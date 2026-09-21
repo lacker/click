@@ -3424,7 +3424,7 @@ impl ResourceContext {
                     resource_fact_read_core_range(available)
                 };
                 available.is_some_and(|available| {
-                    memory_range_structurally_covers(&available, required) == Some(true)
+                    memory_range_structurally_covers(&available, required, None) == Some(true)
                 })
             })
     }
@@ -5103,7 +5103,7 @@ pub(in crate::kernel) fn memory_range_covers(
     ) {
         return true;
     }
-    if let Some(covers) = memory_range_structurally_covers(available, required) {
+    if let Some(covers) = memory_range_structurally_covers(available, required, Some(assumptions)) {
         return covers;
     }
     if crate::instrumentation::measure_operation(
@@ -5149,26 +5149,105 @@ fn memory_resource_fact_range(fact: &CResourceFact) -> Option<&CMemoryRange> {
     }
 }
 
+/// A constant range as the pair an address statement is made of: the signed
+/// index of its first element, and how many elements it holds.
+///
+/// A range is never read as its two endpoints. `p[start..end)` is
+/// `memory_range_byte_count` bytes from the *address* of element `start`, so
+/// its element count is the signed value of the 32-bit term `end - start` —
+/// the residue, read as `int32`. `end` is `start + count` only while that add
+/// does not carry, and `p[i32::MAX..i32::MIN]` is a forward range of exactly
+/// one element. Taking the count by the wrapping subtraction and the start by
+/// its signed value makes both exact, in `i64`, with nothing left modular.
+fn constant_range_extent(range: &CMemoryRange) -> Option<(i64, i64)> {
+    let start = range.start().as_const()? as i32;
+    let end = range.end().as_const()? as i32;
+    Some((i64::from(start), i64::from(end.wrapping_sub(start))))
+}
+
+/// Whether `required`, whose first element sits `delta` elements from
+/// `available`'s base, lies inside `available`.
+///
+/// Every input is an exact `i64`, so this is interval containment and owes no
+/// premise of its own: the caller's obligation is to have obtained `delta`
+/// exactly. A reversed range is refused rather than answered, because neither
+/// side of this test means what it reads as when a count runs backwards.
+fn constant_extents_contain(
+    available: (i64, i64),
+    delta: i64,
+    required: (i64, i64),
+) -> Option<bool> {
+    let (available_start, available_count) = available;
+    let (required_start, required_count) = required;
+    if available_count < 0 || required_count < 0 {
+        return None;
+    }
+    let required_start = delta.checked_add(required_start)?;
+    let required_end = required_start.checked_add(required_count)?;
+    let available_end = available_start.checked_add(available_count)?;
+    Some(available_start <= required_start && required_end <= available_end)
+}
+
+/// The delta from `available`'s base to `required`'s, as an exact number of
+/// elements.
+///
+/// `Pointer::element_index_from_base_with_width` answers with one modular
+/// term, which names the delta only modulo `2^32`; a containment conclusion
+/// reads the delta as a number, so it takes
+/// [`Pointer::exact_element_delta_from_base`] instead. That keeps the constant
+/// part in `i64` beside at most one symbolic index, and the index's *signed*
+/// value is part of the delta — which is why `exact_signed_constant` may be
+/// asked for it, and may not be asked for a residue.
+fn exact_constant_base_delta(
+    available: &CMemoryRange,
+    required: &CMemoryRange,
+    assumptions: Option<&PureFactContext>,
+) -> Option<i64> {
+    let delta = required.base().exact_element_delta_from_base(
+        available.base(),
+        available.element_width(),
+        assumptions,
+    )?;
+    if delta.is_constant() {
+        return Some(delta.constant);
+    }
+    crate::kernel::assumptions::exact_signed_constant(&delta.index, assumptions?)?
+        .checked_add(delta.constant)
+}
+
+/// Containment decided by arithmetic alone, for two ranges whose endpoints are
+/// constants and whose bases differ by a constant number of elements.
+///
+/// This is `memory_range_covers`'s structural arm and it short-circuits the
+/// exact derived-containment rule below it, so its positive answer has to be
+/// exact for the same reason `memory_range_shallowly_contained`'s is (`b92ab3c0`):
+/// the wrapped reading of a residue is `r - 2^32`, which is *outside*, and
+/// "covers" holds under neither reading unless the wrap is ruled out. It used
+/// to build both relative endpoints with the modular `Bitvector32Term::add`
+/// and compare them as an order, so a base `i32::MIN` elements below the owner
+/// carried `q[-1..0]` back into it.
+///
+/// Answering `None` rather than `Some(false)` where the arithmetic no longer
+/// settles it matters: `Some` is a short-circuit, and the routes below this one
+/// are the exact ones.
 fn memory_range_structurally_covers(
     available: &CMemoryRange,
     required: &CMemoryRange,
+    assumptions: Option<&PureFactContext>,
 ) -> Option<bool> {
     if available.element_width() != required.element_width() {
         return None;
     }
-    let base_delta = if required.base() == available.base() {
-        Bitvector32Term::Constant(0)
+    let delta = if required.base() == available.base() {
+        0
     } else {
-        required
-            .base()
-            .element_index_from_base_with_width(available.base(), available.element_width())?
+        exact_constant_base_delta(available, required, assumptions)?
     };
-    let available_start = available.start().as_const()? as i32;
-    let available_end = available.end().as_const()? as i32;
-    let required_start =
-        Bitvector32Term::add(base_delta.clone(), required.start().clone()).as_const()? as i32;
-    let required_end = Bitvector32Term::add(base_delta, required.end().clone()).as_const()? as i32;
-    Some(available_start <= required_start && required_end <= available_end)
+    constant_extents_contain(
+        constant_range_extent(available)?,
+        delta,
+        constant_range_extent(required)?,
+    )
 }
 
 fn memory_ranges_structurally_disjoint(left: &CMemoryRange, right: &CMemoryRange) -> bool {
@@ -5363,34 +5442,31 @@ pub(crate) fn memory_ranges_proven_overlapping(
         )) == Some(true)
 }
 
+/// The same containment as [`memory_range_structurally_covers`], for a base
+/// delta the facts pin rather than the offsets alone.
+///
+/// An element index is signed: `Pointer::offset_by_elements` sign-extends it
+/// before scaling, so element `-1` of `p` is the element below `p`. This read
+/// both endpoints of both ranges through `as_const`, which answers `u32`, so a
+/// `-1` start arrived as `4294967295` and `p[-1..0]` — the element *before*
+/// the range — passed `available_start <= required_start` against every owner
+/// whose own end cleared `0`. A caller owning `p[0..1]` could hand `p[-1..0]`
+/// to a callee and have it written.
 fn memory_range_covers_with_exact_index(
     available: &CMemoryRange,
     required: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> bool {
-    let index = required
-        .base()
-        .element_index_from_base_with_width(available.base(), available.element_width());
-    let Some(base_delta) = index
-        .and_then(|index| crate::kernel::assumptions::exact_signed_constant(&index, assumptions))
-    else {
+    let Some(delta) = exact_constant_base_delta(available, required, Some(assumptions)) else {
         return false;
     };
-    let (Some(available_start), Some(available_end), Some(required_start), Some(required_end)) = (
-        available.start().as_const().map(|value| value as i64),
-        available.end().as_const().map(|value| value as i64),
-        required.start().as_const().map(|value| value as i64),
-        required.end().as_const().map(|value| value as i64),
+    let (Some(available), Some(required)) = (
+        constant_range_extent(available),
+        constant_range_extent(required),
     ) else {
         return false;
     };
-    let Some(required_start) = base_delta.checked_add(required_start) else {
-        return false;
-    };
-    let Some(required_end) = base_delta.checked_add(required_end) else {
-        return false;
-    };
-    available_start <= required_start && required_end <= available_end
+    constant_extents_contain(available, delta, required) == Some(true)
 }
 
 impl CResource {

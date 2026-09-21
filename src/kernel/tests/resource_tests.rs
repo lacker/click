@@ -6444,3 +6444,121 @@ fn distinct_heap_allocations_never_merge_under_contradictory_assumptions() {
         "both authorities must remain usable"
     );
 }
+
+/// An element index is signed, and both of `memory_range_covers`'s
+/// constant-arithmetic arms used to read one as an unsigned residue: the
+/// fact-pinned arm read every endpoint through `as_const`, which answers
+/// `u32`, and the structural arm folded the base delta into each endpoint with
+/// the modular `Bitvector32Term::add`. Both drew a *positive containment*
+/// conclusion from it, which is the direction a residue cannot support.
+mod constant_range_containment {
+    use super::*;
+
+    fn external(elements: i64) -> Pointer {
+        Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(elements * 4),
+        }
+    }
+
+    fn range(base: Pointer, start: i32, end: i32) -> CMemoryRange {
+        CMemoryRange::new(
+            base,
+            Bitvector32Term::Constant(start as u32),
+            Bitvector32Term::Constant(end as u32),
+        )
+    }
+
+    fn covers(available: &CMemoryRange, required: &CMemoryRange) -> bool {
+        crate::kernel::memory_range_covers(available, required, &PureFactContext::new())
+    }
+
+    #[test]
+    fn a_range_below_the_owner_is_not_covered_by_it() {
+        let owned = range(external(0), 0, 1);
+        // `p[-1..0]` is the element *before* `p`. Read as `u32` its start is
+        // `4294967295`, which clears `available_start <= required_start`
+        // against every owner, and its end is `0`, which clears the other
+        // side against every owner whose own end is nonnegative.
+        assert!(!covers(&owned, &range(external(0), -1, 0)));
+        assert!(!covers(&owned, &range(external(0), -1, 1)));
+        assert!(!covers(&owned, &range(external(0), -3, 0)));
+        // The same ranges from an owner that does hold them.
+        let wide = range(external(-3), 0, 4);
+        assert!(covers(&wide, &range(external(0), -1, 0)));
+        assert!(covers(&wide, &range(external(0), -1, 1)));
+        assert!(covers(&wide, &range(external(0), -3, 0)));
+    }
+
+    #[test]
+    fn a_base_far_below_the_owner_does_not_wrap_into_it() {
+        let owned = range(external(0), 0, 1);
+        // `q = &p[i32::MIN]`. The relative start `i32::MIN + (-1)` wraps to
+        // `i32::MAX` and the relative end to `i32::MIN`, which bracket every
+        // constant range there is; the true position is `2^31 + 1` elements
+        // below `p`.
+        let far = external(i64::from(i32::MIN));
+        assert!(!covers(&owned, &range(far.clone(), -1, 0)));
+        assert!(!covers(&owned, &range(far, 0, 1)));
+        // A base a constant distance inside the owner still answers.
+        assert!(covers(&range(external(0), 0, 4), &range(external(1), 0, 2)));
+        assert!(!covers(&range(external(0), 0, 4), &range(external(1), 0, 4)));
+    }
+
+    #[test]
+    fn a_range_is_its_start_and_its_count_not_its_endpoints() {
+        // `p[i32::MAX..i32::MIN]` is a forward range of exactly one element,
+        // at `i32::MAX`. Reading its endpoints as an interval would place it
+        // inside anything at all.
+        let one_at_the_top = range(external(0), i32::MAX, i32::MIN);
+        assert!(!covers(&range(external(0), 0, 1), &one_at_the_top));
+        assert!(covers(&one_at_the_top, &one_at_the_top));
+        assert!(covers(
+            &range(external(0), i32::MAX - 1, i32::MIN),
+            &one_at_the_top
+        ));
+    }
+
+    #[test]
+    fn a_base_delta_the_facts_pin_is_still_taken() {
+        let index = Bitvector32Term::Variable(Variable(93_960));
+        let base = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let child = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::scale_int32(index.clone(), 4),
+        };
+        let owned = range(base, 0, 4);
+        let required = CMemoryRange::new(
+            child,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        let pinned = |value: i32| {
+            PureFactContext::new().assume_condition(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(index.clone()),
+                    Box::new(Bitvector32Term::Constant(value as u32)),
+                ),
+                true,
+            )
+        };
+        assert!(crate::kernel::memory_range_covers(
+            &owned,
+            &required,
+            &pinned(2)
+        ));
+        assert!(!crate::kernel::memory_range_covers(
+            &owned,
+            &required,
+            &pinned(-1)
+        ));
+        assert!(!crate::kernel::memory_range_covers(
+            &owned,
+            &required,
+            &pinned(4)
+        ));
+    }
+}
