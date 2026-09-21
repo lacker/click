@@ -968,21 +968,31 @@ fn candidate_memory_ranges_relation_by_bounds(
         return CandidateMemoryRangeRelation::Disjoint;
     }
     if left.base() == right.base() {
+        // One base, so the element indexes scaled to bytes place both ranges
+        // in the same coordinates. The indexes are the *signed* numbers
+        // `memory_range_byte_count` scales, which is the reading
+        // `resources_structurally_separate` takes on the same comparison:
+        // zero-extended, `a[-1..2]`'s start landed four gigabytes above
+        // `a[0..1]`'s end and the two shared cells were reported `Disjoint`.
+        // `Disjoint` is final here — `candidate_memory_ranges_relation` only
+        // consults the arithmetic oracle for a pair this leaves undecided —
+        // so it suppressed the `LoanRefusal` a caller's overlapping effect
+        // and view owe each other.
         let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
-            left.start().as_const(),
-            left.end().as_const(),
-            right.start().as_const(),
-            right.end().as_const(),
+            signed_bitvector_constant(left.start()),
+            signed_bitvector_constant(left.end()),
+            signed_bitvector_constant(right.start()),
+            signed_bitvector_constant(right.end()),
         ) else {
             return CandidateMemoryRangeRelation::SeparationUnproved;
         };
         let left_width = i64::from(left.element_width());
         let right_width = i64::from(right.element_width());
         let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
-            i64::from(left_start).checked_mul(left_width),
-            i64::from(left_end).checked_mul(left_width),
-            i64::from(right_start).checked_mul(right_width),
-            i64::from(right_end).checked_mul(right_width),
+            left_start.checked_mul(left_width),
+            left_end.checked_mul(left_width),
+            right_start.checked_mul(right_width),
+            right_end.checked_mul(right_width),
         ) else {
             return CandidateMemoryRangeRelation::SeparationUnproved;
         };
@@ -992,6 +1002,12 @@ fn candidate_memory_ranges_relation_by_bounds(
             CandidateMemoryRangeRelation::Overlap
         };
     }
+    // Different bases. `byte_footprint` puts each range's first element in
+    // the block's own coordinates through `offset_by_elements`, which
+    // sign-extends, so the two starts are already signed numbers. The byte
+    // counts stay `u32`: a count that is negative as an `int32` reads as a
+    // range longer than the address space, which can only report *less*
+    // separation, never more.
     let (left_base, left_bytes) = left.byte_footprint();
     let (right_base, right_bytes) = right.byte_footprint();
     let Some(left_start) = left_base.offset.as_const() else {
@@ -21992,6 +22008,73 @@ mod stable_view_call_tests {
             end,
             element_width,
         )
+    }
+
+    fn constant_bounded_range(start: i32, end: i32, element_width: u32) -> CMemoryRange {
+        symbolic_bounded_range(
+            Bitvector32Term::Constant(start as u32),
+            Bitvector32Term::Constant(end as u32),
+            element_width,
+        )
+    }
+
+    /// A range that starts below its base meets the ranges it really meets.
+    /// Zero-extended, `a[-1..2]`'s start scaled to `17179869180`, so every
+    /// nonnegative range ended at or before it and was called `Disjoint` —
+    /// which is final, because only a pair this leaves undecided reaches the
+    /// arithmetic oracle, so it suppressed the refusal an overlapping effect
+    /// and view owe each other.
+    #[test]
+    fn candidate_sees_a_range_that_starts_below_its_base() {
+        let assumptions = PureFactContext::new();
+        let below = constant_bounded_range(-1, 2, 4);
+        for other in [
+            constant_bounded_range(0, 1, 4),
+            constant_bounded_range(-1, 0, 4),
+            constant_bounded_range(1, 2, 4),
+            // Differing element widths meet in bytes: `a[-1..2]` covers
+            // bytes -4..8 and this covers bytes 0..4.
+            constant_bounded_range(0, 4, 1),
+        ] {
+            assert_eq!(
+                candidate_memory_ranges_relation_by_bounds(&below, &other, &assumptions),
+                CandidateMemoryRangeRelation::Overlap
+            );
+            assert_eq!(
+                candidate_memory_ranges_relation_by_bounds(&other, &below, &assumptions),
+                CandidateMemoryRangeRelation::Overlap
+            );
+        }
+    }
+
+    /// The other polarity: ranges that really do miss each other, on both
+    /// sides of the base and both wholly below it, stay `Disjoint`.
+    #[test]
+    fn candidate_keeps_separate_ranges_below_a_base_separate() {
+        let assumptions = PureFactContext::new();
+        let below = constant_bounded_range(-4, -1, 4);
+        for other in [
+            constant_bounded_range(0, 2, 4),
+            constant_bounded_range(-1, 0, 4),
+            constant_bounded_range(-8, -4, 4),
+        ] {
+            assert_eq!(
+                candidate_memory_ranges_relation_by_bounds(&below, &other, &assumptions),
+                CandidateMemoryRangeRelation::Disjoint
+            );
+            assert_eq!(
+                candidate_memory_ranges_relation_by_bounds(&other, &below, &assumptions),
+                CandidateMemoryRangeRelation::Disjoint
+            );
+        }
+        assert_eq!(
+            candidate_memory_ranges_relation_by_bounds(
+                &below,
+                &constant_bounded_range(-2, 1, 4),
+                &assumptions
+            ),
+            CandidateMemoryRangeRelation::Overlap
+        );
     }
 
     /// `p[0..n - 1]` and `p[n - 1..n]` are separate for every `n`, and the
