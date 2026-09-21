@@ -12862,7 +12862,7 @@ fn counted_population_quantities(
     definitions: &[CCompositeResourceDefinition],
     tracked_state: &CState,
     assumptions: &PureFactContext,
-) -> BTreeMap<(String, ResourceArguments), Bitvector32Term> {
+) -> Result<BTreeMap<(String, ResourceArguments), Bitvector32Term>, String> {
     let mut quantities = BTreeMap::<(String, ResourceArguments), Bitvector32Term>::new();
     for fact in resources.facts() {
         let (name, arguments) = match fact.resource() {
@@ -12892,14 +12892,49 @@ fn counted_population_quantities(
         let Some(quantity) = fact.owned_quantity_term() else {
             continue;
         };
-        quantities
-            .entry((name.clone(), arguments.clone()))
-            .and_modify(|total| {
-                *total = Bitvector32Term::add(total.clone(), quantity.clone());
-            })
-            .or_insert_with(|| quantity.clone());
+        // The clauses of one contract naming one population are one number,
+        // and that number is a count. Composing them modularly made two
+        // `produces 2000000000 of tok(o)` clauses a population of
+        // `-294967296`; `population_quantity_sum` forms the total only where
+        // it is exact, and a contract whose own clauses do not add up is
+        // refused rather than summarized by a smaller number than they say.
+        match quantities.entry((name.clone(), arguments.clone())) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(quantity.clone());
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let total = population_quantity_sum(entry.get(), quantity).ok_or_else(|| {
+                    population_total_overflow_message(name, entry.get(), quantity)
+                })?;
+                entry.insert(total);
+            }
+        }
     }
-    quantities
+    Ok(quantities)
+}
+
+/// Why a population's clauses could not be added up.
+///
+/// It names both sides where they are numbers, because the quantity a reader
+/// has to change is one of them, and says what discharges a symbolic pair:
+/// the same no-overflow condition C's own `+` owes.
+fn population_total_overflow_message(
+    name: &str,
+    total: &Bitvector32Term,
+    quantity: &Bitvector32Term,
+) -> String {
+    let sides = match (
+        signed_bitvector_constant(total),
+        signed_bitvector_constant(quantity),
+    ) {
+        (Some(total), Some(quantity)) => format!(" of {total} and {quantity}"),
+        _ => String::new(),
+    };
+    format!(
+        "counted population `{name}` has clauses whose quantities{sides} do not add up to a \
+         count: a population count is a nonnegative `int32`, so state that the two quantities \
+         do not overflow when they are added"
+    )
 }
 
 /// Only a counted population has a population-wide body.
@@ -13061,24 +13096,26 @@ fn apply_counted_population_transitions_with_interface(
         Ok(resources) => resources,
         Err(error) => return Ok(Err(error)),
     };
-    let required_quantities = counted_population_quantities(
-        &required,
-        interface.composite_resource_definitions(),
-        caller_state,
-        assumptions,
-    );
-    let ensured_quantities = counted_population_quantities(
-        &ensured,
-        interface.composite_resource_definitions(),
-        caller_state,
-        assumptions,
-    );
-    let caller_quantities = counted_population_quantities(
-        caller_state.resources(),
-        interface.composite_resource_definitions(),
-        caller_state,
-        assumptions,
-    );
+    let population_totals = |resources: &ResourceContext| {
+        counted_population_quantities(
+            resources,
+            interface.composite_resource_definitions(),
+            caller_state,
+            assumptions,
+        )
+    };
+    let required_quantities = match population_totals(&required) {
+        Ok(quantities) => quantities,
+        Err(message) => return Ok(Err(CRuntimeError::FunctionContract(message))),
+    };
+    let ensured_quantities = match population_totals(&ensured) {
+        Ok(quantities) => quantities,
+        Err(message) => return Ok(Err(CRuntimeError::FunctionContract(message))),
+    };
+    let caller_quantities = match population_totals(caller_state.resources()) {
+        Ok(quantities) => quantities,
+        Err(message) => return Ok(Err(CRuntimeError::FunctionContract(message))),
+    };
     let keys = required_quantities
         .keys()
         .chain(ensured_quantities.keys())
@@ -15639,7 +15676,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
     assumptions: &PureFactContext,
     include_ordinary: bool,
 ) -> Option<Vec<Proposition>> {
-    let mut populations = BTreeMap::<(String, ResourceArguments), Bitvector32Term>::new();
+    let mut populations = BTreeMap::<(String, ResourceArguments), Option<Bitvector32Term>>::new();
     for fact in context.facts() {
         let (name, arguments) = match fact.resource() {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -15650,12 +15687,23 @@ pub(super) fn evaluate_resource_population_fact_propositions(
         let Some(quantity) = fact.owned_quantity_term() else {
             continue;
         };
-        populations
-            .entry((name.clone(), arguments.clone()))
-            .and_modify(|total| {
-                *total = Bitvector32Term::add(total.clone(), quantity.clone());
-            })
-            .or_insert_with(|| quantity.clone());
+        // The visible total bounds the ledger from below, and a modular total
+        // is a smaller number than the facts hold, so wrapping here weakens
+        // the relation rather than falsifying it. It is still not the
+        // population's number: an unformed total publishes no relation at
+        // all, which is the same weakening said once.
+        match populations.entry((name.clone(), arguments.clone())) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(quantity.clone()));
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let total = entry
+                    .get()
+                    .as_ref()
+                    .and_then(|total| population_quantity_sum(total, quantity));
+                entry.insert(total);
+            }
+        }
     }
     let mut propositions = Vec::new();
     for ((name, arguments), visible_quantity) in populations {
@@ -15669,7 +15717,9 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             return None;
         }
         let population_count = state.counted_population(&name, &arguments);
-        if let Some(population_count) = population_count {
+        if let (Some(population_count), Some(visible_quantity)) =
+            (population_count, visible_quantity)
+        {
             propositions.push(Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedGreaterEqual(
                     Box::new(population_count.clone()),

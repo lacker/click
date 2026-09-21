@@ -590,6 +590,42 @@ shape — the signed value of a raw word *when it is nonnegative*, which answers
 `None` rather than a negative number, and exists for the bound rules that want
 a positive constant addend.
 
+A **population count** is a third number, and reading it as either of the
+other two is the same class of bug. It is a mathematical natural number,
+carried in an `int32` term because that is what a contract writes, so a total
+of two quantities is either that total or it is nothing.
+`population_quantity_sum` forms one only where it is **exact**, and reads
+exactness off the two terms alone: two constants whose signed sum stays inside
+`0..=i32::MAX`, which is the range a count may occupy at all, or a merge that
+undoes a split, where `used + (available - used)` is `available` whatever the
+pieces are. Two symbolic quantities are not a total — they carry no relation
+the terms show — while a symbolic quantity absorbing a *constant* addend
+still is, which is the documented remaining gap rather than a claim of
+exactness: `count + 1` overflows at `i32::MAX` like anything else, it is the
+merge every refcount contract is written with, and the ledger's own
+accumulation across a call is unguarded beside it, so withdrawing it here
+would close nothing. Adding two quantities with the modular `Bitvector32Term::add`
+instead made two `produces 2000000000 of tok(o)` clauses a population of
+`-294967296`, and every quantity rule beneath reads a quantity as signed, so
+`ensures count(tok(o)) < 0` verified over four billion produced units.
+
+It consults no facts, deliberately. A merged quantity travels inside a
+resource fact, and a contract is certified against a recomputation holding a
+different context, so a rule that merged under one context and declined under
+the other would make generation and check disagree about a number — which
+reaches the user as a completion mismatch rather than as a refusal naming the
+quantity. The place the no-overflow condition is *owed* instead of decided is
+`count(...)`'s own pattern sum in `src/kernel/spec.rs`: it has an obligation
+list to put `not signed_add_overflows` on, the same condition C's `+` owes,
+and a contract discharges it there.
+
+`None` from that reader is not a smaller count. Each caller says what an
+unformed total costs, and none of them substitutes one: a merge declines to
+merge and leaves both facts in the state, a contract's counted-population
+transition refuses and names the population, a published `count >= visible`
+relation is left unpublished, and the wildcard pattern's ledger fold answers
+that it has no sum.
+
 `as_const` itself stays right for the questions that really are about bits:
 equality, a map or hash key that carries no order, and the width-scaling
 arithmetic that is modular by definition. A key that *is* ordered — the

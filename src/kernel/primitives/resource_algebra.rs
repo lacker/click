@@ -4454,6 +4454,87 @@ fn resource_quantity_is_positive(
         )
 }
 
+/// The total of two population quantities, as the natural number a count is.
+///
+/// A population count is a mathematical natural number. The kernel holds one
+/// in an `int32` term, and [`Bitvector32Term::add`] is modular, so
+/// `2000000000 + 2000000000` is `-294967296`: four billion units reading as a
+/// negative population. Every quantity rule beneath this one is signed —
+/// [`resource_quantity_at_least`], [`constant_quantity_is_positive`],
+/// `population_quantity_is_positive` — so a wrapped total is not an
+/// imprecision, it is a different and smaller number. Two `produces k of
+/// tok(o)` clauses at `k == 2000000000` composed to `k + k` this way, and
+/// `ensures count(tok(o)) < 0` verified on the result.
+///
+/// So a total is formed only where it is **exact**, and exactness is read off
+/// the two terms alone. Two constants are exact while the signed sum stays
+/// inside `0..=i32::MAX`, which is the range a count may occupy at all. A
+/// merge that *undoes a split* is exact by construction: `used + (available -
+/// used)` is `available`, the very term the split was taken from, whatever
+/// either piece is.
+///
+/// Two quantities that are both symbolic are not a total. That is what the
+/// witness above is — `k` and `k` — and it is also the shape nothing else can
+/// bound: a symbolic pair carries no relation the terms themselves show, so
+/// the sum a reader would have to state is not one this rule could check.
+///
+/// A symbolic quantity absorbing a **constant** addend is still a total, and
+/// that is a deliberate remaining gap rather than a claim of exactness:
+/// `count + 1` overflows at `i32::MAX` like anything else. It stays because
+/// it is the basic "one more unit" merge every refcount contract is written
+/// with (`declared_resource_quantity_work_ignores_the_numeric_coefficient`),
+/// and because the ledger's own accumulation across a call — `prior +
+/// (ensured - required)` in `crate::kernel::functions` — is unguarded anyway,
+/// so withdrawing it here would cost that merge and close nothing. Closing it
+/// means carrying `0 <= q <= i32::MAX` with a population quantity and owing
+/// `left <= i32::MAX - right` at both sites together.
+///
+/// It reads no facts on purpose. The quantity a merge produces is carried in
+/// a resource fact, and a contract is certified against a recomputation that
+/// holds a different context; a rule that merged under one context and
+/// declined under the other would make generation and check disagree about a
+/// number, which surfaces as an unusable completion mismatch rather than as a
+/// refusal a reader can act on. `count(...)`'s own pattern sum in
+/// `crate::kernel::spec` is where the condition is *owed* instead of decided
+/// — it has an obligation list to put `not signed_add_overflows` on, which
+/// is what C's own `+` owes, and a contract discharges it there.
+///
+/// `None` is "this total is not established", and each caller decides what
+/// that costs: a merge declines to merge and leaves both facts where they
+/// are, a contract's population transition refuses, and a published
+/// count relation is left unpublished.
+pub(in crate::kernel) fn population_quantity_sum(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> Option<Bitvector32Term> {
+    if let (Some(left_value), Some(right_value)) = (
+        signed_bitvector_constant(left),
+        signed_bitvector_constant(right),
+    ) {
+        let total = left_value + right_value;
+        return u32::try_from(total)
+            .ok()
+            .filter(|_| total <= i64::from(i32::MAX))
+            .map(Bitvector32Term::Constant);
+    }
+    // Recombining a framed remainder is what a contract refinement does
+    // (`mdtests/c_named_contract_refines_symbolic_resource_quantity.md`), and
+    // the term it lands on is the one it started from.
+    if let Bitvector32Term::Subtract(total, taken) = right
+        && taken.as_ref() == left
+    {
+        return Some(total.as_ref().clone());
+    }
+    if let Bitvector32Term::Subtract(total, taken) = left
+        && taken.as_ref() == right
+    {
+        return Some(total.as_ref().clone());
+    }
+    // One symbolic side and a constant addend: the remaining gap above.
+    (signed_bitvector_constant(left).is_some() || signed_bitvector_constant(right).is_some())
+        .then(|| Bitvector32Term::add(left.clone(), right.clone()))
+}
+
 fn resource_quantity_is_zero(quantity: &Bitvector32Term, assumptions: &PureFactContext) -> bool {
     quantity.as_const() == Some(0)
         || assumptions.proves_exact(&Proposition::ConditionIs(
@@ -4777,12 +4858,13 @@ macro_rules! impl_exact_resource_algebra {
                         CResourceFact::Own(left, left_quantity),
                         CResourceFact::Own(right, right_quantity),
                     ) if exact_resources_proven_equal(left, right, assumptions) => {
+                        // A merge that cannot state the total exactly is
+                        // declined rather than wrapped: leaving both facts
+                        // in the state costs precision, and a wrapped
+                        // quantity is a count that is not the population's.
                         Some(CResourceFact::Own(
                             left.clone(),
-                            Box::new(Bitvector32Term::add(
-                                left_quantity.as_ref().clone(),
-                                right_quantity.as_ref().clone(),
-                            )),
+                            Box::new(population_quantity_sum(left_quantity, right_quantity)?),
                         ))
                     }
                     _ => combine_exact_resource_facts(left, right, assumptions),

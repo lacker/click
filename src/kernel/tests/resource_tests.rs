@@ -1915,11 +1915,11 @@ fn symbolic_resource_indices_distinguish_constructors_and_population_counts() {
     assert_eq!(count, Bitvector32Term::Constant(3));
     assert_eq!(
         state.counted_population_sum("indexed", &[None], &assumptions),
-        count
+        Some(count.clone())
     );
     assert_eq!(
         state.counted_population_sum("indexed", &[Some(n_arguments[0].clone())], &assumptions),
-        count
+        Some(count)
     );
 }
 
@@ -6624,6 +6624,144 @@ mod owned_quantity_sign {
                     .satisfies_fact(&viewed(), &assumptions)
             );
         }
+    }
+}
+
+/// A population count is a mathematical natural number, so the merge that
+/// composes two owned quantities into one must state the total exactly or
+/// decline. Composing them with the modular `Bitvector32Term::add` made two
+/// `produces 2000000000 of tok(o)` clauses a population of `-294967296`, and
+/// `ensures count(tok(o)) < 0` verified over four billion produced units.
+mod population_quantity_totals {
+    use super::*;
+
+    fn token(quantity: Bitvector32Term) -> CResourceFact {
+        CResourceFact::own_quantity(
+            CResource::Token {
+                name: "tok".to_string(),
+                arguments: Vec::new().into(),
+            },
+            quantity,
+        )
+    }
+
+    fn constant(quantity: i32) -> Bitvector32Term {
+        Bitvector32Term::Constant(quantity as u32)
+    }
+
+    /// The quantity the merge of these two facts carries, or `None` where the
+    /// two were left where they are.
+    fn merged_quantity(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+        assumptions: &PureFactContext,
+    ) -> Option<Bitvector32Term> {
+        let merged = ResourceContext::new()
+            .unchecked_with_fact(token(left))
+            .unchecked_with_fact(token(right))
+            .normalized(assumptions);
+        let facts = merged.facts().to_vec();
+        match facts.as_slice() {
+            [fact] => Some(fact.owned_quantity_term().cloned().expect("owned quantity")),
+            _ => None,
+        }
+    }
+
+    /// Neither the wrapped total nor any other number: the pair is left
+    /// alone, and each fact still says what its clause said.
+    #[test]
+    fn an_overflowing_total_is_not_composed() {
+        let assumptions = PureFactContext::new();
+        for (left, right) in [
+            (2_000_000_000, 2_000_000_000),
+            (i32::MAX, 1),
+            (1, i32::MAX),
+            (i32::MAX, i32::MAX),
+            // A total that wraps all the way back to a plausible-looking
+            // positive number is the same defect wearing a friendlier value.
+            (1_500_000_000, 1_500_000_000),
+        ] {
+            assert_eq!(
+                merged_quantity(constant(left), constant(right), &assumptions),
+                None,
+                "{left} + {right} was composed"
+            );
+        }
+        // A total that leaves the range downwards is not a count either.
+        assert_eq!(
+            merged_quantity(constant(-1), constant(-1), &assumptions),
+            None
+        );
+    }
+
+    /// The other polarity: a total that is a count is still composed, at the
+    /// ordinary quantities and at the largest one that fits.
+    #[test]
+    fn a_total_that_is_a_count_is_still_composed() {
+        let assumptions = PureFactContext::new();
+        for (left, right) in [(1, 1), (2, 5), (2_000_000_000, 147_483_647), (i32::MAX, 0)] {
+            assert_eq!(
+                merged_quantity(constant(left), constant(right), &assumptions),
+                Some(constant(left + right)),
+                "{left} + {right} was not composed"
+            );
+        }
+    }
+
+    /// Two symbolic quantities are not a total, whatever the context says:
+    /// the merged quantity travels in a resource fact that a recomputation
+    /// checks from a different context, so a rule that merged under one and
+    /// declined under the other would make generation and check disagree
+    /// about a number. `k` and `k` is the witness's own pair.
+    ///
+    /// A symbolic quantity absorbing a constant addend is still merged — the
+    /// documented remaining gap, pinned here so that closing it is a visible
+    /// change rather than a silent one.
+    #[test]
+    fn a_symbolic_pair_is_not_a_total() {
+        let quantity = Bitvector32Term::Variable(Variable(7));
+        let other = Bitvector32Term::Variable(Variable(8));
+        let overflow = ConditionTerm::signed_add_overflows(quantity.clone(), quantity.clone());
+        for assumptions in [
+            PureFactContext::new(),
+            PureFactContext::new().assume_proposition(Proposition::ConditionIs(overflow, false)),
+        ] {
+            assert_eq!(
+                merged_quantity(quantity.clone(), quantity.clone(), &assumptions),
+                None
+            );
+            assert_eq!(
+                merged_quantity(quantity.clone(), other.clone(), &assumptions),
+                None
+            );
+            assert_eq!(
+                merged_quantity(quantity.clone(), Bitvector32Term::Constant(1), &assumptions),
+                Some(Bitvector32Term::add(
+                    quantity.clone(),
+                    Bitvector32Term::Constant(1)
+                ))
+            );
+        }
+    }
+
+    /// The one symbolic exception: recombining a framed remainder lands on
+    /// the term the split was taken from, which is exact whatever the pieces
+    /// are, and is what a contract refinement does.
+    #[test]
+    fn recombining_a_framed_remainder_restores_its_term() {
+        let assumptions = PureFactContext::new();
+        let available = Bitvector32Term::Variable(Variable(11));
+        let used = Bitvector32Term::Variable(Variable(12));
+        let remainder =
+            Bitvector32Term::Subtract(Box::new(available.clone()), Box::new(used.clone()));
+        assert_eq!(
+            merged_quantity(used.clone(), remainder.clone(), &assumptions),
+            Some(available.clone())
+        );
+        assert_eq!(
+            merged_quantity(remainder, used, &assumptions),
+            Some(available)
+        );
     }
 }
 

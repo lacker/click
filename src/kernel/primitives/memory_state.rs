@@ -3252,12 +3252,22 @@ impl CState {
             })
     }
 
+    /// The total of every ledger entry this pattern names, or `None` where
+    /// that total is not a count.
+    ///
+    /// The entries are populations and their counts are natural numbers, so
+    /// the fold goes through `population_quantity_sum` rather than the
+    /// modular add: two entries of `2000000000` are four billion units, and
+    /// the wrapped `-294967296` would be a smaller number than either of
+    /// them. `crate::kernel::spec`'s own pattern sum asks the same question
+    /// with an obligation list to put the no-overflow condition on; this one
+    /// has none, so it answers that the sum is not established.
     pub fn counted_population_sum(
         &self,
         name: &str,
         arguments: &[Option<AlgebraicValue>],
         assumptions: &PureFactContext,
-    ) -> Bitvector32Term {
+    ) -> Option<Bitvector32Term> {
         self.counted_populations
             .iter()
             .filter(|population| {
@@ -3278,8 +3288,11 @@ impl CState {
                             })
                         })
             })
-            .fold(Bitvector32Term::Constant(0), |total, population| {
-                Bitvector32Term::add(total, population.count.clone())
+            .try_fold(Bitvector32Term::Constant(0), |total, population| {
+                crate::kernel::primitives::resource_algebra::population_quantity_sum(
+                    &total,
+                    &population.count,
+                )
             })
     }
 

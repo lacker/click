@@ -4089,9 +4089,15 @@ impl AnnotationLowerer<'_> {
                             format!("`count({name})` at a recorded state needs fixed arguments")
                         })?;
                     let assumptions = self.count_assumptions.cloned().unwrap_or_default();
-                    return Ok(SpecExpression::Value(CValue::Int32(
-                        state.counted_population_sum(name, &values, &assumptions),
-                    )));
+                    let total = state
+                        .counted_population_sum(name, &values, &assumptions)
+                        .ok_or_else(|| {
+                            format!(
+                                "`count({name})` at a recorded state totals populations whose \
+                                 quantities do not add up to a count"
+                            )
+                        })?;
+                    return Ok(SpecExpression::Value(CValue::Int32(total)));
                 }
                 let count = SpecExpression::CountedResourceCount {
                     name: name.clone(),

@@ -325,6 +325,17 @@ body invariant while changing both the C state and logical quantity.
 Inside `count(...)`, `_` is a wildcard over one resource argument. For example,
 `count(pool_object(pool, _))` sums all exact object populations for `pool`.
 
+A count is a nonnegative number that fits in an `int32`, and Click holds
+contracts to that. Wherever two quantities for one population are added — two
+clauses of one contract, two facts in one state, two entries under one
+wildcard — the total has to be one Click can state exactly, or the two
+quantities stay separate and the contract that needs them added is refused.
+Constant quantities are added when their sum fits, and a quantity split off a
+population recombines with its own remainder. Without that rule, `produces
+2000000000 of tok(o)` twice composed to a population of `-294967296`, and
+`ensures count(tok(o)) < 0` was provable of a function that had just produced
+four billion units.
+
 A function spec may exist only to consume a resource:
 
 <!-- verified-example: mdtests/composite_resource_composes_token.md -->
