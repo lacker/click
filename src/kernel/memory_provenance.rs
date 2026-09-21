@@ -1529,6 +1529,7 @@ pub(in crate::kernel) fn exact_separation_fact_covers_range_and_pointer(
     fact: &Proposition,
     range: &CMemoryRange,
     pointer: &Pointer,
+    assumptions: &PureFactContext,
 ) -> bool {
     let (left, right) = match fact {
         Proposition::CMemoryDisjoint {
@@ -1548,10 +1549,21 @@ pub(in crate::kernel) fn exact_separation_fact_covers_range_and_pointer(
         } => (left.clone(), right.clone()),
         _ => return false,
     };
-    super::assumptions::memory_range_shallowly_contained(range, &left)
-        && super::assumptions::pointer_in_memory_range_shallow(pointer, &right)
-        || super::assumptions::memory_range_shallowly_contained(range, &right)
-            && super::assumptions::pointer_in_memory_range_shallow(pointer, &left)
+    super::assumptions::memory_range_shallowly_contained_with_facts(range, &left, assumptions)
+        && super::assumptions::pointer_in_memory_range_shallow_with_facts(
+            pointer,
+            &right,
+            assumptions,
+        )
+        || super::assumptions::memory_range_shallowly_contained_with_facts(
+            range,
+            &right,
+            assumptions,
+        ) && super::assumptions::pointer_in_memory_range_shallow_with_facts(
+            pointer,
+            &left,
+            assumptions,
+        )
 }
 
 pub(in crate::kernel) fn forward_range_offset_from_pointer(
@@ -1589,11 +1601,9 @@ pub(in crate::kernel) fn typed_range_disjoint_from_pointer_evidence(
     if range.base.blocks_proven_distinct(pointer) {
         return Some(RangeDisjointFromPointerEvidence::DistinctBlocks);
     }
-    if let Some(fact) = assumptions
-        .prop_facts
-        .iter()
-        .find(|fact| exact_separation_fact_covers_range_and_pointer(fact, range, pointer))
-    {
+    if let Some(fact) = assumptions.prop_facts.iter().find(|fact| {
+        exact_separation_fact_covers_range_and_pointer(fact, range, pointer, assumptions)
+    }) {
         crate::kernel::record_implicit_reasoning_provenance(assumptions, fact);
         return Some(RangeDisjointFromPointerEvidence::ExactSeparationFact(
             fact.clone(),

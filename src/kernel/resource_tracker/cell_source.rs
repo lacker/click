@@ -369,7 +369,12 @@ impl RangeDisjointFromPointerEvidence {
             Self::DistinctBlocks => range.base.blocks_proven_distinct(pointer),
             Self::ExactSeparationFact(fact) => {
                 assumptions.prop_facts.contains(fact)
-                    && exact_separation_fact_covers_range_and_pointer(fact, range, pointer)
+                    && exact_separation_fact_covers_range_and_pointer(
+                        fact,
+                        range,
+                        pointer,
+                        assumptions,
+                    )
             }
             Self::DirectConstantOutside { index, start, end } => {
                 direct_constant_element_index(pointer, range.base()) == Some(*index)
@@ -566,7 +571,11 @@ impl PointerInRangeEvidence {
         range: &CMemoryRange,
         assumptions: &PureFactContext,
     ) -> Option<Self> {
-        if crate::kernel::assumptions::pointer_in_memory_range_shallow(pointer, range) {
+        if crate::kernel::assumptions::pointer_in_memory_range_shallow_with_facts(
+            pointer,
+            range,
+            assumptions,
+        ) {
             return Some(Self::Shallow);
         }
         let index =
@@ -593,7 +602,11 @@ impl PointerInRangeEvidence {
             upper,
         } = self
         else {
-            return crate::kernel::assumptions::pointer_in_memory_range_shallow(pointer, range);
+            return crate::kernel::assumptions::pointer_in_memory_range_shallow_with_facts(
+                pointer,
+                range,
+                assumptions,
+            );
         };
         let Some(index) =
             pointer.element_index_from_base_with_width(range.base(), range.element_width())

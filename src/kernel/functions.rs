@@ -4931,24 +4931,30 @@ pub(crate) fn storage_writes_outside_owned_footprint(
     let mut outside = Vec::new();
     for pointer in &storage_writes {
         let covered = owned.iter().any(|range| {
-            super::assumptions::pointer_in_memory_range_shallow(pointer, range)
-                || assumptions.pointer_in_range_by_shallow_fact_graph_with_width(
-                    pointer,
-                    range.base(),
-                    range.start(),
-                    range.end(),
-                    range.element_width(),
-                )
+            super::assumptions::pointer_in_memory_range_shallow_with_facts(
+                pointer,
+                range,
+                assumptions,
+            ) || assumptions.pointer_in_range_by_shallow_fact_graph_with_width(
+                pointer,
+                range.base(),
+                range.start(),
+                range.end(),
+                range.element_width(),
+            )
         });
         if !covered {
             outside.push(format!("{pointer:?}"));
         }
     }
     for range in storage_summaries {
-        if !owned
-            .iter()
-            .any(|parent| super::assumptions::memory_range_shallowly_contained(range, parent))
-        {
+        if !owned.iter().any(|parent| {
+            super::assumptions::memory_range_shallowly_contained_with_facts(
+                range,
+                parent,
+                assumptions,
+            )
+        }) {
             outside.push(format!("{range:?}"));
         }
     }

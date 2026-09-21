@@ -2994,6 +2994,50 @@ impl Pointer {
             }
         }
     }
+
+    /// [`Self::element_index_from_base_with_width`] for a caller that needs the
+    /// delta's `i64` value rather than its residue.
+    ///
+    /// Same shapes, answered exactly. The index that function returns is a
+    /// modular `Bitvector32Term`, so it names the delta only modulo `2^32`:
+    /// the two byte offsets are exact `i64`, and every step that folds them
+    /// into one 32-bit index — an `Add` of two displacements, the closing
+    /// `Bitvector32Term::subtract` — can wrap. A rule concluding *membership*
+    /// or *containment* is reading the delta as a number and needs this form;
+    /// see [`crate::kernel::reasoning::ExactElementDelta`].
+    pub(in crate::kernel) fn exact_element_delta_from_base(
+        &self,
+        base: &Self,
+        byte_width: u32,
+        assumptions: Option<&PureFactContext>,
+    ) -> Option<crate::kernel::reasoning::ExactElementDelta> {
+        use crate::kernel::reasoning::{ExactElementDelta, exact_element_delta_from_offset};
+
+        if self.block != base.block {
+            return None;
+        }
+        if self.offset == base.offset {
+            return Some(ExactElementDelta {
+                index: Bitvector32Term::Constant(0),
+                constant: 0,
+            });
+        }
+        if base.offset == PointerOffsetTerm::Constant(0) {
+            return exact_element_delta_from_offset(&self.offset, byte_width);
+        }
+        match &self.offset {
+            PointerOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
+                exact_element_delta_from_offset(right, byte_width)
+            }
+            PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
+                exact_element_delta_from_offset(left, byte_width)
+            }
+            _ => exact_element_delta_from_offset(&self.offset, byte_width)?.subtract(
+                exact_element_delta_from_offset(&base.offset, byte_width)?,
+                assumptions,
+            ),
+        }
+    }
 }
 
 #[cfg(test)]

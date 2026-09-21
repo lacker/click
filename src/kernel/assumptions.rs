@@ -4376,32 +4376,125 @@ fn memory_range_shallowly_contained_in_parts(
     base: &Pointer,
     start: &Bitvector32Term,
     end: &Bitvector32Term,
+    assumptions: Option<&PureFactContext>,
 ) -> bool {
-    memory_range_shallowly_contained(
+    memory_range_contained_by_exact_arithmetic(
         range,
         &CMemoryRange::new(base.clone(), start.clone(), end.clone()),
+        assumptions,
     )
 }
 
+/// Whether every cell of `range` is a cell of `parent`, for a caller with no
+/// fact context. See [`memory_range_shallowly_contained_with_facts`].
 pub(in crate::kernel) fn memory_range_shallowly_contained(
     range: &CMemoryRange,
     parent: &CMemoryRange,
 ) -> bool {
+    memory_range_contained_by_exact_arithmetic(range, parent, None)
+}
+
+/// [`memory_range_shallowly_contained`] for a caller that holds a fact context.
+///
+/// This is `memory_range_covers`'s structural arm, so it gates every `owns` and
+/// `views` entailment, contract-effect coverage and `free` extent. It concluded
+/// containment from two affine differences of modular terms read as signed
+/// orders, and that is the same misreading `bitvector_index_outside_range_shallow`
+/// carried, in the direction where it is unsound: a difference of `2^32` is not
+/// "at or after", it is "the same element".
+///
+/// What containment means is an `i64` statement about addresses. `parent` holds
+/// `parent_count` elements from the address of its element `parent.start`;
+/// `range` holds `range_count` from the address of its own element
+/// `range.start`, which sits `offset` elements into the parent. So containment
+/// is `0 <= offset` and `offset + range_count <= parent_count`, and each of the
+/// three is computed exactly or not at all:
+///
+/// * `offset` is the base delta plus `sext(range.start) - sext(parent.start)`.
+///   The delta comes from [`Pointer::exact_element_delta_from_base`] as an
+///   exact `i64` constant beside at most one symbolic index; the subtraction
+///   comes from [`exact_affine_index_difference`]. Because only one symbolic
+///   index may appear, whichever of the two ranges is rebased must carry a
+///   constant start — which is what the shapes that reach here do: a child at
+///   the parent's own base, or a child `[0..k]` at a pointer into the parent.
+/// * both counts come from [`affine_range_element_count`], which is the count
+///   and not a bound on it.
+///
+/// A parent whose endpoints have no constant difference has no count, and then
+/// the only route left compares the two ranges' *ends* — `p[3..n]` inside
+/// `p[0..n]`. That reads `end` as `start + count`, so it additionally asks
+/// [`range_count_is_nonnegative`] of the parent, which a stated extent guard
+/// supplies and a context-free caller cannot.
+pub(in crate::kernel) fn memory_range_shallowly_contained_with_facts(
+    range: &CMemoryRange,
+    parent: &CMemoryRange,
+    assumptions: &PureFactContext,
+) -> bool {
+    memory_range_contained_by_exact_arithmetic(range, parent, Some(assumptions))
+}
+
+fn memory_range_contained_by_exact_arithmetic(
+    range: &CMemoryRange,
+    parent: &CMemoryRange,
+    assumptions: Option<&PureFactContext>,
+) -> bool {
     if range.element_width() != parent.element_width() {
         return false;
     }
-    let Some(base_index) = range
-        .base()
-        .element_index_from_base_with_width(parent.base(), parent.element_width())
+    let Some(base_delta) = range.base().exact_element_delta_from_base(
+        parent.base(),
+        parent.element_width(),
+        assumptions,
+    ) else {
+        return false;
+    };
+    // `range`'s endpoints are in its own base's coordinates and `parent`'s are
+    // in the parent's, so the base delta joins them. Only one symbolic index
+    // may cross that join, since adding two would need the modular add this
+    // whole rule exists to stop trusting.
+    let translate = |endpoint: &Bitvector32Term| {
+        if base_delta.is_constant() {
+            Some((endpoint.clone(), base_delta.constant))
+        } else {
+            signed_bitvector_constant(endpoint)
+                .and_then(|endpoint| base_delta.constant.checked_add(endpoint))
+                .map(|constant| (base_delta.index.clone(), constant))
+        }
+    };
+    let Some((start_term, start_constant)) = translate(range.start()) else {
+        return false;
+    };
+    let Some(offset) = exact_affine_index_difference(&start_term, parent.start(), assumptions)
+        .and_then(|difference| difference.checked_add(start_constant))
     else {
         return false;
     };
-    let range_start = Bitvector32Term::add(base_index.clone(), range.start().clone());
-    let range_end = Bitvector32Term::add(base_index, range.end().clone());
-    affine_bitvector_difference_constant(&range_start, parent.start())
-        .is_some_and(|delta| delta >= 0)
-        && affine_bitvector_difference_constant(parent.end(), &range_end)
-            .is_some_and(|delta| delta >= 0)
+    if offset < 0 {
+        return false;
+    }
+    if let (Some(range_count), Some(parent_count)) = (
+        affine_range_element_count(range.start(), range.end()),
+        affine_range_element_count(parent.start(), parent.end()),
+    ) && offset
+        .checked_add(range_count)
+        .is_some_and(|end| end <= parent_count)
+    {
+        return true;
+    }
+    let Some((end_term, end_constant)) = translate(range.end()) else {
+        return false;
+    };
+    let Some(slack) = exact_affine_index_difference(parent.end(), &end_term, assumptions)
+        .and_then(|difference| difference.checked_sub(end_constant))
+    else {
+        return false;
+    };
+    let Some(reach) = offset.checked_add(slack) else {
+        return false;
+    };
+    slack >= 0
+        && reach < (1i64 << 31)
+        && (reach == 0 || range_count_is_nonnegative(parent, assumptions))
 }
 
 pub(super) fn memory_range_contained_for_memory_resolution(
@@ -4412,7 +4505,7 @@ pub(super) fn memory_range_contained_for_memory_resolution(
     if range.element_width() != parent.element_width() {
         return false;
     }
-    if memory_range_shallowly_contained(range, parent) {
+    if memory_range_shallowly_contained_with_facts(range, parent, assumptions) {
         return true;
     }
     if super::reasoning::resolution_interrupted() {
@@ -4569,6 +4662,11 @@ fn recorded_less_equal_candidates<'a>(
         })
 }
 
+/// [`pointer_in_range_shallow`] over a range, for a caller with no fact
+/// context: a structural or memoized walk that cannot consult one. It answers
+/// only what arithmetic settles on its own — a pointer at the range's own start
+/// term, or wholly constant endpoints and delta — and refuses the rest rather
+/// than reading a residue as an offset.
 pub(in crate::kernel) fn pointer_in_memory_range_shallow(
     pointer: &Pointer,
     range: &CMemoryRange,
@@ -4579,6 +4677,24 @@ pub(in crate::kernel) fn pointer_in_memory_range_shallow(
         range.start(),
         range.end(),
         range.element_width(),
+        None,
+    )
+}
+
+/// [`pointer_in_memory_range_shallow`] for a caller that does hold a fact
+/// context, so a range whose start is only provably nonnegative still answers.
+pub(in crate::kernel) fn pointer_in_memory_range_shallow_with_facts(
+    pointer: &Pointer,
+    range: &CMemoryRange,
+    assumptions: &PureFactContext,
+) -> bool {
+    pointer_in_range_shallow(
+        pointer,
+        range.base(),
+        range.start(),
+        range.end(),
+        range.element_width(),
+        Some(assumptions),
     )
 }
 
@@ -4646,8 +4762,13 @@ fn pointer_in_range_for_memory_resolution(
     ) else {
         return false;
     };
+    // Every index collected here ends in a membership conclusion, so each is
+    // the pointer's element delta exactly or not at all: `element_index_from_offset`
+    // folds an exact `i64` byte offset into a wrapping 32-bit add, and a
+    // residue read as an index is the wrap this rule cannot see.
     let mut indexes = pointer
-        .element_index_from_base_with_width(base, element_width)
+        .exact_element_delta_from_base(base, element_width, Some(assumptions))
+        .and_then(|delta| delta.as_index_term())
         .into_iter()
         .collect::<Vec<_>>();
     if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
@@ -4660,7 +4781,8 @@ fn pointer_in_range_for_memory_resolution(
                     left,
                     &base.offset,
                     assumptions,
-                ) && let Some(index) = element_index_from_offset(right, element_width)
+                ) && let Some(index) = exact_element_delta_from_offset(right, element_width)
+                    .and_then(|delta| delta.as_index_term())
                     && !indexes.contains(&index)
                 {
                     indexes.push(index);
@@ -4669,7 +4791,8 @@ fn pointer_in_range_for_memory_resolution(
                     right,
                     &base.offset,
                     assumptions,
-                ) && let Some(index) = element_index_from_offset(left, element_width)
+                ) && let Some(index) = exact_element_delta_from_offset(left, element_width)
+                    .and_then(|delta| delta.as_index_term())
                     && !indexes.contains(&index)
                 {
                     indexes.push(index);
@@ -4833,14 +4956,63 @@ fn bitvector_index_in_range_shallow(
         return true;
     }
 
-    let Some(offset) = affine_bitvector_difference_constant(index, start) else {
+    element_delta_in_range_by_affine_arithmetic(
+        &ExactElementDelta {
+            index: index.clone(),
+            constant: 0,
+        },
+        start,
+        end,
+        assumptions,
+    )
+}
+
+/// Whether an exact element delta lands inside `[start, end)`, by affine
+/// arithmetic over the range's own endpoints.
+///
+/// This is the tail of [`bitvector_index_in_range_shallow`], over a delta
+/// rather than one index term, because a pointer's delta is an `i64` constant
+/// beside a symbolic index and joining the two would need the modular add this
+/// rule must not trust. The arms above that tail state the index as a term, so
+/// they answer only for a delta that *is* one term
+/// ([`ExactElementDelta::as_index_term`]); this one answers for both.
+///
+/// The affine routes read a constant difference as a signed order, and a
+/// difference of modular terms is the true one only modulo `2^32`. An
+/// "outside" conclusion survives that reduction — a residue past the count is
+/// outside whichever way the terms wrapped — and "inside" does not, so the
+/// offset here is the real one ([`exact_affine_index_difference`]) and the
+/// length is the real element count ([`affine_range_element_count`]), or this
+/// concludes nothing. The remaining arm compares the offset against the
+/// range's length as a *term*, which is a signed order over that term's value
+/// and needs no count.
+pub(in crate::kernel) fn element_delta_in_range_by_affine_arithmetic(
+    delta: &ExactElementDelta,
+    start: &Bitvector32Term,
+    end: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    let recorded_exact_order_path = |left: &Bitvector32Term,
+                                     right: &Bitvector32Term,
+                                     strict: bool| {
+        let Some(path) = assumptions.exact_signed_order_path_evidence(left, right, strict) else {
+            return false;
+        };
+        for step in path {
+            record_implicit_reasoning_provenance(assumptions, &step.premise);
+        }
+        true
+    };
+    let Some(offset) = exact_affine_index_difference(&delta.index, start, Some(assumptions))
+        .and_then(|difference| difference.checked_add(delta.constant))
+    else {
         return false;
     };
     if offset < 0 {
         return false;
     }
-    if let Some(length) = affine_bitvector_difference_constant(end, start) {
-        return offset < length;
+    if let Some(count) = affine_range_element_count(start, end) {
+        return offset < count;
     }
     i32::try_from(offset).is_ok_and(|offset| {
         affine_bitvector_difference_atom(end, start).is_some_and(|length| {
@@ -4887,6 +5059,165 @@ pub(in crate::kernel) fn affine_range_element_count_bound(
         return Some(count);
     }
     assumptions.established_range_element_count_bound(start, end, element_width)
+}
+
+/// The number of elements a range spans, when its endpoints' affine difference
+/// determines it. This is the count itself, not a bound.
+///
+/// A range `p[start..end)` denotes `memory_range_byte_count` bytes from the
+/// address of element `start`, and that byte count is the modular term
+/// `(end - start) * width`. So the element count is the *signed* value of the
+/// 32-bit term `end - start`, which is the residue of an affine constant
+/// difference read as `int32` — exactly, with nothing assumed: the affine walk
+/// is faithful modulo `2^32`, and modulo `2^32` is all the count is. A residue
+/// in the upper half is a negative count, a reversed range that holds no cells
+/// and fails its own valid-extent guard, and this answers `None` for it rather
+/// than a count no conclusion should use.
+///
+/// Contrast [`affine_range_element_count_bound`], which answers for a range
+/// whose endpoints have *no* constant difference by consulting its extent
+/// facts. A bound is all an "outside" conclusion needs; a membership
+/// conclusion needs the count.
+pub(in crate::kernel) fn affine_range_element_count(
+    start: &Bitvector32Term,
+    end: &Bitvector32Term,
+) -> Option<i64> {
+    let residue = affine_bitvector_difference_constant(end, start)?.rem_euclid(1i64 << 32);
+    (residue < (1i64 << 31)).then_some(residue)
+}
+
+/// Whether an affine constant difference between two element-index terms is
+/// their true difference in `i64`, and not merely that difference modulo
+/// `2^32`.
+///
+/// This is the premise every *positive* membership conclusion needs and no
+/// negative one does, and it is the whole difference between the two. Write
+/// `D = sext(index) - sext(start)` for the true difference and `r` for the
+/// residue the affine walk yields. Both terms are `int32`, so `D` lies in
+/// `(-2^32, 2^32)`, and `D ≡ r (mod 2^32)` pins it to `D ∈ {r, r - 2^32}`.
+///
+/// "Outside" needs no more: `r - 2^32` is negative, so below the start, and `r`
+/// above the count is past the end — outside under either reading, which is
+/// what [`affine_offset_from_start_is_outside`] uses. "Inside" needs `D = r`
+/// outright, because `D = r - 2^32` is *outside*. `i + 1` is one element above
+/// `i` only while the add does not wrap; at `i == i32::MAX` it is `2^32 - 1`
+/// elements below.
+///
+/// Three routes rule the wrapped reading out, and each is checked before any
+/// fact lookup.
+///
+/// * `r == 0`. Then `D` is `0` or `-2^32`, and `-2^32` is out of reach, so the
+///   two terms name the same element. This is the route that carries the
+///   ordinary shapes — a child range starting where its parent does, a pointer
+///   at a range's own start — with no context at all.
+/// * `r` in the upper half is refused. `D = r >= 2^31` would need the index
+///   `2^31` elements above the start, and a range that reaches that far fails
+///   its valid-extent guard, so a membership caller cannot want it; refusing
+///   costs nothing and keeps the argument below to the low half.
+/// * Otherwise `D = r - 2^32 <= -2^31 - 1`, which forces `sext(index) < 0` and
+///   `sext(start) > 0` together: with `sext(index) >= 0` the difference is at
+///   least `-sext(start) > -2^31`, and with `sext(start) <= 0` it is at least
+///   `sext(index) >= -2^31`. So *either* `0 <= index` *or* `start <= 0`
+///   excludes it. A constant endpoint settles its own side without consulting
+///   anything, which is why a range over `p[0..n]` and a constant index need no
+///   facts; otherwise the order comes from the same exact routes a stated
+///   extent guard is checked by.
+///
+/// Default-deny: a caller with no context gets the fact-free routes only.
+/// Whether an element-index term is known nonnegative, by exact routes only:
+/// its own constant value, or the same order routes a stated extent guard is
+/// checked by. This is the premise that keeps a 32-bit subtraction of two
+/// indices inside `int32`, which several conclusions below need and none may
+/// assume.
+pub(in crate::kernel) fn element_index_is_nonnegative(
+    term: &Bitvector32Term,
+    assumptions: Option<&PureFactContext>,
+) -> bool {
+    signed_bitvector_constant(term).is_some_and(|value| 0 <= value)
+        || assumptions.is_some_and(|assumptions| {
+            assumptions.proves_element_endpoint_order(&Bitvector32Term::Constant(0), term)
+        })
+}
+
+fn affine_index_difference_is_exact(
+    index: &Bitvector32Term,
+    start: &Bitvector32Term,
+    difference: i64,
+    assumptions: Option<&PureFactContext>,
+) -> bool {
+    let residue = difference.rem_euclid(1i64 << 32);
+    if residue == 0 {
+        return true;
+    }
+    if residue >= (1i64 << 31) {
+        return false;
+    }
+    if element_index_is_nonnegative(index, assumptions) {
+        return true;
+    }
+    signed_bitvector_constant(start).is_some_and(|start| start <= 0)
+        || assumptions.is_some_and(|assumptions| {
+            assumptions.proves_element_endpoint_order(start, &Bitvector32Term::Constant(0))
+        })
+}
+
+/// The true `i64` difference `sext(index) - sext(start)` of two element-index
+/// terms, when an affine constant difference determines it.
+///
+/// Two constants answer outright, difference and sign included. Otherwise the
+/// answer is the residue, and only once [`affine_index_difference_is_exact`]
+/// has ruled out the wrapped reading of it — so a symbolic answer is always in
+/// `0..2^31`, and a caller that needs a *negative* difference between symbolic
+/// terms gets `None` rather than a residue standing in for one.
+pub(in crate::kernel) fn exact_affine_index_difference(
+    index: &Bitvector32Term,
+    start: &Bitvector32Term,
+    assumptions: Option<&PureFactContext>,
+) -> Option<i64> {
+    if let (Some(index), Some(start)) = (
+        signed_bitvector_constant(index),
+        signed_bitvector_constant(start),
+    ) {
+        return Some(index - start);
+    }
+    let difference = affine_bitvector_difference_constant(index, start)?;
+    affine_index_difference_is_exact(index, start, difference, assumptions)
+        .then(|| difference.rem_euclid(1i64 << 32))
+}
+
+/// Whether a range's element count is a real count and not a residue standing
+/// for a negative span — `0 <= end - start`, the forward half of the one
+/// valid-byte-extent condition, which is all this needs and the width limit is
+/// not part of.
+///
+/// This is the premise for comparing two ranges' *ends* rather than their
+/// counts. Write `offset` for how far the child starts into the parent and
+/// `slack` for how far the parent's end reaches past the child's; both are
+/// exact `i64`, and whatever the endpoints did,
+/// `parent_count - child_count ≡ offset + slack (mod 2^32)`. Both counts are
+/// residues read as `int32`, so they lie in `[-2^31, 2^31)`; a *nonnegative*
+/// parent count puts their difference in `(-2^31, 2^32)`, and `offset + slack`
+/// in `[0, 2^31)` is then the only value in that window congruent to it. So
+/// the difference *is* `offset + slack`, and `slack >= 0` is exactly
+/// `offset + child_count <= parent_count`.
+///
+/// Without it a range may be forward and valid with its endpoints nowhere near
+/// each other: `p[i32::MAX..i32::MIN]` holds exactly one element, and reading
+/// its `end` as `start + count` would place that element `2^32` away.
+///
+/// A reach of zero needs nothing at all: the two ranges then start at one
+/// address and end at one address, so their counts are residues of the same
+/// value and are equal.
+fn range_count_is_nonnegative(range: &CMemoryRange, assumptions: Option<&PureFactContext>) -> bool {
+    if affine_range_element_count(range.start(), range.end()).is_some() {
+        return true;
+    }
+    assumptions.is_some_and(|assumptions| {
+        assumptions.proves_element_endpoint_order(
+            &Bitvector32Term::Constant(0),
+            &crate::kernel::memory_range_element_count(range),
+        )
+    })
 }
 
 /// Whether an affine constant difference from a range's start places the index
@@ -4954,31 +5285,40 @@ fn bitvector_index_outside_range_shallow(
             .is_some_and(|offset| affine_offset_from_end_is_outside(offset, count_bound))
 }
 
+/// Whether a pointer addresses one of the cells of `base[start..end)`, from
+/// arithmetic alone, plus `assumptions` when the caller holds a context.
+///
+/// This is a membership conclusion, so every quantity it compares has to be the
+/// real one. A range denotes `count` elements from the address of element
+/// `start`, and the pointer names the address `base + delta * width`, so what
+/// membership means is the `i64` statement `0 <= delta - sext(start) < count`.
+/// Each of the three pieces is read exactly:
+/// [`Pointer::exact_element_delta_from_base`] for `delta`, so a folded sum of
+/// byte offsets cannot pass off a residue as one;
+/// [`exact_affine_index_difference`] for the subtraction, which is where the
+/// wrap that `p[i..i + 1]` hides at `i == i32::MAX` would be; and
+/// [`affine_range_element_count`] for the count.
 fn pointer_in_range_shallow(
     pointer: &Pointer,
     base: &Pointer,
     start: &Bitvector32Term,
     end: &Bitvector32Term,
     element_width: u32,
+    assumptions: Option<&PureFactContext>,
 ) -> bool {
-    let Some(index) = pointer.element_index_from_base_with_width(base, element_width) else {
+    let Some(delta) = pointer.exact_element_delta_from_base(base, element_width, assumptions)
+    else {
         return false;
     };
-    if let (Some(index), Some(start), Some(end)) = (
-        signed_bitvector_constant(&index),
-        signed_bitvector_constant(start),
-        signed_bitvector_constant(end),
-    ) {
-        return start <= index && index < end;
-    }
-
-    let (Some(offset), Some(length)) = (
-        affine_bitvector_difference_constant(&index, start),
-        affine_bitvector_difference_constant(end, start),
-    ) else {
+    let Some(count) = affine_range_element_count(start, end) else {
         return false;
     };
-    0 <= offset && offset < length
+    let Some(offset) = exact_affine_index_difference(&delta.index, start, assumptions)
+        .and_then(|difference| difference.checked_add(delta.constant))
+    else {
+        return false;
+    };
+    0 <= offset && offset < count
 }
 
 pub(in crate::kernel) fn affine_bitvector_difference_constant(

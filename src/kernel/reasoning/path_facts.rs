@@ -547,6 +547,162 @@ pub(in crate::kernel) fn int32_element_index_from_offset(
     element_index_from_offset(offset, 4)
 }
 
+/// An element delta split so that it is *exact*: the true delta in `i64` is
+/// `sext(index) + constant`.
+///
+/// [`element_index_from_offset`] answers with one `Bitvector32Term`, and that
+/// is a lossy answer for anything but an equality. A byte offset is
+/// mathematical `i64` — [`PointerOffsetTerm::scale_int32`] sign-extends its
+/// index before scaling, and `Add` adds exactly — while a `Bitvector32Term` is
+/// modular, so collapsing a sum of offsets into [`Bitvector32Term::add`] keeps
+/// the delta only *modulo* `2^32`. A membership or order conclusion drawn from
+/// such a term would be reading a residue as a number.
+///
+/// Keeping the constant part in `i64` beside the index loses nothing and wraps
+/// nothing: every constant byte displacement a struct field or a fixed array
+/// subscript contributes lands here, exactly, and only a *second* symbolic
+/// index would need an add this cannot do.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::kernel) struct ExactElementDelta {
+    /// The one symbolic element index in the delta, or `Constant(0)` when the
+    /// delta is wholly constant. Its *signed* value is part of the delta.
+    pub(in crate::kernel) index: Bitvector32Term,
+    /// The exact constant part, in elements. Not reduced to `i32`: a delta far
+    /// outside `i32` is still an exact delta, and refusing it here would be a
+    /// silent truncation.
+    pub(in crate::kernel) constant: i64,
+}
+
+impl ExactElementDelta {
+    /// The delta of a wholly constant number of elements.
+    fn constant(constant: i64) -> Self {
+        Self {
+            index: Bitvector32Term::Constant(0),
+            constant,
+        }
+    }
+
+    /// The zero delta: a pointer at its base.
+    pub(in crate::kernel) fn zero() -> Self {
+        Self::constant(0)
+    }
+
+    /// This delta as one `Bitvector32Term` whose *signed* value is the delta,
+    /// for a caller that states it as an ordinary index bound. `None` when the
+    /// two parts cannot be joined without a modular add, which a symbolic index
+    /// beside a nonzero constant cannot.
+    pub(in crate::kernel) fn as_index_term(&self) -> Option<Bitvector32Term> {
+        if self.constant == 0 {
+            return Some(self.index.clone());
+        }
+        if !self.is_constant() {
+            return None;
+        }
+        i32::try_from(self.constant)
+            .ok()
+            .map(|constant| Bitvector32Term::Constant(constant as u32))
+    }
+
+    /// Whether this delta names no symbolic index, so its `i64` value is the
+    /// whole of it.
+    pub(in crate::kernel) fn is_constant(&self) -> bool {
+        self.index == Bitvector32Term::Constant(0)
+    }
+
+    /// The two deltas added, when at most one of them is symbolic. Two
+    /// symbolic indices would need a modular add, which is the loss this type
+    /// exists to avoid.
+    fn add(self, other: Self) -> Option<Self> {
+        let index = match (self.is_constant(), other.is_constant()) {
+            (_, true) => self.index,
+            (true, false) => other.index,
+            (false, false) => return None,
+        };
+        Some(Self {
+            index,
+            constant: self.constant.checked_add(other.constant)?,
+        })
+    }
+
+    /// `self - other`, when the subtraction stays exact: either the subtrahend
+    /// is constant, or the two symbolic indices cancel.
+    ///
+    /// Two indices cancel only when their difference is the true one and not a
+    /// residue — `4 * i + 3` is three elements above `i + i + i + i` only while
+    /// the scaling does not wrap — so the cancellation goes through the same
+    /// [`crate::kernel::assumptions::exact_affine_index_difference`] every other
+    /// membership conclusion uses, and answers `None` without the premise it
+    /// needs.
+    pub(in crate::kernel) fn subtract(
+        self,
+        other: Self,
+        assumptions: Option<&PureFactContext>,
+    ) -> Option<Self> {
+        let constant = self.constant.checked_sub(other.constant)?;
+        if other.is_constant() {
+            return Some(Self {
+                index: self.index,
+                constant,
+            });
+        }
+        if let Some(difference) = crate::kernel::assumptions::exact_affine_index_difference(
+            &self.index,
+            &other.index,
+            assumptions,
+        ) {
+            return difference.checked_add(constant).map(Self::constant);
+        }
+        // Two indices with no constant difference between them. Their modular
+        // difference still names the delta while neither is negative, since
+        // `sext(a) - sext(b)` then lies in `(-2^31, 2^31)` and the 32-bit
+        // subtraction is the subtraction. That is the premise a range restated
+        // in another base's coordinates as `b - a` needs, and without it the
+        // restated start and the real delta can sit `2^32` elements apart.
+        (crate::kernel::assumptions::element_index_is_nonnegative(&self.index, assumptions)
+            && crate::kernel::assumptions::element_index_is_nonnegative(&other.index, assumptions))
+        .then(|| Self {
+            index: Bitvector32Term::subtract(self.index, other.index),
+            constant,
+        })
+    }
+}
+
+/// [`element_index_from_offset`] for a caller that needs the delta's value and
+/// not merely its residue. See [`ExactElementDelta`].
+pub(in crate::kernel) fn exact_element_delta_from_offset(
+    offset: &PointerOffsetTerm,
+    element_width: u32,
+) -> Option<ExactElementDelta> {
+    if element_width == 0 {
+        return None;
+    }
+    match offset {
+        PointerOffsetTerm::Add(left, right) => {
+            exact_element_delta_from_offset(left, element_width)?
+                .add(exact_element_delta_from_offset(right, element_width)?)
+        }
+        PointerOffsetTerm::Int32Scaled { value, byte_width }
+            if *byte_width == i64::from(element_width) =>
+        {
+            Some(ExactElementDelta {
+                index: value.as_ref().clone(),
+                constant: 0,
+            })
+        }
+        PointerOffsetTerm::Constant(offset) if offset % i64::from(element_width) == 0 => Some(
+            ExactElementDelta::constant(offset / i64::from(element_width)),
+        ),
+        // An `Int64Scaled` index scales its *64-bit* value, which is not the
+        // signed value of the 32-bit term holding it, so the term cannot stand
+        // for the delta. A constant one has already been folded into
+        // `Constant` by `scale_int64`.
+        PointerOffsetTerm::Constant(_)
+        | PointerOffsetTerm::Variable(_)
+        | PointerOffsetTerm::Int32Scaled { .. }
+        | PointerOffsetTerm::Int64Scaled { .. } => None,
+    }
+}
+
 pub(in crate::kernel) fn common_pointer_offset_element_width(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,

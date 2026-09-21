@@ -226,15 +226,33 @@ fn byte_range_containment_expands_constant_stride_arithmetic() {
         },
     };
 
-    assert!(crate::kernel::assumptions::pointer_in_memory_range_shallow(
-        &pointer,
-        &CMemoryRange::new_with_element_width(
-            base,
+    let range = CMemoryRange::new_with_element_width(
+        base,
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(4),
+        1,
+    );
+    // `4 * i + 3` is three bytes above `i + i + i + i` only while the scaling
+    // does not wrap: at `4 * i == i32::MAX` the sum is `i32::MIN + 2`, nearly
+    // `2^32` bytes *below* the base, and the range contains nothing of it. The
+    // stride arithmetic is still expanded, and the offset it yields is still
+    // read as an offset — once something pins the sum out of the wrapped
+    // reading.
+    let index_is_nonnegative = PureFactContext::new().assume_condition(
+        ConditionTerm::signed_less_equal(
             Bitvector32Term::Constant(0),
-            Bitvector32Term::Constant(4),
-            1,
+            pointer.offset.scaled_values()[0].clone(),
         ),
-    ));
+        true,
+    );
+    assert!(
+        crate::kernel::assumptions::pointer_in_memory_range_shallow_with_facts(
+            &pointer,
+            &range,
+            &index_is_nonnegative,
+        )
+    );
+    assert!(!crate::kernel::assumptions::pointer_in_memory_range_shallow(&pointer, &range,));
 }
 
 #[test]
@@ -1989,6 +2007,27 @@ fn atomic_condition_fact_transport_does_not_plan_from_a_separate_range() {
     );
 }
 
+/// A range restated in another base's coordinates as `data - owner` names the
+/// real delta between the two bases only while that subtraction stays inside
+/// `int32`: at `owner == -1` and `data == i32::MAX` the difference is `2^31`,
+/// the restated start is `i32::MIN`, and the two sit `2^32` elements apart. The
+/// restatement is still how a relative separation fact is read; both indices
+/// being nonnegative is the premise that makes it the delta rather than the
+/// delta modulo `2^32`.
+fn with_nonnegative_owner_and_data_indices(assumptions: PureFactContext) -> PureFactContext {
+    [92, 93]
+        .into_iter()
+        .fold(assumptions, |assumptions, index| {
+            assumptions.assume_condition(
+                ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Variable(Variable(index)),
+                ),
+                true,
+            )
+        })
+}
+
 #[test]
 fn direct_condition_transport_uses_relative_separate_range() {
     let before = CMemory::new();
@@ -2024,7 +2063,7 @@ fn direct_condition_transport_uses_relative_separate_range() {
             Bitvector32Term::Constant(1),
         )],
     };
-    let assumptions = PureFactContext::new()
+    let assumptions = with_nonnegative_owner_and_data_indices(PureFactContext::new())
         .assume_condition(
             ConditionTerm::signed_less_than(
                 data_index_from_owner.clone(),
@@ -2050,7 +2089,9 @@ fn direct_condition_transport_uses_relative_separate_range() {
         .expect("relative exact separation should directly frame the data load");
     let (premises, target) = c_condition_fact_transport_parts(&theorem, &fact)
         .expect("transport theorem must retain its explicit source");
-    assert_eq!(premises.len(), 2);
+    // Two more premises than the separation and the effect: the nonnegativity
+    // of each index, which is what makes the restated start the real delta.
+    assert_eq!(premises.len(), 4);
     assert!(premises.contains(&&effect));
     assert!(
         premises
@@ -2106,7 +2147,7 @@ fn direct_condition_transport_uses_indexed_relative_separate_range() {
             Bitvector32Term::Constant(1),
         )],
     };
-    let assumptions = PureFactContext::new()
+    let assumptions = with_nonnegative_owner_and_data_indices(PureFactContext::new())
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
             true,
@@ -2129,7 +2170,9 @@ fn direct_condition_transport_uses_indexed_relative_separate_range() {
         .expect("an indexed pointer in a relative separate range should be directly framed");
     let (premises, target) = c_condition_fact_transport_parts(&theorem, &fact)
         .expect("transport theorem must retain its explicit source");
-    assert_eq!(premises.len(), 3);
+    // Two more premises than the separation and the effect: the nonnegativity
+    // of each index, which is what makes the restated start the real delta.
+    assert_eq!(premises.len(), 5);
     assert!(premises.contains(&&effect));
     assert!(
         premises
@@ -3021,8 +3064,23 @@ fn memory_resolution_alias_check_uses_explicit_separation() {
         Bitvector32Term::Variable(Variable(91)),
         Bitvector32Term::Variable(Variable(90)),
     );
+    // The restated start `v91 - v90` is the real delta between the two bases
+    // only while that subtraction stays inside `int32`, so the normalized form
+    // of the fact needs what the unnormalized one did not.
+    let nonnegative_indices =
+        [90, 91]
+            .into_iter()
+            .fold(PureFactContext::new(), |assumptions, index| {
+                assumptions.assume_condition(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Variable(Variable(index)),
+                    ),
+                    true,
+                )
+            });
     let normalized_assumptions =
-        PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
+        nonnegative_indices.assume_proposition(Proposition::CResourceSeparate {
             left: CResource::Memory(memory_range(left_base.clone(), 0, 4)),
             right: CResource::Memory(memory_range(
                 left_base.clone(),
@@ -4999,4 +5057,241 @@ fn an_unbounded_range_places_no_index_outside_itself() {
         Bitvector32Term::subtract(start, Bitvector32Term::Constant(1)),
         &PureFactContext::new(),
     ));
+}
+
+/// The tests below pin both polarities of the premise a *positive* membership
+/// conclusion needs, for each rule that draws one from an affine constant
+/// difference of modular terms. The mirror image of the four above: an
+/// "outside" conclusion survives reduction modulo `2^32` and an "inside" one
+/// does not, because the wrapped reading of a residue is outside.
+mod membership_needs_an_unwrapped_difference {
+    use super::*;
+
+    /// A pointer `base + index * 4 + bytes`.
+    fn scaled_pointer(index: Bitvector32Term, bytes: i64) -> Pointer {
+        let offset = PointerOffsetTerm::scale_int32(index, 4);
+        Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: if bytes == 0 {
+                offset
+            } else {
+                PointerOffsetTerm::add(offset, PointerOffsetTerm::Constant(bytes))
+            },
+        }
+    }
+
+    fn range(start: Bitvector32Term, end: Bitvector32Term) -> CMemoryRange {
+        CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            start,
+            end,
+        )
+    }
+
+    fn index_is_nonnegative(index: &Bitvector32Term) -> PureFactContext {
+        PureFactContext::new().assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone()),
+            true,
+        )
+    }
+
+    /// `i` written so that every addition wraps and the value is `i` again:
+    /// three constants summing to `2^32`. Its affine difference from `i` is
+    /// `2^32`, whose residue is `0` — which is exactly what the difference
+    /// means.
+    fn wrapped_identity(index: &Bitvector32Term) -> Bitvector32Term {
+        Bitvector32Term::add(
+            Bitvector32Term::add(
+                Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1_431_655_765)),
+                Bitvector32Term::Constant(1_431_655_765),
+            ),
+            Bitvector32Term::Constant(1_431_655_766),
+        )
+    }
+
+    #[test]
+    fn a_pointer_at_a_constant_byte_offset_is_placed_in_a_range_by_arithmetic_alone() {
+        let index = Bitvector32Term::Variable(Variable(93_950));
+        let owned = range(
+            index.clone(),
+            Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(4)),
+        );
+        // A byte displacement is mathematical `i64`, so `&p[i] + 8` is two
+        // elements above `p[i]` whatever `i` is, and no fact is needed.
+        for elements in 0..4 {
+            assert!(crate::kernel::assumptions::pointer_in_memory_range_shallow(
+                &scaled_pointer(index.clone(), elements * 4),
+                &owned,
+            ));
+        }
+        assert!(
+            !crate::kernel::assumptions::pointer_in_memory_range_shallow(
+                &scaled_pointer(index.clone(), 16),
+                &owned,
+            )
+        );
+        // The same element reached through a start term that wrapped all the
+        // way around is still that element.
+        assert!(crate::kernel::assumptions::pointer_in_memory_range_shallow(
+            &scaled_pointer(index.clone(), 0),
+            &range(
+                wrapped_identity(&index),
+                Bitvector32Term::add(index, Bitvector32Term::Constant(4)),
+            ),
+        ));
+    }
+
+    #[test]
+    fn a_pointer_at_a_wrapping_index_term_needs_the_index_pinned() {
+        let index = Bitvector32Term::Variable(Variable(93_951));
+        // `i + 2` is two elements above `i` only while the 32-bit add does not
+        // wrap; at `i == i32::MAX - 1` it is `i32::MIN`, nearly `2^32`
+        // elements below.
+        let bumped = Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(2));
+        let owned = range(
+            index.clone(),
+            Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(4)),
+        );
+        assert!(
+            !crate::kernel::assumptions::pointer_in_memory_range_shallow(
+                &scaled_pointer(bumped.clone(), 0),
+                &owned,
+            )
+        );
+        assert!(
+            crate::kernel::assumptions::pointer_in_memory_range_shallow_with_facts(
+                &scaled_pointer(bumped.clone(), 0),
+                &owned,
+                &index_is_nonnegative(&bumped),
+            )
+        );
+        // A start that cannot be positive settles it without any fact, since
+        // the wrapped reading needs one.
+        assert!(crate::kernel::assumptions::pointer_in_memory_range_shallow(
+            &scaled_pointer(Bitvector32Term::Constant(2), 0),
+            &range(Bitvector32Term::Constant(0), Bitvector32Term::Constant(4)),
+        ));
+    }
+
+    #[test]
+    fn a_child_range_is_contained_by_its_count_or_by_a_forward_parent() {
+        let index = Bitvector32Term::Variable(Variable(93_952));
+        let parent = range(
+            index.clone(),
+            Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(4)),
+        );
+        // Same start term: the offset is zero however the endpoints wrapped,
+        // and the two counts decide the rest.
+        assert!(
+            crate::kernel::assumptions::memory_range_shallowly_contained(
+                &range(
+                    index.clone(),
+                    Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1)),
+                ),
+                &parent,
+            )
+        );
+        assert!(
+            !crate::kernel::assumptions::memory_range_shallowly_contained(
+                &range(
+                    index.clone(),
+                    Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(5)),
+                ),
+                &parent,
+            )
+        );
+        // A child one element in needs that one element not to have wrapped.
+        let bumped = Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1));
+        let child = range(
+            bumped.clone(),
+            Bitvector32Term::add(index, Bitvector32Term::Constant(2)),
+        );
+        assert!(!crate::kernel::assumptions::memory_range_shallowly_contained(&child, &parent));
+        assert!(
+            crate::kernel::assumptions::memory_range_shallowly_contained_with_facts(
+                &child,
+                &parent,
+                &index_is_nonnegative(&bumped),
+            )
+        );
+    }
+
+    #[test]
+    fn a_parent_without_a_count_must_be_known_to_hold_one() {
+        let count = Bitvector32Term::Variable(Variable(93_953));
+        let parent = range(Bitvector32Term::Constant(0), count.clone());
+        let child = range(Bitvector32Term::Constant(3), count.clone());
+        // `p[0..n]` has no constant count, so containment is decided by
+        // comparing the two ends. That reads the parent's `end` as
+        // `start + count`, which `p[i32::MAX..i32::MIN]` — a forward range of
+        // exactly one element — shows is not free.
+        assert!(!crate::kernel::assumptions::memory_range_shallowly_contained(&child, &parent));
+        assert!(
+            crate::kernel::assumptions::memory_range_shallowly_contained_with_facts(
+                &child,
+                &parent,
+                &index_is_nonnegative(&count),
+            )
+        );
+    }
+
+    #[test]
+    fn the_fact_graph_membership_rule_needs_the_same_premise() {
+        let index = Bitvector32Term::Variable(Variable(93_954));
+        let base = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let bumped = Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(2));
+        let pointer = scaled_pointer(bumped.clone(), 0);
+        let start = index.clone();
+        let end = Bitvector32Term::add(index, Bitvector32Term::Constant(4));
+        assert!(
+            !PureFactContext::new().pointer_in_range_by_shallow_fact_graph_with_width(
+                &pointer, &base, &start, &end, 4,
+            )
+        );
+        assert!(
+            index_is_nonnegative(&bumped).pointer_in_range_by_shallow_fact_graph_with_width(
+                &pointer, &base, &start, &end, 4,
+            )
+        );
+    }
+
+    #[test]
+    fn the_affine_tail_reads_a_residue_only_as_a_count_may_occupy_it() {
+        use crate::kernel::assumptions::element_delta_in_range_by_affine_arithmetic;
+        use crate::kernel::reasoning::ExactElementDelta;
+
+        let index = Bitvector32Term::Variable(Variable(93_955));
+        let delta = |term: Bitvector32Term, constant: i64| ExactElementDelta {
+            index: term,
+            constant,
+        };
+        let start = index.clone();
+        let end = Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(4));
+        // A residue in the upper half is refused outright: reading it as an
+        // offset would place the index `2^31` elements above the start, and no
+        // valid extent reaches that far.
+        assert!(!element_delta_in_range_by_affine_arithmetic(
+            &delta(
+                Bitvector32Term::subtract(index.clone(), Bitvector32Term::Constant(1)),
+                0,
+            ),
+            &start,
+            &end,
+            &PureFactContext::new(),
+        ));
+        // The exact `i64` constant beside the index is not a residue and needs
+        // no premise of its own.
+        assert!(element_delta_in_range_by_affine_arithmetic(
+            &delta(index, 3),
+            &start,
+            &end,
+            &PureFactContext::new(),
+        ));
+    }
 }
