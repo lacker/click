@@ -2382,11 +2382,19 @@ impl<'a> Proof<'a> {
         // above cannot see it. Saying "no stated viewable range" to a reader
         // whose contract opens with `views a[0..n]` sends them to state what
         // they already stated, so name the resource ranges over this base.
-        let held = self.held_memory_ranges_over_goal_base();
+        let (held, held_any) = self.held_memory_ranges_over_goal_base();
         if !held.is_empty() {
             let ranges = held.join("` and `");
             return Some(format!(
                 "`{target}` was not proved: the range this proof holds over that base is `{ranges}`, so narrowing has to reach `{target}` from it, and it did not"
+            ));
+        }
+        if held_any {
+            // There are ranges over this block, but none of them renders as a
+            // range over the base the goal names. Claiming nothing was stated
+            // would be the old wrong answer again, so say what is true.
+            return Some(format!(
+                "`{target}` was not proved: this proof holds memory over that object, but none of it is a range over `{target}`'s own base, so there is nothing to narrow"
             ));
         }
         Some(format!(
@@ -2406,17 +2414,21 @@ impl<'a> Proof<'a> {
     /// base the goal was written with. The walk is over the held resource
     /// facts, which is the proof's own resource context, not an ambient fact
     /// scan, and this decides nothing — it only names what was being compared.
-    fn held_memory_ranges_over_goal_base(&self) -> Vec<String> {
+    ///
+    /// The second result says whether this proof holds any memory over that
+    /// object at all, so a refusal that could name none of it can still say
+    /// that rather than reporting that nothing was ever stated.
+    fn held_memory_ranges_over_goal_base(&self) -> (Vec<String>, bool) {
         let Some(Proposition::CMemoryLoadable { base, .. }) = self.goal() else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
         let Some(ClickProposition::Loadable { segment }) = self.surface_goal() else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
         let Some((goal_base, _, _)) = segment.surface_range() else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
-        let prefix = format!("{}[", describe_contract_expression(&goal_base));
+        let prefix = format!("{}[", describe_contract_expression(goal_base));
         let view = match self.context.as_ref() {
             ProofContext::FixedState(context) => {
                 Some(FixedStateOperationView::from_fixed_state(context))
@@ -2427,9 +2439,10 @@ impl<'a> Proof<'a> {
             ProofContext::Pure(_) => None,
         };
         let Some(context) = view else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
         let mut ranges = Vec::new();
+        let mut held_any = false;
         for fact in context.state.resources().facts() {
             let CResource::Memory(range) = fact.resource() else {
                 continue;
@@ -2437,6 +2450,7 @@ impl<'a> Proof<'a> {
             if range.base().block != base.block {
                 continue;
             }
+            held_any = true;
             let described = crate::surface::diagnostics::describe_memory_range(
                 range,
                 context.parameters,
@@ -2453,7 +2467,7 @@ impl<'a> Proof<'a> {
                 ranges.push(described);
             }
         }
-        ranges
+        (ranges, held_any)
     }
 
     /// `transport(source, target) using { ... }` inside a pure theorem.
