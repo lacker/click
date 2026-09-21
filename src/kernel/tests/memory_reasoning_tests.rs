@@ -1534,6 +1534,53 @@ fn direct_separation_contains_zero_under_a_constant_lower_bound() {
     ));
 }
 
+/// The two polarities of the element length an access occupies in a range's
+/// own coordinates.
+///
+/// A range counts logical elements; an access is measured in bytes. Deciding
+/// exclusion from the access's *first* element alone called an eight-byte read
+/// at the element below a four-byte range separate from it, while its upper
+/// half sits on the range's first element — and every framing route that asks
+/// this question then carried the read across a write there.
+fn access_outside_range_probe(index: u32, byte_width: u32) -> bool {
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let range = CMemoryRange::new(
+        base.clone(),
+        Bitvector32Term::Constant(4),
+        Bitvector32Term::Constant(8),
+    );
+    let pointer = base.offset_by_int32_elements(Bitvector32Term::Constant(index));
+    PureFactContext::new().ranges_directly_disjoint_from_access(&[range], &pointer, byte_width)
+}
+
+#[test]
+fn a_wide_access_reaching_into_a_range_is_not_separate_from_it() {
+    // Elements 3 and 4 of a four-byte range: element 4 is the range's first.
+    assert!(
+        !access_outside_range_probe(3, 8),
+        "an eight-byte read at element 3 covers element 4, which the range holds"
+    );
+    // The same address read four bytes wide stops before the range.
+    assert!(
+        access_outside_range_probe(3, 4),
+        "a four-byte read at element 3 ends where the range begins"
+    );
+}
+
+#[test]
+fn a_wide_access_that_clears_the_range_stays_separate_from_it() {
+    // Elements 2 and 3, one element of gap below the range's first.
+    assert!(access_outside_range_probe(2, 8));
+    // Above the range, where the access extends away from it.
+    assert!(access_outside_range_probe(8, 8));
+    // And the last element the range holds is inside it at every width.
+    assert!(!access_outside_range_probe(7, 4));
+    assert!(!access_outside_range_probe(7, 8));
+}
+
 #[test]
 fn constant_field_offset_is_disjoint_from_earlier_constant_range() {
     let base = Pointer {
