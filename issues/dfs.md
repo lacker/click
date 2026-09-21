@@ -173,10 +173,9 @@ Cause: the surface proof stepper never executes an `if` as a unit —
 (`src/surface/proof/cursor_execution.rs`) splices the selected arm in front of
 the `if`'s tail, so there is no step at which the arm is left and nothing ends
 the arm's locals. The kernel's own executors do retire a scope's locals at every
-exit on branch `claude/automatic-lifetimes-end` (`end_scope_automatic_lifetimes`,
-`paths_after_scope_exit`; check whether it has landed — it has five kernel tests
-whose negatives return the false value without it), but no sidecar proof goes
-through that route.
+exit (`end_scope_automatic_lifetimes`, `paths_after_scope_exit`, landed in
+b99f30c0 with five kernel tests), but no sidecar proof goes through that route,
+so the witness above still verifies.
 
 Fix shape: a recorded execution event, `CheckedAutomaticLifetimeEnd
 { before_state, after_state, blocks }`, modelled on `CheckedResourceObservation`
@@ -194,50 +193,72 @@ inline bodies), so such a callee can certify `ensures *out[0] == 3` about its ow
 local. Retiring parameter slots must wait until postconditions have been read
 (struct-by-value `ensures` read them).
 
-### S2. A resource count wraps negative
+### S2. A contract whose own clauses alias under its `requires`
 
+```c
+int32 aliased(int32* p, int32* w) { int32 t; w[0] = 7; t = p[1]; return t; }
+```
 ```click
-// contract of a function that mints tokens
-produces 2000000000 of tok(o);
-produces 2000000000 of tok(o);
-ensures count(tok(o)) < 0;          // verifies: the count is -294967296
+int32 aliased(int32* p, int32* w) {
+    requires w == p + 1;
+    requires p[1] == 3;
+    views p[0..3];
+    consumes w[0..3];
+    ensures result == 3;          // verifies; the C returns 7
+} by { execute(); simp(); }
 ```
 
-`normalize_pair` in the resource algebra adds quantities with the modular
-`Bitvector32Term::add` and owes no no-overflow condition. Unknown whether it can
-be escalated (wrapping to 0 to hide a leak at function exit; consuming more than
-was produced). Fix shape: a population count is a natural number — refuse a
-constant merge whose signed sum leaves `0..=i32::MAX`, and make a symbolic merge
-owe `not signed_add_overflows`, as C's own `+` does. (An agent on branch
-`claude/soundness-hunt-4` was working on this; check whether it landed.)
+`w[0]` is `p[1]`. The entry fact "a contract's owned and viewed clauses are
+separate" (`contract_entry_partition_facts`, `src/kernel/functions.rs`) frames the
+store away. No ordinary caller can enter (the stable-view planner refuses every
+call that satisfies the `requires`), and a recursive self-call only re-enters the
+same context, so this is a vacuous contract rather than an escape — but Click
+issues a verified claim about real C that is false under a satisfiable `requires`.
+The guard exists and fires for `requires w == p`
+("the contract's `views` clause overlaps its own `owns` clause"), not for
+`w == p + 1`: `install_borrowed_contract_inputs` (`src/kernel/api.rs`) strips
+memory separations and asks `protected_range_proven_overlapping`
+(`src/kernel/loans.rs`), whose cross-base route does not spend the `requires`
+pointer-offset equality to place `w`'s range against `p`'s. That is the repair.
+
+### S3. A symbolic resource count can still wrap
+
+Constant totals are now exact (`population_quantity_sum`; regression
+`mdtests/a_population_count_is_not_a_wrapped_total.md`, which refuses
+`produces k of tok(o)` twice at `k == 2000000000` proving `count(tok(o)) < 0`).
+Two gaps remain underneath: `c_counted_population_transition`'s ledger update
+`prior + (ensured - required)` is still a modular add, and the merge of a symbolic
+quantity with a constant `1` (`own_quantity(R, n) + own(R)`, the shape every
+refcount contract uses) is kept unguarded on purpose. Closing both means carrying
+`0 <= q <= i32::MAX` with every population quantity. The refusal for the symbolic
+case is also unusable: `claim Ensure(2) on path 0 has mismatched proposition
+completion evidence` (`src/surface/proof/claim_proofs.rs`).
 
 ## Open — unsound or unexamined reasoning, no witness yet
 
 Ranked by how likely a witness is.
 
-1. **Address-only framing in call/loop effect summaries.** Consumers that frame a
-   write away from a read on pointer inequality with no `access_byte_overlap`
-   check: `c_memory_load_is_directly_unchanged`'s `CMemoryMutatesOnly` arm
+1. **A call's or loop's write set carries no widths.** `Proposition::CMemoryMutatesOnly`
+   holds `pointers: Vec<Pointer>` only, the branch join in
+   `src/kernel/proof/execution.rs` unions arm writes and drops widths, and the
+   consumers — `c_memory_load_is_directly_unchanged`'s `CMemoryMutatesOnly` arm
    (`src/kernel/memory_provenance.rs`, including a plain
-   `pointer_byte_offset_from_base != 0` rung),
-   `memory_snapshots_directly_proven_equal_for_memory_resolution` and
-   `resolve_memory_load_value` (`memory_conditions.rs`), and `cell_effect`'s
-   `HeapFreed` arm (`src/kernel/resource_tracker/step_effect.rs`), which uses the
-   allocation's base address where its extent is meant. Today only the
-   recorded-history veto blocks the known shapes. Attack: a callee whose
-   `mutable` clause writes an `int64` at `q` while the caller keeps a fact about
-   the `int32` at `q + 4`; `free(p)` then a fact about `p[3]`. When gating a
-   ladder, call the explicit-range rung beside the gate, not under it — gating it
-   away once cost +545% work on `rb_replace_node_with_children`.
-2. **A contract whose own clauses alias under its `requires`.**
-   `requires w == p + 1; views p[0..3]; consumes w[0..3];` still gets the entry
-   fact "owned and viewed clauses are separate" (`contract_entry_partition_facts`,
-   `src/kernel/functions.rs`), and `ensures result == 3` verifies where the C
-   returns 7. No caller can satisfy it (the stable-view planner refuses the
-   call), so it may be vacuous; the entry to attack is a recursive self-call
-   proved under its own contract. Either way the entry check
-   (`install_borrowed_contract_inputs`, `src/kernel/api.rs`) should refuse clauses
-   that provably alias under the contract's own premises.
+   `pointer_byte_offset_from_base != 0` rung) and
+   `memory_snapshots_directly_proven_equal_for_memory_resolution`
+   (`memory_conditions.rs`) — frame a write away from a read on address
+   inequality alone. Attack: a callee whose `mutable` clause writes an `int64` at
+   `q` while the caller keeps a fact about the `int32` at `q + 4`. Gating with the
+   widest scalar for both sides would make every `a[i]`/`a[j]` pair `Unknown` and
+   kill array framing, so the fix needs real widths: derive the write width by
+   diffing the effect's two snapshots, carry it in the proposition (~30 sites), or
+   thread the load width through the four call sites. When gating a ladder, call
+   the explicit-range rung beside the gate, not under it — gating it away once
+   cost +545% work on `rb_replace_node_with_children`.
+2. **`resolve_memory_load_value`** (`memory_conditions.rs`) has no width parameter
+   and returns the stored value of a pointer-equal cell whatever width that cell
+   holds, so a 2-byte stored value can answer a 4-byte load. Narrow and cheap to
+   attack. Also `heap_allocation_may_contain_pointer`'s `base.block !=
+   pointer.block` test is fail-open on a block spelling.
 3. **`separate(memory(a[s..s + 2]), …)` with `s` unconstrained is accepted**, where
    `owns a[s..s + 2]` would owe `not signed_add_overflows`. A provably reversed
    range is refused; an undecided one is not
@@ -263,11 +284,14 @@ Ranked by how likely a witness is.
    (`term_operations.rs`) uses a wrapping add (`i32::MAX .. i32::MIN` unrolls
    once) — judged unreachable because `(a..b).fold` lowers to the signed Integer
    carrier.
-7. Unexamined fresh ground with the same roots: `uint32` arithmetic and unsigned
-   loop counters (`for (uint32 i = n; i >= 0; i--)` never terminates — is a
-   `decreases i` accepted?), signed/unsigned comparison (`-1 < 1u` is false in C),
-   shifts, `INT_MIN / -1`, truncating stores then widening loads, `<` between
-   pointers into different objects.
+7. Probed once and found sound (18 sidecars, no false theorem): `uint32`
+   arithmetic and order, signed/unsigned comparison, shifts by ≥ width,
+   `INT_MIN % -1`, `uint32`→`int32` conversion, `<` and `-` between pointers into
+   different objects; `decreases` on a `uint32` is refused outright. Not modelled
+   rather than unsound: `uint8`/`uint16` wrap on assignment (the true claim
+   `result == 44` for `200 + 100` is refused too), and the narrowing refusal exits
+   as `type mismatch` instead of the message its own mdtests pin. `int8` is not in
+   the subset.
 8. Trust-model notes, by design rather than bugs: the `apply` tactic's
    requirement checks (including range extent guards) are enforced on the surface
    side at one shared point
@@ -277,11 +301,10 @@ Ranked by how likely a witness is.
 
 ## Tooling findings
 
-- `tests::every_cli_tool_accepts_the_supported_expression_boundary`
-  (`src/bin/click.rs`) runs within 0.5% of the gate's 8 MiB stack — `CMemory`
-  travels by value inside `Term`, so adding one word to a snapshot overflows it —
-  and it can exceed nextest's 60 s budget on a loaded machine (108 s under plain
-  `cargo test`). Either is a red gate unrelated to the change under test.
+- The CLI surface-depth boundary tests (`src/bin/click.rs`) run within 0.5% of
+  the gate's 8 MiB stack: `CMemory` travels by value inside `Term`, so adding one
+  word to a snapshot overflows them. Keep new snapshot fields behind an existing
+  pointer.
 - `cargo test --lib` (not the gate) fails
   `scaling_tests::targeted_simple_verification_does_not_verify_unrelated_theorems`
   when tests share a process; nextest's per-test processes hide it.
@@ -292,9 +315,7 @@ Ranked by how likely a witness is.
   "the kernel lowering produced 0 paths"; `object(...)` is not accepted inside
   `separate(...)` nor for a file-scope struct.
 - Diagnostics that name nothing: `(callee precondition): false = true`; "invalid
-  memory access" for a dangling use (the tombstone knows the variable's name);
-  after a wide store over a narrow cell the refusal says "state `i != j`" even
-  when it is stated and the real reason is that 8 bytes reach the neighbour.
+  memory access" for a dangling use (the tombstone knows the variable's name).
 
 ## Acceptance (Part 2)
 
