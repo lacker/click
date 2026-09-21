@@ -2429,6 +2429,12 @@ impl CMemory {
                     written.overwrites(&normalized_cell_pointer, cell_value)
                 })
             {
+                // Only a cell the store writes *completely* is stale. One it
+                // writes part of leaves the untouched bytes unrecorded, so the
+                // result knows strictly less than its source and has to say so.
+                forgot_live_knowledge |= !written.as_ref().is_some_and(|written| {
+                    written.overwrites_completely(&normalized_cell_pointer, cell_value)
+                });
                 return false;
             }
             let kept = pointers_proven_distinct_for_memory_resolution(
@@ -2472,6 +2478,9 @@ impl CMemory {
                     written.overwrites_typed(&normalized_cell_pointer, *cell_type)
                 })
             {
+                forgot_live_knowledge |= !written.as_ref().is_some_and(|written| {
+                    written.overwrites_typed_completely(&normalized_cell_pointer, *cell_type)
+                });
                 return false;
             }
             let kept = pointers_proven_distinct_for_memory_resolution(

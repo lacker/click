@@ -1109,15 +1109,26 @@ fn record_load_access_width(memory: &CMemory, pointer: &Pointer, bytes: u32) {
         crate::kernel::intern_c_memory(memory.clone()),
         pointer.clone(),
     );
+    // A recorded width can only ever widen, and a name computed under the
+    // narrower one is stale: the epoch walk a narrow access takes crosses
+    // stores the wider one stops at, so it names the load at an older
+    // snapshot. `LOAD_VARIABLE_CACHE` is keyed by the term alone — a term
+    // carries no width — so widening has to drop the names that were derived
+    // before it. Widening is rare; a name being the answer to a question this
+    // table has since changed is not something a later reader can detect.
+    let mut widened = false;
+    let mut widen = |known: &mut u32| {
+        if bytes > *known {
+            *known = bytes;
+            widened = true;
+        }
+    };
     LOAD_ACCESS_WIDTH.with(|widths| {
         let mut widths = widths.borrow_mut();
         if widths.len() >= 100_000 {
             widths.clear();
         }
-        widths
-            .entry(key)
-            .and_modify(|known| *known = (*known).max(bytes))
-            .or_insert(bytes);
+        widths.entry(key).and_modify(&mut widen).or_insert(bytes);
     });
     LOAD_ACCESS_WIDTH_AT_ADDRESS.with(|widths| {
         let mut widths = widths.borrow_mut();
@@ -1126,9 +1137,12 @@ fn record_load_access_width(memory: &CMemory, pointer: &Pointer, bytes: u32) {
         }
         widths
             .entry(pointer.clone())
-            .and_modify(|known| *known = (*known).max(bytes))
+            .and_modify(&mut widen)
             .or_insert(bytes);
     });
+    if widened {
+        LOAD_VARIABLE_CACHE.with(|cache| cache.borrow_mut().clear());
+    }
 }
 
 /// Says that a load of `bytes` bytes happens at this address, the way
