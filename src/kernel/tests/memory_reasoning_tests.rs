@@ -1100,13 +1100,9 @@ fn disjoint_range_proves_mutable_frame_cell_distinct() {
             ConditionTerm::signed_less_than(j_bits.clone(), j_plus_one.clone()),
             true,
         )
-        .assume_proposition(Proposition::CMemoryDisjoint {
-            left_base: base.clone(),
-            left_start: i_bits.clone(),
-            left_end: i_plus_one,
-            right_base: base,
-            right_start: j_bits.clone(),
-            right_end: j_plus_one,
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(base.clone(), i_bits.clone(), i_plus_one)),
+            right: CResource::Memory(CMemoryRange::new(base, j_bits.clone(), j_plus_one)),
         })
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: before_memory.clone(),
@@ -1154,13 +1150,17 @@ fn disjoint_ranges_frame_metadata_across_symbolic_index_store() {
             ConditionTerm::signed_less_than(index, capacity.clone()),
             true,
         )
-        .assume_proposition(Proposition::CMemoryDisjoint {
-            left_base: owner,
-            left_start: Bitvector32Term::Constant(0),
-            left_end: Bitvector32Term::Constant(4),
-            right_base: data,
-            right_start: Bitvector32Term::Constant(0),
-            right_end: capacity,
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                owner,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(4),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                data,
+                Bitvector32Term::Constant(0),
+                capacity,
+            )),
         })
         .assume_proposition(Proposition::CMemoryMutatesOnly {
             before: before_memory.clone(),
@@ -1636,13 +1636,17 @@ fn covering_disjoint_fact_handles_shifted_mutable_range() {
             ConditionTerm::signed_less_than(k_bits, n_bits.clone()),
             true,
         )
-        .assume_proposition(Proposition::CMemoryDisjoint {
-            left_base: dst_base,
-            left_start: Bitvector32Term::Constant(0),
-            left_end: n_bits.clone(),
-            right_base: src_base,
-            right_start: Bitvector32Term::Constant(0),
-            right_end: n_bits.clone(),
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                dst_base,
+                Bitvector32Term::Constant(0),
+                n_bits.clone(),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                src_base,
+                Bitvector32Term::Constant(0),
+                n_bits.clone(),
+            )),
         })
         .assume_proposition(Proposition::CMemoryEffectSummary {
             before: before_memory.clone(),
@@ -2259,30 +2263,42 @@ fn adjacent_disjoint_fact_ranges_cover_larger_disjoint_goal() {
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(88)), 4),
     };
     let assumptions = PureFactContext::new()
-        .assume_proposition(Proposition::CMemoryDisjoint {
-            left_base: p_base.clone(),
-            left_start: Bitvector32Term::Constant(0),
-            left_end: Bitvector32Term::Constant(1),
-            right_base: q_base.clone(),
-            right_start: Bitvector32Term::Constant(0),
-            right_end: n_bits.clone(),
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                p_base.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                q_base.clone(),
+                Bitvector32Term::Constant(0),
+                n_bits.clone(),
+            )),
         })
-        .assume_proposition(Proposition::CMemoryDisjoint {
-            left_base: p_plus_one,
-            left_start: Bitvector32Term::Constant(0),
-            left_end: Bitvector32Term::Constant(2),
-            right_base: q_base.clone(),
-            right_start: Bitvector32Term::Constant(0),
-            right_end: n_bits.clone(),
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                p_plus_one,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(2),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                q_base.clone(),
+                Bitvector32Term::Constant(0),
+                n_bits.clone(),
+            )),
         });
 
-    assert!(assumptions.proves(&Proposition::CMemoryDisjoint {
-        left_base: p_base,
-        left_start: Bitvector32Term::Constant(0),
-        left_end: Bitvector32Term::Constant(2),
-        right_base: q_base,
-        right_start: Bitvector32Term::Constant(0),
-        right_end: n_bits,
+    assert!(assumptions.proves(&Proposition::CResourceSeparate {
+        left: CResource::Memory(CMemoryRange::new(
+            p_base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(2)
+        )),
+        right: CResource::Memory(CMemoryRange::new(
+            q_base,
+            Bitvector32Term::Constant(0),
+            n_bits
+        ))
     }));
 }
 
@@ -2328,13 +2344,17 @@ fn symbolic_disjoint_fact_proves_itself() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(90)), 4),
     };
-    let fact = Proposition::CMemoryDisjoint {
-        left_base: p_base,
-        left_start: Bitvector32Term::Constant(0),
-        left_end: n_bits.clone(),
-        right_base: q_base,
-        right_start: Bitvector32Term::Constant(0),
-        right_end: n_bits,
+    let fact = Proposition::CResourceSeparate {
+        left: CResource::Memory(CMemoryRange::new(
+            p_base,
+            Bitvector32Term::Constant(0),
+            n_bits.clone(),
+        )),
+        right: CResource::Memory(CMemoryRange::new(
+            q_base,
+            Bitvector32Term::Constant(0),
+            n_bits,
+        )),
     };
     let assumptions = PureFactContext::new().assume_proposition(fact.clone());
 

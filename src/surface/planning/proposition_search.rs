@@ -17,9 +17,9 @@
 //! everything it finds is returned as a [`PropositionDerivation`] whose
 //! checker is local, deterministic, and still in the kernel. The atomic
 //! theory checkers the leaves call (`decide`, `proves_memory_loadable`,
-//! `proves_memory_access`, `proves_memory_disjoint`,
-//! `proves_resource_separate`, `proves_resource_contains`, and the
-//! canonicalization equality walks) stay in the kernel and are unchanged;
+//! `proves_memory_access`, `proves_resource_separate`,
+//! `proves_resource_contains`, and the canonicalization equality walks)
+//! stay in the kernel and are unchanged;
 //! see the kernel authority boundary in `docs/internals/proof-objects.md`.
 //!
 //! Nothing under `src/kernel/` may call into this module. A kernel
@@ -265,32 +265,6 @@ impl PropositionSearch for PureFactContext {
                 pointer,
                 byte_width,
             } => self.proves_memory_access(memory, pointer, *byte_width),
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                self.contains_proposition_fact(proposition)
-                    || self.proves_memory_disjoint(
-                        left_base,
-                        left_start,
-                        left_end,
-                        right_base,
-                        right_start,
-                        right_end,
-                    )
-                    || self.proves_memory_disjoint_from_resource_separate(
-                        left_base,
-                        left_start,
-                        left_end,
-                        right_base,
-                        right_start,
-                        right_end,
-                    )
-            }
             Proposition::CResourceSeparate { left, right } => {
                 self.contains_proposition_fact(proposition)
                     || self.proves_resource_separate(left, right)
@@ -479,14 +453,9 @@ impl PropositionSearch for PureFactContext {
             Proposition::CMemoryLoadable { .. } | Proposition::CMemoryCanStore { .. } => {
                 matches!(fact, Proposition::CMemoryLoadable { .. })
             }
-            Proposition::CResourceSeparate { .. } => matches!(
-                fact,
-                Proposition::CResourceSeparate { .. } | Proposition::CMemoryDisjoint { .. }
-            ),
-            Proposition::CMemoryDisjoint { .. } => matches!(
-                fact,
-                Proposition::CMemoryDisjoint { .. } | Proposition::CResourceSeparate { .. }
-            ),
+            Proposition::CResourceSeparate { .. } => {
+                matches!(fact, Proposition::CResourceSeparate { .. })
+            }
             _ => false,
         };
         let candidates = self

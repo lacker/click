@@ -252,21 +252,6 @@ pub(crate) fn solve_builtin_prop(proposition: &Proposition) -> bool {
         } => bytes
             .as_const()
             .is_some_and(|bytes| memory.access_in_bounds(base, bytes)),
-        Proposition::CMemoryDisjoint {
-            left_base,
-            left_start,
-            left_end,
-            right_base,
-            right_start,
-            right_end,
-        } => memory_ranges_disjoint_builtin(
-            left_base,
-            left_start,
-            left_end,
-            right_base,
-            right_start,
-            right_end,
-        ),
         Proposition::CResourceSeparate { .. } | Proposition::CResourceContains { .. } => false,
         Proposition::CMemoryCanStore {
             memory,
@@ -455,52 +440,6 @@ fn c_values_definitely_distinct(left: &CValue, right: &CValue) -> bool {
         }
         _ => false,
     }
-}
-
-pub(in crate::kernel) fn memory_ranges_disjoint_builtin(
-    left_base: &Pointer,
-    left_start: &Bitvector32Term,
-    left_end: &Bitvector32Term,
-    right_base: &Pointer,
-    right_start: &Bitvector32Term,
-    right_end: &Bitvector32Term,
-) -> bool {
-    if left_base.blocks_proven_distinct(right_base) {
-        return true;
-    }
-
-    let Some(left_base_index) = left_base.element_index_from_base(&Pointer {
-        block: left_base.block.clone(),
-        offset: PointerOffsetTerm::Constant(0),
-    }) else {
-        return false;
-    };
-    let Some(right_base_index) = right_base.element_index_from_base(&Pointer {
-        block: right_base.block.clone(),
-        offset: PointerOffsetTerm::Constant(0),
-    }) else {
-        return false;
-    };
-    let (Some(left_base_index), Some(left_start), Some(left_end)) = (
-        signed_bitvector_constant(&left_base_index),
-        signed_bitvector_constant(left_start),
-        signed_bitvector_constant(left_end),
-    ) else {
-        return false;
-    };
-    let (Some(right_base_index), Some(right_start), Some(right_end)) = (
-        signed_bitvector_constant(&right_base_index),
-        signed_bitvector_constant(right_start),
-        signed_bitvector_constant(right_end),
-    ) else {
-        return false;
-    };
-
-    let left_start = left_base_index + left_start;
-    let left_end = left_base_index + left_end;
-    let right_start = right_base_index + right_start;
-    let right_end = right_base_index + right_end;
-    left_end <= right_start || right_end <= left_start
 }
 
 pub(in crate::kernel) fn element_index_from_offset(

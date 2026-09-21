@@ -5844,14 +5844,6 @@ pub enum Proposition {
         base: Pointer,
         bytes: Bitvector32Term,
     },
-    CMemoryDisjoint {
-        left_base: Pointer,
-        left_start: Bitvector32Term,
-        left_end: Bitvector32Term,
-        right_base: Pointer,
-        right_start: Bitvector32Term,
-        right_end: Bitvector32Term,
-    },
     CResourceSeparate {
         left: CResource,
         right: CResource,

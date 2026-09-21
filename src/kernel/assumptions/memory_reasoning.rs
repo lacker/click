@@ -1658,39 +1658,6 @@ impl PureFactContext {
         })
     }
 
-    pub(crate) fn proves_memory_disjoint(
-        &self,
-        left_base: &Pointer,
-        left_start: &Bitvector32Term,
-        left_end: &Bitvector32Term,
-        right_base: &Pointer,
-        right_start: &Bitvector32Term,
-        right_end: &Bitvector32Term,
-    ) -> bool {
-        let left = CMemoryRange::new(left_base.clone(), left_start.clone(), left_end.clone());
-        let right = CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone());
-        self.range_covered_by_disjoint_fact_ranges(&left, &right)
-            || self.range_covered_by_disjoint_fact_ranges(&right, &left)
-    }
-
-    pub(crate) fn proves_memory_disjoint_from_resource_separate(
-        &self,
-        left_base: &Pointer,
-        left_start: &Bitvector32Term,
-        left_end: &Bitvector32Term,
-        right_base: &Pointer,
-        right_start: &Bitvector32Term,
-        right_end: &Bitvector32Term,
-    ) -> bool {
-        let left = CMemoryRange::new(left_base.clone(), left_start.clone(), left_end.clone());
-        let right = CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone());
-        self.proves_resource_separate(
-            &CResource::Memory(left.clone()),
-            &CResource::Memory(right.clone()),
-        ) || self.range_covered_by_resource_separate_ranges(&left, &right)
-            || self.range_covered_by_resource_separate_ranges(&right, &left)
-    }
-
     pub(crate) fn proves_resource_contains(&self, parent: &CResource, child: &CResource) -> bool {
         self.proves_resource_contains_inner(parent, child)
     }
@@ -2014,41 +1981,6 @@ impl PureFactContext {
         range_intervals_cover_target(target, intervals)
     }
 
-    fn range_covered_by_disjoint_fact_ranges(
-        &self,
-        target: &CMemoryRange,
-        other: &CMemoryRange,
-    ) -> bool {
-        let mut intervals = Vec::new();
-        for proposition in self.prop_facts.iter() {
-            let Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } = proposition
-            else {
-                continue;
-            };
-
-            if self.range_covered_by_fact_range(other, right_base, right_start, right_end)
-                && let Some(interval) =
-                    self.fact_range_interval_on_target(target, left_base, left_start, left_end)
-            {
-                intervals.push(interval);
-            }
-            if self.range_covered_by_fact_range(other, left_base, left_start, left_end)
-                && let Some(interval) =
-                    self.fact_range_interval_on_target(target, right_base, right_start, right_end)
-            {
-                intervals.push(interval);
-            }
-        }
-        range_intervals_cover_target(target, intervals)
-    }
-
     fn fact_range_interval_on_target(
         &self,
         target: &CMemoryRange,
@@ -2331,42 +2263,6 @@ impl PureFactContext {
                 self.prop_facts
                     .iter()
                     .find(|proposition| match proposition {
-                        Proposition::CMemoryDisjoint {
-                            left_base,
-                            left_start,
-                            left_end,
-                            right_base,
-                            right_start,
-                            right_end,
-                        } => {
-                            memory_range_shallowly_contained_in_parts(
-                                range,
-                                left_base,
-                                left_start,
-                                left_end,
-                                Some(self),
-                            ) && pointer_in_range_shallow(
-                                pointer,
-                                right_base,
-                                right_start,
-                                right_end,
-                                4,
-                                Some(self),
-                            ) || memory_range_shallowly_contained_in_parts(
-                                range,
-                                right_base,
-                                right_start,
-                                right_end,
-                                Some(self),
-                            ) && pointer_in_range_shallow(
-                                pointer,
-                                left_base,
-                                left_start,
-                                left_end,
-                                4,
-                                Some(self),
-                            )
-                        }
                         Proposition::CResourceSeparate {
                             left: CResource::Memory(left_range),
                             right: CResource::Memory(right_range),
@@ -2675,42 +2571,6 @@ impl PureFactContext {
             .prop_facts
             .iter()
             .find(|proposition| match proposition {
-                Proposition::CMemoryDisjoint {
-                    left_base,
-                    left_start,
-                    left_end,
-                    right_base,
-                    right_start,
-                    right_end,
-                } => {
-                    memory_range_shallowly_contained_in_parts(
-                        range,
-                        left_base,
-                        left_start,
-                        left_end,
-                        Some(self),
-                    ) && pointer_in_range_shallow(
-                        pointer,
-                        right_base,
-                        right_start,
-                        right_end,
-                        4,
-                        Some(self),
-                    ) || memory_range_shallowly_contained_in_parts(
-                        range,
-                        right_base,
-                        right_start,
-                        right_end,
-                        Some(self),
-                    ) && pointer_in_range_shallow(
-                        pointer,
-                        left_base,
-                        left_start,
-                        left_end,
-                        4,
-                        Some(self),
-                    )
-                }
                 Proposition::CResourceSeparate {
                     left: CResource::Memory(left_range),
                     right: CResource::Memory(right_range),

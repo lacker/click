@@ -165,21 +165,6 @@ fn collect_proposition_bitvector_variables_one(
             collect_pointer_bitvector_variables(base, variables);
             collect_bitvector_variables(bytes, variables);
         }
-        Proposition::CMemoryDisjoint {
-            left_base,
-            left_start,
-            left_end,
-            right_base,
-            right_start,
-            right_end,
-        } => {
-            collect_pointer_bitvector_variables(left_base, variables);
-            collect_bitvector_variables(left_start, variables);
-            collect_bitvector_variables(left_end, variables);
-            collect_pointer_bitvector_variables(right_base, variables);
-            collect_bitvector_variables(right_start, variables);
-            collect_bitvector_variables(right_end, variables);
-        }
         Proposition::CResourceSeparate { left, right } => {
             collect_c_resource_bitvector_variables(left, variables);
             collect_c_resource_bitvector_variables(right, variables);

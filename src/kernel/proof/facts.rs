@@ -683,10 +683,8 @@ impl ProofFacts {
     /// exact fact index and the retained atomic checkers, never a logical
     /// search.
     pub(crate) fn with_selected_resource_separation(&self, goal: &Proposition) -> Self {
-        if matches!(
-            goal,
-            Proposition::CResourceSeparate { .. } | Proposition::CMemoryDisjoint { .. }
-        ) && !self.contains(goal)
+        if matches!(goal, Proposition::CResourceSeparate { .. })
+            && !self.contains(goal)
             && (self.assumptions.proves_exact(goal)
                 || self.assumptions.proves_atomic_memory_or_resource(goal))
         {
@@ -703,16 +701,10 @@ impl ProofFacts {
     /// postcondition relating two ranges, say) is not materialized, so its
     /// proof keeps an explicit derivation.
     pub(crate) fn with_selected_composition_separation(&self, goal: &Proposition) -> Self {
-        if matches!(
-            goal,
-            Proposition::CResourceSeparate { .. } | Proposition::CMemoryDisjoint { .. }
-        ) && !self.contains(goal)
-            && {
-                let compositions = self.assumptions.compositions_only();
-                compositions.proves_exact(goal)
-                    || compositions.proves_atomic_memory_or_resource(goal)
-            }
-        {
+        if matches!(goal, Proposition::CResourceSeparate { .. }) && !self.contains(goal) && {
+            let compositions = self.assumptions.compositions_only();
+            compositions.proves_exact(goal) || compositions.proves_atomic_memory_or_resource(goal)
+        } {
             self.with_fact(goal.clone())
         } else {
             self.clone()
@@ -1667,21 +1659,6 @@ fn collect_proposition_bitvector_atoms(
                     collect_bitvector_atoms(&range.start, atoms);
                     collect_bitvector_atoms(&range.end, atoms);
                 }
-            }
-        }
-        Proposition::CMemoryDisjoint {
-            left_base,
-            left_start,
-            left_end,
-            right_base,
-            right_start,
-            right_end,
-        } => {
-            for base in [left_base, right_base] {
-                collect_pointer_offset_bitvector_atoms(&base.offset, atoms);
-            }
-            for bound in [left_start, left_end, right_start, right_end] {
-                collect_bitvector_atoms(bound, atoms);
             }
         }
         Proposition::ForAll { body, .. }

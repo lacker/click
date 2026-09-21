@@ -251,28 +251,6 @@ impl Renderer<'_> {
                 self.outcome(outcome);
                 self.push(")");
             }
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                self.push("memory-disjoint(");
-                self.pointer(left_base);
-                self.push("[");
-                self.bitvector(left_start);
-                self.push("..");
-                self.bitvector(left_end);
-                self.push("], ");
-                self.pointer(right_base);
-                self.push("[");
-                self.bitvector(right_start);
-                self.push("..");
-                self.bitvector(right_end);
-                self.push("])");
-            }
             Proposition::CResourceSeparate { left, right } => {
                 self.resource(left);
                 self.push(" separate ");

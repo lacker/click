@@ -1938,21 +1938,6 @@ fn proposition_mentions_integer_variable(proposition: &Proposition, variable: Va
             integer_carrier_in_bitvector(bytes, variable)
                 || integer_carrier_in_pointer(base, variable)
         }
-        Proposition::CMemoryDisjoint {
-            left_base,
-            right_base,
-            left_start,
-            left_end,
-            right_start,
-            right_end,
-            ..
-        } => {
-            [left_start, left_end, right_start, right_end]
-                .iter()
-                .any(|term| integer_carrier_in_bitvector(term, variable))
-                || integer_carrier_in_pointer(left_base, variable)
-                || integer_carrier_in_pointer(right_base, variable)
-        }
         Proposition::CMemoryMutatesOnly { pointers, .. } => pointers
             .iter()
             .any(|pointer| integer_carrier_in_pointer(pointer, variable)),

@@ -1858,7 +1858,6 @@ pub(in crate::surface) fn simp_proposition(
         | Proposition::CMemoryLoads { .. }
         | Proposition::CMemoryLoadable { .. }
         | Proposition::CMemoryCanStore { .. }
-        | Proposition::CMemoryDisjoint { .. }
         | Proposition::CResourceSeparate { .. }
         | Proposition::CResourceComposition(_)
         | Proposition::CResourceContains { .. }

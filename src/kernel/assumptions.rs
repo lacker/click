@@ -2953,17 +2953,6 @@ impl PureFactContext {
         proposition: &Proposition,
     ) -> Option<(CMemoryRange, CMemoryRange)> {
         match proposition {
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => Some((
-                CMemoryRange::new(left_base.clone(), left_start.clone(), left_end.clone()),
-                CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone()),
-            )),
             Proposition::CResourceSeparate {
                 left: CResource::Memory(left),
                 right: CResource::Memory(right),
@@ -3647,10 +3636,7 @@ impl PureFactContext {
         self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.separated_anchor_offsets = crate::persistent::PersistentMap::default();
         self.retain_proposition_facts(|proposition| {
-            !matches!(
-                proposition,
-                Proposition::CMemoryDisjoint { .. } | Proposition::CResourceSeparate { .. }
-            )
+            !matches!(proposition, Proposition::CResourceSeparate { .. })
         });
         self
     }
@@ -4375,20 +4361,6 @@ fn memory_range_length_term(range: &CMemoryRange) -> Bitvector32Term {
         }
         end => Bitvector32Term::subtract(end.clone(), range.start().clone()),
     }
-}
-
-fn memory_range_shallowly_contained_in_parts(
-    range: &CMemoryRange,
-    base: &Pointer,
-    start: &Bitvector32Term,
-    end: &Bitvector32Term,
-    assumptions: Option<&PureFactContext>,
-) -> bool {
-    memory_range_contained_by_exact_arithmetic(
-        range,
-        &CMemoryRange::new(base.clone(), start.clone(), end.clone()),
-        assumptions,
-    )
 }
 
 /// Whether every cell of `range` is a cell of `parent`, for a caller with no

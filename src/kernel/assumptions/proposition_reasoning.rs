@@ -248,30 +248,6 @@ impl PureFactContext {
                 pointer,
                 byte_width,
             } => self.proves_memory_access(memory, pointer, *byte_width),
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                self.proves_memory_disjoint(
-                    left_base,
-                    left_start,
-                    left_end,
-                    right_base,
-                    right_start,
-                    right_end,
-                ) || self.proves_memory_disjoint_from_resource_separate(
-                    left_base,
-                    left_start,
-                    left_end,
-                    right_base,
-                    right_start,
-                    right_end,
-                )
-            }
             Proposition::CResourceSeparate { left, right } => {
                 self.proves_resource_separate(left, right)
             }
@@ -383,32 +359,6 @@ impl PureFactContext {
                 pointer,
                 byte_width,
             } => self.proves_memory_access(memory, pointer, *byte_width),
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                self.prop_facts.contains(proposition)
-                    || self.proves_memory_disjoint(
-                        left_base,
-                        left_start,
-                        left_end,
-                        right_base,
-                        right_start,
-                        right_end,
-                    )
-                    || self.proves_memory_disjoint_from_resource_separate(
-                        left_base,
-                        left_start,
-                        left_end,
-                        right_base,
-                        right_start,
-                        right_end,
-                    )
-            }
             Proposition::CResourceSeparate { left, right } => {
                 self.prop_facts.contains(proposition) || self.proves_resource_separate(left, right)
             }

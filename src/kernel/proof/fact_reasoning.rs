@@ -343,7 +343,6 @@ pub(crate) fn is_implicit_fact_transport_context(proposition: &Proposition) -> b
         proposition,
         Proposition::CMemoryLoadable { .. }
             | Proposition::CMemoryCanStore { .. }
-            | Proposition::CMemoryDisjoint { .. }
             | Proposition::CResourceSeparate { .. }
     )
 }

@@ -2331,11 +2331,10 @@ fn assumptions_without_memory_separations(assumptions: &PureFactContext) -> Pure
         .filter(|fact| {
             matches!(
                 fact,
-                Proposition::CMemoryDisjoint { .. }
-                    | Proposition::CResourceSeparate {
-                        left: CResource::Memory(_),
-                        right: CResource::Memory(_),
-                    }
+                Proposition::CResourceSeparate {
+                    left: CResource::Memory(_),
+                    right: CResource::Memory(_),
+                }
             )
         })
         .cloned()

@@ -1609,17 +1609,6 @@ pub(in crate::kernel) fn exact_separation_fact_covers_range_and_pointer(
     assumptions: &PureFactContext,
 ) -> bool {
     let (left, right) = match fact {
-        Proposition::CMemoryDisjoint {
-            left_base,
-            left_start,
-            left_end,
-            right_base,
-            right_start,
-            right_end,
-        } => (
-            CMemoryRange::new(left_base.clone(), left_start.clone(), left_end.clone()),
-            CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone()),
-        ),
         Proposition::CResourceSeparate {
             left: CResource::Memory(left),
             right: CResource::Memory(right),
