@@ -124,22 +124,23 @@ Do not treat every local as needing an unconditional drop, or recover a loan
 merely because its local storage ends. Future unwind/abort paths must be
 distinguishable from normal returns. [rustc drop elaboration](https://rustc-dev-guide.rust-lang.org/mir/drop-elaboration.html)
 
-The first C++ slice covered normal scope exits and returns. A later scalar
-exception slice now checks one guard unwound after a cross-call throw. General
-goto, irreducible control flow, broader C++ exceptions, Rust panic unwinding,
-and coroutines remain unsupported while the edge representation reserves their
-semantic distinctions. Backedges still need invariants and termination
-evidence; a tactic budget is not a termination proof. Compare a forward C
-cleanup jump, the C++ RAII return example, and a Rust conditional drop when
-selecting the shared representation.
+The first C++ slice covered normal scope exits and returns. The selected scalar
+exception slice now checks the two-guard cross-call throw, the
+throw-before-second-guard conditional lifetime, and reverse cleanup on both
+normal and caught paths. General goto, irreducible control flow, broader C++
+exceptions, Rust panic unwinding, and coroutines remain unsupported while the
+edge representation reserves their semantic distinctions. Backedges still
+need invariants and termination evidence; a tactic budget is not a termination
+proof. The bounded control-flow design, profile, trust boundary, resource
+tracker role, and scaling evidence are recorded in the
+[architecture note](../docs/internals/architecture.md#selected-control-flow-and-c-cleanup-model).
+Compare a forward C cleanup jump, the C++ RAII return example, and a Rust
+conditional drop when selecting the shared representation.
 
-The separately selected P1 [control-flow demo](../issues/control-flow-demo.md)
-requires forward C cleanup jumps and a cross-call C++ exception probe before
-launch. Its forward C prerequisite and first one-guard C++ unwind proof have
-landed; the two-guard/conditional-lifetime acceptance case remains open. The
-remaining [goto issue](../issues/goto.md) tracks general backward and
-irreducible jumps at P2. The exception proof is a later slice, not an expansion
-of the completed non-throwing basic C++ milestone.
+The remaining [goto issue](../issues/goto.md) tracks general backward and
+irreducible jumps at P2. The exception proof is a bounded extension of the
+completed non-throwing basic C++ milestone, not a claim of general C++
+unwinding or an exception ABI proof.
 
 For that probe, exceptional behavior is part of the verified function
 interface: a closed `throws int32` signature states which payload may cross a
@@ -148,11 +149,13 @@ Omitting `noexcept` in C++ does not infer a Click exceptional signature, and
 omitting a Click exceptional signature means the body must prove non-throwing.
 
 The scalar profile imports a typed `throw int`, one named by-value `catch (int)`,
-and a try-local `noexcept` guard whose destructor runs after a helper call
-throws. The [checked regression](../mdtests/cpp_one_guard_unwind.md) proves
-the resulting state on normal and caught paths. This is neither general C++
-unwinding nor proof of an exception ABI; the two-guard case remains in the P1
-control-flow issue.
+and try-local `noexcept` guards whose destructors run after a helper call
+throws. The checked regressions in
+[`cpp_one_guard_unwind.md`](../mdtests/cpp_one_guard_unwind.md),
+[`cpp_two_guard_unwind.md`](../mdtests/cpp_two_guard_unwind.md), and
+[`cpp_guard_unwind_before_second.md`](../mdtests/cpp_guard_unwind_before_second.md)
+prove the resulting state on normal and caught paths. This is neither general
+C++ unwinding nor proof of an exception ABI.
 
 ## Shared resources and Rust borrowing
 

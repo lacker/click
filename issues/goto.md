@@ -2,8 +2,8 @@
 
 Found during the 2026-09-03 control-flow follow-up after commit 184b4ef2.
 
-The P1 forward-cleanup prerequisite for the
-[control-flow demo](control-flow-demo.md) landed in commits `9e247956`,
+The P1 forward-cleanup prerequisite for the selected control-flow demo landed
+in commits `9e247956`,
 `2e3bdcb9`, and the cleanup-chain regression linked below. Click now has
 checked forward edges from function bodies and `if` arms to later
 function-scope labels, exact target resumption, path joins, and chained
@@ -24,8 +24,9 @@ frontends in mind. The shared control-flow discussion is in
 The delivered [basic C++ slice](../examples/basic-cpp/README.md) implements
 implicit cleanup on ordinary scope exits and returns without general C goto.
 The [one-guard exception regression](../mdtests/cpp_one_guard_unwind.md) now
-checks cleanup on one exceptional call edge as well; the broader two-guard
-unwinding case remains with [the P1 control-flow demo](control-flow-demo.md).
+checks cleanup on one exceptional call edge as well; the completed bounded
+two-guard unwinding case is recorded in the
+[control-flow architecture note](../docs/internals/architecture.md#selected-control-flow-and-c-cleanup-model).
 
 A target label alone is not enough for every language. An edge may need
 checked scope-exit operations, object-lifetime changes, and a distinction

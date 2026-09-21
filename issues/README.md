@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (9)
+## P1: before launch (8)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -68,8 +68,7 @@ Soundness and kernel shape:
 Program import and execution:
 
 - [Verify a concurrency demo with threads, mutexes, and publication](concurrency-demo.md)
-- [Verify cleanup jumps and cross-call exception unwinding](control-flow-demo.md)
-- [Verify a pointer-chasing search over an index array, and close the soundness findings it exposed](dfs.md)
+- [Verify a pointer-chasing search over an index array](dfs.md)
 
 The completed [basic C++ example](../examples/basic-cpp/README.md) verifies
 references, checked scoped cleanup, and a modular caller. The unchanged
@@ -79,17 +78,12 @@ verified in
 The first [cross-call exception mdtest](../mdtests/cpp_one_guard_unwind.md)
 also verifies one `noexcept` guard constructed inside a `try`: its destructor
 restores caller memory before either normal continuation or the matching
-`catch` observes it. This is progress on the separate control-flow demo, not
-completion of its two-guard and conditional-lifetime acceptance case. General
+`catch` observes it. The selected control-flow demo is now complete through
+its two-guard and conditional-lifetime acceptance cases, hostile cleanup
+proofs, and deterministic scaling regression. General backward/irreducible
 `goto`, multi-compiler support, and broad C++ coverage remain outside the
-delivered slices.
-
-The control-flow demo builds on the delivered forward-cleanup goto and basic
-C++ frontend/normal-cleanup slices. Its scalar exception contracts, typed
-handler, and first one-guard unwind proof have landed; the full two-guard demo
-is still open. General backward/irreducible jumps remain P2. The
-byte-representation and sequential shared-heap-graph demos do not depend on
-goto, C++, or concurrency.
+delivered slices. The byte-representation and sequential shared-heap-graph
+demos do not depend on goto, C++, or concurrency.
 
 Specification and proof:
 

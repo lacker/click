@@ -1795,6 +1795,120 @@ fn outcome_haves_and_resource_folds_do_not_reimport_ambient_facts() {
     }
 }
 
+/// A maybe-throwing call is the shared control-flow boundary used by the C++
+/// cleanup lowering.  The returned arm advances through the selected cleanup
+/// chain; the thrown arm must retain its exceptional outcome without executing
+/// the normal-only tail.  The unrelated declarations and requirements make
+/// sure the boundary is charged for its selected frontier, not for every
+/// function, scope, or fact in the enclosing verification.
+fn exceptional_cleanup_chain_project(
+    cleanup_count: usize,
+    unrelated_function_count: usize,
+    unrelated_fact_count: usize,
+) -> (String, String) {
+    let mut c_source = String::from("int32 helper(int32 x) { return x; }\n\n");
+    for index in 0..cleanup_count {
+        c_source.push_str(&format!("int32 cleanup_{index}(int32 x) {{ return x; }}\n"));
+    }
+    for index in 0..unrelated_function_count {
+        c_source.push_str(&format!(
+            "int32 unrelated_{index}(int32 x) {{ return x; }}\n"
+        ));
+    }
+    c_source.push_str("\nint32 cleanup_caller(int32 x) {\n    int32 result = helper(x);\n");
+    for index in 0..cleanup_count {
+        c_source.push_str(&format!("    result = cleanup_{index}(result);\n"));
+    }
+    c_source.push_str("    return result;\n}\n");
+
+    let mut click_source = String::from("verifying \"cleanup.c\";\n\n");
+    click_source.push_str(
+        "int32 helper(int32 x) throws int32 {\n    ensures result == x;\n    exceptional ensures exception == 7;\n}\n\n",
+    );
+    for index in 0..cleanup_count {
+        click_source.push_str(&format!(
+            "int32 cleanup_{index}(int32 x) {{\n    ensures result == x;\n}}\n\n"
+        ));
+    }
+    for index in 0..unrelated_function_count {
+        click_source.push_str(&format!(
+            "int32 unrelated_{index}(int32 x) {{ ensures result == x; }}\n\n"
+        ));
+    }
+    click_source.push_str("int32 cleanup_caller(int32 x) throws int32 {\n");
+    for index in 0..unrelated_fact_count {
+        click_source.push_str(&format!("    requires x != {};\n", 10_000 + index));
+    }
+    click_source.push_str("    ensures result == x;\n    exceptional ensures exception == 7;\n}\n");
+    (c_source, click_source)
+}
+
+/// The C++ importer currently emits a bounded cleanup list, but its cleanup
+/// calls use the same checked outcome frontier as this growing C model.  This
+/// acceptance regression keeps that shared engine honest while the selected
+/// cleanup-edge count grows from 2 through 16 and unrelated scopes/functions/
+/// facts grow with it.
+#[test]
+fn exceptional_cleanup_edges_scale_near_linearly_with_unrelated_context() {
+    const CALL_WORK: &str = "operation `verification statement: call assign`";
+    let mut samples = Vec::new();
+    let mut cleanup_work = Vec::new();
+    for size in [2, 4, 8, 16] {
+        let (c_source, click_source) = exceptional_cleanup_chain_project(size, size, size);
+        let (verified, sample) = scaling_sample(size, || {
+            verify_c0_sources(&click_source, &[("cleanup.c", c_source.as_str())])
+        });
+        verified.unwrap_or_else(|error| {
+            panic!(
+                "size {size} exceptional cleanup scaling fixture failed: {}",
+                error.message()
+            )
+        });
+        cleanup_work.push(sample.named_work.get(CALL_WORK).copied().unwrap_or(0));
+        samples.push(sample);
+    }
+    assert!(
+        cleanup_work[0] > 0,
+        "the scaling fixture never checked the exceptional frontier: {cleanup_work:?}"
+    );
+    assert_near_linear_scaling("exceptional cleanup edges", &samples);
+    assert_near_linear_scaling(
+        "exceptional cleanup call frontier",
+        &samples
+            .iter()
+            .map(|sample| ScalingSample {
+                size: sample.size,
+                work: *sample.named_work.get(CALL_WORK).unwrap_or(&0),
+                named_work: BTreeMap::new(),
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    // Hold the selected edge and cleanup count fixed while unrelated function
+    // scopes and facts grow. The named call work must not inspect those
+    // unrelated declarations to re-check the same frontier.
+    let mut fixed_cleanup_work = Vec::new();
+    for unrelated in [4, 8, 16, 32] {
+        let (c_source, click_source) = exceptional_cleanup_chain_project(8, unrelated, unrelated);
+        let (verified, sample) = scaling_sample(8, || {
+            verify_c0_sources(&click_source, &[("cleanup.c", c_source.as_str())])
+        });
+        verified.unwrap_or_else(|error| {
+            panic!(
+                "unrelated context {unrelated} fixed-frontier fixture failed: {}",
+                error.message()
+            )
+        });
+        fixed_cleanup_work.push(sample.named_work.get(CALL_WORK).copied().unwrap_or(0));
+    }
+    assert!(
+        fixed_cleanup_work
+            .iter()
+            .all(|work| *work == fixed_cleanup_work[0]),
+        "fixed cleanup frontier work changed with unrelated context: {fixed_cleanup_work:?}"
+    );
+}
+
 /// One project with `statement_count` local stores between two uses of the
 /// same fact about an array the stores cannot touch.
 fn array_fact_across_local_stores(statement_count: usize) -> (String, String) {

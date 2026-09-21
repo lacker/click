@@ -99,6 +99,50 @@ spellings before binding through one of those. The loan ledger, its laws, and
 the call boundary's lending and recovery are in
 [stable views](stable-views.md).
 
+## Selected control-flow and C++ cleanup model
+
+The launch control-flow slice has one checked execution-frontier model for
+forward C edges and C++ cleanup edges. A frontier carries its path state and
+obligations to the next source operation; a transfer does not execute skipped
+statements. C forward `goto` keeps its target and source attribution, while the
+C++ importer supplies checked destructor operations on normal returns and
+exceptional unwinding edges. The language frontends decide which edges are
+legal; the kernel does not infer cleanup or loan recovery from lexical scope
+alone.
+
+The selected C++ exception profile is deliberately closed: C++20 on the pinned
+Clang/LLVM 19.1.7 `x86_64-unknown-linux-gnu` profile, exceptions enabled,
+RTTI disabled, one `int32` exceptional payload, a matching `catch (int)`, and
+non-throwing constructors and destructors. `throws int32` is part of the
+checked Click signature. Normal `ensures` and `exceptional ensures` are
+separate claim families; a missing exceptional declaration is non-throwing,
+not an unconstrained promise. The locked exporter artifact records the
+compiler profile and semantic input, so an exporter change cannot silently
+broaden a normal-only import.
+
+The C++ exporter uses Clang's typed AST and checked source CFG to identify the
+throw, handler, payload, and constructed objects. It emits destructor calls as
+ordinary checked kernel steps, in reverse construction order, and retains the
+constructed prefix when a later declaration follows a potentially throwing
+call. ABI landing pads and runtime exception behavior are trust-boundary
+inputs, not proof evidence. The supported slice permits at most two
+destructible objects in the selected cleanup scope; throwing constructors or
+destructors, rethrow and inherited handlers, `setjmp`/`longjmp`, and general
+backward or irreducible edges remain outside it.
+
+The [resource tracker](resource-tracker.md) is the single kernel authority for
+whether a mutable resource is the same at two proof points. Cleanup proofs use
+that answer to frame destructor stores and to distinguish a real mutation from
+an unshown fact; it does not grant ownership or recover a resource on its own.
+The semantic regressions are `mdtests/cpp_two_guard_unwind.md`,
+`mdtests/cpp_guard_unwind_before_second.md`, and the hostile proof checks in
+`tests/cpp_import.rs`. The deterministic
+scaling regression
+`exceptional_cleanup_edges_scale_near_linearly_with_unrelated_context` in
+`src/surface/tests/scaling_tests.rs` covers cleanup-edge counts 2, 4, 8, and
+16 while unrelated functions and facts grow; it checks both total work and
+the named call/edge operation rather than wall time.
+
 ## Trust and boundaries
 
 The kernel semantics and the code that translates accepted source claims into

@@ -20,14 +20,15 @@ mutex-protected mutation, and one-shot release/acquire publication. The other
 demos exercise object representation copying, C cleanup jumps and narrow C++
 exception unwinding, and independently owned parents sharing a child.
 
-The forward goto cleanup dependency is implemented; general backward and
-irreducible jumps remain deferred. The control-flow demo still owns the narrow
-cross-call C++ exception probe. Normal C++ cleanup lands before that probe.
-The probe introduces internal exceptional execution outcomes first, then a
-closed exceptional set in the verified function signature and separate
-outcome-specific claims, and only then enables the selected C++ `throw` and
-matching `catch`. A missing Click exceptional signature means non-throwing;
-C++ source that merely omits `noexcept` does not infer one.
+The forward goto cleanup dependency and the selected control-flow demo are
+implemented; general backward and irreducible jumps remain deferred. The
+control-flow slice uses internal exceptional execution outcomes, a closed
+exceptional set in the verified function signature, separate outcome-specific
+claims, and checked C++ `throw`/matching `catch` cleanup edges. A missing Click
+exceptional signature means non-throwing; C++ source that merely omits
+`noexcept` does not infer one. Its bounded profile, resource-tracker role,
+trust boundary, and deterministic scaling evidence are recorded in the
+[architecture note](architecture.md#selected-control-flow-and-c-cleanup-model).
 Each milestone keeps a bounded support claim and uses the existing proof
 engine with deterministic scaling evidence. Close an issue only when its fix,
 regression coverage, and documentation land.
