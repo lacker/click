@@ -1117,12 +1117,70 @@ fn memory_snapshots_match_for_resolution(
         "snapshot comparison: differing cells",
         || left.differing_cell_pointers(right),
     );
+    let load_bytes = crate::kernel::load_access_width_at_address_or_widest(pointer);
     differing
         .into_iter()
         .filter(|cell_pointer| cell_is_observable_by_load(cell_pointer, pointer))
         .all(|cell_pointer| {
-            pointers_proven_distinct_for_memory_resolution(&cell_pointer, pointer, assumptions)
+            differing_cell_bytes_miss_the_load(
+                left,
+                right,
+                &cell_pointer,
+                pointer,
+                load_bytes,
+                assumptions,
+            ) && pointers_proven_distinct_for_memory_resolution(&cell_pointer, pointer, assumptions)
         })
+}
+
+/// How wide the cell the two snapshots differ on is, in bytes.
+///
+/// The width comes from the value the cell holds, on whichever side holds
+/// one, and from the wider of the two where both do and disagree: the entry
+/// has to cover every byte either snapshot keeps there. A cell that is only a
+/// union view, or one holding `Void`, has no value width to read here and
+/// stands in the widest scalar — over-stating a width can only shrink the
+/// separated set.
+fn differing_cell_byte_width(left: &CMemory, right: &CMemory, cell_pointer: &Pointer) -> u32 {
+    let stored_width = |memory: &CMemory| {
+        memory
+            .cells
+            .get(cell_pointer)
+            .map(CValue::byte_width)
+            .filter(|bytes| *bytes > 0)
+    };
+    stored_width(left)
+        .into_iter()
+        .chain(stored_width(right))
+        .max()
+        .unwrap_or_else(crate::kernel::resource_tracker::widest_scalar_access_bytes)
+}
+
+/// Whether the address ladder may answer for this differing cell at all.
+///
+/// The ladder below it decides whether the cell's *address* is a different
+/// address from the load's. That is not the question these comparisons are
+/// asking: they are deciding whether the two snapshots hold the same value
+/// for this load, and a cell at `p + 1` holding one byte is a different
+/// address from `p` while being the second byte a four-byte read there
+/// returns. Only where the bytes are shown separate may the ladder stand in
+/// for them; provable overlap and an unknown gap both mean the snapshots are
+/// not shown to agree.
+fn differing_cell_bytes_miss_the_load(
+    left: &CMemory,
+    right: &CMemory,
+    cell_pointer: &Pointer,
+    load_pointer: &Pointer,
+    load_bytes: u32,
+    assumptions: &PureFactContext,
+) -> bool {
+    access_byte_overlap(
+        cell_pointer,
+        differing_cell_byte_width(left, right, cell_pointer),
+        load_pointer,
+        load_bytes,
+        assumptions,
+    ) == AccessByteOverlap::Separate
 }
 
 /// The filter the three "do these snapshots agree about this load" comparisons
@@ -1537,6 +1595,131 @@ fn cell_disjoint_from_load_by_constant_offset(
     )
 }
 
+/// What one access's bytes do to another's, where an address ladder is about
+/// to be used to answer the byte question.
+///
+/// Separation is a question about bytes, and every address ladder in the
+/// kernel answers a different one: whether two *addresses* denote different
+/// locations. `p + 1` is a different address from `p` under every test there
+/// is, and a one-byte write there still overwrites the second byte of a
+/// four-byte read at `p`. So a ladder may only stand in for the byte question
+/// where the gap it establishes clears both accesses, and this is the one
+/// place that decides whether it does.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::kernel) enum AccessByteOverlap {
+    /// The two accesses provably share a byte. No address ladder may speak:
+    /// they touch the same storage whatever their addresses are called.
+    Overlaps,
+    /// The two accesses provably share no byte, or the gap a ladder
+    /// establishes is wide enough that neither can reach the other.
+    Separate,
+    /// Neither is shown. A ladder proving the addresses differ still says
+    /// nothing about the bytes, so it may not stand in for this.
+    Unknown,
+}
+
+/// Whether the `left_bytes` bytes at `left` reach the `right_bytes` bytes at
+/// `right`.
+///
+/// Two accesses in blocks proven distinct never share a byte, whatever their
+/// widths. Within one block it comes down to the gap the offsets guarantee:
+///
+/// - Both offsets constant: the exact interval test decides it, in both
+///   directions. This is taken first, because provable overlap is the answer
+///   however clean the addresses look — `+4` inside an eight-byte element is
+///   a sub-element shift that the element-width rule below reports as a clean
+///   element width.
+/// - Offsets that differ by a whole element of a common width: an address
+///   ladder proving the element indices differ guarantees a gap of at least
+///   that element width. Which access has to fit inside that gap depends on
+///   what the ladder knows. A bare disequality leaves the direction open, so
+///   both accesses must fit: an eight-byte load at element `i` of a
+///   four-byte-scaled pointer reaches into element `i + 1`, and `i != j`
+///   does not rule out `j == i + 1`. A strict order fixes the direction, and
+///   then only the *lower* access has to fit — the upper one extends away
+///   from the gap, so its width cannot close it.
+/// - Anything else: the gap is unknown, and an unknown gap separates nothing.
+///
+/// An address sitting part-way into an element has no element index at all,
+/// so it declines the ladder rather than rounding onto an element boundary:
+/// a store at `a[j] + 4` lands inside `a[i]` when `j == i`, though a ladder
+/// proving `i != j` would separate the indices happily enough.
+pub(in crate::kernel) fn access_byte_overlap(
+    left: &Pointer,
+    left_bytes: u32,
+    right: &Pointer,
+    right_bytes: u32,
+    assumptions: &PureFactContext,
+) -> AccessByteOverlap {
+    if let Some(shift) = constant_byte_shift_between(left, right) {
+        return if crate::kernel::byte_intervals_disjoint(
+            shift,
+            i64::from(left_bytes),
+            0,
+            i64::from(right_bytes),
+        ) {
+            AccessByteOverlap::Separate
+        } else {
+            AccessByteOverlap::Overlaps
+        };
+    }
+    if one_element_gap_separates_bytes(left, left_bytes, right, right_bytes, assumptions) {
+        AccessByteOverlap::Separate
+    } else {
+        AccessByteOverlap::Unknown
+    }
+}
+
+/// The element-width half of [`access_byte_overlap`]: whether the gap an
+/// address ladder can establish between two same-block offsets is wide enough
+/// to clear both accesses. See that function's note for which access has to
+/// fit and why the direction matters.
+fn one_element_gap_separates_bytes(
+    left: &Pointer,
+    left_bytes: u32,
+    right: &Pointer,
+    right_bytes: u32,
+    assumptions: &PureFactContext,
+) -> bool {
+    if left.block != right.block {
+        // Two addresses in different blocks are separated by the block
+        // ladder, which needs no width: distinct objects share no byte.
+        return true;
+    }
+    let Some((left_index, right_index, element_width)) = common_base_element_indices(left, right)
+    else {
+        return false;
+    };
+    let element_width = i64::from(element_width);
+    // The direction-free answer first: when both accesses fit in an element,
+    // no direction can make them overlap, and no order query is needed.
+    if i64::from(left_bytes.max(right_bytes)) <= element_width {
+        return true;
+    }
+    // Only a known direction can separate them now. Ask for it in the order
+    // that puts the narrower requirement first.
+    let strictly_below = |low: &Bitvector32Term, high: &Bitvector32Term| {
+        assumptions.decide(&ConditionTerm::signed_less_than(low.clone(), high.clone()))
+            == Some(true)
+    };
+    let lower_access_bytes = if strictly_below(&left_index, &right_index) {
+        left_bytes
+    } else if strictly_below(&right_index, &left_index) {
+        right_bytes
+    } else {
+        return false;
+    };
+    i64::from(lower_access_bytes) <= element_width
+}
+
+/// The constant byte distance from `base` to `pointer`, when the two
+/// addresses differ by a constant.
+fn constant_byte_shift_between(pointer: &Pointer, base: &Pointer) -> Option<i64> {
+    pointer_byte_offset_from_base(pointer, base)
+        .as_ref()
+        .and_then(signed_bitvector_constant)
+}
+
 /// The bytes a store covers, as non-constant offset atoms plus a constant
 /// byte interval, for the cells of the same block to be compared against.
 /// `None` where the write has no constant extent to compare.
@@ -1676,6 +1859,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_bounded_alias(
     {
         return false;
     }
+    let load_bytes = crate::kernel::load_access_width_at_address_or_widest(pointer);
     left.differing_cell_pointers(right)
         .into_iter()
         .filter(|cell_pointer| cell_is_observable_by_load(cell_pointer, pointer))
@@ -1701,7 +1885,14 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_bounded_alias(
             }
             value.is_some_and(|value| {
                 cell_disjoint_from_load_by_constant_offset(&cell_pointer, value, pointer)
-            }) || pointers_proven_distinct_for_memory_resolution(
+            }) || differing_cell_bytes_miss_the_load(
+                left,
+                right,
+                &cell_pointer,
+                pointer,
+                load_bytes,
+                assumptions,
+            ) && pointers_proven_distinct_for_memory_resolution(
                 &cell_pointer,
                 pointer,
                 assumptions,
@@ -1733,6 +1924,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
         return false;
     }
 
+    let load_bytes = crate::kernel::load_access_width_at_address_or_widest(pointer);
     left.differing_cell_pointers(right)
         .into_iter()
         .filter(|cell_pointer| cell_is_observable_by_load(cell_pointer, pointer))
@@ -1742,7 +1934,14 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
                 "resource context equality",
                 "snapshot comparison: bounded alias",
                 || {
-                    pointers_proven_distinct_for_memory_resolution(
+                    differing_cell_bytes_miss_the_load(
+                        left,
+                        right,
+                        &cell_pointer,
+                        pointer,
+                        load_bytes,
+                        assumptions,
+                    ) && pointers_proven_distinct_for_memory_resolution(
                         &cell_pointer,
                         pointer,
                         assumptions,

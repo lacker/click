@@ -259,82 +259,6 @@ pub(in crate::kernel) fn separation_check(
     }
 }
 
-/// Whether a `write_bytes`-wide store at `write` could be shown to miss the
-/// `bytes` bytes at `pointer` — the byte question the address ladders in
-/// [`cell_effect`] are standing in for.
-///
-/// False means the store's bytes reach this cell under every reading the
-/// kernel can see, so no address ladder may separate them. True only says
-/// the bytes *may* be disjoint; the ladder still has to prove the addresses
-/// differ.
-///
-/// Two accesses in blocks proven distinct never share a byte, whatever their
-/// widths. Within one block it comes down to the gap the offsets guarantee:
-///
-/// - Both offsets constant: the exact interval test decides it.
-/// - Offsets that differ by a whole element of a common width: an address
-///   ladder proving the element indices differ guarantees a gap of at least
-///   that element width. Which access has to fit inside that gap depends on
-///   what the ladder knows. A bare disequality leaves the direction open, so
-///   both accesses must fit: an eight-byte load at element `i` of a
-///   four-byte-scaled pointer reaches into element `i + 1`, and `i != j`
-///   does not rule out `j == i + 1`. A strict order fixes the direction, and
-///   then only the *lower* access has to fit — the upper one extends away
-///   from the gap, so its width cannot close it.
-/// - Anything else: the gap is unknown, and an unknown gap does not separate
-///   bytes.
-///
-/// An address sitting part-way into an element has no element index at all,
-/// so it declines the ladder rather than rounding onto an element boundary:
-/// a store at `a[j] + 4` lands inside `a[i]` when `j == i`, though a ladder
-/// proving `i != j` would separate the indices happily enough.
-fn one_element_gap_separates_bytes(
-    write: &Pointer,
-    write_bytes: u32,
-    pointer: &Pointer,
-    bytes: u32,
-    assumptions: &PureFactContext,
-) -> bool {
-    if write.block != pointer.block {
-        // Two addresses in different blocks are separated by the block
-        // ladder, which needs no width: distinct objects share no byte.
-        return true;
-    }
-    let Some((write_index, cell_index, element_width)) =
-        crate::kernel::reasoning::common_base_element_indices(write, pointer)
-    else {
-        return false;
-    };
-    let element_width = i64::from(element_width);
-    // The direction-free answer first: when both accesses fit in an element,
-    // no direction can make them overlap, and no order query is needed.
-    if i64::from(write_bytes.max(bytes)) <= element_width {
-        return true;
-    }
-    // Only a known direction can separate them now. Ask for it in the order
-    // that puts the narrower requirement first.
-    let strictly_below = |low: &Bitvector32Term, high: &Bitvector32Term| {
-        assumptions.decide(&ConditionTerm::signed_less_than(low.clone(), high.clone()))
-            == Some(true)
-    };
-    let lower_access_bytes = if strictly_below(&write_index, &cell_index) {
-        write_bytes
-    } else if strictly_below(&cell_index, &write_index) {
-        bytes
-    } else {
-        return false;
-    };
-    i64::from(lower_access_bytes) <= element_width
-}
-
-/// The constant byte distance from `pointer` to `write`, when the two
-/// addresses differ by a constant.
-fn constant_byte_shift_between(write: &Pointer, pointer: &Pointer) -> Option<i64> {
-    crate::kernel::reasoning::pointer_byte_offset_from_base(write, pointer)
-        .as_ref()
-        .and_then(crate::kernel::reasoning::signed_bitvector_constant)
-}
-
 /// One cell's answer: exactly the walk that named every load variable in the
 /// repository before there was a rule, ladder for ladder.
 ///
@@ -385,17 +309,9 @@ fn cell_effect(
             // question outright, so take that answer first: overlapping
             // bytes mean the store wrote this cell, whatever the addresses
             // are called.
-            let write_bytes = value.byte_width();
-            let gap = constant_byte_shift_between(write, pointer);
-            let disjoint_by_constant_gap = gap.map(|shift| {
-                crate::kernel::byte_intervals_disjoint(
-                    shift,
-                    i64::from(write_bytes),
-                    0,
-                    i64::from(bytes),
-                )
-            });
-            if disjoint_by_constant_gap == Some(false) {
+            let overlap =
+                access_byte_overlap(write, value.byte_width(), pointer, bytes, assumptions);
+            if overlap == AccessByteOverlap::Overlaps {
                 return StepEffect::Affected;
             }
             // Otherwise the ladders may speak, but the two that rest on
@@ -404,8 +320,7 @@ fn cell_effect(
             // access. Where it is not, they are skipped rather than
             // contradicted: the answer becomes "not shown separate", which
             // is both the truth and the refusal that explains itself.
-            let address_inequality_separates_bytes = disjoint_by_constant_gap == Some(true)
-                || one_element_gap_separates_bytes(write, write_bytes, pointer, bytes, assumptions);
+            let address_inequality_separates_bytes = overlap == AccessByteOverlap::Separate;
             // The recorded-range fallback covers writes into a
             // proven-separate region (a buffer store crossed while resolving
             // a struct field); extended-bridging scope only, and under its

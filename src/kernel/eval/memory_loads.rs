@@ -1168,6 +1168,21 @@ pub(crate) fn load_access_width_or_widest(memory: &SharedCMemory, pointer: &Poin
         .unwrap_or_else(crate::kernel::resource_tracker::widest_scalar_access_bytes)
 }
 
+/// The widest C load recorded at this address in any snapshot, or the widest
+/// scalar when none was seen.
+///
+/// The snapshot-keyed form above is the precise one and is what a caller
+/// holding an interned snapshot asks. This one is for a caller holding a bare
+/// `CMemory` it would have to intern only to ask the question, where the C
+/// type at the address is the whole answer anyway: every framing comparison
+/// runs at a snapshot later than the load it is carrying, so the exact key
+/// would miss and fall through to this table regardless.
+pub(crate) fn load_access_width_at_address_or_widest(pointer: &Pointer) -> u32 {
+    LOAD_ACCESS_WIDTH_AT_ADDRESS
+        .with(|widths| widths.borrow().get(pointer).copied())
+        .unwrap_or_else(crate::kernel::resource_tracker::widest_scalar_access_bytes)
+}
+
 /// How many bytes the access this variable names reads.
 ///
 /// No `MemoryLoad` term carries its width, so this registry is where a

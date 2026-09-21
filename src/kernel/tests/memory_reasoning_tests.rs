@@ -458,6 +458,10 @@ fn mutable_frame_transports_load_across_certified_effect_chain() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(8),
     };
+    // The transported load is the `int32` at offset zero. Say so: a
+    // width-less load stands in eight bytes, which the first write at offset
+    // four overlaps, and the two snapshots then do not agree about it.
+    crate::kernel::eval::declare_load_access_width(&preserved, 4);
     let before = CMemory::new();
     let middle = before.clone().store(first_write.clone(), int32(1));
     let after = middle.clone().store(second_write.clone(), int32(2));

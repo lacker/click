@@ -2130,3 +2130,51 @@ fn canonical_load_form_keeps_a_cell_a_wide_read_covers() {
         "a cell well above the load is outside every scalar read"
     );
 }
+
+/// Two snapshots a store separates do not agree about a load whose bytes it
+/// wrote, however clean the two addresses look.
+///
+/// "Do these snapshots hold one value for this load" is answered by scanning
+/// the cells they differ on and asking whether each is separate from the
+/// load. That question used to be asked of the *addresses* alone, and `p + 1`
+/// is a different address from `p` under every test the kernel has while
+/// holding the second byte a four-byte read at `p` returns. With the address
+/// answer standing in for the byte answer, an `unsigned char` write one byte
+/// into an `int32` left the whole `int32` readable at its old value.
+///
+/// Both directions are pinned: a write the read's bytes cover blocks the
+/// agreement, and one past its last byte still does not.
+#[test]
+fn a_store_inside_a_read_stops_two_snapshots_agreeing_about_it() {
+    let bare = PureFactContext::new();
+    let read = arc_pointer(0);
+    crate::kernel::eval::declare_load_access_width(&read, 4);
+    let base = CMemory::new().with_block("arg-memory", 32);
+    let byte_written_at = |offset: i64| {
+        base.clone()
+            .without_possible_aliasing_cells(&arc_pointer(offset), 1, &bare)
+            .store(
+                arc_pointer(offset),
+                CValue::UInt8(Bitvector32Term::Constant(7)),
+            )
+    };
+
+    for offset in 1..4 {
+        let after = byte_written_at(offset);
+        assert!(
+            !crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+                &base, &after, &read, &bare
+            ),
+            "a one-byte write {offset} bytes into a four-byte read is a byte the read \
+             returns, so the two snapshots do not agree about it"
+        );
+    }
+
+    let after = byte_written_at(4);
+    assert!(
+        crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+            &base, &after, &read, &bare
+        ),
+        "a write past the read's last byte leaves the two snapshots agreeing about it"
+    );
+}

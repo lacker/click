@@ -71,6 +71,7 @@ pub(crate) use eval::canonicalized_offset_index_term;
 pub(crate) use eval::count_canonical_at_creation_violations;
 pub(crate) use eval::is_load_variable;
 pub(crate) use eval::is_load_variable_defining_fact;
+pub(crate) use eval::load_access_width_at_address_or_widest;
 pub(crate) use eval::load_access_width_or_widest;
 #[cfg(test)]
 pub(crate) use eval::load_variable_for_cell_with_origin;
