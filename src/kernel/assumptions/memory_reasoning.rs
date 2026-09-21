@@ -25,6 +25,42 @@ thread_local! {
     > = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// How many of a range's logical elements an access of `byte_width` bytes
+/// occupies for the *permission* question, where a range authorizes a read.
+///
+/// A range counts logical elements and an access is measured in bytes, so an
+/// `int64` read spans two elements of a four-byte range. The exception is the
+/// historical struct field unit: a loaded C pointer occupies one four-byte
+/// *field* even though its ABI footprint is two physical words, and
+/// [`PureFactContext::pointer_access_in_range`] has counted it that way since
+/// struct ranges existed. Keeping that rule here is what makes this a pure
+/// extraction of the code it replaces.
+///
+/// `None` for a width that names no elements at all, which declines the
+/// element question rather than rounding an answer onto a boundary.
+fn authorized_access_element_length(byte_width: u32, element_width: u32) -> Option<u32> {
+    if element_width == 0 || byte_width == 0 {
+        return None;
+    }
+    if byte_width == crate::kernel::C_POINTER_BYTE_WIDTH && element_width == 4 {
+        return Some(1);
+    }
+    Some(byte_width.div_ceil(element_width))
+}
+
+/// How many bytes the access at this address reads, for a separation question
+/// whose caller holds only the address.
+///
+/// The C type at an address does not vary with the snapshot a framing walk
+/// happens to start from, so the address-keyed half of the record
+/// [`crate::kernel::eval::symbolic_load_value`] writes is the answer, and the
+/// widest scalar stands in where no typed load was ever seen. Over-stating a
+/// width can only shrink the set an exclusion rule calls separate, so the
+/// fallback is the safe direction.
+fn access_byte_width_for_separation(pointer: &Pointer) -> u32 {
+    crate::kernel::load_access_width_at_address_or_widest(pointer)
+}
+
 /// Arms [`FRAME_COMPOSITE_DEFINITIONS`] for the guard's lifetime. Definitions
 /// are file-global, so one guard covers a whole verification.
 #[must_use = "definitions stay armed only while the guard is alive"]
@@ -2004,6 +2040,47 @@ impl PureFactContext {
         ))
     }
 
+    /// Whether an access of `byte_width` bytes at element `index` of a range
+    /// whose elements are `element_width` bytes lies wholly outside
+    /// `start..end`.
+    ///
+    /// The access spans [`access_element_span`] elements from `index`, not
+    /// one. It is outside the range when it ends at or before the range
+    /// starts, or starts at or after the range ends. Deciding it from `index`
+    /// alone — `index < start || end <= index` — let an `int64` read at the
+    /// element just below a range be called separate from it, while its upper
+    /// half sits on the range's first element; every framing route that asks
+    /// this question then carried the read across a write there.
+    ///
+    /// `access_element_span` is the exclusion side's count and deliberately
+    /// not [`authorized_access_element_length`]: eight bytes at an address
+    /// could be a pointer or an `int64`, and the permission side's struct
+    /// field rule reads that width as one four-byte field. The two may
+    /// disagree only in this direction — a range may authorize an access it is
+    /// not proven separate from, which costs a framing conclusion, while the
+    /// reverse is the false theorem.
+    ///
+    /// Returns `None` when the access has no element span in this range's
+    /// coordinates, which is the same declining that
+    /// [`Self::pointer_access_in_range`] does rather than rounding onto a
+    /// boundary.
+    fn constant_access_outside_range(
+        index: i64,
+        start: i64,
+        end: i64,
+        byte_width: u32,
+        element_width: u32,
+    ) -> Option<bool> {
+        let length =
+            crate::kernel::memory_provenance::access_element_span(byte_width, element_width)?;
+        Some(
+            index
+                .checked_add(length)
+                .is_some_and(|access_end| access_end <= start)
+                || end <= index,
+        )
+    }
+
     pub(in crate::kernel) fn pointer_access_in_range(
         &self,
         pointer: &Pointer,
@@ -2054,17 +2131,9 @@ impl PureFactContext {
         if element_width > 0
             && byte_width.is_multiple_of(element_width)
             && let Some(index) = pointer.element_index_from_base_with_width(base, element_width)
+            && let Some(logical_access_length) =
+                authorized_access_element_length(byte_width, element_width)
         {
-            // Struct ranges use the historical 4-byte field unit. A loaded C
-            // pointer occupies one such field even though its ABI footprint
-            // is two physical words; preserve that logical-field rule while
-            // treating byte-buffer accesses by their actual byte length.
-            let logical_access_length =
-                if byte_width == crate::kernel::C_POINTER_BYTE_WIDTH && element_width == 4 {
-                    1
-                } else {
-                    byte_width / element_width
-                };
             let access_length = Bitvector32Term::Constant(logical_access_length);
             let access_end = Bitvector32Term::add(index.clone(), access_length);
             let exact_within_range = match (
@@ -2221,6 +2290,23 @@ impl PureFactContext {
         ranges: &[CMemoryRange],
         pointer: &Pointer,
     ) -> bool {
+        self.ranges_directly_disjoint_from_access(
+            ranges,
+            pointer,
+            access_byte_width_for_separation(pointer),
+        )
+    }
+
+    /// [`Self::ranges_directly_disjoint_from_pointer`] for a caller that knows
+    /// how many bytes the access reads. Separation is a question about bytes,
+    /// and the callers above hold only an address, so they recover the width
+    /// from the record every typed C load writes.
+    pub(in crate::kernel) fn ranges_directly_disjoint_from_access(
+        &self,
+        ranges: &[CMemoryRange],
+        pointer: &Pointer,
+        byte_width: u32,
+    ) -> bool {
         ranges.iter().all(|range| {
             if range.base.blocks_proven_distinct(pointer) {
                 return true;
@@ -2256,8 +2342,15 @@ impl PureFactContext {
                     signed_bitvector_constant(&range.start),
                     signed_bitvector_constant(&range.end),
                 )
+                && let Some(outside) = Self::constant_access_outside_range(
+                    index,
+                    start,
+                    end,
+                    byte_width,
+                    range.element_width(),
+                )
             {
-                return index < start || end <= index;
+                return outside;
             }
             if let Some(proposition) =
                 self.prop_facts
@@ -2599,16 +2692,35 @@ impl PureFactContext {
                 signed_bitvector_constant(term)
                     .or_else(|| self.known_signed_constant_after_normalization(term))
             };
+            let byte_width = access_byte_width_for_separation(pointer);
             if let (Some(index), Some(start), Some(end)) =
                 (resolve(&index), resolve(&range.start), resolve(&range.end))
-                && (index < start || end <= index)
+                && Self::constant_access_outside_range(
+                    index,
+                    start,
+                    end,
+                    byte_width,
+                    range.element_width(),
+                ) == Some(true)
             {
                 return true;
             }
-            if self.decide(&ConditionTerm::signed_less_than(
-                index.clone(),
-                range.start.clone(),
-            )) == Some(true)
+            // `index < start` says the access *starts* below the range, which
+            // places the whole of it below only while the access is one
+            // element wide. A wider one is declined here rather than restated
+            // as `index + length <= start`: that sum is a modular add, and
+            // `ad1a0050`/`b92ab3c0` are what reading a wrapped sum as an order
+            // costs. The range's upper side needs no length, because an access
+            // at or above `end` extends away from the range.
+            let single_element = crate::kernel::memory_provenance::access_element_span(
+                byte_width,
+                range.element_width(),
+            ) == Some(1);
+            if single_element
+                && self.decide(&ConditionTerm::signed_less_than(
+                    index.clone(),
+                    range.start.clone(),
+                )) == Some(true)
                 || self.decide(&ConditionTerm::signed_less_equal(range.end.clone(), index))
                     == Some(true)
             {
