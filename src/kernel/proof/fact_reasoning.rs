@@ -1067,7 +1067,10 @@ mod tests {
         let quantified = |memory: SharedCMemory, named: bool| {
             let load = if named {
                 Bitvector32Term::Variable(load_variable_for_cell_with_origin(
-                    &memory, &pointer, &memory,
+                    &memory,
+                    &pointer,
+                    crate::kernel::load_access_width_or_widest(&memory, &pointer),
+                    &memory,
                 ))
             } else {
                 Bitvector32Term::MemoryLoad(memory, Box::new(pointer.clone()))
@@ -1120,7 +1123,7 @@ mod tests {
                     byte_width: 4,
                 },
             };
-            let load = load_variable_for_cell_with_origin(snapshot, &pointer, snapshot);
+            let load = load_variable_for_cell_with_origin(snapshot, &pointer, 4, snapshot);
             Proposition::ForAll {
                 var: binder,
                 sort: Sort::CInt32,
@@ -1269,14 +1272,18 @@ mod tests {
         // differ only by a declared block or a write to another cell share
         // an epoch, so a synthetic marker block would not separate these
         // load variables; a write to the queried cell does (the second pair).
+        // Both sides are the same four-byte access; the question under test
+        // is the epoch, not the width.
         let left = load_variable_for_cell_with_origin(
             &intern_c_memory(before.clone()),
             &preserved,
+            4,
             &intern_c_memory(before.clone()),
         );
         let right = load_variable_for_cell_with_origin(
             &intern_c_memory(after.clone()),
             &preserved,
+            4,
             &intern_c_memory(after.clone()),
         );
 
@@ -1298,11 +1305,13 @@ mod tests {
         let changed_left = load_variable_for_cell_with_origin(
             &intern_c_memory(changed_before.clone()),
             &loaded,
+            4,
             &intern_c_memory(changed_before),
         );
         let changed_right = load_variable_for_cell_with_origin(
             &intern_c_memory(changed_after.clone()),
             &loaded,
+            4,
             &intern_c_memory(changed_after),
         );
         assert_ne!(

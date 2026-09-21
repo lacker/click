@@ -1744,6 +1744,9 @@ fn atomic_condition_fact_transport_ignores_distinct_materialized_cell() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
+    // The framed load is the `int32` at offset zero. Say so: a width-less
+    // load stands in eight bytes, which the store at offset four overlaps.
+    crate::kernel::eval::declare_load_access_width(&preserved, 4);
     let after = before
         .clone()
         .store(materialized, CValue::Int32(Bitvector32Term::Constant(9)));
@@ -2928,7 +2931,10 @@ fn a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer() {
         &crate::kernel::intern_c_memory_ref(&after_store),
     );
     let stop = crate::kernel::resource_tracker::last_same(
-        crate::kernel::resource_tracker::Resource::Cell(&symbolic),
+        crate::kernel::resource_tracker::Resource::Cell {
+            pointer: &symbolic,
+            bytes: 4,
+        },
         &point,
     )
     .expect("a cell always has a naming point");
@@ -3209,11 +3215,11 @@ fn a_composition_separates_a_store_from_a_load_only_through_two_owners() {
         value: crate::kernel::api::int32(1),
     };
     assert!(
-        hop.checks(&store, &acquired, &owners),
+        hop.checks(&store, &acquired, 4, &owners),
         "the hop re-checks against the composition it named"
     );
     assert!(
-        !hop.checks(&store, &acquired, &PureFactContext::new()),
+        !hop.checks(&store, &acquired, 4, &PureFactContext::new()),
         "a retained hop is worthless in a context that does not hold its composition"
     );
 }
@@ -4073,6 +4079,9 @@ fn added_composition_carrier_keeps_snapshot_premise_work_bounded() {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::Constant(4),
     };
+    // The framed load is the `int32` at offset zero; the neighbour store is
+    // four bytes away, which only a declared width keeps clear of it.
+    crate::kernel::eval::declare_load_access_width(&target, 4);
     let before = CMemory::new().with_block("arena", 64);
     let after = before.clone().store(neighbor, int32(7));
     let premise = Proposition::ConditionIs(
@@ -4153,17 +4162,17 @@ fn load_variable_registry_fails_loudly_at_capacity_instead_of_clearing() {
             .with_block("local:c", 4),
     );
     crate::kernel::with_load_variable_registry_capacity(2, || {
-        let first = load_variable_for_cell_with_origin(&memory, &pointer("local:a"), &memory);
-        load_variable_for_cell_with_origin(&memory, &pointer("local:b"), &memory);
+        let first = load_variable_for_cell_with_origin(&memory, &pointer("local:a"), 4, &memory);
+        load_variable_for_cell_with_origin(&memory, &pointer("local:b"), 4, &memory);
         // Re-registering an identity the registry already knows is not growth
         // and must keep returning the same variable.
-        let again = load_variable_for_cell_with_origin(&memory, &pointer("local:a"), &memory);
+        let again = load_variable_for_cell_with_origin(&memory, &pointer("local:a"), 4, &memory);
         assert_eq!(first, again);
         assert_eq!(crate::kernel::load_variable_registry_len(), 2);
         // The third distinct identity exceeds the capacity: the registry must
         // fail loudly here rather than forget the entries that guard against
         // id collisions.
-        load_variable_for_cell_with_origin(&memory, &pointer("local:c"), &memory);
+        load_variable_for_cell_with_origin(&memory, &pointer("local:c"), 4, &memory);
     });
 }
 

@@ -990,9 +990,16 @@ pub(crate) fn is_load_variable_defining_fact(proposition: &Proposition) -> bool 
 
 thread_local! {
     /// Load variable -> (canonical memory, pointer, first-seen live origin,
-    /// the origin epoch that origin was recorded in).
+    /// the origin epoch that origin was recorded in, access width in bytes).
+    ///
+    /// The width is what a later caller holding only a load variable — or
+    /// only the term it names — recovers the access size from, because no
+    /// `MemoryLoad` term records one. Mints that cannot name a width record
+    /// [`resource_tracker::widest_scalar_access_bytes`], and a mint that can
+    /// widens any narrower width already recorded: one entry stands for every
+    /// access that resolved to this name, so it has to cover all of them.
     static LOAD_VARIABLE_REGISTRY: std::cell::RefCell<
-        std::collections::HashMap<Variable, (SharedCMemory, Pointer, SharedCMemory, u64)>,
+        std::collections::HashMap<Variable, (SharedCMemory, Pointer, SharedCMemory, u64, u32)>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
     /// The current origin epoch. A load variable's id names one load for the
     /// whole session, but the live snapshot transport resolves through is
@@ -1028,6 +1035,11 @@ pub(crate) fn clear_load_canonicalization_caches() {
 
 pub(crate) fn clear_load_variable_registry() {
     LOAD_VARIABLE_REGISTRY.with(|registry| registry.borrow_mut().clear());
+    // Access widths are scoped to the verification that observed them. A
+    // `local:` address is spelled the same in the next function, so a width
+    // left behind would answer for an unrelated cell there.
+    LOAD_ACCESS_WIDTH.with(|widths| widths.borrow_mut().clear());
+    LOAD_ACCESS_WIDTH_AT_ADDRESS.with(|widths| widths.borrow_mut().clear());
     LOAD_ORIGIN_EPOCH.with(|epoch| epoch.set(0));
 }
 
@@ -1050,7 +1062,124 @@ pub(crate) fn registered_load_for_variable(
         registry
             .borrow()
             .get(variable)
-            .map(|(memory, pointer, _, _)| (memory.clone(), pointer.clone()))
+            .map(|(memory, pointer, _, _, _)| (memory.clone(), pointer.clone()))
+    })
+}
+
+thread_local! {
+    /// `(snapshot, address)` -> how many bytes the C load there reads.
+    ///
+    /// A `MemoryLoad` term records no width, so without this a caller
+    /// holding only a term has to assume the widest scalar, and an `int32`
+    /// load stops being separable from a store four bytes away. The entry is
+    /// written by [`symbolic_load_value`], the one typed entry point every C
+    /// load passes through, before any naming can happen.
+    static LOAD_ACCESS_WIDTH: std::cell::RefCell<
+        std::collections::HashMap<(SharedCMemory, Pointer), u32>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+
+    /// `address` -> the widest C load seen at it, in any snapshot.
+    ///
+    /// How wide the access at an address is comes from the C type being
+    /// loaded, which does not vary with the snapshot. The exact key above is
+    /// still preferred, because it answers for one particular load; this one
+    /// answers for a walk that reached the address through a snapshot no
+    /// typed load was ever performed at, which is every framing walk that
+    /// starts at a later snapshot than the load it is carrying.
+    ///
+    /// Widening on conflict, so a `char` view and a `long` view of one
+    /// address answer with the `long`: over-stating a width can only shrink
+    /// the separated set.
+    static LOAD_ACCESS_WIDTH_AT_ADDRESS: std::cell::RefCell<
+        std::collections::HashMap<Pointer, u32>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Remembers that a load of `bytes` bytes happens at this address in this
+/// snapshot. Widening on conflict: the entry has to cover every access that
+/// resolves through it.
+fn record_load_access_width(memory: &CMemory, pointer: &Pointer, bytes: u32) {
+    let key = (
+        crate::kernel::intern_c_memory(memory.clone()),
+        pointer.clone(),
+    );
+    LOAD_ACCESS_WIDTH.with(|widths| {
+        let mut widths = widths.borrow_mut();
+        if widths.len() >= 100_000 {
+            widths.clear();
+        }
+        widths
+            .entry(key)
+            .and_modify(|known| *known = (*known).max(bytes))
+            .or_insert(bytes);
+    });
+    LOAD_ACCESS_WIDTH_AT_ADDRESS.with(|widths| {
+        let mut widths = widths.borrow_mut();
+        if widths.len() >= 100_000 {
+            widths.clear();
+        }
+        widths
+            .entry(pointer.clone())
+            .and_modify(|known| *known = (*known).max(bytes))
+            .or_insert(bytes);
+    });
+}
+
+/// Says that a load of `bytes` bytes happens at this address, the way
+/// [`symbolic_load_value`] says it for a typed C load.
+///
+/// Kernel tests build `MemoryLoad` terms by hand, and a term carries no
+/// width. Without a declaration such a term is a width-less load and stands
+/// in the widest scalar, which no store four bytes away can be separated
+/// from. A test that means "the `int32` at this address" says so here.
+#[cfg(test)]
+pub(in crate::kernel) fn declare_load_access_width(pointer: &Pointer, bytes: u32) {
+    LOAD_ACCESS_WIDTH_AT_ADDRESS.with(|widths| {
+        widths
+            .borrow_mut()
+            .entry(pointer.clone())
+            .and_modify(|known| *known = (*known).max(bytes))
+            .or_insert(bytes);
+    });
+}
+
+/// The width of the C load recorded at this address in this snapshot, when
+/// one was. `None` means no typed load was seen here, and the caller stands
+/// in [`resource_tracker::widest_scalar_access_bytes`].
+pub(crate) fn recorded_load_access_width(memory: &SharedCMemory, pointer: &Pointer) -> Option<u32> {
+    LOAD_ACCESS_WIDTH
+        .with(|widths| {
+            widths
+                .borrow()
+                .get(&(memory.clone(), pointer.clone()))
+                .copied()
+        })
+        .or_else(|| {
+            // This snapshot saw no typed load here, but the address still has
+            // a width if any snapshot did: the C type at an address does not
+            // change with the snapshot a framing walk happens to start from.
+            LOAD_ACCESS_WIDTH_AT_ADDRESS.with(|widths| widths.borrow().get(pointer).copied())
+        })
+}
+
+/// The access width to use for a load named only by a term.
+pub(crate) fn load_access_width_or_widest(memory: &SharedCMemory, pointer: &Pointer) -> u32 {
+    recorded_load_access_width(memory, pointer)
+        .unwrap_or_else(crate::kernel::resource_tracker::widest_scalar_access_bytes)
+}
+
+/// How many bytes the access this variable names reads.
+///
+/// No `MemoryLoad` term carries its width, so this registry is where a
+/// caller holding only a name recovers one. `None` means the variable is not
+/// a registered load; a caller that needs a width anyway uses
+/// [`resource_tracker::widest_scalar_access_bytes`].
+pub(crate) fn registered_load_bytes_for_variable(variable: &Variable) -> Option<u32> {
+    LOAD_VARIABLE_REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .get(variable)
+            .map(|(_, _, _, _, bytes)| *bytes)
     })
 }
 
@@ -1068,7 +1197,7 @@ pub(crate) fn registered_load_origin_for_variable(
         registry
             .borrow()
             .get(variable)
-            .map(|(_, pointer, origin, _)| (origin.clone(), pointer.clone()))
+            .map(|(_, pointer, origin, _, _)| (origin.clone(), pointer.clone()))
     })
 }
 
@@ -2363,8 +2492,16 @@ fn offset_mentions_a_memory_load(offset: &PointerOffsetTerm) -> bool {
 /// stops verification loudly instead of silently conflating them; it is
 /// never cleared within a session, and exhausting its capacity is likewise
 /// a loud failure rather than a silent reset.
+/// The variable naming a load of `pointer` in `memory` whose width the
+/// caller cannot name. A raw `MemoryLoad` term records no access width, so
+/// this stands in the widest scalar one could be.
 pub(crate) fn load_variable_for_cell(memory: &SharedCMemory, pointer: &Pointer) -> Variable {
-    load_variable_for_cell_with_origin(memory, pointer, memory)
+    load_variable_for_cell_with_origin(
+        memory,
+        pointer,
+        load_access_width_or_widest(memory, pointer),
+        memory,
+    )
 }
 
 /// Mint the load identity for exactly this snapshot and pointer.
@@ -2375,13 +2512,24 @@ pub(crate) fn load_variable_for_cell(memory: &SharedCMemory, pointer: &Pointer) 
 /// the snapshot identity carried by an existing defining fact.  Keeping this
 /// narrow helper separate makes the selected snapshot explicit and avoids
 /// traversing or rewriting any of its contents.
-pub(crate) fn load_variable_for_exact_cell(memory: &SharedCMemory, pointer: &Pointer) -> Variable {
-    mint_load_variable_identity(memory, pointer, memory)
+pub(crate) fn load_variable_for_exact_cell(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+    bytes: u32,
+) -> Variable {
+    mint_load_variable_identity(memory, pointer, memory, bytes)
 }
 
+/// The variable naming a `bytes`-wide load of `pointer` in `memory`.
+///
+/// `bytes` is the access width, and it decides how far back the epoch walk
+/// may go: a store lands on this load exactly when it writes one of these
+/// bytes. A caller reading a term that records no width passes
+/// [`resource_tracker::widest_scalar_access_bytes`].
 pub(crate) fn load_variable_for_cell_with_origin(
     memory: &SharedCMemory,
     pointer: &Pointer,
+    bytes: u32,
     origin: &SharedCMemory,
 ) -> Variable {
     // Derive the variable from the cell's DAG epoch when one is recorded:
@@ -2389,18 +2537,19 @@ pub(crate) fn load_variable_for_cell_with_origin(
     // cell then share the variable, so bookkeeping drift and unrelated
     // stores do not mint new identities for one load.
     let epoch = crate::kernel::resource_tracker::last_same_point(
-        crate::kernel::resource_tracker::Resource::Cell(pointer),
+        crate::kernel::resource_tracker::Resource::Cell { pointer, bytes },
         &crate::kernel::resource_tracker::ProgramPoint::at(memory),
     )
     .map(|point| point.snapshot().clone());
     let memory = epoch.as_ref().unwrap_or(memory);
-    mint_load_variable_identity(memory, pointer, origin)
+    mint_load_variable_identity(memory, pointer, origin, bytes)
 }
 
 fn mint_load_variable_identity(
     memory: &SharedCMemory,
     pointer: &Pointer,
     origin: &SharedCMemory,
+    bytes: u32,
 ) -> Variable {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -2411,13 +2560,17 @@ fn mint_load_variable_identity(
     let current_epoch = LOAD_ORIGIN_EPOCH.with(std::cell::Cell::get);
     LOAD_VARIABLE_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
-        if let Some((known_memory, known_pointer, known_origin, known_epoch)) =
+        if let Some((known_memory, known_pointer, known_origin, known_epoch, known_bytes)) =
             registry.get_mut(&variable)
         {
             assert!(
                 known_memory == memory && known_pointer == pointer,
                 "load-variable collision: {variable:?} represents two distinct loads"
             );
+            // One entry stands for every access that resolved to this name,
+            // so its width has to cover all of them: a caller that reads the
+            // width back is asking how many bytes this name could depend on.
+            *known_bytes = (*known_bytes).max(bytes);
             // An origin from an earlier epoch was minted by another
             // function; this function's first mint is its origin.
             if *known_epoch != current_epoch {
@@ -2439,6 +2592,7 @@ fn mint_load_variable_identity(
                     pointer.clone(),
                     origin.clone(),
                     current_epoch,
+                    bytes,
                 ),
             );
         }
@@ -2484,7 +2638,18 @@ fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, 
             unreachable!("the pattern above matched a memory load");
         };
         return Some((
-            load_variable_for_cell_with_origin(memory, pointer, origin),
+            load_variable_for_cell_with_origin(
+                memory,
+                pointer,
+                // Either snapshot's recorded entry is this same load's own
+                // width, so the first one found is the answer. Taking the
+                // larger would let a miss on one side widen a width the
+                // other side knows exactly.
+                recorded_load_access_width(origin, pointer)
+                    .or_else(|| recorded_load_access_width(memory, pointer))
+                    .unwrap_or_else(crate::kernel::resource_tracker::widest_scalar_access_bytes),
+                origin,
+            ),
             canonical.clone(),
         ));
     }
@@ -2590,6 +2755,12 @@ pub(in crate::kernel) fn symbolic_load_value(
     pointer: &Pointer,
     value_type: CType,
 ) -> Option<CValue> {
+    // Every C load reaches the kernel through here with its type, and this
+    // is the only place the access width is still known: the `MemoryLoad`
+    // term built below records none, so a later caller holding only the term
+    // would have to assume the widest scalar. Recording it here is what lets
+    // an `int32` load keep being separated from a store one element away.
+    record_load_access_width(memory, pointer, value_type.byte_width());
     match value_type {
         CType::Void | CType::VoidPointer => None,
         CType::Bool => {

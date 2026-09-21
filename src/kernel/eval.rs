@@ -45,8 +45,11 @@ pub(crate) use memory_loads::canonicalized_offset_index_term;
 pub(crate) use memory_loads::check_canonical_at_creation;
 #[cfg(test)]
 pub(crate) use memory_loads::count_canonical_at_creation_violations;
+#[cfg(test)]
+pub(in crate::kernel) use memory_loads::declare_load_access_width;
 pub(crate) use memory_loads::is_load_variable;
 pub(crate) use memory_loads::is_load_variable_defining_fact;
+pub(crate) use memory_loads::load_access_width_or_widest;
 #[cfg(test)]
 pub(crate) use memory_loads::load_variable_for_cell;
 #[cfg(test)]
@@ -57,6 +60,7 @@ pub(crate) use memory_loads::offsets_have_same_canonical_form;
 pub(crate) use memory_loads::proposition_mentions_registered_load_variable;
 #[cfg(test)]
 pub(crate) use memory_loads::record_load_variable_defining_fact;
+pub(crate) use memory_loads::registered_load_bytes_for_variable;
 pub(crate) use memory_loads::registered_load_for_variable;
 pub(crate) use memory_loads::registered_load_origin_for_variable;
 pub(crate) use memory_loads::terms_have_same_canonical_form;

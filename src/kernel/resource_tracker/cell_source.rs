@@ -151,6 +151,11 @@ pub(in crate::kernel) enum RangeDisjointFromPointerEvidence {
     ExactSeparationFact(Proposition),
     DirectConstantOutside {
         index: i64,
+        /// The access width the index was judged against. A range is a byte
+        /// footprint, so an access wider than one element has to clear every
+        /// element it reaches, and checking cannot re-derive that from
+        /// the index alone.
+        bytes: u32,
         start: i64,
         end: i64,
     },
@@ -174,10 +179,15 @@ impl MemoryDagHopJustification {
 
     /// Check one completed local edge proof without asking a general solver
     /// to rediscover it. Returns false for the not-yet-typed branches.
+    ///
+    /// `bytes` is the access width the hop was recorded for. A hop is a claim
+    /// that a step missed *these* bytes, so checking it against a different
+    /// access is not the same claim.
     pub(in crate::kernel) fn checks(
         &self,
         derivation: &CMemoryDerivation,
         pointer: &Pointer,
+        bytes: u32,
         assumptions: &PureFactContext,
     ) -> bool {
         match self {
@@ -299,10 +309,9 @@ impl MemoryDagHopJustification {
                     return false;
                 };
                 ranges.len() == mutable_ranges.len()
-                    && ranges
-                        .iter()
-                        .zip(mutable_ranges)
-                        .all(|(evidence, range)| evidence.checks(range, pointer, assumptions))
+                    && ranges.iter().zip(mutable_ranges).all(|(evidence, range)| {
+                        evidence.checks(range, pointer, bytes, assumptions)
+                    })
             }
             Self::LoopHavocRanges { ranges } => {
                 let CMemoryDerivation::LoopHavoc {
@@ -313,10 +322,9 @@ impl MemoryDagHopJustification {
                     return false;
                 };
                 ranges.len() == mutable_ranges.len()
-                    && ranges
-                        .iter()
-                        .zip(mutable_ranges)
-                        .all(|(evidence, range)| evidence.checks(range, pointer, assumptions))
+                    && ranges.iter().zip(mutable_ranges).all(|(evidence, range)| {
+                        evidence.checks(range, pointer, bytes, assumptions)
+                    })
             }
             Self::AssumptionDependent(_) => false,
         }
@@ -359,10 +367,14 @@ impl PositiveTermEvidence {
 }
 
 impl RangeDisjointFromPointerEvidence {
+    /// `bytes` is the access width being checked, and it must be the one the
+    /// producer judged: a route that only clears one element is not a proof
+    /// about a wider access.
     pub(in crate::kernel) fn checks(
         &self,
         range: &CMemoryRange,
         pointer: &Pointer,
+        bytes: u32,
         assumptions: &PureFactContext,
     ) -> bool {
         match self {
@@ -376,14 +388,31 @@ impl RangeDisjointFromPointerEvidence {
                         assumptions,
                     )
             }
-            Self::DirectConstantOutside { index, start, end } => {
-                direct_constant_element_index(pointer, range.base()) == Some(*index)
+            Self::DirectConstantOutside {
+                index,
+                bytes: judged_bytes,
+                start,
+                end,
+            } => {
+                // Re-derive in the range's own element unit, exactly as the
+                // producer did: checking this in a different unit is how
+                // smart execution and certificate checking would drift apart
+                // while both looked healthy. The recorded width must also be
+                // the one being checked, or the certificate is a proof about
+                // some other access.
+                let element_width = range.element_width();
+                *judged_bytes == bytes
+                    && direct_constant_element_index(pointer, range.base(), element_width)
+                        == Some(*index)
                     && signed_bitvector_constant(range.start()) == Some(*start)
                     && signed_bitvector_constant(range.end()) == Some(*end)
-                    && (index < start || end <= index)
+                    && access_element_span(bytes, element_width).is_some_and(|span| {
+                        index.checked_add(span).is_some_and(|last| last <= *start) || *end <= *index
+                    })
             }
             Self::ForwardOffset { offset, positive } => {
-                forward_range_offset_from_pointer(range, pointer) == Some(offset.clone())
+                bytes <= range.element_width()
+                    && forward_range_offset_from_pointer(range, pointer) == Some(offset.clone())
                     && positive.checks(
                         &Bitvector32Term::add(offset.clone(), range.start.clone()),
                         assumptions,
@@ -412,6 +441,7 @@ impl MemoryDagCell {
         &self,
         memory: &SharedCMemory,
         pointer: &Pointer,
+        bytes: u32,
         assumptions: &PureFactContext,
     ) -> bool {
         let path = match self {
@@ -423,7 +453,7 @@ impl MemoryDagCell {
                 || current.derivation().as_ref() != Some(&hop.derivation)
                 || !hop
                     .justification
-                    .checks(hop.derivation.as_ref(), pointer, assumptions)
+                    .checks(hop.derivation.as_ref(), pointer, bytes, assumptions)
             {
                 return false;
             }
@@ -629,6 +659,7 @@ impl PointerInRangeEvidence {
 pub(in crate::kernel) fn memory_dag_cell_source(
     memory: &SharedCMemory,
     pointer: &Pointer,
+    bytes: u32,
     assumptions: &PureFactContext,
     cross_loop_havoc: bool,
 ) -> Option<MemoryDagCell> {
@@ -638,6 +669,7 @@ pub(in crate::kernel) fn memory_dag_cell_source(
     Some(memory_dag_cell_source_walk(
         memory,
         pointer,
+        bytes,
         assumptions,
         cross_loop_havoc,
     ))
@@ -646,6 +678,7 @@ pub(in crate::kernel) fn memory_dag_cell_source(
 fn memory_dag_cell_source_walk(
     memory: &SharedCMemory,
     pointer: &Pointer,
+    bytes: u32,
     assumptions: &PureFactContext,
     cross_loop_havoc: bool,
 ) -> MemoryDagCell {
@@ -673,7 +706,7 @@ fn memory_dag_cell_source_walk(
         let justification = match super::step_effect::affects(
             derivation.as_ref(),
             &current,
-            super::Resource::Cell(pointer),
+            super::Resource::Cell { pointer, bytes },
             &evidence,
         ) {
             super::step_effect::StepEffect::Affected => {

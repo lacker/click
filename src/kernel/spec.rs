@@ -7777,7 +7777,7 @@ mod integer_budget_tests {
             block: PointerBlock::Concrete("array".into()),
             offset: PointerOffsetTerm::Constant(0),
         };
-        let load = crate::kernel::eval::load_variable_for_exact_cell(&memory, &pointer);
+        let load = crate::kernel::eval::load_variable_for_exact_cell(&memory, &pointer, 4);
         let (registered_memory, registered_pointer) =
             crate::kernel::eval::registered_load_for_variable(&load)
                 .expect("the exact load must have a registry descriptor");

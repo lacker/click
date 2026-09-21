@@ -6582,6 +6582,9 @@ fn derived_order_contradiction_bridges_snapshot_loads() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
+    // The untouched cell is the `int32` at offset zero; a width-less load
+    // there spans eight bytes and the store at offset four does touch it.
+    crate::kernel::eval::declare_load_access_width(&preserved, 4);
     let before = CMemory::new();
     let after = before
         .clone()

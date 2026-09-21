@@ -1331,8 +1331,14 @@ mod tests {
             block: crate::kernel::PointerBlock::Concrete("static:test:values#static0".into()),
             offset: crate::kernel::PointerOffsetTerm::Constant(0),
         };
-        let variable =
-            crate::kernel::load_variable_for_cell_with_origin(&memory, &pointer, &memory);
+        // The spelled `MemoryLoad` alternative below records no width, so the
+        // named form has to stand in the width that term's naming assumes.
+        let variable = crate::kernel::load_variable_for_cell_with_origin(
+            &memory,
+            &pointer,
+            crate::kernel::load_access_width_or_widest(&memory, &pointer),
+            &memory,
+        );
         let proposition = Proposition::ConditionIs(
             ConditionTerm::Bitvector32Equal(
                 Box::new(Bitvector32Term::Variable(variable)),
@@ -1374,8 +1380,12 @@ mod tests {
             block: crate::kernel::PointerBlock::Concrete("heap:test".into()),
             offset: crate::kernel::PointerOffsetTerm::Constant(0),
         };
-        let dynamic_variable =
-            crate::kernel::load_variable_for_cell_with_origin(&memory, &dynamic_pointer, &memory);
+        let dynamic_variable = crate::kernel::load_variable_for_cell_with_origin(
+            &memory,
+            &dynamic_pointer,
+            crate::kernel::load_access_width_or_widest(&memory, &dynamic_pointer),
+            &memory,
+        );
         let dynamic_load = Proposition::ConditionIs(
             ConditionTerm::Bitvector32Equal(
                 Box::new(Bitvector32Term::Variable(dynamic_variable)),

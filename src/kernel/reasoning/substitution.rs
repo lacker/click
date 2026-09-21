@@ -8460,6 +8460,7 @@ mod integer_mixed_quantifier_tests {
                     byte_width: 4,
                 },
             },
+            4,
         );
         let replacement = IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
             MachineIntegerType::Int32,

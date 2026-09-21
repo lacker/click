@@ -1263,7 +1263,10 @@ pub(super) fn describe_unseparated_write(
 ) -> Option<String> {
     let (memory, load) = unresolved_load(value)?;
     let explanation = resource_tracker::explain_last_same(
-        resource_tracker::Resource::Cell(&load),
+        resource_tracker::Resource::Cell {
+            pointer: &load,
+            bytes: crate::kernel::load_access_width_or_widest(&memory, &load),
+        },
         &resource_tracker::ProgramPoint::at(&memory),
     );
     describe_resource_version_mismatch(
@@ -1378,7 +1381,10 @@ pub(super) fn describe_two_sided_version_mismatch(
         return None;
     }
     let explanation = resource_tracker::explain(
-        resource_tracker::Resource::Cell(&left_load),
+        resource_tracker::Resource::Cell {
+            pointer: &left_load,
+            bytes: crate::kernel::load_access_width_or_widest(&left_memory, &left_load),
+        },
         &resource_tracker::ProgramPoint::at(&left_memory),
         &resource_tracker::ProgramPoint::at(&right_memory),
     );
@@ -1465,7 +1471,7 @@ pub(super) fn describe_resource_version_mismatch(
         resource_tracker::OwnedResource::Block(block) => {
             describe_block_fact_stop(block, &stop.change, parameters, arguments)
         }
-        resource_tracker::OwnedResource::Cell(pointer) => {
+        resource_tracker::OwnedResource::Cell { pointer, .. } => {
             describe_cell_version_stop(pointer, stop, since, parameters, arguments)
         }
         // No term names a memory footprint, so no goal or premise a refusal
@@ -1493,8 +1499,11 @@ pub(super) fn describe_resource_version_mismatch(
     };
     if explanation.crossed_after > 0 {
         let steps = explanation.crossed_after;
-        let plural = if steps == 1 { "step" } else { "steps" };
-        let _ = write!(message, " The {steps} later {plural} do not touch it.");
+        let _ = if steps == 1 {
+            write!(message, " The one later step does not touch it.")
+        } else {
+            write!(message, " The {steps} later steps do not touch it.")
+        };
     }
     Some(message)
 }

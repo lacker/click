@@ -364,9 +364,13 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
 /// The program point a cell's load variable is named by, asked of the
 /// resource tracker: the one place that decides which resources are the same
 /// at which points (`crate::kernel::resource_tracker`).
-fn cell_version_point(memory: &SharedCMemory, pointer: &Pointer) -> Option<SharedCMemory> {
+fn cell_version_point(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+    bytes: u32,
+) -> Option<SharedCMemory> {
     crate::kernel::resource_tracker::last_same_point(
-        crate::kernel::resource_tracker::Resource::Cell(pointer),
+        crate::kernel::resource_tracker::Resource::Cell { pointer, bytes },
         &crate::kernel::resource_tracker::ProgramPoint::at(memory),
     )
     .map(|point| point.snapshot().clone())
@@ -715,8 +719,20 @@ fn checked_call_load_equality_evidence(
     if left_pointer != right_pointer {
         return None;
     }
-    let left = memory_dag_cell_source(left_memory, left_pointer, assumptions, true)?;
-    let right = memory_dag_cell_source(right_memory, right_pointer, assumptions, true)?;
+    let left = memory_dag_cell_source(
+        left_memory,
+        left_pointer,
+        crate::kernel::load_access_width_or_widest(left_memory, left_pointer),
+        assumptions,
+        true,
+    )?;
+    let right = memory_dag_cell_source(
+        right_memory,
+        right_pointer,
+        crate::kernel::load_access_width_or_widest(right_memory, right_pointer),
+        assumptions,
+        true,
+    )?;
     if !left.has_only_typed_hops()
         || !right.has_only_typed_hops()
         || !matches!(
@@ -882,7 +898,15 @@ impl CheckedLoadEquality {
                 };
                 endpoint.matches_term(load)
                     && cell.has_only_typed_hops()
-                    && cell.checks_walk_from(&endpoint.memory, &endpoint.pointer, assumptions)
+                    && cell.checks_walk_from(
+                        &endpoint.memory,
+                        &endpoint.pointer,
+                        crate::kernel::load_access_width_or_widest(
+                            &endpoint.memory,
+                            &endpoint.pointer,
+                        ),
+                        assumptions,
+                    )
                     && pointer.block == endpoint.pointer.block
                     && offset.checks(&pointer.offset, &endpoint.pointer.offset, assumptions)
                     && stored == value
@@ -951,10 +975,14 @@ impl CheckedLoadEquality {
                     && right.memory.memory() == expected_right
                     && assumptions.contains_assumed_exact(summary)
                     && ranges.len() == mutable_ranges.len()
-                    && ranges
-                        .iter()
-                        .zip(mutable_ranges)
-                        .all(|(evidence, range)| evidence.checks(range, &left.pointer, assumptions))
+                    && ranges.iter().zip(mutable_ranges).all(|(evidence, range)| {
+                        evidence.checks(
+                            range,
+                            &left.pointer,
+                            crate::kernel::load_access_width_or_widest(&left.memory, &left.pointer),
+                            assumptions,
+                        )
+                    })
             }
             CheckedLoadEqualityEvidence::SameCheckedCallEvent(evidence) => {
                 let (
@@ -977,12 +1005,18 @@ impl CheckedLoadEquality {
                         evidence.right.node().derivation().as_deref(),
                         Some(CMemoryDerivation::CallHavoc { .. })
                     )
-                    && evidence
-                        .left
-                        .checks_walk_from(left_memory, left_pointer, assumptions)
-                    && evidence
-                        .right
-                        .checks_walk_from(right_memory, right_pointer, assumptions)
+                    && evidence.left.checks_walk_from(
+                        left_memory,
+                        left_pointer,
+                        crate::kernel::load_access_width_or_widest(left_memory, left_pointer),
+                        assumptions,
+                    )
+                    && evidence.right.checks_walk_from(
+                        right_memory,
+                        right_pointer,
+                        crate::kernel::load_access_width_or_widest(right_memory, right_pointer),
+                        assumptions,
+                    )
             }
         }
     }
@@ -1067,7 +1101,13 @@ pub(crate) fn checked_stored_origin_equality(
         };
         let previous = EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true));
         let cell = with_extended_dag_bridging(|| {
-            memory_dag_cell_source(&endpoint.memory, &endpoint.pointer, assumptions, true)
+            memory_dag_cell_source(
+                &endpoint.memory,
+                &endpoint.pointer,
+                crate::kernel::load_access_width_or_widest(&endpoint.memory, &endpoint.pointer),
+                assumptions,
+                true,
+            )
         });
         EXPLICIT_DAG_CHECK.with(|flag| flag.set(previous));
         let Some(cell) = cell else {
@@ -1211,6 +1251,10 @@ pub(crate) fn checked_origin_load_equality(
                         typed_ranges_disjoint_from_pointer_evidence(
                             mutable_ranges,
                             &left_endpoint.pointer,
+                            crate::kernel::load_access_width_or_widest(
+                                &left_endpoint.memory,
+                                &left_endpoint.pointer,
+                            ),
                             assumptions,
                         )
                     })
@@ -1433,8 +1477,18 @@ impl AtomicMemoryLoadEqualityEvidence {
         };
         left_pointer == right_pointer
             && left_evidence.node() == right_evidence.node()
-            && left_evidence.checks_walk_from(left_start, left_pointer, assumptions)
-            && right_evidence.checks_walk_from(right_start, right_pointer, assumptions)
+            && left_evidence.checks_walk_from(
+                left_start,
+                left_pointer,
+                crate::kernel::load_access_width_or_widest(left_start, left_pointer),
+                assumptions,
+            )
+            && right_evidence.checks_walk_from(
+                right_start,
+                right_pointer,
+                crate::kernel::load_access_width_or_widest(right_start, right_pointer),
+                assumptions,
+            )
     }
 }
 
@@ -1585,17 +1639,50 @@ pub(in crate::kernel) fn forward_range_offset_from_pointer(
     }
 }
 
+/// The whole-element index of `pointer` in a range based at `base` whose
+/// elements are `element_width` bytes wide.
+///
+/// Two units meet here and are easy to confuse: the byte distance this
+/// computes between two addresses, and the element counts a range's bounds
+/// are written in. Dividing the bytes by anything but the range's own
+/// element width answers in a unit the bounds are not written in, so a
+/// `uint8` range's bounds would be read as `int32` indices and a pointer
+/// range's element one would be its own byte four.
+///
+/// An address part-way into an element has no element index at all. Byte four
+/// of an eight-byte element is *inside* element zero, not element one, and a
+/// caller asking "is this outside the range" must not be handed "element one"
+/// for it. `None` is the honest answer, and it declines the ladder.
 pub(in crate::kernel) fn direct_constant_element_index(
     pointer: &Pointer,
     base: &Pointer,
+    element_width: u32,
 ) -> Option<i64> {
+    let element_width = i64::from(element_width);
+    if element_width <= 0 {
+        return None;
+    }
     let bytes = signed_bitvector_constant(&pointer_byte_offset_from_base(pointer, base)?)?;
-    (bytes % 4 == 0).then_some(bytes / 4)
+    (bytes % element_width == 0).then_some(bytes / element_width)
 }
 
+/// How many of a range's elements a `bytes`-wide access covers, rounded up: an
+/// access is only outside the range when *every* element it touches is.
+pub(in crate::kernel) fn access_element_span(bytes: u32, element_width: u32) -> Option<i64> {
+    (element_width > 0).then(|| i64::from(bytes.div_ceil(element_width).max(1)))
+}
+
+/// Whether the `bytes` bytes at `pointer` can be shown to miss every byte of
+/// `range`.
+///
+/// `bytes` is the access width, and it is not decoration: a range is a byte
+/// footprint, and an access wider than one element reaches past the element
+/// its address names. Each route below therefore has to clear the whole
+/// access, not just its first byte.
 pub(in crate::kernel) fn typed_range_disjoint_from_pointer_evidence(
     range: &CMemoryRange,
     pointer: &Pointer,
+    bytes: u32,
     assumptions: &PureFactContext,
 ) -> Option<RangeDisjointFromPointerEvidence> {
     if range.base.blocks_proven_distinct(pointer) {
@@ -1609,13 +1696,26 @@ pub(in crate::kernel) fn typed_range_disjoint_from_pointer_evidence(
             fact.clone(),
         ));
     }
-    if let (Some(index), Some(start), Some(end)) = (
-        direct_constant_element_index(pointer, range.base()),
+    let element_width = range.element_width();
+    if let (Some(index), Some(span), Some(start), Some(end)) = (
+        direct_constant_element_index(pointer, range.base(), element_width),
+        access_element_span(bytes, element_width),
         signed_bitvector_constant(range.start()),
         signed_bitvector_constant(range.end()),
-    ) && (index < start || end <= index)
+    ) && (index.checked_add(span).is_some_and(|last| last <= start) || end <= index)
     {
-        return Some(RangeDisjointFromPointerEvidence::DirectConstantOutside { index, start, end });
+        return Some(RangeDisjointFromPointerEvidence::DirectConstantOutside {
+            index,
+            bytes,
+            start,
+            end,
+        });
+    }
+    // The forward-offset route proves the range begins strictly after this
+    // address, which is a gap of one element. That clears an access only as
+    // wide as an element; anything wider reaches into the range's first one.
+    if bytes > element_width {
+        return None;
     }
     let offset = forward_range_offset_from_pointer(range, pointer)?;
     let range_start = Bitvector32Term::add(offset.clone(), range.start.clone());
@@ -1783,11 +1883,12 @@ pub(in crate::kernel) fn owned_composition_store_separated_evidence(
 pub(in crate::kernel) fn typed_ranges_disjoint_from_pointer_evidence(
     ranges: &[CMemoryRange],
     pointer: &Pointer,
+    bytes: u32,
     assumptions: &PureFactContext,
 ) -> Option<Vec<RangeDisjointFromPointerEvidence>> {
     ranges
         .iter()
-        .map(|range| typed_range_disjoint_from_pointer_evidence(range, pointer, assumptions))
+        .map(|range| typed_range_disjoint_from_pointer_evidence(range, pointer, bytes, assumptions))
         .collect()
 }
 
@@ -1816,7 +1917,13 @@ pub(crate) fn pointer_load_offset_proven_equal(
     let Some((memory, pointer)) = load else {
         return false;
     };
-    let Some(cell) = memory_dag_cell_source(&memory, &pointer, assumptions, true) else {
+    let Some(cell) = memory_dag_cell_source(
+        &memory,
+        &pointer,
+        crate::kernel::load_access_width_or_widest(&memory, &pointer),
+        assumptions,
+        true,
+    ) else {
         return false;
     };
     let Some(CValue::Pointer(stored)) = cell.resolved_value(&pointer) else {
@@ -1888,8 +1995,20 @@ pub(super) fn memory_load_equality_evidence_at(
         });
     }
     let (Some(left), Some(right)) = (
-        memory_dag_cell_source(left_memory, pointer, assumptions, true),
-        memory_dag_cell_source(right_memory, pointer, assumptions, true),
+        memory_dag_cell_source(
+            left_memory,
+            pointer,
+            crate::kernel::load_access_width_or_widest(left_memory, pointer),
+            assumptions,
+            true,
+        ),
+        memory_dag_cell_source(
+            right_memory,
+            pointer,
+            crate::kernel::load_access_width_or_widest(right_memory, pointer),
+            assumptions,
+            true,
+        ),
     ) else {
         return None;
     };
@@ -1994,8 +2113,8 @@ pub(super) fn atomic_memory_load_equality_evidence(
             .map(AtomicMemoryLoadEqualityEvidence::SameCell)
             .or_else(|| {
                 let (Some(left_cell), Some(right_cell)) = (
-                    memory_dag_cell_source(left_memory, left_pointer, assumptions, true),
-                    memory_dag_cell_source(right_memory, right_pointer, assumptions, true),
+                    memory_dag_cell_source(left_memory, left_pointer, crate::kernel::load_access_width_or_widest(left_memory, left_pointer), assumptions, true),
+                    memory_dag_cell_source(right_memory, right_pointer, crate::kernel::load_access_width_or_widest(right_memory, right_pointer), assumptions, true),
                 ) else {
                     return None;
                 };
@@ -2054,7 +2173,13 @@ pub(crate) fn resolve_load_along_memory_derivations(
     let _assumptions_id_scope = assumptions.enter_id_scope();
     let previous = EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true));
     let result = with_extended_dag_bridging(|| {
-        match memory_dag_cell_source(memory, pointer, assumptions, true)? {
+        match memory_dag_cell_source(
+            memory,
+            pointer,
+            crate::kernel::load_access_width_or_widest(memory, pointer),
+            assumptions,
+            true,
+        )? {
             MemoryDagCell::Stored { value, .. } => match value {
                 CValue::Int16(value)
                 | CValue::Int32(value)
@@ -2136,7 +2261,7 @@ pub(crate) fn explicit_atomic_equality_from_memory_derivations(
                 return false;
             };
             matches!(
-                memory_dag_cell_source(memory, pointer, assumptions, true)
+                memory_dag_cell_source(memory, pointer, crate::kernel::load_access_width_or_widest(memory, pointer), assumptions, true)
                     .and_then(|cell| cell.resolved_value(pointer)),
                 Some(CValue::Int16(resolved) | CValue::Int32(resolved) | CValue::UInt8(resolved) | CValue::UInt16(resolved) | CValue::UInt32(resolved))
                     if resolved == *value
@@ -2370,8 +2495,22 @@ fn memories_directly_match_for_pointer_load(
     // effect summary whose `before` is the later live snapshot.
     if !pointer.block.starts_with("local:")
         && let (Some(left_epoch), Some(right_epoch)) = (
-            cell_version_point(&crate::kernel::intern_c_memory(left.clone()), pointer),
-            cell_version_point(&crate::kernel::intern_c_memory(right.clone()), pointer),
+            cell_version_point(
+                &crate::kernel::intern_c_memory(left.clone()),
+                pointer,
+                crate::kernel::load_access_width_or_widest(
+                    &crate::kernel::intern_c_memory(left.clone()),
+                    pointer,
+                ),
+            ),
+            cell_version_point(
+                &crate::kernel::intern_c_memory(right.clone()),
+                pointer,
+                crate::kernel::load_access_width_or_widest(
+                    &crate::kernel::intern_c_memory(right.clone()),
+                    pointer,
+                ),
+            ),
         )
         && left_epoch == right_epoch
     {
@@ -3099,7 +3238,14 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                             // could not cross anything. Walking the original
                             // snapshot lets two loads of one unwritten cell at
                             // different points share one canonical form.
-                            let epoch = cell_version_point(memory, &canonical_pointer);
+                            let epoch = cell_version_point(
+                                memory,
+                                &canonical_pointer,
+                                crate::kernel::load_access_width_or_widest(
+                                    memory,
+                                    &canonical_pointer,
+                                ),
+                            );
                             let epoch = epoch.as_ref().unwrap_or(memory);
                             results.push(Bitvector32Term::MemoryLoad(
                                 canonical_projected_load_memory(epoch, &canonical_pointer),
@@ -3143,7 +3289,14 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                                 value = next;
                                 continue;
                             }
-                            let epoch = cell_version_point(next_memory, &canonical_pointer);
+                            let epoch = cell_version_point(
+                                next_memory,
+                                &canonical_pointer,
+                                crate::kernel::load_access_width_or_widest(
+                                    next_memory,
+                                    &canonical_pointer,
+                                ),
+                            );
                             let epoch = epoch.as_ref().unwrap_or(next_memory);
                             results.push(Bitvector32Term::MemoryLoad(
                                 canonical_projected_load_memory(epoch, &canonical_pointer),

@@ -152,8 +152,19 @@ impl std::fmt::Debug for StatePoint<'_> {
 /// build and pass a resource do not change.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Resource<'a> {
-    /// One memory cell, at this address.
-    Cell(&'a Pointer),
+    /// One memory cell: this many bytes, starting at this address.
+    ///
+    /// The width is part of the resource because separation is a question
+    /// about bytes, not addresses. A store at `p + 4` is a different
+    /// *address* from `p` by every address test there is, and it still
+    /// overwrites the upper half of an eight-byte cell at `p`. A cell asked
+    /// about without its width would be separated from that store and keep
+    /// its old value across it.
+    ///
+    /// Callers that cannot name a width — a raw `MemoryLoad` term records
+    /// none — pass [`MAX_SCALAR_ACCESS_BYTES`]. Over-stating a width can
+    /// only shrink the separated set, never grow it.
+    Cell { pointer: &'a Pointer, bytes: u32 },
     /// A whole memory block, as a pure function reads it through an array
     /// argument: the footprint is every cell reachable through the pointer.
     Block(&'a PointerBlock),
@@ -185,10 +196,24 @@ pub(crate) enum Resource<'a> {
     },
 }
 
+/// The width a cell resource stands in when its caller cannot name one.
+///
+/// A raw `MemoryLoad` term records no access width, so a caller holding only
+/// the term must assume the widest scalar the kernel can load. Over-stating
+/// the width only shrinks the separated set, so this is the fail-closed
+/// reading of a width the term does not carry.
+pub(crate) fn widest_scalar_access_bytes() -> u32 {
+    u32::try_from(crate::kernel::MAX_SCALAR_ACCESS_BYTES)
+        .expect("the widest scalar access is a small positive byte count")
+}
+
 impl Resource<'_> {
     pub(crate) fn to_owned(self) -> OwnedResource {
         match self {
-            Self::Cell(pointer) => OwnedResource::Cell(pointer.clone()),
+            Self::Cell { pointer, bytes } => OwnedResource::Cell {
+                pointer: pointer.clone(),
+                bytes,
+            },
             Self::Block(block) => OwnedResource::Block(block.clone()),
             Self::Ranges(ranges) => OwnedResource::Ranges(ranges.to_vec()),
             Self::AnyMemory => OwnedResource::AnyMemory,
@@ -219,7 +244,10 @@ impl Resource<'_> {
 /// [`Resource`] owned, for the answers a diagnostic keeps past the question.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum OwnedResource {
-    Cell(Pointer),
+    Cell {
+        pointer: Pointer,
+        bytes: u32,
+    },
     Block(PointerBlock),
     Ranges(Vec<CMemoryRange>),
     AnyMemory,
@@ -237,7 +265,10 @@ pub(crate) enum OwnedResource {
 impl OwnedResource {
     pub(crate) fn as_resource(&self) -> Resource<'_> {
         match self {
-            Self::Cell(pointer) => Resource::Cell(pointer),
+            Self::Cell { pointer, bytes } => Resource::Cell {
+                pointer,
+                bytes: *bytes,
+            },
             Self::Block(block) => Resource::Block(block),
             Self::Ranges(ranges) => Resource::Ranges(ranges),
             Self::AnyMemory => Resource::AnyMemory,
@@ -517,7 +548,9 @@ impl Explanation {
 /// tracker call on the hot path.
 pub(crate) fn last_same_point(resource: Resource<'_>, at: &ProgramPoint) -> Option<ProgramPoint> {
     match resource {
-        Resource::Cell(pointer) => cell_last_same_point(at.snapshot(), pointer).map(ProgramPoint),
+        Resource::Cell { pointer, bytes } => {
+            cell_last_same_point(at.snapshot(), pointer, bytes).map(ProgramPoint)
+        }
         Resource::Block(block) => Some(ProgramPoint(block_last_same_point(at.snapshot(), block))),
         // No term names a memory footprint, so a footprint has no naming path
         // to be the oldest point of. Its one caller knows both ends of the
@@ -542,8 +575,8 @@ pub(crate) fn last_same_point(resource: Resource<'_>, at: &ProgramPoint) -> Opti
 /// naming path does no extra work.
 pub(crate) fn last_same(resource: Resource<'_>, at: &ProgramPoint) -> Option<LastSame> {
     match resource {
-        Resource::Cell(pointer) => {
-            let cell = cell_source_for_naming(at.snapshot(), pointer)?;
+        Resource::Cell { pointer, bytes } => {
+            let cell = cell_source_for_naming(at.snapshot(), pointer, bytes)?;
             let point = ProgramPoint(cell.node().clone());
             let stopped_by = Stop::at_point(&point, resource);
             Some(LastSame { point, stopped_by })
@@ -777,7 +810,9 @@ fn version_at_state(resource: Resource<'_>, point: StatePoint<'_>) -> Option<Ver
             .cloned()
             .map(Version::Count),
         // A memory resource's version is a program point, not a value.
-        Resource::Cell(_) | Resource::Block(_) | Resource::Ranges(_) | Resource::AnyMemory => None,
+        Resource::Cell { .. } | Resource::Block(_) | Resource::Ranges(_) | Resource::AnyMemory => {
+            None
+        }
     }
 }
 
@@ -1003,10 +1038,16 @@ pub(crate) fn block_epoch_memo_len() -> usize {
 /// over recorded edges. Snapshots that differ only by effects the recorded
 /// history proves disjoint from the cell share a point, so load variables
 /// stay stable across them.
-fn cell_last_same_point(memory: &SharedCMemory, pointer: &Pointer) -> Option<SharedCMemory> {
+fn cell_last_same_point(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+    bytes: u32,
+) -> Option<SharedCMemory> {
     // Assumption-free and a function of the interned snapshot, the pointer,
-    // and the recorded edges, so the answer is memoized per query.
-    let key = (memory.clone(), pointer.clone());
+    // the access width and the recorded edges, so the answer is memoized per
+    // query. The width is part of the key because it is part of the
+    // question: a wider access stops at stores a narrower one crosses.
+    let key = (memory.clone(), pointer.clone(), bytes);
     if let Some(hit) = CELL_EPOCH_MEMO.with(|memo| memo.borrow().get(&key).cloned()) {
         return hit;
     }
@@ -1014,7 +1055,7 @@ fn cell_last_same_point(memory: &SharedCMemory, pointer: &Pointer) -> Option<Sha
         "kernel",
         "canonical form",
         "cell epoch walk",
-        || cell_source_for_naming(memory, pointer).map(|cell| cell.node().clone()),
+        || cell_source_for_naming(memory, pointer, bytes).map(|cell| cell.node().clone()),
     );
     CELL_EPOCH_MEMO.with(|memo| {
         let mut memo = memo.borrow_mut();
@@ -1034,15 +1075,22 @@ fn cell_last_same_point(memory: &SharedCMemory, pointer: &Pointer) -> Option<Sha
 /// Every tracker answer about a cell goes through here, so a diagnostic
 /// explains the name the term actually got rather than a walk run under
 /// different flags.
-fn cell_source_for_naming(memory: &SharedCMemory, pointer: &Pointer) -> Option<MemoryDagCell> {
+fn cell_source_for_naming(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+    bytes: u32,
+) -> Option<MemoryDagCell> {
     with_extended_dag_bridging(|| {
-        memory_dag_cell_source(memory, pointer, &PureFactContext::new(), false)
+        memory_dag_cell_source(memory, pointer, bytes, &PureFactContext::new(), false)
     })
 }
 
 thread_local! {
     static CELL_EPOCH_MEMO: std::cell::RefCell<
-        std::collections::HashMap<(crate::kernel::SharedCMemory, Pointer), Option<crate::kernel::SharedCMemory>>,
+        std::collections::HashMap<
+            (crate::kernel::SharedCMemory, Pointer, u32),
+            Option<crate::kernel::SharedCMemory>,
+        >,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
@@ -1291,9 +1339,14 @@ fn collect_argument_reads(argument: &PureFunctionArgument, reads: &mut Vec<Resou
 
 fn collect_bitvector_reads(term: &Bitvector32Term, reads: &mut Vec<ResourceRead>) {
     match term {
+        // A raw load term records no access width, so this read covers the
+        // widest scalar one could be.
         Bitvector32Term::MemoryLoad(memory, pointer) => push_read(
             reads,
-            OwnedResource::Cell(pointer.as_ref().clone()),
+            OwnedResource::Cell {
+                pointer: pointer.as_ref().clone(),
+                bytes: widest_scalar_access_bytes(),
+            },
             ProgramPoint::at(memory),
         ),
         // A load variable reads the cell it was minted for, at the point its
@@ -1304,7 +1357,11 @@ fn collect_bitvector_reads(term: &Bitvector32Term, reads: &mut Vec<ResourceRead>
             {
                 push_read(
                     reads,
-                    OwnedResource::Cell(pointer),
+                    OwnedResource::Cell {
+                        pointer,
+                        bytes: crate::kernel::registered_load_bytes_for_variable(variable)
+                            .unwrap_or_else(widest_scalar_access_bytes),
+                    },
                     ProgramPoint::at(&memory),
                 );
             }

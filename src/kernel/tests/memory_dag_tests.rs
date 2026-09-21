@@ -446,6 +446,7 @@ fn retained_store_hops_carry_locally_checkable_distinctness_proofs() {
     assert!(constant_hop.justification.checks(
         constant_hop.derivation.as_ref(),
         &constant_read,
+        4,
         &PureFactContext::new(),
     ));
     let constant_left = Bitvector32Term::MemoryLoad(
@@ -471,6 +472,9 @@ fn retained_store_hops_carry_locally_checkable_distinctness_proofs() {
     let read_index = Bitvector32Term::Variable(Variable(102));
     let symbolic_write = root.offset_by_int32_elements(write_index.clone());
     let symbolic_read = root.offset_by_int32_elements(read_index.clone());
+    // An `int32` element read. A width-less load would stand in eight bytes
+    // and reach into the next element, which `i != j` cannot separate.
+    crate::kernel::eval::declare_load_access_width(&symbolic_read, 4);
     let inequality = ConditionTerm::equal(write_index, read_index);
     let assumptions = PureFactContext::new().assume_condition(inequality.clone(), false);
     let after_symbolic = base.store(symbolic_write, CValue::Int32(Bitvector32Term::Constant(9)));
@@ -491,12 +495,14 @@ fn retained_store_hops_carry_locally_checkable_distinctness_proofs() {
     assert!(symbolic_hop.justification.checks(
         symbolic_hop.derivation.as_ref(),
         &symbolic_read,
+        4,
         &assumptions,
     ));
     assert!(
         !symbolic_hop.justification.checks(
             symbolic_hop.derivation.as_ref(),
             &symbolic_read,
+            4,
             &PureFactContext::new(),
         ),
         "the retained exact premise must still be present during check"
@@ -591,12 +597,13 @@ fn retained_common_base_store_hop_carries_a_signed_order_path() {
     );
     assert!(
         hop.justification
-            .checks(hop.derivation.as_ref(), &read, &assumptions,)
+            .checks(hop.derivation.as_ref(), &read, 4, &assumptions)
     );
     assert!(
         !hop.justification.checks(
             hop.derivation.as_ref(),
             &read,
+            4,
             &PureFactContext::new().assume_condition(second, true),
         ),
         "the retained path must still have every named premise"
@@ -704,7 +711,7 @@ fn store_hop_retains_direct_or_composed_separated_range_authority() {
         .derivation()
         .expect("the written snapshot retains its store");
     assert!(
-        !composed.checks(derivation.as_ref(), &load, &PureFactContext::new(),),
+        !composed.checks(derivation.as_ref(), &load, 4, &PureFactContext::new()),
         "the retained composition must still be present during checking"
     );
 }
@@ -776,7 +783,7 @@ fn separated_range_store_hop_retains_symbolic_membership_bounds() {
     ));
     assert!(
         hop.justification
-            .checks(hop.derivation.as_ref(), &load, &assumptions)
+            .checks(hop.derivation.as_ref(), &load, 4, &assumptions)
     );
 
     let missing_successor = PureFactContext::new()
@@ -786,7 +793,7 @@ fn separated_range_store_hop_retains_symbolic_membership_bounds() {
         .assume_condition(zero_le_load, true);
     assert!(
         !hop.justification
-            .checks(hop.derivation.as_ref(), &load, &missing_successor),
+            .checks(hop.derivation.as_ref(), &load, 4, &missing_successor),
         "the retained successor bound must still be present"
     );
     let retargeted = load_base.offset_by_int32_elements(Bitvector32Term::add(
@@ -795,7 +802,7 @@ fn separated_range_store_hop_retains_symbolic_membership_bounds() {
     ));
     assert!(
         !hop.justification
-            .checks(hop.derivation.as_ref(), &retargeted, &assumptions),
+            .checks(hop.derivation.as_ref(), &retargeted, 4, &assumptions),
         "the membership evidence must remain tied to its exact index"
     );
 }
@@ -1267,6 +1274,10 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
             byte_width: 4,
         },
     };
+    // An `int32` element read. The forward-offset route proves the havoc
+    // range starts one element later, which clears a four-byte access; a
+    // width-less load would stand in eight bytes and reach into it.
+    crate::kernel::eval::declare_load_access_width(&data, 4);
     let len = Bitvector32Term::Variable(Variable(203));
     let separation = Proposition::CResourceSeparate {
         left: CResource::Memory(memory_range(owner.clone(), 0, 4)),
@@ -1358,6 +1369,9 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
 fn loadable_bound_check_bridges_len_forms_across_block_and_prune_edges() {
     let entry = CMemory::new().with_block("arg-memory", 64);
     let len_pointer = arc_pointer(0);
+    // `len` is an `int32` field. A width-less load stands in eight bytes,
+    // which the neighbouring store at offset four overlaps.
+    crate::kernel::eval::declare_load_access_width(&len_pointer, 4);
     let len_at_entry = Bitvector32Term::MemoryLoad(
         crate::kernel::intern_c_memory_ref(&entry),
         Box::new(len_pointer.clone()),

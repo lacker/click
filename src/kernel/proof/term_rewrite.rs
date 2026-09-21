@@ -1349,7 +1349,12 @@ impl<'a> TermRewrite<'a> {
         let rewritten = if rewritten == pointer {
             variable
         } else {
-            crate::kernel::eval::load_variable_for_exact_cell(&memory, &rewritten)
+            crate::kernel::eval::load_variable_for_exact_cell(
+                &memory,
+                &rewritten,
+                crate::kernel::registered_load_bytes_for_variable(&variable)
+                    .unwrap_or_else(crate::kernel::resource_tracker::widest_scalar_access_bytes),
+            )
         };
         self.changed |= rewritten != variable;
         self.registered_load_cache.insert(cache_key, rewritten);
@@ -4279,6 +4284,7 @@ mod tests {
                         byte_width: 4,
                     },
                 },
+                4,
             );
             for _ in 0..depth {
                 load = crate::kernel::eval::load_variable_for_exact_cell(
@@ -4296,6 +4302,7 @@ mod tests {
                             }),
                         ),
                     },
+                    4,
                 );
             }
             let body = IntegerTerm::Machine(crate::kernel::SharedMachineIntegerTerm::intern(
@@ -6370,7 +6377,7 @@ mod tests {
                 },
             };
             let mut load =
-                crate::kernel::eval::load_variable_for_exact_cell(&memory, &leaf_pointer);
+                crate::kernel::eval::load_variable_for_exact_cell(&memory, &leaf_pointer, 4);
             for _ in 0..depth {
                 load = crate::kernel::eval::load_variable_for_exact_cell(
                     &memory,
@@ -6378,6 +6385,7 @@ mod tests {
                         block: PointerBlock::Concrete("array".into()),
                         offset: PointerOffsetTerm::Variable(load),
                     },
+                    4,
                 );
             }
             let atom = Proposition::CMemoryLoadable {

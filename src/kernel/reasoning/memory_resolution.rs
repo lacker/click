@@ -1213,6 +1213,51 @@ pub(in crate::kernel) fn pointer_offsets_with_common_base_distinctness_condition
     left: &Pointer,
     right: &Pointer,
 ) -> Option<ConditionTerm> {
+    let (left_index, right_index) = common_base_index_offsets(left, right)?;
+    if let (Some(left), Some(right)) = (left_index.as_const(), right_index.as_const()) {
+        return Some(ConditionTerm::Constant(left == right));
+    }
+    let (left_index, right_index, _) = element_indices_of(&left_index, &right_index)?;
+    Some(ConditionTerm::equal(left_index, right_index))
+}
+
+/// The element indices the common-base ladder compares, counted in the
+/// element width they share.
+///
+/// A caller that needs more than "are these two addresses different" — how
+/// many bytes apart they are, or which of them is the lower — needs the
+/// indices themselves, not just the equality built from them. The byte
+/// question a store hop actually asks is one of those callers: an address
+/// ladder proving the indices differ guarantees a gap of one element, and
+/// whether one element is enough depends on how wide the two accesses are.
+pub(in crate::kernel) fn common_base_element_indices(
+    left: &Pointer,
+    right: &Pointer,
+) -> Option<(Bitvector32Term, Bitvector32Term, u32)> {
+    let (left_index, right_index) = common_base_index_offsets(left, right)?;
+    element_indices_of(&left_index, &right_index)
+}
+
+/// Convert a cancelled index pair into element indices of their common
+/// width. A constant that is not a whole number of elements has no element
+/// index, which is how an address sitting part-way into an element declines
+/// the ladder rather than rounding itself onto an element boundary.
+fn element_indices_of(
+    left_index: &PointerOffsetTerm,
+    right_index: &PointerOffsetTerm,
+) -> Option<(Bitvector32Term, Bitvector32Term, u32)> {
+    let element_width = common_pointer_offset_element_width(left_index, right_index)?;
+    let left = element_index_from_offset(left_index, element_width)?;
+    let right = element_index_from_offset(right_index, element_width)?;
+    Some((left, right, element_width))
+}
+
+/// Cancel a structurally identical additive base from two same-block offsets
+/// and return what remains on each side.
+fn common_base_index_offsets(
+    left: &Pointer,
+    right: &Pointer,
+) -> Option<(PointerOffsetTerm, PointerOffsetTerm)> {
     if left.block != right.block {
         return None;
     }
@@ -1251,17 +1296,7 @@ pub(in crate::kernel) fn pointer_offsets_with_common_base_distinctness_condition
         _ => None,
     };
     let (left_index, right_index) = index_pair?;
-    if let (Some(left), Some(right)) = (left_index.as_const(), right_index.as_const()) {
-        return Some(ConditionTerm::Constant(left == right));
-    }
-    let element_width = common_pointer_offset_element_width(left_index, right_index)?;
-    let (Some(left_index), Some(right_index)) = (
-        element_index_from_offset(left_index, element_width),
-        element_index_from_offset(right_index, element_width),
-    ) else {
-        return None;
-    };
-    Some(ConditionTerm::equal(left_index, right_index))
+    Some((left_index.clone(), right_index.clone()))
 }
 
 pub(in crate::kernel) fn pointers_proven_equal(

@@ -2714,7 +2714,7 @@ mod checked_proposition_index_tests {
                 .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(2))),
         );
         let folded = |memory: &SharedCMemory, accumulator, item| {
-            let load = crate::kernel::eval::load_variable_for_exact_cell(memory, &pointer);
+            let load = crate::kernel::eval::load_variable_for_exact_cell(memory, &pointer, 4);
             IntegerTerm::range_fold(
                 IntegerRangeFoldIndex::Integer {
                     start: IntegerTerm::constant_i64(0).into(),
