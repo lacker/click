@@ -225,6 +225,33 @@ logarithmic. The known violation of the
 havoc, whose cost is cells times symbolic loans in one block; it is pinned
 as a measurement.
 
+## Suspended worker recovery (internal checkpoint)
+
+`src/kernel/threads.rs` uses the same checked partition and verified-call
+summary as synchronous calls, but keeps the worker's output resources and
+postconditions in an opaque completion registry. Spawn requires termination
+evidence for the exact verified function. Failed creation preserves the
+parent; an empty or ambiguous summary refuses rather than removing its path.
+Successful creation exposes only the mutable-footprint havoc to the parent.
+
+Join composes the explicit worker output delta into the current parent frame
+and closes just that worker's loans against the current ledger. It never
+restores the saved parent ledger or memory. This permits two disjoint workers
+to join in either order while the other worker's job view stays protected.
+A registry entry is consumed once; a foreign handle or a user resource token
+cannot authorize recovery. The runtime assumption that a valid join succeeds
+is explicit and scoped to this parent's live, terminating child.
+
+This is an internal ownership checkpoint, not a C threading API. It supports
+explicit external-memory ownership and nonescaping stable views. Transfers of
+caller stack/global/static storage are refused until ordinary accesses to that
+storage enforce thread authority; dropping an ownership fact alone would not
+block the caller's implicit storage access. A reborrow pins its
+parent share, so a second overlapping reader is refused until explicit share
+splitting and recombination are implemented at the thread boundary. Pthread
+imports, handle stores, result branches, artifact integration, heap protocols,
+and composite or escaping borrows remain outside this checkpoint.
+
 ## Model-only extensions
 
 `src/kernel/tests/loan_model_tests.rs` is an executable model with a
@@ -234,7 +261,7 @@ reborrows, a returned field loan, a mutex handle with an invariant-owned
 payload and one guard, and a thread-local cell confined to its context.
 These are checks of the abstraction boundaries for later threading and Rust
 work, not verified concurrency: scheduling, atomics, Rust's alias rules,
-production reborrows, and thread APIs stay outside the kernel.
+exclusive production reborrows and C thread APIs remain outside this checkpoint.
 
 ## Regression map
 
@@ -254,6 +281,7 @@ production reborrows, and thread APIs stay outside the kernel.
 | Effects | `candidate_rejects_mutable_effect_overlapping_a_composite_view_piece`, `candidate_allows_a_mutable_effect_reserved_from_another_owned_occurrence` |
 | Callbacks and refinement | `stable_view_refinement_uses_checked_variance_for_subranges`, `mdtests/rb_augment_callbacks_helper_owns_rejects_unseparated.md`, `mdtests/rb_augment_callbacks_helper_calls_after_close_through_view.md` (a viewed suite's callback stays callable after an open closes), `mdtests/rb_augment_callbacks_helper_rejects_call_after_close.md` (an owned suite's does not) |
 | Loops and branches | `loop_havoc_requires_a_checked_set_disjoint_from_active_loans`, `loop_back_edge_refuses_a_dropped_share_or_a_regenerated_root`, `abstract_join_rejects_a_loan_ended_on_only_one_arm` |
+| Suspended workers | `src/kernel/tests/thread_transition_tests.rs` (both join orders, refusal paths, scoped termination, withheld guarantees, backing lifetime, and four-size recovery scaling) |
 | Evidence | `hostile_transition_payload_is_rechecked`, `transitions_are_bound_to_their_exact_predecessor`, `session_rejects_a_stale_identity_before_reverification` |
 | Scaling | the four-size curves in `src/kernel/loans.rs`, `interface_binding_inheritance_is_near_linear_in_the_binding_count`, `loop_head_havoc_work_over_cells_and_symbolic_loans` |
 | Model | the `r27_`, `r28_`, `r29_`, and `r30_` tests in `loan_model_tests.rs` |

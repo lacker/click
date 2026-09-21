@@ -86,12 +86,38 @@ invariants no longer shift a later universal onto the false guard.
 reproduction. Changed-state break exits do not assign exit spellings to old
 loop-head facts. This repair also adds no thread semantics.
 
-The modeled header is not a locked import of glibc headers, and no pthread
-external contract, checked spawn/join operation, scheduling/memory-model
-rule, concurrent parent sidecar, or verified concurrency example has landed. In particular, the
-numeric representation of `pthread_t` grants no completion authority; only
-a checked success transition may create a joinable right. Do not present a
-successful parse or native compiler syntax check as race-freedom evidence.
+The internal ownership checkpoint now lives in `src/kernel/threads.rs`.
+It uses the ordinary verified-call engine once to check a terminating worker's
+entry and summary, retaining the output delta and postconditions behind an
+opaque completion right. Failed creation preserves the complete parent path;
+an empty or ambiguous worker summary is an explicit refusal. Join consumes
+one right and recovers that worker's loans against the current parent ledger,
+without restoring a saved frame, memory, or ledger. Two workers with disjoint
+owned ranges and borrowed job views can join in either order. Kernel tests
+cover overlapping writers, duplicate and foreign joins, missing or mismatched
+termination evidence, withheld postconditions, pinned backing scopes, and
+recovery work over 8, 16, 32, and 64 outstanding workers.
+
+This checkpoint supports explicit ownership of external memory and nonescaping
+views only. Transfers of caller stack/global/static storage are refused: ordinary
+C accesses to that storage can bypass explicit ownership, so per-context storage
+authority must be enforced before permitting such ownership transfers. The frozen
+parent's output buffer is a caller-supplied parameter; its stack-resident job
+records instead need local backing for stable views and lifetime checks through
+join.
+A second reader cannot yet reborrow an already pinned parent share; the shared
+reader companion still needs explicit share splitting and recombination.
+Composite/escaping borrowing, heap protocols, and counted-resource deltas are
+also outside this internal slice. The scoped valid-join-success assumption is
+explicit in the internal operation.
+
+The modeled header is not a locked import of glibc headers. No C call site
+invokes the internal operations yet: pthread declaration recognition, binding
+the opaque right to the written `pthread_t`, ordinary result-status branching,
+artifact integration, the concurrent parent sidecar, and verified concurrency
+examples remain to be implemented. The numeric representation of `pthread_t`
+grants no completion authority. Do not present the internal tests, a successful
+parse, or native compiler syntax check as race-freedom evidence for the C probe.
 
 Build on the authority conservation, stable borrowing, observation support,
 and checked transitions in the [stable-views record](../docs/internals/stable-views.md).
@@ -127,8 +153,8 @@ or serial execution wrappers to make their proofs work.
 
 ## Next implementation sequence
 
-1. Add a checked internal spawn/join transition with focused positive and
-   hostile kernel tests. On a nonzero `pthread_create` result, the parent keeps
+1. Build on the checked internal spawn/join ownership checkpoint and its
+   focused positive and hostile kernel tests. On a nonzero `pthread_create` result, the parent keeps
    its task resources and no child/right exists. On zero, exactly one child
    receives the selected worker task and the parent receives one linear right
    tied to the written `pthread_t`, callback, argument, and task. A valid
