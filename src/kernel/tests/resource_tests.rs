@@ -6562,3 +6562,133 @@ mod constant_range_containment {
         ));
     }
 }
+
+/// `split_memory_range` states the residues in the owner's coordinates, so the
+/// requirement's endpoints cross a base delta to get there. That join used the
+/// modular `Bitvector32Term::add` and installed the result as the residues'
+/// own bounds, so a carry left the holder an owned fact over cells the
+/// requirement had taken — and `consumed_range_is_well_formed` cannot see it,
+/// because it compares the same two wrapped terms with each other.
+mod residue_bounds {
+    use super::*;
+
+    fn external(elements: i64) -> Pointer {
+        Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(elements * 4),
+        }
+    }
+
+    fn range(base: Pointer, start: Bitvector32Term, end: Bitvector32Term) -> CMemoryRange {
+        CMemoryRange::new(base, start, end)
+    }
+
+    fn constant(value: i32) -> Bitvector32Term {
+        Bitvector32Term::Constant(value as u32)
+    }
+
+    fn split(
+        available: &CMemoryRange,
+        required: &CMemoryRange,
+        assumptions: &PureFactContext,
+    ) -> Option<Vec<CMemoryRange>> {
+        crate::kernel::split_memory_range(available, required, assumptions)
+    }
+
+    #[test]
+    fn an_ordinary_split_keeps_both_sides() {
+        let assumptions = PureFactContext::new();
+        let available = range(external(0), constant(0), constant(4));
+        let residues = split(
+            &available,
+            &range(external(1), constant(0), constant(2)),
+            &assumptions,
+        )
+        .expect("a constant split inside the owner");
+        assert_eq!(
+            residues,
+            vec![
+                range(external(0), constant(0), constant(1)),
+                range(external(0), constant(3), constant(4)),
+            ]
+        );
+        // The same requirement stated in the owner's own coordinates.
+        assert_eq!(
+            split(
+                &available,
+                &range(external(0), constant(1), constant(3)),
+                &assumptions
+            )
+            .expect("a split with a zero base delta"),
+            vec![
+                range(external(0), constant(0), constant(1)),
+                range(external(0), constant(3), constant(4)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_carrying_base_delta_states_no_residue() {
+        let assumptions = PureFactContext::new();
+        let available = range(external(0), constant(0), constant(10));
+        // `&p[i32::MAX]` is the delta, and `i32::MAX + 2` carries: the sum is
+        // `2^31 + 1` elements above the owner's base, while the residue reads
+        // as `i32::MIN + 1`, which the owner's endpoints bracket.
+        let required = range(external(i64::from(i32::MAX)), constant(2), constant(3));
+        assert_eq!(split(&available, &required, &assumptions), None);
+        // The same shape at a base whose join stays put still splits.
+        assert_eq!(
+            split(
+                &available,
+                &range(external(3), constant(2), constant(3)),
+                &assumptions
+            )
+            .expect("a join that does not carry"),
+            vec![
+                range(external(0), constant(0), constant(5)),
+                range(external(0), constant(6), constant(10)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_symbolic_join_asks_whether_it_carries() {
+        let index = Bitvector32Term::Variable(Variable(93_970));
+        let count = Bitvector32Term::Variable(Variable(93_971));
+        let available = range(external(0), constant(0), count);
+        let required = CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(index.clone(), 4),
+            },
+            constant(1),
+            constant(2),
+        );
+        // `i + 1` is one element above `i` only while the add does not carry.
+        assert_eq!(split(&available, &required, &PureFactContext::new()), None);
+        let no_carry = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::signed_add_overflows(index.clone(), constant(1)),
+                false,
+            )
+            .assume_condition(
+                ConditionTerm::signed_add_overflows(index.clone(), constant(2)),
+                false,
+            );
+        assert!(split(&available, &required, &no_carry).is_some());
+        // The requirement stated in the owner's own coordinates has no add to
+        // carry, and is the shape a split ordinarily arrives in.
+        assert!(
+            split(
+                &available,
+                &range(
+                    external(0),
+                    index.clone(),
+                    Bitvector32Term::add(index, constant(1))
+                ),
+                &PureFactContext::new()
+            )
+            .is_some()
+        );
+    }
+}

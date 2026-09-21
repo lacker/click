@@ -5320,7 +5320,54 @@ fn consumed_range_is_well_formed(
     )) == Some(true)
 }
 
-fn split_memory_range(
+/// `delta + endpoint`, when that add is the sum rather than its residue.
+///
+/// [`split_memory_range`] installs these two terms as the *residue ranges' own
+/// bounds*, so a carry here hands the holder an owned fact over cells the
+/// requirement took away. [`consumed_range_is_well_formed`] cannot see it: it
+/// compares the same two wrapped terms with each other, and they are
+/// consistent with each other however far they both are from the truth.
+///
+/// Three routes settle it with no context at all, and they are the shapes a
+/// split arrives in: a zero delta, which is the requirement already stated in
+/// the owner's coordinates; a zero endpoint, which is a range at the pointer
+/// the delta names; and two constants whose sum occupies an `int32`. Anything
+/// else is a modular add of a symbolic index, and the one thing that makes it
+/// the sum is that it does not carry — which is what it asks.
+fn exact_shifted_endpoint(
+    delta: &Bitvector32Term,
+    endpoint: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> Option<Bitvector32Term> {
+    if delta == &Bitvector32Term::Constant(0) {
+        return Some(endpoint.clone());
+    }
+    if endpoint == &Bitvector32Term::Constant(0) {
+        return Some(delta.clone());
+    }
+    if let (Some(delta), Some(endpoint)) = (delta.as_const(), endpoint.as_const()) {
+        let sum = i64::from(delta as i32) + i64::from(endpoint as i32);
+        return i32::try_from(sum)
+            .ok()
+            .map(|sum| Bitvector32Term::Constant(sum as u32));
+    }
+    (assumptions.decide(&ConditionTerm::signed_add_overflows(
+        delta.clone(),
+        endpoint.clone(),
+    )) == Some(false))
+    .then(|| Bitvector32Term::add(delta.clone(), endpoint.clone()))
+}
+
+/// The owned ranges left to the holder once `required` is taken out of
+/// `available`, or `None` where the remainder cannot be stated soundly.
+///
+/// The requirement's endpoints arrive in its own base's coordinates and the
+/// residues are stated in the owner's, so the base delta joins them — and that
+/// join has to be the sum and not its residue. See [`exact_shifted_endpoint`]:
+/// a carry would leave a retained owned fact over cells the requirement
+/// consumed, and distinct owned facts are assumed separate, so a store through
+/// one would not invalidate a load through the other.
+pub(in crate::kernel) fn split_memory_range(
     available: &CMemoryRange,
     required: &CMemoryRange,
     assumptions: &PureFactContext,
@@ -5369,8 +5416,8 @@ fn split_memory_range(
                 .then_some(Bitvector32Term::Constant(0))
             })
     }?;
-    let required_start = Bitvector32Term::add(base_delta.clone(), required.start().clone());
-    let required_end = Bitvector32Term::add(base_delta, required.end().clone());
+    let required_start = exact_shifted_endpoint(&base_delta, required.start(), assumptions)?;
+    let required_end = exact_shifted_endpoint(&base_delta, required.end(), assumptions)?;
     let keeps_prefix =
         !bitvector_terms_proven_equal(available.start(), &required_start, assumptions)
             && !range_endpoint_terms_equal(available.start(), &required_start, assumptions);
