@@ -1,11 +1,22 @@
-# Verify a pointer-chasing search over an index array (the "DFS" example)
+# Verify a pointer-chasing search over an index array (the "DFS" example), and the soundness findings it exposed
 
-P1. A forcing-function example: an `int next[n]` array whose entries are all in
-`0..n` (indexes used as pointers), a `visited[n]` array, and a search that
-follows `next`, marks `visited`, and reports whether `to` is reached. The goal
-is to prove it **terminates** (termination is the only C judgment in Click) and
-is memory safe, then to prove a correctness claim, and to use everything that is
-awkward along the way to improve the language rather than the example. The C is
+P1. Two things live here, because they came out of one campaign and the second
+blocks trusting the first:
+
+- **Part 1** — the DFS forcing-function example and the language gaps it found.
+- **Part 2** — kernel soundness findings that are still open. Per
+  `issues/README.md`, an unsound rule is P1 whatever it is about, and these come
+  before feature work. Everything a new agent needs is in this file and in
+  `design/dfs-gaps/`; nothing depends on anyone's scratch files.
+
+---
+
+# Part 1 — the DFS example
+
+An `int next[n]` array whose entries are all in `0..n` (indexes used as
+pointers), a `visited[n]` array, and a search that follows `next`, marks
+`visited`, and reports whether `to` is reached. Prove it terminates (termination
+is the only C judgment), is memory safe, and then a correctness claim. The C is
 fixed; a true claim Click cannot prove is a Click gap.
 
 ```c
@@ -20,9 +31,9 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
 }
 ```
 
-The measure is the number of unmarked cells, a user-defined `Integer`-valued
-fold in the sidecar (not the prelude `count`, which clashes with the built-in
-`count(resource(args))`, and not `int32`, whose `+` is partial in specs):
+The measure is a user-defined `Integer`-valued fold (not the prelude `count`,
+which clashes with the built-in `count(resource(args))`; not `int32`, whose `+`
+is partial in specs), used as `decreases unmarked(visited, 0, n)`:
 
 ```click
 function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
@@ -30,130 +41,263 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
 }
 ```
 
-with loop clause `decreases unmarked(visited, 0, n)`.
+## State
 
-## What is on master
+- On master and verifying: `mdtests/unmarked_count_lemmas.md` (`unmarked_frame`,
+  `unmarked_point_update`, by `induct(hi)`) and
+  `mdtests/sweep_maintains_a_zero_unmarked_count.md` (a marking loop keeping
+  `invariant unmarked(visited, 0, i) == 0`; it carries a verbatim copy of
+  `unmarked_frame`).
+- `design/dfs-gaps/search_terminates_blocked.md` is the full C and sidecar for
+  `search` at the furthest point reached. Everything verifies except one
+  loop-invariant bundle member: re-establishing the quantified invariant about
+  `next` (its `viewable` half) at the loop's back edge. Rerun it first; a lot of
+  kernel work has landed since it was last run and the refusal may have moved.
+  It also holds a third lemma, `unmarked_nonnegative`, that verifies and should
+  move into `mdtests/unmarked_count_lemmas.md`.
 
-- `mdtests/unmarked_count_lemmas.md` — `unmarked_frame` (two arrays agreeing on
-  `lo..m` have equal counts on `lo..hi`, `hi <= m`) and `unmarked_point_update`
-  (marking one unmarked cell `j` in range drops the count by exactly one), both
-  by `induct(hi)`, using `views` clauses in theorems, `unfold(f(args)) using
-  { guards }` and Integer `arithmetic() using`.
-- `mdtests/sweep_maintains_a_zero_unmarked_count.md` — a `for` loop that marks
-  every cell while maintaining `invariant unmarked(visited, 0, i) == 0`. It
-  carries a verbatim copy of `unmarked_frame` (see "shared lemmas" below) and a
-  quantified per-cell frame fact.
-- Language work the example has already forced, all landed: `decreases` over a
-  pure (and `Integer`-valued) expression at loops, self-recursion and recursion
-  inside loops; loops inside branch arms; theorem application to arrays at a
-  snapshot (`at(label, a)`); fold endpoint laws and `unfold … using`; `views`
-  in pure theorems; `loadable` renamed `viewable`; stated ranges carry their
-  byte-extent guards; Integer `arithmetic()` with equality elimination;
-  `close_invariants()` deriving an `Integer` ranking member; user-grade
-  refusals through the resource tracker (`docs/internals/resource-tracker.md`);
-  array facts surviving declarations, separate allocations and separate calls;
-  a second universal `have` narrowing a stated range (was a binder-identity
-  bug, fixed in 88b05d28).
-
-## Where the search proof stands
-
-`design/dfs-gaps/search_terminates_blocked.md` is the full C and sidecar at the
-furthest point reached. Everything verifies except one loop-invariant bundle
-member: the contract, memory safety of the walk, the quantified `next` bound
-instantiated at `cur`, the early-`return` arm, `unmarked_point_update` applied
-between `at(iter, visited)` and `visited` after the store, `unmarked_nonnegative`
-(a third lemma, in that file, that verifies and should move into
-`mdtests/unmarked_count_lemmas.md`), and the strict decrease. The open member is
-re-establishing the quantified invariant about `next` — specifically its
-`viewable` half — at the loop's back edge:
-
-```text
-loop invariant bundle leaf [UnclosedGoal]: goal: ∀k. (0 <= k ∧ k < n) ⇒ viewable(next[k..k+1]) at the back-edge snapshot
-```
-
-It was last run after 88b05d28; rerun it first, because a lot has landed since
-(resource-tracker explanations, byte-interval framing, history-based load
-equality) and the refusal may have moved.
-
-## Gaps, ranked by proof text they cost (reductions in `design/dfs-gaps/`)
+## Gaps, ranked by the proof text they cost (reductions in `design/dfs-gaps/`)
 
 1. **A quantified fact cannot be transported to another program point**
    (`a_universal_fact_does_not_transport.md`). `transport` refuses a quantified
    proposition and a comparison (`unsupported proof operation transport`), so a
-   quantified precondition reaches a loop body one cell at a time: an
-   entry-snapshot `instantiate`, two `extract`s, a load-equality transport and a
-   hand-written orientation flip — 19 lines per premise. Also: a top-level
-   `transport` in a `preserve` body verifies while the same `transport` inside a
-   `have` there is refused. **This is what blocks `search` now.**
+   quantified precondition reaches a loop body one cell at a time — 19 lines per
+   premise. A top-level `transport` in a `preserve` body verifies while the same
+   `transport` inside a `have` there is refused. **This blocks `search`.**
 2. **A `return` inside a loop body** (`return_inside_a_ranked_loop_body.md`).
-   Not one of the loop rule's body endings. `branch { then { execute(); } else
-   { } }` accepts a returning arm only when an unrelated current-snapshot fact
-   is already in context; otherwise `branch did not verify as a checked
-   preservation operation`, which names no goal, premise or target and carries
-   the wrong tactic index. Fix the diagnostic first, then the rule.
+   `branch { then { execute(); } else { } }` accepts a returning arm only when an
+   unrelated current-snapshot fact is already in context; otherwise
+   `branch did not verify as a checked preservation operation`, which names no
+   goal, premise or target and carries the wrong tactic index. Fix the
+   diagnostic first, then the rule.
 3. **A fact about part of an array dies at a store outside that part.**
-   `unmarked(visited, 0, i)` reads only cells below `i`, but Click records that
-   it depends on the whole array, so `visited[i] = 1` discards it. The user pays
-   with the frame lemma plus a quantified per-cell transport: about 110 of the
-   190 lines of the sweep example. A read-only design proposal exists
-   (scratch, not in the repo): derive the read range from a fold-shaped function
-   definition (`(lo..hi).fold` whose body reads `v[k]` at exactly the binder;
-   anything else falls back to the whole array), carry it on the array argument,
-   and let the resource tracker's assumption-free walk decide that a store to
-   `a[i]` misses `a[0..i)` because the stored index is the same term as the
-   range's upper bound. A too-small range is a false theorem, so the derivation
-   must be default-deny. Not approved by the user yet — ask before building.
-   It would not help `search` itself (there the store is inside the range and
-   `unmarked_point_update` is genuinely needed).
+   `unmarked(visited, 0, i)` reads only cells below `i`, but Click records that it
+   depends on the whole array, so `visited[i] = 1` discards it; the user pays with
+   a frame lemma plus a quantified per-cell transport (about 110 of the sweep
+   example's 190 lines). Design idea, **not approved by the user — ask first**:
+   derive the read range from a fold-shaped definition (`(lo..hi).fold` whose body
+   reads `v[k]` at exactly the binder; anything else falls back to the whole
+   array, default-deny because a too-small range is a false theorem), carry it on
+   the array argument, and let the resource tracker's assumption-free walk decide
+   that a store to `a[i]` misses `a[0..i)` because the stored index is the same
+   term as the upper bound. It would not help `search` itself (that store is
+   inside the range; `unmarked_point_update` is genuinely needed).
 4. **No gate-checked shared lemma library for mdtests.** `import` supplies
    theorem statements and assumes their proofs by design, and nothing in
-   `scripts/check.sh` selects a library `.click` file, so `unmarked_frame` is
-   copied verbatim (90 lines) into every example that needs it.
+   `scripts/check.sh` selects a library `.click` file, so lemmas are copied
+   verbatim into each example.
 5. **Extent bounds restated at every pure-theorem `apply … using`.** A stated
    range carries `0 <= n - lo` and `n - lo <= 1073741823` for the proof, but a
-   `using` list inside a pure theorem must name them again (the C-proof route
-   already accepts a cited range's available guards). That checker promises to
-   read only listed premises, so this is a design question.
-6. Small ones (`small_refusals_and_spellings.md`): no `!=` symmetry (`y != x`
-   from `x != y`), which forces `unmarked_point_update` to split its agreement
-   premise into `below`/`above` — not re-tested on current master; `have` cannot
-   take a label, so long quantified facts are written twice; `assumption()`
-   cannot close a `viewable` goal; `arithmetic() using { j < hi; hi <= n }` will
-   not weaken to `j <= n` and says the premises are insufficient;
-   `missing pure fact: constant condition is true` does not say which constant;
-   a store refusal spells `owns b[0..1]` as `owns a[(v100001 - v100000)..]`.
+   `using` list in a pure theorem must name them again (the C-proof route accepts
+   a cited range's available guards). That checker promises to read only listed
+   premises, so this is a design question.
+6. Small ones (`small_refusals_and_spellings.md`): no `!=` symmetry (forces
+   `unmarked_point_update`'s `below`/`above` split; not re-tested recently);
+   `have` cannot take a label; `assumption()` cannot close a `viewable` goal;
+   `arithmetic() using { j < hi; hi <= n }` will not weaken to `j <= n` and says
+   the premises are insufficient; `missing pure fact: constant condition is true`
+   does not say which constant; a store refusal spells `owns b[0..1]` as
+   `owns a[(v100001 - v100000)..]`.
 
-## Later stages
+Later stages: a modest correctness claim (`result == 1` only via the `cur == to`
+exit), then reachability (needs recursive pure functions over arrays — they use
+`fuel: Nat` today — or a resource whose field is a pure model of the graph; the
+model route has its own gaps: a loop guard cannot read a cell owned by a folded
+resource, and there is no spelling for a model field at the head of an
+iteration), then the recursive branching DFS.
 
-- A modest correctness claim for the iterative search (`result == 1` only via
-  the `cur == to` exit), then real reachability, which needs a recursive pure
-  function over an array (pure recursive functions use `fuel: Nat` today) or a
-  model-based route: wrap the graph in a resource whose field is a pure model
-  and state the measure on the model. The model route exposed its own gaps
-  earlier (a loop guard cannot read a cell owned by a folded resource; no
-  spelling for a model field at the head of an iteration).
-- The recursive, branching DFS (`visited` plus two successor arrays).
+## Acceptance (Part 1)
 
-## Rules of engagement that have worked
+`mdtests/search_terminates_by_unmarked_count.md` verifies termination and memory
+safety of the unmodified C; each fixed gap has a minimal regression mdtest; a
+correctness claim is proved or split out at the user's request;
+`design/dfs-gaps/` is deleted with this issue.
 
-- Simple tactics first; smart tactics only once the explicit proof works.
-- A refusal that does not say what is missing in source spelling is a bug in
-  the refusal: fix the standard diagnostic, never add temporary debug output.
-- Reduce every gap to a few-line reproduction before proposing a rule; each
-  language addition gets its own minimal mdtest, reviewed by the user.
-- This example sits on top of kernel memory reasoning that was under active
-  soundness repair in September 2026 (see `docs/internals/memory-dag.md`,
-  `docs/internals/resource-tracker.md`, `docs/internals/kernel.md` "Index and
-  offset arithmetic"). Anything that verifies and should not is a stop-and-report
-  event, ahead of any feature work.
+---
 
-## Acceptance
+# Part 2 — open soundness findings
 
-- `mdtests/search_terminates_by_unmarked_count.md` verifies termination and
-  memory safety of the unmodified C above, with `unmarked_nonnegative` moved
-  into the lemmas file.
-- Each gap above that is fixed has a minimal regression mdtest; gaps that are
-  deliberately left are recorded in the docs, and `design/dfs-gaps/` is deleted
-  with this issue.
-- A correctness claim for `search` is stated and proved, or the missing language
-  support is split into its own issue at the user's request.
+## How they were found, and how to find more
+
+Every finding below came from taking a rule that "looked wrong but had no known
+witness" and attacking it with a few-line C sidecar. About twenty false theorems
+were found and fixed this way in September 2026; in that period no item classed
+"latent" survived an attack as merely latent. Work attack-first: write the
+witness, confirm it verifies on master, fix at the root, keep the witness as an
+`expect fail:` mdtest. A guard that merely happens to sit elsewhere is not a
+soundness argument — the rule must require its own premise.
+
+Recurring roots worth auditing by name:
+
+- **R1** an `int32` constant read as unsigned (`Bitvector32Term::as_const` is
+  `u32`) and then ordered. The blessed signed reader is
+  `signed_bitvector_constant` (`docs/internals/kernel.md`).
+- **R2** wrapping 32-bit index arithmetic read as mathematical. Index terms are
+  modular; pointer byte offsets are exact `i64` (same doc, "Index and offset
+  arithmetic").
+- **R3** "addresses differ" used where "byte intervals are disjoint" is needed.
+  The one helper is `access_byte_overlap` (`Overlaps | Separate | Unknown`).
+- **R4** absence of a cached cell read as "nothing was written". Cell maps are
+  incomplete by design; the recorded history is the authority
+  (`recorded_load_history`, `docs/internals/memory-dag.md`).
+- **R5** block *names* compared instead of `PointerBlock::proven_distinct`.
+- **R6** fresh identifiers drawn from a range the producer does not own (range
+  registry in `docs/internals/kernel.md`).
+- Control-flow walks (`switch`/`break`) that silently stop checking the rest of a
+  function (`walk_termination_paths`).
+
+Cost evidence must be deterministic work from `click profile`; wall-clock on the
+development machine varies by ±50% run to run.
+
+## Open — false theorems with a witness on master
+
+### S1. A local's address outlives its scope
+
+```c
+int32 f(int32 n) {
+    int32* q; int32 z;
+    if (n == 0) { int32 a[2]; a[0] = 5; q = &a[0]; } else { int32 b[2]; b[0] = 5; q = &b[0]; }
+    z = q[0];            /* dangling in C */
+    return z;            /* `ensures result == 5` verifies */
+}
+```
+
+Also verifies for: nested `if` scopes, a `while` body local read after the loop
+(including after `break`), a `switch` case local, a `for`-init variable read
+through a pointer after the loop, and an arm local's address stored in a struct
+field. `mdtests/automatic_block_reentry_lifetime_alias.md` states the intended
+verdict (`undefined behavior: invalid memory access`) for the re-entry variant.
+
+Cause: the surface proof stepper never executes an `if` as a unit —
+`execute_branch_step_from_frontier_position`
+(`src/surface/proof/cursor_execution.rs`) splices the selected arm in front of
+the `if`'s tail, so there is no step at which the arm is left and nothing ends
+the arm's locals. The kernel's own executors do retire a scope's locals at every
+exit on branch `claude/automatic-lifetimes-end` (`end_scope_automatic_lifetimes`,
+`paths_after_scope_exit`; check whether it has landed — it has five kernel tests
+whose negatives return the false value without it), but no sidecar proof goes
+through that route.
+
+Fix shape: a recorded execution event, `CheckedAutomaticLifetimeEnd
+{ before_state, after_state, blocks }`, modelled on `CheckedResourceObservation`
+(`src/kernel/proof/execution.rs`), recorded where the stepper leaves a region
+(the `exited_branch_regions(...)` sites), including `break`/`continue`/`return`
+out of an arm. A silent state change is rejected by the proof object
+("evidence does not start from the running state") — that was tried. `for`-init
+variables are lowered as a sibling of the loop (`src/languages/c/syntax.rs`), so
+they need a frontend scope or the same event keyed on the `for` region.
+
+Related, not exploitable from a caller today: a non-inline callee body that is
+executed in place never retires its locals or its `local:frame:` parameter slots
+(`src/kernel/functions.rs`, `end_inline_frame_automatic_lifetimes` runs only for
+inline bodies), so such a callee can certify `ensures *out[0] == 3` about its own
+local. Retiring parameter slots must wait until postconditions have been read
+(struct-by-value `ensures` read them).
+
+### S2. A resource count wraps negative
+
+```click
+// contract of a function that mints tokens
+produces 2000000000 of tok(o);
+produces 2000000000 of tok(o);
+ensures count(tok(o)) < 0;          // verifies: the count is -294967296
+```
+
+`normalize_pair` in the resource algebra adds quantities with the modular
+`Bitvector32Term::add` and owes no no-overflow condition. Unknown whether it can
+be escalated (wrapping to 0 to hide a leak at function exit; consuming more than
+was produced). Fix shape: a population count is a natural number — refuse a
+constant merge whose signed sum leaves `0..=i32::MAX`, and make a symbolic merge
+owe `not signed_add_overflows`, as C's own `+` does. (An agent on branch
+`claude/soundness-hunt-4` was working on this; check whether it landed.)
+
+## Open — unsound or unexamined reasoning, no witness yet
+
+Ranked by how likely a witness is.
+
+1. **Address-only framing in call/loop effect summaries.** Consumers that frame a
+   write away from a read on pointer inequality with no `access_byte_overlap`
+   check: `c_memory_load_is_directly_unchanged`'s `CMemoryMutatesOnly` arm
+   (`src/kernel/memory_provenance.rs`, including a plain
+   `pointer_byte_offset_from_base != 0` rung),
+   `memory_snapshots_directly_proven_equal_for_memory_resolution` and
+   `resolve_memory_load_value` (`memory_conditions.rs`), and `cell_effect`'s
+   `HeapFreed` arm (`src/kernel/resource_tracker/step_effect.rs`), which uses the
+   allocation's base address where its extent is meant. Today only the
+   recorded-history veto blocks the known shapes. Attack: a callee whose
+   `mutable` clause writes an `int64` at `q` while the caller keeps a fact about
+   the `int32` at `q + 4`; `free(p)` then a fact about `p[3]`. When gating a
+   ladder, call the explicit-range rung beside the gate, not under it — gating it
+   away once cost +545% work on `rb_replace_node_with_children`.
+2. **A contract whose own clauses alias under its `requires`.**
+   `requires w == p + 1; views p[0..3]; consumes w[0..3];` still gets the entry
+   fact "owned and viewed clauses are separate" (`contract_entry_partition_facts`,
+   `src/kernel/functions.rs`), and `ensures result == 3` verifies where the C
+   returns 7. No caller can satisfy it (the stable-view planner refuses the
+   call), so it may be vacuous; the entry to attack is a recursive self-call
+   proved under its own contract. Either way the entry check
+   (`install_borrowed_contract_inputs`, `src/kernel/api.rs`) should refuse clauses
+   that provably alias under the contract's own premises.
+3. **`separate(memory(a[s..s + 2]), …)` with `s` unconstrained is accepted**, where
+   `owns a[s..s + 2]` would owe `not signed_add_overflows`. A provably reversed
+   range is refused; an undecided one is not
+   (`mdtests/an_ordinary_separation_clause_needs_no_extent_text.md` pins this
+   limit). It could not be made an obligation because a range reached through a
+   composite resource publishes no extent guard to its user, and half of the
+   guard is an unsigned comparison the surface cannot write. Prerequisite:
+   composites publish their inner ranges' guards in the signed count spelling
+   (`memory_range_element_count_guards`).
+4. **The load-side distinct-cell reduction names a load at an ancestor snapshot**
+   using the current path's facts (`evaluate_c_memory_load_paths_with_alias_cache`,
+   `src/kernel/eval/memory_loads.rs`); 369 refused backwards `CellsForgotten`
+   edges over the corpus come from it. Argued benign (every step skipped is a
+   store it proved distinct; names are assumption-free), and one attack on name
+   reuse across branch arms was refused — but it is fact-dependent naming on the
+   hottest path and deserves a second attack.
+5. **Snapshots unrelated by recorded history are still compared by cell maps**
+   (`memories_match_for_pointer_load`); the doc comment says what that rests on
+   (equal havoc markers, extents, observable cells). No path between them exists
+   for the history to speak about.
+6. `one_element_gap_separates_bytes` decides a *direction* from residue indexes
+   (the `Separate` answer does not depend on it); `range_fold`'s one-step shortcut
+   (`term_operations.rs`) uses a wrapping add (`i32::MAX .. i32::MIN` unrolls
+   once) — judged unreachable because `(a..b).fold` lowers to the signed Integer
+   carrier.
+7. Unexamined fresh ground with the same roots: `uint32` arithmetic and unsigned
+   loop counters (`for (uint32 i = n; i >= 0; i--)` never terminates — is a
+   `decreases i` accepted?), signed/unsigned comparison (`-1 < 1u` is false in C),
+   shifts, `INT_MIN / -1`, truncating stores then widening loads, `<` between
+   pointers into different objects.
+8. Trust-model notes, by design rather than bugs: the `apply` tactic's
+   requirement checks (including range extent guards) are enforced on the surface
+   side at one shared point
+   (`instantiate_theorem_application_with_assumptions`); a top-level `owns`/`views`
+   range's extent at the program's outer boundary is an environment assumption;
+   `import` assumes imported proofs.
+
+## Tooling findings
+
+- `tests::every_cli_tool_accepts_the_supported_expression_boundary`
+  (`src/bin/click.rs`) runs within 0.5% of the gate's 8 MiB stack — `CMemory`
+  travels by value inside `Term`, so adding one word to a snapshot overflows it —
+  and it can exceed nextest's 60 s budget on a loaded machine (108 s under plain
+  `cargo test`). Either is a red gate unrelated to the change under test.
+- `cargo test --lib` (not the gate) fails
+  `scaling_tests::targeted_simple_verification_does_not_verify_unrelated_theorems`
+  when tests share a process; nextest's per-test processes hide it.
+- Unit tests need `RUST_MIN_STACK=8388608` outside the gate.
+- The C0 parser panics instead of refusing on `int32* tab[2];` at file scope
+  (`src/languages/c/syntax.rs`, "validated global array element type").
+- `have h.slot[0] == 5` about a pointer field of a local struct refuses with
+  "the kernel lowering produced 0 paths"; `object(...)` is not accepted inside
+  `separate(...)` nor for a file-scope struct.
+- Diagnostics that name nothing: `(callee precondition): false = true`; "invalid
+  memory access" for a dangling use (the tombstone knows the variable's name);
+  after a wide store over a narrow cell the refusal says "state `i != j`" even
+  when it is stated and the real reason is that 8 bytes reach the neighbour.
+
+## Acceptance (Part 2)
+
+Each open item above is either fixed with its witness as an `expect fail:`
+mdtest, or shown sound with the argument written on the rule, and removed from
+this file. New findings are added here only at the user's request.
