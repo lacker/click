@@ -13597,6 +13597,7 @@ fn witness_origin_word<'a>(fact: &'a SpecProposition, witness: &str) -> Option<&
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceRewriteRefusal {
     Message(&'static str),
+    OwnedMessage(String),
     /// `fold` could not establish body fact `index` (zero-based, in
     /// declaration order) of the `count` facts in `arm`, or of the
     /// definition's own facts when `arm` is `None`.
@@ -13611,6 +13612,7 @@ impl ResourceRewriteRefusal {
     pub fn describe(&self) -> String {
         match self {
             ResourceRewriteRefusal::Message(message) => (*message).to_string(),
+            ResourceRewriteRefusal::OwnedMessage(message) => message.clone(),
             ResourceRewriteRefusal::BodyFactNotEstablished { arm, index, count } => {
                 let place = match arm {
                     Some(arm) => format!("of arm `{arm}`"),
@@ -13635,6 +13637,7 @@ impl From<ResourceRewriteRefusal> for &'static str {
     fn from(refusal: ResourceRewriteRefusal) -> Self {
         match refusal {
             ResourceRewriteRefusal::Message(message) => message,
+            ResourceRewriteRefusal::OwnedMessage(_) => "resource rewrite refused",
             ResourceRewriteRefusal::BodyFactNotEstablished { .. } => {
                 "fold requires the instance body facts for the proposed fields"
             }
@@ -13984,8 +13987,28 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             .iter()
             .cloned()
             .fold(assumptions.clone(), PureFactContext::assume_proposition);
-        let (arm, constructor) =
-            selected_instance_match_arm(instance, definition, definitions, &selection_assumptions)?;
+        let (arm, constructor) = selected_instance_match_arm(
+            instance,
+            definition,
+            definitions,
+            &selection_assumptions,
+        )
+        .map_err(|message| {
+            if message == "resource match requires constructor evidence for the instance field" {
+                let field_name = definition
+                    .matched
+                    .as_ref()
+                    .and_then(|body| instance.schema().fields().get(body.field_index))
+                    .map(|(name, _)| name.as_str())
+                    .unwrap_or("<matched field>");
+                ResourceRewriteRefusal::OwnedMessage(format!(
+                    "cannot fold or unfold resource `{}`: matched field `{field_name}` has no known constructor; match the field first or prove an exact constructor equality",
+                    instance.name(),
+                ))
+            } else {
+                ResourceRewriteRefusal::Message(message)
+            }
+        })?;
         let AlgebraicTermNode::Constructor { fields, .. } = constructor.node else {
             unreachable!()
         };

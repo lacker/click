@@ -71,5 +71,5 @@ void run_frame(struct link* x, struct link* y, struct link* z, int32* out) {
 ```
 
 ```expect
-fail: resource match requires constructor evidence for the instance field
+fail: cannot fold or unfold resource `frame_at`: matched field `model` has no known constructor; match the field first or prove an exact constructor equality
 ```
