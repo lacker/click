@@ -544,12 +544,14 @@ impl ProofFacts {
         }
         let body_variables = crate::kernel::proposition_variables(body);
         let fresh = self.fresh_universal_witness(&body_variables)?;
-        let body = crate::kernel::substitute_int32_variable_in_proposition(
+        let renamed = crate::kernel::substitute_int32_variable_in_proposition(
             body,
             binder,
             Bitvector32Term::Variable(fresh),
         );
-        Some((fresh, body))
+        let renamed =
+            restore_range_extent_spelling(body, renamed, binder, &Bitvector32Term::Variable(fresh));
+        Some((fresh, renamed))
     }
 
     pub(crate) fn freshen_integer_forall_body(
@@ -651,6 +653,8 @@ impl ProofFacts {
         } else {
             Pointer::symbolic(fresh)
         };
+        // A pointer binder never occurs in a range's element endpoints, which
+        // are `int32` terms, so the extent has nothing to put back here.
         let body =
             crate::kernel::substitute_pointer_variable_in_proposition(body, binder, &pointer);
         Some((fresh, body))
@@ -1261,6 +1265,113 @@ impl ProofFacts {
             .get(key)
             .map(PersistentSequence::len)
     }
+}
+
+/// Puts back the extent spelling a range carried before its binder was
+/// renamed.
+///
+/// Renaming a bound variable is supposed to change what a proposition's binder
+/// is called and nothing else. Substitution rebuilds every term it walks with
+/// the kernel's folding constructors, though, and those fold strictly more
+/// than the one `memory_range_byte_count` builds a range's extent with: the
+/// extent of `a[k..k + 1]` is written `((k + 1) - k) * w` and comes back from
+/// a substitution as the constant `w`. Both spell the same extent, and a
+/// proof state matches a goal against a fact syntactically, so the rename
+/// moved the goal out of the form every re-lowering of the written range
+/// produces and the narrowing that had just worked stopped matching.
+///
+/// The two forms cannot simply be merged. The extent is also where surface
+/// synthesis recovers a range's written ends from — folding `(k + 1) - k` to a
+/// constant loses them, and `loadable(p[k..k + 1])` then spells back as a
+/// zero-based range over a displaced base. So the rename keeps the spelling
+/// instead: where the original carried a range extent, the renamed
+/// proposition gets that extent's endpoints substituted and reassembled in the
+/// written shape rather than the folded one.
+///
+/// This walks only the logical structure the two propositions share, and only
+/// as far as the range leaves; it changes no other term and decides nothing.
+fn restore_range_extent_spelling(
+    original: &Proposition,
+    renamed: Proposition,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> Proposition {
+    let recurse = |original: &Proposition, renamed: Proposition| {
+        Box::new(restore_range_extent_spelling(original, renamed, from, to))
+    };
+    match (original, renamed) {
+        (
+            Proposition::CMemoryLoadable { bytes, .. },
+            Proposition::CMemoryLoadable {
+                memory,
+                base,
+                bytes: folded,
+            },
+        ) => Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes: substituted_range_extent(bytes, from, to).unwrap_or(folded),
+        },
+        (Proposition::And(left, right), Proposition::And(renamed_left, renamed_right)) => {
+            Proposition::And(recurse(left, *renamed_left), recurse(right, *renamed_right))
+        }
+        (Proposition::Or(left, right), Proposition::Or(renamed_left, renamed_right)) => {
+            Proposition::Or(recurse(left, *renamed_left), recurse(right, *renamed_right))
+        }
+        (
+            Proposition::Implies(antecedent, consequent),
+            Proposition::Implies(renamed_antecedent, renamed_consequent),
+        ) => Proposition::Implies(
+            recurse(antecedent, *renamed_antecedent),
+            recurse(consequent, *renamed_consequent),
+        ),
+        (Proposition::Not(body), Proposition::Not(renamed_body)) => {
+            Proposition::Not(recurse(body, *renamed_body))
+        }
+        (
+            Proposition::ForAll { body, .. },
+            Proposition::ForAll {
+                var,
+                sort,
+                body: renamed_body,
+            },
+        ) => Proposition::ForAll {
+            var,
+            sort,
+            body: recurse(body, *renamed_body),
+        },
+        (_, renamed) => renamed,
+    }
+}
+
+/// A written range extent with its endpoints substituted, reassembled in the
+/// shape [`crate::kernel::memory_range_byte_count`] builds rather than the
+/// shape the folding constructors would collapse it to. `None` when the term
+/// is not a written range extent, which is every other byte count.
+fn substituted_range_extent(
+    bytes: &Bitvector32Term,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> Option<Bitvector32Term> {
+    let substitute = |term: &Bitvector32Term| {
+        crate::kernel::reasoning::substitute_bitvector_variable(term, from, to)
+    };
+    let (count, width) = match bytes {
+        Bitvector32Term::Multiply(count, width) => match width.as_ref() {
+            Bitvector32Term::Constant(_) => (count.as_ref(), Some(width.as_ref().clone())),
+            _ => return None,
+        },
+        count @ Bitvector32Term::Subtract(_, _) => (count, None),
+        _ => return None,
+    };
+    let Bitvector32Term::Subtract(end, start) = count else {
+        return None;
+    };
+    let count = Bitvector32Term::Subtract(Box::new(substitute(end)), Box::new(substitute(start)));
+    Some(match width {
+        Some(width) => Bitvector32Term::Multiply(Box::new(count), Box::new(width)),
+        None => count,
+    })
 }
 
 /// The largest universal-introduction witness identity in an ascending set of
