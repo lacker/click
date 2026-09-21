@@ -881,6 +881,50 @@ range's byte extent has exactly one constructor — `memory_range_byte_count`
 folds through `Bitvector32Term::subtract`, the same one substitution rebuilds
 terms with — rather than a private near-copy that cancels a little less.
 
+### Automatic object identity
+
+A `local:` block is an automatic object's identity, and around seventy kernel
+sites read two equal blocks as one object: the same extent, the same cells, the
+same answer from every distinctness rule. Each execution of a declaration must
+therefore get a block no other automatic object in that memory has, live or
+ended.
+
+Three spellings reach a `local:` block. `local:<name>` is the plain one;
+`local:lifetime:<n>:<name>` is a generation, taken from the `next_local_lifetime`
+counter the state threads through calls and returns; `local:frame:<n>:<name>` is
+a call frame's slot for an addressable or aggregate parameter. All three keep
+the `local:` prefix, so every rule that asks whether a block is a local still
+gets the same answer, and the diagnostic renderer spells all three by the last
+segment — the name the reader wrote.
+
+`local_declaration_pointer` is the only place an automatic object's identity is
+created, and it is where the uniqueness is established rather than assumed. It
+takes a generation when any of three things is true:
+
+- this frame is re-entering the declaration — a loop, or an inner scope
+  shadowing the name — which the locals map sees, and whose old object's
+  lifetime ends first;
+- the memory already holds or has retired a block of that spelling; or
+- a frame this one was called from holds bindings at all. A called frame
+  executes on the caller's memory with its own locals map, so it cannot see the
+  caller's objects, and an object the caller holds only as a value — a parameter
+  whose address it never takes — has no block in memory to find. A frame called
+  from one that has bound nothing is the outermost frame and keeps the plain
+  spelling.
+
+The mint then checks its candidate against the memory the declaration lands in.
+The counter is monotone and every generation it hands out is declared, so the
+first candidate is free; checking anyway is what makes the invariant enforced
+where it is created rather than trusted at the seventy sites that depend on it.
+
+An inline body's frame retires the identities it minted for itself when it
+returns, because it declared them into the caller's memory and nothing else
+would: otherwise its cells stay readable under a later declaration of that name,
+and a pointer to one of its locals stays dereferenceable at the call site. A
+value-only parameter is deliberately left alone — its pseudo-slot borrows the
+plain `local:<name>` spelling while owning no block, so retiring it would
+tombstone whatever object of that name the caller has.
+
 Call and loop behavior are explicit inputs to kernel execution. The common
 configurations are:
 
