@@ -9518,7 +9518,12 @@ pub(super) fn bind_c_function_arguments(
                 frame.saturating_add(1)
             },
         )
-        .with_next_local_lifetime(caller_state.next_local_lifetime());
+        .with_next_local_lifetime(caller_state.next_local_lifetime())
+        // The body below declares its locals into the caller's memory with
+        // this fresh locals map, which cannot see the caller's objects. Say
+        // so, so each declaration takes an identity of its own rather than
+        // the caller's `local:<name>`.
+        .with_in_called_frame(true);
     callee_state.counted_populations = caller_state.counted_populations.clone();
     // A function entry is a lexical/frame rebind, not an authority reset.
     // Preserve an already-active candidate loan through calls whose resource
@@ -9628,7 +9633,8 @@ fn bind_c_contract_arguments(
         } else {
             frame
         })
-        .with_next_local_lifetime(caller_state.next_local_lifetime());
+        .with_next_local_lifetime(caller_state.next_local_lifetime())
+        .with_in_called_frame(true);
     callee_state.counted_populations = caller_state.counted_populations.clone();
     callee_state.loan_ledger = caller_state.loan_ledger.clone();
     callee_state.loan_participant = caller_state.loan_participant;

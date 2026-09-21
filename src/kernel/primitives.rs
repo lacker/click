@@ -4406,6 +4406,13 @@ pub struct CState {
     /// declaration can be re-entered by a loop. This is path state so joins
     /// and nested calls cannot accidentally reuse an ended local block.
     pub(super) next_local_lifetime: u64,
+    /// Whether this state is a called frame's rather than the outermost
+    /// function's. A called frame runs on the caller's memory with its own
+    /// locals map, so it cannot see which automatic objects the caller
+    /// already has; every declaration it executes therefore takes a fresh
+    /// generation instead of the bare `local:<name>` spelling, which belongs
+    /// to the outermost frame alone.
+    pub(super) in_called_frame: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

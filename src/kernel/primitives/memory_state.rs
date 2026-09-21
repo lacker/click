@@ -2644,6 +2644,17 @@ impl CMemory {
         self.forgotten.ended_local_blocks.contains(&pointer.block)
     }
 
+    /// Whether this memory has already given this block to an automatic
+    /// object: one that is live, or one whose lifetime ended and whose
+    /// tombstone still makes aliases to it invalid.
+    ///
+    /// Handing the same block to a second object would make the two one
+    /// object at every site that reads `a.block == b.block`, so a declaration
+    /// asks this before it mints.
+    pub(in crate::kernel) fn local_block_is_occupied(&self, block: &PointerBlock) -> bool {
+        self.blocks.contains_key(block) || self.forgotten.ended_local_blocks.contains(block)
+    }
+
     /// A sufficient, search-free condition for transporting loadability of
     /// an exact range. Unlike value equality, this ignores writes, but never
     /// ignores changed block extents or allocation retirement metadata.
@@ -2875,6 +2886,15 @@ impl CState {
 
     pub(in crate::kernel) fn with_next_local_lifetime(mut self, next: u64) -> Self {
         self.next_local_lifetime = next;
+        self
+    }
+
+    pub(in crate::kernel) fn in_called_frame(&self) -> bool {
+        self.in_called_frame
+    }
+
+    pub(in crate::kernel) fn with_in_called_frame(mut self, nested: bool) -> Self {
+        self.in_called_frame = nested;
         self
     }
 

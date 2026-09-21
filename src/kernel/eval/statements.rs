@@ -3109,6 +3109,28 @@ pub(in crate::kernel) fn execute_c_while_paths(
     Ok(paths)
 }
 
+/// Mints the block identity for one execution of a local declaration.
+///
+/// Soundness. Around seventy kernel sites read `a.block == b.block` as "the
+/// same object", so each execution of a declaration must get a block that no
+/// other automatic object in this memory has, live or ended. Two things can
+/// hand out the bare `local:<name>` spelling twice:
+///
+/// * this frame re-entering the declaration — a loop, or an inner scope that
+///   shadows the name — which the locals map sees, and which ends the old
+///   object's lifetime before taking the next generation; and
+/// * a *called* frame, which executes on the caller's memory with its own
+///   locals map and so cannot see the caller's objects at all. Its `buf` and
+///   the caller's `buf` would be one block, one extent and one cell map. That
+///   is why a called frame is generational unconditionally: the caller's
+///   object may not even be visible in memory, as for a value-only parameter
+///   whose pseudo-slot borrows the `local:<name>` spelling while owning no
+///   block of its own.
+///
+/// The generation counter is path state threaded through calls and returns,
+/// so it hands out each generation once. The mint checks that against memory
+/// regardless, because this is the place the uniqueness invariant is
+/// established rather than assumed.
 fn local_declaration_pointer(
     state: &mut CState,
     name: &str,
@@ -3136,13 +3158,41 @@ fn local_declaration_pointer(
             return Err(refusal);
         }
         state.set_memory(state.memory.without_local_block(&previous.block));
+        return Ok(fresh_local_object_identity(state, name));
+    }
+    let unnumbered = CMemory::local_pointer(name);
+    if state.in_called_frame() || state.memory.local_block_is_occupied(&unnumbered.block) {
+        return Ok(fresh_local_object_identity(state, name));
+    }
+    Ok(unnumbered)
+}
+
+/// Takes the next unused generation of `name`'s automatic object.
+///
+/// Refuses to hand back an identity this memory has already given out. The
+/// counter is monotone and every generation it hands out is declared, so the
+/// first candidate is free; checking it is what makes the uniqueness
+/// invariant enforced at the one place it is created.
+fn fresh_local_object_identity(state: &mut CState, name: &str) -> Pointer {
+    loop {
         let lifetime = state.next_local_lifetime();
+        assert!(
+            lifetime != u64::MAX,
+            "ran out of automatic-object generations for `{name}`"
+        );
         *state = state
             .clone()
             .with_next_local_lifetime(lifetime.saturating_add(1));
-        return Ok(CMemory::local_lifetime_pointer(lifetime, name));
+        let pointer = CMemory::local_lifetime_pointer(lifetime, name);
+        if !state.memory.local_block_is_occupied(&pointer.block) {
+            return pointer;
+        }
+        debug_assert!(
+            false,
+            "generation {lifetime} of `{name}` was minted twice; \
+             an automatic object would share a block with another one"
+        );
     }
-    Ok(CMemory::local_pointer(name))
 }
 
 pub(in crate::kernel) fn declare_local(
