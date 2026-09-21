@@ -5073,3 +5073,81 @@ fn a_recursion_anchor_is_part_of_the_environment_identity() {
     .expect("the declared measure reads at the entry state");
     assert_ne!(anchored, plain);
 }
+
+/// The block a declaration mints is the object's identity, and about seventy
+/// kernel sites read two equal blocks as one object. A called frame runs on
+/// the caller's memory with its own locals map, so it cannot see the caller's
+/// objects; if it minted the plain `local:<name>` anyway, the callee's object
+/// and the caller's would be one block, one extent and one cell map.
+#[test]
+fn a_called_frames_declaration_does_not_take_the_callers_block() {
+    let callers = Pointer {
+        block: "local:x".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_memory(
+            CMemory::new()
+                .with_block("local:x", 4)
+                .store(callers.clone(), int32(1)),
+        )
+        .with_in_called_frame(true);
+    let statement = c_seq(
+        c_declare("x", CType::Int32),
+        c_seq(
+            c_assign("x", c_int32_literal(2)),
+            c_return(c_int32_literal(0)),
+        ),
+    );
+    let theorem = prove_symbolic_c_execution(state, statement, PureFactContext::new())
+        .expect("a called frame declares its own local");
+    let Proposition::CStatementExecutes {
+        outcome: CStatementOutcome::Return { state: after, .. },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("expected a return: {:?}", theorem.proposition());
+    };
+
+    let minted = after.locals().slot("x").expect("the callee's own slot");
+    assert_ne!(minted, &callers);
+    assert_eq!(after.memory().cells.get(&callers), Some(&int32(1)));
+}
+
+/// An identity is not free again once its object's lifetime has ended: the
+/// tombstone is what makes an alias to the old object invalid, so handing the
+/// block to a new object would revive every stale pointer to the old one.
+#[test]
+fn a_declaration_does_not_take_a_block_whose_lifetime_ended() {
+    let retired = PointerBlock::from("local:x");
+    let state = CState::new().with_memory(
+        CMemory::new()
+            .with_block("local:x", 4)
+            .without_local_block(&retired),
+    );
+    let statement = c_seq(
+        c_declare("x", CType::Int32),
+        c_seq(
+            c_assign("x", c_int32_literal(2)),
+            c_return(c_int32_literal(0)),
+        ),
+    );
+    let theorem = prove_symbolic_c_execution(state, statement, PureFactContext::new())
+        .expect("a declaration after an ended lifetime executes");
+    let Proposition::CStatementExecutes {
+        outcome: CStatementOutcome::Return { state: after, .. },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("expected a return: {:?}", theorem.proposition());
+    };
+
+    assert_ne!(
+        &after
+            .locals()
+            .slot("x")
+            .expect("the new object's slot")
+            .block,
+        &retired
+    );
+}
