@@ -1028,7 +1028,10 @@ are read, so exporting an address through a field or output parameter does not
 extend its lifetime. Address-backed scalar parameters expire too. Aggregate
 parameter copies remain available during contract evaluation and retire before
 caller execution resumes; separating their logical contract values from C
-storage during postcondition evaluation remains an open boundary. Materialized
+storage during postcondition evaluation remains a bug: a postcondition can read
+an expired parameter field through an output pointer (`issues/dfs.md`, S1).
+The positive companion `mdtests/aggregate_parameter_logical_value.md` requires
+logical field values to remain usable after the C storage expires. Materialized
 aggregate results belong to the caller and survive the callee's exit.
 
 Value-only parameter bindings use a separate pseudo-slot namespace. Concrete

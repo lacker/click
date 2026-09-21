@@ -151,18 +151,62 @@ development machine varies by ±50% run to run.
 
 ## Open — false theorems with a witness on master
 
-### S1. Remaining aggregate-parameter contract storage boundary
+### S1. A postcondition can read an expired aggregate parameter through an output pointer
 
 The surface scope exits, for-update ordering, callee body locals, and scalar
 parameter storage now retire. Regressions live in
 `mdtests/automatic_scope_exit_*.md`; valid paths and expansion are checked too.
 Callee stores through caller-local pointers also refresh their named bindings.
 
-Aggregate parameter copies still supply logical field values during contract
-postcondition evaluation. They now retire before caller execution resumes, but
-separating their logical contract values from the C objects during postcondition
-evaluation remains open. The previous investigation did not find an ordinary
-caller exploit through this path.
+Confirmed on `c21abc68`: the following whole-function contract verifies, including
+final certification. The output pointer names the callee's by-value parameter
+copy, whose storage has expired when the postcondition is read.
+
+```c
+struct packet { int32 value; };
+void leak(struct packet input, int32** out) {
+    input.value = 7;
+    out[0] = &input.value;
+}
+```
+
+```click
+void leak(struct packet input, int32** out) {
+    consumes out[0..1];
+    produces out[0..1];
+    ensures *out[0] == 7;
+} by { execute(); simp(); }
+```
+
+`end_function_body_automatic_lifetimes` in `src/kernel/functions.rs` deliberately
+exempts aggregate parameter slots so that contracts can read their logical field
+values. `function_exit_memory` closes a directly returned local pointer's block,
+but does not follow pointers stored through output parameters. Thus the output
+read above still sees the private parameter copy as live. This is a confirmed
+false contract, not merely an unexamined representation concern.
+
+The investigated direct-return variant (`return &input.value` with
+`ensures result[0] == 7`) is rejected during final certification. A modular caller
+that passes through its own owned output argument and then executes
+`return *out[0]` is also rejected: the callee's equality does not supply the
+required view of the pointee. A caller using an uninitialized local output slot
+is rejected earlier for missing ownership of that slot. These checks do not
+establish safety of every caller route.
+
+Removing the aggregate exemption makes the false output-pointer contract fail
+with `the proposition reads memory that is not viewable here`, but also breaks
+the valid contract in `mdtests/aggregate_parameter_logical_value.md`:
+`read_value(struct packet input) { return input.value; }` with
+`ensures result == input.value`. That experiment was reverted; this bug remains
+unfixed.
+
+The repair must retain logical aggregate values for contracts independently of
+the parameter's C storage, retire all parameter storage before postcondition
+checks, and prevent logical snapshots from granting access through escaped C
+pointers. Keep the C above unchanged as a negative regression and the logical
+value fixture as its positive companion. Also check nested/array fields,
+shallow pointer fields, `old(...)`, aggregate returns, returned resources, and
+ordinary caller execution; verify that positive proofs expand and recheck.
 
 S2's offset-alias partition witness is rejected by indexed pointer and offset
 equalities, with exact byte comparisons for concrete extents. Its regression is
