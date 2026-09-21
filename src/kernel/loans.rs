@@ -10,6 +10,7 @@ use super::primitives::{
     PointerBlock, ResourceMemoryIntervalNode, memory_interval_ancestors, memory_interval_nodes,
     memory_ranges_proven_overlapping,
 };
+use super::reasoning::signed_bitvector_constant;
 use super::{
     Bitvector32Term, CMemoryRange, CResource, CResourceFact, CResourceSnapshot,
     CResourceTransferRole, PureFactContext, ResourceContext, ResourceOccurrenceId,
@@ -290,6 +291,30 @@ fn without_unindexed_memory(
         };
     }
     map
+}
+
+/// Whether a range names no storage at all, which is the one shape the write
+/// barrier may skip without looking at a single loan.
+///
+/// A backwards range is how a range says it is empty, and both endpoints are
+/// read as the signed `int32` values they are. Read through
+/// `Bitvector32Term::as_const`, a start of `-1` arrives as `4294967295` and
+/// every range beginning below its base — `r[-1..3]` under a callee's
+/// `mutable r[s..e]` called at `-1, 3` — claimed to be empty and took the
+/// barrier's exit: no interval lookup, no symbolic comparison, no refusal,
+/// for a range naming four real elements.
+///
+/// Undecided is not empty. A symbolic endpoint answers `false` here and goes
+/// on to the barrier proper, which is where a range the index cannot hold is
+/// refused rather than waved through.
+fn memory_range_is_empty(range: &CMemoryRange) -> bool {
+    matches!(
+        (
+            signed_bitvector_constant(range.start()),
+            signed_bitvector_constant(range.end()),
+        ),
+        (Some(start), Some(end)) if start >= end
+    )
 }
 
 /// Whether a query range provably touches a protected range, compared
@@ -3506,9 +3531,7 @@ impl LoanLedger {
         &self,
         range: &CMemoryRange,
     ) -> Result<Vec<LoanId>, LoanRefusal> {
-        if let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const())
-            && start >= end
-        {
+        if memory_range_is_empty(range) {
             return Ok(Vec::new());
         }
         let Some(query_nodes) = memory_interval_nodes(range) else {
@@ -3552,9 +3575,7 @@ impl LoanLedger {
         range: &CMemoryRange,
         assumptions: &PureFactContext,
     ) -> Result<(), LoanRefusal> {
-        if let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const())
-            && start >= end
-        {
+        if memory_range_is_empty(range) {
             return Ok(());
         }
         if memory_interval_nodes(range).is_some() {
@@ -6458,6 +6479,68 @@ mod tests {
         } else {
             CResourceFact::view_memory(range)
         }
+    }
+
+    /// A ledger holding one live view of `buffer[0..4]`, which is what the
+    /// write barrier is there to protect.
+    fn ledger_lending_the_first_four_elements() -> LoanLedger {
+        let (ledger, holder, _) = participants();
+        let viewed = memory(0, 4, false);
+        let resources = ResourceContext::new().unchecked_with_fact(viewed.clone());
+        let support = resources.occurrences_for_fact(&viewed)[0];
+        let opening = ledger
+            .borrowed_contract_input(holder, support, viewed, None)
+            .expect("checked contract input");
+        ledger.apply(&opening.transition).expect("apply input root")
+    }
+
+    fn range(start: u32, end: u32) -> CMemoryRange {
+        memory(start, end, true).memory_range().unwrap().clone()
+    }
+
+    /// `buffer[-1..3]` names four elements, three of them lent. Its start is
+    /// `4294967295` read through `as_const`, which made `start >= end` true
+    /// and returned the barrier's "this range names no storage" answer for a
+    /// range that names more storage than the lent one does.
+    #[test]
+    fn a_range_starting_below_its_base_is_not_empty_to_the_write_barrier() {
+        let ledger = ledger_lending_the_first_four_elements();
+        let assumptions = PureFactContext::new();
+        let below = range(u32::MAX, 3);
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(&below, &assumptions),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        assert!(!ledger.active_memory_overlaps(&below).unwrap().is_empty());
+        // The contained range is the control: a superset of a refused range
+        // may never be the one that is admitted.
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(&range(0, 3), &assumptions),
+            Err(LoanRefusal::ActiveDependency)
+        );
+    }
+
+    /// The exit itself stays: a backwards range is how a range says it is
+    /// empty, and an empty range touches no loan however far the lent range
+    /// reaches. Both spellings of empty, and one wholly below the loan.
+    #[test]
+    fn an_empty_or_separate_range_still_passes_the_write_barrier() {
+        let ledger = ledger_lending_the_first_four_elements();
+        let assumptions = PureFactContext::new();
+        for empty in [range(2, 2), range(3, 1), range(u32::MAX, u32::MAX - 1)] {
+            assert_eq!(
+                ledger.permits_memory_access_with_assumptions(&empty, &assumptions),
+                Ok(())
+            );
+            assert!(ledger.active_memory_overlaps(&empty).unwrap().is_empty());
+        }
+        // Nonempty, entirely below the lent range, and permitted on its
+        // merits rather than by being mistaken for empty.
+        let below = range(u32::MAX - 1, u32::MAX);
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(&below, &assumptions),
+            Ok(())
+        );
     }
 
     fn composite(name: &str, own: bool) -> CResourceFact {
