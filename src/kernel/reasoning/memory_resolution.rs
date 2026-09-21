@@ -549,8 +549,8 @@ fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
         return false;
     };
     let (Some(left_index), Some(right_index)) = (
-        element_index_from_offset(left_index, element_width),
-        element_index_from_offset(right_index, element_width),
+        element_index_from_offset_with_facts(left_index, element_width, assumptions),
+        element_index_from_offset_with_facts(right_index, element_width, assumptions),
     ) else {
         return false;
     };
@@ -659,8 +659,8 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
     }
     if let Some(element_width) = common_pointer_offset_element_width(left, right)
         && let (Some(left), Some(right)) = (
-            element_index_from_offset(left, element_width),
-            element_index_from_offset(right, element_width),
+            element_index_from_offset_with_facts(left, element_width, assumptions),
+            element_index_from_offset_with_facts(right, element_width, assumptions),
         )
     {
         if let (Some(left), Some(right)) = (

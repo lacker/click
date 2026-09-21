@@ -1468,20 +1468,20 @@ impl PureFactContext {
         };
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
             if offsets_equal(left, &base.offset) {
-                return element_index_from_offset(right, byte_width);
+                return element_index_from_offset_with_facts(right, byte_width, self);
             }
             if offsets_equal(right, &base.offset) {
-                return element_index_from_offset(left, byte_width);
+                return element_index_from_offset_with_facts(left, byte_width, self);
             }
         }
 
         if let PointerOffsetTerm::Add(left, right) = &base.offset {
             if offsets_equal(&pointer.offset, left) {
-                return element_index_from_offset(right, byte_width)
+                return element_index_from_offset_with_facts(right, byte_width, self)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
             if offsets_equal(&pointer.offset, right) {
-                return element_index_from_offset(left, byte_width)
+                return element_index_from_offset_with_facts(left, byte_width, self)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
         }
@@ -1510,7 +1510,7 @@ impl PureFactContext {
         // the exact element index. Preserve that symbolic index so the
         // ordinary endpoint checks can certify an in-bounds access directly.
         if base.offset == PointerOffsetTerm::Constant(0) {
-            return element_index_from_offset(&pointer.offset, byte_width);
+            return element_index_from_offset_with_facts(&pointer.offset, byte_width, self);
         }
         let offsets_match_for_resolution = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
             left == right
@@ -1520,19 +1520,19 @@ impl PureFactContext {
         };
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
             if offsets_match_for_resolution(left, &base.offset) {
-                return element_index_from_offset(right, byte_width);
+                return element_index_from_offset_with_facts(right, byte_width, self);
             }
             if offsets_match_for_resolution(right, &base.offset) {
-                return element_index_from_offset(left, byte_width);
+                return element_index_from_offset_with_facts(left, byte_width, self);
             }
         }
         if let PointerOffsetTerm::Add(left, right) = &base.offset {
             if offsets_match_for_resolution(&pointer.offset, left) {
-                return element_index_from_offset(right, byte_width)
+                return element_index_from_offset_with_facts(right, byte_width, self)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
             if offsets_match_for_resolution(&pointer.offset, right) {
-                return element_index_from_offset(left, byte_width)
+                return element_index_from_offset_with_facts(left, byte_width, self)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
         }

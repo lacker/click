@@ -276,6 +276,80 @@ fn element_index_and_count_support_nonlegacy_widths() {
     }
 }
 
+/// A 64-bit index is not an element index. `element_index_from_offset` used to
+/// hand an `Int64Scaled` displacement's value straight back, so the term every
+/// membership, order and equality rule then compared against 32-bit bounds was
+/// one of a different width — the arm its exact sibling
+/// `exact_element_delta_from_offset` already refused in writing.
+#[test]
+fn a_sixty_four_bit_index_is_an_element_index_only_where_it_is_pinned() {
+    let value = Bitvector32Term::Variable(Variable(93_610));
+    let wide = PointerOffsetTerm::Int64Scaled {
+        value: Box::new(value.clone()),
+        byte_width: 8,
+        unsigned: false,
+    };
+    let narrow = PointerOffsetTerm::Int32Scaled {
+        value: Box::new(value.clone()),
+        byte_width: 8,
+    };
+    let empty = PureFactContext::new();
+    // The 32-bit index of the same width still answers, with and without facts.
+    assert_eq!(element_index_from_offset(&narrow, 8), Some(value.clone()));
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(&narrow, 8, &empty),
+        Some(value.clone())
+    );
+    // The 64-bit one does not, and nothing but a fact can make it.
+    assert_eq!(element_index_from_offset(&wide, 8), None);
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(&wide, 8, &empty),
+        None
+    );
+
+    let pinned = |constant: Bitvector32Term| {
+        PureFactContext::new().assume_condition(
+            ConditionTerm::Bitvector64Equal(Box::new(value.clone()), Box::new(constant)),
+            true,
+        )
+    };
+    // Pinned to a number an `int32` holds, that number *is* the index.
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(
+            &wide,
+            8,
+            &pinned(Bitvector32Term::Int64Constant(1)),
+        ),
+        Some(Bitvector32Term::Constant(1))
+    );
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(
+            &wide,
+            8,
+            &pinned(Bitvector32Term::Int64Constant(-2)),
+        ),
+        Some(Bitvector32Term::Constant((-2i32) as u32))
+    );
+    // Pinned outside it, there is no 32-bit index to answer with: element
+    // `2^32 + 1` is not element `1`.
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(
+            &wide,
+            8,
+            &pinned(Bitvector32Term::Int64Constant(4_294_967_297)),
+        ),
+        None
+    );
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(
+            &wide,
+            8,
+            &pinned(Bitvector32Term::Int64Constant(i64::from(i32::MAX) + 1)),
+        ),
+        None
+    );
+}
+
 #[test]
 fn byte_pointer_distinctness_uses_byte_scaled_indices() {
     let i = Bitvector32Term::Variable(Variable(93_500));

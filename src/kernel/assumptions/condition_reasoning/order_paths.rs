@@ -1334,10 +1334,30 @@ impl PureFactContext {
         };
         match offset {
             PointerOffsetTerm::Constant(_) => true,
-            PointerOffsetTerm::Int32Scaled { value, byte_width }
-            | PointerOffsetTerm::Int64Scaled {
+            // A 64-bit index is not an element index: `element_index_from_offset`
+            // refuses it, so the element rebuilder produces nothing for an
+            // offset that mentions one and this can only be reached on the
+            // byte path. Saying so, rather than returning `true` for both
+            // paths, keeps the affirmative half of `exact_or_unequal` from
+            // resting on a rebuild that did not happen.
+            PointerOffsetTerm::Int64Scaled {
                 value, byte_width, ..
             } => {
+                if !byte_path {
+                    return false;
+                }
+                if *byte_width <= 1 {
+                    return true;
+                }
+                let Ok(width) = u32::try_from(*byte_width) else {
+                    return false;
+                };
+                self.decide(&ConditionTerm::signed_multiply_overflows(
+                    value.as_ref().clone(),
+                    Bitvector32Term::Constant(width),
+                )) == Some(false)
+            }
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
                 if !byte_path || *byte_width <= 1 {
                     return true;
                 }

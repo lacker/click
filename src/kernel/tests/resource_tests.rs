@@ -6502,7 +6502,10 @@ mod constant_range_containment {
         assert!(!covers(&owned, &range(far, 0, 1)));
         // A base a constant distance inside the owner still answers.
         assert!(covers(&range(external(0), 0, 4), &range(external(1), 0, 2)));
-        assert!(!covers(&range(external(0), 0, 4), &range(external(1), 0, 4)));
+        assert!(!covers(
+            &range(external(0), 0, 4),
+            &range(external(1), 0, 4)
+        ));
     }
 
     #[test]
