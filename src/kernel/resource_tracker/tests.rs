@@ -624,12 +624,25 @@ mod saved_states {
         }
     }
 
-    fn unknown(reason: StopReason) -> Sameness {
+    fn not_held(missing_here: bool, missing_there: bool) -> Sameness {
         Sameness::Unknown {
             at: None,
             why: Stop {
-                change: Change::Unrecorded,
-                reason,
+                change: Change::NotHeld {
+                    missing_here,
+                    missing_there,
+                },
+                reason: StopReason::NotHeld,
+            },
+        }
+    }
+
+    fn replaced(by: Option<crate::kernel::model_fields::ModelMint>) -> Sameness {
+        Sameness::Unknown {
+            at: None,
+            why: Stop {
+                change: Change::ModelReplaced { by },
+                reason: StopReason::DifferentVersion,
             },
         }
     }
@@ -666,7 +679,8 @@ mod saved_states {
         let after = holding(1, 4, 0);
         assert_eq!(
             same_at_states(rank(), StatePoint::at(&after), StatePoint::at(&entry)),
-            unknown(StopReason::DifferentVersion)
+            replaced(None),
+            "neither stored value was minted as an arbitrary model, so no step is claimed"
         );
     }
 
@@ -679,11 +693,12 @@ mod saved_states {
         let consumed = CState::new();
         assert_eq!(
             same_at_states(rank(), StatePoint::at(&consumed), StatePoint::at(&entry)),
-            unknown(StopReason::NotHeld)
+            not_held(true, false),
+            "a value only the first point has lost can still be named at the second"
         );
         assert_eq!(
             same_at_states(rank(), StatePoint::at(&entry), StatePoint::at(&consumed)),
-            unknown(StopReason::NotHeld)
+            not_held(false, true)
         );
     }
 
@@ -701,7 +716,7 @@ mod saved_states {
         };
         assert_eq!(
             same_at_states(other, StatePoint::at(&after), StatePoint::at(&entry)),
-            unknown(StopReason::NotHeld)
+            not_held(true, true)
         );
     }
 
@@ -719,7 +734,7 @@ mod saved_states {
         };
         assert_eq!(
             same_at_states(field, StatePoint::at(&after), StatePoint::at(&entry)),
-            unknown(StopReason::NotHeld)
+            not_held(true, true)
         );
     }
 
@@ -753,13 +768,27 @@ mod saved_states {
         );
         assert_eq!(
             same_at_states(population, StatePoint::at(&two), StatePoint::at(&one)),
-            unknown(StopReason::DifferentVersion)
+            Sameness::Unknown {
+                at: None,
+                why: Stop {
+                    change: Change::PopulationMoved,
+                    reason: StopReason::DifferentVersion,
+                },
+            }
         );
         let ended = CState::new();
         assert_eq!(
             same_at_states(population, StatePoint::at(&ended), StatePoint::at(&one)),
-            unknown(StopReason::NotHeld)
+            not_held(true, false)
         );
+        assert_eq!(
+            sole_population_of_family(&one, "object_ref"),
+            Some(OwnedResource::Population {
+                name: "object_ref".to_string(),
+                arguments: arguments.to_vec(),
+            })
+        );
+        assert_eq!(sole_population_of_family(&ended, "object_ref"), None);
     }
 
     /// Neither kind has a naming path: no term is named by one of these
@@ -791,7 +820,7 @@ mod saved_states {
         assert_eq!(explanation.here, None);
         assert_eq!(explanation.there, None);
         assert_eq!(explanation.crossed_after, 0);
-        assert_eq!(explanation.outcome, unknown(StopReason::DifferentVersion));
+        assert_eq!(explanation.outcome, replaced(None));
         assert_eq!(explanation.resource.as_resource(), rank());
         assert_eq!(
             format!("{:?}", StatePoint::at(&entry)),

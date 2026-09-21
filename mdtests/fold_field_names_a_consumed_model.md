@@ -34,5 +34,5 @@ void touch(int32* p) {
 ```
 
 ```expect
-fail: fold field `rank`: `c.rank` names no model here: `c` was consumed since function entry, so this state holds no field to read. Name the value it had there: `{ rank: old(c.rank) }`.
+fail: fold field `rank`: `c.rank` names no model here: `c` was consumed since function entry, so this state holds no field to read. Name the value it had there, `old(c.rank)`.
 ```

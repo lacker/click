@@ -52,7 +52,7 @@ const MAX_REGISTERED: usize = 100_000;
 /// Which step replaced an instance's model, recorded at the mint.
 ///
 /// This is not a guess reconstructed from a refusal site: the recorded memory
-/// history says nothing about model fields (`resource_tracker::Change::Unrecorded`),
+/// history says nothing about model fields (no `CMemoryDerivation` edge carries it),
 /// and the only place that knows why a field vector is fresh is the place that
 /// made it fresh.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,12 +92,25 @@ thread_local! {
     static INSTANCE_SPELLINGS: std::cell::RefCell<
         std::collections::HashMap<Variable, Arc<str>>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// The field of a schema an `(instance, index)` key is, so a refusal that
+    /// holds the tracker's key rather than a term can still spell it. Filled by
+    /// the same insert as the table above.
+    static INSTANCE_FIELD_NAMES: std::cell::RefCell<
+        std::collections::HashMap<(Variable, usize), Arc<str>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 /// Records one fresh field variable. One insert, at the site that already
 /// allocated the variable, so the cost is one entry per field of the instance
 /// whose model was just replaced.
 pub(crate) fn register_model_field_variable(variable: Variable, origin: ModelFieldOrigin) {
+    INSTANCE_FIELD_NAMES.with(|registry| {
+        let mut registry = registry.borrow_mut();
+        if registry.len() >= MAX_REGISTERED {
+            registry.clear();
+        }
+        registry.insert((origin.identity, origin.field_index), origin.field.clone());
+    });
     MODEL_FIELD_VARIABLES.with(|registry| {
         let mut registry = registry.borrow_mut();
         if registry.len() >= MAX_REGISTERED {
@@ -105,6 +118,15 @@ pub(crate) fn register_model_field_variable(variable: Variable, origin: ModelFie
         }
         registry.insert(variable, origin);
     });
+}
+
+/// The reader's own spelling of one field of one instance, `c.rank`, from the
+/// tracker's key rather than from a term.
+pub(crate) fn instance_field_spelling(identity: Variable, field_index: usize) -> Option<String> {
+    let owner = registered_instance_spelling(identity)?;
+    let field = INSTANCE_FIELD_NAMES
+        .with(|registry| registry.borrow().get(&(identity, field_index)).cloned())?;
+    Some(format!("{owner}.{field}"))
 }
 
 /// What a model-field variable stands for, if this session minted it.
@@ -122,9 +144,9 @@ pub(crate) fn register_instance_spelling(identity: Variable, spelling: &str) {
         if registry.len() >= MAX_REGISTERED {
             registry.clear();
         }
-        if !registry.contains_key(&identity) {
-            registry.insert(identity, Arc::from(spelling));
-        }
+        registry
+            .entry(identity)
+            .or_insert_with(|| Arc::from(spelling));
     });
 }
 
@@ -152,4 +174,5 @@ pub(crate) fn model_field_spelling(variable: Variable) -> Option<String> {
 pub(crate) fn clear_model_field_registry() {
     MODEL_FIELD_VARIABLES.with(|registry| registry.borrow_mut().clear());
     INSTANCE_SPELLINGS.with(|registry| registry.borrow_mut().clear());
+    INSTANCE_FIELD_NAMES.with(|registry| registry.borrow_mut().clear());
 }

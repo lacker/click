@@ -1176,6 +1176,78 @@ pub(super) fn unresolved_load(value: &CValue) -> Option<(SharedCMemory, Pointer)
     }
 }
 
+/// The model field a comparison side stands for, if that side is exactly one
+/// model-field variable. A side that resolved to a value stands for nothing.
+///
+/// The registry the mint filled is the only route: the field value is stored
+/// inside the instance fact, so the term carries no projection to read.
+pub(super) fn unresolved_model_field(
+    value: &CValue,
+) -> Option<crate::kernel::model_fields::ModelFieldOrigin> {
+    let variable = crate::kernel::model_fields::algebraic_value_variable(
+        &crate::kernel::AlgebraicValue::C(value.clone()),
+    )?;
+    crate::kernel::model_fields::registered_model_field_origin(variable)
+}
+
+/// The explanation for one comparison side that is a model field: it reads the
+/// outcome state's model, and the question is whether that is still the model
+/// the earlier state held.
+///
+/// The two points are whole saved states, because a model field's version is
+/// the value stored in the instance rather than a point on the memory history.
+pub(super) fn describe_model_field_mismatch(
+    value: &CValue,
+    here: &CState,
+    there: &CState,
+    since: &str,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    let origin = unresolved_model_field(value)?;
+    let explanation = resource_tracker::explain_at_states(
+        resource_tracker::Resource::ModelField {
+            identity: origin.identity,
+            children: &[],
+            field_index: origin.field_index,
+        },
+        resource_tracker::StatePoint::at(here),
+        resource_tracker::StatePoint::at(there),
+    );
+    describe_resource_version_mismatch(&explanation, since, parameters, arguments)
+}
+
+/// The explanation for a comparison side that is a `count(..)`: its version is
+/// the count the state holds, and the question is whether that is still the
+/// count the earlier state held.
+///
+/// The transition that moved it already relates the two counts in the term — the
+/// goal evaluated to `old + 1` — so the text states that relation rather than
+/// computing a new fact.
+pub(super) fn describe_population_mismatch(
+    expression: &ContractExpression,
+    here: &CState,
+    there: &CState,
+    since: &str,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    let ContractExpression::ResourceCount(clause) = expression else {
+        return None;
+    };
+    let ResourceClause::Declared { name, .. } = clause.as_ref() else {
+        return None;
+    };
+    let population = resource_tracker::sole_population_of_family(here, name)
+        .or_else(|| resource_tracker::sole_population_of_family(there, name))?;
+    let explanation = resource_tracker::explain_at_states(
+        population.as_resource(),
+        resource_tracker::StatePoint::at(here),
+        resource_tracker::StatePoint::at(there),
+    );
+    describe_resource_version_mismatch(&explanation, since, parameters, arguments)
+}
+
 /// Names the write that stopped a comparison side from being carried across
 /// the body: the step the resource tracker's walk stopped at, in the source
 /// spelling, with what would settle it.
@@ -1215,30 +1287,27 @@ pub(super) fn describe_unseparated_write(
 /// entry state does: a repair is printed only where it works, and where
 /// `old(..)` would name nothing either the text says so instead.
 pub(super) fn describe_unheld_model_field_initializer(
-    field: &str,
     initializer: &ContractExpression,
     state: &CState,
     entry_state: &CState,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
 ) -> Option<String> {
     let access = unheld_model_field_access(initializer, state)?;
-    let spelled = describe_contract_expression(&ContractExpression::ResourceField(access.clone()));
-    let owner = &access.owner;
-    if entry_state
-        .resource_instance_at_path(access.identity, &access.children)
-        .and_then(|instance| instance.fields().get(access.field_index))
-        .is_none()
-    {
-        return Some(format!(
-            "`{spelled}` names no model here: this state does not hold `{owner}`, and neither does \
-             function entry, so `old({spelled})` would name nothing either. Fold the field from a \
-             value the proof already has."
-        ));
-    }
-    Some(format!(
-        "`{spelled}` names no model here: `{owner}` was consumed since function entry, so this \
-         state holds no field to read. Name the value it had there: \
-         `{{ {field}: old({spelled}) }}`."
-    ))
+    // The instance identity a fold writes is the reader's binder, so the
+    // registry's spelling is available here too; register it in case this
+    // access is the first one lowered.
+    crate::kernel::model_fields::register_instance_spelling(access.identity, &access.owner);
+    let explanation = resource_tracker::explain_at_states(
+        resource_tracker::Resource::ModelField {
+            identity: access.identity,
+            children: &access.children,
+            field_index: access.field_index,
+        },
+        resource_tracker::StatePoint::at(state),
+        resource_tracker::StatePoint::at(entry_state),
+    );
+    describe_resource_version_mismatch(&explanation, "function entry", parameters, arguments)
 }
 
 /// The first model field in `expression` that `state` cannot resolve, skipping
@@ -1405,11 +1474,22 @@ pub(super) fn describe_resource_version_mismatch(
         resource_tracker::OwnedResource::Ranges(_) | resource_tracker::OwnedResource::AnyMemory => {
             return None;
         }
-        // The saved-state kinds are spelled from the registry that minted
-        // their values, not from a memory step; the arms are added with that
-        // registry.
-        resource_tracker::OwnedResource::ModelField { .. }
-        | resource_tracker::OwnedResource::Population { .. } => return None,
+        resource_tracker::OwnedResource::ModelField {
+            identity,
+            children,
+            field_index,
+        } => describe_model_field_version_stop(*identity, children, *field_index, stop, since)?,
+        resource_tracker::OwnedResource::Population {
+            name,
+            arguments: population_arguments,
+        } => describe_population_version_stop(
+            name,
+            population_arguments,
+            stop,
+            since,
+            parameters,
+            arguments,
+        ),
     };
     if explanation.crossed_after > 0 {
         let steps = explanation.crossed_after;
@@ -1417,6 +1497,107 @@ pub(super) fn describe_resource_version_mismatch(
         let _ = write!(message, " The {steps} later {plural} do not touch it.");
     }
     Some(message)
+}
+
+/// One model field, and the step that replaced the model it belongs to.
+///
+/// The field is spelled from the registry the mint filled, so this says
+/// `c.rank`; where either half of that name is unknown there is nothing to say,
+/// because a half-spelled field would read like source the reader could search
+/// for.
+fn describe_model_field_version_stop(
+    identity: Variable,
+    children: &[String],
+    field_index: usize,
+    stop: &resource_tracker::Stop,
+    since: &str,
+) -> Option<String> {
+    let field = crate::kernel::model_fields::instance_field_spelling(identity, field_index)?;
+    // A parent-qualified path is not what the registry names, so it has no
+    // spelling of its own and this says nothing rather than the parent's.
+    if !children.is_empty() {
+        return None;
+    }
+    let owner = crate::kernel::model_fields::registered_instance_spelling(identity)?;
+    let promise = format!("`ensures {field} == old({field})`");
+    Some(match &stop.change {
+        // A value only this state has lost can still be named where it was
+        // held. One neither point holds can be named nowhere, and then the
+        // text says what is missing instead of a repair that would not work.
+        resource_tracker::Change::NotHeld {
+            missing_there: false,
+            ..
+        } => format!(
+            "`{field}` names no model here: `{owner}` was consumed since {since}, so this state \
+             holds no field to read. Name the value it had there, `old({field})`."
+        ),
+        resource_tracker::Change::NotHeld { .. } => format!(
+            "`{field}` names no model here, and none at {since} either: nothing holds `{owner}` at \
+             either point, so `old({field})` names nothing to fall back on."
+        ),
+        resource_tracker::Change::ModelReplaced { by } => {
+            let cause = match by {
+                Some(crate::kernel::model_fields::ModelMint::CallReturn { callee }) => format!(
+                    "the call to `{callee}` returned ownership of `{owner}` with a new model, and \
+                     `{callee}` promises nothing about this field. If it keeps the field, state \
+                     {promise} on `{callee}`."
+                ),
+                Some(crate::kernel::model_fields::ModelMint::Produced { callee }) => format!(
+                    "the call to `{callee}` produced `{owner}`, so its model is fresh here. Only \
+                     an {promise} on `{callee}` relates it to an earlier one."
+                ),
+                Some(crate::kernel::model_fields::ModelMint::LoopHead) => format!(
+                    "the loop owns `{owner}`, and a loop head is an arbitrary visit, so it gives \
+                     `{owner}` a fresh model. If the body keeps the field, carry it through as \
+                     `invariant {field} == old({field});`."
+                ),
+                Some(crate::kernel::model_fields::ModelMint::Refinement) => format!(
+                    "contract/implementation refinement gave `{owner}` an arbitrary model, so only \
+                     what both sides state relates the two."
+                ),
+                // The entry model is the old version, never the replacement,
+                // so it is not a cause; `replacing_change` skips it.
+                Some(crate::kernel::model_fields::ModelMint::ContractEntry) | None => format!(
+                    "the two states store different models for `{owner}`, and no step here says \
+                     which replaced which. State {promise} wherever the model is replaced."
+                ),
+            };
+            format!("`{field}` may have changed since {since}: {cause}")
+        }
+        // A model field's answer is never a memory step: `same_at_states` is
+        // the only route to one, and it produces the two arms above.
+        _ => return None,
+    })
+}
+
+/// One counted population, and the transition that moved it.
+///
+/// The transition relates the two counts arithmetically in the term itself —
+/// `old + 1` is what the goal already evaluated to — so the repair is to state
+/// that relation. Nothing new is computed here.
+fn describe_population_version_stop(
+    name: &str,
+    resource_arguments: &[AlgebraicValue],
+    stop: &resource_tracker::Stop,
+    since: &str,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let population = format!(
+        "count({})",
+        format_declared_resource(name, resource_arguments, parameters, arguments)
+    );
+    match &stop.change {
+        resource_tracker::Change::NotHeld { .. } => format!(
+            "`{population}` names no population here: the family is not in scope at both points, \
+             so there is no count to compare."
+        ),
+        _ => format!(
+            "`{population}` changed since {since}: a `produces` or `consumes` transition in \
+             between moved it. The transition relates the two counts, so state that relation, as \
+             `ensures {population} == old({population}) + 1`."
+        ),
+    }
 }
 
 /// A fact about a whole array. The block walk crosses only a step the kernel
@@ -1524,9 +1705,12 @@ fn describe_cell_cause(
         resource_tracker::Change::BeginningOfHistory => {
             "the recorded execution reaches no further back.".to_string()
         }
-        // A cell's change is always a recorded step, so this is unreachable
-        // for this resource; saying it plainly beats inventing a cause.
-        resource_tracker::Change::Unrecorded => {
+        // A cell's change is always a recorded memory step, so the three
+        // saved-state changes are unreachable for this resource; saying that
+        // plainly beats inventing a cause.
+        resource_tracker::Change::ModelReplaced { .. }
+        | resource_tracker::Change::PopulationMoved
+        | resource_tracker::Change::NotHeld { .. } => {
             "no recorded step in between names this cell.".to_string()
         }
     }
@@ -1714,7 +1898,11 @@ fn describe_step(
         resource_tracker::Change::BeginningOfHistory => {
             "the start of the recorded execution".to_string()
         }
-        resource_tracker::Change::Unrecorded => "a step nothing recorded".to_string(),
+        resource_tracker::Change::ModelReplaced { .. } => "a replaced model".to_string(),
+        resource_tracker::Change::PopulationMoved => "a population transition".to_string(),
+        resource_tracker::Change::NotHeld { .. } => {
+            "a resource this state does not hold".to_string()
+        }
     }
 }
 

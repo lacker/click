@@ -338,15 +338,31 @@ pub(crate) enum Change {
     CellsForgotten,
     /// Nothing: the recorded history starts here.
     BeginningOfHistory,
-    /// No recorded step names this change.
+    /// One instance's model was replaced: its identity survived and its field
+    /// values did not.
     ///
-    /// The memory DAG records one write set per snapshot, so a cell's answer
-    /// can name the step it stopped at. Nothing records "field *k* of this
-    /// instance was replaced" or "this population moved": the version is a
-    /// value in two saved states, and the difference between them is all the
-    /// tracker sees. Naming the step belongs to the site that minted the new
-    /// value, which is the only place that knows why it did.
-    Unrecorded,
+    /// No recorded memory edge carries this, because a model field is not
+    /// memory. `by` is the step the **mint** of the new value recorded, which
+    /// is the only place that knows why it minted one; `None` where neither
+    /// side's value was minted as an arbitrary model, and then the text says
+    /// only what it can see.
+    ModelReplaced {
+        by: Option<crate::kernel::model_fields::ModelMint>,
+    },
+    /// A counted population holds a different count at the two states. The
+    /// transition that moved it is a contract's `produces`/`consumes`, which
+    /// relates the two counts arithmetically in the term itself.
+    PopulationMoved,
+    /// A saved state does not hold the resource at all: the instance was
+    /// consumed, the population ended, or it was never there.
+    ///
+    /// Which of the two points it is missing at decides what a repair can say,
+    /// so both are reported: a value only the *first* point has lost can still
+    /// be named at the second, and one neither holds can be named nowhere.
+    NotHeld {
+        missing_here: bool,
+        missing_there: bool,
+    },
 }
 
 impl Change {
@@ -612,10 +628,11 @@ pub(crate) fn same(resource: Resource<'_>, left: &ProgramPoint, right: &ProgramP
 /// not promise must never be reported the same, because a caller that believed
 /// it would hold a false theorem.
 ///
-/// **Never `Changed`.** Nothing recorded says a step replaced the value, so
-/// the tracker does not claim one did. The site that minted the new value is
-/// the only place that knows why it did, and that is where a refusal reads the
-/// step from (`registered_model_field_origin`), not here.
+/// **Never `Changed`.** No recorded edge says a step replaced the value, so the
+/// answer is never the `Changed` a memory write earns. The step is still named
+/// where one is known: the site that minted the new value recorded why it did
+/// (`crate::kernel::model_fields`), and the two values this already fetched are
+/// where that is read from.
 pub(crate) fn same_at_states(
     resource: Resource<'_>,
     left: StatePoint<'_>,
@@ -628,24 +645,79 @@ pub(crate) fn same_at_states(
     if left.is_one_state(right) {
         return Sameness::Same;
     }
-    let unknown = |reason| Sameness::Unknown {
-        at: None,
-        why: Stop {
-            change: Change::Unrecorded,
-            reason,
-        },
-    };
-    let (Some(left_version), Some(right_version)) = (
+    let (left_held, right_held) = (
         version_at_state(resource, left),
         version_at_state(resource, right),
-    ) else {
-        return unknown(StopReason::NotHeld);
+    );
+    let (Some(left_version), Some(right_version)) = (left_held.as_ref(), right_held.as_ref())
+    else {
+        return Sameness::Unknown {
+            at: None,
+            why: Stop {
+                change: Change::NotHeld {
+                    missing_here: left_held.is_none(),
+                    missing_there: right_held.is_none(),
+                },
+                reason: StopReason::NotHeld,
+            },
+        };
     };
     if left_version == right_version {
-        Sameness::Same
-    } else {
-        unknown(StopReason::DifferentVersion)
+        return Sameness::Same;
     }
+    Sameness::Unknown {
+        at: None,
+        why: Stop {
+            change: replacing_change(left_version, right_version),
+            reason: StopReason::DifferentVersion,
+        },
+    }
+}
+
+/// What replaced the version, from the two values already in hand.
+///
+/// A field value the contract's entry minted is the **old** version, so the
+/// other side's mint is the step that replaced it. Where neither side was
+/// minted as an arbitrary model — a folded constant, a value an `ensures`
+/// relates — nothing is claimed.
+fn replacing_change(left: &Version, right: &Version) -> Change {
+    let (Version::Field(left), Version::Field(right)) = (left, right) else {
+        return Change::PopulationMoved;
+    };
+    let mint = |value: &AlgebraicValue| {
+        crate::kernel::model_fields::algebraic_value_variable(value)
+            .and_then(crate::kernel::model_fields::registered_model_field_origin)
+            .map(|origin| origin.minted_by)
+    };
+    let replaced = [mint(left), mint(right)]
+        .into_iter()
+        .flatten()
+        .find(|mint| *mint != crate::kernel::model_fields::ModelMint::ContractEntry);
+    Change::ModelReplaced { by: replaced }
+}
+
+/// The population a resource family names in a state, when the state holds
+/// exactly one of that family.
+///
+/// A refusal has the family the reader wrote, `count(object_ref(obj))`, and not
+/// the evaluated arguments the state indexes it by. Where one family has two
+/// live instantiations there is nothing to say: answering about the wrong one
+/// would name a population the reader was not asking about.
+pub(crate) fn sole_population_of_family(state: &CState, family: &str) -> Option<OwnedResource> {
+    let mut found = None;
+    for population in state.counted_populations() {
+        if population.name != family {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(OwnedResource::Population {
+            name: population.name.clone(),
+            arguments: population.arguments.to_vec(),
+        });
+    }
+    found
 }
 
 /// [`same_at_states`], with the bounded context a refusal prints.
@@ -663,13 +735,20 @@ pub(crate) fn explain_at_states(
     }
 }
 
-/// One version of a saved-state resource: the value the state stores at the
-/// one key asked about, by one keyed lookup.
-///
-/// A `Term` rather than the stored representation, so a field and a population
-/// count are compared by the same equality. The comparison is syntactic: two
-/// spellings of one value answer `Unknown`, which is the safe direction.
-fn version_at_state(resource: Resource<'_>, point: StatePoint<'_>) -> Option<Term> {
+/// One version of a saved-state resource: exactly what the state stores at the
+/// one key asked about, kept in its own form so the mint of a field value can
+/// still be read off it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Version {
+    /// One model field's stored value.
+    Field(AlgebraicValue),
+    /// One population's count term.
+    Count(Bitvector32Term),
+}
+
+/// The version by one keyed lookup. The comparison is syntactic: two spellings
+/// of one value answer `Unknown`, which is the safe direction.
+fn version_at_state(resource: Resource<'_>, point: StatePoint<'_>) -> Option<Version> {
     match resource {
         Resource::ModelField {
             identity,
@@ -679,7 +758,8 @@ fn version_at_state(resource: Resource<'_>, point: StatePoint<'_>) -> Option<Ter
             .state()
             .resource_instance_at_path(identity, children)
             .and_then(|instance| instance.fields().get(field_index))
-            .map(algebraic_value_term),
+            .cloned()
+            .map(Version::Field),
         // `CState::counted_population` is the one keyed lookup for this, and
         // it is the lookup every other consumer already uses. A state's
         // population list holds one entry per resource family the contract's
@@ -688,17 +768,10 @@ fn version_at_state(resource: Resource<'_>, point: StatePoint<'_>) -> Option<Ter
         Resource::Population { name, arguments } => point
             .state()
             .counted_population(name, arguments)
-            .map(|count| Term::Bitvector32(count.clone())),
+            .cloned()
+            .map(Version::Count),
         // A memory resource's version is a program point, not a value.
         Resource::Cell(_) | Resource::Block(_) | Resource::Ranges(_) | Resource::AnyMemory => None,
-    }
-}
-
-fn algebraic_value_term(value: &AlgebraicValue) -> Term {
-    match value {
-        AlgebraicValue::Integer(term) => Term::Integer(term.clone()),
-        AlgebraicValue::C(value) => Term::CValue(value.clone()),
-        AlgebraicValue::Algebraic(term) => Term::Algebraic(term.clone()),
     }
 }
 

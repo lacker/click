@@ -95,14 +95,15 @@ impl<'a> Proof<'a> {
                 )
                 .map_err(|message| {
                     // The kernel can only say the identity is absent. Here the
-                    // reader's own initializer is in hand, so the field, the
-                    // instance and the repair are named instead.
+                    // reader's own initializer is in hand, so the one renderer
+                    // names the field, the instance and the repair instead.
                     let message =
                         crate::surface::diagnostics::describe_unheld_model_field_initializer(
-                            name,
                             &expression,
                             before,
                             pre_state,
+                            context.parsed_function.parameters(),
+                            context.arguments,
                         )
                         .unwrap_or(message);
                     self.step_error(format!("fold field `{name}`: {message}"))
