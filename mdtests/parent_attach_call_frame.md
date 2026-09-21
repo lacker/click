@@ -95,6 +95,7 @@ void parent_attach(struct parent* p, struct child* kid) {
     owns child_ref(kid);
     produces child_ref(kid);
     produces link: parent(p);
+    ensures link.link == ParentLink::Linked(kid);
 } by {
     execute();
     let link = fold(parent(p), { link: ParentLink::Linked(kid) });
