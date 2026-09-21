@@ -276,6 +276,209 @@ fn element_index_and_count_support_nonlegacy_widths() {
     }
 }
 
+/// A 64-bit index is not an element index. `element_index_from_offset` used to
+/// hand an `Int64Scaled` displacement's value straight back, so the term every
+/// membership, order and equality rule then compared against 32-bit bounds was
+/// one of a different width — the arm its exact sibling
+/// `exact_element_delta_from_offset` already refused in writing.
+#[test]
+fn a_sixty_four_bit_index_is_an_element_index_only_where_it_is_pinned() {
+    let value = Bitvector32Term::Variable(Variable(93_610));
+    let wide = PointerOffsetTerm::Int64Scaled {
+        value: Box::new(value.clone()),
+        byte_width: 8,
+        unsigned: false,
+    };
+    let narrow = PointerOffsetTerm::Int32Scaled {
+        value: Box::new(value.clone()),
+        byte_width: 8,
+    };
+    let empty = PureFactContext::new();
+    // The 32-bit index of the same width still answers, with and without facts.
+    assert_eq!(element_index_from_offset(&narrow, 8), Some(value.clone()));
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(&narrow, 8, &empty),
+        Some(value.clone())
+    );
+    // The 64-bit one does not, and nothing but a fact can make it.
+    assert_eq!(element_index_from_offset(&wide, 8), None);
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(&wide, 8, &empty),
+        None
+    );
+
+    let pinned = |constant: Bitvector32Term| {
+        PureFactContext::new().assume_condition(
+            ConditionTerm::Bitvector64Equal(Box::new(value.clone()), Box::new(constant)),
+            true,
+        )
+    };
+    // Pinned to a number an `int32` holds, that number *is* the index.
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(
+            &wide,
+            8,
+            &pinned(Bitvector32Term::Int64Constant(1)),
+        ),
+        Some(Bitvector32Term::Constant(1))
+    );
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(
+            &wide,
+            8,
+            &pinned(Bitvector32Term::Int64Constant(-2)),
+        ),
+        Some(Bitvector32Term::Constant((-2i32) as u32))
+    );
+    // Pinned outside it, there is no 32-bit index to answer with: element
+    // `2^32 + 1` is not element `1`.
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(
+            &wide,
+            8,
+            &pinned(Bitvector32Term::Int64Constant(4_294_967_297)),
+        ),
+        None
+    );
+    assert_eq!(
+        crate::kernel::reasoning::element_index_from_offset_with_facts(
+            &wide,
+            8,
+            &pinned(Bitvector32Term::Int64Constant(i64::from(i32::MAX) + 1)),
+        ),
+        None
+    );
+}
+
+/// A decided pointer-offset equality is also a statement about element
+/// indices, and the two directions are not the same statement. The index a
+/// byte offset folds to is the offset divided by the element width *modulo*
+/// `2^32`, so equal offsets have equal indices and different offsets need
+/// not have different ones.
+#[test]
+fn an_index_disequality_needs_the_folds_to_be_sums() {
+    let i = Bitvector32Term::Variable(Variable(93_660));
+    let j = Bitvector32Term::Variable(Variable(93_661));
+    let k = Bitvector32Term::Variable(Variable(93_662));
+    let scaled = |value: &Bitvector32Term| PointerOffsetTerm::Int32Scaled {
+        value: Box::new(value.clone()),
+        byte_width: 4,
+    };
+    // `p + i + j` against `p + k`: at `i == j == i32::MAX` and `k == -2` the
+    // two offsets are `2^34` bytes apart and both indices are `-2`.
+    let summed = PointerOffsetTerm::Add(Box::new(scaled(&i)), Box::new(scaled(&j)));
+    let single = scaled(&k);
+    let index_fact = Proposition::ConditionIs(
+        ConditionTerm::equal(Bitvector32Term::add(i.clone(), j.clone()), k.clone()),
+        false,
+    );
+
+    let recorded = |assumptions: &PureFactContext, value: bool| {
+        let mut facts = Vec::new();
+        crate::kernel::reasoning::add_pointer_offset_equality_execution_pure_facts(
+            &mut facts,
+            assumptions,
+            summed.clone(),
+            single.clone(),
+            value,
+        )
+        .expect("the offsets are undecided, so both polarities are consistent");
+        facts
+            .iter()
+            .map(|fact| fact.proposition().clone())
+            .collect::<Vec<_>>()
+    };
+
+    let empty = PureFactContext::new();
+    // The disequality is refused: nothing says the fold of `i + j` is the sum.
+    assert!(!recorded(&empty, false).contains(&index_fact));
+    // The equality is arithmetic and needs no premise: equal offsets have
+    // equal residues however either side wrapped.
+    assert!(recorded(&empty, true).contains(&Proposition::ConditionIs(
+        ConditionTerm::equal(Bitvector32Term::add(i.clone(), j.clone()), k.clone()),
+        true,
+    )));
+
+    // The premise is exactly that the one modular add does not carry, which
+    // is the condition C's own `+` publishes.
+    let unwrapped = PureFactContext::new().assume_condition(
+        ConditionTerm::signed_add_overflows(i.clone(), j.clone()),
+        false,
+    );
+    assert!(recorded(&unwrapped, false).contains(&index_fact));
+
+    // One scaled index on each side folds with no add at all, so it is the
+    // index exactly and the disequality is recorded with no premise.
+    let mut facts = Vec::new();
+    crate::kernel::reasoning::add_pointer_offset_equality_execution_pure_facts(
+        &mut facts,
+        &empty,
+        scaled(&i),
+        single,
+        false,
+    )
+    .expect("two undecided offsets");
+    let single_index_fact = Proposition::ConditionIs(ConditionTerm::equal(i, k), false);
+    assert!(
+        facts
+            .iter()
+            .any(|fact| fact.proposition() == &single_index_fact)
+    );
+}
+
+/// The byte path rebuilds an `Int64Scaled` displacement as a *thirty-two-bit*
+/// `Multiply` of a term whose own value is sixty-four bits wide. The
+/// thirty-two-bit overflow question is therefore the wrong question about it,
+/// and a low word of `0xFFFFFFFF` is what shows so: `-1 * 8` does not
+/// overflow an `int32`, while the offset an unsigned index of `4294967295`
+/// really names is `8 * 4294967295`, not `-8`.
+#[test]
+fn a_sixty_four_bit_displacement_is_exact_only_where_a_fact_pins_it() {
+    let value = Bitvector32Term::Variable(Variable(93_670));
+    let wide = |unsigned: bool| PointerOffsetTerm::Int64Scaled {
+        value: Box::new(value.clone()),
+        byte_width: 8,
+        unsigned,
+    };
+    let decide = |assumptions: &PureFactContext, unsigned: bool, target: i64| {
+        assumptions.decide(&ConditionTerm::pointer_offset_equal(
+            wide(unsigned),
+            PointerOffsetTerm::Constant(target),
+        ))
+    };
+
+    let low_word_is_minus_one = PureFactContext::new().assume_condition(
+        ConditionTerm::equal(value.clone(), Bitvector32Term::Constant(0xFFFF_FFFF)),
+        true,
+    );
+    // A thirty-two-bit fact says nothing about a sixty-four-bit value, so
+    // neither reading may be affirmed.
+    assert_eq!(decide(&low_word_is_minus_one, true, -8), None);
+    assert_eq!(decide(&low_word_is_minus_one, false, -8), None);
+
+    let pinned = |constant: i64| {
+        PureFactContext::new().assume_condition(
+            ConditionTerm::Bitvector64Equal(
+                Box::new(value.clone()),
+                Box::new(Bitvector32Term::Int64Constant(constant)),
+            ),
+            true,
+        )
+    };
+    // Pinned to a number whose scaled product occupies an `int32`, the
+    // rebuilt term is the offset and the equality is decided both ways.
+    assert_eq!(decide(&pinned(1), false, 8), Some(true));
+    assert_ne!(decide(&pinned(1), false, 16), Some(true));
+    assert_eq!(decide(&pinned(-1), false, -8), Some(true));
+    // An unsigned index read signed is only the unsigned one while it is
+    // nonnegative.
+    assert_eq!(decide(&pinned(-1), true, -8), None);
+    // Pinned where the product leaves `int32`, there is no rebuilt term that
+    // holds it: `8 * 2^31` is not a thirty-two-bit displacement.
+    assert_eq!(decide(&pinned(i64::from(i32::MAX) + 1), false, 0), None);
+    assert_eq!(decide(&pinned(4_294_967_295), true, -8), None);
+}
+
 #[test]
 fn byte_pointer_distinctness_uses_byte_scaled_indices() {
     let i = Bitvector32Term::Variable(Variable(93_500));
@@ -2858,6 +3061,76 @@ fn symbolic_store_invalidates_only_possible_aliasing_cells() {
         .without_possible_aliasing_cells(&symbolic_cell, 4, &distinct_assumptions)
         .store(symbolic_cell, int32(7));
     assert_eq!(distinct.known_value(&concrete_cell), Some(int32(42)));
+}
+
+/// A store keeps the cells whose *bytes* it provably misses, and an address
+/// ladder does not answer that. `i != j` separates `a[i]` from `a[j]` and
+/// says nothing about an eight-byte store at `a[j]`, which covers `a[j]` and
+/// `a[j + 1]` both — so the ladder may only stand in for the bytes where the
+/// gap it establishes clears the wider access.
+///
+/// `overwrites` is not what was deciding these: it compares a constant byte
+/// interval and declines two offsets carrying different symbolic atoms,
+/// which is exactly this pair.
+#[test]
+fn a_wide_store_does_not_spare_a_narrow_cell_a_ladder_separates() {
+    let i = Bitvector32Term::Variable(Variable(93_640));
+    let j = Bitvector32Term::Variable(Variable(93_641));
+    let element = |index: &Bitvector32Term| Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Add(
+            Box::new(PointerOffsetTerm::Variable(Variable(93_642))),
+            Box::new(PointerOffsetTerm::Int32Scaled {
+                value: Box::new(index.clone()),
+                byte_width: 4,
+            }),
+        ),
+    };
+    let cell = element(&i);
+    let write = element(&j);
+    let memory = CMemory::new()
+        .with_block("array", 16)
+        .store(cell.clone(), int32(5));
+    // The ladder's premise, and the only one: the two element indices differ.
+    let indices_differ =
+        PureFactContext::new().assume_condition(ConditionTerm::equal(i.clone(), j.clone()), false);
+
+    // A four-byte store at a different element misses a four-byte cell: one
+    // element of gap clears both accesses whichever way the ladder runs.
+    let narrow = memory
+        .clone()
+        .without_possible_aliasing_cells(&write, 4, &indices_differ);
+    assert_eq!(narrow.known_value(&cell), Some(int32(5)));
+
+    // An eight-byte store at that same element reaches the one above it, and
+    // `i != j` does not rule out `i == j + 1`.
+    let wide = memory
+        .clone()
+        .without_possible_aliasing_cells(&write, 8, &indices_differ);
+    assert_eq!(wide.known_value(&cell), None);
+
+    // With the direction fixed the gap is decided: the store is the *lower*
+    // access, so its eight bytes have to fit, and they do not.
+    let store_below = indices_differ
+        .clone()
+        .assume_condition(ConditionTerm::signed_less_than(j.clone(), i.clone()), true);
+    assert_eq!(
+        memory
+            .clone()
+            .without_possible_aliasing_cells(&write, 8, &store_below)
+            .known_value(&cell),
+        None
+    );
+    // The other direction puts the *cell* below, and an access extending away
+    // from the gap cannot close it, so the eight-byte store is separate.
+    let store_above = indices_differ
+        .assume_condition(ConditionTerm::signed_less_than(i.clone(), j.clone()), true);
+    assert_eq!(
+        memory
+            .without_possible_aliasing_cells(&write, 8, &store_above)
+            .known_value(&cell),
+        Some(int32(5))
+    );
 }
 
 /// One hop through an exact pointer equality, and every way that hop must not

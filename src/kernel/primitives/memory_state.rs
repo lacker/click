@@ -2394,6 +2394,27 @@ impl CMemory {
     /// the second reads a width, and it reads both sides' exact widths, so
     /// the cells that survive a store are the ones whose bytes the store
     /// provably misses.
+    ///
+    /// Both questions are asked of every cell. `overwrites` answers only
+    /// where the two offsets carry the same symbolic atoms — it is the
+    /// constant-gap test, and it declines a cell at `a[i]` against a store at
+    /// `a[j]` — so the separation ladder below it was, on its own, deciding
+    /// the byte question for exactly the pairs `overwrites` could not. It
+    /// decided it from the addresses: `i != j` separates `a[i]` from `a[j]`
+    /// and says nothing about an eight-byte store there, which covers
+    /// `a[j]` and `a[j + 1]` both. So the ladder is conjoined with the shared
+    /// [`access_byte_overlap`], exactly as `step_effect::cell_effect` and the
+    /// snapshot comparisons conjoin it: the ladder decides whether the
+    /// addresses differ, and the byte answer decides whether the gap it
+    /// establishes clears both accesses. An unknown gap blocks it too — a
+    /// ladder proving two addresses differ says nothing about bytes.
+    ///
+    /// The widths are exact on both sides here, which is why this site can
+    /// ask at all: the store's is its own `bytes`, and the cell's is the
+    /// width of the value it holds, standing in the widest scalar where it
+    /// holds none. Over-stating a width can only shrink the separated set,
+    /// and a cell that stops being shown separate is dropped, which loses
+    /// knowledge rather than keeping a stale value.
     pub(in crate::kernel) fn without_possible_aliasing_cells(
         &self,
         pointer: &Pointer,
@@ -2437,16 +2458,34 @@ impl CMemory {
                 });
                 return false;
             }
-            let kept = pointers_proven_distinct_for_memory_resolution(
+            let address_inequality_separates_bytes = crate::kernel::reasoning::access_byte_overlap(
                 &normalized_cell_pointer,
+                crate::kernel::reasoning::cell_access_byte_width(cell_value),
                 &normalized_pointer,
+                bytes,
                 assumptions,
-            )
-                // A field cell survives a store into an array it is
-                // separated from: separation facts plus range membership
-                // decide the cross-base pairs offset reasoning cannot.
-                // Only here, per cell per store — not on the general
-                // distinctness path, where this scan is too hot.
+            ) == crate::kernel::reasoning::AccessByteOverlap::Separate;
+            let kept = address_inequality_separates_bytes
+                && pointers_proven_distinct_for_memory_resolution(
+                    &normalized_cell_pointer,
+                    &normalized_pointer,
+                    assumptions,
+                )
+                // The three range rungs. A field cell survives a store into
+                // an array it is separated from: separation facts plus range
+                // membership decide the cross-base pairs offset reasoning
+                // cannot, and `access_byte_overlap` has no counterpart for
+                // them — it answers `Unknown` for every pair with no common
+                // additive base, which is exactly the pairs these exist to
+                // decide. They place an access by its *first element*, so
+                // they carry the same confusion one level up; that is
+                // reported rather than fixed here, because the membership
+                // evidence takes no access width and the retained
+                // certificate has no field for one.
+                || assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution(
+                    &normalized_cell_pointer,
+                    &normalized_pointer,
+                )
                 || assumptions
                     .pointers_directly_disjoint_by_range(&normalized_cell_pointer, &normalized_pointer)
                 // Last: a separating composition owns the written address and
@@ -2483,12 +2522,26 @@ impl CMemory {
                 });
                 return false;
             }
-            let kept = pointers_proven_distinct_for_memory_resolution(
+            // A union view has no value to read a width from, so it stands in
+            // the width of the type it is keyed by — the access it records.
+            let address_inequality_separates_bytes = crate::kernel::reasoning::access_byte_overlap(
                 &normalized_cell_pointer,
+                cell_type.byte_width().max(1),
                 &normalized_pointer,
+                bytes,
                 assumptions,
-            ) || assumptions
-                .pointers_directly_disjoint_by_range(&normalized_cell_pointer, &normalized_pointer)
+            )
+                == crate::kernel::reasoning::AccessByteOverlap::Separate;
+            let kept = address_inequality_separates_bytes
+                && pointers_proven_distinct_for_memory_resolution(
+                    &normalized_cell_pointer,
+                    &normalized_pointer,
+                    assumptions,
+                )
+                || assumptions.pointers_directly_disjoint_by_range(
+                    &normalized_cell_pointer,
+                    &normalized_pointer,
+                )
                 || crate::kernel::memory_provenance::owned_composition_store_separated_evidence(
                     &normalized_pointer,
                     &normalized_cell_pointer,

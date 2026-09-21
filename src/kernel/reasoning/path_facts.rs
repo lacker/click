@@ -442,6 +442,21 @@ fn c_values_definitely_distinct(left: &CValue, right: &CValue) -> bool {
     }
 }
 
+/// The element index a byte offset names, *modulo `2^32`*.
+///
+/// A residue is enough for a disequality and for an exclusion; a caller that
+/// reads the answer as a number wants [`exact_element_delta_from_offset`].
+/// Either way the answer has to be a residue of the delta, and an
+/// `Int64Scaled` one is not: it scales its *64-bit* value, so the 32-bit term
+/// holding that value denotes the index only when the value happens to fit
+/// `int32`, and `unsigned int k; a[k]` reaches here as
+/// `UInt64From32(k)` — a term of a different width from the one every
+/// consumer compares it against. This is the arm
+/// [`exact_element_delta_from_offset`] already refused, for the same reason,
+/// and it is refused here too rather than carried: a width threaded alongside
+/// the index would have to be got right independently at each of the dozen
+/// consumers and at every certificate that re-checks them, while refusing
+/// costs an answer none of them can use.
 pub(in crate::kernel) fn element_index_from_offset(
     offset: &PointerOffsetTerm,
     element_width: u32,
@@ -467,9 +482,6 @@ pub(in crate::kernel) fn element_index_from_offset(
         {
             Some(value.as_ref().clone())
         }
-        PointerOffsetTerm::Int64Scaled {
-            value, byte_width, ..
-        } if *byte_width == i64::from(element_width) => Some(value.as_ref().clone()),
         PointerOffsetTerm::Constant(offset) if offset % i64::from(element_width) == 0 => {
             let index = offset / i64::from(element_width);
             (i32::MIN as i64..=i32::MAX as i64)
@@ -484,6 +496,54 @@ pub(in crate::kernel) fn int32_element_index_from_offset(
     offset: &PointerOffsetTerm,
 ) -> Option<Bitvector32Term> {
     element_index_from_offset(offset, 4)
+}
+
+/// [`element_index_from_offset`] for a caller holding facts, which is the one
+/// thing that turns a 64-bit index into a 32-bit one.
+///
+/// An `Int64Scaled` displacement scales its *64-bit* value, so the term
+/// holding that value names an element index only where the facts pin it to a
+/// number an `int32` holds — and then that number is the index, exactly, with
+/// nothing read as a residue. `size_t index; … values[index]` under
+/// `index == 1` is the shape, and it is what the membership and permission
+/// rules were getting out of the residue arm.
+pub(in crate::kernel) fn element_index_from_offset_with_facts(
+    offset: &PointerOffsetTerm,
+    element_width: u32,
+    assumptions: &PureFactContext,
+) -> Option<Bitvector32Term> {
+    if element_width == 0 {
+        return None;
+    }
+    if let Some(index) = element_index_from_offset(offset, element_width) {
+        return Some(index);
+    }
+    match offset {
+        PointerOffsetTerm::Add(left, right) => Some(Bitvector32Term::add(
+            element_index_from_offset_with_facts(left, element_width, assumptions)?,
+            element_index_from_offset_with_facts(right, element_width, assumptions)?,
+        )),
+        PointerOffsetTerm::Int64Scaled {
+            value,
+            byte_width,
+            unsigned,
+        } if *byte_width == i64::from(element_width) => {
+            // The value is sixty-four bits wide, so only a sixty-four-bit
+            // fact pins it: a thirty-two-bit one names the low word and
+            // leaves the rest, and `exact_signed_constant` accepts those.
+            // `unsigned` is part of the question rather than a check after
+            // it, because the two readings of one word are different numbers.
+            let index = crate::kernel::assumptions::exact_sixty_four_bit_constant(
+                value,
+                *unsigned,
+                assumptions,
+            )?;
+            i32::try_from(index)
+                .ok()
+                .map(|index| Bitvector32Term::Constant(index as u32))
+        }
+        _ => None,
+    }
 }
 
 /// An element delta split so that it is *exact*: the true delta in `i64` is
@@ -942,10 +1002,31 @@ pub(in crate::kernel) fn add_pointer_offset_equality_execution_pure_facts(
         value,
     )?;
 
+    // The element index a byte offset folds to is that offset divided by the
+    // element width, *modulo* `2^32`: every leaf contributes a whole multiple
+    // of the width, but `Bitvector32Term::add` folds the pieces modularly.
+    //
+    // That makes the two directions different statements. Equal offsets have
+    // equal residues, so the affirmative half is arithmetic and needs no
+    // premise. Different offsets need not have different residues: `p + i + j`
+    // and `p + k` are `2^34` bytes apart at `i == j == i32::MAX`, `k == -2`,
+    // and their indices are the same `-2`. Recording `i + j != k` there is
+    // recording a false fact, which proves anything.
+    //
+    // So the disequality is recorded only where each fold is the sum —
+    // `rebuilt_offset_is_exact` on the element path, the same premise the
+    // opposite polarity of the same question already asks for in
+    // `exact_or_unequal`, and exact for the opposite reason: there a residue
+    // may refute an offset equality and may not affirm one, while here an
+    // offset disequality may not be read off a residue that could have
+    // wrapped onto it.
     if let (Some(left_index), Some(right_index)) = (
         int32_element_index_from_offset(&left),
         int32_element_index_from_offset(&right),
-    ) {
+    ) && (value
+        || assumptions.element_index_rebuild_is_exact(&left)
+            && assumptions.element_index_rebuild_is_exact(&right))
+    {
         add_condition_path_fact(
             facts,
             assumptions,

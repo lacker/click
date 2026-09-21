@@ -2275,3 +2275,82 @@ fn a_store_inside_a_read_refutes_the_load_equality_at_every_offset() {
         );
     }
 }
+
+/// The gate the load-side distinct-cell reduction now applies before dropping
+/// a cell: dropping it names the load at a snapshot that no longer records it,
+/// so the cell's bytes have to miss the read. The reduction had only
+/// `pointers_proven_distinct_for_memory_resolution`, which is about addresses.
+#[test]
+fn a_cell_clears_a_read_only_outside_its_bytes() {
+    use crate::kernel::reasoning::memory_resolution::{AccessByteOverlap, access_byte_overlap};
+
+    let bare = PureFactContext::new();
+    let at = |offset: i64| Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(offset),
+    };
+    let read = at(0);
+    for read_bytes in [4u32, 8] {
+        for cell_bytes in [1u32, 4, 8] {
+            for offset in -8..=8i64 {
+                let separate =
+                    access_byte_overlap(&at(offset), cell_bytes, &read, read_bytes, &bare)
+                        == AccessByteOverlap::Separate;
+                let overlaps = offset < i64::from(read_bytes) && -offset < i64::from(cell_bytes);
+                assert_eq!(
+                    separate, !overlaps,
+                    "a {cell_bytes}-byte cell {offset} bytes from a {read_bytes}-byte read"
+                );
+            }
+        }
+    }
+}
+
+/// Two snapshots that differ on a cell inside a read do not hold one value for
+/// it. `memories_directly_match_for_pointer_load` decided each differing cell
+/// from the two *addresses* — a constant nonzero byte offset was enough — and
+/// an address is not the question: a four-byte cell at `q + 4` is a different
+/// address from `q` under every test the kernel has while holding the upper
+/// half of an eight-byte read there.
+#[test]
+fn a_differing_cell_inside_a_read_stops_the_two_snapshots_matching() {
+    let bare = PureFactContext::new();
+    for (block, read_bytes) in [("narrow-cell-memory", 4u32), ("wide-cell-memory", 8)] {
+        let read = Pointer {
+            block: block.into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        crate::kernel::eval::declare_load_access_width(&read, read_bytes);
+        let base = CMemory::new().with_block(block, 32);
+        let cell_holding = |offset: i64, value: u32| {
+            base.clone().store(
+                Pointer {
+                    block: block.into(),
+                    offset: PointerOffsetTerm::Constant(offset),
+                },
+                CValue::UInt8(Bitvector32Term::Constant(value)),
+            )
+        };
+        for offset in 1..i64::from(read_bytes) {
+            assert!(
+                !crate::kernel::memory_provenance::memories_directly_match_for_pointer_load(
+                    &cell_holding(offset, 1),
+                    &cell_holding(offset, 2),
+                    &read,
+                    &bare,
+                ),
+                "a cell {offset} bytes into a {read_bytes}-byte read is a byte that read \
+                 returns, so the two snapshots do not hold one value for it"
+            );
+        }
+        assert!(
+            crate::kernel::memory_provenance::memories_directly_match_for_pointer_load(
+                &cell_holding(i64::from(read_bytes), 1),
+                &cell_holding(i64::from(read_bytes), 2),
+                &read,
+                &bare,
+            ),
+            "a cell past the read's last byte holds none of its bytes"
+        );
+    }
+}

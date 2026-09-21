@@ -444,14 +444,29 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     record_load_access_width(&memory, &pointer, value_type.byte_width());
     let reduction_base = Some(intern_c_memory_ref(&memory));
     let cells_before_reduction = memory.cells.len();
+    let load_bytes = value_type.byte_width();
     crate::instrumentation::measure_operation(
         "kernel",
         "memory load",
         "memory load: distinct-cell reduction",
         || {
             crate::instrumentation::record_deterministic_work(cells_before_reduction);
-            std::sync::Arc::make_mut(&mut memory.cells).retain(|stored_pointer, _| {
-                !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
+            std::sync::Arc::make_mut(&mut memory.cells).retain(|stored_pointer, stored_value| {
+                // Dropping a cell names this load at a snapshot that no longer
+                // records it, so the question is the same byte question
+                // `1a3b2701` put in front of the three snapshot comparisons:
+                // `p + 1` is a different address from `p` under every test the
+                // kernel has while holding the second byte a four-byte read
+                // there returns. The address ladder decides it only where the
+                // bytes it establishes clear both accesses.
+                !(alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
+                    && access_byte_overlap(
+                        stored_pointer,
+                        cell_access_byte_width(stored_value),
+                        &pointer,
+                        load_bytes,
+                        assumptions,
+                    ) == AccessByteOverlap::Separate)
             });
         },
     );

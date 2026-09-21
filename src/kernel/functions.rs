@@ -10624,13 +10624,28 @@ fn zero_aggregate_array_fields(
 /// caller's own stack object either way, and tightening that case belongs
 /// with the range-arithmetic work rather than here.
 fn local_view_range_within_block(range: &CMemoryRange, memory: &CMemory) -> bool {
-    let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const()) else {
+    // Signed, both endpoints. `as_const` answers `u32`, so a start of `-1`
+    // arrived as `4294967295` and `end <= start` short-circuited to "in
+    // bounds" for every range that begins below its block — the exact
+    // opposite of what this asks. `pair[-1..3]` was placed inside a
+    // two-element local while the contained `pair[0..3]` was refused.
+    let (Some(start), Some(end)) = (
+        crate::kernel::prelude::signed_bitvector_constant(range.start()),
+        crate::kernel::prelude::signed_bitvector_constant(range.end()),
+    ) else {
         return true;
     };
+    // An empty range names no storage, and `end < start` is how a range says
+    // so: `memory_range_byte_count` scales the signed count, so this is the
+    // same reading the extent guards use.
     if end <= start {
         return true;
     }
-    let Some(bytes) = (end - start).checked_mul(range.element_width()) else {
+    let Some(bytes) = end
+        .checked_sub(start)
+        .and_then(|count| count.checked_mul(i64::from(range.element_width())))
+        .and_then(|bytes| u32::try_from(bytes).ok())
+    else {
         return false;
     };
     let base = range

@@ -549,8 +549,8 @@ fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
         return false;
     };
     let (Some(left_index), Some(right_index)) = (
-        element_index_from_offset(left_index, element_width),
-        element_index_from_offset(right_index, element_width),
+        element_index_from_offset_with_facts(left_index, element_width, assumptions),
+        element_index_from_offset_with_facts(right_index, element_width, assumptions),
     ) else {
         return false;
     };
@@ -659,8 +659,8 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
     }
     if let Some(element_width) = common_pointer_offset_element_width(left, right)
         && let (Some(left), Some(right)) = (
-            element_index_from_offset(left, element_width),
-            element_index_from_offset(right, element_width),
+            element_index_from_offset_with_facts(left, element_width, assumptions),
+            element_index_from_offset_with_facts(right, element_width, assumptions),
         )
     {
         if let (Some(left), Some(right)) = (
@@ -1226,6 +1226,18 @@ fn memory_snapshots_match_for_resolution(
         })
 }
 
+/// How many bytes a cell holding this value occupies.
+///
+/// A cell that is only a union view, or one holding `Void`, has no value width
+/// to read and stands in the widest scalar: over-stating a width can only
+/// shrink the separated set.
+pub(in crate::kernel) fn cell_access_byte_width(value: &CValue) -> u32 {
+    match value.byte_width() {
+        0 => crate::kernel::resource_tracker::widest_scalar_access_bytes(),
+        bytes => bytes,
+    }
+}
+
 /// How wide the cell the two snapshots differ on is, in bytes.
 ///
 /// The width comes from the value the cell holds, on whichever side holds
@@ -1259,7 +1271,7 @@ fn differing_cell_byte_width(left: &CMemory, right: &CMemory, cell_pointer: &Poi
 /// returns. Only where the bytes are shown separate may the ladder stand in
 /// for them; provable overlap and an unknown gap both mean the snapshots are
 /// not shown to agree.
-fn differing_cell_bytes_miss_the_load(
+pub(in crate::kernel) fn differing_cell_bytes_miss_the_load(
     left: &CMemory,
     right: &CMemory,
     cell_pointer: &Pointer,
@@ -1786,7 +1798,18 @@ fn one_element_gap_separates_bytes(
         // ladder, which needs no width: distinct objects share no byte.
         return true;
     }
+    // Cancelling a shared additive base is what lets two indexed addresses be
+    // compared, and a pair with no base to cancel — `a + 4` against `a[i]`,
+    // where one side is a bare constant and the other a bare scaled index —
+    // had nothing to cancel and so was declined. Their own offsets are the
+    // indices in that case, and reading them is sound for the same reason
+    // the cancelled pair's are: `element_index_from_offset` answers only
+    // where every leaf contributes a whole multiple of the element width, so
+    // two offsets it answers for are both multiples of that width, and two
+    // different multiples of `w` are at least `w` apart. That is the gap this
+    // rule measures, and it needs no index arithmetic to establish.
     let Some((left_index, right_index, element_width)) = common_base_element_indices(left, right)
+        .or_else(|| element_indices_of(&left.offset, &right.offset))
     else {
         return false;
     };

@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (8)
+## P1: before launch (9)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -69,6 +69,7 @@ Program import and execution:
 
 - [Verify a concurrency demo with threads, mutexes, and publication](concurrency-demo.md)
 - [Verify cleanup jumps and cross-call exception unwinding](control-flow-demo.md)
+- [Verify a pointer-chasing search over an index array](dfs.md)
 
 The completed [basic C++ example](../examples/basic-cpp/README.md) verifies
 references, checked scoped cleanup, and a modular caller. The unchanged

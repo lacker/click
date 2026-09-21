@@ -2659,7 +2659,7 @@ fn c_memory_load_is_directly_unchanged(
     })
 }
 
-fn memories_directly_match_for_pointer_load(
+pub(in crate::kernel) fn memories_directly_match_for_pointer_load(
     left: &CMemory,
     right: &CMemory,
     pointer: &Pointer,
@@ -2708,10 +2708,25 @@ fn memories_directly_match_for_pointer_load(
     {
         return false;
     }
+    // Every arm below decides whether the cell's *address* is a different
+    // address from the load's, and that is not the question this function
+    // asks: it is deciding whether the two snapshots hold one value for this
+    // load, and a cell at `p + 1` holding one byte is a different address
+    // from `p` while being the second byte a four-byte read there returns.
+    // `1a3b2701` put the byte question in front of the three sibling
+    // comparisons; this is the fourth, and the constant-offset arm —
+    // `pointer_byte_offset_from_base(...) != 0` — is the plainest statement of
+    // the confusion, calling a cell four bytes into an eight-byte read
+    // separate from it.
+    let load_bytes = crate::kernel::load_access_width_or_widest(
+        &crate::kernel::intern_c_memory(left.clone()),
+        pointer,
+    );
     differing_cell_pointers_possibly_aliasing(left, right, &pointer.block)
         .into_iter()
         .all(|cell| {
-            cell.blocks_proven_distinct(pointer)
+            differing_cell_bytes_miss_the_load(left, right, &cell, pointer, load_bytes, assumptions)
+                && (cell.blocks_proven_distinct(pointer)
                 || pointer_offsets_with_common_base_proven_distinct(&cell, pointer, assumptions)
                 || pointers_proven_distinct_for_memory_resolution(&cell, pointer, assumptions)
                 || pointer_byte_offset_from_base(&cell, pointer)
@@ -2727,7 +2742,7 @@ fn memories_directly_match_for_pointer_load(
                 )
                 // Last: the same composition rule the mutates-only arm above
                 // and the tracker's `Store` arm spend, so the three agree.
-                || owned_composition_store_separated_evidence(&cell, pointer, assumptions).is_some()
+                || owned_composition_store_separated_evidence(&cell, pointer, assumptions).is_some())
         })
 }
 

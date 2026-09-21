@@ -1503,10 +1503,46 @@ fn function_object_names(function: &CFunction) -> BTreeSet<String> {
 /// monotone, so refining the weakest bound gives the weakest refined bound.
 /// Keeping one bound per join is therefore exactly as strict as keeping
 /// every path's, and keeps the list from doubling at each sequential `if`.
-/// No path continuing, after a `return` or a `break` on every path, stays
-/// the empty list.
+/// No path continuing, after a `return` on every path, stays the empty list.
 fn weakest_lower_bound(paths: Vec<i64>) -> Vec<i64> {
     paths.into_iter().min().into_iter().collect()
+}
+
+/// Where the paths leaving a statement go.
+///
+/// `continuing` are the paths that fall out of this statement into the next
+/// one. `broken` are the paths that left the innermost enclosing `switch` or
+/// loop through a `break`: they do not reach the statement after this one,
+/// they resume after that construct, and putting them back is that
+/// construct's job.
+///
+/// The split exists because this measure form has no verification condition
+/// behind it — the walk *is* the proof of descent — so a path the walk stops
+/// following is a recursive call nothing checks. `break` used to answer the
+/// empty list, which is right for a loop body, where the loop discards its
+/// body's answer anyway, and wrong for a `switch`, where it is the ordinary
+/// way a case ends. An empty list then propagates: `Seq` keeps it empty, and
+/// `If` and `While` iterate over it, so every later branch and loop body in
+/// the function went unwalked.
+struct RecursionPaths {
+    continuing: Vec<i64>,
+    broken: Vec<i64>,
+}
+
+impl RecursionPaths {
+    fn continuing(lower_bounds: Vec<i64>) -> Self {
+        Self {
+            continuing: lower_bounds,
+            broken: Vec::new(),
+        }
+    }
+
+    fn none() -> Self {
+        Self {
+            continuing: Vec::new(),
+            broken: Vec::new(),
+        }
+    }
 }
 
 fn recursion_paths(
@@ -1516,6 +1552,32 @@ fn recursion_paths(
     parameter_indices: &BTreeMap<String, usize>,
     lower_bounds: Vec<i64>,
 ) -> Result<Vec<i64>, CTerminationError> {
+    Ok(recursion_paths_split(
+        statement,
+        measure,
+        component,
+        parameter_indices,
+        lower_bounds,
+    )?
+    .continuing)
+}
+
+fn recursion_paths_split(
+    statement: &CStatement,
+    measure: &str,
+    component: &BTreeSet<String>,
+    parameter_indices: &BTreeMap<String, usize>,
+    lower_bounds: Vec<i64>,
+) -> Result<RecursionPaths, CTerminationError> {
+    let walk = |statement: &CStatement, lower_bounds: Vec<i64>| {
+        recursion_paths_split(
+            statement,
+            measure,
+            component,
+            parameter_indices,
+            lower_bounds,
+        )
+    };
     match statement {
         CStatement::Skip
         | CStatement::Continue
@@ -1526,27 +1588,31 @@ fn recursion_paths(
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
-        | CStatement::CopyAggregate { .. } => Ok(lower_bounds),
-        CStatement::ContinueWithStep { step } => {
-            recursion_paths(step, measure, component, parameter_indices, lower_bounds)
-        }
-        CStatement::Return(_) | CStatement::Throw(_) => Ok(Vec::new()),
-        CStatement::Break => Ok(Vec::new()),
+        | CStatement::CopyAggregate { .. } => Ok(RecursionPaths::continuing(lower_bounds)),
+        CStatement::ContinueWithStep { step } => walk(step, lower_bounds),
+        CStatement::Return(_) | CStatement::Throw(_) => Ok(RecursionPaths::none()),
+        // A `break` leaves the innermost `switch` or loop and resumes after
+        // it, carrying the bound it holds here. It does not reach the next
+        // statement in this body, which is what `continuing` is empty for.
+        CStatement::Break => Ok(RecursionPaths {
+            continuing: Vec::new(),
+            broken: lower_bounds,
+        }),
         CStatement::Assign { name, .. } if name == measure => Err(error(format!(
             "termination measure `{measure}` is reassigned; this first implementation requires an unchanged function parameter"
         ))),
-        CStatement::Assign { .. } => Ok(lower_bounds),
+        CStatement::Assign { .. } => Ok(RecursionPaths::continuing(lower_bounds)),
         CStatement::Update {
             target: CExpression::Variable(name),
             ..
         } if name == measure => Err(error(format!(
             "termination measure `{measure}` is updated; this first implementation requires an unchanged function parameter"
         ))),
-        CStatement::Update { .. } => Ok(lower_bounds),
+        CStatement::Update { .. } => Ok(RecursionPaths::continuing(lower_bounds)),
         CStatement::HeapAllocate { target, .. } if target == measure => Err(error(format!(
             "recursive termination measure `{measure}` is overwritten by an allocation result"
         ))),
-        CStatement::HeapAllocate { .. } => Ok(lower_bounds),
+        CStatement::HeapAllocate { .. } => Ok(RecursionPaths::continuing(lower_bounds)),
         CStatement::CallAssign {
             target,
             function_name,
@@ -1575,7 +1641,7 @@ fn recursion_paths(
                     )));
                 }
             }
-            Ok(lower_bounds)
+            Ok(RecursionPaths::continuing(lower_bounds))
         }
         CStatement::Call {
             function_name,
@@ -1599,87 +1665,104 @@ fn recursion_paths(
                     )));
                 }
             }
-            Ok(lower_bounds)
+            Ok(RecursionPaths::continuing(lower_bounds))
         }
-        CStatement::Seq(first, second) => recursion_paths(
-            second,
-            measure,
-            component,
-            parameter_indices,
-            recursion_paths(first, measure, component, parameter_indices, lower_bounds)?,
-        ),
+        CStatement::Seq(first, second) => {
+            let first = walk(first, lower_bounds)?;
+            let mut second = walk(second, first.continuing)?;
+            second.broken.extend(first.broken);
+            Ok(second)
+        }
         CStatement::TryCatchInt32 {
             try_body, handler, ..
         } => {
-            let mut paths = recursion_paths(
-                try_body,
-                measure,
-                component,
-                parameter_indices,
-                lower_bounds.clone(),
-            )?;
-            paths.extend(recursion_paths(
-                handler,
-                measure,
-                component,
-                parameter_indices,
-                lower_bounds,
-            )?);
-            Ok(weakest_lower_bound(paths))
+            let try_body = walk(try_body, lower_bounds.clone())?;
+            let handler = walk(handler, lower_bounds)?;
+            let mut continuing = try_body.continuing;
+            continuing.extend(handler.continuing);
+            let mut broken = try_body.broken;
+            broken.extend(handler.broken);
+            Ok(RecursionPaths {
+                continuing: weakest_lower_bound(continuing),
+                broken: weakest_lower_bound(broken),
+            })
         }
         CStatement::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            let mut paths = Vec::new();
-            for lower_bound in lower_bounds {
-                paths.extend(recursion_paths(
-                    then_branch,
-                    measure,
-                    component,
-                    parameter_indices,
-                    vec![refined_lower_bound(condition, measure, true, lower_bound)],
-                )?);
-                paths.extend(recursion_paths(
-                    else_branch,
-                    measure,
-                    component,
-                    parameter_indices,
-                    vec![refined_lower_bound(condition, measure, false, lower_bound)],
-                )?);
+            let mut continuing = Vec::new();
+            let mut broken = Vec::new();
+            for (branch, taken) in [(then_branch, true), (else_branch, false)] {
+                // The branch is walked once per incoming bound, and once with
+                // no bound at all where no path reaches it. The walk is this
+                // measure form's whole proof, so a subtree it never enters is
+                // a recursive call nothing checks; an empty bound list
+                // compares against nothing, so entering it adds the
+                // structural refusals and no bound refusal.
+                let entries = entry_bounds(&lower_bounds);
+                for entry in entries {
+                    let refined = entry
+                        .map(|bound| vec![refined_lower_bound(condition, measure, taken, bound)])
+                        .unwrap_or_default();
+                    let paths = walk(branch, refined)?;
+                    continuing.extend(paths.continuing);
+                    broken.extend(paths.broken);
+                }
             }
-            Ok(weakest_lower_bound(paths))
+            Ok(RecursionPaths {
+                continuing: weakest_lower_bound(continuing),
+                broken: weakest_lower_bound(broken),
+            })
         }
         CStatement::While {
             condition, body, ..
         } => {
-            for lower_bound in &lower_bounds {
-                let body_lower_bound = refined_lower_bound(condition, measure, true, *lower_bound);
-                recursion_paths(
-                    body,
-                    measure,
-                    component,
-                    parameter_indices,
-                    vec![body_lower_bound],
-                )?;
+            for entry in entry_bounds(&lower_bounds) {
+                let body_lower_bound = entry
+                    .map(|bound| vec![refined_lower_bound(condition, measure, true, bound)])
+                    .unwrap_or_default();
+                // A `break` in the body lands where the loop's own exit lands,
+                // with a bound refined from the incoming one, so it is already
+                // covered by the incoming bounds this returns.
+                walk(body, body_lower_bound)?;
             }
-            Ok(lower_bounds)
+            Ok(RecursionPaths::continuing(lower_bounds))
         }
         CStatement::Switch { cases, .. } => {
-            let mut paths = Vec::new();
+            // Every way out of a `switch` continues at the statement after it:
+            // a case body that ends normally (falling into the next case, and
+            // out of the last one), a `break`, and — when no case matches and
+            // there is no `default` — the selector path that runs no case body
+            // at all. Each case body is entered with the incoming bound, which
+            // is weaker than anything a fall-through would carry, so it covers
+            // fall-through too.
+            let mut escaping = Vec::new();
             for case in cases {
-                paths.extend(recursion_paths(
-                    &case.body,
-                    measure,
-                    component,
-                    parameter_indices,
-                    lower_bounds.clone(),
-                )?);
+                let paths = walk(&case.body, lower_bounds.clone())?;
+                escaping.extend(paths.continuing);
+                escaping.extend(paths.broken);
             }
-            Ok(weakest_lower_bound(paths))
+            if cases.iter().all(|case| case.value.is_some()) {
+                escaping.extend(lower_bounds);
+            }
+            Ok(RecursionPaths {
+                continuing: weakest_lower_bound(escaping),
+                broken: Vec::new(),
+            })
         }
     }
+}
+
+/// One walk entry per incoming bound, and one bound-free entry where no path
+/// reaches the statement at all. See the note on [`RecursionPaths`] for why an
+/// unreachable subtree is still walked.
+fn entry_bounds(lower_bounds: &[i64]) -> Vec<Option<i64>> {
+    if lower_bounds.is_empty() {
+        return vec![None];
+    }
+    lower_bounds.iter().copied().map(Some).collect()
 }
 
 fn termination_measure_display(measure: &CExpression) -> String {

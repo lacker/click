@@ -6444,3 +6444,254 @@ fn distinct_heap_allocations_never_merge_under_contradictory_assumptions() {
         "both authorities must remain usable"
     );
 }
+
+/// An element index is signed, and both of `memory_range_covers`'s
+/// constant-arithmetic arms used to read one as an unsigned residue: the
+/// fact-pinned arm read every endpoint through `as_const`, which answers
+/// `u32`, and the structural arm folded the base delta into each endpoint with
+/// the modular `Bitvector32Term::add`. Both drew a *positive containment*
+/// conclusion from it, which is the direction a residue cannot support.
+mod constant_range_containment {
+    use super::*;
+
+    fn external(elements: i64) -> Pointer {
+        Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(elements * 4),
+        }
+    }
+
+    fn range(base: Pointer, start: i32, end: i32) -> CMemoryRange {
+        CMemoryRange::new(
+            base,
+            Bitvector32Term::Constant(start as u32),
+            Bitvector32Term::Constant(end as u32),
+        )
+    }
+
+    fn covers(available: &CMemoryRange, required: &CMemoryRange) -> bool {
+        crate::kernel::memory_range_covers(available, required, &PureFactContext::new())
+    }
+
+    #[test]
+    fn a_range_below_the_owner_is_not_covered_by_it() {
+        let owned = range(external(0), 0, 1);
+        // `p[-1..0]` is the element *before* `p`. Read as `u32` its start is
+        // `4294967295`, which clears `available_start <= required_start`
+        // against every owner, and its end is `0`, which clears the other
+        // side against every owner whose own end is nonnegative.
+        assert!(!covers(&owned, &range(external(0), -1, 0)));
+        assert!(!covers(&owned, &range(external(0), -1, 1)));
+        assert!(!covers(&owned, &range(external(0), -3, 0)));
+        // The same ranges from an owner that does hold them.
+        let wide = range(external(-3), 0, 4);
+        assert!(covers(&wide, &range(external(0), -1, 0)));
+        assert!(covers(&wide, &range(external(0), -1, 1)));
+        assert!(covers(&wide, &range(external(0), -3, 0)));
+    }
+
+    #[test]
+    fn a_base_far_below_the_owner_does_not_wrap_into_it() {
+        let owned = range(external(0), 0, 1);
+        // `q = &p[i32::MIN]`. The relative start `i32::MIN + (-1)` wraps to
+        // `i32::MAX` and the relative end to `i32::MIN`, which bracket every
+        // constant range there is; the true position is `2^31 + 1` elements
+        // below `p`.
+        let far = external(i64::from(i32::MIN));
+        assert!(!covers(&owned, &range(far.clone(), -1, 0)));
+        assert!(!covers(&owned, &range(far, 0, 1)));
+        // A base a constant distance inside the owner still answers.
+        assert!(covers(&range(external(0), 0, 4), &range(external(1), 0, 2)));
+        assert!(!covers(
+            &range(external(0), 0, 4),
+            &range(external(1), 0, 4)
+        ));
+    }
+
+    #[test]
+    fn a_range_is_its_start_and_its_count_not_its_endpoints() {
+        // `p[i32::MAX..i32::MIN]` is a forward range of exactly one element,
+        // at `i32::MAX`. Reading its endpoints as an interval would place it
+        // inside anything at all.
+        let one_at_the_top = range(external(0), i32::MAX, i32::MIN);
+        assert!(!covers(&range(external(0), 0, 1), &one_at_the_top));
+        assert!(covers(&one_at_the_top, &one_at_the_top));
+        assert!(covers(
+            &range(external(0), i32::MAX - 1, i32::MIN),
+            &one_at_the_top
+        ));
+    }
+
+    #[test]
+    fn a_base_delta_the_facts_pin_is_still_taken() {
+        let index = Bitvector32Term::Variable(Variable(93_960));
+        let base = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let child = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::scale_int32(index.clone(), 4),
+        };
+        let owned = range(base, 0, 4);
+        let required = CMemoryRange::new(
+            child,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        let pinned = |value: i32| {
+            PureFactContext::new().assume_condition(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(index.clone()),
+                    Box::new(Bitvector32Term::Constant(value as u32)),
+                ),
+                true,
+            )
+        };
+        assert!(crate::kernel::memory_range_covers(
+            &owned,
+            &required,
+            &pinned(2)
+        ));
+        assert!(!crate::kernel::memory_range_covers(
+            &owned,
+            &required,
+            &pinned(-1)
+        ));
+        assert!(!crate::kernel::memory_range_covers(
+            &owned,
+            &required,
+            &pinned(4)
+        ));
+    }
+}
+
+/// `split_memory_range` states the residues in the owner's coordinates, so the
+/// requirement's endpoints cross a base delta to get there. That join used the
+/// modular `Bitvector32Term::add` and installed the result as the residues'
+/// own bounds, so a carry left the holder an owned fact over cells the
+/// requirement had taken — and `consumed_range_is_well_formed` cannot see it,
+/// because it compares the same two wrapped terms with each other.
+mod residue_bounds {
+    use super::*;
+
+    fn external(elements: i64) -> Pointer {
+        Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(elements * 4),
+        }
+    }
+
+    fn range(base: Pointer, start: Bitvector32Term, end: Bitvector32Term) -> CMemoryRange {
+        CMemoryRange::new(base, start, end)
+    }
+
+    fn constant(value: i32) -> Bitvector32Term {
+        Bitvector32Term::Constant(value as u32)
+    }
+
+    fn split(
+        available: &CMemoryRange,
+        required: &CMemoryRange,
+        assumptions: &PureFactContext,
+    ) -> Option<Vec<CMemoryRange>> {
+        crate::kernel::split_memory_range(available, required, assumptions)
+    }
+
+    #[test]
+    fn an_ordinary_split_keeps_both_sides() {
+        let assumptions = PureFactContext::new();
+        let available = range(external(0), constant(0), constant(4));
+        let residues = split(
+            &available,
+            &range(external(1), constant(0), constant(2)),
+            &assumptions,
+        )
+        .expect("a constant split inside the owner");
+        assert_eq!(
+            residues,
+            vec![
+                range(external(0), constant(0), constant(1)),
+                range(external(0), constant(3), constant(4)),
+            ]
+        );
+        // The same requirement stated in the owner's own coordinates.
+        assert_eq!(
+            split(
+                &available,
+                &range(external(0), constant(1), constant(3)),
+                &assumptions
+            )
+            .expect("a split with a zero base delta"),
+            vec![
+                range(external(0), constant(0), constant(1)),
+                range(external(0), constant(3), constant(4)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_carrying_base_delta_states_no_residue() {
+        let assumptions = PureFactContext::new();
+        let available = range(external(0), constant(0), constant(10));
+        // `&p[i32::MAX]` is the delta, and `i32::MAX + 2` carries: the sum is
+        // `2^31 + 1` elements above the owner's base, while the residue reads
+        // as `i32::MIN + 1`, which the owner's endpoints bracket.
+        let required = range(external(i64::from(i32::MAX)), constant(2), constant(3));
+        assert_eq!(split(&available, &required, &assumptions), None);
+        // The same shape at a base whose join stays put still splits.
+        assert_eq!(
+            split(
+                &available,
+                &range(external(3), constant(2), constant(3)),
+                &assumptions
+            )
+            .expect("a join that does not carry"),
+            vec![
+                range(external(0), constant(0), constant(5)),
+                range(external(0), constant(6), constant(10)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_symbolic_join_asks_whether_it_carries() {
+        let index = Bitvector32Term::Variable(Variable(93_970));
+        let count = Bitvector32Term::Variable(Variable(93_971));
+        let available = range(external(0), constant(0), count);
+        let required = CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(index.clone(), 4),
+            },
+            constant(1),
+            constant(2),
+        );
+        // `i + 1` is one element above `i` only while the add does not carry.
+        assert_eq!(split(&available, &required, &PureFactContext::new()), None);
+        let no_carry = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::signed_add_overflows(index.clone(), constant(1)),
+                false,
+            )
+            .assume_condition(
+                ConditionTerm::signed_add_overflows(index.clone(), constant(2)),
+                false,
+            );
+        assert!(split(&available, &required, &no_carry).is_some());
+        // The requirement stated in the owner's own coordinates has no add to
+        // carry, and is the shape a split ordinarily arrives in.
+        assert!(
+            split(
+                &available,
+                &range(
+                    external(0),
+                    index.clone(),
+                    Bitvector32Term::add(index, constant(1))
+                ),
+                &PureFactContext::new()
+            )
+            .is_some()
+        );
+    }
+}
