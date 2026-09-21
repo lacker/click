@@ -20,7 +20,7 @@ library as an entry.
 
 The body's bookkeeping is what a `using` list can cite without a `have` first:
 the invariants, the loop guard, and a stated range's extent halves are all
-available by name, so thirty-three of the forty `have`s the first version
+available by name, so twenty-six of the thirty-seven `have`s the first version
 wrote are gone and the C proof is seventy-two lines instead of a hundred and
 thirty-nine.
 
