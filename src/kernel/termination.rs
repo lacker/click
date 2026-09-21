@@ -1552,10 +1552,14 @@ fn recursion_paths(
     parameter_indices: &BTreeMap<String, usize>,
     lower_bounds: Vec<i64>,
 ) -> Result<Vec<i64>, CTerminationError> {
-    Ok(
-        recursion_paths_split(statement, measure, component, parameter_indices, lower_bounds)?
-            .continuing,
-    )
+    Ok(recursion_paths_split(
+        statement,
+        measure,
+        component,
+        parameter_indices,
+        lower_bounds,
+    )?
+    .continuing)
 }
 
 fn recursion_paths_split(
@@ -1566,7 +1570,13 @@ fn recursion_paths_split(
     lower_bounds: Vec<i64>,
 ) -> Result<RecursionPaths, CTerminationError> {
     let walk = |statement: &CStatement, lower_bounds: Vec<i64>| {
-        recursion_paths_split(statement, measure, component, parameter_indices, lower_bounds)
+        recursion_paths_split(
+            statement,
+            measure,
+            component,
+            parameter_indices,
+            lower_bounds,
+        )
     };
     match statement {
         CStatement::Skip

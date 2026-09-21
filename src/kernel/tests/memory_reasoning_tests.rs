@@ -3092,8 +3092,8 @@ fn a_wide_store_does_not_spare_a_narrow_cell_a_ladder_separates() {
         .with_block("array", 16)
         .store(cell.clone(), int32(5));
     // The ladder's premise, and the only one: the two element indices differ.
-    let indices_differ = PureFactContext::new()
-        .assume_condition(ConditionTerm::equal(i.clone(), j.clone()), false);
+    let indices_differ =
+        PureFactContext::new().assume_condition(ConditionTerm::equal(i.clone(), j.clone()), false);
 
     // A four-byte store at a different element misses a four-byte cell: one
     // element of gap clears both accesses whichever way the ladder runs.
@@ -3111,10 +3111,9 @@ fn a_wide_store_does_not_spare_a_narrow_cell_a_ladder_separates() {
 
     // With the direction fixed the gap is decided: the store is the *lower*
     // access, so its eight bytes have to fit, and they do not.
-    let store_below = indices_differ.clone().assume_condition(
-        ConditionTerm::signed_less_than(j.clone(), i.clone()),
-        true,
-    );
+    let store_below = indices_differ
+        .clone()
+        .assume_condition(ConditionTerm::signed_less_than(j.clone(), i.clone()), true);
     assert_eq!(
         memory
             .clone()

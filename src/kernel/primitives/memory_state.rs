@@ -2530,7 +2530,8 @@ impl CMemory {
                 &normalized_pointer,
                 bytes,
                 assumptions,
-            ) == crate::kernel::reasoning::AccessByteOverlap::Separate;
+            )
+                == crate::kernel::reasoning::AccessByteOverlap::Separate;
             let kept = address_inequality_separates_bytes
                 && pointers_proven_distinct_for_memory_resolution(
                     &normalized_cell_pointer,
