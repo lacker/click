@@ -4428,11 +4428,23 @@ fn resource_quantity_at_least(
         )
 }
 
+/// Whether a constant owned quantity is positive, as the signed number it is.
+///
+/// An owned quantity is an `int32`, and `resource_quantity_at_least` beside it
+/// asks `Bitvector32SignedGreaterEqual`, so reading this one through
+/// `Bitvector32Term::as_const` made the two arms disagree about one number:
+/// `-1` was the largest quantity there is. `a98a05e4` is the same confusion at
+/// the surface `fold`, and this is the kernel's own copy of it — the one that
+/// decides whether an owned population exposes a viewed description of itself.
+fn constant_quantity_is_positive(quantity: &Bitvector32Term) -> bool {
+    signed_bitvector_constant(quantity).is_some_and(|value| value > 0)
+}
+
 fn resource_quantity_is_positive(
     quantity: &Bitvector32Term,
     assumptions: &PureFactContext,
 ) -> bool {
-    quantity.as_const().is_some_and(|value| value > 0)
+    constant_quantity_is_positive(quantity)
         || quantity_condition_holds(
             assumptions,
             ConditionTerm::Bitvector32SignedGreaterThan(
@@ -4577,9 +4589,7 @@ fn combine_exact_resource_facts(
 /// context.
 fn owner_observation_core(resource: &CResourceFact) -> Option<CResourceFact> {
     match resource {
-        CResourceFact::Own(resource, quantity)
-            if quantity.as_const().is_some_and(|value| value > 0) =>
-        {
+        CResourceFact::Own(resource, quantity) if constant_quantity_is_positive(quantity) => {
             Some(CResourceFact::View(resource.clone()))
         }
         CResourceFact::Own(_, _) => None,

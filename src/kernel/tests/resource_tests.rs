@@ -6566,6 +6566,67 @@ mod constant_range_containment {
     }
 }
 
+/// An owned population's quantity is an `int32`. Every rule that *orders* one
+/// asks `Bitvector32SignedGreaterEqual`, except the two constant arms that
+/// decide whether an owner may observe itself, which read the bits.
+mod owned_quantity_sign {
+    use super::*;
+
+    fn token(quantity: i32) -> CResourceFact {
+        CResourceFact::own_quantity(
+            CResource::Token {
+                name: "tok".to_string(),
+                arguments: Vec::new().into(),
+            },
+            Bitvector32Term::Constant(quantity as u32),
+        )
+    }
+
+    fn viewed() -> CResourceFact {
+        CResourceFact::View(CResource::Token {
+            name: "tok".to_string(),
+            arguments: Vec::new().into(),
+        })
+    }
+
+    /// A population of `-1` owns nothing, so it exposes no viewed description
+    /// of itself and entails no view. `-294967296` is the quantity two
+    /// declared-nonnegative `produces 2000000000 of` clauses compose to.
+    #[test]
+    fn a_negative_population_observes_nothing() {
+        let assumptions = PureFactContext::new();
+        for quantity in [-1, i32::MIN, -294_967_296, 0] {
+            let owned = token(quantity);
+            assert_eq!(owned.core(), None);
+            assert_eq!(owned.core_with_assumptions(&assumptions), None);
+            assert!(!owned.has_proven_positive_quantity(&assumptions));
+            assert!(
+                !ResourceContext::new()
+                    .unchecked_with_fact(owned)
+                    .satisfies_fact(&viewed(), &assumptions)
+            );
+        }
+    }
+
+    /// The other polarity: a positive population still observes itself, at
+    /// one unit and at the largest quantity there is.
+    #[test]
+    fn a_positive_population_still_observes_itself() {
+        let assumptions = PureFactContext::new();
+        for quantity in [1, 2, i32::MAX] {
+            let owned = token(quantity);
+            assert_eq!(owned.core(), Some(viewed()));
+            assert_eq!(owned.core_with_assumptions(&assumptions), Some(viewed()));
+            assert!(owned.has_proven_positive_quantity(&assumptions));
+            assert!(
+                ResourceContext::new()
+                    .unchecked_with_fact(owned)
+                    .satisfies_fact(&viewed(), &assumptions)
+            );
+        }
+    }
+}
+
 /// The partition gate over one block of constant, same-base owned ranges is a
 /// linear sweep instead of a pairwise scan, and the incremental path beside it
 /// probes only the neighbours of a new range in the `concrete_memory` key
