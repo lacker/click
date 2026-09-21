@@ -508,7 +508,7 @@ impl ProofFacts {
     /// Scanning up from `Variable(0)` for an identity no *fact* mentions was
     /// the earlier rule, and it is wrong twice over. The facts are not the
     /// whole state a witness has to stay clear of: a C proof also carries
-    /// program variables, a symbolic store, a memory DAG and a resource
+    /// program variables, a symbolic store, a memory snapshot and a resource
     /// context, and `Variable(0)` is a C identity by the reserved-range
     /// registry, so the first candidate that rule tried was a live program
     /// variable of the function being proved. Taking the identity from a range

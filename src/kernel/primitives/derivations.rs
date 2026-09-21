@@ -1162,7 +1162,7 @@ impl ExecutionBudget {
     /// `intro()` on `forall v. body` replaces `v` by a *free* identity that
     /// stands for an arbitrary value, so it must name nothing the surrounding
     /// state already names. The facts are only part of that state: a C proof
-    /// also carries program variables, a symbolic store, a memory DAG and a
+    /// also carries program variables, a symbolic store, a memory snapshot and a
     /// resource context, and an identity that occurs in none of the facts can
     /// still be the identity of a live C variable. Picking the witness from a
     /// range no other producer mints makes the distinction structural instead

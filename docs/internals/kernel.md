@@ -794,7 +794,7 @@ The witness range carries the same kind of obligation. `intro` on
 `forall v. body` replaces `v` by a free identity standing for an arbitrary
 value, so it must name nothing the surrounding state names — and the facts are
 not the whole of that state, since a C proof also carries program variables, a
-symbolic store, a memory DAG and a resource context. Choosing the witness by
+symbolic store, a memory snapshot and a resource context. Choosing the witness by
 scanning up from `Variable(0)` for an identity no fact mentions therefore
 started in the C identity range and could land on a live program variable;
 `the_universal_witness_range_is_disjoint_from_every_other_producer` and
