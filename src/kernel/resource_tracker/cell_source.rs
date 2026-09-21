@@ -39,6 +39,29 @@ pub(crate) enum MemoryDagCell {
     },
 }
 
+/// Why a cell walk stopped where it did.
+///
+/// The node a walk stops at answers "what does this load read"; this answers
+/// the separate question of what the walk *knows* about the step it did not
+/// cross, and the three reasons are not interchangeable. A walk that ran out
+/// of history proved nothing either way. A walk that could not show a step
+/// separate proved nothing either way, and some other route may still
+/// separate that step. A walk stopped by a step that provably writes, creates
+/// or retires bytes this access reads has established a positive fact: the
+/// cell one step older is a *different version* of this cell, and two loads
+/// either side of that step are not one value by any structural route.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::kernel) enum CellWalkStop {
+    /// The walk reached a snapshot with no recorded derivation: the oldest
+    /// point the recorded history reaches.
+    OldestRecorded,
+    /// The step the walk stopped at provably acts on this access's bytes.
+    Affected,
+    /// The step the walk stopped at could not be shown separate from the
+    /// access, and was not shown to act on it either.
+    NotShownSeparate,
+}
+
 /// One exact edge traversed while resolving a cell through the named memory
 /// DAG. Retaining the edge is only the first half of a proof object: callers
 /// that expose this walk as a certificate must additionally retain the typed
@@ -663,6 +686,21 @@ pub(in crate::kernel) fn memory_dag_cell_source(
     assumptions: &PureFactContext,
     cross_loop_havoc: bool,
 ) -> Option<MemoryDagCell> {
+    memory_dag_cell_source_with_stop(memory, pointer, bytes, assumptions, cross_loop_havoc)
+        .map(|(cell, _)| cell)
+}
+
+/// [`memory_dag_cell_source`] with the reason the walk stopped, for the one
+/// caller that asks the history whether two loads can be one value at all.
+/// It is the same single traversal; only the second half of its answer is
+/// kept.
+pub(in crate::kernel) fn memory_dag_cell_source_with_stop(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+    bytes: u32,
+    assumptions: &PureFactContext,
+    cross_loop_havoc: bool,
+) -> Option<(MemoryDagCell, CellWalkStop)> {
     // A lookup of a cell already being looked up is a cycle and has no
     // answer; see `CELL_LOOKUPS_IN_PROGRESS`.
     let _lookup = CellLookupGuard::enter(memory, pointer)?;
@@ -681,7 +719,7 @@ fn memory_dag_cell_source_walk(
     bytes: u32,
     assumptions: &PureFactContext,
     cross_loop_havoc: bool,
-) -> MemoryDagCell {
+) -> (MemoryDagCell, CellWalkStop) {
     let evidence = super::step_effect::Evidence {
         assumptions,
         cross_loop_havoc,
@@ -695,10 +733,13 @@ fn memory_dag_cell_source_walk(
         // regression sees a walk that grows with the proof.
         crate::instrumentation::record_deterministic_work(1);
         let Some(derivation) = current.derivation() else {
-            return MemoryDagCell::Unwritten {
-                node: current,
-                path,
-            };
+            return (
+                MemoryDagCell::Unwritten {
+                    node: current,
+                    path,
+                },
+                CellWalkStop::OldestRecorded,
+            );
         };
         // One rule decides every step for every resource; this walk's part is
         // to keep the hop it justified, and to read the written value off the
@@ -711,22 +752,31 @@ fn memory_dag_cell_source_walk(
         ) {
             super::step_effect::StepEffect::Affected => {
                 if let CMemoryDerivation::Store { value, .. } = derivation.as_ref() {
-                    return MemoryDagCell::Stored {
-                        node: current,
-                        value: value.clone(),
-                        path,
-                    };
+                    return (
+                        MemoryDagCell::Stored {
+                            node: current,
+                            value: value.clone(),
+                            path,
+                        },
+                        CellWalkStop::Affected,
+                    );
                 }
-                return MemoryDagCell::Unwritten {
-                    node: current,
-                    path,
-                };
+                return (
+                    MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    },
+                    CellWalkStop::Affected,
+                );
             }
             super::step_effect::StepEffect::NotShownSeparate(_) => {
-                return MemoryDagCell::Unwritten {
-                    node: current,
-                    path,
-                };
+                return (
+                    MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    },
+                    CellWalkStop::NotShownSeparate,
+                );
             }
             super::step_effect::StepEffect::Separate(super::step_effect::Separation::Cell(
                 justification,
@@ -738,10 +788,13 @@ fn memory_dag_cell_source_walk(
                 super::step_effect::Separation::Block(_)
                 | super::step_effect::Separation::Footprint(_),
             ) => {
-                return MemoryDagCell::Unwritten {
-                    node: current,
-                    path,
-                };
+                return (
+                    MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    },
+                    CellWalkStop::NotShownSeparate,
+                );
             }
         };
         path.push(MemoryDagHop {

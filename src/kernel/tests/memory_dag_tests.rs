@@ -2178,3 +2178,100 @@ fn a_store_inside_a_read_stops_two_snapshots_agreeing_about_it() {
         "a write past the read's last byte leaves the two snapshots agreeing about it"
     );
 }
+
+/// A recorded store inside a read refutes the equality of the two loads
+/// around it, at every offset its bytes reach, whatever the snapshots kept.
+///
+/// This is the rule the snapshot comparisons and the canonical-form
+/// comparison now answer to. Both are read from *state*: a cell map records
+/// what is known at a point, and a canonical form drops what it can prove
+/// irrelevant. Neither records that a store happened, and a store into the
+/// middle of a cell drops the cell it partly overwrites, so the two
+/// snapshots around it can be identical where it is concerned. The recorded
+/// history has the store either way, and one walk over it is all three
+/// routes' answer.
+///
+/// The sweep is the whole width of each access: a one-byte write at any
+/// offset a four-byte read covers, and at any offset an eight-byte read
+/// covers, is a byte that read returns. The offset one past the last is the
+/// negative control, and it must stay unrefuted — that is the adjacent
+/// element every framing proof in the corpus rests on.
+#[test]
+fn a_store_inside_a_read_refutes_the_load_equality_at_every_offset() {
+    let bare = PureFactContext::new();
+    for (block, read_bytes) in [("narrow-arg-memory", 4u32), ("wide-arg-memory", 8u32)] {
+        let read = Pointer {
+            block: block.into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        crate::kernel::eval::declare_load_access_width(&read, read_bytes);
+        let base = CMemory::new().with_block(block, 32);
+        let byte_written_at = |offset: i64| {
+            let write = Pointer {
+                block: block.into(),
+                offset: PointerOffsetTerm::Constant(offset),
+            };
+            base.clone()
+                .without_possible_aliasing_cells(&write, 1, &bare)
+                .store(write, CValue::UInt8(Bitvector32Term::Constant(7)))
+        };
+        let history_about = |after: &CMemory| {
+            crate::kernel::memory_provenance::recorded_load_history(
+                &crate::kernel::intern_c_memory_ref(&base),
+                &crate::kernel::intern_c_memory_ref(after),
+                &read,
+                &bare,
+            )
+        };
+        let load_in = |memory: &CMemory| {
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory_ref(memory),
+                Box::new(read.clone()),
+            )
+        };
+
+        for offset in 1..i64::from(read_bytes) {
+            let after = byte_written_at(offset);
+            assert_eq!(
+                with_extended_dag_bridging(|| history_about(&after)),
+                crate::kernel::memory_provenance::LoadHistory::DifferentVersions,
+                "a one-byte write {offset} bytes into a {read_bytes}-byte read is a byte that \
+                 read returns, so the history holds two versions of the cell"
+            );
+            assert_eq!(
+                with_extended_dag_bridging(|| history_about(&after)),
+                crate::kernel::memory_provenance::LoadHistory::DifferentVersions,
+                "the memoized answer to the repeated question is the same answer"
+            );
+            assert!(
+                !crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+                    &base, &after, &read, &bare
+                ),
+                "the snapshot comparison answers to that history"
+            );
+            assert!(
+                !bare.proves_atomic_without_search(&Proposition::ConditionIs(
+                    ConditionTerm::equal(load_in(&base), load_in(&after)),
+                    true
+                )),
+                "the canonical-form comparison answers to that history"
+            );
+        }
+
+        let past_the_end = byte_written_at(i64::from(read_bytes));
+        assert_ne!(
+            with_extended_dag_bridging(|| history_about(&past_the_end)),
+            crate::kernel::memory_provenance::LoadHistory::DifferentVersions,
+            "a write past the read's last byte writes none of its bytes"
+        );
+        assert!(
+            crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+                &base,
+                &past_the_end,
+                &read,
+                &bare
+            ),
+            "and the two snapshots still agree about the read"
+        );
+    }
+}

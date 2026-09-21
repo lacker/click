@@ -879,6 +879,12 @@ fn bitvector_terms_equal_for_memory_resolution_unmemoized(
             Bitvector32Term::MemoryLoad(right_memory, right_pointer),
         ) => {
             pointers_proven_equal_for_memory_resolution(left_pointer, right_pointer, assumptions)
+                && !loads_separated_by_recorded_history(
+                    left_memory,
+                    right_memory,
+                    left_pointer,
+                    assumptions,
+                )
                 && memory_snapshots_match_for_resolution(
                     left_memory,
                     right_memory,
@@ -1061,6 +1067,93 @@ pub(in crate::kernel) fn memory_load_terms_equal_for_fact_transport(
             left_memory,
             right_memory,
             left_pointer,
+            assumptions,
+        )
+}
+
+/// Whether the recorded history puts a step that writes this load's bytes
+/// between the two snapshots.
+///
+/// This is the one veto the snapshot comparisons answer to, and it is read
+/// off walks they have already paid for: the equality question reaches
+/// `recorded_load_history` first, so the refutation is a memo lookup on the
+/// same key. A stated or assumed equality never reaches here — the fact
+/// graph is consulted before the load arms are — so the veto withdraws only
+/// the structural routes.
+///
+/// The snapshots a framing comparison holds are often naming projections:
+/// built rather than derived, carrying no recorded step of their own, so a
+/// walk from one stops immediately. The projection registry leads each back
+/// to the snapshot its materialized cells were loaded from, which is where
+/// the history is, and the pair is asked again from there.
+pub(in crate::kernel) fn loads_separated_by_recorded_history(
+    left: &SharedCMemory,
+    right: &SharedCMemory,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> bool {
+    let separated = |left: &SharedCMemory, right: &SharedCMemory| {
+        // Asked with every recorded edge readable, in every scope. Crossing a
+        // block declaration or a cell-forgetting step is not an inference the
+        // loadable prover licenses — those steps write nothing, and a walk
+        // that stops at one has read the history only as far as the first
+        // bookkeeping edge. The pre-arc scope keeps its own equality answers
+        // (see `recorded_load_history`); what it must not keep is a *weaker*
+        // view of which stores happened, because then one route would frame a
+        // load across a store another route refuses.
+        crate::kernel::api::with_extended_dag_bridging(|| {
+            crate::kernel::api::recorded_load_history(left, right, pointer, assumptions)
+        }) == crate::kernel::api::LoadHistory::DifferentVersions
+    };
+    separated(left, right) || {
+        let left_source = canonical_load_projection_source(left, pointer);
+        let right_source = canonical_load_projection_source(right, pointer);
+        (left_source.is_some() || right_source.is_some())
+            && separated(
+                left_source.as_ref().unwrap_or(left),
+                right_source.as_ref().unwrap_or(right),
+            )
+    }
+}
+
+/// The term-level form of [`loads_separated_by_recorded_history`], for the
+/// routes that compare two whole terms rather than two snapshots.
+///
+/// Three structural routes can call two loads of one cell equal: the history
+/// walk itself, the snapshot comparison, and the deep canonical-form
+/// comparison. The first asks the history by construction; this is what the
+/// other two answer to, so that one store cannot be seen by one route and
+/// missed by another. A load variable is viewed through the load registry,
+/// exactly as those routes view it.
+///
+/// Routes that derive the equality from stated or assumed facts are not
+/// vetoed and never reach here: a premise about the two values outranks what
+/// the history says about the cell, and the fact graph is consulted first
+/// everywhere this is used.
+pub(in crate::kernel) fn load_equality_refuted_by_history(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    let load = |term: &Bitvector32Term| match term {
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            Some((memory.clone(), pointer.as_ref().clone()))
+        }
+        Bitvector32Term::Variable(variable) => {
+            crate::kernel::eval::registered_load_origin_for_variable(variable)
+        }
+        _ => None,
+    };
+    let (Some((left_memory, left_pointer)), Some((right_memory, right_pointer))) =
+        (load(left), load(right))
+    else {
+        return false;
+    };
+    left_pointer == right_pointer
+        && loads_separated_by_recorded_history(
+            &left_memory,
+            &right_memory,
+            &left_pointer,
             assumptions,
         )
 }

@@ -934,6 +934,12 @@ fn loads_equal_by_bounded_snapshot_match(left: &Bitvector32Term, right: &Bitvect
         return false;
     };
     left_pointer == right_pointer
+        && !crate::kernel::reasoning::loads_separated_by_recorded_history(
+            left_memory,
+            right_memory,
+            left_pointer,
+            &PureFactContext::new(),
+        )
         && crate::kernel::reasoning::memories_match_for_pointer_load_under_assumptions(
             left_memory,
             right_memory,
