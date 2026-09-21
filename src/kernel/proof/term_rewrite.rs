@@ -4431,8 +4431,8 @@ mod tests {
                 &original_memory.union_cells
             ));
             assert!(std::sync::Arc::ptr_eq(
-                &memory.forgotten.ended_local_blocks,
-                &original_memory.forgotten.ended_local_blocks
+                &memory.forgotten,
+                &original_memory.forgotten
             ));
             assert!(std::sync::Arc::ptr_eq(&memory.heap, &original_memory.heap));
         };
