@@ -3493,6 +3493,51 @@ pub(super) enum CLocalBinding {
     },
 }
 
+/// The snapshot a snapshot forgot knowledge from.
+///
+/// A snapshot is interned by content, so two states with the same known
+/// cells are one node. That is only sound while the known cells decide what
+/// every address holds *relative to a fixed starting state* — and dropping a
+/// cached value breaks exactly that. After `a[i] = 7; a[j] = 0;` the write to
+/// `a[j]` drops the possibly aliasing `a[i]` cell, and the cell map is empty
+/// again, just as it was at function entry. Without this mark that state *is*
+/// the entry node, so `a[m]` is named `old(a[m])` and the two are equal by
+/// spelling with no rule having decided it.
+///
+/// So the forget is part of the content. `{cells, forgotten_from = S}` reads
+/// "the memory `S` denotes, with these cells known on top of it". Two
+/// executions that reach the same cells over the same `S` really are in the
+/// same state, so interning stays sound, deterministic and
+/// path-independent — and an entry state, which carries no mark, can no
+/// longer be the state something was forgotten into.
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub(crate) struct ForgottenFrom(SharedCMemory);
+
+impl ForgottenFrom {
+    pub(crate) fn snapshot(&self) -> &SharedCMemory {
+        &self.0
+    }
+}
+
+impl std::hash::Hash for ForgottenFrom {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // `SharedCMemory` hashes its precomputed content hash, so a marked
+        // snapshot costs one extra word to hash rather than a walk of the
+        // chain behind it.
+        self.0.hash(state);
+    }
+}
+
+impl std::fmt::Debug for ForgottenFrom {
+    /// Compact on purpose: `SharedCMemory`'s own `Debug` prints the whole
+    /// snapshot, and a chain of marks would print every snapshot behind it
+    /// into a diagnostic.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (arena, id) = self.0.arena_id();
+        write!(formatter, "forgotten-from({arena}.{id})")
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CMemory {
     pub(super) blocks: std::sync::Arc<BTreeMap<PointerBlock, CBlock>>,
@@ -3507,20 +3552,42 @@ pub struct CMemory {
     /// even when a later proof step forgets or rejoins ordinary cells.
     pub(super) ended_local_blocks: std::sync::Arc<BTreeSet<PointerBlock>>,
     pub(super) heap: std::sync::Arc<CHeapMemory>,
+    /// Set where cached values were dropped without the memory itself being
+    /// known unchanged; see [`ForgottenFrom`]. Carried by later stores and by
+    /// the projections used for load naming, so a state that has forgotten
+    /// something can never re-intern as the state it forgot it from.
+    pub(super) forgotten_from: Option<ForgottenFrom>,
 }
 
 impl CMemory {
     /// O(1) diagnostic identity for a snapshot without interning or walking
     /// its contents. This is intentionally only an identity label; equal
     /// labels imply shared storage roots, not semantic inequality otherwise.
-    pub(crate) fn diagnostic_identity(&self) -> (usize, usize, usize, usize, usize) {
+    pub(crate) fn diagnostic_identity(&self) -> (usize, usize, usize, usize, usize, (u32, u32)) {
         (
             std::sync::Arc::as_ptr(&self.blocks) as usize,
             std::sync::Arc::as_ptr(&self.cells) as usize,
             std::sync::Arc::as_ptr(&self.union_cells) as usize,
             std::sync::Arc::as_ptr(&self.ended_local_blocks) as usize,
             std::sync::Arc::as_ptr(&self.heap) as usize,
+            self.forgotten_from
+                .as_ref()
+                .map_or((u32::MAX, u32::MAX), |mark| mark.0.arena_id()),
         )
+    }
+
+    /// The snapshot this one last forgot cached values from, if any.
+    pub(crate) fn forgotten_from(&self) -> Option<&SharedCMemory> {
+        self.forgotten_from.as_ref().map(ForgottenFrom::snapshot)
+    }
+
+    /// Records that this snapshot dropped cached values that `base` knew,
+    /// without the memory the two describe having changed.
+    ///
+    /// Overwriting an older mark keeps the chain: `base` carries its own
+    /// mark, so the whole forget history stays reachable through it.
+    pub(in crate::kernel) fn mark_forgotten_from(&mut self, base: &SharedCMemory) {
+        self.forgotten_from = Some(ForgottenFrom(base.clone()));
     }
 
     /// Whether two snapshots are the same stored snapshot, by the storage
@@ -3588,6 +3655,11 @@ impl std::hash::Hash for CMemory {
             std::hash::Hash::hash(&self.ended_local_blocks, state);
         }
         self.heap.hash(state);
+        // Likewise skipped when absent, so every snapshot that never forgot
+        // anything keeps the load identities it had before marks existed.
+        if let Some(forgotten_from) = &self.forgotten_from {
+            forgotten_from.hash(state);
+        }
     }
 }
 
@@ -3599,6 +3671,7 @@ impl Ord for CMemory {
             .then_with(|| self.union_cells.cmp(&other.union_cells))
             .then_with(|| self.ended_local_blocks.cmp(&other.ended_local_blocks))
             .then_with(|| self.heap.cmp(&other.heap))
+            .then_with(|| self.forgotten_from.cmp(&other.forgotten_from))
     }
 }
 
@@ -4059,6 +4132,10 @@ struct CMemoryShallowIdentity {
     union_cells: usize,
     ended_local_blocks: usize,
     heap: usize,
+    /// Part of the shallow key, not only of the content: two snapshots can
+    /// share every storage root and still be different states when one of
+    /// them forgot something the other did not.
+    forgotten_from: Option<(u32, u32)>,
 }
 
 impl CMemoryShallowIdentity {
@@ -4069,6 +4146,7 @@ impl CMemoryShallowIdentity {
             union_cells: std::sync::Arc::as_ptr(&memory.union_cells) as usize,
             ended_local_blocks: std::sync::Arc::as_ptr(&memory.ended_local_blocks) as usize,
             heap: std::sync::Arc::as_ptr(&memory.heap) as usize,
+            forgotten_from: memory.forgotten_from().map(SharedCMemory::arena_id),
         }
     }
 }

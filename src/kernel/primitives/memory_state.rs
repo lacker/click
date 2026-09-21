@@ -2349,6 +2349,7 @@ impl CMemory {
         };
         let field_end = field_start + i64::from(c_type.byte_width());
         let mut memory = self.clone();
+        let source = intern_c_memory_ref(&memory);
         let overlaps = |pointer: &Pointer| {
             pointer.block == base.block
                 && pointer
@@ -2359,6 +2360,15 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| !overlaps(pointer));
         std::sync::Arc::make_mut(&mut memory.union_cells)
             .retain(|(pointer, _), _| !overlaps(pointer));
+        // Nothing restores these cells — the copy could not carry the field —
+        // so the result knows strictly less than its source and must not be
+        // able to re-intern as a state that never knew it. See
+        // [`CMemory::mark_forgotten_from`].
+        if memory.cells.len() != self.cells.len()
+            || memory.union_cells.len() != self.union_cells.len()
+        {
+            memory.mark_forgotten_from(&source);
+        }
         memory
     }
 
@@ -2397,6 +2407,13 @@ impl CMemory {
         let written = crate::kernel::reasoning::StoreByteInterval::of(&normalized_pointer, bytes);
         let base = Some(intern_c_memory_ref(self));
         let mut memory = self.clone();
+        // Whether any cell went for the *aliasing* reason rather than because
+        // this store overwrites every one of its bytes. An overwritten cell
+        // is stale, not forgotten: the store about to run replaces exactly
+        // what was dropped, so the result still says everything about the
+        // state it describes. A possibly aliasing cell is knowledge the
+        // result no longer has, and that is what has to show in the content.
+        let mut forgot_live_knowledge = false;
         std::sync::Arc::make_mut(&mut memory.cells).retain(|cell_pointer, cell_value| {
             let normalized_cell_pointer = Pointer {
                 block: cell_pointer.block.clone(),
@@ -2412,7 +2429,7 @@ impl CMemory {
             {
                 return false;
             }
-            pointers_proven_distinct_for_memory_resolution(
+            let kept = pointers_proven_distinct_for_memory_resolution(
                 &normalized_cell_pointer,
                 &normalized_pointer,
                 assumptions,
@@ -2436,7 +2453,9 @@ impl CMemory {
                     &normalized_cell_pointer,
                     assumptions,
                 )
-                .is_some()
+                .is_some();
+            forgot_live_knowledge |= !kept;
+            kept
         });
         std::sync::Arc::make_mut(&mut memory.union_cells).retain(|(cell_pointer, cell_type), _| {
             let normalized_cell_pointer = Pointer {
@@ -2453,7 +2472,7 @@ impl CMemory {
             {
                 return false;
             }
-            pointers_proven_distinct_for_memory_resolution(
+            let kept = pointers_proven_distinct_for_memory_resolution(
                 &normalized_cell_pointer,
                 &normalized_pointer,
                 assumptions,
@@ -2464,7 +2483,9 @@ impl CMemory {
                     &normalized_cell_pointer,
                     assumptions,
                 )
-                .is_some()
+                .is_some();
+            forgot_live_knowledge |= !kept;
+            kept
         });
         // Forgetting nothing is not a transition: the memory is the same
         // snapshot, so a later load keeps resolving through it unchanged
@@ -2475,6 +2496,15 @@ impl CMemory {
             return self.clone();
         }
         if let Some(base) = base {
+            // The mark goes on before interning, because it is what the
+            // result is interned *as*. Without it the emptied cell map can
+            // re-intern as an older node — in the smallest case the function
+            // entry state — and then this edge would run backwards, be
+            // dropped, and leave the store that filled those cells off every
+            // recorded history.
+            if forgot_live_knowledge {
+                memory.mark_forgotten_from(&base);
+            }
             record_c_memory_derivation(&memory, CMemoryDerivation::CellsForgotten { base });
         }
         memory

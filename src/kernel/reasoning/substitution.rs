@@ -5245,6 +5245,10 @@ fn substitute_bitvector_variable_in_memory_contents(
                 .collect(),
         ),
         ended_local_blocks: memory.ended_local_blocks.clone(),
+        // Carried unrewritten. The mark is an identity, not an address or a
+        // value, and a rewritten snapshot that dropped it could re-intern as
+        // a state that forgot nothing.
+        forgotten_from: memory.forgotten_from.clone(),
         heap: std::sync::Arc::new(CHeapMemory {
             live_allocations: memory
                 .heap
@@ -6619,6 +6623,9 @@ pub(crate) fn substitute_pointer_variable_in_memory(
                 .map(|block| substitute_pointer_variable_in_block(block, from, to))
                 .collect(),
         ),
+        // Carried unrewritten, for the reason given in
+        // `substitute_bitvector_variable_in_memory_contents`.
+        forgotten_from: memory.forgotten_from.clone(),
         heap: std::sync::Arc::new(CHeapMemory {
             live_allocations: memory
                 .heap

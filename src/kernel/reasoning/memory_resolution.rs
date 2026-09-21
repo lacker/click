@@ -1584,6 +1584,12 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
         for (block, size) in markers {
             blocks.entry(block).or_insert(size);
         }
+        // A forget mark survives the jump for the same reason a havoc marker
+        // does, and it is the source's mark that must not be inherited: the
+        // cells' common source may be a state this one has since forgotten
+        // things from, and wearing that state's identity is exactly what
+        // names a changed load `old(...)`.
+        canonical.forgotten_from = memory.forgotten_from.clone();
     }
     // Only the cells below decide what a load reads. Declaring a block writes
     // nothing, so the block list stays the load's own block plus the havoc
