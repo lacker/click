@@ -3161,7 +3161,9 @@ fn local_declaration_pointer(
         return Ok(fresh_local_object_identity(state, name));
     }
     let unnumbered = CMemory::local_pointer(name);
-    if state.in_called_frame() || state.memory.local_block_is_occupied(&unnumbered.block) {
+    if state.enclosing_frame_holds_locals()
+        || state.memory.local_block_is_occupied(&unnumbered.block)
+    {
         return Ok(fresh_local_object_identity(state, name));
     }
     Ok(unnumbered)

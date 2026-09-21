@@ -1116,6 +1116,17 @@ impl CLocalEnvironment {
         self.bindings.contains_key(name)
     }
 
+    /// Whether this frame has bound anything at all.
+    ///
+    /// A frame that has bound nothing owns no automatic object and no
+    /// parameter pseudo-slot, so nothing it holds can collide with a name a
+    /// frame it calls declares. That is the question an entering frame asks,
+    /// and asking it this way keeps the answer a single indexed check rather
+    /// than a walk of the caller's environment.
+    pub(in crate::kernel) fn is_empty(&self) -> bool {
+        self.bindings.is_empty()
+    }
+
     /// Whether this name is a declared automatic object whose value the
     /// execution has not produced yet. Reading it has no defined path, so a
     /// proposition that names it cannot lower; a diagnostic uses this to name
@@ -2884,17 +2895,17 @@ impl CState {
         self.next_local_lifetime
     }
 
-    pub(in crate::kernel) fn with_next_local_lifetime(mut self, next: u64) -> Self {
+    pub(crate) fn with_next_local_lifetime(mut self, next: u64) -> Self {
         self.next_local_lifetime = next;
         self
     }
 
-    pub(in crate::kernel) fn in_called_frame(&self) -> bool {
-        self.in_called_frame
+    pub(in crate::kernel) fn enclosing_frame_holds_locals(&self) -> bool {
+        self.enclosing_frame_holds_locals
     }
 
-    pub(in crate::kernel) fn with_in_called_frame(mut self, nested: bool) -> Self {
-        self.in_called_frame = nested;
+    pub(in crate::kernel) fn with_enclosing_frame_holds_locals(mut self, nested: bool) -> Self {
+        self.enclosing_frame_holds_locals = nested;
         self
     }
 

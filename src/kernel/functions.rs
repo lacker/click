@@ -9520,10 +9520,14 @@ pub(super) fn bind_c_function_arguments(
         )
         .with_next_local_lifetime(caller_state.next_local_lifetime())
         // The body below declares its locals into the caller's memory with
-        // this fresh locals map, which cannot see the caller's objects. Say
-        // so, so each declaration takes an identity of its own rather than
-        // the caller's `local:<name>`.
-        .with_in_called_frame(true);
+        // this fresh locals map, which cannot see the caller's objects. Pass
+        // down whether there are any to collide with, so each declaration
+        // that could take a caller's `local:<name>` takes its own identity
+        // instead. A frame that has bound nothing owns nothing, which is what
+        // makes the outermost one answer no.
+        .with_enclosing_frame_holds_locals(
+            caller_state.enclosing_frame_holds_locals() || !caller_state.locals.is_empty(),
+        );
     callee_state.counted_populations = caller_state.counted_populations.clone();
     // A function entry is a lexical/frame rebind, not an authority reset.
     // Preserve an already-active candidate loan through calls whose resource
@@ -9634,7 +9638,9 @@ fn bind_c_contract_arguments(
             frame
         })
         .with_next_local_lifetime(caller_state.next_local_lifetime())
-        .with_in_called_frame(true);
+        .with_enclosing_frame_holds_locals(
+            caller_state.enclosing_frame_holds_locals() || !caller_state.locals.is_empty(),
+        );
     callee_state.counted_populations = caller_state.counted_populations.clone();
     callee_state.loan_ledger = caller_state.loan_ledger.clone();
     callee_state.loan_participant = caller_state.loan_participant;
@@ -13393,13 +13399,6 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
             function.name()
         ))));
     };
-    // Certifying a contract enters the function at the verification root: its
-    // frame is the outermost one, and its memory holds no caller's automatic
-    // objects for a declaration to collide with. Keep the plain `local:<name>`
-    // identity there, both because it is the readable one a diagnostic shows
-    // and because a generation would claim a re-entry that did not happen. A
-    // caller that is already inside a frame passes its own answer down.
-    let callee_state = callee_state.with_in_called_frame(caller_state.in_called_frame());
     let transfer = match crate::instrumentation::measure_operation(
         function.name(),
         "contract resource transition",

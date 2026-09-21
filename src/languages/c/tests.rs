@@ -10363,17 +10363,32 @@ fn c0_function_pointers_preserve_signature_and_dispatch_callback() {
             arguments: Vec::new(),
             outcome: crate::kernel::CFunctionOutcome::Return {
                 value: crate::kernel::int32(38),
-                state: crate::kernel::CState::new().with_memory(
-                    crate::kernel::CMemory::new()
-                        .with_block("local:result", 4)
-                        .store(
-                            crate::kernel::Pointer {
-                                block: "local:result".into(),
-                                offset: crate::kernel::PointerOffsetTerm::Constant(0),
-                            },
-                            crate::kernel::int32(38),
-                        )
-                ),
+                // `caller` and `apply` each declare a `result`, and they are
+                // two objects. `apply` runs on the caller's memory with its
+                // own names, so its declaration takes the next generation
+                // rather than the caller's block; both happen to end at 38,
+                // which is exactly why one block for both went unnoticed.
+                state: crate::kernel::CState::new()
+                    .with_memory(
+                        crate::kernel::CMemory::new()
+                            .with_block("local:result", 4)
+                            .with_block("local:lifetime:0:result", 4)
+                            .store(
+                                crate::kernel::Pointer {
+                                    block: "local:lifetime:0:result".into(),
+                                    offset: crate::kernel::PointerOffsetTerm::Constant(0),
+                                },
+                                crate::kernel::int32(38),
+                            )
+                            .store(
+                                crate::kernel::Pointer {
+                                    block: "local:result".into(),
+                                    offset: crate::kernel::PointerOffsetTerm::Constant(0),
+                                },
+                                crate::kernel::int32(38),
+                            )
+                    )
+                    .with_next_local_lifetime(1),
             },
         }
     );

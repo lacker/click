@@ -5091,7 +5091,7 @@ fn a_called_frames_declaration_does_not_take_the_callers_block() {
                 .with_block("local:x", 4)
                 .store(callers.clone(), int32(1)),
         )
-        .with_in_called_frame(true);
+        .with_enclosing_frame_holds_locals(true);
     let statement = c_seq(
         c_declare("x", CType::Int32),
         c_seq(

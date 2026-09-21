@@ -4406,13 +4406,17 @@ pub struct CState {
     /// declaration can be re-entered by a loop. This is path state so joins
     /// and nested calls cannot accidentally reuse an ended local block.
     pub(super) next_local_lifetime: u64,
-    /// Whether this state is a called frame's rather than the outermost
-    /// function's. A called frame runs on the caller's memory with its own
-    /// locals map, so it cannot see which automatic objects the caller
-    /// already has; every declaration it executes therefore takes a fresh
-    /// generation instead of the bare `local:<name>` spelling, which belongs
-    /// to the outermost frame alone.
-    pub(super) in_called_frame: bool,
+    /// Whether some frame this one was called from holds automatic objects.
+    ///
+    /// A called frame runs on the caller's memory with its own locals map, so
+    /// it cannot see which objects the caller already has, and an object the
+    /// caller holds only as a value has no block to find in memory either.
+    /// Where the answer is yes, every declaration takes a fresh generation
+    /// rather than the plain `local:<name>` spelling, which then belongs to
+    /// the frame that already had it. A frame called from one that has bound
+    /// nothing — the outermost one — has nothing to collide with and keeps
+    /// the plain spelling.
+    pub(super) enclosing_frame_holds_locals: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
