@@ -614,10 +614,27 @@ is a forward range of exactly one element. A rule that compares one range's
 The valid-byte-extent condition itself is `memory_range_element_count_guards`,
 and it is the one definition: `0 <= count` plus, where the element width
 constrains an `int32` count at all, `count <= u32::MAX / width`. A stated
-`owns` or `views` range brings it; a range the kernel synthesizes — a loop
-`modifies` frame, a `CMemoryDisjoint` or `CResourceSeparate` endpoint, a
-havoc-derived range — does not, so a rule that needs it must ask rather than
-assume.
+`owns` or `views` range brings it, through
+`stated_loadable_extent_guards`. A range the kernel synthesizes — a loop
+`modifies` frame, a havoc-derived range — does not, so a rule that needs it
+must ask rather than assume.
+
+A range named by a stated `separate(memory(…), …)` sits between the two.
+`stated_separation_extent_guards` is the separation family's counterpart of
+`stated_loadable_extent_guards`: the ranges a separation names are read back by
+the same element arithmetic as an owned range, so wherever a separation is
+assumed its ranges' guards are available with it. What a separation does *not*
+do is owe an undecided guard as a proof obligation. A range reached through a
+composite clause — `views readable_input(data, length)`, whose inner
+`views data[0..length]` states the extent inside the resource body — publishes
+no guard to the code that names the range, so such an obligation would be one
+no contract text could discharge. A stated separation is therefore refused only
+where the surrounding facts already *decide* that one of its ranges runs
+backwards, which is what `separation_extent_is_impossible` asks and what keeps
+`separate(memory(a[s..t]), …)` from being written with `s == i32::MAX` and
+`t == -i32::MAX`. The undecided wrapping case, `separate(memory(a[s..s + 2]),
+…)` for an unconstrained `s`, is still accepted; surfacing a composite's inner
+range guards to its user is what would let it be owed.
 
 ## Floating-point semantic boundary
 

@@ -4942,6 +4942,80 @@ mod stated_range_guard_derivation {
         };
         assert!(crate::kernel::stated_loadable_extent_guards(&cell).is_empty());
     }
+
+    fn int32_range_resource(start: Bitvector32Term, end: Bitvector32Term) -> CResource {
+        CResource::Memory(CMemoryRange::new(
+            Pointer {
+                block: "arg-memory".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            start,
+            end,
+        ))
+    }
+
+    /// A stated separation carries the extent guards of both ranges it names.
+    /// Naming a range in `separate(…)` means what naming it in `owns` means,
+    /// so the two directions of that meaning come from one derivation.
+    #[test]
+    fn a_stated_separation_carries_both_ranges_extents() {
+        let left_end = Bitvector32Term::Variable(Variable(9_200_010));
+        let right_end = Bitvector32Term::Variable(Variable(9_200_011));
+        let separation = Proposition::CResourceSeparate {
+            left: int32_range_resource(Bitvector32Term::Constant(0), left_end.clone()),
+            right: int32_range_resource(Bitvector32Term::Constant(0), right_end.clone()),
+        };
+        let guards = crate::kernel::stated_separation_extent_guards(&separation);
+        for end in [left_end, right_end] {
+            assert!(
+                guards.contains(&Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), end.clone()),
+                    true,
+                )),
+                "the forward half of {end:?} is owed: {guards:?}"
+            );
+        }
+    }
+
+    /// A reversed constant range contributes the impossible guard, which is
+    /// what lets the lowering refuse `separate(memory(a[0..-1]), …)` rather
+    /// than relate a range that denotes no bytes.
+    #[test]
+    fn a_reversed_constant_separation_range_cannot_hold() {
+        let separation = Proposition::CResourceSeparate {
+            left: int32_range_resource(
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant((-1i32) as u32),
+            ),
+            right: int32_range_resource(Bitvector32Term::Constant(0), Bitvector32Term::Constant(1)),
+        };
+        assert!(
+            crate::kernel::stated_separation_extent_guards(&separation).contains(
+                &Proposition::ConditionIs(ConditionTerm::Constant(false), true)
+            ),
+            "a reversed constant range is not a byte extent"
+        );
+    }
+
+    /// A composite or token resource names no range, so a separation over one
+    /// owes nothing. Only memory carries an extent.
+    #[test]
+    fn a_separation_of_opaque_resources_carries_nothing() {
+        let separation = Proposition::CResourceSeparate {
+            left: CResource::Token {
+                name: "t".into(),
+                arguments: Vec::new().into(),
+            },
+            right: CResource::Composite {
+                name: "c".into(),
+                arguments: Vec::new().into(),
+            },
+        };
+        assert!(
+            crate::kernel::stated_separation_extent_guards(&separation).is_empty(),
+            "an opaque ownership atom has no endpoints"
+        );
+    }
 }
 
 /// The four tests below pin the two polarities of the element-count bound an

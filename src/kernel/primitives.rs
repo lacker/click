@@ -21,7 +21,7 @@ pub(crate) use contracts::{
     memory_range_byte_count_extent, memory_range_byte_count_guards, memory_range_element_count,
     memory_range_element_count_guards, memory_range_element_count_limit,
     scaled_extent_element_width, stated_loadable_extent_guard_spellings,
-    stated_loadable_extent_guards,
+    stated_loadable_extent_guards, stated_separation_extent_guards,
 };
 mod integer;
 pub use integer::{
@@ -3341,6 +3341,13 @@ pub struct ExecutionBudget {
     /// count says nothing about why. Diagnostic only: no evaluation reads it
     /// back.
     pub(super) dropped_fold_body: Option<DroppedFoldBody>,
+    /// Set when a stated resource relation was dropped because this context
+    /// already proves one of its memory ranges is not a valid byte extent.
+    /// Unlike [`Self::dropped_range_extent`] the endpoints here need not be
+    /// constants — the surrounding facts are what decide it — so there is no
+    /// element count to report, only the reason. Diagnostic only: no
+    /// evaluation reads it back.
+    pub(super) dropped_relation_range_extent: bool,
 }
 
 /// A constant element range a lowering refused as a byte extent, for the

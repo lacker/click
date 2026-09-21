@@ -14286,6 +14286,11 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     for guard in facts
         .iter()
         .flat_map(crate::kernel::stated_loadable_extent_guards)
+        .chain(
+            facts
+                .iter()
+                .flat_map(crate::kernel::stated_separation_extent_guards),
+        )
         .collect::<Vec<_>>()
     {
         body_assumptions = body_assumptions.assume_proposition(guard);
@@ -14513,7 +14518,10 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
     for fact in supporting_facts {
-        for guard in crate::kernel::stated_loadable_extent_guards(&fact) {
+        for guard in crate::kernel::stated_loadable_extent_guards(&fact)
+            .into_iter()
+            .chain(crate::kernel::stated_separation_extent_guards(&fact))
+        {
             body_assumptions = body_assumptions.assume_proposition(guard);
         }
         body_assumptions = body_assumptions.assume_proposition(fact);

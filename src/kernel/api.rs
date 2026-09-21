@@ -2082,6 +2082,12 @@ fn no_single_path_message<T>(what: &str, paths: &[T], budget: &ExecutionBudget) 
             )
         };
     }
+    if paths.is_empty() && budget.dropped_relation_range_extent() {
+        return format!(
+            "the kernel {what} produced no path: it relates a memory range this context already \
+             proves is not a byte extent, because its end is before its start"
+        );
+    }
     match (paths.len(), budget.dropped_runtime_error()) {
         (0, Some(error)) => format!(
             "the kernel {what} produced no path: every evaluation path ended in a runtime error: {}",

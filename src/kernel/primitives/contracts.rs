@@ -1991,6 +1991,78 @@ fn collect_stated_loadable_extent_guards(
     }
 }
 
+/// The byte-extent guards a stated resource-separation proposition carries.
+///
+/// `separate(memory(a[s..t]), …)` names two memory ranges, and naming a range
+/// in a contract means the same thing here as it does in `owns a[s..t]` or
+/// `viewable(a[s..t])`: that `s..t` is a valid 32-bit byte extent. Separation
+/// used to be the one stated form that did not carry it, so
+/// `separate(memory(a[s..s + 2]), memory(b[0..1]))` was accepted for every
+/// `s`, including the `s` where `s + 2` wraps past `i32::MAX` and the range
+/// runs backwards over the whole index space. The ranges a separation names
+/// are read back into element arithmetic by the same rules that read back an
+/// owned range, so they need the same premise to mean anything.
+///
+/// This is [`stated_loadable_extent_guards`] for the separation family: one
+/// derivation from the lowered proposition, so that wherever a separation is
+/// assumed these are available with it and wherever it is a goal or a cited
+/// premise a proof owes them. Deriving both from the proposition alone is what
+/// keeps the two directions agreeing without a rule about where the
+/// proposition came from.
+///
+/// Only [`CResource::Memory`] carries an extent. A composite or token
+/// resource is an opaque ownership atom whose arguments are not a range, and
+/// an instance names no bounds, so those contribute nothing. Conjunctions are
+/// walked for the same reason as above: a `requires` clause is written as one.
+pub(crate) fn stated_separation_extent_guards(proposition: &Proposition) -> Vec<Proposition> {
+    let mut guards = Vec::new();
+    for range in stated_separation_memory_ranges(proposition) {
+        for guard in memory_range_byte_count_guards(
+            range.start().clone(),
+            range.end().clone(),
+            range.element_width(),
+        ) {
+            if !guards.contains(&guard) {
+                guards.push(guard);
+            }
+        }
+    }
+    guards
+}
+
+/// The memory ranges a stated separation names, in the order they are written.
+///
+/// The one place that decides which ranges a separation's extent meaning is
+/// about. [`stated_separation_extent_guards`] states their guards, and the
+/// lowering that owes those guards reads the same ranges back so it can name
+/// a constant-invalid one in its refusal rather than reporting only that a
+/// path disappeared.
+fn stated_separation_memory_ranges(proposition: &Proposition) -> Vec<&CMemoryRange> {
+    let mut ranges = Vec::new();
+    collect_stated_separation_memory_ranges(proposition, &mut ranges);
+    ranges
+}
+
+fn collect_stated_separation_memory_ranges<'a>(
+    proposition: &'a Proposition,
+    ranges: &mut Vec<&'a CMemoryRange>,
+) {
+    match proposition {
+        Proposition::And(left, right) => {
+            collect_stated_separation_memory_ranges(left, ranges);
+            collect_stated_separation_memory_ranges(right, ranges);
+        }
+        Proposition::CResourceSeparate { left, right } => {
+            for resource in [left, right] {
+                if let CResource::Memory(range) = resource {
+                    ranges.push(range);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// [`memory_range_byte_count_extent`] as a flat guard list: an invalid
 /// constant range becomes the impossible guard, which refuses wherever the
 /// caller discharges guards.
