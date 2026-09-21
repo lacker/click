@@ -1147,17 +1147,23 @@ pub(super) fn execute_c_statement_verification_paths(
                             );
                             let branch_state =
                                 resolve_pending_heap_allocations(state, &branch_assumptions);
-                            paths.extend(execute_c_statement_verification_paths_with_prefix(
-                                &branch_state,
-                                branch,
-                                assumptions,
-                                environment,
-                                execution_semantics,
-                                &truthiness_path.facts,
-                                &truthiness_path.obligations,
-                                budget,
-                                variables,
-                            )?);
+                            // The arm is a scope: what it declares stops
+                            // existing however control leaves it.
+                            let declared = scope_declared_names(branch);
+                            paths.extend(paths_after_scope_exit(
+                                execute_c_statement_verification_paths_with_prefix(
+                                    &branch_state,
+                                    branch,
+                                    assumptions,
+                                    environment,
+                                    execution_semantics,
+                                    &truthiness_path.facts,
+                                    &truthiness_path.obligations,
+                                    budget,
+                                    variables,
+                                )?,
+                                &declared,
+                            ));
                         }
                     }
                     CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
@@ -3229,6 +3235,7 @@ pub(super) fn collect_loop_preservation_summary(
     // The body executes from the loop's own resource context; everything the
     // enclosing frame withheld is returned on the way out.
     let top_state = &head.body;
+    let body_declared = scope_declared_names(body);
     let binders = c_loop_binders(resource_specs);
     let whole_loop_effect_facts = whole_loop_effect_summaries
         .iter()
@@ -3278,17 +3285,22 @@ pub(super) fn collect_loop_preservation_summary(
                 obligations: condition_obligations,
                 ..
             } = assumption;
-            for body_path in execute_c_statement_verification_paths_with_prefix(
-                top_state,
-                body,
-                assumptions,
-                environment,
-                execution_semantics,
-                &condition_facts,
-                &condition_obligations,
-                budget,
-                variables,
-            )? {
+            // The body is a scope: the objects the summarized iteration
+            // declares stop existing at the back edge and at every exit.
+            for body_path in paths_after_scope_exit(
+                execute_c_statement_verification_paths_with_prefix(
+                    top_state,
+                    body,
+                    assumptions,
+                    environment,
+                    execution_semantics,
+                    &condition_facts,
+                    &condition_obligations,
+                    budget,
+                    variables,
+                )?,
+                &body_declared,
+            ) {
                 match body_path.outcome {
                     CStatementOutcome::Normal(next_state)
                     | CStatementOutcome::Continue(next_state) => {

@@ -5151,3 +5151,226 @@ fn a_declaration_does_not_take_a_block_whose_lifetime_ended() {
         &retired
     );
 }
+
+/// An automatic object's lifetime ends when control leaves the block that
+/// declared it. An `if` arm is such a block: the address of a local it
+/// declared designates no object once the arm is left, so a load through one
+/// is undefined behaviour rather than a way to read what the arm wrote.
+#[test]
+fn an_if_arms_local_stops_existing_when_the_arm_is_left() {
+    let arm = c_seq(
+        c_declare("x", CType::Int32),
+        c_seq(
+            c_assign("x", c_int32_literal(7)),
+            c_assign("p", c_addr_of("x")),
+        ),
+    );
+    let statement = c_seq(
+        c_declare("anchor", CType::Int32),
+        c_seq(
+            c_assign("anchor", c_int32_literal(0)),
+            c_seq(
+                c_declare("p", CType::Int32Pointer),
+                c_seq(
+                    c_assign("p", c_addr_of("anchor")),
+                    c_seq(
+                        c_if(c_variable("c"), arm, CStatement::Skip),
+                        c_return(c_load(c_variable("p"))),
+                    ),
+                ),
+            ),
+        ),
+    );
+    let state = CState::new().with_local("c", CValue::Int32(Bitvector32Term::Constant(1)));
+    let theorem = prove_symbolic_c_execution(state, statement, PureFactContext::new())
+        .expect("the taken arm is the only path");
+    let Proposition::CStatementExecutes { outcome, .. } = theorem.proposition() else {
+        panic!("expected an execution: {:?}", theorem.proposition());
+    };
+    assert!(
+        matches!(
+            outcome,
+            CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory)
+        ),
+        "reading an `if` arm's local after the arm is undefined behaviour, got {outcome:?}"
+    );
+}
+
+/// A loop body is a block, and an iteration leaves it at the back edge as
+/// well as at every exit, so a pointer to a body local does not outlive the
+/// iteration that created it.
+#[test]
+fn a_loop_bodys_local_stops_existing_at_the_back_edge() {
+    let body = c_seq(
+        c_declare("x", CType::Int32),
+        c_seq(
+            c_assign("x", c_int32_literal(9)),
+            c_seq(
+                c_assign("p", c_addr_of("x")),
+                c_assign("i", c_add(c_variable("i"), c_int32_literal(1))),
+            ),
+        ),
+    );
+    let statement = c_seq(
+        c_declare("anchor", CType::Int32),
+        c_seq(
+            c_assign("anchor", c_int32_literal(0)),
+            c_seq(
+                c_declare("p", CType::Int32Pointer),
+                c_seq(
+                    c_assign("p", c_addr_of("anchor")),
+                    c_seq(
+                        c_declare("i", CType::Int32),
+                        c_seq(
+                            c_assign("i", c_int32_literal(0)),
+                            c_seq(
+                                c_while(
+                                    c_less_than(c_variable("i"), c_int32_literal(2)),
+                                    Vec::new(),
+                                    body,
+                                ),
+                                c_return(c_load(c_variable("p"))),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    );
+    let theorem = prove_symbolic_c_execution(CState::new(), statement, PureFactContext::new())
+        .expect("a concrete loop has one path");
+    let Proposition::CStatementExecutes { outcome, .. } = theorem.proposition() else {
+        panic!("expected an execution: {:?}", theorem.proposition());
+    };
+    assert!(
+        matches!(
+            outcome,
+            CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory)
+        ),
+        "reading a loop body's local after the loop is undefined behaviour, got {outcome:?}"
+    );
+}
+
+/// `break` leaves the body too. An exit that skips the end of a block still
+/// leaves the block, so it ends the same lifetimes falling off the end does.
+#[test]
+fn a_loop_bodys_local_stops_existing_on_break() {
+    let body = c_seq(
+        c_declare("x", CType::Int32),
+        c_seq(
+            c_assign("x", c_int32_literal(2)),
+            c_seq(c_assign("p", c_addr_of("x")), c_break()),
+        ),
+    );
+    let statement = c_seq(
+        c_declare("anchor", CType::Int32),
+        c_seq(
+            c_assign("anchor", c_int32_literal(0)),
+            c_seq(
+                c_declare("p", CType::Int32Pointer),
+                c_seq(
+                    c_assign("p", c_addr_of("anchor")),
+                    c_seq(
+                        c_while(c_int32_literal(1), Vec::new(), body),
+                        c_return(c_load(c_variable("p"))),
+                    ),
+                ),
+            ),
+        ),
+    );
+    let theorem = prove_symbolic_c_execution(CState::new(), statement, PureFactContext::new())
+        .expect("the loop breaks on its first iteration");
+    let Proposition::CStatementExecutes { outcome, .. } = theorem.proposition() else {
+        panic!("expected an execution: {:?}", theorem.proposition());
+    };
+    assert!(
+        matches!(
+            outcome,
+            CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory)
+        ),
+        "reading a loop body's local after a `break` is undefined behaviour, got {outcome:?}"
+    );
+}
+
+/// A `switch` body is one block for all of its cases, because control falls
+/// from one case into the next. Leaving the switch leaves that block.
+#[test]
+fn a_switch_bodys_local_stops_existing_when_the_switch_is_left() {
+    let case = c_seq(
+        c_declare("x", CType::Int32),
+        c_seq(
+            c_assign("x", c_int32_literal(4)),
+            c_seq(c_assign("p", c_addr_of("x")), c_break()),
+        ),
+    );
+    let statement = c_seq(
+        c_declare("anchor", CType::Int32),
+        c_seq(
+            c_assign("anchor", c_int32_literal(0)),
+            c_seq(
+                c_declare("p", CType::Int32Pointer),
+                c_seq(
+                    c_assign("p", c_addr_of("anchor")),
+                    c_seq(
+                        c_switch(
+                            c_int32_literal(1),
+                            vec![CSwitchCase {
+                                value: Some(1),
+                                body: Box::new(case),
+                            }],
+                        ),
+                        c_return(c_load(c_variable("p"))),
+                    ),
+                ),
+            ),
+        ),
+    );
+    let theorem = prove_symbolic_c_execution(CState::new(), statement, PureFactContext::new())
+        .expect("a constant selector picks one case");
+    let Proposition::CStatementExecutes { outcome, .. } = theorem.proposition() else {
+        panic!("expected an execution: {:?}", theorem.proposition());
+    };
+    assert!(
+        matches!(
+            outcome,
+            CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory)
+        ),
+        "reading a `switch` body's local after the switch is undefined behaviour, got {outcome:?}"
+    );
+}
+
+/// A scope exit retires what the scope declared and nothing else: a pointer
+/// to an object the enclosing block declared still designates it.
+#[test]
+fn an_outer_locals_address_survives_an_inner_scope() {
+    let arm = c_seq(
+        c_declare("x", CType::Int32),
+        c_assign("x", c_int32_literal(7)),
+    );
+    let statement = c_seq(
+        c_declare("outer", CType::Int32),
+        c_seq(
+            c_assign("outer", c_int32_literal(5)),
+            c_seq(
+                c_declare("p", CType::Int32Pointer),
+                c_seq(
+                    c_assign("p", c_addr_of("outer")),
+                    c_seq(
+                        c_if(c_variable("c"), arm, CStatement::Skip),
+                        c_return(c_load(c_variable("p"))),
+                    ),
+                ),
+            ),
+        ),
+    );
+    let state = CState::new().with_local("c", CValue::Int32(Bitvector32Term::Constant(1)));
+    let theorem = prove_symbolic_c_execution(state, statement, PureFactContext::new())
+        .expect("the taken arm is the only path");
+    let Proposition::CStatementExecutes { outcome, .. } = theorem.proposition() else {
+        panic!("expected an execution: {:?}", theorem.proposition());
+    };
+    let CStatementOutcome::Return { value, .. } = outcome else {
+        panic!("expected a return: {outcome:?}");
+    };
+    assert_eq!(value, &CValue::Int32(Bitvector32Term::Constant(5)));
+}

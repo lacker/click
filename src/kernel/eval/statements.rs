@@ -2124,6 +2124,142 @@ fn pending_allocation_outcome_paths(
     }
 }
 
+/// The automatic objects one scope declares for itself.
+///
+/// C0 lowers a source block to a `Seq` tree, and the kernel has no statement
+/// that stands for the block itself, so a scope's own declarations are the
+/// ones reachable from its root through that tree. The walk stops at a nested
+/// scope — an `if` arm, a loop body, a `switch` body — because control leaving
+/// that scope retires what it declared, and stops at every other statement
+/// because no other statement declares.
+///
+/// Bounded by the scope's own spine: the `Seq` nodes above its declarations,
+/// which a source block has one of per statement it holds.
+fn collect_scope_declared_names(statement: &CStatement, names: &mut Vec<String>) {
+    match statement {
+        CStatement::Declare { name, .. } | CStatement::DeclareAggregate { name, .. } => {
+            names.push(name.clone());
+        }
+        CStatement::Seq(first, second) => {
+            collect_scope_declared_names(first, names);
+            collect_scope_declared_names(second, names);
+        }
+        // Nested scopes retire their own declarations.
+        CStatement::If { .. }
+        | CStatement::While { .. }
+        | CStatement::Switch { .. }
+        | CStatement::TryCatchInt32 { .. }
+        // Everything else declares nothing.
+        | CStatement::Skip
+        | CStatement::Break
+        | CStatement::Continue
+        | CStatement::Goto { .. }
+        | CStatement::ContinueWithStep { .. }
+        | CStatement::CopyAggregate { .. }
+        | CStatement::Assign { .. }
+        | CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Return(_)
+        | CStatement::Throw(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::Update { .. } => {}
+    }
+}
+
+/// The names a scope declares, in the order it declares them.
+pub(in crate::kernel) fn scope_declared_names(statement: &CStatement) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_scope_declared_names(statement, &mut names);
+    names
+}
+
+/// Ends the automatic lifetimes of the objects a scope declared.
+///
+/// An automatic object's lifetime ends when control leaves the block that
+/// declared it, however it leaves — falling off the end, `break`, `continue`,
+/// `return`, `goto`, or a thrown outcome. Its storage stops existing, so a
+/// pointer into it designates no object and a load through one is undefined
+/// behaviour rather than a way to read what the block wrote.
+///
+/// The name is unbound as well as the storage retired, because the frame no
+/// longer holds an object of that name: a later declaration of it is a
+/// declaration, not a re-entry, and the mint gives it an identity of its own.
+///
+/// Bounded by the declarations of the exiting scope; it reads no other local
+/// and no other block.
+pub(in crate::kernel) fn end_scope_automatic_lifetimes(
+    state: &CState,
+    declared: &[String],
+) -> CState {
+    let mut state = state.clone();
+    let mut memory = state.memory.clone();
+    let mut retired = false;
+    for name in declared {
+        let Some(slot) = state.locals.slot(name).cloned() else {
+            continue;
+        };
+        if slot.block.starts_with("local:") && memory.has_block(&slot.block) {
+            memory = memory.without_local_block(&slot.block);
+            retired = true;
+        }
+        state.locals.remove(name);
+    }
+    if retired {
+        state.set_memory(memory);
+    }
+    state
+}
+
+/// Applies a scope exit to every outcome a scope's body produced.
+///
+/// Every outcome leaves the scope, so every outcome retires it. The three
+/// outcomes that carry no state — divergence, undefined behaviour, a runtime
+/// error — have no successor to retire anything in.
+pub(in crate::kernel) fn paths_after_scope_exit(
+    paths: Vec<CStatementExecutionPath>,
+    declared: &[String],
+) -> Vec<CStatementExecutionPath> {
+    if declared.is_empty() {
+        return paths;
+    }
+    paths
+        .into_iter()
+        .map(|path| {
+            let outcome = match path.outcome {
+                CStatementOutcome::Normal(state) => {
+                    CStatementOutcome::Normal(end_scope_automatic_lifetimes(&state, declared))
+                }
+                CStatementOutcome::Break(state) => {
+                    CStatementOutcome::Break(end_scope_automatic_lifetimes(&state, declared))
+                }
+                CStatementOutcome::Continue(state) => {
+                    CStatementOutcome::Continue(end_scope_automatic_lifetimes(&state, declared))
+                }
+                CStatementOutcome::Jump { target, state } => CStatementOutcome::Jump {
+                    target,
+                    state: end_scope_automatic_lifetimes(&state, declared),
+                },
+                CStatementOutcome::Return { value, state } => CStatementOutcome::Return {
+                    value,
+                    state: end_scope_automatic_lifetimes(&state, declared),
+                },
+                CStatementOutcome::Throw { value, state } => CStatementOutcome::Throw {
+                    value,
+                    state: end_scope_automatic_lifetimes(&state, declared),
+                },
+                outcome @ (CStatementOutcome::VerificationDiverges
+                | CStatementOutcome::UndefinedBehavior(_)
+                | CStatementOutcome::RuntimeError(_)) => outcome,
+            };
+            CStatementExecutionPath { outcome, ..path }
+        })
+        .collect()
+}
+
 pub(in crate::kernel) fn execute_c_statement_paths(
     state: &CState,
     statement: &CStatement,
@@ -2511,17 +2647,23 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                             );
                             let branch_state =
                                 resolve_pending_heap_allocations(state, &path_assumptions);
-                            paths.extend(execute_c_statement_paths_with_prefix(
-                                &branch_state,
-                                branch,
-                                assumptions,
-                                environment,
-                                execution_semantics,
-                                &truthiness_path.facts,
-                                &truthiness_path.obligations,
-                                &empty_checked_loan_evidence_sequence(),
-                                budget,
-                            )?);
+                            // The arm is a scope: what it declares stops
+                            // existing however control leaves it.
+                            let declared = scope_declared_names(branch);
+                            paths.extend(paths_after_scope_exit(
+                                execute_c_statement_paths_with_prefix(
+                                    &branch_state,
+                                    branch,
+                                    assumptions,
+                                    environment,
+                                    execution_semantics,
+                                    &truthiness_path.facts,
+                                    &truthiness_path.obligations,
+                                    &empty_checked_loan_evidence_sequence(),
+                                    budget,
+                                )?,
+                                &declared,
+                            ));
                         }
                     }
                     CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
@@ -2590,6 +2732,13 @@ fn execute_c_switch_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    // A `switch` body is one scope: cases fall through into each other, so a
+    // declaration in one case is in scope in the next and stops existing only
+    // where control leaves the switch.
+    let mut declared = Vec::new();
+    for case in cases {
+        collect_scope_declared_names(&case.body, &mut declared);
+    }
     let mut paths = Vec::new();
     for selector_path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
         let CExpressionPath {
@@ -2642,7 +2791,7 @@ fn execute_c_switch_paths(
             }),
         }
     }
-    Ok(paths)
+    Ok(paths_after_scope_exit(paths, &declared))
 }
 
 fn execute_c_switch_dispatch_paths(
@@ -2899,6 +3048,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
         check_condition: bool,
     }
 
+    let body_declared = scope_declared_names(body);
     let mut pending = vec![PendingLoopPath {
         state: state.clone(),
         facts: Vec::new(),
@@ -2997,14 +3147,20 @@ pub(in crate::kernel) fn execute_c_while_paths(
                             &truthiness_path.facts,
                             &truthiness_path.obligations,
                         );
-                        for body_path in execute_c_statement_paths(
-                            &current_state,
-                            body,
-                            &body_assumptions,
-                            environment,
-                            execution_semantics,
-                            budget,
-                        )? {
+                        // The body is a scope, and every way out of an
+                        // iteration leaves it: the back edge, `break`,
+                        // `continue`, and every transfer out of the loop.
+                        for body_path in paths_after_scope_exit(
+                            execute_c_statement_paths(
+                                &current_state,
+                                body,
+                                &body_assumptions,
+                                environment,
+                                execution_semantics,
+                                budget,
+                            )?,
+                            &body_declared,
+                        ) {
                             let Some((step_facts, step_obligations)) =
                                 merge_execution_pure_facts_and_obligations(
                                     &truthiness_path.facts,

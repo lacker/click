@@ -1278,6 +1278,18 @@ impl CLocalEnvironment {
         }
         std::sync::Arc::make_mut(&mut self.slots).insert(slot, name);
     }
+
+    /// Unbinds one name, as control leaving the scope that declared it does.
+    ///
+    /// The object's storage is retired separately; this removes the name that
+    /// designated it, so a later declaration of that name is a declaration
+    /// rather than a re-entry of one this frame still holds.
+    pub(in crate::kernel) fn remove(&mut self, name: &str) {
+        let Some(binding) = std::sync::Arc::make_mut(&mut self.bindings).remove(name) else {
+            return;
+        };
+        std::sync::Arc::make_mut(&mut self.slots).remove(binding.slot());
+    }
 }
 
 impl CBlock {
