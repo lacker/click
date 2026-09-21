@@ -605,35 +605,12 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 value.clone(),
                 authorized_range,
             ));
-            if let Some(name) = state.locals.name_for_slot(&pointer)
-                && let Some(c_type) = state.locals.scalar_object_type(name)
-            {
-                let (object_volatile, object_pointee_volatile, object_pointee_constant) =
-                    match state.locals.binding(name) {
-                        Some(CLocalBinding::Object {
-                            volatile,
-                            pointee_volatile,
-                            pointee_constant,
-                            ..
-                        })
-                        | Some(CLocalBinding::UninitializedObject {
-                            volatile,
-                            pointee_volatile,
-                            pointee_constant,
-                            ..
-                        }) => (*volatile, *pointee_volatile, *pointee_constant),
-                        _ => (false, false, false),
-                    };
-                state.locals.set_typed_with_all_qualifiers(
-                    name.to_string(),
-                    value.clone(),
-                    c_type,
-                    object_volatile,
-                    object_pointee_volatile,
-                    false,
-                    object_pointee_constant,
-                );
-            }
+            refresh_scalar_local_after_memory_store(
+                &mut state,
+                &pointer,
+                &value,
+                &effective_assumptions,
+            );
             if is_volatile {
                 facts.push(volatile_access_fact(
                     budget, true, pointer, value_type, value,
@@ -3443,6 +3420,106 @@ fn begin_aggregate_construction(
             ),
         ));
     Ok(Ok(state))
+}
+
+/// Brings a scalar local's binding back in step with the memory a store just
+/// produced.
+///
+/// A scalar local is held twice: as a binding, which is what reading the name
+/// returns, and — once its address is taken — as the cell at its stack slot.
+/// A store through a pointer only writes the cell, so the binding has to be
+/// told. Which addresses count is a question about *bytes*: `&v + 1` is a
+/// different address from `&v` by every address test the kernel has, and a
+/// one-byte store there still overwrites the second byte of an `int64` `v`.
+/// Matching the slot address exactly left that binding holding the whole old
+/// value, and the next read of the name returned it as if the store had not
+/// happened.
+///
+/// So the store's byte interval is compared against the object's, and only a
+/// store that covers the object completely, at its own address and in its own
+/// type, may install its value. Any other store that reaches those bytes —
+/// including one whose overlap is undecided — replaces the binding with the
+/// read of the slot in the memory this store produced, which is what reading
+/// the name now means. A store the bytes separate leaves the binding alone.
+///
+/// Bounded: one slot lookup keyed by the written block, then the shared byte
+/// comparison against that one object. No scan of the frame.
+fn refresh_scalar_local_after_memory_store(
+    state: &mut CState,
+    pointer: &Pointer,
+    value: &CValue,
+    assumptions: &PureFactContext,
+) {
+    let slot = Pointer {
+        block: pointer.block.clone(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let Some(name) = state.locals.name_for_slot(&slot).map(str::to_string) else {
+        return;
+    };
+    let Some(c_type) = state.locals.scalar_object_type(&name) else {
+        return;
+    };
+    let overlap = crate::kernel::reasoning::memory_resolution::access_byte_overlap(
+        pointer,
+        value.byte_width(),
+        &slot,
+        c_type.byte_width(),
+        assumptions,
+    );
+    if overlap == crate::kernel::reasoning::memory_resolution::AccessByteOverlap::Separate {
+        return;
+    }
+    let covers_whole_object = pointer == &slot
+        && crate::kernel::reasoning::memory_resolution::StoreByteInterval::of(
+            pointer,
+            value.byte_width(),
+        )
+        .is_some_and(|written| written.overwrites_typed_completely(&slot, c_type))
+        && c_type.accepts(value);
+    let refreshed = if covers_whole_object {
+        Some(value.clone())
+    } else {
+        crate::kernel::eval::symbolic_load_value(&state.memory, &slot, c_type)
+    };
+    let (object_volatile, object_pointee_volatile, object_pointee_constant) =
+        match state.locals.binding(&name) {
+            Some(CLocalBinding::Object {
+                volatile,
+                pointee_volatile,
+                pointee_constant,
+                ..
+            })
+            | Some(CLocalBinding::UninitializedObject {
+                volatile,
+                pointee_volatile,
+                pointee_constant,
+                ..
+            }) => (*volatile, *pointee_volatile, *pointee_constant),
+            _ => (false, false, false),
+        };
+    match refreshed {
+        Some(refreshed) => state.locals.set_typed_with_all_qualifiers(
+            name,
+            refreshed,
+            c_type,
+            object_volatile,
+            object_pointee_volatile,
+            false,
+            object_pointee_constant,
+        ),
+        // No symbolic form for this object's type: the binding must not keep
+        // saying what it said before the store.
+        None => state.locals.set_uninitialized_with_all_qualifiers(
+            name,
+            c_type,
+            slot,
+            object_volatile,
+            object_pointee_volatile,
+            false,
+            object_pointee_constant,
+        ),
+    }
 }
 
 pub(in crate::kernel) fn sync_stack_local(state: &mut CState, name: &str, value: &CValue) {

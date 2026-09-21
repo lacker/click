@@ -1867,6 +1867,47 @@ impl StoreByteInterval {
         self.overwrites_bytes(cell_pointer, i64::from(cell_type.byte_width()))
     }
 
+    /// Whether this store writes *every* byte the cell occupies.
+    ///
+    /// This is the difference between a cell that is stale and a cell that is
+    /// forgotten. A store that covers the cell completely replaces exactly
+    /// what dropping the cell lost, so the snapshot it produces still says
+    /// everything about the state it describes. A store that covers only some
+    /// of the cell's bytes leaves the rest at values nothing records any more:
+    /// the byte written into the middle of an `int64` is in the result, and
+    /// the other seven bytes are knowledge the result no longer has. Calling
+    /// that partial case stale let the produced snapshot claim to be the state
+    /// before the store.
+    pub(in crate::kernel) fn overwrites_completely(
+        &self,
+        cell_pointer: &Pointer,
+        cell_value: &CValue,
+    ) -> bool {
+        self.covers_bytes(cell_pointer, i64::from(cell_value.byte_width()))
+    }
+
+    pub(in crate::kernel) fn overwrites_typed_completely(
+        &self,
+        cell_pointer: &Pointer,
+        cell_type: CType,
+    ) -> bool {
+        self.covers_bytes(cell_pointer, i64::from(cell_type.byte_width()))
+    }
+
+    fn covers_bytes(&self, cell_pointer: &Pointer, cell_width: i64) -> bool {
+        if cell_width == 0 {
+            return false;
+        }
+        let (cell_atoms, cell_shift) = offset_atoms_and_constant(&cell_pointer.offset);
+        if cell_atoms != self.atoms {
+            return false;
+        }
+        self.shift <= cell_shift
+            && cell_shift
+                .checked_add(cell_width)
+                .is_some_and(|cell_end| self.shift.checked_add(self.bytes) >= Some(cell_end))
+    }
+
     fn overwrites_bytes(&self, cell_pointer: &Pointer, cell_width: i64) -> bool {
         if cell_width == 0 {
             return false;

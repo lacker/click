@@ -1266,7 +1266,7 @@ mod prepared_output_tests {
             "compiler": "/usr/bin/gcc",
             "working_directory": ".",
             "environment": {"allow": {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "SOURCE_DATE_EPOCH": "0"}},
-            "sources": [{"logical_source": "main.c", "path": "main.c", "args": ["-DVARIANT=2", "-isystem", "configured"], "artifact": "main.i"}]
+            "sources": [{"logical_source": "main.c", "path": "main.c", "args": ["-DVARIANT=1", "-isystem", "configured"], "artifact": "main.i"}]
         });
         let config_path = directory.join("main.click.import.json");
         fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();

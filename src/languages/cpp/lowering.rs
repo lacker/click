@@ -357,6 +357,9 @@ impl LoweringContext<'_> {
             )),
             CppStatement::Scope { body, cleanups, .. } => {
                 if self.unwind_cleanups && !cleanups.is_empty() {
+                    if scope_needs_path_sensitive_unwind(body, cleanups) {
+                        return self.lower_path_sensitive_scope(body, cleanups);
+                    }
                     let Some((construction, live_body)) = body.split_first() else {
                         return Err("C++ unwind scope has no construction statement".into());
                     };
@@ -402,6 +405,148 @@ impl LoweringContext<'_> {
                 self.lower_call_arguments(arguments)?,
             )),
         }
+    }
+
+    /// Lowers a cleanup scope whose constructed-object set can differ by
+    /// exceptional path. The ordinary scope shape has all declarations before
+    /// the first potentially throwing operation, so it can use one checked
+    /// cleanup edge around the live tail. Once a call or throw precedes a later
+    /// declaration, that edge would incorrectly destroy an object that has not
+    /// been constructed yet. Keep the active cleanup prefix while lowering
+    /// each statement instead.
+    fn lower_path_sensitive_scope(
+        &mut self,
+        body: &[CppStatement],
+        cleanups: &[CppCleanup],
+    ) -> Result<CStatement, String> {
+        let mut active = Vec::new();
+        let mut lowered = None;
+        for statement in body {
+            let current = self.lower_statement_with_cleanups(statement, &active)?;
+            lowered = Some(match lowered {
+                Some(previous) => c_seq(previous, current),
+                None => current,
+            });
+            if let CppStatement::Declare { local, .. } = statement
+                && let Some(cleanup) = cleanups.iter().find(|cleanup| match cleanup {
+                    CppCleanup::Destructor { object, .. } => {
+                        object.declaration_id == local.declaration_id && object.name == local.name
+                    }
+                })
+            {
+                active.push(cleanup.clone());
+            }
+        }
+        let mut result = lowered.unwrap_or_else(c_skip);
+        for cleanup in cleanups {
+            result = c_seq(result, self.lower_cleanup(cleanup)?);
+        }
+        Ok(result)
+    }
+
+    /// Lowers one statement with the cleanup prefix that is alive on entry.
+    /// Branches inherit the prefix, while a nested scope extends it only for
+    /// the statements after its own construction.
+    fn lower_statement_with_cleanups(
+        &mut self,
+        statement: &CppStatement,
+        active: &[CppCleanup],
+    ) -> Result<CStatement, String> {
+        match statement {
+            CppStatement::Call {
+                callee, arguments, ..
+            } => {
+                let call = c_call(callee.name.clone(), self.lower_call_arguments(arguments)?);
+                self.lower_throwing_statement(call, active)
+            }
+            CppStatement::Throw { value, .. } => {
+                let throw = CStatement::Throw(self.lower_expression(value)?);
+                self.lower_throwing_statement(throw, active)
+            }
+            CppStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let condition = self.lower_expression(condition)?;
+                let then_branch = self.lower_sequence_with_cleanups(then_branch, active)?;
+                let else_branch = self.lower_sequence_with_cleanups(else_branch, active)?;
+                Ok(c_if(condition, then_branch, else_branch))
+            }
+            CppStatement::TryCatchInt32 {
+                try_body,
+                binding,
+                handler,
+                ..
+            } => Ok(c_try_catch_int32(
+                self.lower_sequence_with_cleanups(try_body, active)?,
+                binding.name.clone(),
+                self.lower_sequence_with_cleanups(handler, active)?,
+            )),
+            CppStatement::Scope { body, cleanups, .. } => {
+                let mut nested_active = active.to_vec();
+                let mut lowered = None;
+                for member in body {
+                    let current = self.lower_statement_with_cleanups(member, &nested_active)?;
+                    lowered = Some(match lowered {
+                        Some(previous) => c_seq(previous, current),
+                        None => current,
+                    });
+                    if let CppStatement::Declare { local, .. } = member
+                        && let Some(cleanup) = cleanups.iter().find(|cleanup| match cleanup {
+                            CppCleanup::Destructor { object, .. } => {
+                                object.declaration_id == local.declaration_id
+                                    && object.name == local.name
+                            }
+                        })
+                    {
+                        nested_active.push(cleanup.clone());
+                    }
+                }
+                let mut result = lowered.unwrap_or_else(c_skip);
+                for cleanup in cleanups {
+                    result = c_seq(result, self.lower_cleanup(cleanup)?);
+                }
+                Ok(result)
+            }
+            _ => self.lower_statement(statement),
+        }
+    }
+
+    fn lower_sequence_with_cleanups(
+        &mut self,
+        statements: &[CppStatement],
+        active: &[CppCleanup],
+    ) -> Result<CStatement, String> {
+        let mut lowered = None;
+        for statement in statements {
+            let current = self.lower_statement_with_cleanups(statement, active)?;
+            lowered = Some(match lowered {
+                Some(previous) => c_seq(previous, current),
+                None => current,
+            });
+        }
+        Ok(lowered.unwrap_or_else(c_skip))
+    }
+
+    fn lower_throwing_statement(
+        &mut self,
+        statement: CStatement,
+        active: &[CppCleanup],
+    ) -> Result<CStatement, String> {
+        if active.is_empty() {
+            return Ok(statement);
+        }
+        let binding = self.unwind_exception_name.clone();
+        let mut handler = c_skip();
+        for cleanup in active.iter().rev() {
+            handler = c_seq(handler, self.lower_cleanup(cleanup)?);
+        }
+        handler = c_seq(handler, CStatement::Throw(c_variable(binding.clone())));
+        Ok(c_try_catch_int32_with_cleanup(
+            statement, binding, handler, true,
+        ))
     }
 
     fn lower_call_arguments(
@@ -745,6 +890,52 @@ impl LoweringContext<'_> {
         }
         Ok(parameter)
     }
+}
+
+fn scope_needs_path_sensitive_unwind(statements: &[CppStatement], cleanups: &[CppCleanup]) -> bool {
+    let mut may_throw = false;
+    for statement in statements {
+        if may_throw
+            && matches!(
+                statement,
+                CppStatement::Declare { local, .. }
+                    if cleanups.iter().any(|cleanup| match cleanup {
+                        CppCleanup::Destructor { object, .. } => {
+                            object.declaration_id == local.declaration_id
+                                && object.name == local.name
+                        }
+                    })
+            )
+        {
+            return true;
+        }
+        may_throw |= statement_may_throw(statement);
+    }
+    false
+}
+
+fn statement_may_throw(statement: &CppStatement) -> bool {
+    match statement {
+        CppStatement::Call { .. } | CppStatement::Throw { .. } => true,
+        CppStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => sequence_may_throw(then_branch) || sequence_may_throw(else_branch),
+        CppStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => sequence_may_throw(try_body) || sequence_may_throw(handler),
+        CppStatement::Scope { body, .. } => sequence_may_throw(body),
+        CppStatement::Declare { .. }
+        | CppStatement::Assign { .. }
+        | CppStatement::Store { .. }
+        | CppStatement::MemberStore { .. }
+        | CppStatement::Return { .. } => false,
+    }
+}
+
+fn sequence_may_throw(statements: &[CppStatement]) -> bool {
+    statements.iter().any(statement_may_throw)
 }
 
 fn return_capture_name(function: &CppFunction) -> String {
