@@ -70,7 +70,7 @@ pub(crate) trait PropositionSearch {
         &self,
         proposition: &Proposition,
         for_simp: bool,
-    ) -> Option<PropositionDerivation>;
+    ) -> Option<Box<PropositionDerivation>>;
 
     fn derive_structural_rule(
         &self,
@@ -302,10 +302,12 @@ impl PropositionSearch for PureFactContext {
     /// correctness.
     fn derive_proposition(&self, proposition: &Proposition) -> Option<PropositionDerivation> {
         self.derive_proposition_using(proposition, false)
+            .map(|derivation| *derivation)
     }
 
     fn derive_simp_proposition(&self, proposition: &Proposition) -> Option<PropositionDerivation> {
         self.derive_proposition_using(proposition, true)
+            .map(|derivation| *derivation)
     }
 
     /// Searches for a simplifier derivation without using the goal's own
@@ -518,37 +520,37 @@ impl PropositionSearch for PureFactContext {
         &self,
         proposition: &Proposition,
         for_simp: bool,
-    ) -> Option<PropositionDerivation> {
+    ) -> Option<Box<PropositionDerivation>> {
         let _id_scope = PureFactContextIdScope::enter(self);
         if simp_reasoning_interrupted() {
             return None;
         }
         if solve_builtin_prop(proposition) {
-            return Some(proposition_derivation(
+            return Some(Box::new(proposition_derivation(
                 proposition,
                 PropositionDerivationRule::ContextFree,
-            ));
+            )));
         }
         if let Some(rule) = self.derive_by_algebraic_constructor_rules(proposition, for_simp) {
-            return Some(proposition_derivation(proposition, rule));
+            return Some(Box::new(proposition_derivation(proposition, rule)));
         }
         let direct = self.derive_structural_rule(proposition, for_simp);
         if let Some(rule) = direct {
-            return Some(proposition_derivation(proposition, rule));
+            return Some(Box::new(proposition_derivation(proposition, rule)));
         }
         if self.is_inconsistent() {
-            return Some(proposition_derivation(
+            return Some(Box::new(proposition_derivation(
                 proposition,
                 PropositionDerivationRule::Explosion {
                     premises: RetainedPremises::from_context(self),
                 },
-            ));
+            )));
         }
         if let Some(rule) = self.derive_by_singleton_substitution(proposition, for_simp) {
-            return Some(proposition_derivation(proposition, rule));
+            return Some(Box::new(proposition_derivation(proposition, rule)));
         }
         self.derive_by_disjunction_cases(proposition, for_simp)
-            .map(|rule| proposition_derivation(proposition, rule))
+            .map(|rule| Box::new(proposition_derivation(proposition, rule)))
     }
 
     #[inline(never)]
@@ -587,10 +589,7 @@ impl PropositionSearch for PureFactContext {
     ) -> Option<PropositionDerivationRule> {
         self.derive_proposition_using(left, for_simp)
             .zip(self.derive_proposition_using(right, for_simp))
-            .map(|(left, right)| PropositionDerivationRule::And {
-                left: Box::new(left),
-                right: Box::new(right),
-            })
+            .map(|(left, right)| PropositionDerivationRule::And { left, right })
     }
 
     #[inline(never)]
@@ -601,10 +600,10 @@ impl PropositionSearch for PureFactContext {
         for_simp: bool,
     ) -> Option<PropositionDerivationRule> {
         self.derive_proposition_using(left, for_simp)
-            .map(|proof| PropositionDerivationRule::OrLeft(Box::new(proof)))
+            .map(PropositionDerivationRule::OrLeft)
             .or_else(|| {
                 self.derive_proposition_using(right, for_simp)
-                    .map(|proof| PropositionDerivationRule::OrRight(Box::new(proof)))
+                    .map(PropositionDerivationRule::OrRight)
             })
     }
 
@@ -615,7 +614,7 @@ impl PropositionSearch for PureFactContext {
         for_simp: bool,
     ) -> Option<PropositionDerivationRule> {
         self.derive_proposition_using(inner, for_simp)
-            .map(|proof| PropositionDerivationRule::DoubleNegation(Box::new(proof)))
+            .map(PropositionDerivationRule::DoubleNegation)
     }
 
     #[inline(never)]
@@ -629,20 +628,15 @@ impl PropositionSearch for PureFactContext {
         let negated_antecedent = Proposition::Not(Box::new(antecedent.clone()));
         if self.proves_exact(&negated_antecedent) {
             self.derive_proposition_using(&negated_antecedent, for_simp)
-                .map(|proof| PropositionDerivationRule::ImpliesFalseAntecedent(Box::new(proof)))
+                .map(PropositionDerivationRule::ImpliesFalseAntecedent)
         } else {
             self.clone()
                 .assume_proposition(antecedent.clone())
                 .derive_proposition_using(right, for_simp)
-                .map(|body| PropositionDerivationRule::Implies {
-                    antecedent,
-                    body: Box::new(body),
-                })
+                .map(|body| PropositionDerivationRule::Implies { antecedent, body })
                 .or_else(|| {
                     self.derive_proposition_using(&negated_antecedent, for_simp)
-                        .map(|proof| {
-                            PropositionDerivationRule::ImpliesFalseAntecedent(Box::new(proof))
-                        })
+                        .map(PropositionDerivationRule::ImpliesFalseAntecedent)
                 })
         }
     }
@@ -658,7 +652,7 @@ impl PropositionSearch for PureFactContext {
         let body_derivation = self
             .without_free_bitvector_variable(var)
             .derive_proposition_using(body, for_simp)
-            .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)));
+            .map(PropositionDerivationRule::ForAllBody);
         body_derivation
             .or_else(|| self.derive_forall_loadable_range(proposition))
             .or_else(|| self.derive_finite_forall(proposition, for_simp))
@@ -691,7 +685,10 @@ impl PropositionSearch for PureFactContext {
         {
             let fields = fields
                 .iter()
-                .map(|field| self.derive_proposition_using(field, for_simp))
+                .map(|field| {
+                    self.derive_proposition_using(field, for_simp)
+                        .map(|proof| *proof)
+                })
                 .collect::<Option<Vec<_>>>()?;
             return Some(PropositionDerivationRule::AlgebraicConstructorCongruence { fields });
         }
@@ -716,7 +713,10 @@ impl PropositionSearch for PureFactContext {
         }
         instances
             .iter()
-            .map(|instance| self.derive_proposition_using(instance, for_simp))
+            .map(|instance| {
+                self.derive_proposition_using(instance, for_simp)
+                    .map(|proof| *proof)
+            })
             .collect::<Option<Vec<_>>>()
             .map(|instances| PropositionDerivationRule::FiniteForAll { instances })
     }
@@ -766,7 +766,7 @@ impl PropositionSearch for PureFactContext {
             if let Some(derivation) = derivation {
                 return Some(PropositionDerivationRule::ExistsFromFact {
                     source,
-                    body: Box::new(derivation),
+                    body: derivation,
                 });
             }
         }
@@ -796,7 +796,7 @@ impl PropositionSearch for PureFactContext {
             if let Some(derivation) = derivation {
                 return Some(PropositionDerivationRule::ExistsFromWitness {
                     witness,
-                    body: Box::new(derivation),
+                    body: derivation,
                 });
             }
         }
@@ -890,7 +890,7 @@ impl PropositionSearch for PureFactContext {
             variable,
             value,
             equality,
-            body: Box::new(body),
+            body,
         })
     }
 
@@ -912,6 +912,7 @@ impl PropositionSearch for PureFactContext {
                     base.clone()
                         .assume_proposition(case.clone())
                         .derive_proposition_using(proposition, for_simp)
+                        .map(|proof| *proof)
                 })
                 .collect::<Option<Vec<_>>>()
             else {
