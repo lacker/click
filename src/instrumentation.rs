@@ -1594,6 +1594,43 @@ pub fn take_artifact_reuse_rejection_census() -> ArtifactReuseRejectionCensus {
     std::mem::take(&mut *artifact_reuse_rejection_census())
 }
 
+/// How many derivation edges were dropped for pointing at a snapshot that is
+/// not younger than their result, by edge kind and by whether the result was
+/// its own base.
+///
+/// A self edge (`"Store (self)"`) is the documented no-op: the snapshot did
+/// not change, so there is nothing to record. A *backwards* edge is not:
+/// the step ended on an older node, which keeps that node's history and
+/// leaves everything in between recorded nowhere. Counting the two apart is
+/// how a corpus run says whether any producer still does the second.
+pub type BackwardsMemoryDerivationCensus = std::collections::BTreeMap<&'static str, usize>;
+
+static BACKWARDS_MEMORY_DERIVATION_CENSUS: std::sync::Mutex<BackwardsMemoryDerivationCensus> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+pub(crate) fn record_backwards_memory_derivation(kind: &'static str, onto_itself: bool) {
+    // Only the genuinely backwards ones are counted. A self edge is the
+    // snapshot saying it did not change, which every store of an already
+    // stored value produces and which loses no history.
+    if onto_itself {
+        return;
+    }
+    *BACKWARDS_MEMORY_DERIVATION_CENSUS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(kind)
+        .or_default() += 1;
+}
+
+/// Takes and clears the census.
+pub fn take_backwards_memory_derivation_census() -> BackwardsMemoryDerivationCensus {
+    std::mem::take(
+        &mut *BACKWARDS_MEMORY_DERIVATION_CENSUS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    )
+}
+
 /// The ratchet: `None` when the census equals the pinned baseline exactly,
 /// otherwise a message listing every reason whose count rose (a new rejection,
 /// which must not land) or fell (lower the pin so it cannot rise back).

@@ -76,9 +76,20 @@ fn mdtests() {
     // memory stays small: on 2026-09-11 the whole corpus peaked at 171 MB
     // serially and 291 MB on 8 workers.
     let _ = instrumentation::take_artifact_reuse_rejection_census();
+    let _ = instrumentation::take_backwards_memory_derivation_census();
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
     let failures = run_parallel(&paths, workers, |path| run_mdtest_in_thread(path));
     let census = instrumentation::take_artifact_reuse_rejection_census();
+    // Which producers still end a step on a snapshot older than itself, so
+    // that the step is recorded on no history. A knowledge-losing forget
+    // cannot: its mark makes the result a node no earlier snapshot can be
+    // (`CMemory::mark_forgotten_from`). Anything else here is a producer
+    // whose steps are invisible to every history-based rule, and this line
+    // is how a corpus run names it.
+    eprintln!(
+        "backwards memory derivations over the corpus: {:?}",
+        instrumentation::take_backwards_memory_derivation_census()
+    );
     if failures.is_empty() {
         if !filtered
             && std::env::var_os(RUN_QUARANTINED).is_none()

@@ -4096,6 +4096,23 @@ pub enum CMemoryDerivation {
 }
 
 impl CMemoryDerivation {
+    /// The edge kind's name, for census rows that must stay readable
+    /// without carrying a snapshot.
+    pub(crate) fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Store { .. } => "Store",
+            Self::BlockDeclared { .. } => "BlockDeclared",
+            Self::HeapAllocated { .. } => "HeapAllocated",
+            Self::HeapAllocationPending { .. } => "HeapAllocationPending",
+            Self::ContractAllocationClaimsChanged { .. } => "ContractAllocationClaimsChanged",
+            Self::HeapFreed { .. } => "HeapFreed",
+            Self::CellsForgotten { .. } => "CellsForgotten",
+            Self::LocalLifetimeEnded { .. } => "LocalLifetimeEnded",
+            Self::LoopHavoc { .. } => "LoopHavoc",
+            Self::CallHavoc { .. } => "CallHavoc",
+        }
+    }
+
     /// The snapshot this one was derived from.
     pub fn base(&self) -> &SharedCMemory {
         match self {
@@ -4206,7 +4223,22 @@ pub(crate) fn record_c_memory_derivation(result: &CMemory, derivation: CMemoryDe
         let Some(slot) = arena.derivations.get_mut(derived.id as usize) else {
             return;
         };
-        if slot.is_some() || derivation.base().id >= derived.id {
+        if slot.is_some() {
+            return;
+        }
+        if derivation.base().id >= derived.id {
+            // A step that ends on a node older than itself is recorded
+            // nowhere — so whatever happened in between is on no history,
+            // and every history-based rule inherits a chain that silently
+            // re-rooted. Where the step lost knowledge that is a
+            // false-theorem shape, which is what the forget mark rules out
+            // at the producer. Where it lost nothing the older node is an
+            // ancestor whose history is this path's own prefix, which is
+            // why this stays a census rather than an assertion here.
+            crate::instrumentation::record_backwards_memory_derivation(
+                derivation.kind_name(),
+                derivation.base().id == derived.id,
+            );
             return;
         }
         *slot = Some(std::sync::Arc::new(derivation));
