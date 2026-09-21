@@ -527,6 +527,88 @@ fn successful_heap_allocation_is_fresh_from_every_existing_block() {
     ));
 }
 
+/// A `free` ends the whole allocation, so the question a cell has to answer
+/// is whether the released *extent* reaches it — not whether its address is
+/// the allocation's base. Asking `pointers_proven_distinct_for_memory_resolution`
+/// about the base answered "this free left it alone" for every element of the
+/// block but the first, so a fact about `p[3]` crossed a `free(p)`.
+mod a_free_reaches_every_element_of_its_block {
+    use super::*;
+    use crate::kernel::memory_provenance::with_extended_dag_bridging;
+    use crate::kernel::resource_tracker::{
+        Resource,
+        step_effect::{Evidence, Separation, StepEffect, affects},
+    };
+
+    /// The rule's answer about one cell for the `free` that produced
+    /// `freed`, inside the one scope that may read these edges at all.
+    fn effect_of_the_free(freed: &CMemory, cell: &Pointer) -> StepEffect {
+        let produced = crate::kernel::intern_c_memory(freed.clone());
+        let derivation = produced.derivation().expect("the free records an edge");
+        let no_facts = PureFactContext::new();
+        with_extended_dag_bridging(|| {
+            affects(
+                derivation.as_ref(),
+                &produced,
+                Resource::Cell {
+                    pointer: cell,
+                    bytes: 4,
+                },
+                &Evidence {
+                    assumptions: &no_facts,
+                    cross_loop_havoc: false,
+                },
+            )
+        })
+    }
+
+    fn freed_sixteen_byte_allocation() -> (CMemory, Pointer) {
+        let state = successful_heap_allocation_state();
+        let Some(CValue::Pointer(pointer)) = state.locals().get("p") else {
+            panic!("allocation should assign a pointer");
+        };
+        let base = pointer.pointer().clone();
+        let freed = state
+            .memory()
+            .clone()
+            .free_heap_block(&base)
+            .expect("the allocation is live");
+        (freed, base)
+    }
+
+    /// Every element of the released block, base included.
+    #[test]
+    fn a_freed_allocation_affects_its_interior_cells() {
+        let (freed, base) = freed_sixteen_byte_allocation();
+        for offset in [0, 4, 8, 12] {
+            let cell = base.offset_by_bytes(offset);
+            assert_eq!(
+                effect_of_the_free(&freed, &cell),
+                StepEffect::Affected,
+                "the free was reported separate from the cell at byte {offset}"
+            );
+        }
+    }
+
+    /// The other polarity: a cell in an object the kernel proves is not the
+    /// released one is still framed across the free, on the block ladder
+    /// that decides it above the extent question.
+    #[test]
+    fn a_freed_allocation_leaves_another_object_alone() {
+        let (freed, _) = freed_sixteen_byte_allocation();
+        let elsewhere = Pointer {
+            block: PointerBlock::Concrete("global:g".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        assert_eq!(
+            effect_of_the_free(&freed, &elsewhere),
+            StepEffect::Separate(Separation::Cell(
+                crate::kernel::resource_tracker::cell_source::MemoryDagHopJustification::HeapFreeOfDistinctBlock
+            ))
+        );
+    }
+}
+
 #[test]
 fn heap_free_deallocates_the_complete_block_and_rejects_double_free() {
     let success = successful_heap_allocation_state();

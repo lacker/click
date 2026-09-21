@@ -121,7 +121,6 @@ pub(in crate::kernel) enum MemoryDagAssumptionKind {
     StoreCommonBaseDistinctness,
     StoreExplicitRange,
     StoreGeneralDistinctness,
-    HeapFreeGeneralDistinctness,
     HeapFreeResourceSeparation,
     CallHavocRangeSeparation,
     LoopHavocRangeSeparation,

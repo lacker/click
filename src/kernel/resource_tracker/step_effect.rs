@@ -139,7 +139,7 @@ pub(in crate::kernel) struct Evidence<'a> {
 /// | `ContractAllocationClaimsChanged` | separate: it writes nothing | **not shown separate** |
 /// | `CellsForgotten` | separate: the state is the same | **not shown separate** |
 /// | `LocalLifetimeEnded` | separate on proven distinctness | separate when the retired object is proven distinct; affected for this one |
-/// | `HeapFreed` | separate on three separation ladders | separate when the released allocation's object is proven distinct; affected when it is this one |
+/// | `HeapFreed` | separate on two separation ladders | separate when the released allocation's object is proven distinct; affected when it is this one |
 /// | `CallHavoc` | separate on range disjointness | separate when every declared range's object is proven distinct |
 /// | `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | separate when every declared range's object is proven distinct |
 /// | `LoopHavoc(None)` | never separate | never separate |
@@ -453,16 +453,17 @@ fn cell_effect(
                     unknown()
                 };
             }
+            // A free ends the whole allocation, so what has to miss this
+            // cell is the allocation's *extent*, not its base address. The
+            // rung that asked `pointers_proven_distinct_for_memory_resolution`
+            // about `allocation_base` asked whether the cell is the first
+            // element, and answered "this free did not touch it" for
+            // `p[3]` — every cell of the block but one. Distinct *blocks*
+            // still decide above, and the extent question is the rung below,
+            // which is the same predicate the state routes spend
+            // (`heap_allocation_proven_separate_from_pointer`).
             if allocation_base.blocks_proven_distinct(pointer) {
                 hop(MemoryDagHopJustification::HeapFreeOfDistinctBlock)
-            } else if pointers_proven_distinct_for_memory_resolution(
-                allocation_base,
-                pointer,
-                assumptions,
-            ) {
-                hop(MemoryDagHopJustification::AssumptionDependent(
-                    MemoryDagAssumptionKind::HeapFreeGeneralDistinctness,
-                ))
             } else if heap_allocation_proven_separate_from_pointer(
                 allocation_base,
                 bytes,
