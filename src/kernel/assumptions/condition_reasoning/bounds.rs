@@ -563,7 +563,7 @@ impl PureFactContext {
         // Base matching is by canonical form: a raw load and the canonical
         // name for it are one base. Deterministic, so decisions check.
         if !crate::kernel::eval::terms_have_same_canonical_form(&term_base, base)
-            || signed_u32_constant(addend).is_none_or(|value| value <= 0)
+            || nonnegative_int32_value(addend).is_none_or(|value| value <= 0)
         {
             return false;
         }
@@ -582,7 +582,7 @@ impl PureFactContext {
             return false;
         };
         if !crate::kernel::eval::terms_have_same_canonical_form(&term_base, base)
-            || signed_u32_constant(subtrahend).is_none_or(|value| value <= 0)
+            || nonnegative_int32_value(subtrahend).is_none_or(|value| value <= 0)
         {
             return false;
         }
@@ -601,7 +601,7 @@ impl PureFactContext {
             return false;
         };
         if !crate::kernel::eval::terms_have_same_canonical_form(&term_base, base)
-            || signed_u32_constant(addend).is_none_or(|value| value < 0)
+            || nonnegative_int32_value(addend).is_none_or(|value| value < 0)
         {
             return false;
         }

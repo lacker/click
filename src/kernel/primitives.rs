@@ -4664,7 +4664,13 @@ pub(super) struct ResourceContextIndex {
     pub(super) memory_starts:
         PersistentMap<(PointerBlock, bool, Bitvector32Term), ResourceEntryIds>,
     pub(super) memory_ends: PersistentMap<(PointerBlock, bool, Bitvector32Term), ResourceEntryIds>,
-    pub(super) concrete_memory: PersistentMap<(Pointer, bool, u32, u32), ResourceEntryIds>,
+    /// Owned and viewed ranges with constant endpoints, keyed by base, mode,
+    /// and the **signed** values of those endpoints. The key's order is what
+    /// the partition check's predecessor and successor probes stand in for a
+    /// pairwise scan with, so it is an ordering question wearing a key's
+    /// clothes: read as `u32`, a range starting below its base sorted past
+    /// every range there is and its overlapping neighbour was never probed.
+    pub(super) concrete_memory: PersistentMap<(Pointer, bool, i64, i64), ResourceEntryIds>,
     pub(super) concrete_memory_by_base: PersistentMap<(Pointer, bool), usize>,
 }
 

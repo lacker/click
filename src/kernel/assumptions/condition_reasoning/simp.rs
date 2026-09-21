@@ -485,7 +485,7 @@ impl PureFactContext {
             return false;
         };
         if !self.bitvector_terms_equal_for_simp(&term_base, base)
-            || signed_u32_constant(addend).is_none_or(|value| value <= 0)
+            || nonnegative_int32_value(addend).is_none_or(|value| value <= 0)
         {
             return false;
         }

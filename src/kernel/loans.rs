@@ -10,6 +10,7 @@ use super::primitives::{
     PointerBlock, ResourceMemoryIntervalNode, memory_interval_ancestors, memory_interval_nodes,
     memory_ranges_proven_overlapping,
 };
+use super::reasoning::signed_bitvector_constant;
 use super::{
     Bitvector32Term, CMemoryRange, CResource, CResourceFact, CResourceSnapshot,
     CResourceTransferRole, PureFactContext, ResourceContext, ResourceOccurrenceId,
@@ -292,6 +293,30 @@ fn without_unindexed_memory(
     map
 }
 
+/// Whether a range names no storage at all, which is the one shape the write
+/// barrier may skip without looking at a single loan.
+///
+/// A backwards range is how a range says it is empty, and both endpoints are
+/// read as the signed `int32` values they are. Read through
+/// `Bitvector32Term::as_const`, a start of `-1` arrives as `4294967295` and
+/// every range beginning below its base — `r[-1..3]` under a callee's
+/// `mutable r[s..e]` called at `-1, 3` — claimed to be empty and took the
+/// barrier's exit: no interval lookup, no symbolic comparison, no refusal,
+/// for a range naming four real elements.
+///
+/// Undecided is not empty. A symbolic endpoint answers `false` here and goes
+/// on to the barrier proper, which is where a range the index cannot hold is
+/// refused rather than waved through.
+fn memory_range_is_empty(range: &CMemoryRange) -> bool {
+    matches!(
+        (
+            signed_bitvector_constant(range.start()),
+            signed_bitvector_constant(range.end()),
+        ),
+        (Some(start), Some(end)) if start >= end
+    )
+}
+
 /// Whether a query range provably touches a protected range, compared
 /// bytewise so that differing element widths cannot hide an overlap.
 ///
@@ -312,13 +337,18 @@ pub(crate) fn protected_range_proven_overlapping(
 ) -> bool {
     if query.base() == protected.base() {
         // One object at one base term: element offsets scaled to bytes are
-        // enough, and the kernel's arithmetic decides them exactly.
+        // enough, and the kernel's arithmetic decides them exactly. Both
+        // endpoints are the signed numbers `memory_range_byte_count` scales;
+        // zero-extending them put `p[-1..1]` four gigabytes above `p[0..1]`
+        // and reported the two as separate. A range that is not forward has
+        // no bounds to compare and goes on to `byte_range` below, exactly as
+        // `concrete_memory_range_bounds` answers `None` for one.
         let byte_bounds = |range: &CMemoryRange| {
             let width = i64::from(range.element_width());
-            Some((
-                i64::from(range.start().as_const()?).checked_mul(width)?,
-                i64::from(range.end().as_const()?).checked_mul(width)?,
-            ))
+            let start = signed_bitvector_constant(range.start())?;
+            let end = signed_bitvector_constant(range.end())?;
+            (start < end).then_some(())?;
+            Some((start.checked_mul(width)?, end.checked_mul(width)?))
         };
         if let (Some((query_start, query_end)), Some((protected_start, protected_end))) =
             (byte_bounds(query), byte_bounds(protected))
@@ -3506,9 +3536,7 @@ impl LoanLedger {
         &self,
         range: &CMemoryRange,
     ) -> Result<Vec<LoanId>, LoanRefusal> {
-        if let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const())
-            && start >= end
-        {
+        if memory_range_is_empty(range) {
             return Ok(Vec::new());
         }
         let Some(query_nodes) = memory_interval_nodes(range) else {
@@ -3552,9 +3580,7 @@ impl LoanLedger {
         range: &CMemoryRange,
         assumptions: &PureFactContext,
     ) -> Result<(), LoanRefusal> {
-        if let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const())
-            && start >= end
-        {
+        if memory_range_is_empty(range) {
             return Ok(());
         }
         if memory_interval_nodes(range).is_some() {
@@ -6458,6 +6484,118 @@ mod tests {
         } else {
             CResourceFact::view_memory(range)
         }
+    }
+
+    /// A ledger holding one live view of `buffer[0..4]`, which is what the
+    /// write barrier is there to protect.
+    fn ledger_lending_the_first_four_elements() -> LoanLedger {
+        let (ledger, holder, _) = participants();
+        let viewed = memory(0, 4, false);
+        let resources = ResourceContext::new().unchecked_with_fact(viewed.clone());
+        let support = resources.occurrences_for_fact(&viewed)[0];
+        let opening = ledger
+            .borrowed_contract_input(holder, support, viewed, None)
+            .expect("checked contract input");
+        ledger.apply(&opening.transition).expect("apply input root")
+    }
+
+    fn range(start: u32, end: u32) -> CMemoryRange {
+        memory(start, end, true).memory_range().unwrap().clone()
+    }
+
+    /// `buffer[-1..3]` names four elements, three of them lent. Its start is
+    /// `4294967295` read through `as_const`, which made `start >= end` true
+    /// and returned the barrier's "this range names no storage" answer for a
+    /// range that names more storage than the lent one does.
+    #[test]
+    fn a_range_starting_below_its_base_is_not_empty_to_the_write_barrier() {
+        let ledger = ledger_lending_the_first_four_elements();
+        let assumptions = PureFactContext::new();
+        let below = range(u32::MAX, 3);
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(&below, &assumptions),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        assert!(!ledger.active_memory_overlaps(&below).unwrap().is_empty());
+        // The contained range is the control: a superset of a refused range
+        // may never be the one that is admitted.
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(&range(0, 3), &assumptions),
+            Err(LoanRefusal::ActiveDependency)
+        );
+    }
+
+    /// The exit itself stays: a backwards range is how a range says it is
+    /// empty, and an empty range touches no loan however far the lent range
+    /// reaches. Both spellings of empty, and one wholly below the loan.
+    #[test]
+    fn an_empty_or_separate_range_still_passes_the_write_barrier() {
+        let ledger = ledger_lending_the_first_four_elements();
+        let assumptions = PureFactContext::new();
+        for empty in [range(2, 2), range(3, 1), range(u32::MAX, u32::MAX - 1)] {
+            assert_eq!(
+                ledger.permits_memory_access_with_assumptions(&empty, &assumptions),
+                Ok(())
+            );
+            assert!(ledger.active_memory_overlaps(&empty).unwrap().is_empty());
+        }
+        // Nonempty, entirely below the lent range, and permitted on its
+        // merits rather than by being mistaken for empty.
+        let below = range(u32::MAX - 1, u32::MAX);
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(&below, &assumptions),
+            Ok(())
+        );
+    }
+
+    /// The same-base constant fast path in `protected_range_proven_overlapping`
+    /// short-circuits above the sound `byte_range` route, so reading an
+    /// endpoint as `u32` there is a final wrong answer. `p[-1..1]` and
+    /// `p[0..2]` share element `0`; zero-extension put the query's start four
+    /// gigabytes above the protected range's end and called them separate.
+    #[test]
+    fn a_protected_range_is_reached_from_below_its_base() {
+        let assumptions = PureFactContext::new();
+        let protected = range(0, 2);
+        for query in [range(u32::MAX, 1), range(u32::MAX, 2), range(u32::MAX, 8)] {
+            assert!(protected_range_proven_overlapping(
+                &query,
+                &protected,
+                &assumptions
+            ));
+            assert!(protected_range_proven_overlapping(
+                &protected,
+                &query,
+                &assumptions
+            ));
+        }
+    }
+
+    /// The other polarity: ranges that really are separate stay separate,
+    /// including two that both start below the base, and a backwards range —
+    /// which has no bounds to compare — is not reported as overlapping
+    /// everything.
+    #[test]
+    fn ranges_below_a_base_that_do_not_meet_are_still_separate() {
+        let assumptions = PureFactContext::new();
+        let protected = range(0, 2);
+        for query in [
+            range(u32::MAX - 2, u32::MAX),
+            range(2, 4),
+            range(u32::MAX, 0),
+        ] {
+            assert!(!protected_range_proven_overlapping(
+                &query,
+                &protected,
+                &assumptions
+            ));
+        }
+        // Two ranges wholly below the base, one inside the other.
+        assert!(protected_range_proven_overlapping(
+            &range(u32::MAX - 3, u32::MAX - 2),
+            &range(u32::MAX - 4, u32::MAX),
+            &assumptions
+        ));
     }
 
     fn composite(name: &str, own: bool) -> CResourceFact {

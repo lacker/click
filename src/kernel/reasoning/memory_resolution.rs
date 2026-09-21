@@ -1192,15 +1192,7 @@ fn memory_snapshots_match_for_resolution(
     {
         return true;
     }
-    if !left
-        .blocks
-        .iter()
-        .filter(|(block, _)| !block.starts_with("local:"))
-        .eq(right
-            .blocks
-            .iter()
-            .filter(|(block, _)| !block.starts_with("local:")))
-    {
+    if !snapshot_objects_agree(left, right, pointer) {
         return false;
     }
 
@@ -1325,6 +1317,59 @@ pub(in crate::kernel) fn differing_cell_bytes_miss_the_load(
 /// load's, which is the set the comparison exists to decide.
 fn cell_is_observable_by_load(cell_pointer: &Pointer, load: &Pointer) -> bool {
     cell_pointer.block.observable_by_load(&load.block)
+}
+
+/// Whether the three assumption-carrying comparisons agree about the
+/// *objects* the two snapshots hold, as against the values in their cells:
+/// each block's extent, and which automatic blocks have had their lifetimes
+/// ended.
+///
+/// The cell filter beside this one was corrected to
+/// [`cell_is_observable_by_load`]; this one was left as the same block-name
+/// shortcut, `!block.starts_with("local:")`, and it makes the same claim about
+/// a different map. A block's extent is what says the object is there and how
+/// big it is, so two snapshots that disagree about a local's extent or
+/// liveness disagree about the object a load through a pointer that may
+/// designate it reads — and `&a` may be handed to a callee and come back as
+/// its result, so "the load's pointer is not spelled `local:`" does not mean
+/// the load misses every local.
+///
+/// The filter is now [`local_block_no_pointer_can_reach`], the one
+/// [`memories_proven_equal_for_memory_resolution`] spends in the same place: a
+/// local whose address is never taken anywhere in the program is not memory
+/// any pointer value designates, so no load can tell two snapshots apart by
+/// it. That is a property of the whole program's source, which is why it may
+/// be spent with neither a pointer nor a fact context. Every other local stays
+/// in the comparison.
+fn snapshot_objects_agree(left: &CMemory, right: &CMemory, pointer: &Pointer) -> bool {
+    let reachable = |block: &PointerBlock| !local_block_no_pointer_can_reach(block);
+    left.blocks
+        .iter()
+        .filter(|(block, _)| reachable(block))
+        .eq(right.blocks.iter().filter(|(block, _)| reachable(block)))
+        && retirements_agree_for_load(left, right, pointer)
+}
+
+/// Whether the two snapshots agree about which automatic objects the load may
+/// reach have had their lifetimes ended.
+///
+/// None of the four "do these snapshots agree about this load" comparisons
+/// looked at this map. Once a retired block's cells are gone the tombstone is
+/// the only record that its lifetime ended, and a load through a stale alias
+/// is exactly the load these comparisons are asked about;
+/// `memories_proven_equal_for_memory_resolution`, `CMemory`'s own `eq` and
+/// `read_region_identity` all compare it.
+///
+/// Two exclusions, both sound, and each catches what the other does not: this
+/// load's block is proven distinct from that object, or *no* pointer value in
+/// the program designates it.
+fn retirements_agree_for_load(left: &CMemory, right: &CMemory, pointer: &Pointer) -> bool {
+    left.forgotten
+        .ended_local_blocks
+        .symmetric_difference(&right.forgotten.ended_local_blocks)
+        .all(|block| {
+            !block.observable_by_load(&pointer.block) || local_block_no_pointer_can_reach(block)
+        })
 }
 
 pub(in crate::kernel) fn memory_snapshots_proven_equal_at_pointer(
@@ -1496,6 +1541,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load(
     // argument's load across a write the caller can aim at it.
     memory_havoc_markers(left).eq(memory_havoc_markers(right))
         && left.blocks.get(&pointer.block) == right.blocks.get(&pointer.block)
+        && retirements_agree_for_load(left, right, pointer)
         && left
             .cells
             .iter()
@@ -2012,15 +2058,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_bounded_alias(
     if pointer.block.starts_with("local:") {
         return false;
     }
-    if !left
-        .blocks
-        .iter()
-        .filter(|(block, _)| !block.starts_with("local:"))
-        .eq(right
-            .blocks
-            .iter()
-            .filter(|(block, _)| !block.starts_with("local:")))
-    {
+    if !snapshot_objects_agree(left, right, pointer) {
         return false;
     }
     let load_bytes = crate::kernel::load_access_width_at_address_or_widest(pointer);
@@ -2076,15 +2114,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
     if pointer.block.starts_with("local:") {
         return false;
     }
-    if !left
-        .blocks
-        .iter()
-        .filter(|(block, _)| !block.starts_with("local:"))
-        .eq(right
-            .blocks
-            .iter()
-            .filter(|(block, _)| !block.starts_with("local:")))
-    {
+    if !snapshot_objects_agree(left, right, pointer) {
         return false;
     }
 
