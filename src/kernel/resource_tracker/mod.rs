@@ -748,7 +748,13 @@ enum Version {
 
 /// The version by one keyed lookup. The comparison is syntactic: two spellings
 /// of one value answer `Unknown`, which is the safe direction.
+///
+/// The one unit recorded here is the whole cost model: a question costs two,
+/// whatever the states hold. `a_saved_state_version_costs_one_lookup_per_point`
+/// is the regression, and it is what would fail if this ever enumerated a
+/// resource context instead of indexing it.
 fn version_at_state(resource: Resource<'_>, point: StatePoint<'_>) -> Option<Version> {
+    crate::instrumentation::record_deterministic_work(1);
     match resource {
         Resource::ModelField {
             identity,
