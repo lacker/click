@@ -1037,7 +1037,7 @@ fn symbolic_memory_block_sizes_are_free_and_substitutable() {
         )])),
         cells: std::sync::Arc::new(BTreeMap::new()),
         union_cells: std::sync::Arc::new(BTreeMap::new()),
-        ended_local_blocks: std::sync::Arc::new(BTreeSet::new()),
+        forgotten: std::sync::Arc::default(),
         heap: std::sync::Arc::new(CHeapMemory::default()),
     };
 
@@ -1076,7 +1076,7 @@ fn nested_snapshot_load(depth: usize) -> Bitvector32Term {
         blocks: blocks.clone(),
         cells: std::sync::Arc::new(cells),
         union_cells: std::sync::Arc::new(BTreeMap::new()),
-        ended_local_blocks: std::sync::Arc::new(BTreeSet::new()),
+        forgotten: std::sync::Arc::default(),
         heap: std::sync::Arc::new(CHeapMemory::default()),
     };
 

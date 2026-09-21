@@ -5244,11 +5244,10 @@ fn substitute_bitvector_variable_in_memory_contents(
                 })
                 .collect(),
         ),
-        ended_local_blocks: memory.ended_local_blocks.clone(),
-        // Carried unrewritten. The mark is an identity, not an address or a
-        // value, and a rewritten snapshot that dropped it could re-intern as
-        // a state that forgot nothing.
-        forgotten_from: memory.forgotten_from.clone(),
+        // Carried unrewritten. The mark inside is an identity, not an
+        // address or a value, and a rewritten snapshot that dropped it could
+        // re-intern as a state that forgot nothing.
+        forgotten: memory.forgotten.clone(),
         heap: std::sync::Arc::new(CHeapMemory {
             live_allocations: memory
                 .heap
@@ -6616,16 +6615,17 @@ pub(crate) fn substitute_pointer_variable_in_memory(
                 })
                 .collect(),
         ),
-        ended_local_blocks: std::sync::Arc::new(
-            memory
+        forgotten: std::sync::Arc::new(CForgottenKnowledge {
+            ended_local_blocks: memory
+                .forgotten
                 .ended_local_blocks
                 .iter()
                 .map(|block| substitute_pointer_variable_in_block(block, from, to))
                 .collect(),
-        ),
-        // Carried unrewritten, for the reason given in
-        // `substitute_bitvector_variable_in_memory_contents`.
-        forgotten_from: memory.forgotten_from.clone(),
+            // Carried unrewritten, for the reason given in
+            // `substitute_bitvector_variable_in_memory_contents`.
+            forgotten_from: memory.forgotten.forgotten_from,
+        }),
         heap: std::sync::Arc::new(CHeapMemory {
             live_allocations: memory
                 .heap

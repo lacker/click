@@ -538,7 +538,10 @@ fn a_pending_allocation_records_nothing_a_block_can_observe() {
     assert_eq!(entry.blocks, requested.blocks);
     assert_eq!(entry.cells, requested.cells);
     assert_eq!(entry.union_cells, requested.union_cells);
-    assert_eq!(entry.ended_local_blocks, requested.ended_local_blocks);
+    assert_eq!(
+        entry.forgotten.ended_local_blocks,
+        requested.forgotten.ended_local_blocks
+    );
     let same_heap_but_pending = CHeapMemory {
         pending_allocations: entry.heap.pending_allocations.clone(),
         ..requested.heap.as_ref().clone()

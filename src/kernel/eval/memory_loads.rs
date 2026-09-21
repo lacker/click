@@ -436,6 +436,12 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }
 
     let mut memory = memory.clone();
+    // The access width belongs to the snapshot the load is read at, not only
+    // to the projection of it that the term ends up carrying. Recording it
+    // here as well as inside `symbolic_load_value` is what lets a later
+    // caller holding the unreduced snapshot ask how many bytes this load
+    // reads instead of assuming the widest scalar.
+    record_load_access_width(&memory, &pointer, value_type.byte_width());
     let reduction_base = Some(intern_c_memory_ref(&memory));
     let cells_before_reduction = memory.cells.len();
     crate::instrumentation::measure_operation(

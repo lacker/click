@@ -1432,7 +1432,7 @@ impl CMemory {
 
     pub(crate) fn has_same_snapshot_markers(&self, other: &Self) -> bool {
         self.blocks == other.blocks
-            && self.ended_local_blocks == other.ended_local_blocks
+            && self.forgotten.ended_local_blocks == other.forgotten.ended_local_blocks
             && self.heap == other.heap
     }
 
@@ -1498,7 +1498,7 @@ impl CMemory {
     /// makes aliases to the old object invalid instead of merely making an
     /// eventual load unresolved because the block disappeared.
     pub(in crate::kernel) fn without_local_block(&self, block: &PointerBlock) -> Self {
-        if !self.blocks.contains_key(block) && self.ended_local_blocks.contains(block) {
+        if !self.blocks.contains_key(block) && self.forgotten.ended_local_blocks.contains(block) {
             return self.clone();
         }
 
@@ -1508,7 +1508,9 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| &pointer.block != block);
         std::sync::Arc::make_mut(&mut memory.union_cells)
             .retain(|(pointer, _), _| &pointer.block != block);
-        std::sync::Arc::make_mut(&mut memory.ended_local_blocks).insert(block.clone());
+        std::sync::Arc::make_mut(&mut memory.forgotten)
+            .ended_local_blocks
+            .insert(block.clone());
         record_c_memory_derivation(
             &memory,
             CMemoryDerivation::LocalLifetimeEnded {
@@ -2005,7 +2007,7 @@ impl CMemory {
                     ));
                 }
             }
-            ended_local_blocks.extend(memory.ended_local_blocks.iter().cloned());
+            ended_local_blocks.extend(memory.forgotten.ended_local_blocks.iter().cloned());
         }
 
         let mut live_allocations = BTreeMap::new();
@@ -2113,7 +2115,7 @@ impl CMemory {
         });
         blocks.insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
         self.blocks = std::sync::Arc::new(blocks);
-        self.ended_local_blocks = std::sync::Arc::new(ended_local_blocks);
+        std::sync::Arc::make_mut(&mut self.forgotten).ended_local_blocks = ended_local_blocks;
         self.heap = std::sync::Arc::new(CHeapMemory {
             live_allocations,
             deallocated_allocations,
@@ -2577,7 +2579,7 @@ impl CMemory {
     }
 
     pub(in crate::kernel) fn is_ended_local_address(&self, pointer: &Pointer) -> bool {
-        self.ended_local_blocks.contains(&pointer.block)
+        self.forgotten.ended_local_blocks.contains(&pointer.block)
     }
 
     /// A sufficient, search-free condition for transporting loadability of
@@ -2587,7 +2589,7 @@ impl CMemory {
         crate::instrumentation::record_deterministic_work(1);
         ReadRegionIdentity {
             block_size: self.block_size(&base.block).cloned(),
-            local_lifetime_ended: self.ended_local_blocks.contains(&base.block),
+            local_lifetime_ended: self.forgotten.ended_local_blocks.contains(&base.block),
             heap: self.heap.clone(),
         }
     }

@@ -512,7 +512,7 @@ pub(in crate::kernel) fn c_memories_definitionally_equal(
     {
         return false;
     }
-    if left.ended_local_blocks != right.ended_local_blocks {
+    if left.forgotten.ended_local_blocks != right.forgotten.ended_local_blocks {
         return false;
     }
     memory_cells_definitionally_contained(left, right, assumptions)
@@ -1629,7 +1629,9 @@ pub(in crate::kernel) fn c_effect_memories_definitionally_equal(
             .retain(|block, _| !block.starts_with("local:"));
         std::sync::Arc::make_mut(&mut external.cells)
             .retain(|pointer, _| !pointer.block.starts_with("local:"));
-        std::sync::Arc::make_mut(&mut external.ended_local_blocks).clear();
+        std::sync::Arc::make_mut(&mut external.forgotten)
+            .ended_local_blocks
+            .clear();
         external
     };
     let left = without_locals(left);

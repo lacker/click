@@ -997,7 +997,7 @@ pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
     {
         return false;
     }
-    if left.ended_local_blocks != right.ended_local_blocks {
+    if left.forgotten.ended_local_blocks != right.forgotten.ended_local_blocks {
         return false;
     }
     left.cells
@@ -1589,7 +1589,8 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
         // cells' common source may be a state this one has since forgotten
         // things from, and wearing that state's identity is exactly what
         // names a changed load `old(...)`.
-        canonical.forgotten_from = memory.forgotten_from.clone();
+        std::sync::Arc::make_mut(&mut canonical.forgotten).forgotten_from =
+            memory.forgotten.forgotten_from;
     }
     // Only the cells below decide what a load reads. Declaring a block writes
     // nothing, so the block list stays the load's own block plus the havoc
