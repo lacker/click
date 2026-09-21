@@ -184,6 +184,22 @@ pub(crate) fn memory_interval_ancestors(
         .collect()
 }
 
+/// A range's two endpoints as the signed `int32` numbers they are, present
+/// only when both are constant.
+///
+/// This is the reading every *order* over endpoints takes — the partition
+/// check's sort, the `concrete_memory` key its neighbour probes walk — as
+/// against `as_const`, which answers the bit pattern and is what an equality
+/// or a width scaling wants. The two disagree exactly on the ranges that
+/// begin below their base, and those are the ranges a caller reaches with
+/// `q = p + 1` or with a clause instantiated at a negative index.
+fn signed_range_endpoints(range: &CMemoryRange) -> (Option<i64>, Option<i64>) {
+    (
+        signed_bitvector_constant(range.start()),
+        signed_bitvector_constant(range.end()),
+    )
+}
+
 fn remove_resource_index_entry<K: Ord + Clone>(
     index: &PersistentMap<K, ResourceEntryIds>,
     key: &K,
@@ -237,7 +253,7 @@ impl ResourceContextIndex {
                 (block, mode, range.end().clone()),
                 entry,
             );
-            if let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const()) {
+            if let (Some(start), Some(end)) = signed_range_endpoints(range) {
                 let base = (range.base().clone(), mode);
                 result.concrete_memory = insert_resource_index_entry(
                     &result.concrete_memory,
@@ -298,7 +314,7 @@ impl ResourceContextIndex {
                 &(block, mode, range.end().clone()),
                 entry,
             );
-            if let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const()) {
+            if let (Some(start), Some(end)) = signed_range_endpoints(range) {
                 let base = (range.base().clone(), mode);
                 result.concrete_memory = remove_resource_index_entry(
                     &result.concrete_memory,
@@ -3071,24 +3087,21 @@ impl ResourceContext {
             let Some(right_range) = right.memory_own_range() else {
                 continue;
             };
-            let same_base_concrete = right_range
-                .start()
-                .as_const()
-                .zip(right_range.end().as_const())
-                .and_then(|(start, end)| {
-                    let owned_in_block = self
-                        .storage
-                        .index
-                        .owned_memory_by_block
-                        .get(&right_range.base().block)?
-                        .len();
-                    let represented = *self
-                        .storage
-                        .index
-                        .concrete_memory_by_base
-                        .get(&(right_range.base().clone(), true))?;
-                    (represented == owned_in_block).then_some((start, end))
-                });
+            let (start, end) = signed_range_endpoints(right_range);
+            let same_base_concrete = start.zip(end).and_then(|(start, end)| {
+                let owned_in_block = self
+                    .storage
+                    .index
+                    .owned_memory_by_block
+                    .get(&right_range.base().block)?
+                    .len();
+                let represented = *self
+                    .storage
+                    .index
+                    .concrete_memory_by_base
+                    .get(&(right_range.base().clone(), true))?;
+                (represented == owned_in_block).then_some((start, end))
+            });
             if let Some((start, end)) = same_base_concrete {
                 let key = (right_range.base().clone(), true, start, end);
                 let mut candidates = BTreeSet::new();
@@ -3215,35 +3228,46 @@ impl ResourceContext {
                     fact.memory_own_range().map(|range| (fact, range))
                 })
                 .collect::<Vec<_>>();
+            // The sweep replaces the pairwise scan below, and it is sound
+            // only on the order it assumes. Sorted by *signed* start, an
+            // overlap with any earlier range is an overlap with the earlier
+            // range of greatest end, so comparing each range against that one
+            // decides the whole block. Sorted by the `u32` bit pattern, a
+            // range starting below its base sorts past every range there is:
+            // `p[-1..1]` beside `p[0..2]` and a decoy `p[5..6]` was compared
+            // only against the decoy, and two owners of element `p[0]` — the
+            // partition violation the whole resource model rests on — were
+            // admitted. Both endpoints, and the running maximum, are the
+            // signed numbers they are.
             let one_concrete_base = owned.first().map(|(_, range)| range.base()).filter(|base| {
                 owned.iter().all(|(_, range)| {
-                    range.base() == *base
-                        && range.start().as_const().is_some()
-                        && range.end().as_const().is_some()
+                    let (start, end) = signed_range_endpoints(range);
+                    range.base() == *base && start.is_some() && end.is_some()
                 })
             });
             if one_concrete_base.is_some() {
-                let mut ordered = owned;
-                ordered.sort_by_key(|(_, range)| {
-                    (
-                        range.start().as_const().unwrap(),
-                        range.end().as_const().unwrap(),
-                    )
-                });
-                let mut furthest: Option<(&CResourceFact, &CMemoryRange)> = None;
-                for (fact, range) in ordered {
+                let mut ordered = owned
+                    .into_iter()
+                    .map(|(fact, range)| {
+                        let (start, end) = signed_range_endpoints(range);
+                        (start.unwrap(), end.unwrap(), fact, range)
+                    })
+                    .collect::<Vec<_>>();
+                ordered.sort_by_key(|(start, end, _, _)| (*start, *end));
+                let mut furthest: Option<(i64, &CResourceFact)> = None;
+                for (_, end, fact, _) in ordered {
                     crate::instrumentation::record_deterministic_work(1);
-                    if let Some((left, left_range)) = furthest {
+                    if let Some((furthest_end, left)) = furthest {
                         if let Some(error) = resource_family_algebra(left.family())
                             .pair_validity_error(left, fact, assumptions)
                         {
                             return Some(error);
                         }
-                        if range.end().as_const().unwrap() > left_range.end().as_const().unwrap() {
-                            furthest = Some((fact, range));
+                        if end > furthest_end {
+                            furthest = Some((end, fact));
                         }
                     } else {
-                        furthest = Some((fact, range));
+                        furthest = Some((end, fact));
                     }
                 }
                 continue;

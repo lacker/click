@@ -6566,6 +6566,90 @@ mod constant_range_containment {
     }
 }
 
+/// The partition gate over one block of constant, same-base owned ranges is a
+/// linear sweep instead of a pairwise scan, and the incremental path beside it
+/// probes only the neighbours of a new range in the `concrete_memory` key
+/// order. Both stand in for the scan *only on the order they assume*. Read as
+/// `u32`, a range starting below its base sorts past every range there is, so
+/// its overlapping neighbour is never the one it is compared against.
+mod concrete_partition_sweep {
+    use super::*;
+
+    fn external() -> Pointer {
+        Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    fn owns(start: i32, end: i32) -> CResourceFact {
+        CResourceFact::own_memory(CMemoryRange::new(
+            external(),
+            Bitvector32Term::Constant(start as u32),
+            Bitvector32Term::Constant(end as u32),
+        ))
+    }
+
+    /// Both routes into the gate: the whole-context check, and the
+    /// incremental one that adds the last fact to an already-valid context.
+    fn admits(facts: &[CResourceFact]) -> bool {
+        let assumptions = PureFactContext::new();
+        let mut whole = ResourceContext::new();
+        for fact in facts {
+            whole = whole.unchecked_with_fact(fact.clone());
+        }
+        if whole.validity_error(&assumptions).is_some() {
+            return false;
+        }
+        let (last, earlier) = facts.split_last().expect("at least one fact");
+        let mut incremental = ResourceContext::new();
+        for fact in earlier {
+            incremental = incremental.unchecked_with_fact(fact.clone());
+        }
+        incremental
+            .try_compose_into_valid_context_delaying_normalization(
+                std::iter::once(last.clone()),
+                &assumptions,
+            )
+            .is_ok()
+    }
+
+    /// `p[-1..1]` and `p[0..2]` are two owners of element `p[0]`. With a
+    /// decoy between them in unsigned order the sweep compared the negative
+    /// range only against the decoy, and the neighbour probe found only the
+    /// decoy either side of it.
+    #[test]
+    fn a_range_below_its_base_is_compared_against_the_range_it_overlaps() {
+        assert!(!admits(&[owns(0, 2), owns(5, 6), owns(-1, 1)]));
+        // Order of arrival does not decide it.
+        assert!(!admits(&[owns(-1, 1), owns(5, 6), owns(0, 2)]));
+        assert!(!admits(&[owns(5, 6), owns(0, 2), owns(-1, 1)]));
+        // Two decoys either side, and an overlap that is wholly below the
+        // base rather than straddling it.
+        assert!(!admits(&[
+            owns(-9, -6),
+            owns(0, 2),
+            owns(5, 6),
+            owns(-8, -7)
+        ]));
+        // The running maximum end is read signed too: a range whose *end* is
+        // below the base must not be taken as the furthest one.
+        assert!(!admits(&[owns(-4, -1), owns(0, 2), owns(1, 3)]));
+    }
+
+    /// The other polarity: a partition of ranges below, across and above the
+    /// base is still a partition, and the sweep still refuses an ordinary
+    /// nonnegative overlap.
+    #[test]
+    fn ranges_that_partition_the_block_are_still_admitted() {
+        assert!(admits(&[owns(-4, -1), owns(-1, 0), owns(0, 2), owns(5, 6)]));
+        assert!(admits(&[owns(5, 6), owns(0, 2), owns(-4, -1)]));
+        assert!(admits(&[owns(i32::MIN, i32::MIN + 2), owns(0, 1)]));
+        assert!(!admits(&[owns(0, 2), owns(5, 6), owns(1, 3)]));
+        assert!(!admits(&[owns(-4, -1), owns(5, 6), owns(-2, 0)]));
+    }
+}
+
 /// `split_memory_range` states the residues in the owner's coordinates, so the
 /// requirement's endpoints cross a base delta to get there. That join used the
 /// modular `Bitvector32Term::add` and installed the result as the residues'
