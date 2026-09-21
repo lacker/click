@@ -783,11 +783,31 @@ allocation. The reserved ranges are:
 | `4_000_000_000 .. 8_000_000_000` | symbolic pointer blocks |
 | `1 << 40 .. 1 << 41` | load variables (`LOAD_VARIABLE_BASE`) |
 | `1 << 41 .. 1 << 42` | match-arm binders (`MATCH_BINDER_VARIABLE_BASE`) |
+| `1 << 42 .. 1 << 43` | universal-introduction witnesses (`UNIVERSAL_WITNESS_VARIABLE_BASE`) |
 
 The match-binder range is the one that carries a soundness obligation rather
 than a hygiene one, so `the_match_binder_range_is_disjoint_from_every_other_producer`
 asserts the disjointness instead of leaving it to this table. A lowering that
 exhausts it refuses with `ExecutionLimit::MatchBinderVariables`.
+
+The witness range carries the same kind of obligation. `intro` on
+`forall v. body` replaces `v` by a free identity standing for an arbitrary
+value, so it must name nothing the surrounding state names — and the facts are
+not the whole of that state, since a C proof also carries program variables, a
+symbolic store, a memory DAG and a resource context. Choosing the witness by
+scanning up from `Variable(0)` for an identity no fact mentions therefore
+started in the C identity range and could land on a live program variable;
+`the_universal_witness_range_is_disjoint_from_every_other_producer` and
+`a_freshened_universal_witness_never_takes_a_c_identity` assert the range
+instead. A proof that exhausts it refuses rather than reusing an identity.
+
+Freshening a binder is a renaming, so it must not change what the proposition
+says *or how it is spelled*: a proof state matches a goal against a fact
+syntactically, and a goal that quietly moves to another canonical form stops
+matching the surface's re-lowering of the same written range. That is why a
+range's byte extent has exactly one constructor — `memory_range_byte_count`
+folds through `Bitvector32Term::subtract`, the same one substitution rebuilds
+terms with — rather than a private near-copy that cancels a little less.
 
 Call and loop behavior are explicit inputs to kernel execution. The common
 configurations are:
