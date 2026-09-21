@@ -569,6 +569,34 @@ the supported LP64 host ABI.
 Two number systems meet in every memory rule, and confusing them is a
 soundness bug rather than an imprecision.
 
+Before either of them: **`Bitvector32Term::as_const` answers `u32`, and every
+`int32` quantity the kernel orders is a signed number held in those bits.**
+An element index, a range endpoint, a block extent, an owned quantity — read
+any of them through `as_const` and compare the result, and `-1` becomes the
+largest number there is. That single confusion is what `e219bbc8` (range
+endpoints), `a98a05e4` (a block extent and a fold quantity) and the commits
+beside them each found admitting a false theorem.
+
+So a rule that wants a *number* asks `signed_bitvector_constant`, which is the
+one blessed reader for the signed value of a constant `int32` term, or
+`exact_signed_constant` where a recorded exact equality may name that value
+instead — it is `signed_bitvector_constant` plus one hop through the condition
+facts, and nothing else may be asked in its place.
+`concrete_memory_range_bounds` is the reader for a whole constant range: it
+composes both endpoints and the base offset into signed byte bounds, and a
+rule comparing two constant ranges should ask it rather than scale endpoints
+itself. `nonnegative_int32_value` is a different question with a similar
+shape — the signed value of a raw word *when it is nonnegative*, which answers
+`None` rather than a negative number, and exists for the bound rules that want
+a positive constant addend.
+
+`as_const` itself stays right for the questions that really are about bits:
+equality, a map or hash key that carries no order, and the width-scaling
+arithmetic that is modular by definition. A key that *is* ordered — the
+`concrete_memory` index, whose predecessor and successor probes stand in for a
+pairwise scan — is an ordering question wearing a key's clothes, and takes the
+signed reading.
+
 A **byte offset** is mathematical. `PointerOffsetTerm` adds exactly, and
 `PointerOffsetTerm::scale_int32` sign-extends its index before multiplying by
 the element width, so a pointer's displacement from its block is an `i64` that

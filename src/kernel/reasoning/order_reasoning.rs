@@ -445,12 +445,33 @@ pub(in crate::kernel) fn bitvector_variable(term: &Bitvector32Term) -> Option<Va
     }
 }
 
+/// **The** reader for the signed value of a constant `int32` term.
+///
+/// `Bitvector32Term::as_const` answers `u32`, and every `int32` quantity the
+/// kernel orders — an element index, a range endpoint, a block extent, an
+/// owned quantity — is a signed number held in those bits. Reading one
+/// through `as_const` and then comparing it makes `-1` the largest number
+/// there is, which is how `e219bbc8`, `a98a05e4` and the commits beside them
+/// each admitted a false theorem. A rule that wants a number rather than a
+/// bit pattern asks here, or asks
+/// [`exact_signed_constant`](crate::kernel::assumptions::exact_signed_constant)
+/// where a recorded exact equality may name the value instead. See
+/// "Index and offset arithmetic" in `docs/internals/kernel.md`.
+///
+/// `as_const` itself remains right for the questions that really are about
+/// bits: equality, a hash or index key that carries no order, and the
+/// width-scaling arithmetic that is modular by definition.
 pub(in crate::kernel) fn signed_bitvector_constant(term: &Bitvector32Term) -> Option<i64> {
     term.as_const().map(|value| i64::from(value as i32))
 }
 
-pub(in crate::kernel) fn signed_u32_constant(value: u32) -> Option<i64> {
-    i32::try_from(value).ok().map(i64::from)
+/// The value of a 32-bit word read as `int32`, *when that value is
+/// nonnegative*. This is not [`signed_bitvector_constant`] on a raw word: it
+/// answers `None` rather than a negative number, so `is_none_or(|value|
+/// value <= 0)` reads as "not a positive constant". Its callers are the
+/// bound rules that want a positive constant addend and nothing else.
+pub(in crate::kernel) fn nonnegative_int32_value(word: u32) -> Option<i64> {
+    i32::try_from(word).ok().map(i64::from)
 }
 
 pub(in crate::kernel) fn bitvector_variable_and_constant(
