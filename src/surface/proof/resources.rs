@@ -3531,7 +3531,12 @@ fn fold_composite_resources_on_outcome_with_facts(
                     ),
                     true,
                 ));
-            let quantity_is_positive = quantity.as_const().is_some_and(|value| value > 0)
+            // A resource quantity is a signed `int32`, and `as_const` answers
+            // `u32`, so `-1` read here as `4294967295` was both "positive"
+            // and the thing that made the body active. The symbolic arm
+            // beside it always asked the signed question; reading the
+            // constant signed is what makes the two agree.
+            let quantity_is_positive = quantity.as_const().is_some_and(|value| (value as i32) > 0)
                 || assumptions.proves(&Proposition::ConditionIs(
                     ConditionTerm::Bitvector32SignedGreaterThan(
                         Box::new(quantity.clone()),
