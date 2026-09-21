@@ -1313,6 +1313,17 @@ fn exact_or_unequal(decided: Option<bool>, exact: bool) -> Option<bool> {
 }
 
 impl PureFactContext {
+    /// [`Self::rebuilt_offset_is_exact`] on the element path, for the one
+    /// caller outside this module: the path-fact recorder, which turns a
+    /// decided pointer-offset equality into a statement about element
+    /// indices and owes this premise for the negative direction.
+    pub(in crate::kernel) fn element_index_rebuild_is_exact(
+        &self,
+        offset: &crate::kernel::PointerOffsetTerm,
+    ) -> bool {
+        self.rebuilt_offset_is_exact(offset, false)
+    }
+
     /// Whether the index or byte term the offset rebuilders produce for
     /// `offset` denotes the exact offset rather than a wrapped 32-bit value.
     /// `PointerOffsetTerm` semantics are exact i64, so equal rebuilt terms
@@ -1341,21 +1352,42 @@ impl PureFactContext {
             // paths, keeps the affirmative half of `exact_or_unequal` from
             // resting on a rebuild that did not happen.
             PointerOffsetTerm::Int64Scaled {
-                value, byte_width, ..
+                value,
+                byte_width,
+                unsigned,
             } => {
                 if !byte_path {
                     return false;
                 }
-                if *byte_width <= 1 {
+                if *byte_width == 0 {
                     return true;
                 }
-                let Ok(width) = u32::try_from(*byte_width) else {
+                // An `Int64Scaled` scales its *sixty-four-bit* value, and the
+                // byte rebuilder scales it with the thirty-two-bit
+                // `Multiply`. So the thirty-two-bit overflow question is the
+                // wrong question to ask about this term: it is answered from
+                // the low word, and the term's own value is not that word. A
+                // value whose low word is `0xFFFFFFFF` passes it — `-1 * 8`
+                // does not overflow an `int32` — while the offset it really
+                // names, for an unsigned index, is `8 * 4294967295`, and the
+                // rebuilt `-8` then reads as the element *below* the base.
+                //
+                // What settles it is what `bbe71eba` found settles the
+                // element side: a fact pinning the value to a number, with
+                // the scaled product then required to occupy an `int32`,
+                // which is all the rebuilt term can hold. Arithmetic alone
+                // cannot, and saying so is the refusal. The fact has to be a
+                // sixty-four-bit one: a thirty-two-bit fact names the low
+                // word and leaves the rest, which is the shape that made
+                // `0xFFFFFFFF` look like a clean `-1`.
+                let Some(value) = crate::kernel::assumptions::exact_sixty_four_bit_constant(
+                    value, *unsigned, self,
+                ) else {
                     return false;
                 };
-                self.decide(&ConditionTerm::signed_multiply_overflows(
-                    value.as_ref().clone(),
-                    Bitvector32Term::Constant(width),
-                )) == Some(false)
+                value
+                    .checked_mul(*byte_width)
+                    .is_some_and(|bytes| i32::try_from(bytes).is_ok())
             }
             PointerOffsetTerm::Int32Scaled { value, byte_width } => {
                 if !byte_path || *byte_width <= 1 {

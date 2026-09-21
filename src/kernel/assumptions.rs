@@ -4836,6 +4836,57 @@ pub(in crate::kernel) fn exact_signed_constant(
         })
 }
 
+/// [`exact_signed_constant`] for a term whose *sixty-four-bit* value is the
+/// question — the value an `Int64Scaled` displacement scales.
+///
+/// A thirty-two-bit fact names a thirty-two-bit value and says nothing about
+/// the other word, so it may not answer here: a low word of `0xFFFFFFFF` is
+/// `-1`, and is equally `4294967295`, and is equally `2^32 + 4294967295`.
+/// `exact_signed_constant` accepts one, which is right for the thirty-two-bit
+/// quantities it was written for and wrong for this one. Only a sixty-four-bit
+/// constant term, or a recorded exact sixty-four-bit equality, pins a value
+/// here.
+///
+/// `unsigned` says how the scaling reads it, and the two readings are
+/// different numbers: `size_t` `4294967295` displaces forwards by that many
+/// elements, while the same word read signed is the element below the base.
+pub(in crate::kernel) fn exact_sixty_four_bit_constant(
+    term: &Bitvector32Term,
+    unsigned: bool,
+    assumptions: &PureFactContext,
+) -> Option<i64> {
+    let constant = |candidate: &Bitvector32Term| {
+        if unsigned {
+            candidate
+                .uint64_as_const()
+                .and_then(|value| i64::try_from(value).ok())
+        } else {
+            candidate.int64_as_const()
+        }
+    };
+    if let Some(value) = constant(term) {
+        return Some(value);
+    }
+    assumptions
+        .condition_facts
+        .iter()
+        .find_map(|(condition, value)| {
+            if !*value {
+                return None;
+            }
+            let ConditionTerm::Bitvector64Equal(left, right) = condition else {
+                return None;
+            };
+            if left.as_ref() == term {
+                constant(right)
+            } else if right.as_ref() == term {
+                constant(left)
+            } else {
+                None
+            }
+        })
+}
+
 fn bitvector_index_in_range_shallow(
     index: &Bitvector32Term,
     start: &Bitvector32Term,
