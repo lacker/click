@@ -13,12 +13,13 @@ proof fails with two terms that spell alike.
 ## The vocabulary
 
 - **resource** — a piece of mutable state, or part of one. Today: a memory
-  cell, and a memory block as a pure function reads it through an array
-  argument. A byte range, a struct extent, a composite instance and a local
-  are the kinds that come next.
+  cell, a memory block as a pure function reads it through an array argument,
+  one model field of a resource instance, and one counted population. A byte
+  range, a struct extent and a local are the kinds that come next.
 - **program point** — a point on the current proof path (`entry`, a `mark`ed
   label, "here"), identified by the memory snapshot the kernel had reached
-  there.
+  there, or — for the two kinds whose version is a value rather than a point —
+  by the whole saved state.
 - **same** — the two points are known to hold one version of the resource.
 - **changed** — a step between them wrote the resource.
 
@@ -49,6 +50,102 @@ the history — with a `StopReason`: the step `Affected` the resource, or it was
 `Resource` is borrowed, so asking costs the same as the walks cost before.
 `Explanation` is bounded: the resource, the answer, and how many recorded steps
 the tracker crossed after the blocking one. It never carries memory.
+
+## Two kinds of point, because there are two kinds of version
+
+A memory resource's version **is** a point: the snapshot the cell was last
+written at. That is what makes `last_same_point` a naming path — a load
+variable's name can embed the point, and equal names then mean equal terms.
+
+A model field's version is the **value stored in the instance**, and a counted
+population's is the `count` term the state holds. Neither is a point on the
+memory history: a `fold` changes resources and not memory, and a call that
+returns ownership keeps the instance's identity while replacing its field
+vector. So their points are whole saved states — `StatePoint`, a *handle* to a
+state the kernel already keeps (`entry`, a `mark` out of `RecordedSnapshots`, a
+loop's iteration state, the live one), never a copy.
+
+```rust
+same_at_states(resource, left: StatePoint, right: StatePoint) -> Sameness
+explain_at_states(resource, here, there) -> Explanation
+sole_population_of_family(state, family) -> Option<OwnedResource>
+```
+
+Three decisions are worth writing down.
+
+- **A field's version is its stored value**, with no generation counter and no
+  new per-instance state. An instance that survives a call keeps its identity
+  and gets fresh field variables, so the stored value already distinguishes the
+  versions. Adding a counter would be a second answer to a question the state
+  already answers.
+- **It answers `Unknown`, never `Changed`.** `Changed` is what a recorded write
+  earns, and no `CMemoryDerivation` edge carries "field *k* of this instance was
+  replaced". The *step* is still named, but it is read from the mint rather than
+  from a walk — see below.
+- **It fails closed.** `Same` needs both lookups to succeed and the two values
+  to be syntactically equal. A missing instance, a missing population, a
+  parent-qualified path this lookup does not resolve, and two different
+  spellings of one value all answer `Unknown`. A tracker that answered `Same`
+  for a field a contract did not promise would verify a false theorem.
+
+`last_same` and `last_same_point` return `None` for both kinds, exactly as they
+do for `Ranges` and `AnyMemory`: no term is named by one of these points, so
+there is no oldest point to be. `step_effect::affects` is never asked about
+them, because a memory edge is not between them.
+
+### Where the step comes from
+
+The mint. `src/kernel/model_fields.rs` registers every fresh model-field
+variable where it is minted, with the instance it belongs to, which field of the
+schema it is, and **why** it was minted — a call returning ownership, a
+`produces`, a loop head, contract/implementation refinement, or the contract's
+own entry model. The mint site is the only place that knows why.
+
+`same_at_states` reads the step off the two values it already fetched: a value
+the contract's entry minted is the *old* version, so the other side's mint is
+the replacement. Where neither side was minted as an arbitrary model, nothing is
+claimed and the text says only what it can see.
+
+The same registry is what lets a refusal spell `v1000002` as `c.rank`, and the
+entry model as `old(c.rank)`, in the one place terms are spelled
+(`describe_bitvector_with_context` and `proof_diagnostics::render`). The
+instance's own name comes from the surface, which registers it where it resolves
+a field access and where a verified function declares its binders; a name only
+half known prints nothing, because a half-spelled field would look like source
+the reader could search for.
+
+The registry is diagnostics only — no rule, no premise and no name a term
+carries reads it — bounded like the other memos, and emptied when a
+`VerificationSession` starts, beside the load-variable registry.
+
+### The efficiency contract
+
+A question is **one keyed lookup in each state's resource context, plus one term
+comparison at the single key asked about**. Nothing enumerates a resource
+context, nothing compares two states (two points are one point by handle
+identity), nothing walks a change history, and nothing is memoized — the answer
+reads path state, which may not be cached by content across verifications.
+
+Like the memory cases, it runs **only while building a refusal**. There is no
+per-step history of resource-context changes and no walk of
+`ResourceContextChange` at query time.
+
+`version_at_state` records one deterministic work unit per lookup, so the claim
+is measured:
+`a_saved_state_version_costs_one_lookup_per_point`
+(`src/kernel/resource_tracker/tests.rs`) grows both states by unrelated
+instances and unrelated populations over 8, 16, 32 and 64 and asserts two units
+at every size, with the answer checked each time. Deterministic work for a
+passing proof is unchanged to the unit: the named-operation totals of
+`augment_rotate_callback_child_read`,
+`contract_owns_composite_argument_across_forms` and
+`rb_replace_node_with_children` are identical with and without this chunk.
+
+`sole_population_of_family` is the one place that walks a state's population
+list, and it walks it to turn the family the reader wrote into the key the state
+indexes by. That list holds one entry per family the contract's clauses brought
+into scope, so it is sized by the selected source; where a family has two live
+instantiations it answers nothing rather than the wrong one.
 
 `last_same_point` is the only form on the hot path. It is what a term that
 reads memory is named by: a load variable embeds the oldest point its cell is
@@ -164,12 +261,28 @@ the case that actually applies:
 | the resource was written | ``the store to `a[i]` wrote it.`` |
 | the read has no source spelling | ``the store to `g[0]` may have written it, and nothing tells that address apart from this read.`` |
 | a fact about a block | ``a fact about `a` as a whole does not carry across the store to `b[j]`.`` plus the note below |
+| a model field across a call | ``` `c.rank` may have changed since function entry: the call to `bump` returned ownership of `c` with a new model, and `bump` promises nothing about this field. If it keeps the field, state `ensures c.rank == old(c.rank)` on `bump`.``` |
+| a model field across a loop | ``` … the loop owns `c`, and a loop head is an arbitrary visit, so it gives `c` a fresh model. If the body keeps the field, carry it through as `invariant c.rank == old(c.rank);`.``` |
+| a model field the state no longer holds | ``` `c.rank` names no model here: `c` was consumed since function entry, so this state holds no field to read. Name the value it had there, `old(c.rank)`.``` |
+| a counted population | ``` `count(object_ref(obj))` changed since function entry: a `produces` or `consumes` transition in between moved it. The transition relates the two counts, so state that relation, as `ensures count(object_ref(obj)) == old(count(object_ref(obj))) + 1`.``` |
 
 Every clause it proposes is one that verifies the situation it is printed for;
 where none does, it says what is missing instead of naming a repair that would
 not work. A whole-array fact is the case with no repair to name: the block walk
 reads no stated separation at all, so the text says so rather than sending the
-reader to write a `separate(..)` the walk will never consult.
+reader to write a `separate(..)` the walk will never consult. A model field
+neither point holds is the other: `old(c.rank)` would name nothing either, so
+the text says that rather than printing it.
+
+The four model-field and population rows are pinned as refusals with their
+verified repairs beside them:
+`mdtests/model_field_across_a_call_that_promises_nothing.md` /
+`model_field_kept_by_a_call.md`,
+`model_field_across_a_loop_without_an_invariant.md` /
+`model_field_kept_by_a_loop.md`,
+`fold_field_names_a_consumed_model.md` / `fold_field_names_the_entry_model.md`,
+and `population_count_across_a_produces_transition.md` /
+`population_count_states_its_transition.md`.
 
 The two cases that can spell both ranges offer two clauses, because two say the
 same thing: a stated `separate(..)`, and — since a contract's transferred and
@@ -707,14 +820,40 @@ a retired allocation is skipped rather than refused; and the
 different pointer" with no proof, which selects a witness rather than proving
 anything.
 
+## What stays out
+
+Three things the tracker is deliberately not asked, because they are about
+authority — "may I touch this" — rather than about versions:
+
+- **resource occurrence identity** (`ResourceOccurrenceId`) and the **loan
+  ledger**. Loans, shares and support bind to an occurrence; no proposition can
+  name one, and the ledger's `LoanLedgerStateId` is opaque and carries no delta.
+  The loan family is fail-open by design and must never be merged with the
+  fail-closed families (above, and `src/kernel/loans.rs`);
+- **resource validity** — `pair_validity_error`, `permits_memory_read` — which
+  is who may touch a footprint, not which version it holds;
+- **separation predicates**, which `affects` calls rather than replaces.
+
+A **C local scalar binding** has no version either: a fact about a local is a
+fact about the value term substituted at lowering. Whether eager substitution is
+the final answer there is open.
+
 ## Next chunks
 
 - **Chunk 2** — one question, asked one way. The step-side deciders are one
   rule now; what is left is settling the block column's remaining blanket
   refusals, one commit and one regression each.
-- **Chunk 3** — the other resource kinds. Register the "changed here" events
-  for composite instances, occurrence identities and loans, so `same` and
-  `explain` cover model fields too.
+- **Chunk 3, next slice** — `last_same` over a chain for the saved-state kinds.
+  It needs a recorded history of resource-context changes that names the step
+  that made each one; today `ResourceContextChange` records *which facts*
+  changed and never what changed them. Until that exists, two-point
+  `same_at_states` is the whole resource-side interface, and the step comes from
+  the mint.
+- **Chunk 3, also unrouted** — the proposition-level refusals (`simp_failure`,
+  and an unclosed `have` whose goal matches an available fact up to a model-field
+  version) print the field's source spelling now but do not yet reach
+  `describe_resource_version_mismatch`: their callers hold two propositions and
+  not the two saved states the answer needs.
 - **From the map above** — the two duplicated retain closures (call havoc
   against its own checker, loop havoc against the interface join) are one rule
   written twice in one file each, which the map calls *disagrees* only because

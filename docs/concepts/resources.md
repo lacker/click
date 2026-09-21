@@ -617,6 +617,32 @@ rather than accepting them from the checked execution, so the two contexts
 agree on what the contract assumed
 (`mdtests/resource_selected_arm_fact_at_contract.md`).
 
+### A model field is not carried for you
+
+An instance that survives a call, a loop or an `unfold`/`fold` round trip keeps
+its **identity** and not its model. Three places give it a fresh one, and each
+has the same repair: say what you want kept.
+
+- **A call that returns ownership.** `owns c: Cell()` on a callee means the
+  callee may set the model however it likes, so after the call `c.rank` is a
+  value the caller knows nothing about. Only the callee's own postcondition
+  relates it to the entry model: `ensures c.rank == old(c.rank)`.
+- **A loop that owns the instance.** A loop head is an arbitrary visit, so the
+  model a binder carries there is whatever the invariants state about it, never
+  the model it held at loop entry. `invariant c.rank == old(c.rank);` is what
+  carries a field through.
+- **`unfold` and the `fold` that answers it.** `unfold(c)` gives the instance up,
+  so at the `fold` below it `c.rank` names no model at all — there is no
+  instance of that identity to read. Name the value it had where it still
+  existed: `let c = fold(Cell(), { rank: old(c.rank) });`.
+
+The same holds for a counted population. A contract's `produces` or `consumes`
+moves `count(R(a))`, and the transition relates the two counts, so an `ensures`
+states that relation: `ensures count(R(a)) == old(count(R(a))) + 1`.
+
+A refusal about any of these names the field, says which step replaced the
+model, and prints the clause above for the case that applies.
+
 ### Refuting an arm
 
 The same decision runs backwards. A folded instance's body holds wherever the
