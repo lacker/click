@@ -3232,6 +3232,21 @@ fn prepare_verified_function_call<'a>(
             }
         }
     }
+    let mut facts = arguments_path.facts;
+    let selected_instance_facts = selected_resource_instance_case_facts(
+        caller_state,
+        resource_application.map(|application| application.bindings.as_ref()),
+        contract_interface.composite_resource_definitions(),
+        &path_assumptions,
+    );
+    facts.extend(
+        selected_instance_facts
+            .iter()
+            .cloned()
+            .map(ExecutionPureFact::new),
+    );
+    let path_assumptions =
+        assumptions_with_path_context(assumptions, &facts, &argument_obligations);
     let transfer = match crate::instrumentation::measure_operation(
         application.name,
         "verified function rule application",
@@ -3253,7 +3268,7 @@ fn prepare_verified_function_call<'a>(
         Err(error) => {
             return Ok(Err(CFunctionPath {
                 outcome: CFunctionOutcome::RuntimeError(error),
-                facts: arguments_path.facts,
+                facts,
                 obligations: argument_obligations,
 
                 loan_evidence: empty_checked_loan_evidence_sequence(),
@@ -3298,7 +3313,6 @@ fn prepare_verified_function_call<'a>(
         entry_contract_state.clone()
     };
     let mut obligations = argument_obligations;
-    let mut facts = arguments_path.facts;
     let mut established_requirements = Vec::new();
     let requirement_timing = crate::instrumentation::OperationTiming::new(
         application.name,
@@ -14733,6 +14747,76 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
     )
     .map(|(records, _retained)| records)
     .unwrap_or_default()
+}
+
+/// The body facts of folded instances whose selected constructors are already
+/// known at a call boundary.
+///
+/// A produced resource instance is still folded when its caller receives it,
+/// but a contract ensure can state the constructor of its matched field. In
+/// that case the arm's bound payloads are no longer unknown: the arm fact
+/// `p->kid == kid`, for example, is a consequence of holding the instance
+/// together with `link.link == Linked(kid)`. Publish that fact for the call's
+/// resource transfer so an owned `child_ref(p->kid)` requirement can match the
+/// caller's `child_ref(kid)` without making the proof unfold the instance.
+///
+/// This is read-only publication. It does not move ownership or expose the
+/// arm's memory resources, and it is restricted to instances explicitly bound
+/// by the selected resource call. An instance without exact constructor
+/// evidence contributes nothing.
+fn selected_resource_instance_case_facts(
+    state: &CState,
+    bound_instances: Option<&BTreeMap<Variable, Variable>>,
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+) -> Vec<Proposition> {
+    let Some(bound_instances) = bound_instances else {
+        return Vec::new();
+    };
+    state
+        .resources()
+        .facts()
+        .iter()
+        .filter_map(|fact| match fact.resource() {
+            CResource::Instance(instance)
+                if fact.is_own() && bound_instances.values().any(|id| *id == instance.identity) =>
+            {
+                Some(instance)
+            }
+            _ => None,
+        })
+        .flat_map(|instance| {
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.name() == instance.name())?;
+            let matched = definition.matched.as_ref()?;
+            let AlgebraicValue::Algebraic(model) = instance.fields().get(matched.field_index)?
+            else {
+                return None;
+            };
+            let (_, constructor) =
+                selected_instance_match_arm(instance, definition, definitions, assumptions).ok()?;
+            let projection = ResourceFieldProjection {
+                identity: instance.identity,
+                children: Vec::new(),
+                field_index: matched.field_index,
+                at_entry: false,
+            };
+            Some(
+                matched_resource_instance_case_clauses(
+                    state,
+                    &projection,
+                    model,
+                    &constructor,
+                    definitions,
+                    assumptions,
+                )
+                .into_iter()
+                .map(|clause| clause.proposition),
+            )
+        })
+        .flatten()
+        .collect()
 }
 
 pub(in crate::kernel) fn selected_instance_match_arm<'a>(
