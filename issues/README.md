@@ -94,7 +94,7 @@ Specification and proof:
 
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 
-## P2: after launch (25)
+## P2: after launch (24)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
 - [Lower a dependent composite argument in every tactic position](dependent-composite-argument-in-tactics.md)
@@ -109,7 +109,6 @@ C language coverage:
 - [Support general backward and irreducible goto](goto.md)
 - [Extend static-storage initializers and string-literal coverage](global-variables.md)
 - [Apply Bool integer promotions in ordinary scalar operators](bool-scalar-operator-promotions.md)
-- [Preserve the type of conditional expressions containing calls](conditional-call-result-type.md)
 - [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
 - [Verify Linux rbtree inline helpers from the pinned headers](linux-rbtree-inline-helpers.md)
 - [Transport current static state through cross-file callers](static-state-caller-transport.md)
