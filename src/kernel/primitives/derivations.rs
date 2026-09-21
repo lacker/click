@@ -1157,6 +1157,40 @@ impl ExecutionBudget {
             .contains(&variable.0)
     }
 
+    /// The first identity a universal introduction's witness may use.
+    ///
+    /// `intro()` on `forall v. body` replaces `v` by a *free* identity that
+    /// stands for an arbitrary value, so it must name nothing the surrounding
+    /// state already names. The facts are only part of that state: a C proof
+    /// also carries program variables, a symbolic store, a memory DAG and a
+    /// resource context, and an identity that occurs in none of the facts can
+    /// still be the identity of a live C variable. Picking the witness from a
+    /// range no other producer mints makes the distinction structural instead
+    /// of leaving it to whichever variables happen to appear in a fact.
+    ///
+    /// The range overlaps none of the reserved ones: the C identities run
+    /// below `1_000_000`, the execution counter runs
+    /// `1_000_000 .. 2_000_000`, the surface's quantifier, fold and algebraic
+    /// binder bases span `2_000_000 .. 1_003_000_000`, symbolic pointer blocks
+    /// span `4_000_000_000 .. 8_000_000_000`, the load variables span
+    /// `1 << 40 .. 1 << 41`, and the match binders `1 << 41 .. 1 << 42`. The
+    /// kernel test
+    /// `the_universal_witness_range_is_disjoint_from_every_other_producer`
+    /// asserts that rather than leaving it to this comment.
+    pub(in crate::kernel) const UNIVERSAL_WITNESS_VARIABLE_BASE: u64 = 1 << 42;
+
+    /// The first identity past the universal-witness range. A proof that
+    /// introduced more witnesses than this would start naming something else,
+    /// so freshening refuses here exactly as the execution counter refuses at
+    /// [`Self::KERNEL_VARIABLE_CEILING`].
+    pub(in crate::kernel) const UNIVERSAL_WITNESS_VARIABLE_CEILING: u64 = 1 << 43;
+
+    /// Whether `variable` is a universal-introduction witness identity.
+    pub(in crate::kernel) fn is_universal_witness_variable(variable: Variable) -> bool {
+        (Self::UNIVERSAL_WITNESS_VARIABLE_BASE..Self::UNIVERSAL_WITNESS_VARIABLE_CEILING)
+            .contains(&variable.0)
+    }
+
     /// The first runtime error an evaluation under this budget dropped
     /// because every path of a sub-evaluation ended in one, for the message
     /// a caller writes when the evaluation produced no value path at all.

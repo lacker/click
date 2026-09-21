@@ -153,6 +153,13 @@ pub(crate) enum PropositionCloseError {
     SpecialArithmetic(super::arithmetic_special::SpecialArithmeticCheckError),
     ExpectedIntroduction(Proposition),
     IntegerFresheningExhausted,
+    /// The reserved universal-witness range
+    /// ([`crate::kernel::ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_BASE`])
+    /// holds no identity above the witnesses already in scope. The
+    /// introduction refuses rather than reusing one: an identity outside that
+    /// range is some other producer's, and a witness that names a live C
+    /// variable is the capture this range exists to prevent.
+    UniversalWitnessFresheningExhausted,
     IntegerChoiceSourceUnavailable,
     IntegerChoiceWrongSort,
     IntegerChoiceFresheningExhausted,
@@ -825,8 +832,9 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             Proposition::ForAll { var, sort, body } => {
                 let (variable, body, pointer) = match sort {
                     Sort::CPointer(c_type) => {
-                        let (variable, body) =
-                            facts.freshen_pointer_forall_body(*var, *c_type, body);
+                        let (variable, body) = facts
+                            .freshen_pointer_forall_body(*var, *c_type, body)
+                            .ok_or(PropositionCloseError::UniversalWitnessFresheningExhausted)?;
                         (variable, body, Some(*c_type))
                     }
                     Sort::Integer => {
@@ -836,7 +844,9 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                         (variable, body, None)
                     }
                     _ => {
-                        let (variable, body) = facts.freshen_int32_forall_body(*var, body);
+                        let (variable, body) = facts
+                            .freshen_int32_forall_body(*var, body)
+                            .ok_or(PropositionCloseError::UniversalWitnessFresheningExhausted)?;
                         (variable, body, None)
                     }
                 };

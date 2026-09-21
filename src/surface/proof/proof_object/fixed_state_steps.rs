@@ -7,6 +7,37 @@ use crate::surface::planning::proposition_search::PropositionSearch;
 
 const MAX_CHOSEN_PROJECTION_WORK: usize = 4096;
 
+/// Whether a rendered range still shows one of the verifier's own variable
+/// identities (`v100001`), which means it could not be put in the contract's
+/// words and so names nothing the reader can act on.
+fn renders_internal_identity(description: &str) -> bool {
+    description.match_indices('v').any(|(index, _)| {
+        description[..index]
+            .chars()
+            .next_back()
+            .is_none_or(|previous| !previous.is_alphanumeric() && previous != '_')
+            && description[index + 1..]
+                .chars()
+                .next()
+                .is_some_and(|digit| digit.is_ascii_digit())
+    })
+}
+
+/// What a walk for a stated `loadable` range to narrow from found, kept split
+/// by the filter each candidate fell out of, so a refusal can name the side it
+/// was looking at instead of claiming the contract stated nothing.
+#[derive(Default)]
+struct StatedLoadableRanges {
+    /// Stated ranges over the goal's own base that are available facts here,
+    /// with the element width of the kernel extent they were recorded beside.
+    available: Vec<(ClickProposition, u32)>,
+    /// Stated ranges over the goal's own base whose kernel proposition is not
+    /// an available fact at this program point.
+    same_base_unavailable: Vec<ClickProposition>,
+    /// Stated ranges that are available facts here, but over another base.
+    available_other_bases: Vec<ClickProposition>,
+}
+
 fn proposition_at_connective_path<'a>(
     root: &'a Proposition,
     path: &[usize],
@@ -2187,16 +2218,30 @@ impl<'a> Proof<'a> {
         &self,
         goal: &ClickProposition,
     ) -> Vec<(ClickProposition, u32)> {
+        self.stated_loadable_range_lookup(goal).available
+    }
+
+    /// The same walk as [`Self::available_stated_loadable_ranges`], keeping
+    /// what each filter rejected.
+    ///
+    /// "No stated viewable range over the same base is available here" is one
+    /// of three different situations, and a reader can only act on the one
+    /// they are in: the contract stated no such range, it stated one that is
+    /// not a fact at this program point, or the ranges that are facts here are
+    /// over some other base. Reporting the first for all three sent readers to
+    /// state a range they had already stated. Keep the rejected candidates so
+    /// the refusal can name which side it was looking at.
+    fn stated_loadable_range_lookup(&self, goal: &ClickProposition) -> StatedLoadableRanges {
+        let mut lookup = StatedLoadableRanges::default();
         let Some(propositions) = self.context_surface_propositions() else {
-            return Vec::new();
+            return lookup;
         };
         let ClickProposition::Loadable { segment } = goal else {
-            return Vec::new();
+            return lookup;
         };
         let Some((goal_base, _, _)) = segment.surface_range() else {
-            return Vec::new();
+            return lookup;
         };
-        let mut ranges: Vec<(ClickProposition, u32)> = Vec::new();
         for kernel in propositions.kernel_facts() {
             let Proposition::CMemoryLoadable { bytes, .. } = kernel else {
                 continue;
@@ -2204,9 +2249,7 @@ impl<'a> Proof<'a> {
             let Some(element_width) = crate::kernel::scaled_extent_element_width(bytes) else {
                 continue;
             };
-            if !self.facts().exact_available_across_effects(kernel, &[]) {
-                continue;
-            }
+            let available = self.facts().exact_available_across_effects(kernel, &[]);
             for surface in propositions.surfaces(kernel) {
                 let ClickProposition::Loadable { segment } = surface else {
                     continue;
@@ -2214,13 +2257,28 @@ impl<'a> Proof<'a> {
                 let Some((base, _, _)) = segment.surface_range() else {
                     continue;
                 };
+                if surface == goal {
+                    continue;
+                }
+                if base != goal_base {
+                    if available && !lookup.available_other_bases.contains(surface) {
+                        lookup.available_other_bases.push(surface.clone());
+                    }
+                    continue;
+                }
+                if !available {
+                    if !lookup.same_base_unavailable.contains(surface) {
+                        lookup.same_base_unavailable.push(surface.clone());
+                    }
+                    continue;
+                }
                 let candidate = (surface.clone(), element_width);
-                if base == goal_base && surface != goal && !ranges.contains(&candidate) {
-                    ranges.push(candidate);
+                if !lookup.available.contains(&candidate) {
+                    lookup.available.push(candidate);
                 }
             }
         }
-        ranges
+        lookup
     }
 
     /// The valid-byte-extent facts a stated range owes, over the count the
@@ -2284,8 +2342,9 @@ impl<'a> Proof<'a> {
         let goal = self.surface_goal()?;
         loadable_surface_range_endpoints(goal)?;
         let target = describe_click_proposition(goal);
-        let candidates = self.available_stated_loadable_ranges(goal);
-        for (stated, _) in &candidates {
+        let lookup = self.stated_loadable_range_lookup(goal);
+        let candidates = &lookup.available;
+        for (stated, _) in candidates {
             if let Some(missing) = self.missing_loadable_narrowing_order_fact(stated, goal) {
                 return Some(format!(
                     "`{target}` does not follow from `{}`: narrowing that range needs `{}`, which is not an available fact",
@@ -2306,9 +2365,103 @@ impl<'a> Proof<'a> {
                 describe_click_proposition(stated)
             ));
         }
+        // Every remaining case is "nothing to narrow from", and which one the
+        // reader is in decides what they do next. Name the side this was
+        // looking at rather than reporting the first case for all three.
+        if let Some(stated) = lookup.same_base_unavailable.first() {
+            return Some(format!(
+                "`{target}` was not proved: `{}` is stated over the same base, but it is not an available fact here, so there is no range to narrow",
+                describe_click_proposition(stated)
+            ));
+        }
+        if !lookup.available_other_bases.is_empty() {
+            let others = lookup
+                .available_other_bases
+                .iter()
+                .map(describe_click_proposition)
+                .collect::<Vec<_>>()
+                .join("` and `");
+            return Some(format!(
+                "`{target}` was not proved and no stated viewable range over its own base is available here to narrow; the stated ranges available here are `{others}`"
+            ));
+        }
+        // A `views`/`owns` clause states a range too, but it becomes a
+        // resource rather than a recorded `loadable` proposition, so the walk
+        // above cannot see it. Saying "no stated viewable range" to a reader
+        // whose contract opens with `views a[0..n]` sends them to state what
+        // they already stated, so name the resource ranges over this base.
+        let held = self.held_memory_ranges_over_goal_base();
+        if !held.is_empty() {
+            let ranges = held.join("` and `");
+            return Some(format!(
+                "`{target}` was not proved: the range this proof holds over that base is `{ranges}`, so narrowing has to reach `{target}` from it, and it did not"
+            ));
+        }
         Some(format!(
-            "`{target}` was not proved and no stated viewable range over the same base is available here to narrow"
+            "`{target}` was not proved and no viewable range over the same base was stated anywhere in scope, so there is nothing to narrow"
         ))
+    }
+
+    /// The memory ranges this proof's resource context holds over the goal
+    /// range's own pointer block, in the spelling a contract clause writes.
+    ///
+    /// A goal range and a held range that name the same base are not the same
+    /// kernel pointer — `a[k..k + 1]` starts at `a + k * 4` and `a[0..n]` at
+    /// `a` — and every external argument shares one pointer block, so neither
+    /// exact equality nor the block alone selects what the reader means by
+    /// "the same base". The selection is therefore the name: a held range is
+    /// reported when the contract spelling it renders into is a range over the
+    /// base the goal was written with. The walk is over the held resource
+    /// facts, which is the proof's own resource context, not an ambient fact
+    /// scan, and this decides nothing — it only names what was being compared.
+    fn held_memory_ranges_over_goal_base(&self) -> Vec<String> {
+        let Some(Proposition::CMemoryLoadable { base, .. }) = self.goal() else {
+            return Vec::new();
+        };
+        let Some(ClickProposition::Loadable { segment }) = self.surface_goal() else {
+            return Vec::new();
+        };
+        let Some((goal_base, _, _)) = segment.surface_range() else {
+            return Vec::new();
+        };
+        let prefix = format!("{}[", describe_contract_expression(&goal_base));
+        let view = match self.context.as_ref() {
+            ProofContext::FixedState(context) => {
+                Some(FixedStateOperationView::from_fixed_state(context))
+            }
+            ProofContext::Execution(_) => self
+                .outcome_fixed_state_view()
+                .or_else(|| self.execution_fixed_state_view()),
+            ProofContext::Pure(_) => None,
+        };
+        let Some(context) = view else {
+            return Vec::new();
+        };
+        let mut ranges = Vec::new();
+        for fact in context.state.resources().facts() {
+            let CResource::Memory(range) = fact.resource() else {
+                continue;
+            };
+            if range.base().block != base.block {
+                continue;
+            }
+            let described = crate::surface::diagnostics::describe_memory_range(
+                range,
+                context.parameters,
+                context.arguments,
+            );
+            // A range over another parameter renders against this one's base
+            // as a pointer difference, which is both wrong for the reader and
+            // unwritable. A range this cannot name in the words the contract
+            // used is not named at all.
+            if described.starts_with(&prefix)
+                && !renders_internal_identity(&described)
+                && !ranges.contains(&described)
+            {
+                ranges.push(described);
+            }
+        }
+        ranges
     }
 
     /// `transport(source, target) using { ... }` inside a pure theorem.

@@ -2054,6 +2054,9 @@ impl<'a> Proof<'a> {
                 PropositionCloseError::IntegerFresheningExhausted => {
                     self.step_error("`intro` requires a fresh Integer binder variable")
                 }
+                PropositionCloseError::UniversalWitnessFresheningExhausted => self.step_error(
+                    "`intro` requires a fresh witness identity for the universal's bound variable, and this proof has used every one the reserved witness range holds",
+                ),
                 _ => unreachable!("kernel returned an unrelated intro error"),
             })?;
         if let Some((name, variable)) = integer_binding {

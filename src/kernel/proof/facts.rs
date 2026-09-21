@@ -502,33 +502,54 @@ impl ProofFacts {
         }
     }
 
+    /// A free identity for a universal introduction's witness, from the range
+    /// [`ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_BASE`] reserves for them.
+    ///
+    /// Scanning up from `Variable(0)` for an identity no *fact* mentions was
+    /// the earlier rule, and it is wrong twice over. The facts are not the
+    /// whole state a witness has to stay clear of: a C proof also carries
+    /// program variables, a symbolic store, a memory DAG and a resource
+    /// context, and `Variable(0)` is a C identity by the reserved-range
+    /// registry, so the first candidate that rule tried was a live program
+    /// variable of the function being proved. Taking the identity from a range
+    /// nothing else mints makes freshness structural: an identity outside the
+    /// range belongs to some other producer and is never chosen, and inside it
+    /// this picks one strictly above every witness already visible here.
+    ///
+    /// Work is proportional to the witnesses in scope, not to the fact set:
+    /// the reserved set is ordered, so the highest witness is one backward
+    /// walk over that range's tail.
+    fn fresh_universal_witness(
+        &self,
+        body_variables: &std::collections::BTreeSet<Variable>,
+    ) -> Option<Variable> {
+        let base = crate::kernel::ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_BASE;
+        let ceiling = crate::kernel::ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_CEILING;
+        let reserved_high = highest_universal_witness(self.reserved_variables.iter().copied());
+        let body_high = highest_universal_witness(body_variables.iter().copied());
+        let next = match reserved_high.into_iter().chain(body_high).max() {
+            Some(highest) => highest.checked_add(1)?,
+            None => base,
+        };
+        (next < ceiling).then_some(Variable(next))
+    }
+
     pub(crate) fn freshen_int32_forall_body(
         &self,
         binder: Variable,
         body: &Proposition,
-    ) -> (Variable, Proposition) {
+    ) -> Option<(Variable, Proposition)> {
         if !self.reserved_variables.contains(&binder) {
-            return (binder, body.clone());
+            return Some((binder, body.clone()));
         }
         let body_variables = crate::kernel::proposition_variables(body);
-        let start = Variable(0);
-        let mut fresh = start;
-        loop {
-            if !self.reserved_variables.contains(&fresh) && !body_variables.contains(&fresh) {
-                break;
-            }
-            fresh = Variable(fresh.0.wrapping_add(1));
-            assert_ne!(
-                fresh, start,
-                "all symbolic variable identifiers are already reserved"
-            );
-        }
+        let fresh = self.fresh_universal_witness(&body_variables)?;
         let body = crate::kernel::substitute_int32_variable_in_proposition(
             body,
             binder,
             Bitvector32Term::Variable(fresh),
         );
-        (fresh, body)
+        Some((fresh, body))
     }
 
     pub(crate) fn freshen_integer_forall_body(
@@ -619,23 +640,12 @@ impl ProofFacts {
         binder: Variable,
         c_type: CType,
         body: &Proposition,
-    ) -> (Variable, Proposition) {
+    ) -> Option<(Variable, Proposition)> {
         if !self.reserved_variables.contains(&binder) {
-            return (binder, body.clone());
+            return Some((binder, body.clone()));
         }
         let body_variables = crate::kernel::proposition_variables(body);
-        let start = Variable(0);
-        let mut fresh = start;
-        loop {
-            if !self.reserved_variables.contains(&fresh) && !body_variables.contains(&fresh) {
-                break;
-            }
-            fresh = Variable(fresh.0.wrapping_add(1));
-            assert_ne!(
-                fresh, start,
-                "all symbolic variable identifiers are already reserved"
-            );
-        }
+        let fresh = self.fresh_universal_witness(&body_variables)?;
         let pointer = if matches!(c_type, CType::FunctionPointer(_)) {
             Pointer::symbolic_function(fresh)
         } else {
@@ -643,7 +653,7 @@ impl ProofFacts {
         };
         let body =
             crate::kernel::substitute_pointer_variable_in_proposition(body, binder, &pointer);
-        (fresh, body)
+        Some((fresh, body))
     }
 
     pub(crate) fn with_predicate_unfold_fact(&self, fact: Proposition) -> Self {
@@ -1251,6 +1261,26 @@ impl ProofFacts {
             .get(key)
             .map(PersistentSequence::len)
     }
+}
+
+/// The largest universal-introduction witness identity in an ascending set of
+/// variables, or `None` when the set holds none.
+///
+/// The set is ordered, so this walks back from the top and stops at the first
+/// identity below the witness range. Identities above the range would be some
+/// other producer's, and the registry mints none, so they are skipped rather
+/// than treated as the end of the walk.
+fn highest_universal_witness(variables: impl DoubleEndedIterator<Item = Variable>) -> Option<u64> {
+    variables
+        .rev()
+        .skip_while(|variable| {
+            variable.0 >= crate::kernel::ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_CEILING
+        })
+        .take_while(|variable| {
+            crate::kernel::ExecutionBudget::is_universal_witness_variable(*variable)
+        })
+        .map(|variable| variable.0)
+        .next()
 }
 
 fn index_snapshot_fact(

@@ -1734,38 +1734,24 @@ pub(crate) fn memory_range_byte_count(
 ) -> Bitvector32Term {
     assert!(element_width > 0, "memory element width must be positive");
     let element_count = canonical_subtract(end, start);
-    canonical_multiply(element_count, Bitvector32Term::Constant(element_width))
+    Bitvector32Term::multiply(element_count, Bitvector32Term::Constant(element_width))
 }
 
+/// The element count of a range, in the kernel's one canonical spelling.
+///
+/// This used to be a private near-copy of [`Bitvector32Term::subtract`] that
+/// folded a little less: it cancelled `(b + x) - (b + y)` but not
+/// `(b + x) - b`. That made the extent of `a[k..k + 1]` the unfolded
+/// `((k + 1) - k) * 4` here while every other route to the same term — in
+/// particular the variable substitution `intro` performs when it has to
+/// freshen a universal's binder — rebuilt it through the kernel constructor
+/// and got `4`. The two spellings mean the same extent and a proof state
+/// matches them syntactically, so renaming a bound variable silently moved a
+/// goal out of the form the surface re-lowers written ranges into, and the
+/// narrowing that had just worked stopped matching. One constructor, so a
+/// range's extent has one spelling whichever route built it.
 fn canonical_subtract(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
-    match (&left, &right) {
-        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
-            Bitvector32Term::Constant(left.wrapping_sub(*right))
-        }
-        (_, Bitvector32Term::Constant(0)) => left,
-        _ if left == right => Bitvector32Term::Constant(0),
-        (
-            Bitvector32Term::Add(left_base, left_addend),
-            Bitvector32Term::Add(right_base, right_addend),
-        ) if left_base == right_base => {
-            canonical_subtract(left_addend.as_ref().clone(), right_addend.as_ref().clone())
-        }
-        _ => Bitvector32Term::Subtract(Box::new(left), Box::new(right)),
-    }
-}
-
-fn canonical_multiply(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
-    match (&left, &right) {
-        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
-            Bitvector32Term::Constant(left.wrapping_mul(*right))
-        }
-        (_, Bitvector32Term::Constant(1)) => left,
-        (Bitvector32Term::Constant(1), _) => right,
-        (_, Bitvector32Term::Constant(0)) | (Bitvector32Term::Constant(0), _) => {
-            Bitvector32Term::Constant(0)
-        }
-        _ => Bitvector32Term::Multiply(Box::new(left), Box::new(right)),
-    }
+    Bitvector32Term::subtract(left, right)
 }
 
 /// The largest element count a range of `element_width`-byte elements may have
