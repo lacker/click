@@ -1798,7 +1798,18 @@ fn one_element_gap_separates_bytes(
         // ladder, which needs no width: distinct objects share no byte.
         return true;
     }
+    // Cancelling a shared additive base is what lets two indexed addresses be
+    // compared, and a pair with no base to cancel — `a + 4` against `a[i]`,
+    // where one side is a bare constant and the other a bare scaled index —
+    // had nothing to cancel and so was declined. Their own offsets are the
+    // indices in that case, and reading them is sound for the same reason
+    // the cancelled pair's are: `element_index_from_offset` answers only
+    // where every leaf contributes a whole multiple of the element width, so
+    // two offsets it answers for are both multiples of that width, and two
+    // different multiples of `w` are at least `w` apart. That is the gap this
+    // rule measures, and it needs no index arithmetic to establish.
     let Some((left_index, right_index, element_width)) = common_base_element_indices(left, right)
+        .or_else(|| element_indices_of(&left.offset, &right.offset))
     else {
         return false;
     };

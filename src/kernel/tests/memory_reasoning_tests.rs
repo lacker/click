@@ -2934,6 +2934,77 @@ fn symbolic_store_invalidates_only_possible_aliasing_cells() {
     assert_eq!(distinct.known_value(&concrete_cell), Some(int32(42)));
 }
 
+/// A store keeps the cells whose *bytes* it provably misses, and an address
+/// ladder does not answer that. `i != j` separates `a[i]` from `a[j]` and
+/// says nothing about an eight-byte store at `a[j]`, which covers `a[j]` and
+/// `a[j + 1]` both — so the ladder may only stand in for the bytes where the
+/// gap it establishes clears the wider access.
+///
+/// `overwrites` is not what was deciding these: it compares a constant byte
+/// interval and declines two offsets carrying different symbolic atoms,
+/// which is exactly this pair.
+#[test]
+fn a_wide_store_does_not_spare_a_narrow_cell_a_ladder_separates() {
+    let i = Bitvector32Term::Variable(Variable(93_640));
+    let j = Bitvector32Term::Variable(Variable(93_641));
+    let element = |index: &Bitvector32Term| Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Add(
+            Box::new(PointerOffsetTerm::Variable(Variable(93_642))),
+            Box::new(PointerOffsetTerm::Int32Scaled {
+                value: Box::new(index.clone()),
+                byte_width: 4,
+            }),
+        ),
+    };
+    let cell = element(&i);
+    let write = element(&j);
+    let memory = CMemory::new()
+        .with_block("array", 16)
+        .store(cell.clone(), int32(5));
+    // The ladder's premise, and the only one: the two element indices differ.
+    let indices_differ = PureFactContext::new()
+        .assume_condition(ConditionTerm::equal(i.clone(), j.clone()), false);
+
+    // A four-byte store at a different element misses a four-byte cell: one
+    // element of gap clears both accesses whichever way the ladder runs.
+    let narrow = memory
+        .clone()
+        .without_possible_aliasing_cells(&write, 4, &indices_differ);
+    assert_eq!(narrow.known_value(&cell), Some(int32(5)));
+
+    // An eight-byte store at that same element reaches the one above it, and
+    // `i != j` does not rule out `i == j + 1`.
+    let wide = memory
+        .clone()
+        .without_possible_aliasing_cells(&write, 8, &indices_differ);
+    assert_eq!(wide.known_value(&cell), None);
+
+    // With the direction fixed the gap is decided: the store is the *lower*
+    // access, so its eight bytes have to fit, and they do not.
+    let store_below = indices_differ.clone().assume_condition(
+        ConditionTerm::signed_less_than(j.clone(), i.clone()),
+        true,
+    );
+    assert_eq!(
+        memory
+            .clone()
+            .without_possible_aliasing_cells(&write, 8, &store_below)
+            .known_value(&cell),
+        None
+    );
+    // The other direction puts the *cell* below, and an access extending away
+    // from the gap cannot close it, so the eight-byte store is separate.
+    let store_above = indices_differ
+        .assume_condition(ConditionTerm::signed_less_than(i.clone(), j.clone()), true);
+    assert_eq!(
+        memory
+            .without_possible_aliasing_cells(&write, 8, &store_above)
+            .known_value(&cell),
+        Some(int32(5))
+    );
+}
+
 /// One hop through an exact pointer equality, and every way that hop must not
 /// be taken. Without the rule, a load through a pointer a call returned is
 /// framed by nothing at all once `observable_by_load` stopped filtering by
