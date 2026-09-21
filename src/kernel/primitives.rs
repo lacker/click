@@ -1084,6 +1084,13 @@ pub enum SpecExpression {
         pointer: Box<SpecExpression>,
         value_type: CType,
     },
+    /// A field of a by-value parameter, not a dereference of a C pointer.
+    /// Its logical value remains available after the parameter storage ends.
+    AggregateFieldValue {
+        parameter: String,
+        pointer: Box<SpecExpression>,
+        value_type: CType,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

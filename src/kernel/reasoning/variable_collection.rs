@@ -614,6 +614,9 @@ pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
             collect_spec_expression_bitvector_variables(pointer, variables);
             collect_spec_expression_bitvector_variables(elements, variables);
         }
+        SpecExpression::AggregateFieldValue { pointer, .. } => {
+            collect_spec_expression_bitvector_variables(pointer, variables);
+        }
         SpecExpression::MemoryLoad {
             memory, pointer, ..
         } => {
@@ -1126,6 +1129,9 @@ fn collect_spec_integer_bound_expression(
         } => {
             collect_spec_integer_bound_expression(pointer, variables, integer_seen);
             collect_spec_integer_bound_expression(elements, variables, integer_seen);
+        }
+        SpecExpression::AggregateFieldValue { pointer, .. } => {
+            collect_spec_integer_bound_expression(pointer, variables, integer_seen);
         }
         SpecExpression::MemoryLoad {
             memory, pointer, ..

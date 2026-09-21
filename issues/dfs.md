@@ -149,64 +149,22 @@ Recurring roots worth auditing by name:
 Cost evidence must be deterministic work from `click profile`; wall-clock on the
 development machine varies by ±50% run to run.
 
-## Open — false theorems with a witness on master
+## Fixed soundness findings
 
-### S1. A postcondition can read an expired aggregate parameter through an output pointer
+### S1. Automatic storage and logical aggregate parameter values
 
-The surface scope exits, for-update ordering, callee body locals, and scalar
-parameter storage now retire. Regressions live in
-`mdtests/automatic_scope_exit_*.md`; valid paths and expansion are checked too.
+Surface scope exits, for-update ordering, callee body locals, and all parameter
+storage now retire. Regressions live in `mdtests/automatic_scope_exit_*.md` and
+`mdtests/aggregate_parameter_*.md`; valid paths and expansion are checked too.
 Callee stores through caller-local pointers also refresh their named bindings.
 
-Confirmed on `c21abc68`: the following whole-function contract verifies, including
-final certification. The output pointer names the callee's by-value parameter
-copy, whose storage has expired when the postcondition is read.
-
-```c
-struct packet { int32 value; };
-void leak(struct packet input, int32** out) {
-    input.value = 7;
-    out[0] = &input.value;
-}
-```
-
-```click
-void leak(struct packet input, int32** out) {
-    consumes out[0..1];
-    produces out[0..1];
-    ensures *out[0] == 7;
-} by { execute(); simp(); }
-```
-
-`end_function_body_automatic_lifetimes` in `src/kernel/functions.rs` deliberately
-exempts aggregate parameter slots so that contracts can read their logical field
-values. `function_exit_memory` closes a directly returned local pointer's block,
-but does not follow pointers stored through output parameters. Thus the output
-read above still sees the private parameter copy as live. This is a confirmed
-false contract, not merely an unexamined representation concern.
-
-The investigated direct-return variant (`return &input.value` with
-`ensures result[0] == 7`) is rejected during final certification. A modular caller
-that passes through its own owned output argument and then executes
-`return *out[0]` is also rejected: the callee's equality does not supply the
-required view of the pointee. A caller using an uninitialized local output slot
-is rejected earlier for missing ownership of that slot. These checks do not
-establish safety of every caller route.
-
-Removing the aggregate exemption makes the false output-pointer contract fail
-with `the proposition reads memory that is not viewable here`, but also breaks
-the valid contract in `mdtests/aggregate_parameter_logical_value.md`:
-`read_value(struct packet input) { return input.value; }` with
-`ensures result == input.value`. That experiment was reverted; this bug remains
-unfixed.
-
-The repair must retain logical aggregate values for contracts independently of
-the parameter's C storage, retire all parameter storage before postcondition
-checks, and prevent logical snapshots from granting access through escaped C
-pointers. Keep the C above unchanged as a negative regression and the logical
-value fixture as its positive companion. Also check nested/array fields,
-shallow pointer fields, `old(...)`, aggregate returns, returned resources, and
-ordinary caller execution; verify that positive proofs expand and recheck.
+The remaining witness from `076c7c5e` exported `&input.value` through an output
+pointer and incorrectly verified `ensures *out[0] == 7`. It is now rejected.
+Logical aggregate field projections retain parameter values independently of
+C storage; they cannot grant access through an escaped pointer. Ordinary field
+reads, nested and array fields, shallow pointer values, `old(...)`, and aggregate
+returns have positive coverage. The restriction on postconditions reading
+modified by-value parameter fields remains in place.
 
 S2's offset-alias partition witness is rejected by indexed pointer and offset
 equalities, with exact byte comparisons for concrete extents. Its regression is

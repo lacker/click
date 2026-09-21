@@ -1026,13 +1026,22 @@ a continue update resumes the loop head. Nested loops keep their own control
 edges. A non-inline function also retires its body locals before postconditions
 are read, so exporting an address through a field or output parameter does not
 extend its lifetime. Address-backed scalar parameters expire too. Aggregate
-parameter copies remain available during contract evaluation and retire before
-caller execution resumes; separating their logical contract values from C
-storage during postcondition evaluation remains a bug: a postcondition can read
-an expired parameter field through an output pointer (`issues/dfs.md`, S1).
-The positive companion `mdtests/aggregate_parameter_logical_value.md` requires
-logical field values to remain usable after the C storage expires. Materialized
-aggregate results belong to the caller and survive the callee's exit.
+parameter storage expires before postconditions and returned resources are read.
+`SpecExpression::AggregateFieldValue` reads a direct by-value parameter projection
+from its current storage while live, or its retained entry value after exit.
+The existing check against postconditions reading modified parameter fields
+still applies. The operation accepts a named object projection, not a loaded or
+aliased C pointer; it creates no memory view or resource. Pointer-valued fields
+are shallow values: a following dereference uses current C memory and requires
+its own permission. Historical field reads resolve the object's address in the
+selected entry snapshot. Materialized aggregate results belong to the caller
+and survive the callee's exit.
+
+The positive field, array, shallow-pointer, and aggregate-return checks are in
+`mdtests/aggregate_parameter_value_fields.md`. The output-pointer, explicit
+address-taking, and pointer-bearing return regressions are the other
+`aggregate_parameter_*.md` fixtures. Kernel checks cover forged projections and
+work independent of unrelated locals; positive proofs expand and recheck.
 
 Value-only parameter bindings use a separate pseudo-slot namespace. Concrete
 callee store events refresh the caller's affected scalar bindings by slot, so

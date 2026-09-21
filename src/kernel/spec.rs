@@ -5170,6 +5170,180 @@ fn evaluate_spec_add_chain_paths(
     Ok(paths)
 }
 
+/// Rebase only the syntactic object projection. A loaded/aliased C pointer
+/// cannot use this operation to gain access to a retained logical value.
+fn aggregate_projection_pointer(
+    expression: &SpecExpression,
+    parameter: &str,
+    slot: &Pointer,
+) -> Option<SpecExpression> {
+    match expression {
+        SpecExpression::CExpression(CExpression::Variable(name)) if name == parameter => {
+            Some(SpecExpression::Value(CValue::pointer(slot.clone())))
+        }
+        SpecExpression::PointerOffset {
+            pointer,
+            elements,
+            byte_width,
+        } => Some(SpecExpression::PointerOffset {
+            pointer: Box::new(aggregate_projection_pointer(pointer, parameter, slot)?),
+            elements: elements.clone(),
+            byte_width: *byte_width,
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod aggregate_value_tests {
+    use super::*;
+
+    #[test]
+    fn logical_fields_are_bounded_and_do_not_grant_pointer_access() {
+        use crate::kernel::{CAggregateField, CAggregateLayout};
+        let slot = Pointer {
+            block: "local:frame:0:input".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let layout =
+            CAggregateLayout::new(4, 4, vec![CAggregateField::new("value", 0, CType::Int32)]);
+        let projection = SpecExpression::AggregateFieldValue {
+            parameter: "input".to_string(),
+            pointer: Box::new(SpecExpression::CExpression(CExpression::Variable(
+                "input".to_string(),
+            ))),
+            value_type: CType::Int32,
+        };
+        let mut samples = Vec::new();
+        for size in [8, 32, 128, 512] {
+            let mut entry = CState::new().with_memory(
+                CMemory::new()
+                    .with_block(slot.block.clone(), 4)
+                    .store(slot.clone(), int32(7)),
+            );
+            entry
+                .locals
+                .set_aggregate_object_at("input".to_string(), layout.clone(), slot.clone());
+            for i in 0..size {
+                entry = entry.with_local(format!("unrelated_{i}"), int32(i));
+            }
+            let state = entry
+                .clone()
+                .with_memory(entry.memory.clone().without_local_block(&slot.block));
+            let evaluate = |expression: &SpecExpression| {
+                evaluate_spec_expression_paths_with_loop_entry(
+                    &state,
+                    expression,
+                    Some(&entry),
+                    &PureFactContext::new(),
+                    &mut ExecutionBudget::beside_live_state(),
+                )
+                .unwrap()
+            };
+            let (values, work) =
+                crate::instrumentation::measure_deterministic_work(|| evaluate(&projection));
+            assert_eq!(values.len(), 1);
+            assert_eq!(values[0].value, int32(7));
+            assert!(values[0].obligations.is_empty());
+            samples.push(work);
+            let ordinary = SpecExpression::MemoryLoad {
+                memory: SpecMemory::Current,
+                pointer: Box::new(SpecExpression::Value(CValue::pointer(slot.clone()))),
+                value_type: CType::Int32,
+            };
+            assert!(
+                evaluate(&ordinary)
+                    .iter()
+                    .all(|path| path.obligations.iter().any(|obligation| {
+                        crate::kernel::c_loadability_obligation_impossible(obligation.proposition())
+                    }))
+            );
+            let forged = SpecExpression::AggregateFieldValue {
+                parameter: "input".to_string(),
+                pointer: Box::new(SpecExpression::Value(CValue::pointer(slot.clone()))),
+                value_type: CType::Int32,
+            };
+            assert!(evaluate(&forged).is_empty());
+        }
+        assert!(samples[0] > 0);
+        assert!(
+            samples.iter().all(|work| *work == samples[0]),
+            "{samples:?}"
+        );
+    }
+
+    #[test]
+    fn logical_pointer_field_uses_current_pointee_memory() {
+        use crate::kernel::{CAggregateField, CAggregateLayout};
+        let slot = Pointer {
+            block: "local:frame:0:input".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let pointee = Pointer {
+            block: "local:pointee".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let mut entry = CState::new().with_memory(
+            CMemory::new()
+                .with_block(slot.block.clone(), 8)
+                .with_block(pointee.block.clone(), 4)
+                .store(slot.clone(), CValue::pointer(pointee.clone()))
+                .store(pointee.clone(), int32(3)),
+        );
+        entry.locals.set_aggregate_object_at(
+            "input".to_string(),
+            CAggregateLayout::new(
+                8,
+                8,
+                vec![CAggregateField::new("data", 0, CType::Int32Pointer)],
+            ),
+            slot.clone(),
+        );
+        let load = SpecExpression::MemoryLoad {
+            memory: SpecMemory::Current,
+            pointer: Box::new(SpecExpression::AggregateFieldValue {
+                parameter: "input".to_string(),
+                pointer: Box::new(SpecExpression::CExpression(CExpression::Variable(
+                    "input".to_string(),
+                ))),
+                value_type: CType::Int32Pointer,
+            }),
+            value_type: CType::Int32,
+        };
+        let state = entry.clone().with_memory(
+            entry
+                .memory
+                .clone()
+                .without_local_block(&slot.block)
+                .store(pointee.clone(), int32(7)),
+        );
+        let evaluate = |state: &CState| {
+            evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                &load,
+                Some(&entry),
+                &PureFactContext::new(),
+                &mut ExecutionBudget::beside_live_state(),
+            )
+            .unwrap()
+        };
+        let paths = evaluate(&state);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].value, int32(7));
+        assert!(paths[0].obligations.is_empty());
+        let ended = state
+            .clone()
+            .with_memory(state.memory.clone().without_local_block(&pointee.block));
+        assert!(
+            evaluate(&ended)
+                .iter()
+                .all(|path| path.obligations.iter().any(|obligation| {
+                    crate::kernel::c_loadability_obligation_impossible(obligation.proposition())
+                }))
+        );
+    }
+}
+
 fn evaluate_spec_expression_paths_with_algebraic_bindings_one(
     state: &CState,
     expression: &SpecExpression,
@@ -5180,6 +5354,56 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one(
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     budget.consume_expression_step()?;
     let paths = match expression {
+        SpecExpression::AggregateFieldValue {
+            parameter,
+            pointer,
+            value_type,
+        } => {
+            let entry = loop_entry_state
+                .filter(|entry| entry.locals.aggregate_layout(parameter).is_some())
+                .unwrap_or(state);
+            let Some(CLocalBinding::AggregateObject { slot, .. }) = entry.locals.binding(parameter)
+            else {
+                // Requirement setup can bind the caller's aggregate image as
+                // a plain pointer. It has no retired parameter value to expose.
+                return evaluate_spec_expression_paths_with_algebraic_bindings(
+                    state,
+                    &SpecExpression::MemoryLoad {
+                        memory: SpecMemory::Current,
+                        pointer: pointer.clone(),
+                        value_type: *value_type,
+                    },
+                    loop_entry_state,
+                    assumptions,
+                    algebraic_bindings,
+                    budget,
+                );
+            };
+            let Some(pointer) = aggregate_projection_pointer(pointer, parameter, slot) else {
+                return Ok(Vec::new());
+            };
+            // Current fields are read while storage exists. Once it ends,
+            // the contract retains the value from entry, never its permission.
+            // Contract validation separately refuses current reads of fields
+            // modified by the body, as for ordinary by-value parameter claims.
+            let memory = if state.memory.has_block(&slot.block) {
+                state.memory()
+            } else {
+                entry.memory()
+            };
+            evaluate_spec_expression_paths_with_algebraic_bindings(
+                state,
+                &SpecExpression::MemoryLoad {
+                    memory: SpecMemory::Fixed(memory.clone()),
+                    pointer: Box::new(pointer),
+                    value_type: *value_type,
+                },
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?
+        }
         SpecExpression::IntegerToMachine { value, destination } => {
             let integer_paths = evaluate_spec_integer_expression_paths(
                 state,
@@ -5830,9 +6054,30 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one(
             value_type,
         } => {
             let mut paths = Vec::new();
+            let entry_projection =
+                if matches!(memory, SpecMemory::FunctionEntry | SpecMemory::LoopEntry) {
+                    fn root(expression: &SpecExpression) -> Option<&str> {
+                        match expression {
+                            SpecExpression::CExpression(CExpression::Variable(name)) => Some(name),
+                            SpecExpression::PointerOffset { pointer, .. } => root(pointer),
+                            _ => None,
+                        }
+                    }
+                    root(pointer).and_then(|name| {
+                        let entry = loop_entry_state?;
+                        let CLocalBinding::AggregateObject { slot, .. } =
+                            entry.locals.binding(name)?
+                        else {
+                            return None;
+                        };
+                        aggregate_projection_pointer(pointer, name, slot)
+                    })
+                } else {
+                    None
+                };
             for pointer_path in evaluate_spec_expression_paths_with_algebraic_bindings(
                 state,
-                pointer,
+                entry_projection.as_ref().unwrap_or(pointer),
                 loop_entry_state,
                 assumptions,
                 algebraic_bindings,

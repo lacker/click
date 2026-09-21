@@ -368,7 +368,8 @@ fn collect_spec_expression_carriers(
             }
             collect_spec_expression_carriers(elements, variables, integer_seen);
         }
-        SpecExpression::MemoryLoad { pointer, .. } => {
+        SpecExpression::AggregateFieldValue { pointer, .. }
+        | SpecExpression::MemoryLoad { pointer, .. } => {
             collect_spec_expression_carriers(pointer, variables, integer_seen)
         }
     }
@@ -1021,6 +1022,15 @@ impl<'a> TermRewrite<'a> {
                 pointer: Box::new(self.rewrite_spec_expression(pointer)?),
                 elements: Box::new(self.rewrite_spec_expression(elements)?),
                 byte_width: *byte_width,
+            },
+            SpecExpression::AggregateFieldValue {
+                parameter,
+                pointer,
+                value_type,
+            } => SpecExpression::AggregateFieldValue {
+                parameter: parameter.clone(),
+                pointer: Box::new(self.rewrite_spec_expression(pointer)?),
+                value_type: *value_type,
             },
             SpecExpression::MemoryLoad {
                 memory,

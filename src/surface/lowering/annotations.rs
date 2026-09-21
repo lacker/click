@@ -469,6 +469,7 @@ fn lower_kernel_pure_function_definition(
         entry_state: &entry_state,
         result_type: CType::Int32,
         entry_values: BTreeMap::new(),
+        aggregate_parameters: BTreeSet::new(),
         parameter_array_element_types: definition
             .parameters()
             .iter()
@@ -554,6 +555,7 @@ pub(in crate::surface) fn lower_composite_resource_condition(
         entry_state: &entry_state,
         result_type: CType::Int32,
         entry_values: BTreeMap::new(),
+        aggregate_parameters: BTreeSet::new(),
         parameter_array_element_types: definition
             .parameters()
             .iter()
@@ -634,6 +636,7 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
         entry_state: &entry_state,
         result_type: CType::Int32,
         entry_values: BTreeMap::new(),
+        aggregate_parameters: BTreeSet::new(),
         parameter_array_element_types: definition
             .parameters()
             .iter()
@@ -810,6 +813,12 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
             parsed_function.return_type().to_kernel_type()
         },
         entry_values: parameter_values(parsed_function.parameters(), arguments)?,
+        aggregate_parameters: parsed_function
+            .parameters()
+            .iter()
+            .filter(|p| p.is_struct_value())
+            .map(|p| p.name().to_string())
+            .collect(),
         parameter_array_element_types: parsed_function
             .parameters()
             .iter()
@@ -1004,6 +1013,12 @@ pub(in crate::surface) fn lower_branch_interface_fact(
             parsed_function.return_type().to_kernel_type()
         },
         entry_values: parameter_values(parsed_function.parameters(), arguments)?,
+        aggregate_parameters: parsed_function
+            .parameters()
+            .iter()
+            .filter(|p| p.is_struct_value())
+            .map(|p| p.name().to_string())
+            .collect(),
         parameter_array_element_types: parsed_function
             .parameters()
             .iter()
@@ -1060,6 +1075,7 @@ fn fixed_state_elaboration<'a>(
         entry_state,
         result_type: result.map(CValue::c_type).unwrap_or(CType::Int32),
         entry_values,
+        aggregate_parameters: BTreeSet::new(),
         parameter_array_element_types: array_element_types,
         parameter_pointer_element_widths,
         quantified_values: BTreeMap::new(),
@@ -1355,6 +1371,7 @@ pub(in crate::surface) fn elaborate_requirement_proposition(
         entry_state: &entry_state,
         result_type: CType::Int32,
         entry_values: BTreeMap::new(),
+        aggregate_parameters: BTreeSet::new(),
         parameter_array_element_types: parameters
             .iter()
             .filter_map(|parameter| {
@@ -1417,6 +1434,7 @@ pub(in crate::surface) fn function_contract_summary(
         entry_state: &entry_state,
         result_type: parsed_function.return_type().to_kernel_type(),
         entry_values: BTreeMap::new(),
+        aggregate_parameters: BTreeSet::new(),
         parameter_array_element_types: parsed_function
             .parameters()
             .iter()
@@ -1513,6 +1531,14 @@ pub(in crate::surface) fn function_contract_summary(
             Err(_) => opaque_contract_supported = false,
         }
     }
+    // Entry reads use the live argument image. Exit clauses project logical
+    // values independently of the parameter's expired C storage.
+    lowerer.aggregate_parameters = parsed_function
+        .parameters()
+        .iter()
+        .filter(|parameter| parameter.is_struct_value())
+        .map(|parameter| parameter.name().to_string())
+        .collect();
     let mut ensures = Vec::new();
     for proposition in function_block
         .ensures()
@@ -1760,6 +1786,7 @@ struct AnnotationLowerer<'a> {
     result_type: CType,
     entry_values: BTreeMap<String, CValue>,
     parameter_array_element_types: BTreeMap<String, CType>,
+    aggregate_parameters: BTreeSet<String>,
     /// Source-side pointee widths which are not representable in the kernel's
     /// nominal `CType` (notably pointers to structs, which use the compatible
     /// `int32*` carrier).  Pointer arithmetic must retain this physical width.
@@ -4229,17 +4256,49 @@ impl AnnotationLowerer<'_> {
                 self.lower_contract_expression_to_spec(expression, environment)?,
             ))),
             ContractExpression::Index(base, index) => {
-                let array_ref = self.lower_array_ref_to_spec(base, environment)?;
+                let projection = match base.as_ref() {
+                    ContractExpression::Field { lowered, .. }
+                    | ContractExpression::ArrayIndex { lowered, .. }
+                    | ContractExpression::CFragment(lowered) => aggregate_projection_root(lowered),
+                    _ => None,
+                }
+                .filter(|parameter| {
+                    matches!(environment.current_memory, SpecMemory::Current)
+                        && environment.current_loop_entry.is_none()
+                        && (self.aggregate_parameters.contains(*parameter)
+                            || self
+                                .entry_state
+                                .locals()
+                                .aggregate_layout(parameter)
+                                .is_some())
+                });
+                let mut projection_environment = environment.clone();
+                if let Some(parameter) = projection {
+                    projection_environment.values.insert(
+                        parameter.to_string(),
+                        SpecExpression::CExpression(CExpression::Variable(parameter.to_string())),
+                    );
+                }
+                let array_ref = self.lower_array_ref_to_spec(base, &projection_environment)?;
                 let index = self.lower_contract_expression_to_spec(index, environment)?;
-                Ok(SpecExpression::MemoryLoad {
-                    memory: array_ref.memory,
-                    pointer: Box::new(SpecExpression::PointerOffset {
-                        pointer: Box::new(array_ref.pointer),
-                        elements: Box::new(index),
-                        byte_width: array_ref.element_type.byte_width(),
-                    }),
-                    value_type: array_ref.element_type,
-                })
+                let pointer = Box::new(SpecExpression::PointerOffset {
+                    pointer: Box::new(array_ref.pointer),
+                    elements: Box::new(index),
+                    byte_width: array_ref.element_type.byte_width(),
+                });
+                if let Some(parameter) = projection {
+                    Ok(SpecExpression::AggregateFieldValue {
+                        parameter: parameter.to_string(),
+                        pointer,
+                        value_type: array_ref.element_type,
+                    })
+                } else {
+                    Ok(SpecExpression::MemoryLoad {
+                        memory: array_ref.memory,
+                        pointer,
+                        value_type: array_ref.element_type,
+                    })
+                }
             }
             ContractExpression::If {
                 condition,
@@ -5380,11 +5439,36 @@ impl AnnotationLowerer<'_> {
                 pointer,
                 value_type,
                 ..
-            } => Ok(SpecExpression::MemoryLoad {
-                memory: environment.current_memory.clone(),
-                pointer: Box::new(self.lower_c_fragment_to_spec(pointer, environment)?),
-                value_type: *value_type,
-            }),
+            } => {
+                if matches!(environment.current_memory, SpecMemory::Current)
+                    && environment.current_loop_entry.is_none()
+                    && let Some(parameter) = aggregate_projection_root(pointer)
+                    && (self.aggregate_parameters.contains(parameter)
+                        || self
+                            .entry_state
+                            .locals()
+                            .aggregate_layout(parameter)
+                            .is_some())
+                {
+                    let mut projection_environment = environment.clone();
+                    projection_environment.values.insert(
+                        parameter.to_string(),
+                        SpecExpression::CExpression(CExpression::Variable(parameter.to_string())),
+                    );
+                    return Ok(SpecExpression::AggregateFieldValue {
+                        parameter: parameter.to_string(),
+                        pointer: Box::new(
+                            self.lower_c_fragment_to_spec(pointer, &projection_environment)?,
+                        ),
+                        value_type: *value_type,
+                    });
+                }
+                Ok(SpecExpression::MemoryLoad {
+                    memory: environment.current_memory.clone(),
+                    pointer: Box::new(self.lower_c_fragment_to_spec(pointer, environment)?),
+                    value_type: *value_type,
+                })
+            }
             CExpression::Load(pointer) => Ok(SpecExpression::MemoryLoad {
                 memory: environment.current_memory.clone(),
                 pointer: Box::new(self.lower_c_fragment_to_spec(pointer, environment)?),
@@ -5826,11 +5910,33 @@ impl AnnotationLowerer<'_> {
     }
 }
 
+/// Only direct object projections qualify. Address-taking, casts and loaded
+/// pointers keep ordinary C memory semantics.
+fn aggregate_projection_root(expression: &CExpression) -> Option<&str> {
+    match expression {
+        CExpression::Variable(name) => Some(name),
+        CExpression::PointerOffsetBytes { pointer, .. } => aggregate_projection_root(pointer),
+        CExpression::Add(pointer, _) | CExpression::Subtract(pointer, _) => {
+            aggregate_projection_root(pointer)
+        }
+        CExpression::TypedLoad {
+            pointer,
+            value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+            ..
+        } => aggregate_projection_root(pointer),
+        _ => None,
+    }
+}
+
 fn spec_expression_click_type(expression: &SpecExpression) -> Option<ClickType> {
     let c_type = match expression {
         SpecExpression::ResourceField { c_type, .. } => *c_type,
         SpecExpression::Value(value) => value.c_type(),
         SpecExpression::PureFunctionApplication { result_type, .. }
+        | SpecExpression::AggregateFieldValue {
+            value_type: result_type,
+            ..
+        }
         | SpecExpression::MemoryLoad {
             value_type: result_type,
             ..

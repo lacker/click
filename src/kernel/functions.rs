@@ -6858,7 +6858,8 @@ fn spec_expression_supports_stateful_memory_refinement(expression: &SpecExpressi
         SpecExpression::CountedResourceCount { .. }
         | SpecExpression::RangeFold { .. }
         | SpecExpression::LoopEntrySnapshot(_)
-        | SpecExpression::MemoryLoad { .. } => false,
+        | SpecExpression::MemoryLoad { .. }
+        | SpecExpression::AggregateFieldValue { .. } => false,
     }
 }
 
@@ -7275,7 +7276,8 @@ fn spec_expression_reads_current_parameter(
             memory: SpecMemory::FunctionEntry | SpecMemory::Fixed(_),
             ..
         } => false,
-        SpecExpression::MemoryLoad { pointer, .. } => {
+        SpecExpression::AggregateFieldValue { pointer, .. }
+        | SpecExpression::MemoryLoad { pointer, .. } => {
             spec_expression_reads_current_parameter(pointer, parameter_name)
         }
     }
@@ -7916,7 +7918,12 @@ fn spec_expression_current_parameter_accesses(
             memory: SpecMemory::FunctionEntry | SpecMemory::Fixed(_),
             ..
         } => {}
-        SpecExpression::MemoryLoad {
+        SpecExpression::AggregateFieldValue {
+            pointer,
+            value_type,
+            ..
+        }
+        | SpecExpression::MemoryLoad {
             memory: SpecMemory::Current,
             pointer,
             value_type,
@@ -19191,8 +19198,8 @@ fn end_inline_frame_automatic_lifetimes(state: &CState) -> CMemory {
 
 /// A non-inline body's declared locals have ended before its postconditions
 /// are read, including locals exported through a pointer field or out-parameter.
-/// Aggregate parameter slots remain available during by-value contract
-/// evaluation and retire before returning to a caller. Preserve the materialized
+/// Parameter storage expires too. Logical field projections use the entry
+/// value independently of storage permissions. Preserve the materialized
 /// aggregate result, which belongs to the caller, and caller-owned objects.
 fn end_function_body_automatic_lifetimes(
     state: &CState,
@@ -19200,16 +19207,9 @@ fn end_function_body_automatic_lifetimes(
     caller: &CMemory,
     returned: Option<&CValue>,
 ) -> CMemory {
-    let parameters: BTreeSet<_> = function
-        .parameters()
-        .iter()
-        .filter(|parameter| parameter.aggregate_layout().is_some())
-        .filter_map(|parameter| state.locals.slot(parameter.name()))
-        .collect();
     let mut memory = state.memory.clone();
     for slot in state.locals.slots() {
         if slot.block.starts_with("local:")
-            && !parameters.contains(slot)
             && !(function.return_aggregate_layout().is_some()
                 && matches!(returned, Some(CValue::Pointer(pointer)) if pointer.pointer().block == slot.block))
             && !caller.has_block(&slot.block)
@@ -19568,6 +19568,12 @@ fn function_outcome_from_body_with_resource_transfer(
     if function.return_type() != CType::Void {
         set_function_result(&mut state, function, value.clone());
     }
+    state.set_memory(end_function_body_automatic_lifetimes(
+        &state,
+        function,
+        caller_state.memory(),
+        Some(&value),
+    ));
     let population_transition = match crate::instrumentation::measure_operation(
         function.name(),
         "contract resource transition",
@@ -19691,23 +19697,7 @@ fn function_outcome_from_body_with_resource_transfer(
         };
 
     let mut return_state = caller_state.clone();
-    let mut exit_memory = end_function_body_automatic_lifetimes(
-        &state,
-        function,
-        caller_state.memory(),
-        Some(&value),
-    );
-    // Contract checks above used the callee's by-value parameter storage.
-    // No parameter object remains alive when caller execution resumes.
-    for parameter in function.parameters() {
-        if let Some(slot) = state.locals.slot(parameter.name())
-            && !caller_state.memory().has_block(&slot.block)
-            && exit_memory.has_block(&slot.block)
-        {
-            exit_memory = exit_memory.without_local_block(&slot.block);
-        }
-    }
-    return_state.set_memory(exit_memory);
+    return_state.set_memory(state.memory.clone());
     return_state.resources = return_resources;
     return_state.loan_ledger = return_ledger;
     return_state.loan_participant = return_participant;

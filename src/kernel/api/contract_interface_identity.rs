@@ -333,6 +333,12 @@ impl Names {
             Value(_) | ResourceField { .. } => {}
             IntegerToMachine { value, .. } => self.integer(value),
             CExpression(e) => self.c(e),
+            AggregateFieldValue {
+                parameter, pointer, ..
+            } => {
+                self.reference(parameter);
+                self.expression(pointer);
+            }
             CountedResourceCount { arguments, .. } => {
                 for e in arguments.iter_mut().flatten() {
                     self.expression(e);

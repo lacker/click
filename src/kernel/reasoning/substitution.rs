@@ -3347,6 +3347,17 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
             )),
             byte_width: *byte_width,
         },
+        SpecExpression::AggregateFieldValue {
+            parameter,
+            pointer,
+            value_type,
+        } => SpecExpression::AggregateFieldValue {
+            parameter: parameter.clone(),
+            pointer: Box::new(substitute_bitvector_variable_in_spec_expression(
+                pointer, from, to,
+            )),
+            value_type: *value_type,
+        },
         SpecExpression::MemoryLoad {
             memory,
             pointer,
@@ -6971,6 +6982,17 @@ fn substitute_pointer_variable_in_spec_expression(
                 elements, from, to,
             )),
             byte_width: *byte_width,
+        },
+        SpecExpression::AggregateFieldValue {
+            parameter,
+            pointer,
+            value_type,
+        } => SpecExpression::AggregateFieldValue {
+            parameter: parameter.clone(),
+            pointer: Box::new(substitute_pointer_variable_in_spec_expression(
+                pointer, from, to,
+            )),
+            value_type: *value_type,
         },
         SpecExpression::MemoryLoad {
             memory,

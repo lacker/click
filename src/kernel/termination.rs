@@ -1338,7 +1338,8 @@ fn collect_spec_expression_c_variables(
         | SpecExpression::If { .. }
         | SpecExpression::RangeFold { .. }
         | SpecExpression::Let { .. }
-        | SpecExpression::LoopEntrySnapshot(_) => false,
+        | SpecExpression::LoopEntrySnapshot(_)
+        | SpecExpression::AggregateFieldValue { .. } => false,
     }
 }
 

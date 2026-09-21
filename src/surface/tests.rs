@@ -2367,3 +2367,21 @@ fn bounded_population_increment_expands_and_checks() {
         expand_c0_claim_source(source, &inputs, "increment", CProofClaim::Grouped).unwrap();
     verify_c0_sources(&expanded, &inputs).unwrap();
 }
+
+#[test]
+fn aggregate_parameter_values_expand_and_check() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/aggregate_parameter_value_fields.md");
+    let fixture = crate::cli::read_mdtest(&path).unwrap();
+    let source = fixture.click_source.as_deref().unwrap();
+    let inputs = fixture
+        .c_sources
+        .iter()
+        .map(|(name, body)| (name.as_str(), body.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(source, &inputs).unwrap();
+    for name in ["nested", "copy"] {
+        let expanded = expand_c0_claim_source(source, &inputs, name, CProofClaim::Grouped).unwrap();
+        verify_c0_sources(&expanded, &inputs).unwrap();
+    }
+}
