@@ -2248,6 +2248,89 @@ mod tests {
         assert_ne!(witness, ambient);
     }
 
+    /// A universal introduction's witness stands for an arbitrary value, so
+    /// it must name nothing the surrounding state already names. This used to
+    /// be decided by counting up from `Variable(0)` for an identity no *fact*
+    /// mentions, which is the C identity range: the witness became a live
+    /// program variable of the function being proved whenever the low
+    /// identities happened to be absent from the fact set, as they are for a
+    /// pointer parameter. The range is the guarantee now, so the assertion is
+    /// about the range and not about which identities a particular fact set
+    /// happens to hold.
+    #[test]
+    fn a_freshened_universal_witness_never_takes_a_c_identity() {
+        let bound = Variable(2_000_000);
+        let body = Proposition::ConditionIs(
+            crate::kernel::ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Variable(bound),
+            ),
+            true,
+        );
+        // The only fact reserves the binder, exactly as an earlier universal
+        // `have` over the same lowered binder identity does. Nothing mentions
+        // `Variable(0)`, which is what used to make it the first candidate.
+        let reserving = Proposition::ForAll {
+            var: bound,
+            sort: Sort::CInt32,
+            body: Box::new(body.clone()),
+        };
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&reserving));
+        let (witness, _) = facts
+            .freshen_int32_forall_body(bound, &body)
+            .expect("the witness range holds an identity for the first introduction");
+        assert!(
+            crate::kernel::ExecutionBudget::is_universal_witness_variable(witness),
+            "{witness:?} is outside the reserved universal-witness range, so it is some other producer's identity"
+        );
+        assert!(
+            witness.0 >= crate::kernel::ExecutionBudget::KERNEL_VARIABLE_CEILING,
+            "{witness:?} can still be a C identity or an execution identity"
+        );
+
+        // A second introduction beside the first must not name it again.
+        let second = facts
+            .with_fact(Proposition::ConditionIs(
+                crate::kernel::ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Variable(witness),
+                ),
+                true,
+            ))
+            .freshen_int32_forall_body(bound, &body)
+            .expect("a second witness")
+            .0;
+        assert_ne!(
+            witness, second,
+            "two witnesses in one scope are one identity, so a fact about the first is a fact about the second"
+        );
+    }
+
+    /// The pointer-sorted introduction takes its witness from the same range,
+    /// for the same reason: `Pointer::symbolic(v)` over a C identity is a
+    /// pointer the function already has a name for.
+    #[test]
+    fn a_freshened_pointer_witness_never_takes_a_c_identity() {
+        let bound = Variable(2_000_000);
+        let body = Proposition::Predicate {
+            name: "witness_body".into(),
+            arguments: vec![Term::Bitvector32(Bitvector32Term::Constant(0))],
+        };
+        let reserving = Proposition::ForAll {
+            var: bound,
+            sort: Sort::CPointer(crate::kernel::CType::Int32),
+            body: Box::new(body.clone()),
+        };
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&reserving));
+        let (witness, _) = facts
+            .freshen_pointer_forall_body(bound, crate::kernel::CType::Int32, &body)
+            .expect("the witness range holds an identity");
+        assert!(
+            crate::kernel::ExecutionBudget::is_universal_witness_variable(witness),
+            "{witness:?} is outside the reserved universal-witness range"
+        );
+    }
+
     #[test]
     fn materialized_assumption_accepts_same_snapshot_alpha_facts_only() {
         use crate::kernel::proof::{

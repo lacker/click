@@ -2205,8 +2205,9 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Every available stated loadable range over the goal range's own base,
-    /// in the spelling it was stated with, with its element width.
+    /// The stated loadable ranges over the goal range's own base, in the
+    /// spelling they were stated with, with their element width — and what
+    /// each filter rejected.
     ///
     /// A range that is not available here explains nothing, so availability is
     /// asked of the facts and the spelling of the lowering record, which is
@@ -2214,15 +2215,6 @@ impl<'a> Proof<'a> {
     /// proposition it became. The width comes from that same proposition,
     /// because a surface segment does not carry one and naming an extent's
     /// limit takes it.
-    fn available_stated_loadable_ranges(
-        &self,
-        goal: &ClickProposition,
-    ) -> Vec<(ClickProposition, u32)> {
-        self.stated_loadable_range_lookup(goal).available
-    }
-
-    /// The same walk as [`Self::available_stated_loadable_ranges`], keeping
-    /// what each filter rejected.
     ///
     /// "No stated viewable range over the same base is available here" is one
     /// of three different situations, and a reader can only act on the one
