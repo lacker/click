@@ -1,35 +1,15 @@
-# a pointer-chasing search terminates on the number of unmarked cells
-
-**BLOCKED — this file has not yet been shown to verify completely.** Updated on
-2026-09-22 after repairing ranked-loop return paths and correcting the false
-arm's execution cursor. Both halves of the quantified invariant over `next`
-now close. The earlier `visited[cur] != 0` refusal occurred before the store:
-the proof had crossed the lowered empty-`else` `Skip`, but not the following
-`visited[cur] = 1`. The extra `step()` below crosses the store, and
-`mdtests/post_store_fact_after_ranked_loop_return.md` checks both the equality
-and disequality at that exact control shape. The complete proof still needs a
-fresh ordinary verification run to locate its next genuine open obligation.
-The earlier range-narrowing defect was fixed in `88b05d28`, with regression
-`mdtests/a_second_universal_have_narrows_a_stated_range.md`; it is not the
-remaining prerequisite. See `issues/dfs.md` for the current handoff checkpoint.
-Do not move this file into `mdtests/` until the complete proof verifies.
-
+# A pointer-chasing search terminates on the number of unmarked cells
 
 `next` holds quasi-pointers: every entry of `next[0..n]` is itself an index
-into `0..n`. `search` follows them from `from`, marking each cell it leaves,
-and stops when it reaches a cell it has already marked. Nothing about the
-indices decreases — the walk may revisit any cell — so the measure is the
-number of cells of `visited[0..n]` that still hold zero, which the body drops
-by one every iteration because the guard says `visited[cur]` was zero and the
-body writes it.
+into `0..n`. The search follows those entries, marking each cell it leaves,
+and stops when it reaches a cell it has already marked.
 
-`decreases` takes the `Integer`-valued fold directly, and the ranking bundle
-it adds is `0 <= unmarked(visited, 0, n)` at the back edge and a strict
-decrease there. The three theorems are the ones that bundle needs:
-`unmarked_nonnegative` for the first member, `unmarked_point_update` for the
-second, and `unmarked_frame`, which the point update calls at its boundary
-case. They are copies of `mdtests/unmarked_count_lemmas.md`, because an
-`import` assumes a theorem's proof rather than checking it.
+Nothing about the indices decreases, so the loop measure is the number of
+cells in `visited[0..n]` that still hold zero. The guard establishes that the
+current cell contributes one; the body marks it and the point-update theorem
+proves that the measure drops by exactly one. The proof also exercises an
+early return inside the ranked loop and preserves the quantified bounds on the
+pointer-chasing array.
 
 ```c filename=search_terminates_by_unmarked_count.c
 int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
@@ -450,14 +430,6 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
 }
 ```
 
-The former `visited[cur] != 0` diagnostic was a proof-cursor mistake, not a
-post-store failure. The false C arm lowers through an explicit `Skip`, so the
-proof needs one step to select that arm, one to execute the `Skip`, and one to
-execute the store before stating its result. The focused regression is
-`mdtests/post_store_fact_after_ranked_loop_return.md`.
-
-The quantified value and viewability leaves also close; the pointer-chasing
-value route is covered by
-`mdtests/loop_quantified_value_after_pointer_chase.md`. See the current
-checkpoint in `issues/dfs.md`. The explicit transport limitation remains
-independently reproduced in `a_universal_fact_does_not_transport.md`.
+```expect
+pass
+```

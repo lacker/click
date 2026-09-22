@@ -2,10 +2,11 @@
 
 `unmarked(v, lo, hi)` counts the cells of `v[lo..hi]` that hold zero. It is the
 measure a pointer-chasing search that marks cells as it visits them descends
-on, so the two facts such a proof needs are that the count does not see cells
-outside its range (`unmarked_frame`) and that marking one previously unmarked
-cell inside the range drops it by exactly one (`unmarked_point_update`). Both
-are ordinary `induct(hi)` proofs over the append-last-cell law
+on, so the three facts such a proof needs are that the count is nonnegative
+(`unmarked_nonnegative`), does not see cells outside its range
+(`unmarked_frame`), and drops by exactly one when a previously unmarked cell
+inside the range is marked (`unmarked_point_update`). All three are ordinary
+`induct(hi)` proofs over the append-last-cell law
 `unfold(unmarked(..)) using { lo <= hi - 1; hi - 1 < 2147483647; }` opens.
 
 Two things about the statements are forced rather than chosen.
@@ -35,6 +36,53 @@ restate what the clause above them already said.
 ```click
 function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
     (lo..hi).fold(0, |acc, k| { acc + to_integer(if v[k] == 0 { 1 } else { 0 }) })
+}
+
+theorem unmarked_nonnegative(v: int32[], lo: int32, n: int32, hi: int32) {
+    requires 0 <= lo;
+    requires 0 <= hi;
+    requires hi <= n;
+    requires n <= 1073741823;
+    views v[lo..n];
+    ensures 0 <= unmarked(v, lo, hi) by {
+        induct(hi) as ih;
+        if hi <= lo {
+            unfold(unmarked(v, lo, hi)) using { hi <= lo; }
+            simp();
+        } else {
+            have 0 <= hi - 1 by { arithmetic() using { 0 <= lo; lo < hi; } }
+            have hi - 1 < hi by { arithmetic() using { 0 <= lo; lo < hi; } }
+            have hi - 1 <= n by { arithmetic() using { 0 <= lo; lo < hi; hi <= n; } }
+            apply(ih(hi - 1)) using {
+                0 <= hi - 1;
+                hi - 1 < hi;
+                0 <= lo;
+                hi - 1 <= n;
+                n <= 1073741823;
+                viewable(v[lo..n]);
+                0 <= n - lo;
+                n - lo <= 1073741823;
+            }
+            have lo <= hi - 1 by { arithmetic() using { 0 <= lo; lo < hi; } }
+            have hi - 1 < 2147483647 by { arithmetic() using { 0 <= lo; lo < hi; } }
+            unfold(unmarked(v, lo, hi)) using {
+                lo <= hi - 1;
+                hi - 1 < 2147483647;
+            }
+            have 0 <= (if v[hi - 1] == 0 { 1 } else { 0 }) by { simp(); }
+            apply(int32_less_equal_to_integer(0, if v[hi - 1] == 0 { 1 } else { 0 })) using {
+                0 <= (if v[hi - 1] == 0 { 1 } else { 0 });
+            }
+            have 0 <= unmarked(v, lo, hi - 1)
+                + to_integer(if v[hi - 1] == 0 { 1 } else { 0 }) by {
+                arithmetic() using {
+                    0 <= unmarked(v, lo, hi - 1);
+                    to_integer(0) <= to_integer(if v[hi - 1] == 0 { 1 } else { 0 });
+                }
+            }
+            assumption();
+        }
+    }
 }
 
 theorem unmarked_frame(

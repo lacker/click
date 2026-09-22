@@ -5,37 +5,24 @@ found. Kernel soundness review discovered during the same campaign is tracked
 separately in `issues/bughunt.md`. Everything needed for this example is here
 and in `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
-## Handoff checkpoint — 2026-09-22, after correcting the store frontier
+## Handoff checkpoint — 2026-09-22, after promoting the termination proof
 
-Both the value and generated viewability halves of the quantified invariant
-over `next` now close. The direct pointer-chasing route is covered by
-`mdtests/loop_quantified_value_after_pointer_chase.md`. A return inside a
-ranked loop body also works through the documented proof-level `if` and the
-automatic preservation planner; `mdtests/return_inside_ranked_loop_body.md`
-covers both routes.
+The complete unmodified search now verifies termination and memory safety in
+`mdtests/search_terminates_by_unmarked_count.md`. Its `Integer`-valued fold
+measure, quantified `next` invariant, early return, checked store, point-update
+lemma, nonnegativity proof, and strict back-edge decrease all pass together in
+the gate. `unmarked_nonnegative` also lives with the other checked counting
+lemmas in `mdtests/unmarked_count_lemmas.md`.
 
-The supposed post-store failure was not a verifier defect. The false arm of
-the lowered C `if` contains an explicit `Skip`: the saved proof stepped into
-that arm and across the `Skip`, then stated `visited[cur] != 0` before it had
-executed `visited[cur] = 1`. The saved proof now has the missing store step.
-`mdtests/post_store_fact_after_ranked_loop_return.md` checks the exact control
-shape and proves both `b[i] == 1` and `b[i] != 0` immediately after the store.
+The next proof milestone is the modest correctness claim: a result of `1` can
+only come from the `cur == to` return. The explicit quantified-transport,
+whole-array dependency, shared-lemma, extent-restatement, and small diagnostic
+items below remain proof-language or tooling costs, but none blocks the
+termination-and-memory-safety example anymore.
 
-This is **not yet a routine cleanup handoff**:
-
-- The saved full proof has not yet been promoted into the mdtest gate. Its next
-  bounded task is to rerun the corrected source and record the first genuine
-  open obligation; do not reopen the now-passing quantified invariant, return,
-  or post-store paths.
-- Moving an already verified lemma into the checked lemma fixture, refreshing
-  old reproductions, and reducing a diagnostic are bounded tasks suitable for
-  a less capable agent. Whole-array dependency refinement, reachability, and
-  recursive DFS remain design work, not small finishing edits.
-
-For a bounded next assignment, rerun the corrected complete source in
-`design/dfs-gaps/search_terminates_blocked.md` and reduce only its new first
-failure. The previously quoted `visited[cur] != 0` refusal was before the
-store and is no longer evidence of a Click gap.
+Whole-array dependency refinement, reachability, and recursive DFS remain
+design work rather than small finishing edits. In particular, discuss the
+fold-read-range design in item 2 with the user before implementing it.
 
 This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
 Those files include historical diagnostics, and other small gaps/tooling notes
@@ -92,14 +79,9 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
   `mdtests/sweep_maintains_a_zero_unmarked_count.md` (a marking loop keeping
   `invariant unmarked(visited, 0, i) == 0`; it carries a verbatim copy of
   `unmarked_frame`).
-- `design/dfs-gaps/search_terminates_blocked.md` is the full C and sidecar for
-  `search` at the furthest point reached. Its false-arm cursor now explicitly
-  crosses the lowered `Skip` and the store before using the store result. The
-  quantified `next` obligations, return path, and post-store value are all
-  regression-covered. Rerun the corrected saved proof to find its next genuine
-  refusal.
-  It also holds a third lemma, `unmarked_nonnegative`, that verifies and should
-  move into `mdtests/unmarked_count_lemmas.md`.
+- `mdtests/search_terminates_by_unmarked_count.md` checks the complete C and
+  sidecar for `search`. The formerly saved blocked proof now verifies without
+  changing the C.
 
 ## Gaps, ranked by the proof text they cost (reductions in `design/dfs-gaps/`)
 
@@ -139,7 +121,7 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    does not say which constant; a store refusal spells `owns b[0..1]` as
    `owns a[(v100001 - v100000)..]`.
 
-Later stages: a modest correctness claim (`result == 1` only via the `cur == to`
+Next stages: a modest correctness claim (`result == 1` only via the `cur == to`
 exit), then reachability (needs recursive pure functions over arrays — they use
 `fuel: Nat` today — or a resource whose field is a pure model of the graph; the
 model route has its own gaps: a loop guard cannot read a cell owned by a folded
@@ -148,7 +130,8 @@ iteration), then the recursive branching DFS.
 
 ## Acceptance
 
-`mdtests/search_terminates_by_unmarked_count.md` verifies termination and memory
-safety of the unmodified C; each fixed gap has a minimal regression mdtest; a
-correctness claim is proved or split out at the user's request;
-`design/dfs-gaps/` is deleted with this issue.
+Termination and memory safety of the unmodified C are checked by
+`mdtests/search_terminates_by_unmarked_count.md`. For the remaining work, each
+fixed gap has a minimal regression mdtest; a correctness claim is proved or
+split out at the user's request; and `design/dfs-gaps/` is deleted with this
+issue.
