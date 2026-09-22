@@ -3724,11 +3724,6 @@ fn c0_call_lowering_diagnostics_preserve_original_call_positions() {
             crate::source::SourcePosition::new(2, 21),
         ),
         (
-            "int32 caller() {\n    return ready() && later();\n}\n",
-            "calls in the short-circuit right operand are not supported",
-            crate::source::SourcePosition::new(2, 23),
-        ),
-        (
             "int32 caller() {\n    return outer(left(), right());\n}\n",
             "multiple unsequenced calls in one expression are not supported",
             crate::source::SourcePosition::new(2, 26),
@@ -10041,6 +10036,44 @@ fn c0_syntax_lowers_calls_in_conditional_expression_branches() {
         debug.contains("Declare { c_type: Int32"),
         "the conditional result has a stack binding before either arm"
     );
+}
+
+#[test]
+fn c0_syntax_lowers_calls_in_short_circuit_right_operands() {
+    for (source, operator) in [
+        (
+            r#"
+            int32 caller(int32 condition) {
+                return condition && increment(0);
+            }
+            "#,
+            "And",
+        ),
+        (
+            r#"
+            int32 caller(int32 condition) {
+                return condition || increment(0);
+            }
+            "#,
+            "Or",
+        ),
+    ] {
+        let function = syntax::parse_function(source)
+            .expect("calls in short-circuit right operands should be lowered lazily");
+        let debug = format!("{:?}", function.body());
+        assert!(
+            debug.contains("If {"),
+            "{operator} becomes a checked branch"
+        );
+        assert!(
+            debug.contains("CallAssign"),
+            "{operator} checks the selected call"
+        );
+        assert!(
+            !debug.contains(&format!("{operator}(")),
+            "{operator} is lowered out of the expression tree"
+        );
+    }
 }
 
 #[test]

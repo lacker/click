@@ -1,8 +1,8 @@
-# Calls in short-circuit right operands remain unsupported
+# Calls in short-circuit right operands are evaluated lazily
 
 The original wide-static startup example is retained here without rewriting
-its C. It is blocked by the short-circuit call lowering gap; see
-`issues/control-flow.md`.
+its C. It exercises calls in both right operands of a short-circuit chain;
+the control-flow scope is tracked in `issues/control-flow.md`.
 
 ```c filename=wide.c
 static long low = -9223372036854775807L - 1;
@@ -29,5 +29,5 @@ int main() {
 ```
 
 ```expect
-fail: calls in the short-circuit right operand are not supported
+pass
 ```

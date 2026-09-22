@@ -14685,12 +14685,8 @@ impl Parser {
             C0Expression::BitwiseXor(left, right) => {
                 self.lower_binary_calls(*left, *right, C0Expression::BitwiseXor)
             }
-            C0Expression::And(left, right) => {
-                self.lower_short_circuit_calls(*left, *right, C0Expression::And)
-            }
-            C0Expression::Or(left, right) => {
-                self.lower_short_circuit_calls(*left, *right, C0Expression::Or)
-            }
+            C0Expression::And(left, right) => self.lower_short_circuit_calls(*left, *right, true),
+            C0Expression::Or(left, right) => self.lower_short_circuit_calls(*left, *right, false),
             C0Expression::CheckedArrayIndex { index, length } => {
                 let (mut prefix, index) = self.lower_expression_calls(*index)?;
                 let lower = C0Expression::GreaterEqual(
@@ -14781,25 +14777,72 @@ impl Parser {
         &mut self,
         left: C0Expression,
         right: C0Expression,
-        constructor: fn(Box<C0Expression>, Box<C0Expression>) -> C0Expression,
+        is_and: bool,
     ) -> Result<(Vec<C0Statement>, C0Expression), C0SyntaxError> {
         let right_position = first_embedded_call_position(&right);
         let right_assignment = first_assignment_position(&right);
         let (left_prefix, left) = self.lower_expression_calls(left)?;
         let (right_prefix, right) = self.lower_expression_calls(right)?;
-        if !right_prefix.is_empty() {
-            if right_position.is_none() {
+        if right_position.is_none() {
+            if !right_prefix.is_empty() {
                 return Err(self.error_at_position(
                     right_assignment,
                     "assignment expressions in the short-circuit right operand are not supported",
                 ));
             }
+            let expression = if is_and {
+                C0Expression::And(Box::new(left), Box::new(right))
+            } else {
+                C0Expression::Or(Box::new(left), Box::new(right))
+            };
+            return Ok((left_prefix, expression));
+        }
+        if right_assignment.is_some() {
             return Err(self.error_at_position(
-                right_position,
-                "calls in the short-circuit right operand are not supported",
+                right_assignment,
+                "assignment expressions in the short-circuit right operand are not supported",
             ));
         }
-        Ok((left_prefix, constructor(Box::new(left), Box::new(right))))
+
+        let target = self.fresh_synthesized_call_name();
+        self.variable_types.insert(target.clone(), C0Type::Int32);
+        let normalized_right = C0Expression::Not(Box::new(C0Expression::Not(Box::new(right))));
+        let assign_right = C0Statement::Assign {
+            name: target.clone(),
+            expression: normalized_right,
+        };
+        let (then_branch, else_branch) = if is_and {
+            (
+                prepend_statements(right_prefix, assign_right),
+                C0Statement::Assign {
+                    name: target.clone(),
+                    expression: C0Expression::Int32Literal(0),
+                },
+            )
+        } else {
+            (
+                C0Statement::Assign {
+                    name: target.clone(),
+                    expression: C0Expression::Int32Literal(1),
+                },
+                prepend_statements(right_prefix, assign_right),
+            )
+        };
+        let mut prefix = left_prefix;
+        prefix.push(C0Statement::Declare {
+            c_type: C0Type::Int32,
+            name: target.clone(),
+            volatile: false,
+            pointee_volatile: false,
+            constant: false,
+            pointee_constant: false,
+        });
+        prefix.push(C0Statement::If {
+            condition: left,
+            then_branch: Box::new(then_branch),
+            else_branch: Box::new(else_branch),
+        });
+        Ok((prefix, C0Expression::Variable(target)))
     }
 
     fn parse_conditional(&mut self) -> Result<C0Expression, C0SyntaxError> {
