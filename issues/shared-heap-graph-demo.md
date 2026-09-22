@@ -97,12 +97,12 @@ payload protocols, and arbitrary cyclic-graph proofs remain deferred. The
 small diamond establishes sharing, not cycle reclamation. Follow `AGENTS.md`
 when proof tooling exposes a blocker.
 
-## Current status, 2026-09-19
+## Current status, 2026-09-21
 
 This issue remains open, but the work is now split into verified pieces and a
 specific composition gap. The frozen C source is unchanged. The helper-level
-proofs pass through the normal gate; the complete two-parent caller has not
-yet been added as a passing fixture.
+proofs and the reduced two-parent caller pass through the normal gate; the
+exact frozen lifecycle still does not.
 
 Verified and landed:
 
@@ -120,20 +120,33 @@ Verified and landed:
   names both the leaked allocation and the counted resource holding it.
 - The call/frame transport and surface diagnostics are covered by the normal
   `scripts/check.sh` gate.
+- `mdtests/shared_heap_two_parent_caller.md` now composes two attaches, the
+  first detach, a read through the surviving parent, and the final detach.
+  This clears the earlier caller-side named-resource transport blocker.
 
 Still failing to compose:
 
 - The exact frozen `design/shared-heap-probes/shared_parent.c` diamond has
   two allocation-failure paths and two destruction orders, but no passing
-  sidecar yet.
-- A parent resource that records the initialized child pointer is usable in a
-  focused helper, but an automatic caller proof cannot currently transport
-  that resource into `parent_detach` and then evaluate `child_ref(p->kid)`.
-  Removing the resource binder makes the caller reach the detach call, but
-  leaves the field load unavailable; retaining the binder brings back the
-  unbound-instance transport failure. This is the remaining composition
-  problem, not a failure of the child release proof or the old-pointer
-  handoff itself.
+  sidecar yet. The attempted proof now explicitly handles all three null
+  checks and reaches both `parent_attach` calls.
+- The first exact failure is the creator-reference release immediately after
+  the second attach:
+
+  ```click
+  let { link: first_link } = step(parent_attach(first, kid), {});
+  let { link: second_link } = step(parent_attach(second, kid), {});
+  step(child_release(kid), {});
+  ```
+
+  Click reports that it cannot evaluate `child_ref(kid)` because its field
+  facts require an `UninitializedRead`, even though the two produced parent
+  links each record the same initialized child. Re-expressing the link using
+  `first->kid` makes the resource argument a different symbolic expression and
+  then fails with a missing `child_ref` resource. The remaining gap is
+  therefore preservation/normalization of the local child-pointer identity
+  across the composed parent resources, not the child release proof or the
+  old-pointer handoff itself.
 - The full positive caller, allocation-failure regressions, negative caller
   regressions, and deterministic scaling fixtures therefore remain to be
   composed before this issue can be closed.
