@@ -160,6 +160,58 @@ fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
 }
 
 #[test]
+fn call_havoc_preserves_initialization_of_a_heap_scalar() {
+    let allocated = successful_heap_allocation_state();
+    let Some(CValue::Pointer(pointer)) = allocated.locals().get("p") else {
+        panic!("allocation should assign a pointer");
+    };
+    let initialized = allocated.clone().with_memory(
+        allocated
+            .memory()
+            .clone()
+            .store(pointer.pointer().clone(), int32(7)),
+    );
+    let range = CMemoryRange::new_with_element_width(
+        pointer.pointer().clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+        4,
+    );
+    let after_call =
+        initialized
+            .clone()
+            .with_memory(initialized.memory().clone().with_call_memory_havoc(
+                Variable(901),
+                &[range],
+                &PureFactContext::new(),
+            ));
+    assert!(
+        after_call
+            .memory()
+            .is_uninitialized_heap_address(pointer.pointer(), 4)
+    );
+    assert!(
+        after_call
+            .memory()
+            .has_initialized_cell_at(pointer.pointer(), 4)
+    );
+    let read = evaluate_c_expression_paths(
+        &after_call,
+        &c_index(c_variable("p"), c_int32_literal(0)),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .expect("initialized heap scalar should remain readable after call havoc");
+    assert!(matches!(
+        read.as_slice(),
+        [CExpressionPath {
+            outcome: CExpressionOutcome::Value(_),
+            ..
+        }]
+    ));
+}
+
+#[test]
 fn zeroed_heap_allocation_reads_zero_until_a_store() {
     let state = CState::new().with_local("p", CValue::pointer(Pointer::null()));
     let paths = execute_c_statement_paths(

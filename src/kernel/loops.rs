@@ -1518,7 +1518,11 @@ fn c_loop_state_components_match_at_back_edge_inner(
     assumptions: &PureFactContext,
 ) -> Result<(), String> {
     let mut changed = Vec::new();
-    if top_state.memory().heap != next_state.memory().heap {
+    if !top_state
+        .memory()
+        .heap
+        .have_same_allocation_lifetimes(&next_state.memory().heap)
+    {
         changed.push("heap allocation lifetime");
     }
     if !crate::kernel::api::contract_certification::resource_contexts_definitionally_equal_with_definitions(
@@ -2388,7 +2392,12 @@ fn abstract_loop_exit_memory(
     budget: &mut ExecutionBudget,
 ) -> Result<BTreeSet<Pointer>, String> {
     let mut memory = successor.memory().clone();
-    if exits.iter().any(|state| state.memory().heap != memory.heap) {
+    if exits.iter().any(|state| {
+        !state
+            .memory()
+            .heap
+            .have_same_allocation_lifetimes(&memory.heap)
+    }) {
         return Err("heap allocation lifetimes".to_string());
     }
     let pointers = memory

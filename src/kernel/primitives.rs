@@ -3743,6 +3743,10 @@ pub(super) struct CHeapMemory {
     /// Successful malloc storage remains uninitialized until individual
     /// cells are written. Contract-imported allocations are not placed here.
     pub(super) uninitialized_allocations: BTreeSet<Pointer>,
+    /// Typed scalar cells that were initialized before a call or loop havoc
+    /// dropped their cached values.  The value is gone, but a later typed
+    /// load must not mistake the cell for never-written fresh storage.
+    pub(super) initialized_cells: BTreeMap<Pointer, u32>,
     /// Successful calloc storage reads as zero until individual cells are
     /// written. The set is separate from `uninitialized_allocations` so the
     /// same heap-lifetime machinery can represent both APIs.
@@ -3759,6 +3763,26 @@ pub(super) struct CHeapMemory {
     pub(super) pending_reallocations: BTreeMap<Pointer, CPendingReallocation>,
 }
 
+impl CHeapMemory {
+    /// Whether two heap states have the same allocation lifetime and shape.
+    ///
+    /// Typed initialization metadata is deliberately excluded: it describes
+    /// knowledge about cells inside an allocation, not whether the allocation
+    /// exists or has changed size. Loop back-edge checks use this distinction
+    /// so a body may establish or forget cell initialization without being
+    /// mistaken for an allocation-lifetime transition.
+    pub(super) fn have_same_allocation_lifetimes(&self, other: &Self) -> bool {
+        self.live_allocations == other.live_allocations
+            && self.deallocated_allocations == other.deallocated_allocations
+            && self.pending_allocations == other.pending_allocations
+            && self.uninitialized_allocations == other.uninitialized_allocations
+            && self.zeroed_allocations == other.zeroed_allocations
+            && self.zeroed_prefix_allocations == other.zeroed_prefix_allocations
+            && self.zeroed_pending_allocations == other.zeroed_pending_allocations
+            && self.pending_reallocations == other.pending_reallocations
+    }
+}
+
 impl std::hash::Hash for CHeapMemory {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // Keep the hash of states without new heap-shape bookkeeping identical
@@ -3770,6 +3794,10 @@ impl std::hash::Hash for CHeapMemory {
         std::hash::Hash::hash(&self.deallocated_allocations, state);
         std::hash::Hash::hash(&self.pending_allocations, state);
         std::hash::Hash::hash(&self.uninitialized_allocations, state);
+        if !self.initialized_cells.is_empty() {
+            std::hash::Hash::hash(&3u8, state);
+            std::hash::Hash::hash(&self.initialized_cells, state);
+        }
         std::hash::Hash::hash(&self.zeroed_allocations, state);
         std::hash::Hash::hash(&self.zeroed_pending_allocations, state);
         if !self.pending_reallocations.is_empty() {

@@ -1586,6 +1586,9 @@ impl CMemory {
             .uninitialized_allocations
             .remove(pointer);
         std::sync::Arc::make_mut(&mut self.heap)
+            .initialized_cells
+            .retain(|cell, _| !heap_allocation_may_contain_pointer(pointer, cell));
+        std::sync::Arc::make_mut(&mut self.heap)
             .zeroed_allocations
             .remove(pointer);
         std::sync::Arc::make_mut(&mut self.heap)
@@ -2081,6 +2084,17 @@ impl CMemory {
             uninitialized_allocations.extend(memory.heap.uninitialized_allocations.iter().cloned());
         }
 
+        // A scalar cell is definitely initialized at the join only when every
+        // incoming arm has initialized a compatible cell at that address.
+        // This metadata carries initialization, not a value, so it remains
+        // useful after the join's conservative value havoc.
+        let mut initialized_cells = first.heap.initialized_cells.clone();
+        initialized_cells.retain(|pointer, width| {
+            sibling_memories
+                .iter()
+                .all(|memory| memory.heap.initialized_cells.get(pointer) == Some(width))
+        });
+
         // A zero marker is a value guarantee, so it is retained only when
         // every arm provides it. (The uninitialized marker above is instead
         // unioned because a possibly-uninitialized read must remain unsafe.)
@@ -2151,6 +2165,7 @@ impl CMemory {
             deallocated_allocations,
             pending_allocations,
             uninitialized_allocations,
+            initialized_cells,
             zeroed_allocations,
             zeroed_prefix_allocations,
             zeroed_pending_allocations,
@@ -2269,6 +2284,11 @@ impl CMemory {
     ) -> Self {
         let base = intern_c_memory_ref(&self);
         std::sync::Arc::make_mut(&mut self.cells).insert(pointer.clone(), value.clone());
+        if self.is_live_heap_address(&pointer) {
+            std::sync::Arc::make_mut(&mut self.heap)
+                .initialized_cells
+                .insert(pointer.clone(), value.byte_width());
+        }
         std::sync::Arc::make_mut(&mut self.union_cells)
             .retain(|(cell_pointer, _), _| cell_pointer != &pointer);
         record_c_memory_derivation(
@@ -2324,6 +2344,19 @@ impl CMemory {
                 .any(|(cell_pointer, _)| cell_pointer == pointer)
     }
 
+    /// Whether a typed scalar at this exact heap address was initialized
+    /// before cached values were forgotten by a call or loop havoc.
+    pub(in crate::kernel) fn has_initialized_cell_at(
+        &self,
+        pointer: &Pointer,
+        byte_width: u32,
+    ) -> bool {
+        self.heap
+            .initialized_cells
+            .get(pointer)
+            .is_some_and(|width| *width >= byte_width)
+    }
+
     /// Whether any typed union overlay is recorded at exactly this pointer.
     ///
     /// A union overlay is the authoritative view for an exact typed load, so a
@@ -2356,7 +2389,13 @@ impl CMemory {
         value: CValue,
     ) -> Self {
         std::sync::Arc::make_mut(&mut self.cells).remove(&pointer);
-        std::sync::Arc::make_mut(&mut self.union_cells).insert((pointer, value_type), value);
+        std::sync::Arc::make_mut(&mut self.union_cells)
+            .insert((pointer.clone(), value_type), value);
+        if self.is_live_heap_address(&pointer) {
+            std::sync::Arc::make_mut(&mut self.heap)
+                .initialized_cells
+                .insert(pointer, value_type.byte_width());
+        }
         self
     }
 
@@ -2392,6 +2431,9 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| !overlaps(pointer));
         std::sync::Arc::make_mut(&mut memory.union_cells)
             .retain(|(pointer, _), _| !overlaps(pointer));
+        std::sync::Arc::make_mut(&mut memory.heap)
+            .initialized_cells
+            .retain(|pointer, _| !overlaps(pointer));
         // Nothing restores these cells — the copy could not carry the field —
         // so the result knows strictly less than its source and must not be
         // able to re-intern as a state that never knew it. See
@@ -2409,6 +2451,9 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut memory.cells).remove(pointer);
         std::sync::Arc::make_mut(&mut memory.union_cells)
             .retain(|(cell_pointer, _), _| cell_pointer != pointer);
+        std::sync::Arc::make_mut(&mut memory.heap)
+            .initialized_cells
+            .remove(pointer);
         memory
     }
 
@@ -2581,11 +2626,36 @@ impl CMemory {
             forgot_live_knowledge |= !kept;
             kept
         });
+        std::sync::Arc::make_mut(&mut memory.heap)
+            .initialized_cells
+            .retain(|cell_pointer, width| {
+                let normalized_cell_pointer = Pointer {
+                    block: cell_pointer.block.clone(),
+                    offset: normalize_exact_memory_loads_in_pointer_offset(
+                        &cell_pointer.offset,
+                        assumptions,
+                    ),
+                };
+                let separate = crate::kernel::reasoning::access_byte_overlap(
+                    &normalized_cell_pointer,
+                    *width,
+                    &normalized_pointer,
+                    bytes,
+                    assumptions,
+                ) == crate::kernel::reasoning::AccessByteOverlap::Separate;
+                separate
+                    && (pointers_proven_distinct_for_memory_resolution(
+                        &normalized_cell_pointer,
+                        &normalized_pointer,
+                        assumptions,
+                    ) || normalized_cell_pointer.block != normalized_pointer.block)
+            });
         // Forgetting nothing is not a transition: the memory is the same
         // snapshot, so a later load keeps resolving through it unchanged
         // instead of stopping at an edge that records no write.
         if memory.cells.len() == self.cells.len()
             && memory.union_cells.len() == self.union_cells.len()
+            && memory.heap.initialized_cells == self.heap.initialized_cells
         {
             return self.clone();
         }

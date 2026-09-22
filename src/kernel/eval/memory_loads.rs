@@ -741,12 +741,13 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }]
 }
 
-/// A verified call may leave a mutable cell initialized only when an
-/// established value fact survives the call boundary. The call transition
-/// havocs concrete cells, so ownership or loadability alone is not an
-/// initialization marker. The normalization walk is deliberately limited to
-/// values represented by the shared 32-bit term arena; the indexed condition
-/// witness also accepts a proven symbolic value such as a resource invariant.
+/// A verified call may leave a mutable cell initialized even when its concrete
+/// value does not survive the call boundary. The memory snapshot records that
+/// history separately, while an established value fact can also prove the
+/// load. Ownership or loadability alone is not an initialization marker. The
+/// normalization walk is deliberately limited to values represented by the
+/// shared 32-bit term arena; the indexed condition witness also accepts a
+/// proven symbolic value such as a resource invariant.
 fn load_has_established_value(
     memory: &CMemory,
     pointer: &Pointer,
@@ -769,6 +770,7 @@ fn load_has_established_value(
         || assumptions
             .exact_memory_load_condition_candidates(pointer)
             .any(|(_, value)| value)
+        || memory.has_initialized_cell_at(pointer, value_type.byte_width())
 }
 
 /// Reinterprets an int cell's loaded value as a pointer without letting the
