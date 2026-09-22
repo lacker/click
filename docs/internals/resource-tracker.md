@@ -409,7 +409,7 @@ them without losing every pair the DAG does not connect.
 | Site | Class | Note |
 | --- | --- | --- |
 | `c_memory_load_is_directly_unchanged`, `memories_directly_match_for_pointer_load` `src/kernel/memory_provenance.rs` | disagrees | The transport rule. It already asks the tracker as one disjunct — two snapshots that name the cell by one point hold the same cell — and the rest reads `CMemoryMutatesOnly`, `CMemoryEffectSummary` and `CHeapAllocationFreed` over *stated* endpoints. Its per-write ladder is the same four predicates the rule's `Store` arm uses, applied to a stated write list. |
-| `memories_match_for_pointer_load` `src/kernel/reasoning/memory_resolution.rs` | disagrees | Assumption-free structural agreement about one load: equal havoc markers, an equal extent entry for the load's own block, agreement about the retirement tombstones, and equal cells and union cells under `observable_by_load`. Decides pairs with no common ancestor. |
+| `memories_match_for_pointer_load` `src/kernel/reasoning/memory_resolution.rs` | disagrees | Assumption-free structural agreement about one load: the same forgotten-source identity; equal extents for every object the load may designate plus equal havoc markers; agreement about retirement tombstones and all load-observable heap lifetime, initialization and implicit-zero metadata; and equal cells and union cells under `observable_by_load`. Decides pairs with no common ancestor. |
 | `memory_snapshots_match_for_resolution`, `memory_snapshots_proven_equal_at_pointer`, `memories_match_for_pointer_load_bounded_alias`, `memories_match_for_pointer_load_under_assumptions` `src/kernel/reasoning/memory_resolution.rs` | disagrees | The same question with assumptions: every cell the two snapshots differ on must both miss the load's bytes and be proven distinct from the load. All refuse a load whose own block is `local:`, and all select the cells to check with `cell_is_observable_by_load`, the one filter — *not*, as they used to, by dropping every differing `local:` cell unasked. See below. The second is a thin name for the first, so that a caller asking "are these two snapshots one state as far as this pointer is concerned" reads as that question rather than as a resolution internal. |
 | `snapshot_objects_agree`, `retirements_agree_for_load` | separation | The object half, as against the values in the cells: an extent is what says an object is there and how big it is, and a tombstone is the only record that an automatic object's lifetime ended once its cells are gone. The first is the assumption-carrying comparisons' extent check, and the only extents it leaves out are the ones `local_block_no_pointer_can_reach` allows. The second is the tombstone check, which all four comparisons ask, and it allows a difference only where the load's block is proven distinct from the retired object or no pointer value in the program designates it — two exclusions, each catching what the other does not. A load through a stale alias is exactly the load these comparisons are asked about, which is why neither half may be skipped on a spelling. |
 | `differing_cell_bytes_miss_the_load`, `differing_cell_byte_width` | separation | The byte half, asked of each differing cell before the address ladder may speak. A cell at `p + 1` holding one byte is a different address from `p` and is still the second byte a four-byte read there returns, so an address ladder alone is not an answer. The width is read from whichever side holds a value, the wider where both do and disagree, and the widest scalar where neither does, since over-stating a width can only shrink the separated set. |
@@ -476,11 +476,19 @@ itself refuse is the principled repair, and it is not free: the walk's own
 blanket refusal withdraws field-derived and symbolic-index framing the corpus
 depends on. The repair is to give the two one ladder, not to widen the veto.
 
-Snapshots the history does not connect at all keep the cell comparison
-unconditionally. What that rests on is `memories_match_for_pointer_load`'s
-own claim — equal havoc markers, equal extent, and equal observable cells —
-which is a statement about two states and not about any path between them.
-Where no path exists there is nothing for the history to say.
+Snapshots the history does not connect at all keep the structural comparison.
+What that rests on is `memories_match_for_pointer_load`'s own state claim:
+the same forgotten source, equal observable objects and heap-read metadata,
+and equal observable cells. The forgotten-source check is essential because
+a cell map is only knowledge layered over that source; identical empty maps
+over two sources that stored different values are not one state. Object and
+heap metadata matter even with no cached cell: they decide whether the load's
+object exists, whether it is live and initialized, and whether calloc makes it
+read as zero. The comparison filters each component with the same structural
+may-alias rule as the cell scan, retaining global havoc identities and ignoring
+only storage the load is proven unable to designate. This is a statement about
+two states and not about any path between them; where no path exists there is
+nothing for the history to say.
 
 ### The separation predicates, which stay one function each
 

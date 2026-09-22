@@ -1614,14 +1614,15 @@ pub(in crate::kernel) fn memories_match_for_pointer_load(
         return false;
     }
 
-    // Cells outside the loaded pointer's own block are compared too whenever
-    // their block is not proven distinct from it: an `ExternalArgument`
-    // pointer and a `global:` block are spelled differently and may still be
-    // one object, so dropping the global's cells here would frame the
-    // argument's load across a write the caller can aim at it.
-    memory_havoc_markers(left).eq(memory_havoc_markers(right))
-        && left.blocks.get(&pointer.block) == right.blocks.get(&pointer.block)
+    // A cell map is knowledge layered over the state named by its forget
+    // mark. Equal maps over different marks are not equal states: each may
+    // have forgotten a different value at this very pointer. There is no
+    // recorded history between the snapshots handled by this matcher that
+    // could recover that distinction later.
+    left.forgotten.forgotten_from == right.forgotten.forgotten_from
+        && observable_blocks_match_for_load(left, right, pointer)
         && retirements_agree_for_load(left, right, pointer)
+        && observable_heap_metadata_matches_for_load(left, right, pointer)
         && left
             .cells
             .iter()
@@ -1639,11 +1640,224 @@ pub(in crate::kernel) fn memories_match_for_pointer_load(
             }))
 }
 
-fn memory_havoc_markers(memory: &CMemory) -> impl Iterator<Item = (&PointerBlock, &CBlock)> {
-    memory
-        .blocks
+/// Whether the two snapshots agree about every object this load may name.
+///
+/// Havoc markers are global snapshot identities and therefore remain even
+/// though their synthetic concrete block names are distinct from ordinary
+/// pointers. Every other block is selected with the same may-alias predicate
+/// as cells. A never-address-taken local is the one safe omission: no pointer
+/// value in the program can designate it.
+fn observable_blocks_match_for_load(left: &CMemory, right: &CMemory, pointer: &Pointer) -> bool {
+    let observable = |block: &PointerBlock| {
+        block.starts_with("havoc:")
+            || block.starts_with("call-havoc:")
+            || !local_block_no_pointer_can_reach(block) && block.observable_by_load(&pointer.block)
+    };
+    left.blocks
         .iter()
-        .filter(|(block, _)| block.starts_with("havoc:") || block.starts_with("call-havoc:"))
+        .filter(|(block, _)| observable(block))
+        .eq(right.blocks.iter().filter(|(block, _)| observable(block)))
+}
+
+/// Whether heap facts that can change this load agree in two unrelated
+/// snapshots.
+///
+/// Heap metadata is part of load evaluation even when no concrete cell is
+/// cached: the load reads deallocation, uninitialized-cell, retained
+/// initialization and calloc-zero facts directly. Pending allocation and
+/// reallocation bookkeeping is deliberately absent; it changes future path
+/// refinement, not what an existing load reads. A fresh heap block is
+/// structurally distinct from every other block, so filter each map by the
+/// same observable-block question instead of requiring unrelated heap
+/// allocations to match.
+fn observable_heap_metadata_matches_for_load(
+    left: &CMemory,
+    right: &CMemory,
+    pointer: &Pointer,
+) -> bool {
+    let observable = |candidate: &Pointer| candidate.block.observable_by_load(&pointer.block);
+    let map_matches = |left: &BTreeMap<Pointer, Bitvector32Term>,
+                       right: &BTreeMap<Pointer, Bitvector32Term>| {
+        left.iter()
+            .filter(|(base, _)| observable(base))
+            .eq(right.iter().filter(|(base, _)| observable(base)))
+    };
+    let set_matches = |left: &BTreeSet<Pointer>, right: &BTreeSet<Pointer>| {
+        left.iter()
+            .filter(|base| observable(base))
+            .eq(right.iter().filter(|base| observable(base)))
+    };
+
+    map_matches(
+        &left.heap.deallocated_allocations,
+        &right.heap.deallocated_allocations,
+    ) && set_matches(
+        &left.heap.uninitialized_allocations,
+        &right.heap.uninitialized_allocations,
+    ) && left
+        .heap
+        .initialized_cells
+        .iter()
+        .filter(|(cell, _)| observable(cell))
+        .eq(right
+            .heap
+            .initialized_cells
+            .iter()
+            .filter(|(cell, _)| observable(cell)))
+        && set_matches(
+            &left.heap.zeroed_allocations,
+            &right.heap.zeroed_allocations,
+        )
+        && map_matches(
+            &left.heap.zeroed_prefix_allocations,
+            &right.heap.zeroed_prefix_allocations,
+        )
+}
+
+#[cfg(test)]
+#[test]
+fn unrelated_forgotten_snapshots_do_not_prove_their_loads_equal() {
+    let pointer = Pointer {
+        block: "unrelated-forgotten".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let shell = CMemory::new().with_block("unrelated-forgotten", 4);
+    let left_source = crate::kernel::intern_c_memory_ref(
+        &shell
+            .clone()
+            .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(1))),
+    );
+    let right_source = crate::kernel::intern_c_memory_ref(
+        &shell
+            .clone()
+            .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(2))),
+    );
+    let mut left = shell.clone();
+    left.mark_forgotten_from(&left_source);
+    let mut right = shell;
+    right.mark_forgotten_from(&right_source);
+
+    assert_eq!(
+        left.cells, right.cells,
+        "the attack has identical cell maps"
+    );
+    assert_ne!(
+        left.forgotten.forgotten_from, right.forgotten.forgotten_from,
+        "the maps describe different underlying states"
+    );
+    assert!(
+        !memories_match_for_pointer_load(&left, &right, &pointer),
+        "a cell-map match must not erase the identity of forgotten knowledge"
+    );
+
+    let load = |memory: &CMemory| {
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(memory),
+            Box::new(pointer.clone()),
+        )
+    };
+    assert!(
+        !PureFactContext::new().memory_loads_proven_equal(&load(&left), &load(&right)),
+        "unconnected snapshots over different forgotten sources are not one load"
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn unrelated_snapshots_do_not_erase_object_or_heap_state_visible_to_the_load() {
+    let loads_proven_equal = |left: &CMemory, right: &CMemory, pointer: &Pointer| {
+        let load = |memory: &CMemory| {
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory_ref(memory),
+                Box::new(pointer.clone()),
+            )
+        };
+        PureFactContext::new().memory_loads_proven_equal(&load(left), &load(right))
+    };
+    let symbolic = Pointer {
+        block: PointerBlock::Symbolic(Variable(7_620_001)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let bare = CMemory::new();
+    let with_global = bare
+        .clone()
+        .with_block_without_derivation("global:unrelated-snapshot", 4);
+    assert!(
+        !memories_match_for_pointer_load(&bare, &with_global, &symbolic),
+        "a symbolic load can designate the object present on only one side"
+    );
+    assert!(
+        !loads_proven_equal(&bare, &with_global, &symbolic),
+        "object disagreement in unrelated snapshots cannot prove load equality"
+    );
+
+    let heap_pointer = Pointer {
+        block: PointerBlock::Heap(7_620_002),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let heap_shell = CMemory::new().with_block_without_derivation(heap_pointer.block.clone(), 4);
+    let mut uninitialized = heap_shell.clone();
+    std::sync::Arc::make_mut(&mut uninitialized.heap)
+        .live_allocations
+        .insert(heap_pointer.clone(), Bitvector32Term::Constant(4));
+    std::sync::Arc::make_mut(&mut uninitialized.heap)
+        .uninitialized_allocations
+        .insert(heap_pointer.clone());
+    let mut zeroed = heap_shell;
+    std::sync::Arc::make_mut(&mut zeroed.heap)
+        .live_allocations
+        .insert(heap_pointer.clone(), Bitvector32Term::Constant(4));
+    std::sync::Arc::make_mut(&mut zeroed.heap)
+        .zeroed_allocations
+        .insert(heap_pointer.clone());
+    assert!(
+        !memories_match_for_pointer_load(&uninitialized, &zeroed, &heap_pointer),
+        "an uninitialized load and calloc's implicit zero are not one value"
+    );
+    assert!(
+        !loads_proven_equal(&uninitialized, &zeroed, &heap_pointer),
+        "heap-read metadata disagreement cannot prove load equality"
+    );
+
+    let concrete = Pointer {
+        block: "unrelated-concrete".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let concrete_memory = CMemory::new().with_block("unrelated-concrete", 4);
+    let mut with_unrelated_heap = concrete_memory.clone();
+    std::sync::Arc::make_mut(&mut with_unrelated_heap.blocks)
+        .insert(PointerBlock::Heap(7_620_003), CBlock::new(4));
+    std::sync::Arc::make_mut(&mut with_unrelated_heap.heap)
+        .live_allocations
+        .insert(
+            Pointer {
+                block: PointerBlock::Heap(7_620_003),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(4),
+        );
+    assert!(
+        memories_match_for_pointer_load(&concrete_memory, &with_unrelated_heap, &concrete),
+        "a fresh allocation cannot affect a load through another concrete block"
+    );
+    assert!(
+        loads_proven_equal(&concrete_memory, &with_unrelated_heap, &concrete),
+        "the matcher still ignores heap metadata this pointer cannot observe"
+    );
+
+    let pending_base = Pointer {
+        block: PointerBlock::Symbolic(Variable(7_620_004)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let with_pending = concrete_memory.clone().with_pending_heap_allocation(
+        pending_base,
+        Bitvector32Term::Constant(4),
+        false,
+    );
+    assert!(
+        memories_match_for_pointer_load(&concrete_memory, &with_pending, &concrete),
+        "an unresolved future allocation changes no existing load"
+    );
 }
 
 /// Returns a canonical representation of the portion of memory observable by

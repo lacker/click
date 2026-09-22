@@ -20,10 +20,9 @@ normal proof failure, not a timeout.
 
 This is **not yet a routine cleanup handoff**:
 
-- The remaining Part 2 snapshot/aliasing items are investigations, not confirmed
-  false-theorem witnesses or implementation plans. The unrelated-snapshot
-  comparison needs careful semantic reasoning; retain experienced review for
-  its conclusion and any kernel changes.
+- The remaining Part 2 aliasing items are investigations, not confirmed
+  false-theorem witnesses or implementation plans. Retain experienced review
+  for their conclusions and any kernel changes.
 - The remaining DFS blocker concerns transporting the quantified value fact
   across the loop-entry and iteration-entry snapshots. The viewability half is
   covered by the regression above; do not conflate the residual value failure
@@ -232,6 +231,20 @@ also expand and recheck. Symbolic bounds are compared with wide-integer
 arithmetic at endpoint extremes for widths 1, 2, 4, and 8. The investigation
 found an unchecked separation goal, but no accepted false return-value proof.
 
+The unrelated-snapshot comparison now checks the complete state visible to
+its load, not only cached cells: the forgotten-source identity, every
+may-alias object's extent, automatic-lifetime tombstones, and pointer-relative
+heap lifetime, initialization and implicit-zero metadata. Focused kernel
+regressions construct snapshots with no recorded path between them and show
+that identical cell maps cannot equate different forgotten sources, an
+uninitialized allocation with a calloc-zero allocation, or a symbolic load
+across an object present on only one side. A fresh allocation remains invisible
+to a load through a proven-distinct concrete block. The minimal witness
+deliberately constructs the independently materialized snapshots accepted by
+effect-endpoint and canonical-form callers; ordinary sequential C snapshots
+are DAG-connected and separately regression-covered, so this regression lives
+at the kernel API rather than in an mdtest.
+
 ## Open — unsound or unexamined reasoning, no witness yet
 
 Ranked by how likely a witness is.
@@ -243,16 +256,12 @@ requires the requested width to match the stored cell. Mixed-width effect and
 load-resolution regressions are in the kernel memory-reasoning tests.
 `heap_allocation_may_contain_pointer`'s block-spelling test remains unexamined.
 
-4. **Snapshots unrelated by recorded history are still compared by cell maps**
-   (`memories_match_for_pointer_load`); the doc comment says what that rests on
-   (equal havoc markers, extents, observable cells). No path between them exists
-   for the history to speak about.
-5. `one_element_gap_separates_bytes` decides a *direction* from residue indexes
+4. `one_element_gap_separates_bytes` decides a *direction* from residue indexes
    (the `Separate` answer does not depend on it); `range_fold`'s one-step shortcut
    (`term_operations.rs`) uses a wrapping add (`i32::MAX .. i32::MIN` unrolls
    once) — judged unreachable because `(a..b).fold` lowers to the signed Integer
    carrier.
-6. Probed once and found sound (18 sidecars, no false theorem): `uint32`
+5. Probed once and found sound (18 sidecars, no false theorem): `uint32`
    arithmetic and order, signed/unsigned comparison, shifts by ≥ width,
    `INT_MIN % -1`, `uint32`→`int32` conversion, `<` and `-` between pointers into
    different objects; `decreases` on a `uint32` is refused outright. Not modelled
@@ -260,7 +269,7 @@ load-resolution regressions are in the kernel memory-reasoning tests.
    `result == 44` for `200 + 100` is refused too), and the narrowing refusal exits
    as `type mismatch` instead of the message its own mdtests pin. `int8` is not in
    the subset.
-7. Trust-model notes, by design rather than bugs: the `apply` tactic's
+6. Trust-model notes, by design rather than bugs: the `apply` tactic's
    requirement checks (including range extent guards) are enforced on the surface
    side at one shared point
    (`instantiate_theorem_application_with_assumptions`); a top-level `owns`/`views`
