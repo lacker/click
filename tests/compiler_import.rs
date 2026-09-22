@@ -359,3 +359,173 @@ fn compiler_import_preserves_explicit_external_assumption_reporting() {
     );
     verify_c0_prepared_sources(proof, &imports).unwrap();
 }
+
+fn configure_userspace(project: &Project) {
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.config()).unwrap()).unwrap();
+    config["target"] = json!("x86_64-linux-userspace");
+    fs::write(
+        project.config(),
+        serde_json::to_vec_pretty(&config).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn userspace_compiler_import_verifies_profile_and_expansion() {
+    let project = Project::new();
+    configure_userspace(&project);
+    fs::write(project.0.join("profile.h"), "#define ANSWER 42\n").unwrap();
+    fs::write(
+        project.0.join("main.c"),
+        r#"
+#if defined(__KERNEL__) || __STDC_VERSION__ != 201112L || !defined(__STRICT_ANSI__)
+#error wrong C profile
+#endif
+#if _POSIX_C_SOURCE != 200809L || _REENTRANT != 1
+#error wrong pthread profile
+#endif
+#if __CHAR_BIT__ != 8 || __SIZEOF_LONG__ != 8 || __SIZEOF_POINTER__ != 8 || !defined(__CHAR_UNSIGNED__)
+#error wrong ABI
+#endif
+#include "profile.h"
+int answer(void) { return ANSWER; }
+"#,
+    )
+    .unwrap();
+    let proof = "target \"x86_64-linux-userspace\"; verifying \"main.c\"; int answer() { ensures result == 42; } by { execute(); simp(); }";
+    create_lock(&project.config()).unwrap();
+    let imports = load_imports(&project.config()).unwrap();
+    let verified = verify_c0_prepared_sources(proof, &imports).unwrap();
+    assert!(verified.iter().all(|theorem| {
+        theorem.target() == click::languages::c::target::CTarget::X86_64LinuxUserspace
+            && theorem.import_identity.as_deref() == Some(imports[0].identity())
+    }));
+    let column = proof.find("execute();").unwrap() + 1;
+    let expanded = expand_c0_prepared_tactic_source_at(proof, &imports, 1, column).unwrap();
+    verify_c0_prepared_sources(&expanded, &imports).unwrap();
+    // Both whole-file and selected-site checking must reject a target mismatch.
+    let wrong = proof.replace("x86_64-linux-userspace", "x86_64-linux-kernel");
+    let error = verify_c0_prepared_sources(&wrong, &imports).unwrap_err();
+    assert!(
+        error.message().contains("but the sidecar selects"),
+        "{error:?}"
+    );
+    let column = wrong.find("execute();").unwrap() + 1;
+    assert!(verify_c0_prepared_sources_at(&wrong, &imports, 1, column).is_err());
+    assert!(expand_c0_prepared_tactic_source_at(&wrong, &imports, 1, column).is_err());
+    // Opened headers remain lock dependencies even when their bytes do not
+    // affect the selected function.
+    fs::write(project.0.join("profile.h"), "/* changed header */\n").unwrap();
+    assert!(load_imports(&project.config()).is_err());
+}
+
+#[test]
+fn userspace_and_kernel_imports_have_distinct_identity_for_identical_c() {
+    let project = Project::new();
+    fs::write(
+        project.0.join("main.c"),
+        "int answer(void) { return 42; }\n",
+    )
+    .unwrap();
+    create_lock(&project.config()).unwrap();
+    let kernel = load_imports(&project.config()).unwrap();
+    let original = fs::read(project.0.join("main.i")).unwrap();
+    configure_userspace(&project);
+    assert!(load_imports(&project.config()).is_err());
+    create_lock(&project.config()).unwrap();
+    let userspace = load_imports(&project.config()).unwrap();
+    assert_eq!(original, fs::read(project.0.join("main.i")).unwrap());
+    assert_ne!(kernel[0].identity(), userspace[0].identity());
+    let proof = "target \"x86_64-linux-userspace\"; verifying \"main.c\"; int answer() { ensures result == 42; } by { execute(); simp(); }";
+    assert!(verify_c0_prepared_sources(proof, &kernel).is_err());
+    verify_c0_prepared_sources(proof, &userspace).unwrap();
+}
+
+#[test]
+fn userspace_compiler_import_refuses_profile_overrides_and_ambient_headers() {
+    let project = Project::new();
+    for args in [
+        vec!["-std=gnu11"],
+        vec!["-fno-unsigned-char"],
+        vec!["-D__KERNEL__=1"],
+        vec!["-D__KERNEL__(x)=1"],
+        vec!["-D", "_POSIX_C_SOURCE =199309L"],
+        vec!["-U", "_REENTRANT"],
+        vec!["-D_POSIX_C_SOURCE=199309L"],
+        vec!["-D__STDC_VERSION__=199901L"],
+        vec!["-U__STRICT_ANSI__"],
+    ] {
+        project.configure(1, &args);
+        configure_userspace(&project);
+        let error = create_lock(&project.config()).unwrap_err();
+        assert!(
+            error.contains("unsupported compiler argument") || error.contains("cannot override"),
+            "{args:?}: {error}"
+        );
+    }
+    project.configure(1, &[]);
+    configure_userspace(&project);
+    fs::write(project.0.join("main.c"), "#include <pthread.h>\n").unwrap();
+    let error = create_lock(&project.config()).unwrap_err();
+    assert!(error.contains("pthread.h"), "{error}");
+    assert!(!project.0.join("main.i").exists());
+}
+
+#[test]
+fn userspace_frozen_pthread_probe_records_real_header_boundary() {
+    let project = Project::new();
+    // Follow the same driver as the import config instead of hard-coding a
+    // GCC version. The importer locks the actual selected files.
+    let query = std::process::Command::new("/usr/bin/gcc")
+        .arg("-print-file-name=include")
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(query.status.success());
+    let gcc_include = String::from_utf8(query.stdout).unwrap();
+    project.configure(
+        1,
+        &[
+            "-isystem",
+            gcc_include.trim(),
+            "-isystem",
+            "/usr/include/x86_64-linux-gnu",
+            "-isystem",
+            "/usr/include",
+        ],
+    );
+    configure_userspace(&project);
+    fs::write(
+        project.0.join("main.c"),
+        include_str!("../design/concurrency-probes/fork_join.c"),
+    )
+    .unwrap();
+    create_lock(&project.config()).expect("prepare unchanged probe with real GCC/glibc headers");
+    let imports = load_imports(&project.config()).unwrap();
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.0.join("main.click.import.lock.json")).unwrap())
+            .unwrap();
+    let deps = lock["sources"][0]["dependencies"].as_object().unwrap();
+    assert!(deps.keys().any(|path| path.ends_with("/pthread.h")));
+    assert!(
+        deps.keys()
+            .any(|path| path.ends_with("/bits/pthreadtypes.h"))
+    );
+    let proof = "target \"x86_64-linux-userspace\"; verifying \"main.c\"; int fill_parallel(int output[4]) { owns output[0..4]; ensures result == 0; } by { execute(); simp(); }";
+    let error = verify_c0_prepared_sources(proof, &imports)
+        .unwrap_err()
+        .message()
+        .to_string();
+    assert!(
+        error.contains("failed to parse compiler-prepared"),
+        "{error}"
+    );
+    assert!(error.len() < 4096, "unbounded import diagnostic");
+    assert!(error.contains("bits/types.h:"), "{error}");
+    assert!(
+        error.contains("expected `;`, got identifier `__u_short`"),
+        "{error}"
+    );
+}

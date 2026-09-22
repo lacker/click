@@ -16,10 +16,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::provenance::CSourceMap;
+use super::target::CTarget;
 use crate::languages::compiler_process::{CompilerLimits, run_compiler};
 
 const SCHEMA: u32 = 1;
-const TARGET: &str = "x86_64-linux-kernel";
 const MAX_CONFIG_BYTES: usize = 1 << 20;
 const MAX_SOURCES: usize = 4096;
 const MAX_ARGUMENTS: usize = 4096;
@@ -38,6 +38,7 @@ pub struct PreparedCImport {
 
 #[derive(Debug)]
 struct PreparedInner {
+    target: CTarget,
     logical_source: String,
     source: String,
     source_map: CSourceMap,
@@ -45,6 +46,10 @@ struct PreparedInner {
 }
 
 impl PreparedCImport {
+    pub fn target(&self) -> CTarget {
+        self.inner.target
+    }
+
     pub fn logical_source(&self) -> &str {
         &self.inner.logical_source
     }
@@ -63,6 +68,7 @@ impl PreparedCImport {
         let (source, source_map) = CSourceMap::decode(source).expect("test source map");
         Self {
             inner: Arc::new(PreparedInner {
+                target: CTarget::SUPPORTED,
                 logical_source: logical_source.to_string(),
                 source,
                 source_map,
@@ -89,6 +95,13 @@ struct Config {
     config_path: PathBuf,
     #[serde(skip)]
     config_bytes_sha256: String,
+}
+
+impl Config {
+    // Configs enter the compiler path only after validate_config.
+    fn c_target(&self) -> CTarget {
+        CTarget::from_name(&self.target).expect("validated compiler target")
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -226,6 +239,7 @@ fn load_imports_inner(config_path: &Path) -> Result<Vec<PreparedCImport>, String
         let (clean, map) = CSourceMap::decode(text)?;
         prepared.push(PreparedCImport {
             inner: Arc::new(PreparedInner {
+                target: config.c_target(),
                 logical_source: source.logical_source.clone(),
                 source: clean,
                 source_map: map,
@@ -354,8 +368,8 @@ fn preprocess(context: &Context<'_>, source: &SourceConfig) -> Result<Preprocess
     }
     let dep_path = unique_temp_path("click-import-deps", ".d")?;
     let _cleanup = RemoveFile(dep_path.clone());
-    let mut args = fixed_args();
-    append_user_args(&mut args, &source.args)?;
+    let mut args = fixed_args(context.config.c_target());
+    append_user_args(&mut args, &source.args, context.config.c_target())?;
     args.extend([
         "-x".into(),
         "c".into(),
@@ -463,16 +477,24 @@ fn source_identity(
     hex_digest(&data)
 }
 
-fn fixed_args() -> Vec<String> {
-    vec![
-        "-std=gnu11".into(),
+fn fixed_args(target: CTarget) -> Vec<String> {
+    let standard = match target {
+        CTarget::X86_64LinuxKernel => "-std=gnu11",
+        CTarget::X86_64LinuxUserspace => "-std=c11",
+    };
+    let mut args = vec![
+        standard.into(),
         "-m64".into(),
         "-funsigned-char".into(),
         "-nostdinc".into(),
-    ]
+    ];
+    if target == CTarget::X86_64LinuxUserspace {
+        args.extend(["-pthread".into(), "-D_POSIX_C_SOURCE=200809L".into()]);
+    }
+    args
 }
-fn append_user_args(out: &mut Vec<String>, args: &[String]) -> Result<(), String> {
-    validate_args(args)?;
+fn append_user_args(out: &mut Vec<String>, args: &[String], target: CTarget) -> Result<(), String> {
+    validate_args(args, target)?;
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -583,7 +605,7 @@ fn validate_config(config: &Config) -> Result<(), String> {
     if config.schema != SCHEMA {
         return Err(format!("unsupported import schema {}", config.schema));
     }
-    if config.target != TARGET {
+    if CTarget::from_name(&config.target).is_none() {
         return Err(format!("unsupported compiler target `{}`", config.target));
     }
     let meta = fs::metadata(&config.compiler)
@@ -619,7 +641,7 @@ fn validate_config(config: &Config) -> Result<(), String> {
                 source.logical_source
             ));
         }
-        validate_args(&source.args)?;
+        validate_args(&source.args, config.c_target())?;
         let path = resolve_source(config, &source.path)?;
         let artifact = resolve_artifact(config, &source.artifact)?;
         reject_symlink_components(&artifact)?;
@@ -646,12 +668,13 @@ fn validate_config(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_args(args: &[String]) -> Result<(), String> {
+fn validate_args(args: &[String], target: CTarget) -> Result<(), String> {
     if args.len() > MAX_ARGUMENTS
         || args.iter().map(String::len).sum::<usize>() > MAX_ARGUMENT_BYTES
     {
         return Err("compiler argument list exceeds bounds".into());
     }
+    let profile_args = fixed_args(target);
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
@@ -669,10 +692,7 @@ fn validate_args(args: &[String]) -> Result<(), String> {
         {
             return Err(format!("unsupported compiler argument `{arg}`"));
         }
-        if matches!(
-            arg.as_str(),
-            "-std=gnu11" | "-m64" | "-funsigned-char" | "-nostdinc"
-        ) {
+        if profile_args.contains(arg) {
             i += 1;
             continue;
         }
@@ -700,18 +720,31 @@ fn validate_args(args: &[String]) -> Result<(), String> {
                 return Err(format!("missing value after `{arg}`"));
             }
             if matches!(arg.as_str(), "-D" | "-U") {
-                reject_abi_define(&args[i])?;
+                reject_profile_define(&args[i], target)?;
             }
         } else if arg.starts_with("-D") || arg.starts_with("-U") {
-            reject_abi_define(&arg[2..])?;
+            reject_profile_define(&arg[2..], target)?;
         }
         i += 1;
     }
     Ok(())
 }
 
-fn reject_abi_define(value: &str) -> Result<(), String> {
-    let name = value.split('=').next().unwrap_or(value);
+fn reject_profile_define(value: &str, target: CTarget) -> Result<(), String> {
+    let name = value.split(['=', '(']).next().unwrap_or(value).trim();
+    if target == CTarget::X86_64LinuxUserspace
+        && matches!(
+            name,
+            "__KERNEL__"
+                | "__STDC__"
+                | "__STDC_VERSION__"
+                | "__STRICT_ANSI__"
+                | "_POSIX_C_SOURCE"
+                | "_REENTRANT"
+        )
+    {
+        return Err(format!("cannot override user-space profile macro {name}"));
+    }
     if name.starts_with("__SIZEOF_")
         || name.starts_with("__ORDER_")
         || matches!(
@@ -1057,19 +1090,17 @@ fn abi_probe(config: &Config) -> Result<String, String> {
     let path = unique_temp_path("click-import-abi", ".c")?;
     let _cleanup = RemoveFile(path.clone());
     atomic_write(&path, b"int click_import_abi_probe;\n")?;
+    let mut args = fixed_args(config.c_target());
+    args.extend([
+        "-dM".into(),
+        "-E".into(),
+        "-x".into(),
+        "c".into(),
+        path.to_string_lossy().into_owned(),
+    ]);
     let output = run_compiler(
         &config.compiler,
-        &[
-            "-std=gnu11".into(),
-            "-m64".into(),
-            "-funsigned-char".into(),
-            "-nostdinc".into(),
-            "-dM".into(),
-            "-E".into(),
-            "-x".into(),
-            "c".into(),
-            path.to_string_lossy().into_owned(),
-        ],
+        &args,
         Path::new(&config.working_directory),
         &config.environment.allow,
         limits(),
@@ -1092,6 +1123,26 @@ fn abi_probe(config: &Config) -> Result<String, String> {
     ] {
         if !macros.lines().any(|line| line.trim() == expected) {
             return Err(format!("compiler ABI probe did not establish {expected}"));
+        }
+    }
+    if config.c_target() == CTarget::X86_64LinuxUserspace {
+        for expected in [
+            "#define __STDC_VERSION__ 201112L",
+            "#define __STRICT_ANSI__ 1",
+            "#define _POSIX_C_SOURCE 200809L",
+            "#define _REENTRANT 1",
+        ] {
+            if !macros.lines().any(|line| line.trim() == expected) {
+                return Err(format!(
+                    "compiler user-space probe did not establish {expected}"
+                ));
+            }
+        }
+        if macros
+            .lines()
+            .any(|line| line.starts_with("#define __KERNEL__ "))
+        {
+            return Err("compiler user-space probe unexpectedly defines __KERNEL__".into());
         }
     }
     Ok(hex_digest(macros.as_bytes()))
@@ -1190,7 +1241,7 @@ fn invocation_digest(config: &Config, toolchain: &ToolchainIdentity) -> String {
         toolchain,
     ))
     .expect("identity serializes");
-    bytes.extend_from_slice(fixed_args().join("\0").as_bytes());
+    bytes.extend_from_slice(fixed_args(config.c_target()).join("\0").as_bytes());
     hex_digest(&bytes)
 }
 fn unique_temp_path(prefix: &str, suffix: &str) -> Result<PathBuf, String> {
@@ -1551,26 +1602,29 @@ mod tests {
 
     #[test]
     fn rejects_ambient_or_executable_compiler_options() {
-        assert!(validate_args(&["-fplugin=evil.so".into()]).is_err());
-        assert!(validate_args(&["-c".into()]).is_err());
-        assert!(validate_args(&["@args.rsp".into()]).is_err());
+        assert!(validate_args(&["-fplugin=evil.so".into()], CTarget::SUPPORTED).is_err());
+        assert!(validate_args(&["-c".into()], CTarget::SUPPORTED).is_err());
+        assert!(validate_args(&["@args.rsp".into()], CTarget::SUPPORTED).is_err());
     }
 
     #[test]
     fn accepts_ordered_profile_arguments() {
-        validate_args(&[
-            "-nostdinc".into(),
-            "-m64".into(),
-            "-funsigned-char".into(),
-            "-std=gnu11".into(),
-            "-D".into(),
-            "FLAG=1".into(),
-            "-Iinclude".into(),
-            "-isystem".into(),
-            "/usr/include".into(),
-            "-include".into(),
-            "config.h".into(),
-        ])
+        validate_args(
+            &[
+                "-nostdinc".into(),
+                "-m64".into(),
+                "-funsigned-char".into(),
+                "-std=gnu11".into(),
+                "-D".into(),
+                "FLAG=1".into(),
+                "-Iinclude".into(),
+                "-isystem".into(),
+                "/usr/include".into(),
+                "-include".into(),
+                "config.h".into(),
+            ],
+            CTarget::SUPPORTED,
+        )
         .unwrap();
     }
 

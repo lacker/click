@@ -5,6 +5,11 @@ This is the binding design for
 [Chunk A](../../issues/concurrency-demo.md#chunk-a-settle-and-lock-the-pthread-binding-contract),
 not implemented concurrency support or a verified parent proof.
 
+Implementation checkpoint: the [probe record](README.md#compiler-import-checkpoint)
+now records completion of the user-space compiler-import foundation and the
+real-header parsing gap. Descriptions of the original importer below refer to
+the design baseline, before that first slice.
+
 ## Recommendation
 
 A pthread call should feel like any other verified call: the worker declares

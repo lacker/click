@@ -44,6 +44,28 @@ transfer ownership on failure. The thread body and both client paths remain
 verification obligations. A native compiler run below checks C syntax only;
 it does not establish any concurrency property.
 
+## Compiler-import checkpoint
+
+Compiler-backed imports now accept the user-space target with a fixed C11,
+LP64, unsigned-char, pthread/POSIX profile. Include roots remain explicit and
+inventoried. The sidecar and prepared import must select the same target;
+changed headers, profiles, and stale locks are rejected. This is import
+support only, not a pthread runtime binding or a concurrent proof.
+
+`tests/compiler_import.rs` prepares the unchanged probe through real GCC/glibc
+headers and checks the bounded parser refusal. On this implementation host
+(Ubuntu GCC 13.3.0 and glibc 2.39), preparation and lock loading succeed; C
+parsing stops at `bits/types.h:32`, on `typedef unsigned short int __u_short;`,
+with ``expected `;`, got identifier `__u_short` ``. The compiler-backed
+regression uses the host GCC/header installation and locks those actual
+inputs. This run does not establish the selected Debian GCC 12/glibc 2.36
+runtime binding; that pinned environment still needs validation. No header
+declarations or probe statements are removed.
+
+The next import work is to support this ordinary integer type spelling, then
+inspect the next real-header frontier. Declaration-specific runtime identity
+and checked create/join call binding remain subsequent work.
+
 ## Sequential worker checkpoint
 
 `mdtests/fork_join_worker_sequential.md` verifies `fill_range` from this file,
