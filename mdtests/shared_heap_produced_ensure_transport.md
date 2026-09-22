@@ -78,7 +78,7 @@ void caller(struct parent* p, struct child* kid) {
     consumes &p->kid;
     requires kid != 0;
 } by {
-    let link = step(parent_attach(p, kid), {});
+    let { link: link } = step(parent_attach(p, kid), {});
     step(parent_detach(p), { link: link });
     step();
     simp();
