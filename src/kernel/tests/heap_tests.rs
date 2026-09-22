@@ -1782,12 +1782,10 @@ fn contract_retire_forgets_zeroed_reading_and_records_the_change() {
     );
 }
 
-/// Investigation repro (bug hunt phase 2): `store_union` removes the raw cell
-/// only under the spelling it was handed. A raw cell stored through a
-/// proven-equal alias spelling of the same address stays, and the stale
-/// scalar reads back as known_value at that spelling beside the overlay.
+/// A union overlay invalidates a raw cell at a proven-equal address, even
+/// when the raw cell uses another pointer spelling.
 #[test]
-fn retire_investigation_store_union_leaves_the_aliased_raw_cell() {
+fn store_union_forgets_aliased_raw_cell() {
     let base = Pointer {
         block: PointerBlock::Heap(922_001),
         offset: PointerOffsetTerm::Constant(0),
@@ -1806,9 +1804,19 @@ fn retire_investigation_store_union_leaves_the_aliased_raw_cell() {
         CValue::Int16(Bitvector32Term::Constant(42)),
     );
     assert!(memory.has_union_overlay_at(&base));
-    assert!(
-        memory.known_value(&alias).is_some(),
-        "BUG: the stale raw cell survives under the aliased spelling"
-    );
-    let _ = assumptions;
+    assert_eq!(memory.known_value(&alias), None);
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::pointer_equal(alias.clone(), base.clone()),
+        true,
+    )));
+
+    let memory = CMemory::new()
+        .store_union(
+            base.clone(),
+            CType::Int16,
+            CValue::Int16(Bitvector32Term::Constant(42)),
+        )
+        .store_with_context(alias.clone(), int32(7), &assumptions);
+    assert_eq!(memory.known_value(&alias), Some(int32(7)));
+    assert!(!memory.has_union_overlay_at(&base));
 }

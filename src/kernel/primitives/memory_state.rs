@@ -2428,6 +2428,12 @@ impl CMemory {
         value: CValue,
         context: &PureFactContext,
     ) -> Self {
+        // Most scalar stores have no union views to displace. When one is
+        // present, forget views at every possibly overlapping spelling before
+        // recording the new scalar cell.
+        if !self.union_cells.is_empty() {
+            self = self.without_possible_aliasing_cells(&pointer, value.byte_width(), context);
+        }
         let base = intern_c_memory_ref(&self);
         std::sync::Arc::make_mut(&mut self.cells).insert(pointer.clone(), value.clone());
         if self.is_live_heap_address(&pointer, context) {
@@ -2529,20 +2535,34 @@ impl CMemory {
     }
 
     pub(in crate::kernel) fn store_union(
-        mut self,
+        self,
         pointer: Pointer,
         value_type: CType,
         value: CValue,
     ) -> Self {
-        std::sync::Arc::make_mut(&mut self.cells).remove(&pointer);
-        std::sync::Arc::make_mut(&mut self.union_cells)
-            .insert((pointer.clone(), value_type), value);
-        if self.is_live_heap_address(&pointer, &PureFactContext::new()) {
-            std::sync::Arc::make_mut(&mut self.heap)
+        // Each union member materialization adds another typed view at this
+        // address, so keep those views while invalidating raw cells and views
+        // cached under other spellings that may overlap the new one.
+        let same_address_views = self
+            .union_cells
+            .iter()
+            .filter(|((cell_pointer, _), _)| cell_pointer == &pointer)
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<Vec<_>>();
+        let mut memory = self.without_possible_aliasing_cells(
+            &pointer,
+            value_type.byte_width(),
+            &PureFactContext::new(),
+        );
+        let union_cells = std::sync::Arc::make_mut(&mut memory.union_cells);
+        union_cells.extend(same_address_views);
+        union_cells.insert((pointer.clone(), value_type), value);
+        if memory.is_live_heap_address(&pointer, &PureFactContext::new()) {
+            std::sync::Arc::make_mut(&mut memory.heap)
                 .initialized_cells
                 .insert(pointer, value_type.byte_width());
         }
-        self
+        memory
     }
 
     /// Drops every cell a field of `c_type` at `offset_bytes` from `base`

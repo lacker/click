@@ -538,7 +538,11 @@ provenance, not a duplicate pointee allocation or ownership transfer. The
 aggregate still has no runtime `CValue`: expressions decay to its address for
 field loads and stores. Union-containing layouts retain a separate typed
 overlay for each overlapping member, so aggregate copies preserve all member
-views without pretending the members occupy disjoint cells. Direct whole-union
+views without pretending the members occupy disjoint cells. Adding a union view
+forgets raw cells and other-address views that may overlap its bytes, including
+those reached through another pointer spelling; a later scalar store similarly
+forgets possibly overlapping union views. Views at the union's exact address
+remain together when another member is materialized. Direct whole-union
 values and member writes remain outside this by-value slice; other unsupported
 aggregate shapes remain outside it as well.
 
