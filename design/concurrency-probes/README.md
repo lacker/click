@@ -74,10 +74,17 @@ local values and pointers without inventing a visible C tag.
 `mdtests/c_anonymous_struct_typedef.md` checks its eight-byte layout, field
 access, and independent copies.
 
-The unchanged probe next stops at GCC's `typedef __SIZE_TYPE__ size_t;` in
-`stddef.h`. On this host, the macro expands to `long unsigned int`; Click
-currently accepts `unsigned long int` but not that reordered spelling.
-Supporting the reordered integer specifiers is the next import step.
+GCC's `typedef __SIZE_TYPE__ size_t;` now imports unchanged as well. On
+this host, the macro expands to `long unsigned int`. C and Click share the
+same parser for valid standard integer specifier combinations, regardless of
+order; `mdtests/c_integer_specifier_order.md` checks their existing widths
+and signedness.
+
+The unchanged probe next stops in `bits/cpu-set.h` at the `cpu_set_t`
+anonymous struct's `__cpu_mask __bits[...]` array. `__cpu_mask` is an
+`unsigned long int`, but inline scalar arrays in structs currently support
+only int32, uint8, float, and double elements. Extending those array fields
+to the existing 64-bit integer types is the next import step.
 Declaration-specific runtime identity and checked create/join call binding
 remain subsequent work.
 

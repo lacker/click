@@ -9938,102 +9938,47 @@ impl Parser {
     }
 
     fn parse_named_type(&mut self, name: String) -> Result<ParsedType, C0SyntaxError> {
-        let c_type = match name.as_str() {
-            "void" => C0Type::Void,
-            "_Bool" | "bool" => C0Type::Bool,
-            "int8" | "int8_t" => C0Type::Int8,
-            "int16" | "short" | "int16_t" => C0Type::Int16,
-            "int32" | "int" | "int32_t" => C0Type::Int32,
-            "uint8" | "uint8_t" => C0Type::UInt8,
-            "uint16" | "uint16_t" => C0Type::UInt16,
-            "uint32" | "uint32_t" => C0Type::UInt32,
-            "int64" | "int64_t" | "ssize_t" => C0Type::Int64,
-            "long" => {
-                if self.peek_ident() == Some("double") {
-                    self.position += 1;
-                    return Err(self.error_at_previous(
-                        "unsupported C type `long double`: extended-precision floating-point values are not modeled in C0",
-                    ));
+        let integer = crate::languages::c::integer_specifiers::parse(
+            std::iter::once(name.as_str()).chain(self.tokens[self.position..].iter().map_while(
+                |token| match token {
+                    Token::Ident(word) => Some(word.as_str()),
+                    _ => None,
+                },
+            )),
+        )
+        .map_err(|message| self.error_at_previous(message))?;
+        let c_type = if let Some((c_type, count)) = integer {
+            self.position += count - 1;
+            c_type
+        } else {
+            match name.as_str() {
+                "void" => C0Type::Void,
+                "_Bool" | "bool" => C0Type::Bool,
+                "int8" | "int8_t" => C0Type::Int8,
+                "int16" | "int16_t" => C0Type::Int16,
+                "int32" | "int32_t" => C0Type::Int32,
+                "uint8" | "uint8_t" => C0Type::UInt8,
+                "uint16" | "uint16_t" => C0Type::UInt16,
+                "uint32" | "uint32_t" => C0Type::UInt32,
+                "int64" | "int64_t" | "ssize_t" => C0Type::Int64,
+                "uint64" | "size_t" | "uint64_t" => C0Type::UInt64,
+                "float" => C0Type::Float32,
+                "double" => C0Type::Float64,
+                "volatile" => {
+                    return Err(
+                        self.error_at_previous("the `volatile` qualifier is not supported in C0")
+                    );
                 }
-                if self.peek_ident() == Some("long") {
-                    self.position += 1;
-                }
-                C0Type::Int64
-            }
-            "uint64" | "size_t" | "uint64_t" => C0Type::UInt64,
-            "float" => C0Type::Float32,
-            "double" => C0Type::Float64,
-            "unsigned" => {
-                if self.peek_ident() == Some("char") {
-                    self.position += 1;
-                    C0Type::UInt8
-                } else if self.peek_ident() == Some("int") {
-                    self.position += 1;
-                    C0Type::UInt32
-                } else if self.peek_ident() == Some("short") {
-                    self.position += 1;
-                    C0Type::UInt16
-                } else if self.peek_ident() == Some("long") {
-                    self.position += 1;
-                    if self.peek_ident() == Some("long") {
-                        self.position += 1;
-                    }
-                    C0Type::UInt64
-                } else {
-                    return Err(self.error_at_previous(
-                        "unsupported integer width `unsigned`; only `unsigned char`, `unsigned short`, and `unsigned int` are modeled",
-                    ));
-                }
-            }
-            "signed" => {
-                if self.peek_ident() == Some("int") {
-                    self.position += 1;
-                    C0Type::Int32
-                } else if self.peek_ident() == Some("char") {
-                    self.position += 1;
-                    C0Type::Int8
-                } else if self.peek_ident() == Some("short") {
-                    self.position += 1;
-                    C0Type::Int16
-                } else if self.peek_ident() == Some("long") {
-                    self.position += 1;
-                    if self.peek_ident() == Some("long") {
-                        self.position += 1;
-                    }
-                    C0Type::Int64
-                } else {
-                    return Err(self.error_at_previous(
-                        "unsupported integer width `signed`; expected `signed char`, `signed short`, `signed int`, or `signed long`",
-                    ));
-                }
-            }
-            "char" => C0Type::Char,
-            "volatile" => {
-                return Err(
-                    self.error_at_previous("the `volatile` qualifier is not supported in C0")
-                );
-            }
-            _ => {
-                let Some(typedef) = self.typedefs.get(&name) else {
-                    return Err(self.error_at_previous(format!(
+                _ => {
+                    let Some(typedef) = self.typedefs.get(&name) else {
+                        return Err(self.error_at_previous(format!(
                         "unknown C type `{name}`; expected a supported standard spelling, typedef, or `struct`"
                     )));
-                };
-                return Ok(typedef.clone());
+                    };
+                    return Ok(typedef.clone());
+                }
             }
         };
-        // Standard width specifiers permit a trailing `int`. Consume it only
-        // for these spellings, never for typedef names or fixed-width aliases,
-        // and never after `char` or an already consumed `int`.
-        if matches!(name.as_str(), "short" | "long" | "signed" | "unsigned")
-            && matches!(
-                c_type,
-                C0Type::Int16 | C0Type::UInt16 | C0Type::Int64 | C0Type::UInt64
-            )
-            && self.peek_ident() == Some("int")
-        {
-            self.position += 1;
-        }
         Ok(ParsedType {
             c_type,
             struct_name: None,
