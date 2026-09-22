@@ -5,3 +5,13 @@ One `.md` file per confirmed or strongly evidenced soundness bug, parallel to
 for the roadmap. Each file states the violated invariant, a small intended
 regression, and acceptance criteria. An accepted bug is deleted here when its
 fix, regression coverage, and documentation land.
+
+- [The indexed loan route is bypassed through a proven-equal spelling](loan-index-is-bypassed-through-equal-spellings.md) — machine-confirmed
+- [The owned-overlap rule misses cross-block pairs with proven equal bases](owned-overlap-rule-misses-alias-equal-pairs.md) — machine-confirmed
+- [Spec-carrier substitution has no binder handling: capture and silent drops](spec-substitution-captures-and-drops-binders.md) — machine-confirmed
+- [The loadable byte-offset route certifies a wrapped goal extent](wrapped-byte-extent-passes-loadable-bounds.md) — machine-confirmed
+- [A union store leaves the other members' typed overlays stale](union-store-leaves-stale-member-overlays.md) — machine-confirmed
+- [The shift-overflow wrapper turns the out-of-range refusal into 'safe'](shift-overflow-wrapper-folds-undecided-to-false.md) — machine-confirmed
+- [Entry-partition separation facts are never re-checked after equalities](entry-partition-separation-facts-unrechecked.md) — statically confirmed
+- [Certification outcome equality ignores the heap statuses](outcome-equality-ignores-heap-statuses.md) — machine-confirmed
+- [The annotation quantifier counter is raised into other producers' bands](quantifier-counter-rises-into-other-producers.md) — statically confirmed

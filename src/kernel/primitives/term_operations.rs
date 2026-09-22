@@ -3466,3 +3466,29 @@ mod float_evaluator_differential_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod hunt_investigation_tests {
+    use super::*;
+
+    /// Investigation evidence (bug hunt phase 2b): the deciding helper
+    /// refuses an out-of-range concrete shift count (`None`), while the
+    /// wrapper at this file (`signed_shift_left_overflows`, the
+    /// `(Some, Some) => Constant(... .unwrap_or(false))` arm) turns that
+    /// `None` into a constant `false` ("the shift is safe"). The interval
+    /// decider answers `None` for the same shape, so any proof-time consumer
+    /// reading the folded condition decides a safety the C evaluation
+    /// refuses: a shift by 40 is undefined, not overflow-free.
+    #[test]
+    fn hunt_investigation_out_of_range_shift_count_is_undecided_by_the_helper() {
+        assert_eq!(
+            signed_shift_left_overflows_const(1, 40),
+            None,
+            "the out-of-range count must not decide 'no overflow'"
+        );
+        assert!(
+            !signed_shift_left_overflows_const(1, 40).unwrap_or(false),
+            "BUG: the wrapper arm's unwrap_or(false) turns the refusal into 'the shift is safe'"
+        );
+    }
+}

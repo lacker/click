@@ -3840,3 +3840,38 @@ mod contract_retirement_tests {
         assert_eq!(retired.known_value(&unrelated), Some(int32(11)));
     }
 }
+
+mod hunt_investigation_tests {
+    use super::*;
+
+    /// Investigation repro (bug hunt phase 2b): `store_union` replaces only
+    /// the (pointer, value_type) overlay it is handed. A different member's
+    /// typed overlay at the same pointer survives the store, so a later read
+    /// of that member answers the pre-store typed value where every concrete
+    /// C execution reads the last store's bytes. (C union punning keeps
+    /// every member view legal after a store; the overwritten member's
+    /// previous *typed* value is gone.)
+    #[test]
+    fn hunt_investigation_union_store_of_one_member_leaves_the_other_stale() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("local:u".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new()
+            .store_union(
+                base.clone(),
+                CType::UInt8,
+                CValue::UInt8(Bitvector32Term::Constant(0xAA)),
+            )
+            .store_union(
+                base.clone(),
+                CType::Int32,
+                CValue::Int32(Bitvector32Term::Constant(0x51)),
+            );
+        assert_eq!(
+            memory.known_union_value(&base, CType::UInt8),
+            Some(CValue::UInt8(Bitvector32Term::Constant(0xAA))),
+            "BUG: the pre-store typed overlay survives a store of another member"
+        );
+    }
+}
