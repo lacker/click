@@ -8227,7 +8227,7 @@ mod local_storage_tests {
 #[cfg(test)]
 mod hunt_investigation_tests {
     use super::*;
-    use crate::kernel::{Pointer, PointerOffsetTerm, PointerBlock};
+    use crate::kernel::{Pointer, PointerBlock, PointerOffsetTerm};
 
     /// Investigation repro (bug hunt phase 2b): `hold` inserts a hold into
     /// the ledger data while returning the *predecessor's*
@@ -8256,9 +8256,7 @@ mod hunt_investigation_tests {
         let opening = ledger
             .lend(owner, reader, support, fact.clone())
             .expect("the loan opens");
-        let ledger = ledger
-            .apply(&opening.transition)
-            .expect("the loan applies");
+        let ledger = ledger.apply(&opening.transition).expect("the loan applies");
         let binding = LoanViewBinding {
             loan: opening.loan,
             scope: opening.scope,
@@ -8267,9 +8265,7 @@ mod hunt_investigation_tests {
             viewed: CResourceFact::View(fact.resource().clone()),
             hold: None,
         };
-        let (with_hold, _) = ledger
-            .hold(&binding, reader)
-            .expect("the hold opens");
+        let (with_hold, _) = ledger.hold(&binding, reader).expect("the hold opens");
         let without_hold = ledger.clone();
         assert!(
             with_hold == without_hold,
