@@ -55,6 +55,10 @@ pub(crate) use spec::{
     SpecCaptureRefusal, capture_spec_algebraic_value, capture_spec_integer_value,
 };
 mod termination;
+// Checked internal fork/join; binding to imported pthread declarations is a
+// separate checkpoint, so no C execution path invokes these rules yet.
+#[allow(dead_code)]
+mod threads;
 
 pub use api::*;
 pub(crate) use assumptions::current_memory_loads_in_term;

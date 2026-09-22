@@ -2059,6 +2059,65 @@ fn execute_verified_function_rule(
     )
 }
 
+/// Prepare one worker summary with its ownership still withheld. Only the
+/// internal thread transition calls this; pthread declarations are not wired.
+pub(super) fn suspend_verified_worker(
+    caller_state: &CState,
+    rule: &CVerifiedFunctionRule,
+    argument: CValue,
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<super::threads::WorkerCompletion, String>> {
+    if !rule
+        .function
+        .contract_interface()
+        .exceptional_signature()
+        .is_empty()
+    {
+        return Ok(Err(
+            "exceptional workers are outside the scoped thread profile".to_string(),
+        ));
+    }
+    let mut completions = Vec::new();
+    let paths = execute_verified_function_applications_with_suspension(
+        caller_state,
+        &[CFunctionContractApplication {
+            name: rule.function.name(),
+            interface_name: rule.function.name(),
+            interface: rule.function.contract_interface(),
+            storage: Some(&rule.function),
+            evidence: Some(&rule.function),
+            representation_copy: None,
+        }],
+        None,
+        None,
+        &[CExpression::Value(argument)],
+        assumptions,
+        environment,
+        budget,
+        Some(&mut completions),
+    )?;
+    if let Some(CFunctionPath {
+        outcome: CFunctionOutcome::RuntimeError(error),
+        ..
+    }) = paths.first()
+    {
+        return Ok(Err(super::api::describe_certification_runtime_error(error)));
+    }
+    Ok(unique_worker_completion(paths.is_empty(), completions))
+}
+
+pub(super) fn unique_worker_completion(
+    no_failure_paths: bool,
+    mut completions: Vec<super::threads::WorkerCompletion>,
+) -> Result<super::threads::WorkerCompletion, String> {
+    if !no_failure_paths || completions.len() != 1 {
+        return Err("worker application must produce exactly one checked completion".to_string());
+    }
+    Ok(completions.pop().expect("one completion"))
+}
+
 /// The binder transport the proof selected for a call to `function`, if the
 /// step named this callee. The transported instances are exactly the
 /// function's own `owns`, `consumes`, and `produces` binders.
@@ -2197,6 +2256,30 @@ fn execute_verified_function_applications(
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CFunctionPath>> {
+    execute_verified_function_applications_with_suspension(
+        caller_state,
+        applications,
+        selected_contract,
+        resource_application,
+        arguments,
+        assumptions,
+        environment,
+        budget,
+        None,
+    )
+}
+
+fn execute_verified_function_applications_with_suspension(
+    caller_state: &CState,
+    applications: &[CFunctionContractApplication<'_>],
+    selected_contract: Option<usize>,
+    resource_application: Option<(usize, &ResourceCallApplication)>,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+    mut suspended: Option<&mut Vec<super::threads::WorkerCompletion>>,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     if applications.is_empty() {
         return Ok(vec![CFunctionPath {
@@ -2700,6 +2783,7 @@ fn execute_verified_function_applications(
             "verified call return resource evaluation",
         );
         let ContractReturnResources {
+            output_resources,
             return_resources,
             ensured_views: returned_views,
             produced_borrowing_pieces,
@@ -2858,6 +2942,61 @@ fn execute_verified_function_applications(
                 budget,
             )?;
             facts.extend(additional_facts.into_iter().skip(entry_fact_count));
+        }
+
+        if let Some(completions) = suspended.as_deref_mut() {
+            // This first internal slice accepts direct memory ownership and
+            // nonescaping stable views. Heap, composite, counted and returned
+            // borrowing protocols need their own checked asynchronous deltas.
+            // Local/global/static storage has implicit C access authority;
+            // removing a resource alone would not suspend that authority.
+            let supported = obligations.is_empty()
+                && transfer
+                    .stable_view_plan
+                    .as_ref()
+                    .is_some_and(|plan| plan.supports_suspended_memory_recovery())
+                && transfer.candidate_output_views.is_empty()
+                && transfer.produced_borrowing_pieces.is_empty()
+                && transfer
+                    .callee_resources
+                    .facts()
+                    .iter()
+                    .all(|fact| match fact.resource() {
+                        CResource::Memory(range) => {
+                            !fact.is_own() || is_external_memory_pointer(range.base())
+                        }
+                        _ => false,
+                    })
+                && transfer
+                    .memory_effects
+                    .iter()
+                    .all(|range| is_external_memory_pointer(range.base()))
+                && output_resources
+                    .facts()
+                    .iter()
+                    .all(|fact| fact.is_own() && matches!(fact.resource(), CResource::Memory(range) if is_external_memory_pointer(range.base())));
+            if !supported {
+                paths.push(resource_call_failure(
+                    "suspended worker requires discharged preconditions, explicit ownership of external memory, and nonescaping views",
+                ));
+                continue;
+            }
+            let Some(plan) = transfer.stable_view_plan else {
+                paths.push(resource_call_failure(
+                    "suspended worker requires a checked resource partition",
+                ));
+                continue;
+            };
+            completions.push(super::threads::WorkerCompletion::checked(
+                plan,
+                output_resources,
+                post_state.memory.clone(),
+                transfer.memory_effects.clone(),
+                facts,
+            ));
+            // The internal caller checks there is exactly one completion.
+            // No worker guarantee or ownership is published as a call return.
+            continue;
         }
 
         let (
@@ -5734,6 +5873,7 @@ fn checked_access_mode_refinement_adapter(
         .clone()
         .with_resource_context(function_resources);
     let ContractReturnResources {
+        output_resources: _,
         return_resources: returned,
         ensured_views: returned_views,
         produced_borrowing_pieces,
@@ -12780,6 +12920,7 @@ fn evaluate_contract_return_resources(
             );
     }
     Ok(Ok(ContractReturnResources {
+        output_resources: ensured_resources,
         return_resources,
         ensured_views,
         produced_borrowing_pieces,
@@ -12788,6 +12929,8 @@ fn evaluate_contract_return_resources(
 
 /// The outputs of a contract's return-resource evaluation.
 pub(crate) struct ContractReturnResources {
+    /// The explicit output delta, without the caller's unrelated frame.
+    pub(crate) output_resources: ResourceContext,
     pub(crate) return_resources: ResourceContext,
     pub(crate) ensured_views: Vec<CResourceFact>,
     pub(crate) produced_borrowing_pieces: Vec<(CResourceFact, CResourceFact)>,
@@ -19748,6 +19891,7 @@ fn function_outcome_from_body_with_resource_transfer(
         with_contract_argument_views(caller_state, function, argument_values);
     let mut transfer = transfer.clone();
     let ContractReturnResources {
+        output_resources: _,
         return_resources,
         ensured_views: returned_views,
         produced_borrowing_pieces,

@@ -2600,6 +2600,38 @@ impl StableViewTransferPlan {
         escaping: &BTreeMap<LoanId, Vec<CResourceFact>>,
         consumed_holds: &[LoanViewBinding],
     ) -> Result<StableViewRecovery, StableViewPlanError> {
+        self.recover_stable_views_impl(assumptions, escaping, consumed_holds, false)
+    }
+
+    pub(crate) fn supports_suspended_memory_recovery(&self) -> bool {
+        self.transferred_holds.is_empty()
+            && self.escrowed_holds.is_empty()
+            && self.adapter_restorations.is_empty()
+    }
+
+    /// Recover only this suspended call's loans against the parent's current
+    /// context. Other children may have opened loans since entry, so recovery
+    /// must keep the checked terminal ledger, never restore the entry snapshot.
+    pub(crate) fn recover_suspended_views(
+        mut self,
+        ledger: LoanLedger,
+        resources: ResourceContext,
+        bindings: LoanViewBindings,
+        assumptions: &PureFactContext,
+    ) -> Result<StableViewRecovery, StableViewPlanError> {
+        self.ledger = ledger;
+        self.caller_resources_after_requirements = resources;
+        self.parent_view_bindings = bindings;
+        self.recover_stable_views_impl(assumptions, &BTreeMap::new(), &[], true)
+    }
+
+    fn recover_stable_views_impl(
+        self,
+        assumptions: &PureFactContext,
+        escaping: &BTreeMap<LoanId, Vec<CResourceFact>>,
+        consumed_holds: &[LoanViewBinding],
+        mut keep_terminal: bool,
+    ) -> Result<StableViewRecovery, StableViewPlanError> {
         let parent_ledger = self.parent_ledger;
         let stable_views = self.stable_views.clone();
         let loan_roots = self.loan_roots.clone();
@@ -2609,7 +2641,6 @@ impl StableViewTransferPlan {
         let mut recovered_escrows = Vec::new();
         let mut pending_holds: Vec<(Vec<CResourceFact>, LoanViewBinding)> = Vec::new();
         let mut released_holds = Vec::new();
-        let mut keep_terminal = false;
         for (scope, loan, root, support, recoverable) in loan_roots.into_iter().rev() {
             let transfer = ledger.transfer(root, self.callee, self.caller)?;
             ledger = ledger.apply(&transfer)?;
@@ -2655,16 +2686,10 @@ impl StableViewTransferPlan {
             ledger = ledger.apply(&end)?;
             transitions.push(end);
             if recoverable {
-                let (recover, escrow, support) = ledger.recover(loan, self.caller)?;
+                let (recover, escrow, recovered_support) = ledger.recover(loan, self.caller)?;
                 ledger = ledger.apply(&recover)?;
                 transitions.push(recover);
-                if support
-                    != stable_views
-                        .iter()
-                        .find(|view| view.loan == loan)
-                        .map(|view| view.support)
-                        .unwrap_or(support)
-                {
+                if recovered_support != support {
                     return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
                 }
                 // An adapter lend escrowed a head the planner materialized
