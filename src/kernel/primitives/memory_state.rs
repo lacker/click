@@ -1408,9 +1408,29 @@ fn union_overlay_widths(memory: &CMemory) -> BTreeMap<Pointer, u32> {
     widths
 }
 
-fn heap_allocation_may_contain_pointer(base: &Pointer, pointer: &Pointer) -> bool {
-    if base.block != pointer.block {
+/// Whether a heap allocation's recorded entry (its base) may contain
+/// `pointer`.
+///
+/// The deciding rule is the equality invariant: differently spelled pointer
+/// blocks are not separate unless [`PointerBlock::proven_distinct`] or the
+/// assumptions say so, so two edges control every answer. Entries whose block
+/// is proven distinct from the query pointer's never contain it. Entries in a
+/// block merely spelled differently do, once an assumed pointer equality names
+/// one address under the two spellings; a tried interior-with-offset alias is
+/// answered `false` here, which is conservative — the free-retirement path
+/// clears whole aliased-spelling blocks itself, so no stale cached cell or
+/// zeroed status survives under an alias spelling.
+fn heap_allocation_may_contain_pointer(
+    base: &Pointer,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> bool {
+    if base != pointer && base.block.proven_distinct(&pointer.block) {
         return false;
+    }
+    if base.block != pointer.block {
+        return base.offset == pointer.offset
+            && pointers_proven_equal_for_memory_resolution(base, pointer, assumptions);
     }
     if base.block != PointerBlock::ExternalArgument {
         return true;
@@ -1554,7 +1574,20 @@ impl CMemory {
     pub(in crate::kernel) fn free_heap_block(
         mut self,
         pointer: &Pointer,
+        assumptions: &PureFactContext,
     ) -> Result<Self, CInvalidFree> {
+        // An aliased spelling of this allocation (a contract-returned pointer
+        // proven equal to it, e.g. `ensures result == p`) is one address too.
+        // Retiring through one identity has to retire it through both, else a
+        // load through the other could read a stale cached cell or a stale
+        // zeroed/uninitialized status after the free. Blocks proven distinct
+        // from this allocation's own block keep everything.
+        let mut aliased_blocks = BTreeSet::<PointerBlock>::new();
+        for alias in assumptions.exact_pointer_aliases(pointer) {
+            if alias.block != pointer.block && !alias.block.proven_distinct(&pointer.block) {
+                aliased_blocks.insert(alias.block.clone());
+            }
+        }
         if self.heap.deallocated_allocations.contains_key(pointer) {
             return Err(CInvalidFree::DoubleFree);
         }
@@ -1567,7 +1600,7 @@ impl CMemory {
                     .heap
                     .live_allocations
                     .keys()
-                    .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+                    .any(|base| heap_allocation_may_contain_pointer(base, pointer, assumptions))
                 {
                     CInvalidFree::InteriorPointer
                 } else {
@@ -1579,23 +1612,85 @@ impl CMemory {
         if pointer.block != PointerBlock::ExternalArgument {
             std::sync::Arc::make_mut(&mut self.blocks).remove(&pointer.block);
         }
+        for aliased in &aliased_blocks {
+            std::sync::Arc::make_mut(&mut self.blocks).remove(aliased);
+        }
         std::sync::Arc::make_mut(&mut self.heap)
             .deallocated_allocations
             .insert(pointer.clone(), bytes.clone());
-        std::sync::Arc::make_mut(&mut self.heap)
-            .uninitialized_allocations
-            .remove(pointer);
-        std::sync::Arc::make_mut(&mut self.heap)
-            .initialized_cells
-            .retain(|cell, _| !heap_allocation_may_contain_pointer(pointer, cell));
-        std::sync::Arc::make_mut(&mut self.heap)
-            .zeroed_allocations
-            .remove(pointer);
-        std::sync::Arc::make_mut(&mut self.heap)
-            .zeroed_prefix_allocations
-            .remove(pointer);
+        // Statuses recorded under an aliased spelling of this same allocation
+        // die with it: keeping them would let loads through that spelling see
+        // uninitialized or zeroed-after-free knowledge nobody retired.
+        let mut retired = aliased_blocks.clone();
+        retired.insert(pointer.block.clone());
+        let retired_key = |base: &Pointer| {
+            retired.contains(&base.block) && base.offset == pointer.offset
+                || heap_allocation_may_contain_pointer(base, pointer, assumptions)
+        };
+        let heap = std::sync::Arc::make_mut(&mut self.heap);
+        let freed_within = |base: &Pointer| retired_key(base);
+        {
+            let after_live = heap
+                .live_allocations
+                .iter()
+                .filter(|(base, _)| !freed_within(base))
+                .map(|(base, bytes)| (base.clone(), bytes.clone()))
+                .collect::<Vec<_>>();
+            heap.live_allocations.clear();
+            for (base, bytes) in after_live {
+                heap.live_allocations.insert(base, bytes);
+            }
+        }
+        {
+            let after_uninitialized = heap
+                .uninitialized_allocations
+                .iter()
+                .filter(|base| !freed_within(base))
+                .cloned()
+                .collect::<Vec<_>>();
+            heap.uninitialized_allocations.clear();
+            for base in after_uninitialized {
+                heap.uninitialized_allocations.insert(base);
+            }
+        }
+        {
+            let after_zeroed = heap
+                .zeroed_allocations
+                .iter()
+                .filter(|base| !freed_within(base))
+                .cloned()
+                .collect::<Vec<_>>();
+            heap.zeroed_allocations.clear();
+            for base in after_zeroed {
+                heap.zeroed_allocations.insert(base);
+            }
+        }
+        {
+            let after_prefix = heap
+                .zeroed_prefix_allocations
+                .iter()
+                .filter(|(base, _)| !freed_within(base))
+                .map(|(base, prefix)| (base.clone(), prefix.clone()))
+                .collect::<Vec<_>>();
+            heap.zeroed_prefix_allocations.clear();
+            for (base, prefix) in after_prefix {
+                heap.zeroed_prefix_allocations.insert(base, prefix);
+            }
+        }
+        {
+            let after_initialized = heap
+                .initialized_cells
+                .iter()
+                .filter(|(cell, _)| !freed_within(cell))
+                .map(|(cell, width)| (cell.clone(), *width))
+                .collect::<Vec<_>>();
+            heap.initialized_cells.clear();
+            for (cell, width) in after_initialized {
+                heap.initialized_cells.insert(cell, width);
+            }
+        }
         std::sync::Arc::make_mut(&mut self.cells)
-            .retain(|cell, _| !heap_allocation_may_contain_pointer(pointer, cell));
+            .retain(|cell, _| !aliased_blocks.contains(&cell.block) && !freed_within(cell));
         if let Some(base) = base {
             record_c_memory_derivation(
                 &self,
@@ -1616,11 +1711,15 @@ impl CMemory {
         self.heap.live_allocations.get(pointer)
     }
 
-    pub(crate) fn is_live_heap_address(&self, pointer: &Pointer) -> bool {
+    pub(crate) fn is_live_heap_address(
+        &self,
+        pointer: &Pointer,
+        assumptions: &PureFactContext,
+    ) -> bool {
         self.heap
             .live_allocations
             .keys()
-            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer, assumptions))
     }
 
     pub(in crate::kernel) fn heap_live_allocation_bases(&self) -> impl Iterator<Item = &Pointer> {
@@ -1631,11 +1730,12 @@ impl CMemory {
         &self,
         pointer: &Pointer,
         byte_width: u32,
+        assumptions: &PureFactContext,
     ) -> bool {
         self.heap
             .uninitialized_allocations
             .iter()
-            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer, assumptions))
             || self
                 .heap
                 .zeroed_prefix_allocations
@@ -1650,7 +1750,7 @@ impl CMemory {
                     let Some(end) = offset.checked_add(byte_width) else {
                         return false;
                     };
-                    heap_allocation_may_contain_pointer(base, pointer)
+                    heap_allocation_may_contain_pointer(base, pointer, assumptions)
                         && prefix.as_const().is_some_and(|prefix| end > prefix)
                 })
     }
@@ -1662,14 +1762,18 @@ impl CMemory {
     /// it invalidates a stored cell. The blanket status is dropped for the
     /// whole allocation rather than narrowed to a prefix: the write set bounds
     /// where a callee or loop body may store, not where it did.
-    fn forget_zeroed_allocations_written_by(&mut self, mutable_ranges: &[CMemoryRange]) {
+    fn forget_zeroed_allocations_written_by(
+        &mut self,
+        mutable_ranges: &[CMemoryRange],
+        assumptions: &PureFactContext,
+    ) {
         if mutable_ranges.is_empty() {
             return;
         }
         let written = |base: &Pointer| {
             mutable_ranges
                 .iter()
-                .any(|range| heap_allocation_may_contain_pointer(base, range.base()))
+                .any(|range| heap_allocation_may_contain_pointer(base, range.base(), assumptions))
         };
         let heap = std::sync::Arc::make_mut(&mut self.heap);
         heap.zeroed_allocations.retain(|base| !written(base));
@@ -1681,11 +1785,12 @@ impl CMemory {
         &self,
         pointer: &Pointer,
         byte_width: u32,
+        assumptions: &PureFactContext,
     ) -> bool {
         self.heap
             .zeroed_allocations
             .iter()
-            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer, assumptions))
             || self
                 .heap
                 .zeroed_prefix_allocations
@@ -1700,16 +1805,20 @@ impl CMemory {
                     let Some(end) = offset.checked_add(byte_width) else {
                         return false;
                     };
-                    heap_allocation_may_contain_pointer(base, pointer)
+                    heap_allocation_may_contain_pointer(base, pointer, assumptions)
                         && prefix.as_const().is_some_and(|prefix| end <= prefix)
                 })
     }
 
-    pub(in crate::kernel) fn is_deallocated_heap_address(&self, pointer: &Pointer) -> bool {
+    pub(in crate::kernel) fn is_deallocated_heap_address(
+        &self,
+        pointer: &Pointer,
+        assumptions: &PureFactContext,
+    ) -> bool {
         self.heap
             .deallocated_allocations
             .keys()
-            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer, assumptions))
     }
 
     /// Registers the exact base named by an allocation contract. Unlike a
@@ -1906,12 +2015,15 @@ impl CMemory {
         mut self,
         base: &Pointer,
         succeeds: bool,
+        assumptions: &PureFactContext,
     ) -> Option<(Self, Bitvector32Term, Pointer, CPendingReallocation)> {
         let pending = std::sync::Arc::make_mut(&mut self.heap)
             .pending_reallocations
             .remove(base)?;
         let (mut memory, bytes, resolved_base) = if succeeds {
-            self = self.free_heap_block(&pending.old_pointer).ok()?;
+            self = self
+                .free_heap_block(&pending.old_pointer, assumptions)
+                .ok()?;
             self.resolve_pending_heap_allocation(base, true)?
         } else {
             self.resolve_pending_heap_allocation(base, false)?
@@ -2183,7 +2295,7 @@ impl CMemory {
         let base = Some(intern_c_memory_ref(&self));
         std::sync::Arc::make_mut(&mut self.cells)
             .retain(|pointer, _| call_havoc_keeps_cell(pointer, mutable_ranges, assumptions));
-        self.forget_zeroed_allocations_written_by(mutable_ranges);
+        self.forget_zeroed_allocations_written_by(mutable_ranges, assumptions);
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("call-havoc:{}", variable.0).into(),
             CBlock::new(memory_havoc_write_set_fingerprint(mutable_ranges)),
@@ -2280,11 +2392,11 @@ impl CMemory {
         mut self,
         pointer: Pointer,
         value: CValue,
-        _context: &PureFactContext,
+        context: &PureFactContext,
     ) -> Self {
         let base = intern_c_memory_ref(&self);
         std::sync::Arc::make_mut(&mut self.cells).insert(pointer.clone(), value.clone());
-        if self.is_live_heap_address(&pointer) {
+        if self.is_live_heap_address(&pointer, context) {
             std::sync::Arc::make_mut(&mut self.heap)
                 .initialized_cells
                 .insert(pointer.clone(), value.byte_width());
@@ -2391,7 +2503,7 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut self.cells).remove(&pointer);
         std::sync::Arc::make_mut(&mut self.union_cells)
             .insert((pointer.clone(), value_type), value);
-        if self.is_live_heap_address(&pointer) {
+        if self.is_live_heap_address(&pointer, &PureFactContext::new()) {
             std::sync::Arc::make_mut(&mut self.heap)
                 .initialized_cells
                 .insert(pointer, value_type.byte_width());
@@ -2796,11 +2908,15 @@ impl CMemory {
 
     /// Whether some allocation this snapshot has already freed may contain
     /// `pointer`. Freed allocations are few, so this scans them directly.
-    pub(in crate::kernel) fn freed_heap_allocation_may_contain(&self, pointer: &Pointer) -> bool {
+    pub(in crate::kernel) fn freed_heap_allocation_may_contain(
+        &self,
+        pointer: &Pointer,
+        assumptions: &PureFactContext,
+    ) -> bool {
         self.heap
             .deallocated_allocations
             .keys()
-            .any(|allocation| heap_allocation_may_contain_pointer(allocation, pointer))
+            .any(|allocation| heap_allocation_may_contain_pointer(allocation, pointer, assumptions))
     }
 
     pub(in crate::kernel) fn is_loadable_concretely(

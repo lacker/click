@@ -1901,7 +1901,10 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                         obligations,
                     }]);
                 }
-                if state.memory.is_deallocated_heap_address(pointer) {
+                if state
+                    .memory
+                    .is_deallocated_heap_address(pointer, assumptions)
+                {
                     return Ok(vec![CExpressionPath {
                         outcome: CExpressionOutcome::UndefinedBehavior(
                             CUndefinedBehavior::InvalidMemory,

@@ -2763,7 +2763,22 @@ fn range_fold_simplifies_empty_and_one_step_ranges() {
         Bitvector32Term::Constant(7)
     );
 
+    // A concrete one-element range still unrolls once, by length.
     assert_eq!(
+        Bitvector32Term::range_fold(
+            Bitvector32Term::Constant(4),
+            Bitvector32Term::Constant(5),
+            Bitvector32Term::Constant(7),
+            accumulator,
+            item,
+            body.clone(),
+        ),
+        Bitvector32Term::add(Bitvector32Term::Constant(7), x.clone())
+    );
+
+    // A symbolic pair one element apart under one value of the start is
+    // opaque, because a start of `i32::MAX` makes the signed range empty.
+    assert!(matches!(
         Bitvector32Term::range_fold(
             Bitvector32Term::Variable(Variable(96)),
             Bitvector32Term::add(
@@ -2773,9 +2788,25 @@ fn range_fold_simplifies_empty_and_one_step_ranges() {
             Bitvector32Term::Constant(7),
             accumulator,
             item,
+            body.clone(),
+        ),
+        Bitvector32Term::RangeFold { .. }
+    ));
+
+    // The wrap bound: the signed range `i32::MAX .. i32::MIN` is empty, and
+    // the certified empty law (`prove_integer_range_fold_empty`) returns
+    // `initial` there, so the constructor must too rather than unroll once
+    // with `end == start + 1` modulo `2^32`.
+    assert_eq!(
+        Bitvector32Term::range_fold(
+            Bitvector32Term::Constant(i32::MAX as u32),
+            Bitvector32Term::Constant(i32::MIN as u32),
+            Bitvector32Term::Constant(7),
+            accumulator,
+            item,
             body,
         ),
-        Bitvector32Term::add(Bitvector32Term::Constant(7), x)
+        Bitvector32Term::Constant(7)
     );
 }
 
@@ -4677,18 +4708,27 @@ fn freed_external_allocation_is_not_still_available() {
         .expect("a fresh external allocation claim is accepted");
     let freed = live
         .clone()
-        .free_heap_block(&base)
+        .free_heap_block(&base, &PureFactContext::new())
         .expect("the claimed allocation can be freed");
     let element = base.offset_by_int32_elements(Bitvector32Term::Constant(1));
 
     assert!(crate::kernel::reasoning::memory_range_still_available(
-        &live, &live, &base
+        &live,
+        &live,
+        &base,
+        &PureFactContext::new(),
     ));
     assert!(!crate::kernel::reasoning::memory_range_still_available(
-        &live, &freed, &base
+        &live,
+        &freed,
+        &base,
+        &PureFactContext::new(),
     ));
     assert!(!crate::kernel::reasoning::memory_range_still_available(
-        &live, &freed, &element
+        &live,
+        &freed,
+        &element,
+        &PureFactContext::new(),
     ));
 
     let assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {

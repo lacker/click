@@ -522,7 +522,10 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     loan_evidence: empty_checked_loan_evidence_sequence(),
                 }]);
             }
-            if state.memory.is_deallocated_heap_address(&pointer) {
+            if state
+                .memory
+                .is_deallocated_heap_address(&pointer, assumptions)
+            {
                 return Ok(vec![CStatementExecutionPath {
                     loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::UndefinedBehavior(
@@ -1277,9 +1280,12 @@ pub(crate) fn execute_c_realloc_assign_paths(
         }
 
         let Some(old_bytes) = state.memory.live_heap_block_size(&old_pointer).cloned() else {
-            let error = if state.memory.is_deallocated_heap_address(&old_pointer) {
+            let error = if state
+                .memory
+                .is_deallocated_heap_address(&old_pointer, assumptions)
+            {
                 CInvalidFree::DoubleFree
-            } else if state.memory.is_live_heap_address(&old_pointer) {
+            } else if state.memory.is_live_heap_address(&old_pointer, assumptions) {
                 CInvalidFree::InteriorPointer
             } else {
                 CInvalidFree::NonHeapPointer
@@ -1749,7 +1755,9 @@ fn execute_c_heap_free_paths(
         let mut working_memory = state.memory.clone();
         let bytes = if let Some(bytes) = working_memory.live_heap_block_size(pointer.pointer()) {
             bytes.clone()
-        } else if working_memory.is_deallocated_heap_address(pointer.pointer()) {
+        } else if working_memory
+            .is_deallocated_heap_address(pointer.pointer(), &effective_assumptions)
+        {
             let error = CInvalidFree::DoubleFree;
             paths.push(CStatementExecutionPath {
                 loop_invariant_correspondence: Default::default(),
@@ -1760,7 +1768,7 @@ fn execute_c_heap_free_paths(
                 loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
-        } else if working_memory.is_live_heap_address(pointer.pointer()) {
+        } else if working_memory.is_live_heap_address(pointer.pointer(), &effective_assumptions) {
             let error = CInvalidFree::InteriorPointer;
             paths.push(CStatementExecutionPath {
                 loop_invariant_correspondence: Default::default(),
@@ -1890,7 +1898,7 @@ fn execute_c_heap_free_paths(
             continue;
         }
         let memory = working_memory
-            .free_heap_block(pointer.pointer())
+            .free_heap_block(pointer.pointer(), &effective_assumptions)
             .expect("validated live heap base should free");
         facts.push(ExecutionPureFact::internal(
             Proposition::CHeapAllocationFreed {
@@ -1945,7 +1953,7 @@ pub(crate) fn resolve_pending_heap_allocations(
             let (memory, bytes, resolved_base, _) = state
                 .memory
                 .clone()
-                .resolve_pending_heap_reallocation(&base, !is_null)
+                .resolve_pending_heap_reallocation(&base, !is_null, assumptions)
                 .expect("collected pending reallocation should still exist");
             state = state.with_memory(memory);
             for binding in std::sync::Arc::make_mut(&mut state.locals.bindings).values_mut() {

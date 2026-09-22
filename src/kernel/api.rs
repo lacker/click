@@ -117,7 +117,7 @@ pub(crate) fn c_memory_holds_live_heap_allocation_at(
     memory: &super::CMemory,
     pointer: &Pointer,
 ) -> bool {
-    memory.is_live_heap_address(pointer)
+    memory.is_live_heap_address(pointer, &PureFactContext::new())
         || memory.heap_live_allocation_bases().any(|base| {
             base.block == pointer.block
                 && super::assumptions::pointer_offsets_equal_after_exact_materialization(

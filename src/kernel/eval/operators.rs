@@ -1217,11 +1217,15 @@ fn pointer_has_object_provenance_evidence(
                 else {
                     unreachable!("viewability object index contains only viewability facts")
                 };
-                crate::kernel::reasoning::memory_range_still_available(memory, state.memory(), base)
-                    && decide(ConditionTerm::signed_greater_than(
-                        bytes.clone(),
-                        Bitvector32Term::Constant(0),
-                    ))
+                crate::kernel::reasoning::memory_range_still_available(
+                    memory,
+                    state.memory(),
+                    base,
+                    assumptions,
+                ) && decide(ConditionTerm::signed_greater_than(
+                    bytes.clone(),
+                    Bitvector32Term::Constant(0),
+                ))
             })
 }
 

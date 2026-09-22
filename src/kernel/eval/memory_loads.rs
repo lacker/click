@@ -390,7 +390,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     // Unlike external argument memory, a fresh heap block has a known
     // initialization history. Permission authorizes a read but cannot turn a
     // never-written heap cell into an unconstrained initialized value.
-    if memory.is_uninitialized_heap_address(&pointer, value_type.byte_width())
+    if memory.is_uninitialized_heap_address(&pointer, value_type.byte_width(), assumptions)
         && !load_has_established_value(memory, &pointer, value_type, assumptions)
     {
         return vec![CExpressionPath {
@@ -400,7 +400,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }];
     }
 
-    if memory.is_deallocated_heap_address(&pointer) {
+    if memory.is_deallocated_heap_address(&pointer, assumptions) {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
             facts,
@@ -630,7 +630,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         return paths;
     }
 
-    if memory.is_zeroed_heap_address(&pointer, value_type.byte_width()) {
+    if memory.is_zeroed_heap_address(&pointer, value_type.byte_width(), assumptions) {
         let value = match value_type {
             CType::Int16 => int16(Bitvector32Term::Constant(0)),
             CType::Int32 => int32(Bitvector32Term::Constant(0)),

@@ -254,7 +254,7 @@ impl PureFactContext {
                     return false;
                 };
 
-                memory_range_still_available(range_memory, memory, range_base)
+                memory_range_still_available(range_memory, memory, range_base, self)
                     && self.proves_loadable_region_from_structural_range(
                         range_base,
                         range_bytes,
@@ -294,7 +294,7 @@ impl PureFactContext {
                 else {
                     return None;
                 };
-                memory_range_still_available(range_memory, memory, range_base).then(|| {
+                memory_range_still_available(range_memory, memory, range_base, self).then(|| {
                     let preferred = bytes.as_const() == Some(4)
                         && self
                             .pointer_element_index_from_base_for_memory_resolution(
@@ -335,7 +335,7 @@ impl PureFactContext {
                     == memory.blocks.get(&fact_base.block)
                     && fact_memory.forgotten.ended_local_blocks == memory.forgotten.ended_local_blocks
                     && fact_memory.heap == memory.heap)
-                || memory_range_still_available(fact_memory, memory, fact_base)
+                || memory_range_still_available(fact_memory, memory, fact_base, self)
                 || crate::kernel::api::c_memories_canonically_equal(fact_memory, memory)
                 || crate::kernel::api::c_memories_connected_by_effects(fact_memory, memory, self)
         };
@@ -509,7 +509,7 @@ impl PureFactContext {
                 else {
                     return false;
                 };
-                if !memory_range_still_available(range_memory, memory, range_base) {
+                if !memory_range_still_available(range_memory, memory, range_base, self) {
                     return false;
                 }
                 if range_base == base && range_bytes == bytes {

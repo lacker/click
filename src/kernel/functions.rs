@@ -9080,9 +9080,11 @@ fn apply_verified_heap_allocation_delta(
                     CRuntimeError::InvalidFree(CInvalidFree::NonHeapPointer),
                 ))?;
         }
-        memory = memory.free_heap_block(&base).map_err(|error| {
-            VerifiedAllocationDeltaError::Runtime(CRuntimeError::InvalidFree(error))
-        })?;
+        memory = memory
+            .free_heap_block(&base, assumptions)
+            .map_err(|error| {
+                VerifiedAllocationDeltaError::Runtime(CRuntimeError::InvalidFree(error))
+            })?;
         effects.push(ExecutionPureFact::internal(
             Proposition::CHeapAllocationFreed {
                 before: before_free,
@@ -11120,12 +11122,19 @@ fn uninitialized_aggregate_copy_source_cell(
     if memory.known_value(source_field).is_some() {
         return false;
     }
-    if memory.is_zeroed_heap_address(source_field, element_type.byte_width()) {
+    if memory.is_zeroed_heap_address(
+        source_field,
+        element_type.byte_width(),
+        &PureFactContext::new(),
+    ) {
         return false;
     }
-    memory.is_uninitialized_heap_address(source_field, element_type.byte_width())
-        || (source_field.block.starts_with("local:")
-            && memory.access_in_bounds(source_field, element_type.byte_width()))
+    memory.is_uninitialized_heap_address(
+        source_field,
+        element_type.byte_width(),
+        &PureFactContext::new(),
+    ) || (source_field.block.starts_with("local:")
+        && memory.access_in_bounds(source_field, element_type.byte_width()))
 }
 
 /// Every aggregate-copy path goes through this wrapper so a copy from
@@ -11196,7 +11205,11 @@ fn copy_aggregate_fields(
             let source_field = source.offset_by_bytes(element_offset);
             let destination_field = destination.offset_by_bytes(element_offset);
             let value = memory.known_value(&source_field).or_else(|| {
-                if memory.is_zeroed_heap_address(&source_field, element_type.byte_width()) {
+                if memory.is_zeroed_heap_address(
+                    &source_field,
+                    element_type.byte_width(),
+                    &PureFactContext::new(),
+                ) {
                     return match element_type {
                         CType::Int16 => Some(int16(0)),
                         CType::Int32 => Some(int32(0)),
@@ -11322,7 +11335,11 @@ fn copy_aggregate_union_member(
     {
         return Some(value);
     }
-    if memory.is_zeroed_heap_address(source_field, element_type.byte_width()) {
+    if memory.is_zeroed_heap_address(
+        source_field,
+        element_type.byte_width(),
+        &PureFactContext::new(),
+    ) {
         return zero_union_member_value(element_type);
     }
     if memory.has_block(&source_field.block)

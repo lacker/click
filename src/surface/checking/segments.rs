@@ -85,7 +85,9 @@ fn is_preexisting_write_pointer(pointer: &Pointer, pre_state: &CState) -> bool {
             pointer.block,
             PointerBlock::Heap(_) | PointerBlock::Symbolic(_)
         ) || pre_state.memory().has_block(&pointer.block)
-            || pre_state.memory().is_live_heap_address(pointer))
+            || pre_state
+                .memory()
+                .is_live_heap_address(pointer, &crate::kernel::PureFactContext::new()))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

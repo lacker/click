@@ -599,9 +599,19 @@ impl Bitvector32Term {
             return initial;
         }
 
-        if Self::add(start.clone(), Self::Constant(1)) == end {
-            return instantiate_range_fold_step(&body, accumulator, &initial, item, &start);
-        }
+        // No one-step shortcut above the endpoint check. The fold's carrier is
+        // the signed `int32` range its empty and append laws certify
+        // (`prove_integer_range_fold_empty` guards with the signed order,
+        // `prove_integer_range_fold_append` adds the non-wrapping
+        // `end < i32::MAX` premise), so only a *signed* one-element range may
+        // unroll. `Self::add` wraps in `2^32`, so `add(start, 1) == end` also
+        // holds for `i32::MAX .. i32::MIN`, whose signed range is empty and
+        // whose certified value is `initial` — unrolling it here would return
+        // a step where the laws return `initial`. The concrete path below
+        // decides exact one-element ranges (4 .. 5 unrolls once, `i32::MAX ..
+        // i32::MIN` stays empty), and a symbolic pair that is one element
+        // apart under one value of the start is opaque until an assumption
+        // prefers a value, which is exactly what the laws' guards track.
 
         if let (Some(start_value), Some(end_value)) = (
             signed_bitvector_constant(&start),

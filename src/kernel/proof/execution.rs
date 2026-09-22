@@ -8045,7 +8045,10 @@ mod tests {
         let live = CMemory::new()
             .with_heap_allocation_claim(external.clone(), Bitvector32Term::Constant(8))
             .unwrap();
-        let freed = live.clone().free_heap_block(&external).unwrap();
+        let freed = live
+            .clone()
+            .free_heap_block(&external, &PureFactContext::new())
+            .unwrap();
         let live_read = read(live, external.clone(), Bitvector32Term::Constant(4));
         let dead_read = read(freed.clone(), external, Bitvector32Term::Constant(4));
         assert!(!resource_read_preserves_range(&live_read, &dead_read));
@@ -8749,7 +8752,7 @@ mod tests {
             before
                 .memory()
                 .clone()
-                .free_heap_block(&allocation_base)
+                .free_heap_block(&allocation_base, &PureFactContext::new())
                 .expect("the freed arm should retire the allocation"),
         );
         let retained = before.clone();

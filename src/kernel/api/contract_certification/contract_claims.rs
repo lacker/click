@@ -1716,7 +1716,7 @@ fn heap_free_effect_is_valid(
     };
     live.live_heap_block_size(allocation_base) == Some(bytes)
         && live
-            .free_heap_block(allocation_base)
+            .free_heap_block(allocation_base, &PureFactContext::new())
             .is_ok_and(|expected| expected == *after)
 }
 
