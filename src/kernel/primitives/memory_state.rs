@@ -1857,36 +1857,66 @@ impl CMemory {
         }
     }
 
-    /// Removes an input allocation claim at an opaque contract boundary.
+    /// Retires an input allocation at an opaque contract boundary.
     ///
-    /// The consumed ownership occurrence is gone regardless of whether the
-    /// produced occurrence later names the same pointer value. Unlike a C
-    /// `free`, this abstraction does not assert deallocation or erase bytes:
-    /// the contract may describe continuity, replacement, or either. Return
-    /// resources install the sole post-call allocation claim afterwards.
+    /// The contract leaves continuity undecided, so the callee may have freed
+    /// the object. Forget content and allocation status under every spelling
+    /// the path proves equal to the input base, without asserting a definite
+    /// deallocation. Return resources install any post-call claim afterwards.
     pub(in crate::kernel) fn retire_contract_heap_allocation_claim(
         mut self,
         base: &Pointer,
+        bytes: &Bitvector32Term,
+        assumptions: &PureFactContext,
     ) -> Self {
-        let prior = Some(intern_c_memory_ref(&self));
-        let removed_live = std::sync::Arc::make_mut(&mut self.heap)
-            .live_allocations
-            .remove(base);
-        let removed_uninitialized = std::sync::Arc::make_mut(&mut self.heap)
-            .uninitialized_allocations
-            .remove(base);
-        let removed_zeroed_prefix = std::sync::Arc::make_mut(&mut self.heap)
-            .zeroed_prefix_allocations
-            .remove(base)
-            .is_some();
-        if (removed_live.is_some() || removed_uninitialized || removed_zeroed_prefix)
-            && let Some(base) = prior
-        {
-            record_c_memory_derivation(
-                &self,
-                CMemoryDerivation::ContractAllocationClaimsChanged { base },
-            );
+        let prior = intern_c_memory_ref(&self);
+        let mut retired_blocks = BTreeSet::from([base.block.clone()]);
+        for alias in assumptions.exact_pointer_aliases(base) {
+            if !alias.block.proven_distinct(&base.block) {
+                retired_blocks.insert(alias.block.clone());
+            }
         }
+        let retired_claim = |candidate: &Pointer| {
+            heap_allocation_may_contain_pointer(candidate, base, assumptions)
+                || pointers_proven_equal_for_memory_resolution(candidate, base, assumptions)
+        };
+        // A symbolic alias block can hold cells at interior offsets. As at a
+        // definite free, dropping that block's cached cells is conservative:
+        // an undecided contract can replace the allocation entirely.
+        let retired_cell = |candidate: &Pointer| {
+            retired_blocks.contains(&candidate.block) || retired_claim(candidate)
+        };
+
+        let heap = std::sync::Arc::make_mut(&mut self.heap);
+        heap.live_allocations
+            .retain(|candidate, _| !retired_claim(candidate));
+        heap.uninitialized_allocations
+            .retain(|candidate| !retired_claim(candidate));
+        heap.zeroed_allocations
+            .retain(|candidate| !retired_claim(candidate));
+        heap.zeroed_prefix_allocations
+            .retain(|candidate, _| !retired_claim(candidate));
+        heap.initialized_cells
+            .retain(|candidate, _| !retired_cell(candidate));
+        std::sync::Arc::make_mut(&mut self.cells).retain(|candidate, _| !retired_cell(candidate));
+        std::sync::Arc::make_mut(&mut self.union_cells)
+            .retain(|(candidate, _), _| !retired_cell(candidate));
+        for block in &retired_blocks {
+            if *block != PointerBlock::ExternalArgument {
+                std::sync::Arc::make_mut(&mut self.blocks).remove(block);
+            }
+        }
+        // Losing an allocation's cached knowledge can otherwise re-intern as
+        // an older empty snapshot and drop this safety-critical edge.
+        self.mark_forgotten_from(&prior);
+        record_c_memory_derivation(
+            &self,
+            CMemoryDerivation::ContractAllocationRetired {
+                base: prior,
+                allocation_base: base.clone(),
+                bytes: bytes.clone(),
+            },
+        );
         self
     }
 
@@ -3732,4 +3762,61 @@ pub(crate) fn block_is_never_address_taken_local(block: &PointerBlock) -> bool {
 
 pub(crate) fn clear_never_address_taken_locals() {
     NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| registry.borrow_mut().clear());
+}
+
+#[cfg(test)]
+mod contract_retirement_tests {
+    use super::*;
+
+    #[test]
+    fn retirement_drops_zeroed_status_under_each_equal_base_spelling() {
+        let base = Pointer {
+            block: PointerBlock::Heap(922_200),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let aliases = [
+            Pointer {
+                block: PointerBlock::Symbolic(Variable(922_201)),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Pointer {
+                block: PointerBlock::Symbolic(Variable(922_202)),
+                offset: PointerOffsetTerm::Constant(4),
+            },
+        ];
+        let unrelated = Pointer {
+            block: PointerBlock::Heap(922_203),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let assumptions = aliases.iter().fold(PureFactContext::new(), |facts, alias| {
+            facts.assume_proposition(Proposition::ConditionIs(
+                ConditionTerm::pointer_equal(alias.clone(), base.clone()),
+                true,
+            ))
+        });
+        let mut memory = CMemory::new()
+            .with_heap_allocation_claim(base.clone(), 4)
+            .expect("fresh input allocation");
+        let heap = std::sync::Arc::make_mut(&mut memory.heap);
+        heap.zeroed_allocations.extend(aliases.iter().cloned());
+        heap.zeroed_allocations.insert(unrelated.clone());
+        memory = memory.store_with_context(aliases[0].clone(), int32(9), &assumptions);
+        memory = memory.store(unrelated.clone(), int32(11));
+        assert!(memory.has_initialized_cell_at(&aliases[0], 4));
+        let retired = memory.retire_contract_heap_allocation_claim(
+            &base,
+            &Bitvector32Term::Constant(4),
+            &assumptions,
+        );
+        for alias in &aliases {
+            assert!(
+                !retired.heap.zeroed_allocations.contains(alias),
+                "no equal spelling may retain a blanket zeroed reading"
+            );
+        }
+        assert!(retired.heap.zeroed_allocations.contains(&unrelated));
+        assert_eq!(retired.known_value(&aliases[0]), None);
+        assert!(!retired.has_initialized_cell_at(&aliases[0], 4));
+        assert_eq!(retired.known_value(&unrelated), Some(int32(11)));
+    }
 }

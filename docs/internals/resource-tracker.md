@@ -200,6 +200,7 @@ established.
 | `BlockDeclared` | separate under the extended-bridging gate: it writes nothing | separate when the declared object is proven distinct: it has its own `blocks` key, so this block's extent is the entry it was | separate: it writes nothing |
 | `HeapAllocationPending` | separate under the extended-bridging gate | separate: a request with no address yet records nothing a read of a block consults | separate: it writes nothing |
 | `ContractAllocationClaimsChanged` | separate under the extended-bridging gate | **stops** | separate: it writes nothing |
+| `ContractAllocationRetired` | separate only when the possibly released allocation misses the cell | separate when the allocation's object is proven distinct | separate when its bytes miss every range |
 | `CellsForgotten` | separate under the extended-bridging gate | **stops**: the state is the same, the cell map is not | separate: it writes nothing |
 | `HeapAllocated` | separate under the extended-bridging gate when the block differs | separate when the fresh object is proven distinct | separate: a stated footprint names objects that already existed, so the fresh one's bytes are in no range of it |
 | `LocalLifetimeEnded` | separate under the extended-bridging gate, on general distinctness | separate when the retired object is proven distinct | separate when the retired object is proven distinct from the object every range is in |
@@ -213,6 +214,14 @@ edge: `ContractAllocationClaimsChanged` names no allocation, and a contract
 claim may cover a subrange of `ExternalArgument` memory; `CellsForgotten` names
 no cell, so nothing says the values it dropped were not this block's. Recording
 what they concern is what would settle either.
+
+
+A contract with undecided allocation continuity records
+`ContractAllocationRetired` for the consumed input. It removes cached cells,
+initialization, and zeroed status under equal pointer spellings, while leaving
+definite deallocation unasserted. The edge names the allocation and its extent,
+so a later memory proof may cross it only for storage shown separate from that
+possible release.
 
 Where the cell column names a gate, the answer is one a scope decides rather
 than the edge. `extended_dag_bridging_active` and `explicit_dag_check_active`

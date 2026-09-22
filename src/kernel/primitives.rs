@@ -4120,6 +4120,15 @@ pub enum CMemoryDerivation {
     /// not write bytes, allocate storage, or free storage, so every load is
     /// preserved across this edge.
     ContractAllocationClaimsChanged { base: SharedCMemory },
+    /// `base` after an input allocation claim was consumed by a contract
+    /// that does not decide continuity. The callee may have freed the object,
+    /// so cached contents and status for that allocation cannot cross this
+    /// edge even though no definite C `free` is asserted.
+    ContractAllocationRetired {
+        base: SharedCMemory,
+        allocation_base: Pointer,
+        bytes: Bitvector32Term,
+    },
     /// `base` with one complete heap allocation lifetime ended.
     ///
     /// `allocation_base` is kept rather than only its broad pointer block:
@@ -4182,6 +4191,7 @@ impl CMemoryDerivation {
             Self::HeapAllocated { .. } => "HeapAllocated",
             Self::HeapAllocationPending { .. } => "HeapAllocationPending",
             Self::ContractAllocationClaimsChanged { .. } => "ContractAllocationClaimsChanged",
+            Self::ContractAllocationRetired { .. } => "ContractAllocationRetired",
             Self::HeapFreed { .. } => "HeapFreed",
             Self::CellsForgotten { .. } => "CellsForgotten",
             Self::LocalLifetimeEnded { .. } => "LocalLifetimeEnded",
@@ -4198,6 +4208,7 @@ impl CMemoryDerivation {
             | Self::HeapAllocated { base, .. }
             | Self::HeapAllocationPending { base, .. }
             | Self::ContractAllocationClaimsChanged { base }
+            | Self::ContractAllocationRetired { base, .. }
             | Self::HeapFreed { base, .. }
             | Self::CellsForgotten { base }
             | Self::LocalLifetimeEnded { base, .. }

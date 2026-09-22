@@ -1737,6 +1737,14 @@ fn describe_cell_cause(
                 }
             }
         }
+        resource_tracker::Change::ContractRetirement { allocation } => {
+            match describe_memory_block(&allocation.block, parameters, arguments) {
+                Some(retired) => format!(
+                    "the contract in between may have released the allocation at `{retired}`."
+                ),
+                None => "the contract in between may have released this allocation.".to_string(),
+            }
+        }
         resource_tracker::Change::Allocation { .. } => {
             "an allocation in between made this storage live.".to_string()
         }
@@ -2050,6 +2058,12 @@ fn describe_step(
             match describe_memory_block(&allocation.block, parameters, arguments) {
                 Some(freed) => format!("the release of `{freed}`"),
                 None => "a released allocation".to_string(),
+            }
+        }
+        resource_tracker::Change::ContractRetirement { allocation } => {
+            match describe_memory_block(&allocation.block, parameters, arguments) {
+                Some(retired) => format!("the contract possibly releasing `{retired}`"),
+                None => "a contract possibly releasing an allocation".to_string(),
             }
         }
         resource_tracker::Change::Allocation { .. } => "an allocation".to_string(),

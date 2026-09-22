@@ -1129,7 +1129,11 @@ identity tombstones make use-after-free and double-free explicit, but carry no
 resource authority. `HeapAllocated` and `HeapFreed`
 memory derivation DAG edges preserve these transitions for later checking; an allocation
 resource that crosses a verified call also determines the allocation delta,
-not an untrusted ordinary token. Exact execution records every successful
+not an untrusted ordinary token. When that delta leaves continuity undecided,
+the input allocation's cached values and zeroed status are forgotten under
+proven-equal pointer spellings. A `ContractAllocationRetired` edge records the
+possible release without claiming that a C `free` occurred. Exact execution
+records every successful
 free as `CHeapAllocationFreed(before, after, base, bytes)`. Effect
 certification checks that executing `free(base)` from `before` with the stated
 extent produces `after`, and chains that transition separately from ordinary

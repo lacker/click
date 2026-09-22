@@ -9053,7 +9053,11 @@ fn apply_verified_heap_allocation_delta(
                 // the scan above cannot see a view the caller still holds
                 // over these bytes; the ledger can (docs/internals/stable-views.md).
                 refuse_retiring_a_lent_allocation(ledger, &base, &bytes, &allocation_assumptions)?;
-                memory = memory.retire_contract_heap_allocation_claim(&base);
+                memory = memory.retire_contract_heap_allocation_claim(
+                    &base,
+                    &bytes,
+                    &allocation_assumptions,
+                );
                 continue;
             }
         }

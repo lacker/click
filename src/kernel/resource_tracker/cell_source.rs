@@ -324,6 +324,9 @@ impl MemoryDagHopJustification {
                 derivation,
                 CMemoryDerivation::HeapFreed {
                     allocation_base, ..
+                }
+                | CMemoryDerivation::ContractAllocationRetired {
+                    allocation_base, ..
                 } if allocation_base.blocks_proven_distinct(pointer)
             ),
             Self::CallHavocRanges { ranges } => {
