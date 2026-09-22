@@ -2,6 +2,19 @@
 
 Classification: **missing proof-language representation**.
 
+The first missing layer now has a checked minimal reproduction:
+`mdtests/algebraic_existential_witness_rejected.md`. It removes DFS, arrays,
+and C execution entirely. The proposition
+
+```click
+exists (fuel: Nat) { fuel == Nat::Zero }
+```
+
+has the immediate witness `Nat::Zero`, but parsing stops at `Nat` with
+`quantifier type must be a C type or Integer`. This is the smallest failure;
+the loop below needs the same proposition plus elimination of its witness at
+the next iteration.
+
 The direct correctness invariant for the fixed search C is:
 
 ```click
@@ -56,3 +69,29 @@ Intended regression: permit an algebraic witness in a loop proposition (or an
 equivalent first-class ghost binding) so the invariant above initializes with
 `Nat::Zero`, preserves with `Nat::Succ(fuel)`, and the success return exposes
 the witness without changing the C or manufacturing a resource token.
+
+## Smallest sound implementation
+
+Extend the existing existential machinery rather than adding DFS-specific
+model state or a new ghost-resource convention:
+
+1. Permit algebraic `ClickType` binders in `forall` and `exists`, lower them
+   through an algebraic specification proposition to the kernel's existing
+   `Sort::Algebraic(type)` proposition binder, and retain the type on the
+   binder.
+2. Generalize `witness(name = value)` to evaluate an algebraic expression and
+   substitute its checked algebraic term into that binder. The kernel already
+   represents algebraic variables and generic existential sorts; the missing
+   restriction is primarily in the surface/specification bridge and the
+   tactic adapter.
+3. Generalize `choose` in the other direction, placing a fresh algebraic term
+   in the proof-local algebraic environment. For loops, add an explicit
+   `choose(name from invariant N)` source (or an equivalent named-invariant
+   source), because today's `choose` can only open function requirements.
+
+The implementation should be accepted in layers: first turn the checked
+`Nat::Zero` reproduction into a passing witness proof; then add a pure theorem
+that chooses `fuel` from an algebraic existential and returns
+`Nat::Succ(fuel)` as a new witness; then a one-counter loop using
+`choose(... from invariant 0)`; finally the DFS `walk` invariant. This keeps
+the new rule general, kernel-checked, and independent of array reachability.

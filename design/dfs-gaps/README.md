@@ -39,6 +39,8 @@ decrease there. Neither is the fold law after a store, which
   representation.** The recursive array walk verifies with `Nat` fuel, but the
   loop cannot carry the changing algebraic witness directly; the numeric,
   `to_nat`, and resource alternatives each hit a specific checked refusal.
+  `mdtests/algebraic_existential_witness_rejected.md` is the checked minimal
+  reproduction of the first missing layer.
 - `small_refusals_and_spellings.md` — seven one-to-six-line costs: extent
   halves restated at every `apply`, `arithmetic() using` not weakening a
   derived strict bound, a constant-true requirement needing its own `have`,

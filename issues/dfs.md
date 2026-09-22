@@ -25,7 +25,10 @@ invariant does not exist, numeric recursion rejects the array parameter,
 `Integer` equality cannot be rewritten through `to_nat`, and a resource fact
 cannot mention the recursive function. Do not encode the witness as an empty
 produced token merely to route around those gaps; settle the algebraic ghost
-witness design first.
+witness design first. The root rejection is gate-checked without any DFS
+machinery by `mdtests/algebraic_existential_witness_rejected.md`; the reduction
+also records the narrow algebraic `exists`/`witness`/`choose` implementation
+path that would resolve it.
 
 The explicit
 quantified-transport, whole-array dependency, shared-lemma, extent-restatement,
