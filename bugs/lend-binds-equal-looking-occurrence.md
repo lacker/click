@@ -39,4 +39,4 @@ comparison is the plan's `support` id versus the borrowed occurrence id.
 - [ ] Every lend path re-derives (or refuses on) the `support !=
       origin_support` binding, mirroring the symbolic guard, with the
       substitute-occurrence regression refusing.
-- [ ] `includes/check.sh` green.
+- [ ] `scripts/check.sh` green.

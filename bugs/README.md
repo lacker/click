@@ -19,3 +19,4 @@ fix, regression coverage, and documentation land.
 - [The storage-footprint check loses the write's byte width](write-footprint-check-loses-byte-width.md) — statically confirmed
 - [The call-havoc retention's `local:` promise has no enforced boundary](call-havoc-local-retention-unenforced.md) — statically confirmed
 - [The ordinary lend path binds a substitute occurrence](lend-binds-equal-looking-occurrence.md) — statically confirmed
+- [The byte-offset helper folds an Int64Scaled offset into a 32-bit residue](formation-guard-reads-int64-scaled-offset-as-residue.md) — statically confirmed
