@@ -41,7 +41,7 @@ parameters, pure-function and predicate parameters, typed `let` bindings, and
 `forall`/`exists` variables.
 
 Click signatures currently understand `void` C return types, `int32`/`int`/
-`int32_t`, `uint8`/`unsigned char`/`uint8_t`, and scalar `uint32`/
+`int32_t`, `int8`/`signed char`/`int8_t`, `uint8`/`unsigned char`/`uint8_t`, and scalar `uint32`/
 `unsigned int`/`uint32_t` forms, plus the existing pointer forms, pilot
 `struct name*` parameters, and array-parameter spellings such as `int32 p[]`
 and `uint8 bytes[]`. C typedefs may alias these modeled types. `uint32` is
@@ -623,14 +623,14 @@ mixed Integer/C parameters. Unsuffixed decimal literals take their type from
 an Integer expression, including values larger than 64 bits.
 Machine variables and suffixed machine literals require explicit conversions.
 `to_integer(value)` preserves the numeric value of each supported machine
-integer type: `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, and `uint64`.
+integer type: `int8`, `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, and `uint64`.
 Signed `-1` and unsigned `4294967295u32` therefore produce different Integers.
 Evaluating the argument retains its C definedness obligations. For example,
 `to_integer(x + 1)` requires established evidence of `defined(x + 1)`, even in
 a reflexive comparison. This requirement survives aliases, nested arithmetic,
 and conditional expressions; an overflowing C addition remains invalid.
 
-The reverse names are `to_int16`, `to_int32`, `to_uint8`, `to_uint16`,
+The reverse names are `to_int8`, `to_int16`, `to_int32`, `to_uint8`, `to_uint16`,
 `to_uint32`, `to_int64`, and `to_uint64`. Exact constants must lie within the
 destination's range. Symbolic values require established lower and upper bounds;
 for example, `to_int32(z)` requires `z >= -2147483648` and `z <= 2147483647`.

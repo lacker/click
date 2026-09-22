@@ -4301,6 +4301,7 @@ fn c_parameter_type_spelling(parameter: &CParameter) -> String {
         CType::Bool => "bool",
         CType::VoidPointer => "void*",
         CType::VoidPointerPointer => "void**",
+        CType::Int8 => "int8",
         CType::Int16 => "int16",
         CType::Int32 => "int32",
         CType::UInt8 => "uint8",
@@ -4310,6 +4311,7 @@ fn c_parameter_type_spelling(parameter: &CParameter) -> String {
         CType::UInt64 => "uint64",
         CType::Float32 => "float32",
         CType::Float64 => "float64",
+        CType::Int8Pointer => "int8*",
         CType::Int16Pointer => "int16*",
         CType::UInt16Pointer => "uint16*",
         CType::Int32Pointer => "int32*",
@@ -4319,6 +4321,7 @@ fn c_parameter_type_spelling(parameter: &CParameter) -> String {
         CType::UInt64Pointer => "uint64*",
         CType::Float32Pointer => "float32*",
         CType::Float64Pointer => "float64*",
+        CType::Int8PointerPointer => "int8**",
         CType::Int16PointerPointer => "int16**",
         CType::UInt16PointerPointer => "uint16**",
         CType::Int32PointerPointer => "int32**",
@@ -4329,6 +4332,7 @@ fn c_parameter_type_spelling(parameter: &CParameter) -> String {
         CType::Float32PointerPointer => "float32**",
         CType::Float64PointerPointer => "float64**",
         CType::FunctionPointer(_) => "void (*)()",
+        CType::Int8Array(_) => "int8*",
         CType::Int16Array(_) => "int16*",
         CType::Int32Array(_) => "int32*",
         CType::UInt8Array(_) => "uint8*",
@@ -7837,6 +7841,7 @@ fn spec_expression_constant(expression: &SpecExpression) -> Option<u32> {
         return None;
     };
     match value {
+        CValue::Int8(term) => term.as_const(),
         CValue::Int16(term)
         | CValue::Int32(term)
         | CValue::UInt8(term)
@@ -9336,6 +9341,7 @@ pub(crate) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue 
         CType::VoidPointer | CType::VoidPointerPointer => {
             CValue::typed_pointer(Pointer::symbolic(variable), c_type)
         }
+        CType::Int8 => CValue::Int8(Bitvector32Term::Variable(variable)),
         CType::Int16 => CValue::Int16(Bitvector32Term::Variable(variable)),
         CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
         CType::UInt8 => CValue::UInt8(Bitvector32Term::Variable(variable)),
@@ -9345,6 +9351,9 @@ pub(crate) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue 
         CType::UInt64 => CValue::UInt64(Bitvector32Term::Variable(variable)),
         CType::Float32 => CValue::Float32(Bitvector32Term::Variable(variable)),
         CType::Float64 => CValue::Float64(Bitvector32Term::Variable(variable)),
+        CType::Int8Pointer | CType::Int8PointerPointer => {
+            CValue::typed_pointer(Pointer::symbolic(variable), c_type)
+        }
         CType::Int16Pointer
         | CType::UInt16Pointer
         | CType::Int32Pointer
@@ -9367,6 +9376,9 @@ pub(crate) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue 
         }
         CType::FunctionPointer(_) => {
             CValue::typed_pointer(Pointer::symbolic_function(variable), c_type)
+        }
+        CType::Int8Array(_) => {
+            unreachable!("C functions cannot return array values")
         }
         CType::Int32Array(_)
         | CType::UInt8Array(_)
@@ -9608,6 +9620,7 @@ fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CEx
                     value_type,
                     CType::Int32Array(_)
                         | CType::UInt8Array(_)
+                        | CType::Int8Array(_)
                         | CType::Int16Array(_)
                         | CType::UInt16Array(_)
                         | CType::UInt32Array(_)
@@ -9850,7 +9863,8 @@ pub(super) fn bind_c_function_arguments(
                 && (parameter.is_volatile() && parameter.c_type().is_pointer()
                     || matches!(
                         parameter.c_type(),
-                        CType::Int16
+                        CType::Int8
+                            | CType::Int16
                             | CType::Int32
                             | CType::UInt8
                             | CType::UInt16
@@ -10839,6 +10853,7 @@ fn zero_aggregate_fields(
 ) -> CMemory {
     for field in layout.fields() {
         let (element_type, element_count) = match field.c_type() {
+            CType::Int8 => (field.c_type(), 1),
             CType::Int16
             | CType::Int32
             | CType::UInt8
@@ -10868,6 +10883,7 @@ fn zero_aggregate_fields(
         };
         let zero = match element_type {
             CType::Bool => CValue::Bool(Bitvector32Term::Constant(0)),
+            CType::Int8 => int8(0),
             CType::Int16 => int16(0),
             CType::Int32 => int32(0),
             CType::UInt8 => uint8(0),
@@ -10886,6 +10902,9 @@ fn zero_aggregate_fields(
             | CType::Float32PointerPointer
             | CType::Float64PointerPointer
             | CType::FunctionPointer(_) => CValue::typed_pointer(Pointer::null(), element_type),
+            CType::Int8Array(_) => {
+                continue;
+            }
             CType::Int16Array(_)
             | CType::Int32Array(_)
             | CType::UInt8Array(_)
@@ -10900,6 +10919,7 @@ fn zero_aggregate_fields(
             | CType::VoidPointerPointer => {
                 continue;
             }
+            CType::Int8Pointer | CType::Int8PointerPointer => continue,
             CType::Int16Pointer
             | CType::UInt16Pointer
             | CType::UInt32Pointer
@@ -11043,6 +11063,7 @@ fn aggregate_copy_reads_uninitialized(
     // of leaving them readable, so it cannot go stale here.
     for field in layout.fields() {
         let (element_type, element_count) = match field.c_type() {
+            CType::Int8 => (field.c_type(), 1),
             CType::Int16
             | CType::Int32
             | CType::UInt8
@@ -11166,6 +11187,7 @@ fn copy_aggregate_fields(
 ) -> CMemory {
     for field in layout.fields() {
         let (element_type, element_count) = match field.c_type() {
+            CType::Int8 => (field.c_type(), 1),
             CType::Int16
             | CType::Int32
             | CType::UInt8
@@ -11211,6 +11233,7 @@ fn copy_aggregate_fields(
                     &PureFactContext::new(),
                 ) {
                     return match element_type {
+                        CType::Int8 => Some(int8(0)),
                         CType::Int16 => Some(int16(0)),
                         CType::Int32 => Some(int32(0)),
                         CType::UInt8 => Some(uint8(0)),
@@ -11239,6 +11262,10 @@ fn copy_aggregate_fields(
                     return None;
                 }
                 match element_type {
+                    CType::Int8 => Some(CValue::Int8(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                    ))),
                     CType::Int16 => Some(CValue::Int16(crate::kernel::canonical_form_of_load(
                         crate::kernel::intern_c_memory(memory.clone()),
                         source_field,
@@ -19096,6 +19123,7 @@ fn resolve_retained_aggregate_fields(
             value_type,
             CType::Int32Array(_)
                 | CType::UInt8Array(_)
+                | CType::Int8Array(_)
                 | CType::Int16Array(_)
                 | CType::UInt16Array(_)
                 | CType::UInt32Array(_)

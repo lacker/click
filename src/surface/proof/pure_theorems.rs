@@ -516,6 +516,7 @@ pub(super) fn click_type_from_algebraic_value_type(
             CType::Bool => C0Type::Bool,
             CType::VoidPointer => C0Type::VoidPointer,
             CType::VoidPointerPointer => C0Type::VoidPointerPointer,
+            CType::Int8 => C0Type::Int8,
             CType::Int16 => C0Type::Int16,
             CType::Int32 => C0Type::Int32,
             CType::UInt8 => C0Type::UInt8,
@@ -525,6 +526,7 @@ pub(super) fn click_type_from_algebraic_value_type(
             CType::UInt64 => C0Type::UInt64,
             CType::Float32 => C0Type::Float32,
             CType::Float64 => C0Type::Float64,
+            CType::Int8Pointer => C0Type::Int8Pointer,
             CType::Int16Pointer => C0Type::Int16Pointer,
             CType::UInt16Pointer => C0Type::UInt16Pointer,
             CType::Int32Pointer => C0Type::Int32Pointer,
@@ -534,6 +536,7 @@ pub(super) fn click_type_from_algebraic_value_type(
             CType::UInt64Pointer => C0Type::UInt64Pointer,
             CType::Float32Pointer => C0Type::Float32Pointer,
             CType::Float64Pointer => C0Type::Float64Pointer,
+            CType::Int8PointerPointer => C0Type::Int8PointerPointer,
             CType::Int16PointerPointer => C0Type::Int16PointerPointer,
             CType::UInt16PointerPointer => C0Type::UInt16PointerPointer,
             CType::Int32PointerPointer => C0Type::Int32PointerPointer,
@@ -544,6 +547,7 @@ pub(super) fn click_type_from_algebraic_value_type(
             CType::Float32PointerPointer => C0Type::Float32PointerPointer,
             CType::Float64PointerPointer => C0Type::Float64PointerPointer,
             CType::FunctionPointer(signature) => C0Type::FunctionPointer(*signature),
+            CType::Int8Array(length) => C0Type::Int8Array(*length),
             CType::Int16Array(length) => C0Type::Int16Array(*length),
             CType::UInt16Array(length) => C0Type::UInt16Array(*length),
             CType::Int32Array(length) => C0Type::Int32Array(*length),
@@ -824,6 +828,7 @@ fn check_pure_structural_induction(
                     if matches!(
                         c_type,
                         CType::Void
+                            | CType::Int8Array(_)
                             | CType::Int16Array(_)
                             | CType::UInt16Array(_)
                             | CType::Int32Array(_)
@@ -1300,6 +1305,7 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     },
                     c_type.to_kernel_type(),
                 ),
+                C0Type::Int8 => CValue::Int8(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int16 => CValue::Int16(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int32 => CValue::Int32(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt32 => CValue::UInt32(Bitvector32Term::Variable(Variable(index as u64))),
@@ -1314,6 +1320,18 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 C0Type::Float64 => {
                     CValue::Float64(Bitvector32Term::Variable(Variable(index as u64)))
                 }
+                C0Type::Int8Pointer | C0Type::Int8Array(_) => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            1,
+                        ),
+                    },
+                    CType::Int8Pointer,
+                ),
                 C0Type::Int16Pointer | C0Type::Int16Array(_) => CValue::typed_pointer(
                     Pointer {
                         block: PointerBlock::ExternalArgument,
@@ -1425,6 +1443,25 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     },
                     CType::Float64Pointer,
                 ),
+                C0Type::Int8PointerPointer => {
+                    let element_width = c_type
+                        .pointee_type()
+                        .expect("pointer-to-pointer parameter has a pointee")
+                        .to_kernel_type()
+                        .byte_width();
+                    CValue::typed_pointer(
+                        Pointer {
+                            block: PointerBlock::ExternalArgument,
+                            offset: scale_int32_offset(
+                                Bitvector32Term::Variable(Variable(
+                                    POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                                )),
+                                i64::from(element_width),
+                            ),
+                        },
+                        c_type.to_kernel_type(),
+                    )
+                }
                 C0Type::Int32PointerPointer
                 | C0Type::CharPointerPointer
                 | C0Type::UInt8PointerPointer
@@ -2081,6 +2118,7 @@ fn check_direct_pure_goal_with_proof(
 fn integer_round_trip_destination(name: &str) -> Option<crate::kernel::MachineIntegerType> {
     use crate::kernel::MachineIntegerType;
     Some(match name {
+        "integer_to_int8_round_trip" => MachineIntegerType::Int8,
         "integer_to_int16_round_trip" => MachineIntegerType::Int16,
         "integer_to_int32_round_trip" => MachineIntegerType::Int32,
         "integer_to_uint8_round_trip" => MachineIntegerType::UInt8,

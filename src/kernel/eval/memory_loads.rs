@@ -286,7 +286,8 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             || (matches!(value_type, CType::FunctionPointer(_))
                 && matches!(
                     value,
-                    CValue::Int16(_)
+                    CValue::Int8(_)
+                        | CValue::Int16(_)
                         | CValue::UInt8(_)
                         | CValue::UInt16(_)
                         | CValue::UInt32(_)
@@ -632,6 +633,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
 
     if memory.is_zeroed_heap_address(&pointer, value_type.byte_width(), assumptions) {
         let value = match value_type {
+            CType::Int8 => int8(Bitvector32Term::Constant(0)),
             CType::Int16 => int16(Bitvector32Term::Constant(0)),
             CType::Int32 => int32(Bitvector32Term::Constant(0)),
             CType::UInt8 => uint8(Bitvector32Term::Constant(0)),
@@ -771,7 +773,13 @@ fn load_has_established_value(
 ) -> bool {
     if !matches!(
         value_type,
-        CType::Int16 | CType::Int32 | CType::UInt8 | CType::UInt16 | CType::UInt32 | CType::Float32
+        CType::Int8
+            | CType::Int16
+            | CType::Int32
+            | CType::UInt8
+            | CType::UInt16
+            | CType::UInt32
+            | CType::Float32
     ) {
         return false;
     }
@@ -804,6 +812,10 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
 ) -> Option<CValue> {
     let pointee_byte_width = value_type.pointee_type()?.byte_width();
     let fresh = match value {
+        CValue::Int8(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            return Some(CValue::Int8(Bitvector32Term::Variable(fresh)));
+        }
         CValue::Int16(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
             let fresh = mint_load_variable(bits, facts, assumptions, source)?;
             return Some(CValue::Int16(Bitvector32Term::Variable(fresh)));
@@ -898,6 +910,10 @@ fn canonicalized_symbolic_load_value_with_identity(
     // load variable, with the defining fact beside it, so every fact,
     // offset, and range built from the value is canonical.
     match &value {
+        CValue::Int8(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            return Some(CValue::Int8(Bitvector32Term::Variable(fresh)));
+        }
         CValue::Int16(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
             let fresh = mint_load_variable(bits, facts, assumptions, source)?;
             return Some(CValue::Int16(Bitvector32Term::Variable(fresh)));
@@ -1541,7 +1557,7 @@ fn is_store_fact(condition: &ConditionTerm, value: bool) -> bool {
     matches!(
         load.0.known_value(load.1),
         Some(
-            CValue::Int16(recorded)
+            CValue::Int8(recorded) | CValue::Int16(recorded)
             | CValue::Int32(recorded)
             | CValue::UInt8(recorded)
             | CValue::UInt16(recorded)
@@ -2849,6 +2865,7 @@ pub(in crate::kernel) fn symbolic_load_value(
                 Bitvector32Term::Constant(1),
             )))
         }
+        CType::Int8 => Some(memory.symbolic_int8_load(pointer)),
         CType::Int16 => Some(memory.symbolic_int16_load(pointer)),
         CType::Int32 => Some(memory.symbolic_int32_load(pointer)),
         CType::UInt8 => Some(memory.symbolic_uint8_load(pointer)),
@@ -2858,6 +2875,11 @@ pub(in crate::kernel) fn symbolic_load_value(
         CType::UInt64 => Some(memory.symbolic_uint64_load(pointer)),
         CType::Float32 => Some(memory.symbolic_float32_load(pointer)),
         CType::Float64 => Some(memory.symbolic_float64_load(pointer)),
+        CType::Int8Pointer | CType::Int8PointerPointer => Some(memory.symbolic_pointer_load(
+            pointer,
+            value_type.pointee_type()?.byte_width(),
+            value_type,
+        )),
         CType::VoidPointerPointer
         | CType::Int16Pointer
         | CType::UInt16Pointer
@@ -2896,6 +2918,7 @@ pub(in crate::kernel) fn symbolic_load_value(
                 value_type,
             ))
         }
+        CType::Int8Array(_) => None,
         CType::Int32Array(_)
         | CType::UInt8Array(_)
         | CType::Int16Array(_)

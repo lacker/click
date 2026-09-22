@@ -1746,6 +1746,7 @@ fn integer_carrier_in_c_value(value: &CValue, variable: Variable) -> bool {
     match value {
         CValue::Pointer(pointer) => integer_carrier_in_pointer(pointer, variable),
         CValue::Void => false,
+        CValue::Int8(term) => integer_carrier_in_bitvector(term, variable),
         CValue::Bool(term)
         | CValue::Int16(term)
         | CValue::Int32(term)
@@ -3528,7 +3529,8 @@ pub(super) fn integer_sequence_element_equality(
     if left.c_type() != right.c_type()
         || !matches!(
             left,
-            CValue::Int16(_)
+            CValue::Int8(_)
+                | CValue::Int16(_)
                 | CValue::Int32(_)
                 | CValue::UInt8(_)
                 | CValue::UInt16(_)
@@ -6337,6 +6339,7 @@ fn array_ref_argument_memory(memory: &CMemory, pointer: &CValue) -> CMemory {
 pub(in crate::kernel) fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
         CValue::Bool(term) => Some(term.clone()),
+        CValue::Int8(term) => Some(term.clone()),
         CValue::Int16(term)
         | CValue::Int32(term)
         | CValue::UInt8(term)
@@ -6356,6 +6359,10 @@ fn integer_constant_to_machine(
 ) -> Option<CValue> {
     let value = value.as_const()?;
     match destination {
+        MachineIntegerType::Int8 => {
+            let value = i8::try_from(value.to_i64()?).ok()?;
+            Some(CValue::Int8(Bitvector32Term::Constant(value as u32)))
+        }
         MachineIntegerType::Int16 => {
             let value = i16::try_from(value.to_i64()?).ok()?;
             Some(CValue::Int16(Bitvector32Term::Constant(value as u32)))
@@ -6389,6 +6396,10 @@ pub(super) fn integer_machine_bounds(
     destination: MachineIntegerType,
 ) -> (IntegerTerm, IntegerTerm) {
     match destination {
+        MachineIntegerType::Int8 => (
+            IntegerTerm::constant_i64(i8::MIN as i64),
+            IntegerTerm::constant_i64(i8::MAX as i64),
+        ),
         MachineIntegerType::Int16 => (
             IntegerTerm::constant_i64(i16::MIN as i64),
             IntegerTerm::constant_i64(i16::MAX as i64),
@@ -6422,6 +6433,7 @@ pub(super) fn integer_machine_bounds(
 
 fn c_value_from_bitvector_term(c_type: CType, term: Bitvector32Term) -> Option<CValue> {
     Some(match c_type {
+        CType::Int8 => CValue::Int8(term),
         CType::Int16 => CValue::Int16(term),
         CType::Int32 => CValue::Int32(term),
         CType::UInt8 => CValue::UInt8(term),
@@ -7346,6 +7358,7 @@ pub(super) fn c_value_comparison_proposition(
 
 fn c_value_int32_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
+        CValue::Int8(value) => Some(value.clone()),
         CValue::Bool(value)
         | CValue::Int16(value)
         | CValue::Int32(value)
@@ -7365,6 +7378,7 @@ fn c_value_int64_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
         CValue::Int64(value) => Some(value.clone()),
         CValue::Bool(value) => Some(Bitvector32Term::int64_from_32(value.clone())),
+        CValue::Int8(value) => Some(Bitvector32Term::int64_from_32(value.clone())),
         CValue::Int16(value)
         | CValue::Int32(value)
         | CValue::UInt8(value)
@@ -7383,6 +7397,7 @@ fn c_value_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
         CValue::UInt64(value) => Some(value.clone()),
         CValue::Bool(value) => Some(Bitvector32Term::uint64_from_32(value.clone())),
         CValue::Int64(value) => Some(Bitvector32Term::uint64_from_int64(value.clone())),
+        CValue::Int8(value) => Some(Bitvector32Term::uint64_from_int32(value.clone())),
         CValue::Int16(value)
         | CValue::Int32(value)
         | CValue::UInt8(value)
@@ -8202,6 +8217,11 @@ mod integer_budget_tests {
     fn integer_to_machine_converts_exact_boundaries_without_wrapping() {
         let cases = [
             (
+                MachineIntegerType::Int8,
+                BigInt::from(i8::MIN),
+                CValue::Int8(Bitvector32Term::Constant(i8::MIN as i32 as u32)),
+            ),
+            (
                 MachineIntegerType::Int16,
                 BigInt::from(i16::MIN),
                 CValue::Int16(Bitvector32Term::Constant(i16::MIN as i32 as u32)),
@@ -8258,6 +8278,8 @@ mod integer_budget_tests {
     #[test]
     fn integer_to_machine_rejects_out_of_range_constants() {
         let cases = [
+            (MachineIntegerType::Int8, BigInt::from(i8::MIN) - 1),
+            (MachineIntegerType::Int8, BigInt::from(i8::MAX) + 1),
             (MachineIntegerType::Int16, BigInt::from(i16::MAX) + 1),
             (MachineIntegerType::Int32, BigInt::from(i32::MIN) - 1),
             (MachineIntegerType::UInt8, BigInt::from(-1)),
@@ -8287,6 +8309,11 @@ mod integer_budget_tests {
         let variable = Variable(990);
         let value = IntegerTerm::Variable(variable);
         let cases = [
+            (
+                MachineIntegerType::Int8,
+                BigInt::from(i8::MIN),
+                BigInt::from(i8::MAX),
+            ),
             (
                 MachineIntegerType::Int16,
                 BigInt::from(i16::MIN),
@@ -8340,7 +8367,7 @@ mod integer_budget_tests {
             assert!(paths[0].facts.is_empty());
             assert!(matches!(
                 &paths[0].value,
-                CValue::Int16(Bitvector32Term::IntegerToMachine { destination: d, .. })
+                CValue::Int8(Bitvector32Term::IntegerToMachine { destination: d, .. }) | CValue::Int16(Bitvector32Term::IntegerToMachine { destination: d, .. })
                     | CValue::Int32(Bitvector32Term::IntegerToMachine { destination: d, .. })
                     | CValue::UInt8(Bitvector32Term::IntegerToMachine { destination: d, .. })
                     | CValue::UInt16(Bitvector32Term::IntegerToMachine { destination: d, .. })

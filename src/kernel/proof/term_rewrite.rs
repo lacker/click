@@ -108,6 +108,7 @@ impl CarrierVariables {
 
 fn c_value_variable(value: &CValue) -> Option<Variable> {
     match value {
+        CValue::Int8(Bitvector32Term::Variable(variable)) => Some(*variable),
         CValue::Bool(Bitvector32Term::Variable(variable))
         | CValue::Int16(Bitvector32Term::Variable(variable))
         | CValue::UInt8(Bitvector32Term::Variable(variable))
@@ -130,6 +131,7 @@ fn c_value_variable(value: &CValue) -> Option<Variable> {
 
 fn typed_c_replacement(value: &CValue) -> Option<TypedCReplacement> {
     match value {
+        CValue::Int8(term) => Some(TypedCReplacement::Bitvector(term.clone())),
         CValue::Bool(term)
         | CValue::Int16(term)
         | CValue::UInt8(term)
@@ -191,6 +193,7 @@ fn typed_binding_variable(
 
 fn c_value_declaration_variable(value: &CValue) -> Option<Variable> {
     match value {
+        CValue::Int8(Bitvector32Term::Variable(variable)) => Some(*variable),
         CValue::Bool(Bitvector32Term::Variable(variable))
         | CValue::Int16(Bitvector32Term::Variable(variable))
         | CValue::UInt8(Bitvector32Term::Variable(variable))
@@ -225,6 +228,9 @@ fn replace_binding_variable(
 ) {
     match (carrier, value) {
         (BindingCarrier::C, AlgebraicValue::C(value)) => match value {
+            CValue::Int8(term) if matches!(term, Bitvector32Term::Variable(_)) => {
+                *term = Bitvector32Term::Variable(variable);
+            }
             CValue::Bool(term)
             | CValue::Int16(term)
             | CValue::UInt8(term)
@@ -430,6 +436,7 @@ fn collect_c_value_carriers(value: &CValue, variables: &mut CarrierVariables) {
     }
     match value {
         CValue::Void => {}
+        CValue::Int8(term) => collect_bitvector_carriers(term, variables),
         CValue::Bool(term)
         | CValue::Int16(term)
         | CValue::UInt8(term)
@@ -1056,6 +1063,7 @@ fn exhausted_c_value(value: &CValue) -> CValue {
     match value {
         CValue::Void => CValue::Void,
         CValue::Bool(_) => CValue::Bool(Bitvector32Term::Constant(0)),
+        CValue::Int8(_) => CValue::Int8(Bitvector32Term::Constant(0)),
         CValue::Int16(_) => CValue::Int16(Bitvector32Term::Constant(0)),
         CValue::UInt8(_) => CValue::UInt8(Bitvector32Term::Constant(0)),
         CValue::UInt16(_) => CValue::UInt16(Bitvector32Term::Constant(0)),
@@ -2176,6 +2184,7 @@ impl<'a> TermRewrite<'a> {
         let result = match v {
             CValue::Void => CValue::Void,
             CValue::Bool(v) => CValue::Bool(self.bits(v)),
+            CValue::Int8(v) => CValue::Int8(self.bits(v)),
             CValue::Int16(v) => CValue::Int16(self.bits(v)),
             CValue::UInt16(v) => CValue::UInt16(self.bits(v)),
             CValue::UInt8(v) => CValue::UInt8(self.bits(v)),
@@ -3877,6 +3886,9 @@ fn canonicalize_integer_to_machine_constant(value: Bitvector32Term) -> Bitvector
         return Bitvector32Term::IntegerToMachine { value, destination };
     };
     let converted = match destination {
+        MachineIntegerType::Int8 => constant
+            .to_i8()
+            .map(|value| Bitvector32Term::Constant(value as i32 as u32)),
         MachineIntegerType::Int16 => constant
             .to_i16()
             .map(|value| Bitvector32Term::Constant(value as i32 as u32)),
@@ -3906,6 +3918,22 @@ mod tests {
     use crate::kernel::{
         AlgebraicSchemas, AlgebraicType, AlgebraicValueType, AlgebraicVariantType,
     };
+
+    #[test]
+    fn signed_byte_offset_constants_fold_only_inside_their_range() {
+        for value in [-129, -128, -1, 0, 127, 128] {
+            let input = Bitvector32Term::IntegerToMachine {
+                value: IntegerTerm::constant_i64(value).into(),
+                destination: MachineIntegerType::Int8,
+            };
+            let expected = if (-128..=127).contains(&value) {
+                Bitvector32Term::Constant(value as i32 as u32)
+            } else {
+                input.clone()
+            };
+            assert_eq!(canonicalize_integer_to_machine_constant(input), expected);
+        }
+    }
 
     #[test]
     fn narrowing_rewrite_visits_scale_with_selected_expression() {

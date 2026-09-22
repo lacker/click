@@ -536,6 +536,7 @@ fn cell_value_is_exactly_load(
     pointer: &crate::kernel::Pointer,
 ) -> bool {
     match value {
+        CValue::Int8(term) => term == load,
         CValue::Int16(term)
         | CValue::Int32(term)
         | CValue::UInt8(term)

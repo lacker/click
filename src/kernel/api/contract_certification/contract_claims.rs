@@ -349,7 +349,8 @@ pub(crate) fn matching_recomputed_call_havoc_views(
         pointer: &Pointer,
         value: &CValue,
     ) -> bool {
-        let (CValue::Int16(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
+        let (CValue::Int8(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
+        | CValue::Int16(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
         | CValue::Int32(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
         | CValue::UInt8(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
         | CValue::UInt16(Bitvector32Term::MemoryLoad(load_memory, load_pointer))
@@ -576,6 +577,9 @@ fn materialized_load_is_unchanged(
     assumptions: &PureFactContext,
 ) -> bool {
     let load = match value {
+        CValue::Int8(Bitvector32Term::MemoryLoad(memory, load_pointer)) => {
+            (memory.clone(), load_pointer.as_ref().clone())
+        }
         CValue::Int16(Bitvector32Term::MemoryLoad(memory, load_pointer))
         | CValue::Int32(Bitvector32Term::MemoryLoad(memory, load_pointer))
         | CValue::UInt8(Bitvector32Term::MemoryLoad(memory, load_pointer))
@@ -588,6 +592,14 @@ fn materialized_load_is_unchanged(
         // With terms canonical at creation a materialized cell holds the
         // load variable for its load; the registry records the load it
         // stands for.
+        CValue::Int8(Bitvector32Term::Variable(variable))
+            if crate::kernel::eval::is_load_variable(variable) =>
+        {
+            let Some(load) = crate::kernel::eval::registered_load_for_variable(variable) else {
+                return false;
+            };
+            load
+        }
         CValue::Int16(Bitvector32Term::Variable(variable))
         | CValue::Int32(Bitvector32Term::Variable(variable))
         | CValue::UInt8(Bitvector32Term::Variable(variable))

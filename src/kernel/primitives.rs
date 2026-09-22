@@ -1,5 +1,5 @@
 use super::api::{
-    int16, int32, normalize_exact_memory_loads_in_pointer_offset, uint8, uint16, uint32,
+    int8, int16, int32, normalize_exact_memory_loads_in_pointer_offset, uint8, uint16, uint32,
 };
 use super::memory_provenance::{AtomicMemoryLoadEqualityEvidence, PointerOffsetEqualityEvidence};
 use super::reasoning::{
@@ -636,6 +636,7 @@ pub enum CValue {
     /// always normalized to zero or one.  The storage width remains the
     /// ABI-defined one byte width exposed by `CType::Bool`.
     Bool(Bitvector32Term),
+    Int8(Bitvector32Term),
     Int16(Bitvector32Term),
     Int32(Bitvector32Term),
     UInt8(Bitvector32Term),
@@ -661,6 +662,7 @@ pub enum CType {
     /// Pointer to an opaque object-pointer slot, needed to retain the exact
     /// `pthread_join` result parameter type even in null-only calls.
     VoidPointerPointer,
+    Int8,
     Int16,
     Int32,
     UInt8,
@@ -670,6 +672,7 @@ pub enum CType {
     UInt64,
     Float32,
     Float64,
+    Int8Pointer,
     Int16Pointer,
     UInt16Pointer,
     Int32Pointer,
@@ -679,6 +682,7 @@ pub enum CType {
     UInt64Pointer,
     Float32Pointer,
     Float64Pointer,
+    Int8PointerPointer,
     Int16PointerPointer,
     UInt16PointerPointer,
     Int32PointerPointer,
@@ -691,6 +695,7 @@ pub enum CType {
     FunctionPointer(CallbackSignature),
     Int32Array(u32),
     UInt8Array(u32),
+    Int8Array(u32),
     Int16Array(u32),
     UInt16Array(u32),
     UInt32Array(u32),
@@ -1279,6 +1284,7 @@ impl ResourceFieldSchema {
                     ty,
                     CType::Void
                         | CType::FunctionPointer(_)
+                        | CType::Int8Array(_)
                         | CType::Int16Array(_)
                         | CType::Int32Array(_)
                         | CType::UInt8Array(_)
@@ -1490,6 +1496,7 @@ impl AlgebraicTerm {
                     CValue::Void => {}
                     CValue::Bool(v) => visit(v),
                     CValue::Pointer(v) => pending.push(Node::Offset(&v.pointer().offset)),
+                    CValue::Int8(v) => visit(v),
                     CValue::Int16(v)
                     | CValue::UInt16(v)
                     | CValue::UInt8(v)

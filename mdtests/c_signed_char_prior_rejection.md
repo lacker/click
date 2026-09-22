@@ -1,7 +1,7 @@
-# unmodeled standard integer widths have a useful diagnostic
+# Previously rejected signed char source now verifies
 
-The standard spellings for integer widths that Click does not model yet must
-be rejected explicitly, rather than reported as an unrecognized generic type.
+The original unsupported-type regression is retained unchanged. Signed bytes
+now have their own modeled type and this program verifies.
 
 ```c filename=c_unmodeled_standard_type_diagnostic.c
 signed char unsupported_width() {
@@ -18,5 +18,5 @@ signed char unsupported_width() {
 ```
 
 ```expect
-fail: signed char
+pass
 ```

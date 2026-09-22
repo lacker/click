@@ -24,7 +24,7 @@ value is total, but evaluating the argument retains all of its C definedness
 obligations. In particular, `to_integer(x + 1)` does not discharge an
 overflow obligation for `x + 1`.
 
-Reverse conversions are destination-specific: `to_int16`, `to_int32`,
+Reverse conversions are destination-specific: `to_int8`, `to_int16`, `to_int32`,
 `to_uint8`, `to_uint16`, `to_uint32`, `to_int64`, and `to_uint64`. A conversion
 requires proof that the Integer lies in the destination's exact range. It does
 not truncate, wrap, saturate, or insert an unchecked assumption. A symbolic

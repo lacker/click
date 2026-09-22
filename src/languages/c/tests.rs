@@ -3137,16 +3137,12 @@ fn c0_accepts_standard_integer_spellings_and_struct_typedefs() {
 }
 
 #[test]
-fn c0_rejects_unmodeled_signed_char() {
-    {
-        let (source, spelling) = ("signed char unsupported() { return 0; }", "signed char");
-        let error = syntax::parse_function(source)
-            .expect_err("unmodeled standard C types should be rejected");
-        assert!(
-            error.message().contains(spelling),
-            "diagnostic for `{spelling}` did not mention the spelling: {}",
-            error.message()
-        );
+fn c0_models_signed_char_as_distinct_signed_byte() {
+    for spelling in ["signed char", "int8", "int8_t"] {
+        let source = format!("{spelling} identity({spelling} value) {{ return value; }}");
+        let function = syntax::parse_function(&source).unwrap();
+        assert_eq!(function.return_type(), syntax::C0Type::Int8);
+        assert_eq!(function.parameters()[0].c_type(), syntax::C0Type::Int8);
     }
 }
 
@@ -11905,5 +11901,42 @@ fn trailing_int_does_not_accept_incompatible_or_duplicate_specifiers() {
         .is_err()
     );
     // This change does not silently reinterpret the next unsupported type.
-    assert!(syntax::parse_function("signed char bad(void) { return 0; }").is_err());
+    assert!(syntax::parse_function("signed char int bad(void) { return 0; }").is_err());
+}
+
+#[test]
+fn signed_byte_storage_and_pointer_identity() {
+    use syntax::C0Type;
+    let functions = syntax::parse_functions(
+        "typedef signed char byte; struct bytes { byte a; byte b; int tail; };\n\
+         byte global[2] = {-128, 127};\n\
+         int read(struct bytes *p) { static byte low = -128; return p->b + global[0] + low; }",
+    )
+    .unwrap();
+    let layout = &functions[0].structs()["bytes"];
+    assert_eq!(layout.field("a").unwrap().offset_bytes(), 0);
+    assert_eq!(layout.field("b").unwrap().offset_bytes(), 1);
+    assert_eq!(layout.field("tail").unwrap().offset_bytes(), 4);
+    assert_eq!(C0Type::Int8.to_kernel_type().byte_width(), 1);
+    for source in [
+        "void f(signed char *p, unsigned char *q) { p = q; }",
+        "void f(signed char *p, char *q) { p = q; }",
+        "void f(signed char *p); void f(unsigned char *p);",
+        "void f(int (*cb)(signed char)); void f(int (*cb)(unsigned char));",
+        "signed char invalid = 128; int f(void) { return invalid; }",
+        "signed char invalid = -129; int f(void) { return invalid; }",
+    ] {
+        assert!(syntax::parse_functions(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn signed_byte_proof_expansion_preserves_memory_and_negative_values() {
+    let c = "int read(signed char *p) { return p[1] + 1; }";
+    let proof = "verifying \"byte.c\"; int read(signed char *p) { views p[0..2]; ensures result == p[1] + 1 by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("byte.c", c)]).unwrap();
+    let expanded =
+        crate::surface::expand_c0_claim_source_by_label(proof, &[("byte.c", c)], "read.ensures_0")
+            .unwrap();
+    crate::surface::verify_c0_sources(&expanded, &[("byte.c", c)]).unwrap();
 }

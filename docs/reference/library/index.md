@@ -1785,6 +1785,20 @@ To add a public symbol:
    reusable reasoning gap. Don't hard-code a domain-specific library name into
    the kernel merely because it is useful.
 
+### `integer_to_int8_round_trip`
+
+```click
+theorem integer_to_int8_round_trip(z: Integer) {
+    requires z >= -128;
+    requires z <= 127;
+    ensures to_integer(to_int8(z)) == z;
+}
+```
+
+An Integer within the exact `int8` range retains its value after conversion
+to that machine type and back. Both bounds are required.
+
+
 ### `integer_to_int16_round_trip`
 
 ```click

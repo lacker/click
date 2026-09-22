@@ -79,6 +79,37 @@ pub(in crate::surface) fn initial_call_state(
                     parameter.c_type().to_kernel_type(),
                 ));
             }
+            C0Type::Int8Pointer | C0Type::Int8PointerPointer => {
+                let c_type = parameter.c_type();
+                let kernel_c_type = parameter.to_kernel_parameter().c_type();
+                // Struct array parameters are lowered to byte pointers in the
+                // kernel, so their symbolic external argument address uses
+                // byte-pointer identity. The struct stride is retained only
+                // when indexing the parameter and lowering its resource
+                // clauses.
+                let element_width = parameter.array_element_width().map_or_else(
+                    || {
+                        c_type
+                            .pointee_type()
+                            .expect("pointer parameter has a pointee")
+                            .to_kernel_type()
+                            .byte_width()
+                    },
+                    |_| 1,
+                );
+                arguments.push(c_typed_pointer_value(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            i64::from(element_width),
+                        ),
+                    },
+                    kernel_c_type,
+                ));
+            }
             C0Type::Int16Pointer
             | C0Type::UInt16Pointer
             | C0Type::Int32Pointer
@@ -129,6 +160,11 @@ pub(in crate::surface) fn initial_call_state(
                     kernel_c_type,
                 ));
             }
+            C0Type::Int8 => {
+                arguments.push(CExpression::Value(CValue::Int8(Bitvector32Term::Variable(
+                    Variable(arguments.len() as u64),
+                ))));
+            }
             C0Type::Int16 => {
                 arguments.push(CExpression::Value(CValue::Int16(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
@@ -172,6 +208,12 @@ pub(in crate::surface) fn initial_call_state(
             C0Type::Float64 => {
                 arguments.push(CExpression::Value(CValue::Float64(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
+                )));
+            }
+            C0Type::Int8Array(_) => {
+                return Err(ClickError::new(format!(
+                    "array parameter `{}` should have lowered to a pointer",
+                    parameter.name()
                 )));
             }
             C0Type::Int32Array(_)
@@ -516,6 +558,7 @@ fn check_segment_base_loadability(
         value_type,
         CType::Int32Array(_)
             | CType::UInt8Array(_)
+            | CType::Int8Array(_)
             | CType::Int16Array(_)
             | CType::UInt16Array(_)
             | CType::UInt32Array(_)
@@ -2451,6 +2494,7 @@ fn contract_expression_element_type(
         CExpression::TypedLoad { value_type, .. } => match value_type {
             CType::Int32Array(_) => Some(CType::Int32),
             CType::UInt8Array(_) => Some(CType::UInt8),
+            CType::Int8Array(_) => Some(CType::Int8),
             CType::Int16Array(_) => Some(CType::Int16),
             CType::UInt16Array(_) => Some(CType::UInt16),
             CType::UInt32Array(_) => Some(CType::UInt32),
@@ -2486,6 +2530,7 @@ pub(in crate::surface) fn contract_expression_element_width(
                             C0Type::Int32Array(_) => Some(4),
                             C0Type::CharArray(_) => Some(1),
                             C0Type::UInt8Array(_) => Some(1),
+                            C0Type::Int8Array(_) => Some(1),
                             C0Type::Int16Array(_) | C0Type::UInt16Array(_) => Some(2),
                             C0Type::UInt32Array(_) => Some(4),
                             C0Type::Int64Array(_) | C0Type::UInt64Array(_) => Some(8),
@@ -2500,6 +2545,7 @@ pub(in crate::surface) fn contract_expression_element_width(
             c_type if c_type.is_pointer() => c_type.pointee_type().map(CType::byte_width),
             CType::Int32Array(_) => Some(4),
             CType::UInt8Array(_) => Some(1),
+            CType::Int8Array(_) => Some(1),
             CType::Int16Array(_) | CType::UInt16Array(_) => Some(2),
             CType::UInt32Array(_) => Some(4),
             CType::Int64Array(_) | CType::UInt64Array(_) => Some(8),
@@ -2528,6 +2574,7 @@ pub(in crate::surface) fn symbolic_value_from_load(
             Bitvector32Term::Constant(0),
             Bitvector32Term::Constant(1),
         )),
+        CType::Int8 => CValue::Int8(load),
         CType::Int16 => CValue::Int16(load),
         CType::Int32 => CValue::Int32(load),
         CType::UInt8 => CValue::UInt8(load),

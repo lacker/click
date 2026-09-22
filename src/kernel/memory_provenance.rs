@@ -70,6 +70,12 @@ pub(crate) fn c_resources_directly_match(
             "resource direct match: bitvector value",
             || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions),
         ),
+        (CValue::Int8(left), CValue::Int8(right)) => crate::instrumentation::measure_operation(
+            "kernel",
+            "resource context equality",
+            "resource direct match: bitvector value",
+            || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions),
+        ),
         (CValue::Int16(left), CValue::Int16(right))
         | (CValue::UInt16(left), CValue::UInt16(right)) => {
             crate::instrumentation::measure_operation(
@@ -320,6 +326,7 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
         let value = match value {
             CValue::Void => CValue::Void,
             CValue::Bool(term) => CValue::Bool(canonicalize_atomic_loads(term)),
+            CValue::Int8(term) => CValue::Int8(canonicalize_atomic_loads(term)),
             CValue::Int16(term) => CValue::Int16(canonicalize_atomic_loads(term)),
             CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(term)),
             CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(term)),
@@ -342,6 +349,7 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
         let value = match value {
             CValue::Void => CValue::Void,
             CValue::Bool(term) => CValue::Bool(canonicalize_atomic_loads(term)),
+            CValue::Int8(term) => CValue::Int8(canonicalize_atomic_loads(term)),
             CValue::Int16(term) => CValue::Int16(canonicalize_atomic_loads(term)),
             CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(term)),
             CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(term)),
@@ -2134,7 +2142,7 @@ impl LoadCellWalks {
             matches!(
                 cell.resolved_value(pointer),
                 Some(
-                    CValue::Int16(value)
+                    CValue::Int8(value) | CValue::Int16(value)
                         | CValue::Int32(value)
                         | CValue::UInt8(value)
                         | CValue::UInt16(value)
@@ -2348,6 +2356,7 @@ pub(crate) fn resolve_load_along_memory_derivations(
             true,
         )? {
             MemoryDagCell::Stored { value, .. } => match value {
+                CValue::Int8(value) => Some(value),
                 CValue::Int16(value)
                 | CValue::Int32(value)
                 | CValue::UInt8(value)
@@ -2358,6 +2367,7 @@ pub(crate) fn resolve_load_along_memory_derivations(
             MemoryDagCell::Unwritten { node, .. } => {
                 if let Some(value) = node.memory().known_value(pointer) {
                     return match value {
+                        CValue::Int8(value) => Some(value),
                         CValue::Int16(value)
                         | CValue::Int32(value)
                         | CValue::UInt8(value)
@@ -2430,7 +2440,7 @@ pub(crate) fn explicit_atomic_equality_from_memory_derivations(
             matches!(
                 memory_dag_cell_source(memory, pointer, crate::kernel::load_access_width_or_widest(memory, pointer), assumptions, true)
                     .and_then(|cell| cell.resolved_value(pointer)),
-                Some(CValue::Int16(resolved) | CValue::Int32(resolved) | CValue::UInt8(resolved) | CValue::UInt16(resolved) | CValue::UInt32(resolved))
+                Some(CValue::Int8(resolved) | CValue::Int16(resolved) | CValue::Int32(resolved) | CValue::UInt8(resolved) | CValue::UInt16(resolved) | CValue::UInt32(resolved))
                     if resolved == *value
             )
         };
@@ -2792,7 +2802,7 @@ fn memory_materializes_atomic_load(
 ) -> bool {
     matches!(
         materialized.known_value(pointer),
-        Some(CValue::Int16(Bitvector32Term::MemoryLoad(source, source_pointer))
+        Some(CValue::Int8(Bitvector32Term::MemoryLoad(source, source_pointer)) | CValue::Int16(Bitvector32Term::MemoryLoad(source, source_pointer))
             | CValue::Int32(Bitvector32Term::MemoryLoad(source, source_pointer))
             | CValue::UInt8(Bitvector32Term::MemoryLoad(source, source_pointer))
             | CValue::UInt16(Bitvector32Term::MemoryLoad(source, source_pointer))
@@ -3013,6 +3023,7 @@ pub(crate) fn rewrite_condition_through_certified_stores(
             continue;
         };
         let value_term = match &store.value {
+            CValue::Int8(term) => term.clone(),
             CValue::Int16(term)
             | CValue::Int32(term)
             | CValue::UInt8(term)
@@ -3430,7 +3441,8 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                         let canonical_pointer = canonicalize_pointer_loads(pointer);
                         let resolved = match memory.load(&canonical_pointer) {
                             CExpressionOutcome::Value(
-                                CValue::Int16(value)
+                                CValue::Int8(value)
+                                | CValue::Int16(value)
                                 | CValue::Int32(value)
                                 | CValue::UInt8(value)
                                 | CValue::UInt16(value)
@@ -3438,7 +3450,8 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                             ) if &value != term => Some(value),
                             _ => match memory.load(pointer) {
                                 CExpressionOutcome::Value(
-                                    CValue::Int16(value)
+                                    CValue::Int8(value)
+                                    | CValue::Int16(value)
                                     | CValue::Int32(value)
                                     | CValue::UInt8(value)
                                     | CValue::UInt16(value)
@@ -3484,7 +3497,8 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                             let canonical_pointer = canonicalize_pointer_loads(next_pointer);
                             let resolved = match next_memory.load(&canonical_pointer) {
                                 CExpressionOutcome::Value(
-                                    CValue::Int16(next)
+                                    CValue::Int8(next)
+                                    | CValue::Int16(next)
                                     | CValue::Int32(next)
                                     | CValue::UInt8(next)
                                     | CValue::UInt16(next)
@@ -3492,7 +3506,8 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &Bitvector32Term) -> Bitvecto
                                 ) if next != value => Some(next),
                                 _ => match next_memory.load(next_pointer) {
                                     CExpressionOutcome::Value(
-                                        CValue::Int16(next)
+                                        CValue::Int8(next)
+                                        | CValue::Int16(next)
                                         | CValue::Int32(next)
                                         | CValue::UInt8(next)
                                         | CValue::UInt16(next)
@@ -4231,6 +4246,7 @@ pub(crate) fn certified_store_equations(facts: &[ExecutionPureFact]) -> Vec<Prop
         .filter_map(|fact| {
             let store = fact.certified_store_data()?;
             let value = match &store.value {
+                CValue::Int8(term) => term.clone(),
                 CValue::Bool(term)
                 | CValue::Int16(term)
                 | CValue::Int32(term)
@@ -4266,6 +4282,7 @@ pub(crate) fn certified_store_loadability_facts(facts: &[ExecutionPureFact]) -> 
                 CValue::Void => return None,
                 CValue::Bool(_) => 1,
                 CValue::UInt8(_) => 1,
+                CValue::Int8(_) => 1,
                 CValue::Int16(_) | CValue::UInt16(_) => 2,
                 CValue::Int32(_) | CValue::UInt32(_) => 4,
                 CValue::Int64(_) | CValue::UInt64(_) => 8,

@@ -2366,9 +2366,9 @@ impl CType {
         parameters: &[(Self, bool)],
         exceptional_signature: CExceptionalSignature,
     ) -> CallbackSignature {
-        // Exact base-42 digits: twenty-one modeled types, each with a pointee-const
+        // Exact base-46 digits: twenty-three modeled types, each with a pointee-const
         // bit. The leading one distinguishes arities. Fourteen digits plus
-        // the sentinel use fewer than 76 bits, preserving the 13-parameter
+        // the sentinel use fewer than 79 bits, preserving the 13-parameter
         // capacity without truncation or probabilistic identities.
         fn code(c_type: CType, constant: bool) -> Option<u128> {
             if constant && !c_type.is_object_pointer() {
@@ -2386,10 +2386,12 @@ impl CType {
                     CType::UInt8Pointer => 5,
                     CType::Int32PointerPointer => 6,
                     CType::UInt8PointerPointer => 7,
+                    CType::Int8 => 21,
                     CType::Int16 => 8,
                     CType::UInt16 => 9,
                     CType::Int64 => 10,
                     CType::UInt64 => 11,
+                    CType::Int8Pointer => 22,
                     CType::Int16Pointer => 12,
                     CType::UInt16Pointer => 13,
                     CType::UInt32Pointer => 14,
@@ -2397,6 +2399,9 @@ impl CType {
                     CType::UInt64Pointer => 16,
                     CType::Float32 => 17,
                     CType::Float64 => 18,
+                    CType::Int8PointerPointer | CType::Int8Array(_) => {
+                        return None;
+                    }
                     CType::Int16PointerPointer
                     | CType::UInt16PointerPointer
                     | CType::UInt32PointerPointer
@@ -2419,7 +2424,7 @@ impl CType {
                     | CType::VoidPointerPointer => {
                         return None;
                     }
-                } + if constant { 20 } else { 0 },
+                } + if constant { 23 } else { 0 },
             )
         }
 
@@ -2429,16 +2434,16 @@ impl CType {
         let Some(return_code) = code(return_type, return_constant) else {
             return CallbackSignature::UNSPECIFIED;
         };
-        let mut signature = 42 + return_code;
+        let mut signature = 46 + return_code;
         for &(parameter_type, constant) in parameters {
             let Some(parameter_code) = code(parameter_type, constant) else {
                 return CallbackSignature::UNSPECIFIED;
             };
-            signature = signature * 42 + parameter_code;
+            signature = signature * 46 + parameter_code;
         }
-        // Ordinary callback signatures occupy fewer than 76 bits. Reserve a
-        // high bit for the closed int32 exceptional channel so existing
-        // non-throwing encodings remain stable and cannot collide with it.
+        // Ordinary callback signatures occupy fewer than 79 bits. Reserve a
+        // high bit for the closed int32 exceptional channel so non-throwing
+        // encodings cannot collide with it.
         let signature = match exceptional_signature {
             CExceptionalSignature::None => signature,
             CExceptionalSignature::Int32 => signature | (1u128 << 79),
@@ -2465,6 +2470,7 @@ impl CType {
     pub(crate) fn pointer_to(self) -> Option<Self> {
         match self {
             Self::Bool => None,
+            Self::Int8 => Some(Self::Int8Pointer),
             Self::Int16 => Some(Self::Int16Pointer),
             Self::Int32 => Some(Self::Int32Pointer),
             Self::UInt8 => Some(Self::UInt8Pointer),
@@ -2474,6 +2480,7 @@ impl CType {
             Self::UInt64 => Some(Self::UInt64Pointer),
             Self::Float32 => Some(Self::Float32Pointer),
             Self::Float64 => Some(Self::Float64Pointer),
+            Self::Int8Pointer => Some(Self::Int8PointerPointer),
             Self::Int16Pointer => Some(Self::Int16PointerPointer),
             Self::UInt16Pointer => Some(Self::UInt16PointerPointer),
             Self::Int32Pointer => Some(Self::Int32PointerPointer),
@@ -2484,6 +2491,7 @@ impl CType {
             Self::Float32Pointer => Some(Self::Float32PointerPointer),
             Self::Float64Pointer => Some(Self::Float64PointerPointer),
             Self::VoidPointer => Some(Self::VoidPointerPointer),
+            Self::Int8PointerPointer | Self::Int8Array(_) => None,
             Self::Void
             | Self::VoidPointerPointer
             | Self::Int16PointerPointer
@@ -2510,6 +2518,7 @@ impl CType {
 
     pub(crate) fn accepts(self, value: &CValue) -> bool {
         match (self, value) {
+            (Self::Int8, CValue::Int8(_)) => true,
             (Self::Void, CValue::Void)
             | (Self::Bool, CValue::Bool(_))
             | (Self::Int16, CValue::Int16(_))
@@ -2540,6 +2549,7 @@ impl CType {
         match self {
             Self::Int32Array(_) | Self::UInt32Array(_) | Self::Float32Array(_) => 4,
             Self::UInt8Array(_) => 1,
+            Self::Int8Array(_) => 1,
             Self::Int16Array(_) | Self::UInt16Array(_) => 2,
             Self::Int64Array(_) | Self::UInt64Array(_) | Self::Float64Array(_) => 8,
             scalar => scalar.byte_width().min(C_POINTER_BYTE_WIDTH),
@@ -2552,6 +2562,7 @@ impl CType {
             Self::Bool => 1,
             Self::VoidPointer => C_POINTER_BYTE_WIDTH,
             Self::VoidPointerPointer => C_POINTER_BYTE_WIDTH,
+            Self::Int8 => 1,
             Self::Int16 => 2,
             Self::Int32 => 4,
             Self::UInt8 => 1,
@@ -2561,6 +2572,7 @@ impl CType {
             Self::UInt64 => 8,
             Self::Float32 => 4,
             Self::Float64 => 8,
+            Self::Int8Pointer => C_POINTER_BYTE_WIDTH,
             Self::Int16Pointer => C_POINTER_BYTE_WIDTH,
             Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8Pointer => C_POINTER_BYTE_WIDTH,
@@ -2570,6 +2582,7 @@ impl CType {
             Self::UInt64Pointer => C_POINTER_BYTE_WIDTH,
             Self::Float32Pointer => C_POINTER_BYTE_WIDTH,
             Self::Float64Pointer => C_POINTER_BYTE_WIDTH,
+            Self::Int8PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::Int16PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::Int32PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8PointerPointer => C_POINTER_BYTE_WIDTH,
@@ -2582,6 +2595,7 @@ impl CType {
             Self::FunctionPointer(_) => C_POINTER_BYTE_WIDTH,
             Self::Int32Array(length) => length.saturating_mul(4),
             Self::UInt8Array(length) => length,
+            Self::Int8Array(length) => length,
             Self::Int16Array(length) | Self::UInt16Array(length) => length.saturating_mul(2),
             Self::UInt32Array(length) => length.saturating_mul(4),
             Self::Int64Array(length) | Self::UInt64Array(length) => length.saturating_mul(8),
@@ -2593,6 +2607,7 @@ impl CType {
     pub fn pointee_type(self) -> Option<Self> {
         match self {
             Self::VoidPointerPointer => Some(Self::VoidPointer),
+            Self::Int8Pointer => Some(Self::Int8),
             Self::Int16Pointer => Some(Self::Int16),
             Self::Int32Pointer => Some(Self::Int32),
             Self::UInt8Pointer => Some(Self::UInt8),
@@ -2600,6 +2615,7 @@ impl CType {
             Self::UInt32Pointer => Some(Self::UInt32),
             Self::Int64Pointer => Some(Self::Int64),
             Self::UInt64Pointer => Some(Self::UInt64),
+            Self::Int8PointerPointer => Some(Self::Int8Pointer),
             Self::Int16PointerPointer => Some(Self::Int16Pointer),
             Self::Int32PointerPointer => Some(Self::Int32Pointer),
             Self::UInt8PointerPointer => Some(Self::UInt8Pointer),
@@ -2674,6 +2690,7 @@ impl CValue {
         match self {
             Self::Void => CType::Void,
             Self::Bool(_) => CType::Bool,
+            Self::Int8(_) => CType::Int8,
             Self::Int16(_) => CType::Int16,
             Self::Int32(_) => CType::Int32,
             Self::UInt8(_) => CType::UInt8,
@@ -2691,6 +2708,7 @@ impl CValue {
         match self {
             Self::Void => 0,
             Self::Bool(_) => 1,
+            Self::Int8(_) => 1,
             Self::Int16(_) => 2,
             Self::Int32(_) => 4,
             Self::UInt8(_) => 1,

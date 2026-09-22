@@ -287,6 +287,7 @@ impl Clone for IntegerTerm {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum MachineIntegerType {
+    Int8,
     Int16,
     Int32,
     UInt8,
@@ -299,6 +300,7 @@ pub enum MachineIntegerType {
 impl MachineIntegerType {
     pub fn from_c_type(c_type: CType) -> Option<Self> {
         Some(match c_type {
+            CType::Int8 => Self::Int8,
             CType::Int16 => Self::Int16,
             CType::Int32 => Self::Int32,
             CType::UInt8 => Self::UInt8,
@@ -312,6 +314,7 @@ impl MachineIntegerType {
 
     pub fn c_type(self) -> CType {
         match self {
+            Self::Int8 => CType::Int8,
             Self::Int16 => CType::Int16,
             Self::Int32 => CType::Int32,
             Self::UInt8 => CType::UInt8,
@@ -678,6 +681,9 @@ impl IntegerTerm {
     }
     pub fn from_machine(ty: MachineIntegerType, value: Bitvector32Term) -> Option<Self> {
         let constant = match (&ty, &value) {
+            (MachineIntegerType::Int8, Bitvector32Term::Constant(v)) => {
+                i8::try_from(*v as i32).ok().map(BigInt::from)
+            }
             (MachineIntegerType::Int16, Bitvector32Term::Constant(v)) => {
                 i16::try_from(*v as i32).ok().map(BigInt::from)
             }

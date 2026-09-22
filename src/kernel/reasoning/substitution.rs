@@ -870,6 +870,7 @@ fn collect_sequence_bound_variables(sequence: &SequenceTerm, variables: &mut BTr
 
 fn collect_c_value_bound_variables(value: &CValue, variables: &mut BTreeSet<Variable>) {
     match value {
+        CValue::Int8(bits) => collect_bitvector_bound_variables(bits, variables),
         CValue::Bool(bits)
         | CValue::Int16(bits)
         | CValue::Int32(bits)
@@ -5369,6 +5370,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_value(
     match value {
         CValue::Void => CValue::Void,
         CValue::Bool(bits) => CValue::Bool(substitute_bitvector_variable(bits, from, to)),
+        CValue::Int8(bits) => int8(substitute_bitvector_variable(bits, from, to)),
         CValue::Int16(bits) => int16(substitute_bitvector_variable(bits, from, to)),
         CValue::Int32(bits) => int32(substitute_bitvector_variable(bits, from, to)),
         CValue::UInt8(bits) => uint8(substitute_bitvector_variable(bits, from, to)),
@@ -8231,6 +8233,7 @@ mod integer_match_substitution_scope_tests {
         let replacement = Variable(9041);
         let carriers = [
             CValue::Bool(Bitvector32Term::Variable(replacement)),
+            CValue::Int8(Bitvector32Term::Variable(replacement)),
             CValue::Int16(Bitvector32Term::Variable(replacement)),
             CValue::Int32(Bitvector32Term::Variable(replacement)),
             CValue::UInt8(Bitvector32Term::Variable(replacement)),

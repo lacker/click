@@ -61,6 +61,17 @@ int16_t* read_int16_pointer_slot(int16_t* values[2]) {
 uint64_t* read_uint64_pointer_slot(uint64_t* values[2]) {
     return values[1];
 }
+
+int8_t local_int8_array() {
+    int8_t values[2];
+    values[0] = 3;
+    values[1] = 5;
+    return values[1];
+}
+
+int8_t* read_int8_pointer_slot(int8_t* values[2]) {
+    return values[1];
+}
 ```
 
 ```click
@@ -110,6 +121,15 @@ int16_t* read_int16_pointer_slot(int16_t* values[2]) {
 }
 
 uint64_t* read_uint64_pointer_slot(uint64_t* values[2]) {
+    views values[0..2];
+    ensures result == values[1] by auto;
+}
+
+int8_t local_int8_array() {
+    ensures result == 5;
+}
+
+int8_t* read_int8_pointer_slot(int8_t* values[2]) {
     views values[0..2];
     ensures result == values[1] by auto;
 }

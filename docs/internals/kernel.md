@@ -421,7 +421,7 @@ In `src/kernel/`:
   unsigned order, equality, overflow, pointer-offset equality, and typed
   IEEE floating comparisons/classifications.
 - `CValue`, `CType`, `Pointer`, `CMemory`, `CState`: C semantic state,
-  including the non-object `Void` return value, scalar `int16`, `int32`,
+  including the non-object `Void` return value, scalar `int8`, `int16`, `int32`,
   `uint8`, `uint16`, `uint32`, `int64`, and `uint64`, pointers, and typed
   memory loads/stores.
   Kernel execution reports
@@ -451,7 +451,7 @@ In `src/kernel/`:
   exact partially-correct function returns.
 
 The current integer conversion slice is deliberately small. `eval.rs` promotes
-`int16`, `uint8`, and `uint16` rvalues to `int32` terms for arithmetic, ordered
+`int8`, `int16`, `uint8`, and `uint16` rvalues to `int32` terms for arithmetic, ordered
 comparisons, shifts, and bitwise operators, assignments, and returns, adding
 internal range facts for the promoted term when an expression needs them.
 Scalar `uint32`
@@ -462,7 +462,8 @@ division, and unsigned right shift has a distinct logical-shift node. Equality
 and ordered comparisons select the unsigned conditions. Stores and function
 returns preserve the `uint32` type tag. Scalar narrowing is checked at the
 existing boundaries; the coercion adds proof obligations for the target range
-unless the current path already proves it. `int16` occupies two bytes with
+unless the current path already proves it. `int8` occupies one byte with
+signed range `-128..127`. `int16` occupies two bytes with
 signed range `-32768..32767`; `uint16` occupies two bytes with range `0..65535`.
 Scalar `int64` and `uint64` retain their signedness through arithmetic,
 comparisons, shifts, and bitwise operations; both occupy eight bytes in the
@@ -481,7 +482,7 @@ on one arm and fails on the other stays undecided.
 
 ## C ABI and memory layout
 
-The C0 importer models one explicit ABI: LP64. In that ABI, `int16` and
+The C0 importer models one explicit ABI: LP64. In that ABI, `int8` has size and alignment 1, `int16` and
 `uint16` have size and alignment 2, `int32` has size and alignment 4, `uint8`
 has size and alignment 1, `uint32` has size and alignment 4, `int64` and
 `uint64` have size and alignment 8, and every supported pointer has size and

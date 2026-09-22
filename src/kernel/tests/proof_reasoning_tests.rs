@@ -7005,6 +7005,7 @@ fn integer_machine_round_trip_axioms_hold_in_independent_boundary_models() {
 
     fn shape(destination: MachineIntegerType) -> (usize, bool) {
         match destination {
+            MachineIntegerType::Int8 => (8, true),
             MachineIntegerType::Int16 => (16, true),
             MachineIntegerType::Int32 => (32, true),
             MachineIntegerType::UInt8 => (8, false),
@@ -7060,6 +7061,7 @@ fn integer_machine_round_trip_axioms_hold_in_independent_boundary_models() {
         }
     }
     for destination in [
+        MachineIntegerType::Int8,
         MachineIntegerType::Int16,
         MachineIntegerType::Int32,
         MachineIntegerType::UInt8,

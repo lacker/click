@@ -1008,6 +1008,10 @@ impl CLocalEnvironment {
         self.set_array_object(name, CType::UInt8, length);
     }
 
+    pub fn set_int8_array(&mut self, name: impl Into<String>, length: u32) {
+        self.set_array_object(name, CType::Int8, length);
+    }
+
     pub fn set_int16_array(&mut self, name: impl Into<String>, length: u32) {
         self.set_array_object(name, CType::Int16, length);
     }
@@ -2983,6 +2987,13 @@ impl CMemory {
 
     pub(in crate::kernel) fn symbolic_int32_load(&self, pointer: &Pointer) -> CValue {
         int32(Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(self.clone()),
+            Box::new(pointer.clone()),
+        ))
+    }
+
+    pub(in crate::kernel) fn symbolic_int8_load(&self, pointer: &Pointer) -> CValue {
+        int8(Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(self.clone()),
             Box::new(pointer.clone()),
         ))

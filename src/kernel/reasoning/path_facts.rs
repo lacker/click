@@ -430,6 +430,9 @@ fn c_values_definitely_distinct(left: &CValue, right: &CValue) -> bool {
     }
 
     match (left, right) {
+        (CValue::Int8(left), CValue::Int8(right)) => {
+            matches!((constant(left), constant(right)), (Some(left), Some(right)) if left != right)
+        }
         (CValue::Int16(left), CValue::Int16(right))
         | (CValue::Int32(left), CValue::Int32(right))
         | (CValue::UInt8(left), CValue::UInt8(right))

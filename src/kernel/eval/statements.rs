@@ -151,7 +151,8 @@ fn execute_c_lvalue_update_paths(
         };
         let supported_integer_update = matches!(
             lvalue.value_type,
-            CType::Int16
+            CType::Int8
+                | CType::Int16
                 | CType::Int32
                 | CType::UInt8
                 | CType::UInt16
@@ -411,6 +412,9 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     let volatile_pointer = is_volatile.then(|| lvalue.pointer(state)).flatten();
     if lvalue.value_type == CType::Int32 {
         let range_result = match &value {
+            CValue::Int8(value) => {
+                add_int8_range_execution_pure_facts(&mut facts, &effective_assumptions, value)
+            }
             CValue::Int16(value) => {
                 add_int16_range_execution_pure_facts(&mut facts, &effective_assumptions, value)
             }
@@ -1025,6 +1029,10 @@ fn allocation_size_value(value: CValue, assumptions: &PureFactContext) -> Option
         CValue::Bool(term) => Some(AllocationSize {
             term,
             unsigned: true,
+        }),
+        CValue::Int8(term) => Some(AllocationSize {
+            term,
+            unsigned: false,
         }),
         CValue::Int16(term) | CValue::UInt8(term) | CValue::UInt16(term) => Some(AllocationSize {
             term,
@@ -3513,11 +3521,13 @@ pub(in crate::kernel) fn declare_local(
         CType::Void => unreachable!("void local objects are not supported"),
         CType::Bool => 1,
         CType::VoidPointer | CType::VoidPointerPointer => C_POINTER_BYTE_WIDTH,
+        CType::Int8 => 1,
         CType::Int16 | CType::UInt16 => 2,
         CType::Int32 => 4,
         CType::Int64 | CType::UInt64 | CType::Float64 => 8,
         CType::UInt8 => 1,
         CType::UInt32 | CType::Float32 => 4,
+        CType::Int8Pointer | CType::Int8PointerPointer => C_POINTER_BYTE_WIDTH,
         CType::Int16Pointer
         | CType::UInt16Pointer
         | CType::Int32Pointer
@@ -3563,6 +3573,22 @@ pub(in crate::kernel) fn declare_local(
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::UInt8,
+                length,
+                pointer,
+                constant,
+            );
+            return Ok(state);
+        }
+        CType::Int8Array(length) => {
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), length),
+            );
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                CType::Int8,
                 length,
                 pointer,
                 constant,

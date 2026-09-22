@@ -1861,6 +1861,7 @@ fn sequence_element_type_supported(c_type: C0Type) -> bool {
             | C0Type::Int32Array(_)
             | C0Type::CharArray(_)
             | C0Type::UInt8Array(_)
+            | C0Type::Int8Array(_)
             | C0Type::Int16Array(_)
             | C0Type::UInt16Array(_)
             | C0Type::UInt32Array(_)
@@ -2143,6 +2144,7 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::Void => "void".to_string(),
         C0Type::VoidPointer => "void*".to_string(),
         C0Type::VoidPointerPointer => "void**".to_string(),
+        C0Type::Int8 => "int8".to_string(),
         C0Type::Int16 => "int16".to_string(),
         C0Type::Int32 => "int32".to_string(),
         C0Type::Char => "char".to_string(),
@@ -2153,6 +2155,7 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::UInt64 => "uint64".to_string(),
         C0Type::Float32 => "float".to_string(),
         C0Type::Float64 => "double".to_string(),
+        C0Type::Int8Pointer | C0Type::Int8Array(_) => "int8*".to_string(),
         C0Type::Int16Pointer | C0Type::Int16Array(_) => "int16*".to_string(),
         C0Type::UInt16Pointer | C0Type::UInt16Array(_) => "uint16*".to_string(),
         C0Type::Int32Pointer | C0Type::Int32Array(_) => "int32*".to_string(),
@@ -2163,6 +2166,7 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::UInt64Pointer | C0Type::UInt64Array(_) => "uint64*".to_string(),
         C0Type::Float32Pointer | C0Type::Float32Array(_) => "float*".to_string(),
         C0Type::Float64Pointer | C0Type::Float64Array(_) => "double*".to_string(),
+        C0Type::Int8PointerPointer => "int8**".to_string(),
         C0Type::Int16PointerPointer => "int16**".to_string(),
         C0Type::UInt16PointerPointer => "uint16**".to_string(),
         C0Type::Int32PointerPointer => "int32**".to_string(),
@@ -2205,6 +2209,8 @@ pub(in crate::surface) fn click_types_compatible(actual: C0Type, expected: C0Typ
     match (actual, expected) {
         (C0Type::Int32Array(_), C0Type::Int32Pointer)
         | (C0Type::Int32Pointer, C0Type::Int32Array(_)) => true,
+        (C0Type::Int8Array(_), C0Type::Int8Pointer)
+        | (C0Type::Int8Pointer, C0Type::Int8Array(_)) => true,
         (C0Type::CharArray(_), C0Type::CharPointer)
         | (C0Type::CharPointer, C0Type::CharArray(_))
         | (C0Type::UInt8Array(_), C0Type::UInt8Pointer)
@@ -2224,7 +2230,10 @@ pub(in crate::surface) fn click_types_compatible(actual: C0Type, expected: C0Typ
         | (C0Type::Float64Array(_), C0Type::Float64Pointer)
         | (C0Type::Float64Pointer, C0Type::Float64Array(_)) => true,
         (actual, C0Type::Bool) if actual.is_pointer() => true,
-        (C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16, C0Type::UInt32) => true,
+        (
+            C0Type::Int8 | C0Type::Int16 | C0Type::Int32 | C0Type::UInt8 | C0Type::UInt16,
+            C0Type::UInt32,
+        ) => true,
         (actual, expected)
             if actual.is_object_pointer()
                 && expected.is_object_pointer()
@@ -2244,7 +2253,8 @@ fn resource_types_compatible(name: &str, index: usize, actual: C0Type, expected:
     {
         return matches!(
             actual,
-            C0Type::Int16Pointer
+            C0Type::Int8Pointer
+                | C0Type::Int16Pointer
                 | C0Type::UInt16Pointer
                 | C0Type::Int32Pointer
                 | C0Type::CharPointer
@@ -2252,6 +2262,7 @@ fn resource_types_compatible(name: &str, index: usize, actual: C0Type, expected:
                 | C0Type::UInt32Pointer
                 | C0Type::Int64Pointer
                 | C0Type::UInt64Pointer
+                | C0Type::Int8PointerPointer
                 | C0Type::Int16PointerPointer
                 | C0Type::UInt16PointerPointer
                 | C0Type::Int32PointerPointer
@@ -2267,6 +2278,7 @@ fn resource_types_compatible(name: &str, index: usize, actual: C0Type, expected:
                 | C0Type::Int32Array(_)
                 | C0Type::CharArray(_)
                 | C0Type::UInt8Array(_)
+                | C0Type::Int8Array(_)
                 | C0Type::Int16Array(_)
                 | C0Type::UInt16Array(_)
                 | C0Type::UInt32Array(_)
@@ -2626,6 +2638,7 @@ fn infer_c_expression_type(
     match expression {
         CExpression::Value(CValue::Void) => Some(C0Type::Void),
         CExpression::Value(CValue::Bool(_)) => Some(C0Type::Bool),
+        CExpression::Value(CValue::Int8(_)) => Some(C0Type::Int8),
         CExpression::Value(CValue::Int16(_)) => Some(C0Type::Int16),
         CExpression::Value(CValue::Int32(_)) => Some(C0Type::Int32),
         CExpression::Value(CValue::UInt8(_)) => Some(C0Type::UInt8),
@@ -2643,6 +2656,7 @@ fn infer_c_expression_type(
             ..
         } => match target_type {
             CType::Bool => Some(C0Type::Bool),
+            CType::Int8 => Some(C0Type::Int8),
             CType::Int16 => Some(C0Type::Int16),
             CType::Int32 => Some(C0Type::Int32),
             CType::UInt8 => Some(C0Type::UInt8),
@@ -2660,11 +2674,13 @@ fn infer_c_expression_type(
             CType::Float64 => Some(C0Type::Float64),
             CType::VoidPointer => Some(C0Type::VoidPointer),
             CType::VoidPointerPointer => Some(C0Type::VoidPointerPointer),
+            CType::Int8Pointer => Some(C0Type::Int8Pointer),
             CType::Int16Pointer => Some(C0Type::Int16Pointer),
             CType::UInt16Pointer => Some(C0Type::UInt16Pointer),
             CType::UInt32Pointer => Some(C0Type::UInt32Pointer),
             CType::Int64Pointer => Some(C0Type::Int64Pointer),
             CType::UInt64Pointer => Some(C0Type::UInt64Pointer),
+            CType::Int8PointerPointer => Some(C0Type::Int8PointerPointer),
             CType::Int16PointerPointer => Some(C0Type::Int16PointerPointer),
             CType::UInt16PointerPointer => Some(C0Type::UInt16PointerPointer),
             CType::UInt32PointerPointer => Some(C0Type::UInt32PointerPointer),
@@ -2674,6 +2690,7 @@ fn infer_c_expression_type(
             CType::Float64Pointer => Some(C0Type::Float64Pointer),
             CType::Float32PointerPointer => Some(C0Type::Float32PointerPointer),
             CType::Float64PointerPointer => Some(C0Type::Float64PointerPointer),
+            CType::Int8Array(_) => None,
             CType::Int16Array(_)
             | CType::UInt16Array(_)
             | CType::UInt32Array(_)
@@ -2750,6 +2767,7 @@ fn infer_c_expression_type(
             CType::Bool => C0Type::Bool,
             CType::VoidPointer => C0Type::VoidPointer,
             CType::VoidPointerPointer => C0Type::VoidPointerPointer,
+            CType::Int8 => C0Type::Int8,
             CType::Int16 => C0Type::Int16,
             CType::Int32 => C0Type::Int32,
             CType::UInt8 => C0Type::UInt8,
@@ -2761,11 +2779,13 @@ fn infer_c_expression_type(
             CType::Float64 => C0Type::Float64,
             CType::Int32Pointer => C0Type::Int32Pointer,
             CType::UInt8Pointer => C0Type::UInt8Pointer,
+            CType::Int8Pointer => C0Type::Int8Pointer,
             CType::Int16Pointer => C0Type::Int16Pointer,
             CType::UInt16Pointer => C0Type::UInt16Pointer,
             CType::UInt32Pointer => C0Type::UInt32Pointer,
             CType::Int64Pointer => C0Type::Int64Pointer,
             CType::UInt64Pointer => C0Type::UInt64Pointer,
+            CType::Int8PointerPointer => C0Type::Int8PointerPointer,
             CType::Int16PointerPointer => C0Type::Int16PointerPointer,
             CType::UInt16PointerPointer => C0Type::UInt16PointerPointer,
             CType::Int32PointerPointer => C0Type::Int32PointerPointer,
@@ -2780,6 +2800,7 @@ fn infer_c_expression_type(
             CType::FunctionPointer(signature) => C0Type::FunctionPointer(*signature),
             CType::Int32Array(length) => C0Type::Int32Array(*length),
             CType::UInt8Array(length) => C0Type::UInt8Array(*length),
+            CType::Int8Array(length) => C0Type::Int8Array(*length),
             CType::Int16Array(length) => C0Type::Int16Array(*length),
             CType::UInt16Array(length) => C0Type::UInt16Array(*length),
             CType::UInt32Array(length) => C0Type::UInt32Array(*length),
@@ -2923,6 +2944,7 @@ fn type_is_scalar(c_type: C0Type) -> bool {
     matches!(
         c_type,
         C0Type::Bool
+            | C0Type::Int8
             | C0Type::Int16
             | C0Type::Int32
             | C0Type::Char
@@ -2954,6 +2976,7 @@ fn type_is_data_pointer(c_type: C0Type) -> bool {
     matches!(
         c_type,
         C0Type::Int32Pointer
+            | C0Type::Int8Pointer
             | C0Type::Int16Pointer
             | C0Type::CharPointer
             | C0Type::UInt8Pointer
@@ -2961,6 +2984,7 @@ fn type_is_data_pointer(c_type: C0Type) -> bool {
             | C0Type::UInt32Pointer
             | C0Type::Int64Pointer
             | C0Type::UInt64Pointer
+            | C0Type::Int8PointerPointer
             | C0Type::Int16PointerPointer
             | C0Type::UInt16PointerPointer
             | C0Type::Int32PointerPointer
@@ -2972,6 +2996,7 @@ fn type_is_data_pointer(c_type: C0Type) -> bool {
             | C0Type::Int32Array(_)
             | C0Type::CharArray(_)
             | C0Type::UInt8Array(_)
+            | C0Type::Int8Array(_)
             | C0Type::Int16Array(_)
             | C0Type::UInt16Array(_)
             | C0Type::UInt32Array(_)

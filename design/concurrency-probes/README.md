@@ -60,12 +60,14 @@ standard short/long integer spellings now accept their optional trailing `int`
 with the existing widths and signedness. Parser regressions and
 `mdtests/c_integer_trailing_int.md` pin that behavior.
 
-The next refusal is the `signed char` type used by the `__int8_t` typedef in
-`bits/types.h`. Click explicitly does not model that signed eight-bit type;
-it must not substitute unsigned `char` or delete the typedef. Supporting it
-requires its own type/semantics slice before continuing through the real
-headers. Declaration-specific runtime identity and checked create/join call
-binding remain subsequent work.
+The `signed char` typedef for `__int8_t` now lowers to the distinct signed
+byte type `int8`, with one-byte storage, integer promotion, and checked
+conversions in the range -128 through 127. The regression next stops at
+`typedef signed int __int32_t;` in `bits/types.h`: the parser has not yet
+accepted the explicit `signed int` spelling. The next small import step is
+to support that spelling using the existing `int32` semantics, then rerun the
+unchanged probe. Declaration-specific runtime identity and checked create/join
+call binding remain subsequent work.
 
 The compiler-backed regression uses the host GCC/header installation and locks
 those actual inputs. This run does not establish the selected Debian GCC
