@@ -9,6 +9,13 @@ make the normal example gate fail. The source-integrity test in
 `tests/examples.rs` pins its exact bytes. Later example work must use those
 bytes, not reshape the C to expose a friendlier proof state.
 
+## Binding proposal for review
+
+The [pthread binding design](pthread-binding-design.md) proposes how ordinary
+C create/join calls use the existing worker contracts, `step`, and `branch`.
+It covers delayed status tests, completion authority, and the required locked
+runtime identity. It is a design proposal, not implemented support.
+
 ## Selected profile
 
 | Boundary | Selection |
