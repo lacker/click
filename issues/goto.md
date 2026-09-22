@@ -76,6 +76,8 @@ The first natural-cycle regressions are
 [`natural_goto_conditional_backedge.md`](../mdtests/natural_goto_conditional_backedge.md).
 The natural-cycle slice also accepts one explicit forward exit label, covered
 by [`natural_goto_exit_label.md`](../mdtests/natural_goto_exit_label.md).
+Multiple forward edges to that same exit label are covered by
+[`natural_goto_multiple_exit_labels.md`](../mdtests/natural_goto_multiple_exit_labels.md).
 
 ## Intended regression
 

@@ -2521,11 +2521,11 @@ impl C0Function {
 
     /// The deliberately narrow natural-cycle shape admitted by the C goto
     /// slice: one direct function-body label at the entry, exactly one
-    /// backward goto in the re-entered region, and optionally one forward goto
-    /// to a final direct function-body exit label. There is no declaration in
-    /// the cycle region. The gotos may be nested in an `if`; the proof layer
-    /// wraps this exact source region in a checked loop rule while retaining
-    /// the original gotos.
+    /// backward goto in the re-entered region, and optionally one or more
+    /// forward gotos to a final direct function-body exit label. There is no
+    /// declaration in the cycle region. The gotos may be nested in an `if`;
+    /// the proof layer wraps this exact source region in a checked loop rule
+    /// while retaining the original gotos.
     pub(crate) fn natural_control_loop(
         &self,
     ) -> Option<(
@@ -2574,8 +2574,9 @@ impl C0Function {
         for statement in statements.iter().skip(1).take(cycle_end - 1) {
             collect_natural_cycle_goto_targets(statement, &mut goto_targets);
         }
-        let required_goto_count = if exit_label_index.is_some() { 2 } else { 1 };
-        if goto_targets.len() != required_goto_count {
+        if (exit_label_index.is_none() && goto_targets.len() != 1)
+            || (exit_label_index.is_some() && goto_targets.len() < 2)
+        {
             return None;
         }
         let (label_target, _) = *self.control_targets.get(label_name)?;
@@ -2593,11 +2594,12 @@ impl C0Function {
                     C0Statement::Label { name, .. } => (index, name),
                     _ => unreachable!(),
                 };
-                let (_, target_index) = *self.control_targets.get(exit_name)?;
-                (target_index == index)
-                    .then(|| targets.iter().find(|(_, goto_index)| *goto_index == index))
-                    .flatten()
-                    .map(|(target, _)| *target)
+                let (exit_target, target_index) = *self.control_targets.get(exit_name)?;
+                (!targets.is_empty()
+                    && targets.iter().all(|(goto_target, goto_index)| {
+                        *goto_target == exit_target && *goto_index == target_index
+                    }))
+                .then_some(exit_target)
             }
             None => None,
         };
@@ -4561,11 +4563,13 @@ fn validate_direct_forward_gotos(
             && statements.len() > 2
             && matches!(statements.last(), Some(C0Statement::Label { .. }))
             && backward_gotos.len() == 1
-            && forward_gotos.len() == 1
-            && goto_count == 2
+            && !forward_gotos.is_empty()
+            && goto_count == 1 + forward_gotos.len()
             && labels.len() == 2
             && backward_gotos[0].1 == 0
-            && forward_gotos[0].1 + 1 == statements.len()
+            && forward_gotos
+                .iter()
+                .all(|(_, target_index)| *target_index + 1 == statements.len())
             && matches!(
                 statements.first(),
                 Some(C0Statement::Label { statement, .. })
