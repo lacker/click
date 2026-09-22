@@ -39,5 +39,5 @@ int32 wrapped_slice(int32* p, int32 n) {
 ```
 
 ```expect
-fail: the kernel lowering produced 0 paths, not one
+fail: kernel rejected the resource-count witness
 ```

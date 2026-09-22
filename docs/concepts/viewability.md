@@ -67,6 +67,13 @@ has to be *established* — a C call site, applying a theorem whose premise is a
 range, a loop invariant's entry and back edge — the extent half is owed along
 with the viewability half.
 
+`separate(memory(p[a..b]), memory(q[c..d]))` includes the same validity
+conditions for both ranges. A separation premise supplies the bounds; a
+separation goal or call requirement must prove them. Observing or unfolding a
+composite resource exposes the bounds of its contained memory ranges, so a
+proof can use those bounds without repeating them in the resource definition.
+Separation alone does not grant permission to read either range.
+
 Stating a range whose extent is decidably invalid is refused where the clause is
 prepared, so the two directions cannot be played against each other. At the
 program's outer boundary, where no caller is verified, a contract's range is an

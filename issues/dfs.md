@@ -177,6 +177,15 @@ no-overflow bound. The negative and bounded positive examples are
 and rechecks. The earlier constant-total regression now names the population
 count bound instead of reporting a certificate-completion mismatch.
 
+Separation now carries shared range-validity bounds in both directions: a
+premise supplies them, and a goal or call requirement must establish them.
+Composite observation/unfolding exposes the bounds of its contained ranges.
+`mdtests/separation_extent_*.md` cover unbounded and wrapping goals, bounded
+calls, theorem premises/applications, and composite bounds; positive contracts
+also expand and recheck. Symbolic bounds are compared with wide-integer
+arithmetic at endpoint extremes for widths 1, 2, 4, and 8. The investigation
+found an unchecked separation goal, but no accepted false return-value proof.
+
 ## Open — unsound or unexamined reasoning, no witness yet
 
 Ranked by how likely a witness is.
@@ -188,15 +197,6 @@ requires the requested width to match the stored cell. Mixed-width effect and
 load-resolution regressions are in the kernel memory-reasoning tests.
 `heap_allocation_may_contain_pointer`'s block-spelling test remains unexamined.
 
-3. **`separate(memory(a[s..s + 2]), …)` with `s` unconstrained is accepted**, where
-   `owns a[s..s + 2]` would owe `not signed_add_overflows`. A provably reversed
-   range is refused; an undecided one is not
-   (`mdtests/an_ordinary_separation_clause_needs_no_extent_text.md` pins this
-   limit). It could not be made an obligation because a range reached through a
-   composite resource publishes no extent guard to its user, and half of the
-   guard is an unsigned comparison the surface cannot write. Prerequisite:
-   composites publish their inner ranges' guards in the signed count spelling
-   (`memory_range_element_count_guards`).
 4. **The load-side distinct-cell reduction names a load at an ancestor snapshot**
    using the current path's facts (`evaluate_c_memory_load_paths_with_alias_cache`,
    `src/kernel/eval/memory_loads.rs`); 369 refused backwards `CellsForgotten`

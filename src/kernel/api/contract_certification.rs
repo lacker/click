@@ -1523,11 +1523,7 @@ pub(super) fn c_function_contract_certification_assumptions(
         let Some(range) = fact.memory_view_range().or_else(|| fact.memory_own_range()) else {
             continue;
         };
-        for guard in crate::kernel::memory_range_byte_count_guards(
-            range.start().clone(),
-            range.end().clone(),
-            range.element_width(),
-        ) {
+        for guard in crate::kernel::memory_range_extent_guard_spellings(range) {
             let guard_is_false = match &guard {
                 Proposition::ConditionIs(condition, true) => {
                     assumptions.decide(condition) == Some(false)
@@ -1556,16 +1552,7 @@ pub(super) fn c_function_contract_certification_assumptions(
         let Some(range) = fact.memory_view_range().or_else(|| fact.memory_own_range()) else {
             continue;
         };
-        for guard in crate::kernel::memory_range_byte_count_guards(
-            range.start().clone(),
-            range.end().clone(),
-            range.element_width(),
-        )
-        .into_iter()
-        .chain(crate::kernel::memory_range_element_count_guards(
-            crate::kernel::memory_range_element_count(range),
-            range.element_width(),
-        )) {
+        for guard in crate::kernel::memory_range_extent_guard_spellings(range) {
             let guard_is_false = match &guard {
                 Proposition::ConditionIs(condition, true) => {
                     assumptions.decide(condition) == Some(false)

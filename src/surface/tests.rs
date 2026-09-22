@@ -2410,6 +2410,13 @@ fn resource_contract_regressions_expand_and_check() {
         ("aggregate_parameter_pointee_resource", "touch"),
         ("aggregate_parameter_old_pointee", "dispose"),
         ("const_callback_table_abstract", "caller"),
+        ("separation_extent_bounded_goal", "identity"),
+        ("separation_extent_assumption", "identity"),
+        ("separation_extent_call", "caller"),
+        ("separation_extent_borrowed_call", "caller"),
+        ("separation_extent_composite_bounds", "length"),
+        ("separation_extent_composite_split_bounds", "split_length"),
+        ("owned_symbolic_separation_certificate", "attach"),
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("mdtests/{fixture_name}.md"));

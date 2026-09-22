@@ -674,41 +674,49 @@ impl ProofFacts {
         successor
     }
 
-    /// Materializes one selected separation from the compact resource-
-    /// composition index. This is target-driven: unrelated resource pairs
-    /// remain implicit, while a successful result is an exact fact for the
-    /// ordinary `Assumption` checker in the new fixed-state goal.
-    ///
-    /// The goal is already one bare atomic separation, so the route is the
-    /// exact fact index and the retained atomic checkers, never a logical
-    /// search.
+    /// Materializes only the separations selected by this explicit goal.
+    /// A conjunction also needs every other leaf (including range bounds) as
+    /// an existing fact. No unrelated resource pairs are enumerated.
     pub(crate) fn with_selected_resource_separation(&self, goal: &Proposition) -> Self {
-        if matches!(goal, Proposition::CResourceSeparate { .. })
-            && !self.contains(goal)
-            && (self.assumptions.proves_exact(goal)
-                || self.assumptions.proves_atomic_memory_or_resource(goal))
-        {
-            self.with_fact(goal.clone())
-        } else {
-            self.clone()
-        }
+        self.with_selected_separation_facts(goal, false)
     }
 
-    /// Like [`Self::with_selected_resource_separation`], but the separation
-    /// must follow from the resource compositions alone: two owned ranges of
-    /// one valid composition are disjoint by the algebra, with no condition
-    /// fact involved. A separation that needs contextual facts (a call
-    /// postcondition relating two ranges, say) is not materialized, so its
-    /// proof keeps an explicit derivation.
+    /// As above, but separation must follow from the compositions alone.
+    /// Contextual separation facts retain their explicit derivation.
     pub(crate) fn with_selected_composition_separation(&self, goal: &Proposition) -> Self {
-        if matches!(goal, Proposition::CResourceSeparate { .. }) && !self.contains(goal) && {
-            let compositions = self.assumptions.compositions_only();
-            compositions.proves_exact(goal) || compositions.proves_atomic_memory_or_resource(goal)
-        } {
-            self.with_fact(goal.clone())
-        } else {
-            self.clone()
+        self.with_selected_separation_facts(goal, true)
+    }
+
+    fn with_selected_separation_facts(&self, goal: &Proposition, composition_only: bool) -> Self {
+        let mut facts = self.clone();
+        let mut pending = vec![goal];
+        let mut all_available = true;
+        while let Some(part) = pending.pop() {
+            if let Proposition::And(left, right) = part {
+                pending.push(right);
+                pending.push(left);
+                continue;
+            }
+            if matches!(part, Proposition::CResourceSeparate { .. }) && !facts.contains(part) {
+                let assumptions = if composition_only {
+                    facts.assumptions.compositions_only()
+                } else {
+                    facts.assumptions.clone()
+                };
+                if assumptions.proves_exact(part)
+                    || assumptions.proves_atomic_memory_or_resource(part)
+                {
+                    facts = facts.with_fact(part.clone());
+                }
+            }
+            all_available &= facts.pure_assumption_available(part);
         }
+        // Publish the requested conjunction once. Publishing every nested
+        // prefix would repeatedly clone it and take quadratic work.
+        if matches!(goal, Proposition::And(_, _)) && all_available && !facts.contains(goal) {
+            facts = facts.with_fact(goal.clone());
+        }
+        facts
     }
 
     /// Materializes one selected equality across a checked chain of load
@@ -1963,6 +1971,10 @@ fn index_implicit_transport_context(
     mut implicit: PureFactContext,
     fact: &Proposition,
 ) -> PureFactContext {
+    if let Proposition::And(left, right) = fact {
+        let implicit = index_implicit_transport_context(implicit, left);
+        return index_implicit_transport_context(implicit, right);
+    }
     if is_implicit_fact_transport_context(fact) {
         implicit = implicit.assume_proposition(fact.clone());
     }
@@ -2168,6 +2180,54 @@ mod integer_equality_fact_index_tests {
                 bytes: Bitvector32Term::Constant(bytes),
             }),
         }
+    }
+
+    #[test]
+    fn transport_index_extracts_separation_without_importing_arithmetic() {
+        let range = |block: &str| {
+            crate::kernel::CResource::Memory(crate::kernel::CMemoryRange::new(
+                Pointer {
+                    block: block.into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Variable(Variable(210_000)),
+            ))
+        };
+        let separation = Proposition::CResourceSeparate {
+            left: range("a"),
+            right: range("b"),
+        };
+        let bound = Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Variable(Variable(210_000)),
+            ),
+            true,
+        );
+        let conjunction = Proposition::And(Box::new(separation.clone()), Box::new(bound.clone()));
+        for facts in [
+            ProofFacts::from_ordered(std::slice::from_ref(&conjunction)),
+            ProofFacts::from_ordered(&[]).with_fact(conjunction),
+        ] {
+            assert!(
+                facts
+                    .implicit_transport_assumptions()
+                    .contains_assumed_exact(&separation)
+            );
+            assert!(
+                !facts
+                    .implicit_transport_assumptions()
+                    .contains_assumed_exact(&bound)
+            );
+        }
+        let conditional = Proposition::Implies(Box::new(bound), Box::new(separation.clone()));
+        let facts = ProofFacts::from_ordered(&[conditional]);
+        assert!(
+            !facts
+                .implicit_transport_assumptions()
+                .contains_assumed_exact(&separation)
+        );
     }
 
     #[test]

@@ -3600,6 +3600,15 @@ fn prepare_verified_function_call<'a>(
                     if contract_requirement_is_proven {
                         return true;
                     }
+                    // Range bounds are the definition of this atomic source
+                    // clause. User-written logical structure still needs its
+                    // ordinary explicit proof rather than this unpacking.
+                    if matches!(requirement, SpecProposition::ResourceSeparate { .. }) {
+                        return separation_requirement_parts_are_established(
+                            &path_assumptions,
+                            &requirement_path.proposition,
+                        );
+                    }
                     match &requirement_path.proposition {
                             Proposition::ConditionIs(condition, value) => {
                                 path_assumptions.proves_exact(&requirement_path.proposition)
@@ -4079,6 +4088,36 @@ fn resource_call_failure(message: &str) -> CFunctionPath {
         obligations: vec![],
 
         loan_evidence: empty_checked_loan_evidence_sequence(),
+    }
+}
+
+/// Unpack an atomic separation clause's bounds against the same caller facts,
+/// without assuming any sibling. This checks the definition of separation;
+/// it is not used to discharge user-written conjunctions automatically.
+fn separation_requirement_parts_are_established(
+    assumptions: &PureFactContext,
+    proposition: &Proposition,
+) -> bool {
+    match proposition {
+        Proposition::And(left, right) => {
+            separation_requirement_parts_are_established(assumptions, left)
+                && separation_requirement_parts_are_established(assumptions, right)
+        }
+        Proposition::ConditionIs(condition, value) => {
+            required_obligation_is_exactly_discharged(assumptions, proposition)
+                || assumptions.has_matching_condition_fact_for_memory_resolution(condition, *value)
+        }
+        Proposition::CResourceSeparate {
+            left: CResource::Memory(left),
+            right: CResource::Memory(right),
+        } => {
+            required_obligation_is_exactly_discharged(assumptions, proposition)
+                || assumptions
+                    .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                        left, right,
+                    )
+        }
+        _ => assumptions.proves_exact(proposition),
     }
 }
 
@@ -14690,6 +14729,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         let Some(range) = fact.memory_range() else {
             continue;
         };
+        facts.extend(crate::kernel::memory_range_extent_guard_spellings(range));
         let width = range.element_width();
         facts.push(Proposition::CMemoryLoadable {
             memory: state.memory.clone(),
@@ -14709,22 +14749,6 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         .prefer_symbolic_external_loads();
     for fact in &facts {
         body_assumptions = body_assumptions.assume_proposition(fact.clone());
-    }
-    // A contained range is stated by the composite's own clause, so while the
-    // body's later clauses are evaluated its byte-count guards are available,
-    // exactly as a contract's range carries them. These stay inside the body
-    // evaluation: the published facts below are unchanged.
-    for guard in facts
-        .iter()
-        .flat_map(crate::kernel::stated_loadable_extent_guards)
-        .chain(
-            facts
-                .iter()
-                .flat_map(crate::kernel::stated_separation_extent_guards),
-        )
-        .collect::<Vec<_>>()
-    {
-        body_assumptions = body_assumptions.assume_proposition(guard);
     }
     let facts_to_rewrite = selected.map_or(&definition.facts, |arm| &arm.facts);
     let (body_clauses, retained_conditions) = if active {
@@ -14931,6 +14955,7 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
         let Some(range) = fact.memory_range() else {
             continue;
         };
+        supporting_facts.extend(crate::kernel::memory_range_extent_guard_spellings(range));
         let width = range.element_width();
         supporting_facts.push(Proposition::CMemoryLoadable {
             memory: state.memory.clone(),
@@ -14949,12 +14974,6 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
     for fact in supporting_facts {
-        for guard in crate::kernel::stated_loadable_extent_guards(&fact)
-            .into_iter()
-            .chain(crate::kernel::stated_separation_extent_guards(&fact))
-        {
-            body_assumptions = body_assumptions.assume_proposition(guard);
-        }
         body_assumptions = body_assumptions.assume_proposition(fact);
     }
 
@@ -16049,6 +16068,14 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
         expand_composite_resource_context(context, definitions, memory, assumptions)?;
     let mut propositions = Vec::new();
     for composite in composites {
+        // Preserve the bounds of each declared leaf before adjacent resources
+        // normalize into a larger range. The proof can cite either slice.
+        propositions.extend(evaluate_composite_resource_loadable_propositions(
+            &composite,
+            definitions,
+            memory,
+            assumptions,
+        )?);
         propositions.extend(evaluate_composite_resource_relation_propositions(
             &composite,
             definitions,
@@ -16484,6 +16511,7 @@ pub(super) fn evaluate_composite_resource_loadable_propositions(
         };
         let range = evaluated.memory_range()?;
         let element_width = segment.element_width();
+        propositions.extend(crate::kernel::memory_range_extent_guard_spellings(range));
         propositions.push(Proposition::CMemoryLoadable {
             memory: memory.clone(),
             base: range

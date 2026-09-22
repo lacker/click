@@ -276,28 +276,10 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_without_range_guards(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
-    // Composite-resource population setup uses loadability and separation as
-    // opaque symbolic summaries. Public contract requirements and ensures use
-    // the ordinary lowering path below, which attaches the range validity
-    // obligations before the resulting bytes term can be consumed.
-    //
-    // A separation between a definition's own ranges is such a summary too:
-    // the range that owns those bytes supplies the concrete extent check when
-    // the resource is used, so making the definition owe it here would fail a
-    // body whose endpoints are unconstrained until then.
-    if let SpecProposition::ResourceSeparate { left, right } = proposition {
-        return lower_spec_resource_relation_at_state(
-            state,
-            left,
-            right,
-            loop_entry_state,
-            assumptions,
-            &BTreeMap::new(),
-            budget,
-            |left, right| Proposition::CResourceSeparate { left, right },
-            false,
-        );
-    }
+    // Composite-resource population setup treats loadability as an opaque
+    // symbolic summary; the contained ranges supply its validity conditions.
+    // Separation retains its range-validity conjuncts even in a resource
+    // definition: folding establishes them and observing may expose them.
     let SpecProposition::MemoryLoadable {
         memory,
         base,
@@ -1048,7 +1030,6 @@ fn lower_spec_proposition_at_state_with_algebraic_bindings_one(
             algebraic_bindings,
             budget,
             |left, right| Proposition::CResourceSeparate { left, right },
-            true,
         ),
         SpecProposition::ResourceContains { parent, child } => {
             lower_spec_resource_relation_at_state(
@@ -1060,7 +1041,6 @@ fn lower_spec_proposition_at_state_with_algebraic_bindings_one(
                 algebraic_bindings,
                 budget,
                 |parent, child| Proposition::CResourceContains { parent, child },
-                true,
             )
         }
         SpecProposition::MemoryLoadable {
@@ -4463,14 +4443,8 @@ fn evaluate_spec_resource_at_state(
 /// `separate(memory(a[s..t]), …)` be written with `s == i32::MAX` and
 /// `t == -i32::MAX` — endpoints whose wrapping difference is a tidy `2`.
 ///
-/// This decides only what the context already proves false. It deliberately
-/// does *not* turn an undecided guard into a proof obligation: a range reached
-/// through a composite clause (`views readable_input(data, length)`) publishes
-/// no extent guard to its user, so such an obligation would be one no contract
-/// text could discharge rather than one a caller had forgotten. The undecided
-/// case is therefore still accepted here, and
-/// [`crate::kernel::stated_separation_extent_guards`] is what supplies the
-/// same condition wherever a separation is assumed.
+/// Reject a range already known invalid with the focused extent diagnostic.
+/// Undecided guards remain conjuncts of the lowered separation proposition.
 fn separation_extent_is_impossible(
     proposition: &Proposition,
     assumptions: &PureFactContext,
@@ -4488,13 +4462,8 @@ fn separation_extent_is_impossible(
 
 /// Lowers a relation between two spec resources.
 ///
-/// `enforce_range_guards` plays the same role here as in
-/// [`lower_spec_memory_loadable_at_state`]: a memory range named by the
-/// relation is a stated range, so where the relation is a public contract
-/// clause its extent must at least be possible, and where it is an opaque
-/// symbolic summary the range's owner supplies that instead. The ranges are
-/// read back off the built proposition, so a relation naming no memory range
-/// is unaffected.
+/// A separation names valid memory extents in every context. Relations over
+/// opaque resources, and containment relations, contribute no range bounds.
 #[allow(clippy::too_many_arguments)]
 fn lower_spec_resource_relation_at_state(
     state: &CState,
@@ -4505,7 +4474,6 @@ fn lower_spec_resource_relation_at_state(
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
     relation: impl Fn(CResource, CResource) -> Proposition,
-    enforce_range_guards: bool,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     let mut paths = Vec::new();
     for (left, left_facts, left_obligations) in evaluate_spec_resource_at_state(
@@ -4535,10 +4503,15 @@ fn lower_spec_resource_relation_at_state(
             ) else {
                 continue;
             };
-            let proposition = relation(left.clone(), right);
-            if enforce_range_guards && separation_extent_is_impossible(&proposition, assumptions) {
+            let mut proposition = relation(left.clone(), right);
+            if separation_extent_is_impossible(&proposition, assumptions) {
                 budget.record_dropped_relation_range_extent();
                 continue;
+            }
+            // An assumption provides every conjunct; a goal establishes all
+            // of them. The same lowering serves contracts and theorem proofs.
+            for guard in crate::kernel::stated_separation_extent_bounds(&proposition) {
+                proposition = Proposition::And(Box::new(proposition), Box::new(guard));
             }
             paths.push(SpecPropositionPath {
                 introductions: Vec::new(),

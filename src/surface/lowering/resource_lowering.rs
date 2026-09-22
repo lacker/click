@@ -2083,7 +2083,7 @@ fn reject_impossible_range_guards(
     Ok(())
 }
 
-fn resource_clause_memory_ranges_at_state(
+pub(in crate::surface) fn resource_clause_memory_ranges_at_state(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -2138,11 +2138,7 @@ pub(in crate::surface) fn memory_range_loadable_atom_prop(
 }
 
 pub(in crate::surface) fn memory_range_loadable_guards(range: &CMemoryRange) -> Vec<Proposition> {
-    crate::kernel::memory_range_byte_count_guards(
-        range.start().clone(),
-        range.end().clone(),
-        range.element_width(),
-    )
+    crate::kernel::memory_range_extent_guard_spellings(range)
 }
 
 pub(in crate::surface) fn concrete_loadable_block(
