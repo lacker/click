@@ -13180,14 +13180,24 @@ fn apply_counted_population_transitions_with_interface(
     };
     let post_contract_state =
         with_contract_interface_argument_views(post_state, interface, argument_values);
-    let ensured = match evaluate_function_resource_context(
+    // A produced resource may contain an `old(...)` argument.  Its value must
+    // be read from the function entry memory, while the authority that makes
+    // that read legal is the post-call resource context being returned.  Keep
+    // those two roles separate instead of evaluating the whole ensure section
+    // against the post snapshot.
+    let ensures_entry_state = entry_state
+        .clone()
+        .with_resource_context(post_contract_state.resources().clone());
+    let ensured = match evaluate_function_resource_context_with_entry_and_normalization(
+        &ensures_entry_state,
         &post_contract_state,
         interface.resource_ensures(),
         interface.composite_resource_definitions(),
         assumptions,
         budget,
+        true,
     )? {
-        Ok(resources) => resources,
+        Ok((resources, _)) => resources,
         Err(error) => return Ok(Err(error)),
     };
     let population_totals = |resources: &ResourceContext| {
@@ -16738,7 +16748,32 @@ fn evaluate_function_resource_context_with_normalization(
     budget: &mut ExecutionBudget,
     normalize: bool,
 ) -> ExecutionResult<Result<(ResourceContext, Vec<CCheckedResourceFact>), CRuntimeError>> {
+    evaluate_function_resource_context_with_entry_and_normalization(
+        state,
+        state,
+        resources,
+        definitions,
+        assumptions,
+        budget,
+        normalize,
+    )
+}
+
+fn evaluate_function_resource_context_with_entry_and_normalization(
+    entry_state: &CState,
+    state: &CState,
+    resources: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    normalize: bool,
+) -> ExecutionResult<Result<(ResourceContext, Vec<CCheckedResourceFact>), CRuntimeError>> {
+    // `entry_state` supplies only expressions explicitly marked `old(...)`;
+    // `state` supplies current/post expressions and the section's resulting
+    // resource context.  Keeping both states here prevents repeated lowering
+    // of one entry load from inventing a distinct resource argument.
     let evaluated = match evaluate_resource_clauses_against_whole_section(
+        entry_state,
         state,
         resources,
         definitions,
@@ -16891,6 +16926,7 @@ pub(crate) fn contract_entry_partition_facts(
 /// verdict for a dependency cycle between two clauses and for two clauses that
 /// are independently unevaluable; either way the user needs both positions.
 fn evaluate_resource_clauses_against_whole_section(
+    entry_state: &CState,
     state: &CState,
     resources: &[CResourceSpec],
     definitions: &[CCompositeResourceDefinition],
@@ -16910,6 +16946,7 @@ fn evaluate_resource_clauses_against_whole_section(
                 .unchecked_with_facts(supplied.iter().cloned()),
         );
         let (outcome, missing) = evaluate_resource_clause_with_dependencies(
+            entry_state,
             &evaluation_state,
             resource,
             assumptions,
@@ -16948,6 +16985,7 @@ fn evaluate_resource_clauses_against_whole_section(
         resource_clause_unregister_waiters(index, &mut dependencies, &mut waiters);
         let evaluation_state = state.clone().with_resource_context(section_supply.clone());
         let (outcome, missing) = evaluate_resource_clause_with_dependencies(
+            entry_state,
             &evaluation_state,
             &resources[index],
             assumptions,
@@ -17707,6 +17745,7 @@ mod resource_clause_worklist_tests {
 }
 
 fn evaluate_resource_clause_with_dependencies(
+    entry_state: &CState,
     state: &CState,
     resource: &CResourceSpec,
     assumptions: &PureFactContext,
@@ -17715,7 +17754,13 @@ fn evaluate_resource_clause_with_dependencies(
     #[cfg(test)]
     record_resource_clause_attempt();
     let (result, dependencies) = capture_resource_dependencies(|| {
-        evaluate_function_resource_spec(state, resource, assumptions, budget)
+        evaluate_function_resource_spec_with_entry(
+            entry_state,
+            state,
+            resource,
+            assumptions,
+            budget,
+        )
     });
     result.map(|result| (result, dependencies))
 }
