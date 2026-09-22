@@ -768,11 +768,26 @@ pub(super) fn append_surface_step_to_leaves(steps: &mut Vec<ProofStep>, step: Pr
         return;
     }
     if let Some(ProofStep::If {
+        condition: existing_condition,
         then_proof,
         else_proof,
-        ..
     }) = steps.last_mut()
     {
+        if let ProofStep::If {
+            condition,
+            then_proof: selected_then,
+            else_proof: selected_else,
+        } = &step
+            && condition == existing_condition
+        {
+            for next in selected_then.steps() {
+                append_surface_step_to_leaves(then_proof.steps_mut(), next.clone());
+            }
+            for next in selected_else.steps() {
+                append_surface_step_to_leaves(else_proof.steps_mut(), next.clone());
+            }
+            return;
+        }
         append_surface_step_to_leaves(then_proof.steps_mut(), step.clone());
         append_surface_step_to_leaves(else_proof.steps_mut(), step);
     } else if let Some(ProofStep::CallOutcomes {
@@ -780,6 +795,19 @@ pub(super) fn append_surface_step_to_leaves(steps: &mut Vec<ProofStep>, step: Pr
         threw_proof,
     }) = steps.last_mut()
     {
+        if let ProofStep::CallOutcomes {
+            returned_proof: selected_returned,
+            threw_proof: selected_threw,
+        } = &step
+        {
+            for next in selected_returned.steps() {
+                append_surface_step_to_leaves(returned_proof.steps_mut(), next.clone());
+            }
+            for next in selected_threw.steps() {
+                append_surface_step_to_leaves(threw_proof.steps_mut(), next.clone());
+            }
+            return;
+        }
         append_surface_step_to_leaves(returned_proof.steps_mut(), step.clone());
         append_surface_step_to_leaves(threw_proof.steps_mut(), step);
     } else {

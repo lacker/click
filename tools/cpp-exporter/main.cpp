@@ -796,9 +796,86 @@ private:
            "scalar int32 handler requires one named by-value `int` binding");
       return std::nullopt;
     }
-    auto binding_type = lower_type(
-        binding->getType(), binding->getLocation(),
-        direct_source_alias(binding->getTypeSourceInfo()));
+    auto binding_type =
+        lower_type(binding->getType(), binding->getLocation(),
+                   direct_source_alias(binding->getTypeSourceInfo()));
+    if (!binding_type) {
+      return std::nullopt;
+    }
+
+    // Preserve the source's conditional construction shape while making the
+    // catch region explicit in the lowered C++ artifact.  The C++ source
+    // permits the guard to be constructed only when the condition is true,
+    // while the catch still encloses the potentially-throwing call.  Lowering
+    // the conditional as an outer branch with the typed try/catch in its live
+    // arm gives the C proof driver the real mixed outcome join: normal cleanup
+    // reaches the branch continuation, while the caught path returns.
+    if (statement->getTryBlock()->size() == 1) {
+      const auto *conditional = llvm::dyn_cast<clang::IfStmt>(
+          *statement->getTryBlock()->body_begin());
+      if (conditional != nullptr && conditional->getInit() == nullptr &&
+          conditional->getConditionVariable() == nullptr &&
+          conditional->getElse() == nullptr) {
+        const auto *live_scope =
+            llvm::dyn_cast<clang::CompoundStmt>(conditional->getThen());
+        const clang::DeclStmt *first_declaration =
+            live_scope != nullptr && !live_scope->body_empty()
+                ? llvm::dyn_cast<clang::DeclStmt>(*live_scope->body_begin())
+                : nullptr;
+        const clang::VarDecl *guard =
+            first_declaration != nullptr && first_declaration->isSingleDecl()
+                ? llvm::dyn_cast<clang::VarDecl>(
+                      first_declaration->getSingleDecl())
+                : nullptr;
+        const auto *record_type =
+            guard == nullptr ? nullptr
+                             : guard->getType()->getAs<clang::RecordType>();
+        const auto *record = record_type == nullptr
+                                 ? nullptr
+                                 : llvm::dyn_cast<clang::CXXRecordDecl>(
+                                       record_type->getDecl()->getDefinition());
+        const auto *destructor =
+            record == nullptr ? nullptr : record->getDestructor();
+        if (destructor != nullptr && !destructor->isImplicit()) {
+          auto condition = lower_expression(conditional->getCond(), function);
+          auto live_try_body = lower_branch(conditional->getThen(), function,
+                                            CleanupScopeKind::Conditional);
+          if (!condition || !live_try_body) {
+            return std::nullopt;
+          }
+          active_catch_binding_ = binding;
+          auto handler =
+              lower_branch(handler_block, function, CleanupScopeKind::None);
+          active_catch_binding_ = nullptr;
+          if (!handler) {
+            return std::nullopt;
+          }
+
+          llvm::json::Object nested_try;
+          nested_try["kind"] = "try_catch_int32";
+          nested_try["try_body"] = std::move(*live_try_body);
+          llvm::json::Object nested_binding;
+          nested_binding["declaration_id"] = declaration_id(binding);
+          nested_binding["name"] = binding->getNameAsString();
+          nested_binding["value_type"] = std::move(*binding_type);
+          nested_binding["span"] = span(binding->getSourceRange());
+          nested_try["binding"] = std::move(nested_binding);
+          nested_try["handler"] = std::move(*handler);
+          nested_try["span"] = span(statement->getSourceRange());
+
+          llvm::json::Array then_branch;
+          then_branch.push_back(std::move(nested_try));
+          llvm::json::Array else_branch;
+          llvm::json::Object result;
+          result["kind"] = "if";
+          result["condition"] = std::move(*condition);
+          result["then_branch"] = std::move(then_branch);
+          result["else_branch"] = std::move(else_branch);
+          result["span"] = span(conditional->getSourceRange());
+          return Json(std::move(result));
+        }
+      }
+    }
     auto try_body =
         lower_branch(statement->getTryBlock(), function, CleanupScopeKind::Try);
     if (!binding_type || !try_body) {

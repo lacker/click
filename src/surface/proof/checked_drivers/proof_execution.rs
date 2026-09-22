@@ -213,8 +213,8 @@ fn checked_execution_arm_tactics_end(
 
 /// Classifies the supported execution-region grammar used inside a checked
 /// branch arm. Linear prefixes and nested execution branches are accepted;
-/// every sibling pair must agree on whether it returns to a shared frontier
-/// or completes at function exit.
+/// sibling branches share a frontier, while a call-outcomes pair may mix a
+/// continuing normal arm with a terminal caught arm.
 fn checked_execution_region_end(node: &InternalProofNode) -> Option<CheckedExecutionRegionEnd> {
     checked_execution_region_end_at(node, 0, CheckedExecutionRegionEnd::SharedContinuation)
 }
@@ -243,11 +243,19 @@ fn checked_execution_region_end_at(
             threw_branch,
             continuation,
             ..
-        } => (initial == CheckedExecutionRegionEnd::FunctionExit
-            && deferred_post_execution_region(returned_branch).is_some()
-            && deferred_post_execution_region(threw_branch).is_some())
-        .then(|| checked_execution_region_end_at(continuation, depth + 1, initial))
-        .flatten(),
+        } => {
+            if initial == CheckedExecutionRegionEnd::FunctionExit {
+                return (deferred_post_execution_region(returned_branch).is_some()
+                    && deferred_post_execution_region(threw_branch).is_some())
+                .then(|| checked_execution_region_end_at(continuation, depth + 1, initial))
+                .flatten();
+            }
+            let returned_end =
+                checked_execution_region_end_at(returned_branch, depth + 1, initial)?;
+            let threw_end = checked_execution_region_end_at(threw_branch, depth + 1, initial)?;
+            (returned_end != threw_end && matches!(continuation.as_ref(), InternalProofNode::Done))
+                .then_some(CheckedExecutionRegionEnd::FunctionExit)
+        }
         // A linear run continues the region it is in; the control node it
         // ends at is the next level.
         InternalProofNode::Linear {
@@ -2481,6 +2489,31 @@ fn advance_execution_match_group<'a>(
 }
 
 fn advance_focused_execution_region<'a>(
+    proof: Proof<'a>,
+    enclosing_record: Option<&ExecutionSplit<'a>>,
+    region: &InternalProofNode,
+    expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
+    depth: usize,
+) -> Result<Option<Proof<'a>>, ClickError> {
+    advance_focused_execution_region_with_branch_continuation(
+        proof,
+        enclosing_record,
+        region,
+        expansion_capture,
+        proof_site,
+        owning_source_index,
+        depth,
+        None,
+    )
+}
+
+/// A mixed call-outcome join needs the enclosing branch's source continuation
+/// while its normal sibling is still open. The split record already owns the
+/// checked frontier transition; this parameter only identifies the proof
+/// region to run after that transition.
+fn advance_focused_execution_region_with_branch_continuation<'a>(
     mut proof: Proof<'a>,
     enclosing_record: Option<&ExecutionSplit<'a>>,
     region: &InternalProofNode,
@@ -2488,6 +2521,7 @@ fn advance_focused_execution_region<'a>(
     proof_site: Option<&ProofSite>,
     owning_source_index: usize,
     depth: usize,
+    branch_continuation: Option<&InternalProofNode>,
 ) -> Result<Option<Proof<'a>>, ClickError> {
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
         return decline();
@@ -2529,7 +2563,7 @@ fn advance_focused_execution_region<'a>(
             };
             // The linear run continues this region; its continuation is the
             // control node that opens the next one, and that charges a level.
-            advance_focused_execution_region(
+            advance_focused_execution_region_with_branch_continuation(
                 advanced,
                 enclosing_record,
                 continuation,
@@ -2537,6 +2571,7 @@ fn advance_focused_execution_region<'a>(
                 proof_site,
                 owning_source_index,
                 depth,
+                branch_continuation,
             )
         }
         InternalProofNode::Branch {
@@ -2664,6 +2699,38 @@ fn advance_focused_execution_region<'a>(
                     };
                     advanced = next;
                 }
+                let returned_exit = advanced.arm_at_function_exit(&record, true);
+                let threw_exit = advanced.arm_at_function_exit(&record, false);
+                let mixed = returned_exit != threw_exit;
+                if mixed {
+                    let (Some(enclosing_record), Some(branch_continuation)) =
+                        (enclosing_record, branch_continuation)
+                    else {
+                        return decline();
+                    };
+                    if !matches!(continuation.as_ref(), InternalProofNode::Done) {
+                        return decline();
+                    }
+                    let continuing = advanced.focus_split_arm(&record, !returned_exit)?;
+                    if !continuing.is_at_region_boundary() {
+                        return decline();
+                    }
+                    let continuing =
+                        continuing.continue_arm_into_parent_frontier(enclosing_record)?;
+                    let Some(continued) = advance_focused_execution_region(
+                        continuing,
+                        Some(enclosing_record),
+                        branch_continuation,
+                        expansion_capture.as_deref_mut(),
+                        proof_site,
+                        owning_source_index,
+                        depth + 1,
+                    )?
+                    else {
+                        return decline();
+                    };
+                    advanced = continued;
+                }
                 if !advanced.is_at_function_exit() {
                     return decline();
                 }
@@ -2672,7 +2739,11 @@ fn advance_focused_execution_region<'a>(
                 return advance_focused_execution_region(
                     joined,
                     enclosing_record,
-                    continuation,
+                    if mixed {
+                        &InternalProofNode::Done
+                    } else {
+                        continuation
+                    },
                     expansion_capture,
                     proof_site,
                     owning_source_index,
@@ -2996,7 +3067,7 @@ fn advance_checked_branch_arms<'a>(
             note_dropped_execution_region(expansion_capture.as_deref_mut(), proof_site, region);
             continue;
         }
-        let Some(next) = advance_focused_execution_region(
+        let Some(next) = advance_focused_execution_region_with_branch_continuation(
             advanced.focus_split_arm(record, take_then)?,
             Some(record),
             region,
@@ -3004,6 +3075,7 @@ fn advance_checked_branch_arms<'a>(
             proof_site,
             owning_source_index,
             depth + 1,
+            Some(continuation),
         )?
         else {
             return decline();

@@ -2926,9 +2926,9 @@ impl<'a> Proof<'a> {
         // the refolded field. That is the one shape whose recorded pair can
         // still answer a lookup while the spelling itself has moved to another
         // fact, so it is the one shape re-lowered below. Testing the kernel's
-        // shape once keeps every other premise on the cheap recorded-pair
-        // route: re-lowering every candidate costs a smart `have` about half
-        // its real-time budget again.
+        // shape once keeps other live premise spellings on the cheap
+        // recorded-pair route: re-lowering every candidate costs a smart
+        // `have` about half its real-time budget again.
         let constructor_equation = matches!(
             kernel,
             Proposition::Equal(
@@ -2951,7 +2951,28 @@ impl<'a> Proof<'a> {
                         lowered == kernel || condition_polarity_equivalent(lowered, kernel)
                     })
             {
-                if !constructor_equation {
+                // A terminal path can retain a fact spelled through an
+                // automatic local that has since left scope. Its recorded
+                // pair remains a valid kernel fact, but the unanchored
+                // spelling cannot be used as a source `rewrite`.
+                let names_a_dead_local = self
+                    .focused_outcome_data()
+                    .is_some_and(|data| data.call_returned.is_some())
+                    && self.premise_fixed_state_view().is_some_and(|view| {
+                        let mut current_names = BTreeSet::new();
+                        crate::surface::collect_current_proposition_variables(
+                            candidate,
+                            &mut current_names,
+                        );
+                        current_names.iter().any(|name| {
+                            !view.state.locals().contains_name(name)
+                                && view
+                                    .recorded_snapshots
+                                    .iter()
+                                    .any(|(_, snapshot)| snapshot.locals().contains_name(name))
+                        })
+                    });
+                if !constructor_equation && !names_a_dead_local {
                     // The recorded pair is authoritative for this shape.
                     return Some(());
                 }

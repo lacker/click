@@ -1126,6 +1126,112 @@ fn scalar_int32_profile_catches_a_modular_throw_with_a_typed_payload() {
 }
 
 #[test]
+fn scalar_int32_profile_joins_a_caught_throw_inside_conditional_cleanup() {
+    let project = Project::with_fixture(
+        "caller.cpp",
+        "caller",
+        "struct Restore {\n\
+             int* pointer;\n\
+             int saved;\n\
+             explicit Restore(int* slot) noexcept : pointer(slot), saved(*slot) { *pointer = 9; }\n\
+             ~Restore() noexcept { *pointer = saved; }\n\
+         };\n\
+         int helper(bool should_throw) {\n\
+             if (should_throw) { throw 7; }\n\
+             return 5;\n\
+         }\n\
+         int caller(int& value, bool construct, bool should_throw) {\n\
+             try {\n\
+                 if (construct) {\n\
+                     Restore guard(&value);\n\
+                     helper(should_throw);\n\
+                 }\n\
+             } catch (int caught) {\n\
+                 return value;\n\
+             }\n\
+             return value;\n\
+         }\n",
+    );
+    project.write_exception_enabled_compilation_database();
+    project.write_config_with_exception_behavior("caller", "caller.cpp", true, "scalar_int32");
+    refresh_import(&project.config()).expect("export conditional cleanup and catch");
+    let prepared = load_import(&project.config()).expect("load the conditional cleanup artifact");
+    assert!(matches!(
+        prepared.export().function.body.as_slice(),
+        [CppStatement::If { then_branch, else_branch, .. }, CppStatement::Return { .. }]
+            if matches!(then_branch.as_slice(), [CppStatement::TryCatchInt32 { .. }])
+                && else_branch.is_empty()
+    ));
+
+    let sidecar_source = r#"verifying "caller.cpp";
+        void Restore_constructor(struct Restore* self, int32* slot) {
+            owns &self->pointer;
+            owns self->saved;
+            owns slot[0..1];
+            ensures self->pointer == slot;
+            ensures self->saved == old(slot[0]);
+            ensures slot[0] == 9;
+            ensures separate(memory(object(self)), memory(self->pointer[0..1]));
+        } by { execute(); simp(); }
+        void Restore_destructor(struct Restore* self) {
+            requires separate(memory(object(self)), memory(self->pointer[0..1]));
+            owns &self->pointer;
+            owns self->saved;
+            owns self->pointer[0..1];
+            ensures self->pointer == old(self->pointer);
+            ensures self->saved == old(self->saved);
+            ensures self->pointer[0] == old(self->saved);
+        } by { execute(); simp(); }
+        int32 helper(bool should_throw) throws int32 {
+            ensures result == 5;
+            exceptional ensures exception == 7;
+        }
+        int32 caller(int32* value, bool construct, bool should_throw) {
+            owns value[0..1];
+            ensures result == old(value[0]);
+            ensures value[0] == old(value[0]);
+        } by {
+            branch {
+                then {
+                    step();
+                    step();
+                    outcomes {
+                        returned { step(); step(); }
+                        threw { step(); execute(); simp(); }
+                    }
+                }
+                else { }
+            }
+            step();
+            simp();
+        }
+"#;
+    let sidecar = project.directory.join("demo.click");
+    fs::write(&sidecar, sidecar_source).unwrap();
+    fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
+    let click_project = read_click_project(&sidecar, sidecar_source).unwrap();
+    verify_cpp_prepared_project(&click_project, &prepared)
+        .expect("the mixed conditional cleanup join should verify");
+    let expanded = expand_cpp_prepared_project_claim_source_by_label(
+        &click_project,
+        &prepared,
+        "caller.contract",
+    )
+    .expect("expand the mixed outcome proof");
+    let rewritten = click_project.with_entry_source(expanded.clone());
+    verify_cpp_prepared_project(&rewritten, &prepared)
+        .expect("the expanded mixed outcome proof must reverify");
+    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &prepared)
+        .expect("retain the mixed outcome verification environment");
+    let site =
+        cpp_prepared_project_tactic_source_position(&rewritten, &prepared, "caller.contract", 0)
+            .expect("locate the rewritten branch proof");
+    session
+        .verify_at_project(&expanded, site.line, site.column)
+        .expect("retained audit must accept the expanded mixed outcome proof");
+}
+
+#[test]
 fn scalar_int32_profile_rejects_unsupported_handler_shapes() {
     let cases = [
         (

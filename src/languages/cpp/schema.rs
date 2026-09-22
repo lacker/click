@@ -1134,6 +1134,90 @@ impl CppFunction {
                 else_branch,
                 span,
             } = statement
+                && matches!(then_branch.as_slice(), [CppStatement::TryCatchInt32 { .. }])
+            {
+                let [
+                    CppStatement::TryCatchInt32 {
+                        try_body,
+                        binding,
+                        handler,
+                        span: try_span,
+                    },
+                ] = then_branch.as_slice()
+                else {
+                    unreachable!("checked above")
+                };
+                let [
+                    CppStatement::Scope {
+                        body,
+                        cleanups,
+                        span: scope_span,
+                    },
+                ] = try_body.as_slice()
+                else {
+                    return Err("conditional guarded try requires one cleanup scope".into());
+                };
+                if !matches!(exception_behavior, CppExceptionBehavior::ScalarInt32)
+                    || !matches!(self.function_kind, CppFunctionKind::Free)
+                    || !else_branch.is_empty()
+                    || nested_scopes != 0
+                    || has_conditional_cleanup_scope
+                    || has_exception_cleanup_scope
+                    || aggregate_locals != 0
+                    || !destructible_locals.is_empty()
+                    || !matches!(handler.as_slice(), [CppStatement::Return { .. }])
+                    || !matches!(body.first(), Some(CppStatement::Declare { .. }))
+                    || sequence_contains_return(body)
+                {
+                    return Err(
+                        "conditional guarded try requires one guard, a returning int32 handler, and no outer cleanup lifetime".into(),
+                    );
+                }
+                span.validate(logical_source)?;
+                try_span.validate(logical_source)?;
+                condition.validate(&places, records, logical_source)?;
+                require_bool(condition.value_type(), false, "if condition")?;
+                binding.span.validate(logical_source)?;
+                if binding.declaration_id.is_empty() || binding.name.is_empty() {
+                    return Err("C++ catch binding is missing declaration identity".into());
+                }
+                require_int32(&binding.value_type, false, "catch binding")?;
+                binding.value_type.validate_aliases_in(alias_sources)?;
+                if places.contains_key(&binding.declaration_id)
+                    || !names.insert(binding.name.clone())
+                {
+                    return Err(format!(
+                        "C++ catch binding `{}` shadows another supported place",
+                        binding.name
+                    ));
+                }
+                validate_nested_scope(
+                    body,
+                    cleanups,
+                    scope_span,
+                    &places,
+                    &[],
+                    records,
+                    logical_source,
+                    &self.name,
+                )?;
+                let mut handler_places = places.clone();
+                handler_places.insert(
+                    binding.declaration_id.clone(),
+                    (binding.name.clone(), binding.value_type.clone()),
+                );
+                for member in handler {
+                    member.validate(&handler_places, records, logical_source)?;
+                }
+                nested_scopes += 1;
+                nested_scope_outer_cleanup_counts.push(0);
+                has_conditional_cleanup_scope = true;
+            } else if let CppStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            } = statement
                 && then_branch
                     .iter()
                     .chain(else_branch)

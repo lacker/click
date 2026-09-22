@@ -1149,6 +1149,78 @@ fn caught_throw_satisfies_a_nonthrowing_function_signature() {
 }
 
 #[test]
+fn conditional_catch_has_a_continuing_call_outcome_and_a_terminal_one() {
+    let helper = c_function(
+        CType::Int32,
+        "helper",
+        vec![c_parameter("should_throw", CType::Bool)],
+        c_if(
+            c_variable("should_throw"),
+            CStatement::Throw(c_int32_literal(7)),
+            c_return(c_int32_literal(5)),
+        ),
+    )
+    .with_int32_exceptional_outcome();
+    let caller = c_function(
+        CType::Int32,
+        "caller",
+        vec![
+            c_parameter("construct", CType::Bool),
+            c_parameter("should_throw", CType::Bool),
+        ],
+        c_seq(
+            c_if(
+                c_variable("construct"),
+                c_try_catch_int32(
+                    c_call("helper", vec![c_variable("should_throw")]),
+                    "caught",
+                    c_return(c_variable("caught")),
+                ),
+                c_skip(),
+            ),
+            c_return(c_int32_literal(5)),
+        ),
+    );
+    let execution = prove_symbolic_c_function_execution_paths_with_environment(
+        CState::new(),
+        caller,
+        vec![
+            CExpression::Value(bool_value(Bitvector32Term::Variable(Variable(80_001)))),
+            CExpression::Value(bool_value(Bitvector32Term::Variable(Variable(80_002)))),
+        ],
+        PureFactContext::new(),
+        CExecutionEnvironment::new().with_function(helper),
+        CExecutionSemantics::EXECUTE_BODIES,
+    );
+    assert!(execution.limit().is_none());
+    assert_eq!(execution.paths().len(), 3);
+    let mut returned_values = execution
+        .paths()
+        .iter()
+        .map(|path| {
+            assert!(path.obligations().is_empty());
+            let mut proposition = path.theorem().proposition();
+            while let Proposition::Implies(_, body) = proposition {
+                proposition = body;
+            }
+            match proposition {
+                Proposition::CFunctionExecutes {
+                    outcome:
+                        CFunctionOutcome::Return {
+                            value: CValue::Int32(Bitvector32Term::Constant(value)),
+                            ..
+                        },
+                    ..
+                } => *value,
+                other => panic!("conditional catch produced a non-return outcome: {other:?}"),
+            }
+        })
+        .collect::<Vec<_>>();
+    returned_values.sort_unstable();
+    assert_eq!(returned_values, [5, 5, 7]);
+}
+
+#[test]
 fn internal_throw_is_int32_only_and_requires_a_verified_direct_rule() {
     let throwing = c_function(
         CType::Int32,

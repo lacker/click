@@ -3176,6 +3176,7 @@ mod outcome_case_tests {
                 &root,
                 &mut facts,
                 OutcomeProvenance {
+                    call_returned: None,
                     branch_decisions: PersistentSequence::default(),
                     surface_propositions: SurfacePropositionMap::default(),
                     recorded_snapshots: RecordedSnapshots::default(),

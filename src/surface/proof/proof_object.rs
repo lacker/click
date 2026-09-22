@@ -651,6 +651,7 @@ impl ExecutionProofState {
             .get(path_index)
             .cloned()
             .unwrap_or_else(|| OutcomeProvenance {
+                call_returned: None,
                 branch_decisions: self.presentation.branch_decisions.clone(),
                 surface_propositions: self.presentation.surface_propositions.clone(),
                 recorded_snapshots: self.presentation.recorded_snapshots.clone(),
@@ -821,6 +822,10 @@ impl ProofExecutionView<'_> {
 
 #[derive(Clone)]
 struct OutcomeProvenance {
+    /// The checked call edge selected on this terminal path. A surrounding
+    /// branch can add paths that never visited that call, so this belongs to
+    /// each outcome rather than to the joined frontier as one flat vector.
+    call_returned: Option<bool>,
     branch_decisions: PersistentSequence<ExecutionBranchDecision>,
     surface_propositions: SurfacePropositionMap,
     recorded_snapshots: RecordedSnapshots,
@@ -955,7 +960,7 @@ pub(in crate::surface::proof) struct OutcomeProofPresentation {
     branch_decisions: PersistentSequence<ExecutionBranchDecision>,
     /// The checked edge of a single supported call inside an int32 handler.
     /// `true` is `returned`; `false` is `threw` and entered the handler.
-    call_returned: Option<bool>,
+    pub(in crate::surface::proof) call_returned: Option<bool>,
 }
 
 pub(in crate::surface::proof) type OutcomeProofData =

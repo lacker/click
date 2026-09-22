@@ -1321,6 +1321,15 @@ impl<'a> Proof<'a> {
                 )));
             }
             for (arm_path_index, path) in completed.paths().iter().enumerate() {
+                let mut provenance = arm.execution.provenance_for_outcome(arm_path_index);
+                if call_outcomes {
+                    if provenance.call_returned.is_some() {
+                        return Err(self.step_error(
+                            "nested call-outcome routing requires a distinct checked path selector",
+                        ));
+                    }
+                    provenance.call_returned = Some(arm_index == 0);
+                }
                 let mut path_facts = path.execution_facts();
                 for proposition in &arm.introduced_facts {
                     let fact = ExecutionPureFact::new(proposition.clone());
@@ -1333,6 +1342,7 @@ impl<'a> Proof<'a> {
                     path.outcome().clone(),
                     path_facts.clone(),
                     obligations.clone(),
+                    provenance.call_returned,
                 );
                 let path_loan_evidence = path.loan_evidence().clone();
                 let retained_index = retained_path_keys.get(&path_key).and_then(|entries| {
@@ -1342,9 +1352,8 @@ impl<'a> Proof<'a> {
                         .map(|(_, index)| *index)
                 });
                 if let Some(retained_index) = retained_index {
-                    let incoming = arm.execution.provenance_for_outcome(arm_path_index);
                     if !outcome_provenance[retained_index].merge_generated_load_source_events_since(
-                        &incoming,
+                        &provenance,
                         &parent_execution.presentation.generated_load_source_events,
                     ) {
                         return Err(self.step_error(
@@ -1364,7 +1373,6 @@ impl<'a> Proof<'a> {
                     ));
                     execution_evidence
                         .push(arm.execution.core.execution_evidence[arm_path_index].clone());
-                    let mut provenance = arm.execution.provenance_for_outcome(arm_path_index);
                     if proof_case_split {
                         provenance.branch_decisions.push(ExecutionBranchDecision {
                             condition: surface_condition.clone(),
@@ -1408,7 +1416,12 @@ impl<'a> Proof<'a> {
             parent_execution.presentation.branch_decisions.clone();
         execution.presentation.outcome_provenance = Arc::new(outcome_provenance);
         if call_outcomes {
-            execution.presentation.call_outcome_edges = Some(vec![true, false]);
+            execution.presentation.call_outcome_edges = execution
+                .presentation
+                .outcome_provenance
+                .iter()
+                .map(|path| path.call_returned)
+                .collect();
         }
         execution.core.has_structured_branch_history = true;
         execution.core.next_opaque_call = arms[0]

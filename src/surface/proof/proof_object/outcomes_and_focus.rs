@@ -655,7 +655,9 @@ impl<'a> Proof<'a> {
                             premise_anchor: frontier_anchor.clone(),
                             requirement_surfaces: requirement_surfaces.clone(),
                             branch_decisions: provenance.branch_decisions,
-                            call_returned: call_edges.map(|edges| edges[path_index]),
+                            call_returned: provenance
+                                .call_returned
+                                .or_else(|| call_edges.map(|edges| edges[path_index])),
                         },
                     )),
                 ),

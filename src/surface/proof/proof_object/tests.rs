@@ -13003,6 +13003,215 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
 }
 
 #[test]
+fn mixed_call_outcomes_use_the_enclosing_branch_continuation() {
+    use crate::kernel::{
+        bool_value, c_call, c_int32_literal, c_parameter, c_return, c_skip, c_try_catch_int32,
+        c_variable, prove_c_function_contract_execution_paths_with_checked_artifacts,
+        prove_checked_c_function_execution_with_environment,
+    };
+
+    let click_file = crate::surface::parse(
+        r#"int32 caller(bool construct, bool should_throw) {
+            ensures result == result by {
+                branch {
+                    then {
+                        outcomes {
+                            returned { step(); }
+                            threw { step(); execute(); }
+                        }
+                    }
+                    else { }
+                }
+                step();
+            }
+        }"#,
+    )
+    .expect("minimal caller contract should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let helper = c_function(
+        CType::Int32,
+        "helper",
+        vec![c_parameter("should_throw", CType::Bool)],
+        c_if(
+            c_variable("should_throw"),
+            CStatement::Throw(c_int32_literal(7)),
+            c_return(c_int32_literal(5)),
+        ),
+    )
+    .with_int32_exceptional_outcome()
+    .with_contract(
+        vec![],
+        vec![],
+        vec![],
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let helper_arguments = vec![CExpression::Value(bool_value(Bitvector32Term::Variable(
+        Variable(80_010),
+    )))];
+    let artifacts = prove_checked_c_function_execution_with_environment(
+        CState::new(),
+        helper.clone(),
+        helper_arguments.clone(),
+        PureFactContext::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    let certified = prove_c_function_contract_execution_paths_with_checked_artifacts(
+        CState::new(),
+        helper.clone(),
+        helper_arguments,
+        vec![],
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+        &[artifacts],
+    );
+    let claims = crate::kernel::c_verified_function_contract_claims(&helper, &certified)
+        .expect("helper body safety should certify");
+    let helper_rule = c_verified_function_rule(helper.clone(), &claims)
+        .expect("the checked helper should have a modular rule");
+    let function_environment = CExecutionEnvironment::new()
+        .with_function(helper)
+        .with_verified_function_rule(helper_rule);
+
+    let body = c_seq(
+        c_if(
+            c_variable("construct"),
+            c_try_catch_int32(
+                c_call("helper", vec![c_variable("should_throw")]),
+                "caught",
+                c_return(c_variable("caught")),
+            ),
+            c_skip(),
+        ),
+        c_return(c_int32_literal(5)),
+    );
+    let function = c_function(
+        CType::Int32,
+        "caller",
+        vec![
+            c_parameter("construct", CType::Bool),
+            c_parameter("should_throw", CType::Bool),
+        ],
+        body,
+    );
+    let parsed_function = syntax::C0Function::external(
+        C0Type::Int32,
+        "caller".into(),
+        vec![
+            syntax::C0Parameter::new(C0Type::Bool, "construct".into(), None),
+            syntax::C0Parameter::new(C0Type::Bool, "should_throw".into(), None),
+        ],
+    )
+    .with_prelowered_kernel_function(function.clone());
+    let arguments = vec![
+        CExpression::Value(bool_value(Bitvector32Term::Variable(Variable(80_011)))),
+        CExpression::Value(bool_value(Bitvector32Term::Variable(Variable(80_012)))),
+    ];
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment = ClickFunctionEnvironment::new(&[]);
+    let theorem_environment = TheoremEnvironment::new(&[]);
+    let resource_environment = ResourceEnvironment::new(&[]);
+    let constants = ExecutionProofConstants {
+        source_layout: SourceExecutionLayout::for_function(&parsed_function).unwrap(),
+        ..ExecutionProofConstants::default()
+    };
+    let root = Proof::for_execution_frontier(
+        "mixed call outcomes",
+        0,
+        ExecutionProofState::at_entry(
+            CState::new(),
+            ExecutionFrontier::default(),
+            RecordedSnapshots::new(),
+            SurfacePropositionMap::default(),
+            PersistentSequence::default(),
+        ),
+        vec![],
+        constants.clone(),
+        function_block,
+        &function,
+        &parsed_function,
+        &arguments,
+        &function_environment,
+        &resource_environment,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let (outer, outer_record) = root
+        .split_focused_execution_branch()
+        .expect("conditional should split");
+    let (outcomes, call_record) = outer
+        .focus_split_arm(&outer_record, true)
+        .unwrap()
+        .split_focused_call_outcomes()
+        .expect("call split should be checked")
+        .expect("modular helper has normal and throwing outcomes");
+    let returned = outcomes.focus_split_arm(&call_record, true).unwrap();
+    assert!(returned.is_at_region_boundary());
+    let threw = returned
+        .focus_split_arm(&call_record, false)
+        .unwrap()
+        .apply_step(ProofStep::Step)
+        .expect("the caught arm returns");
+    assert!(threw.is_at_function_exit());
+    let returned = threw
+        .focus_split_arm(&call_record, true)
+        .unwrap()
+        .continue_arm_into_parent_frontier(&outer_record)
+        .expect("the outer branch record owns the final return")
+        .apply_step(ProofStep::Step)
+        .expect("the final return should complete the normal arm");
+    assert!(returned.is_at_function_exit());
+    let joined = returned
+        .join_focused_call_outcomes_terminal(&call_record)
+        .expect("both outcomes have certified terminal paths");
+    assert!(joined.is_at_function_exit());
+
+    let tactics = function_block.ensures()[0].proof().tactics().unwrap();
+    let program = crate::surface::proof::build_internal_proof(tactics, "mixed call outcomes")
+        .expect("explicit branch proof should build");
+    let checked = crate::surface::proof::checked_drivers::try_check_structural_function_proof(
+        root.execution().unwrap(),
+        &[],
+        &constants,
+        &program,
+        None,
+        None,
+        function_block,
+        &parsed_function,
+        "mixed call outcomes",
+        &function_environment,
+        &predicate_environment,
+        &click_function_environment,
+        &resource_environment,
+        &theorem_environment,
+        &function,
+        &arguments,
+    )
+    .expect("the checked structural driver should not error")
+    .expect("the checked structural driver should retain this proof");
+    assert!(checked.is_at_function_exit());
+    let (outcomes, ids) = checked
+        .split_function_outcomes()
+        .expect("the outer join should expose all terminal paths");
+    let mut call_edges = ids
+        .into_iter()
+        .map(|id| {
+            outcomes
+                .focus_branch(id)
+                .unwrap()
+                .checked_call_returned()
+                .ok()
+        })
+        .collect::<Vec<_>>();
+    call_edges.sort_unstable();
+    assert_eq!(call_edges, [None, Some(false), Some(true)]);
+}
+
+#[test]
 fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     let click_file = crate::surface::parse(
         r#"
