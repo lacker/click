@@ -52,11 +52,12 @@ fallthrough model. This was the intended medium-sized parser/lowering slice.
 The nested-switch ownership and basic automatic-scope cleanup slice is now
 covered: an inner `break` exits the innermost switch, fallthrough keeps an
 inner local alive, a `continue` reaches the innermost enclosing loop and
-retires that local, and a scalar `return` reads it before cleanup. Escaped
-pointers are rejected after each tested exit. The remaining harder follow-up
-is broader cleanup and unwind behavior across more complex scope and path
-joins. Jumping into or across a switch remains part of `goto.md`, not this
-slice.
+retires that local, and a scalar `return` reads it before cleanup. A case-local
+constructed on only one dispatch path is also retired correctly when sibling
+paths join after the switch; escaped pointers are rejected after each tested
+exit and join. The remaining harder follow-up is broader cleanup and unwind
+behavior across more complex scope and path joins. Jumping into or across a
+switch remains part of `goto.md`, not this slice.
 
 Acceptance should include positive and negative tests for constant labels,
 fallthrough, duplicate labels, nested switch ownership, loop nesting, and
