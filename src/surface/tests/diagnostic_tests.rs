@@ -913,3 +913,65 @@ fn a_store_wider_than_an_element_is_refused_by_bytes_not_by_index() {
         undecided_index
     );
 }
+
+#[test]
+fn empty_footprint_rejects_a_fact_aliased_write_and_effect_range() {
+    let global = Pointer {
+        block: "global:counter".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let alias = Pointer {
+        block: PointerBlock::Symbolic(Variable(982_001)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let before = CMemory::new().with_block(global.block.clone(), 4);
+    let after = before.clone().store(alias.clone(), int32(1));
+    let pre_state = CState::new().with_memory(before.clone());
+    let outcome = CFunctionOutcome::Return {
+        value: int32(0),
+        state: CState::new().with_memory(after.clone()),
+    };
+    let aliases_global =
+        Proposition::ConditionIs(ConditionTerm::pointer_equal(alias.clone(), global), true);
+    let facts = [
+        ExecutionPureFact::new(Proposition::CMemoryMutatesOnly {
+            before: before.clone(),
+            after: after.clone(),
+            writes: vec![(alias.clone(), 4)],
+        }),
+        ExecutionPureFact::new(Proposition::CMemoryEffectSummary {
+            before,
+            after,
+            mutable_ranges: vec![CMemoryRange::new(
+                alias,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )],
+        }),
+    ];
+    for fact in &facts {
+        super::checking::prove_empty_write_footprint(
+            "aliased.implicit_effect",
+            0,
+            std::slice::from_ref(fact),
+            &[],
+            &[],
+            &[],
+            &pre_state,
+            &outcome,
+        )
+        .expect("the symbolic spelling alone does not name preexisting storage");
+        let error = super::checking::prove_empty_write_footprint(
+            "aliased.implicit_effect",
+            0,
+            std::slice::from_ref(fact),
+            std::slice::from_ref(&aliases_global),
+            &[],
+            &[],
+            &pre_state,
+            &outcome,
+        )
+        .expect_err("a fact-aliased write reaches the preexisting global");
+        assert!(error.message().contains("outside the mutable footprint"));
+    }
+}

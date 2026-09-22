@@ -1055,7 +1055,10 @@ a write through `&local` is visible when the caller next reads that local.
 Memory mutation facts pair every written address with its byte width. Branch
 joins preserve those pairs, and conversion to effect ranges preserves their
 widths. Framing and mutable-footprint checks compare complete accesses rather
-than only their starting addresses. Resolving a load to a stored scalar requires
+than only their starting addresses. The implicit empty-footprint check uses the
+path's equality facts to recognize writes through symbolic pointers to
+preexisting heap or named storage, in both exact-write and effect-range facts.
+Resolving a load to a stored scalar requires
 the load's recorded width to match the stored value; a width-less term cannot
 choose a cell type implicitly.
 
