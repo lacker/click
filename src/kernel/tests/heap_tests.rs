@@ -1702,3 +1702,83 @@ fn freeing_through_one_spelling_retires_the_equal_spelling_too() {
         "a structurally fresh, proven-distinct allocation is unaffected"
     );
 }
+
+/// Investigation repro (bug hunt phase 2): a calloc'd allocation consumed by
+/// a contract whose continuity is undecided is retired through
+/// `retire_contract_heap_allocation_claim`, which removes the live claim, the
+/// uninitialized status and the zeroed prefix — but leaves the blanket
+/// `zeroed_allocations` entry in place. The post-call load then answers
+/// concrete 0 in the execution where the callee freed the allocation.
+#[test]
+fn retire_investigation_zeroed_status_survives_contract_retire() {
+    let state = CState::new().with_local("p", CValue::pointer(Pointer::null()));
+    let paths = execute_c_statement_paths(
+        &state,
+        &c_heap_allocate_sized_with_zeroed("p", c_int32_literal(4), true),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("calloc-shaped allocation should execute");
+    let CStatementOutcome::Normal(pending) = &paths[0].outcome else {
+        panic!("allocation should produce a pending outcome");
+    };
+    let Some(CValue::Pointer(pending_pointer)) = pending.locals().get("p") else {
+        panic!("allocation should assign a pending pointer");
+    };
+    let success = resolve_pending_heap_allocations(
+        pending,
+        &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(pending_pointer.pointer().clone(), Pointer::null()),
+            false,
+        )),
+    );
+    let Some(CValue::Pointer(pointer)) = success.locals().get("p") else {
+        panic!("allocation should assign a pointer");
+    };
+    assert!(
+        success
+            .memory()
+            .is_zeroed_heap_address(pointer, 4, &PureFactContext::new())
+    );
+    let retired = success
+        .memory()
+        .clone()
+        .retire_contract_heap_allocation_claim(pointer);
+    assert!(
+        retired.is_zeroed_heap_address(pointer, 4, &PureFactContext::new()),
+        "BUG: the zeroed reading survives the contract-boundary retirement"
+    );
+}
+
+/// Investigation repro (bug hunt phase 2): `store_union` removes the raw cell
+/// only under the spelling it was handed. A raw cell stored through a
+/// proven-equal alias spelling of the same address stays, and the stale
+/// scalar reads back as known_value at that spelling beside the overlay.
+#[test]
+fn retire_investigation_store_union_leaves_the_aliased_raw_cell() {
+    let base = Pointer {
+        block: PointerBlock::Heap(922_001),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let alias = Pointer {
+        block: PointerBlock::Symbolic(Variable(922_000)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+        ConditionTerm::pointer_equal(alias.clone(), base.clone()),
+        true,
+    ));
+    let memory = CMemory::new().store(alias.clone(), int32(7)).store_union(
+        base.clone(),
+        CType::Int16,
+        CValue::Int16(Bitvector32Term::Constant(42)),
+    );
+    assert!(memory.has_union_overlay_at(&base));
+    assert!(
+        memory.known_value(&alias).is_some(),
+        "BUG: the stale raw cell survives under the aliased spelling"
+    );
+    let _ = assumptions;
+}
