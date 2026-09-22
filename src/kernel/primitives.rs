@@ -3234,8 +3234,8 @@ pub enum ExecutionLimit {
     /// The execution's fresh-identity counter reached the first identity a
     /// producer outside the execution reserves by a constant base. Every
     /// kernel allocation counts up from one base, and the ranges above it
-    /// belong to the surface's quantifier variables, the spec fold binders
-    /// and the algebraic binders; an execution that entered one of them
+    /// belong to the surface's quantifier and algebraic binders and higher
+    /// disjoint producers; an execution that entered one of them
     /// would name their variables without knowing it.
     KernelVariables {
         ceiling: u64,

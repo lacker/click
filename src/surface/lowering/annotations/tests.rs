@@ -274,3 +274,33 @@ fn a_fixed_state_anywhere_in_a_measure_is_found() {
     assert_eq!(selector, &loop_entry);
     assert_eq!(found.spelling(), "at(loop(0).entry, ...)");
 }
+
+#[test]
+fn surface_binder_streams_refuse_before_another_producers_range() {
+    let mut quantifier = SURFACE_QUANTIFIER_VARIABLE_CEILING - 1;
+    assert_eq!(
+        allocate_quantifier_variable(&mut quantifier),
+        Ok(Variable(SURFACE_QUANTIFIER_VARIABLE_CEILING - 1)),
+    );
+    assert!(allocate_quantifier_variable(&mut quantifier).is_err());
+
+    let last_algebraic_index = ((ALGEBRAIC_VARIABLE_CEILING - 1 - ALGEBRAIC_VARIABLE_BASE)
+        / ALGEBRAIC_BINDER_STRIDE) as usize;
+    assert!(algebraic_binder_variable(last_algebraic_index).is_ok());
+    assert!(algebraic_binder_variable(last_algebraic_index + 1).is_err());
+}
+
+#[test]
+fn captured_fold_identity_does_not_exhaust_the_surface_quantifier_stream() {
+    let low = Variable(SURFACE_QUANTIFIER_VARIABLE_CEILING - 2);
+    let high = Variable((1 << 43) + 17);
+    let captured = crate::kernel::SpecIntegerExpression::Add(
+        Box::new(crate::kernel::SpecIntegerExpression::Term(
+            crate::kernel::IntegerTerm::var(low),
+        )),
+        Box::new(crate::kernel::SpecIntegerExpression::Term(
+            crate::kernel::IntegerTerm::var(high),
+        )),
+    );
+    assert_eq!(max_spec_integer_expression_variable(&captured), Some(low));
+}
