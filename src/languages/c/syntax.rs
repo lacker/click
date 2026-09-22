@@ -7178,7 +7178,7 @@ impl Parser {
             } else {
                 false
             };
-            let has_always_inline_attribute = self.consume_always_inline_attribute()?;
+            let has_always_inline_attribute = self.consume_function_attributes()?;
             if is_inline && !is_static {
                 return Err(self.error_here(
                     "inline function definitions require `static inline` or `static __always_inline` in this slice",
@@ -7203,7 +7203,7 @@ impl Parser {
                 )));
             }
             let header = self.parse_function_header(is_static && is_inline)?;
-            let has_trailing_always_inline_attribute = self.consume_always_inline_attribute()?;
+            let has_trailing_always_inline_attribute = self.consume_function_attributes()?;
             if (has_always_inline_attribute || has_trailing_always_inline_attribute) && !is_static {
                 return Err(self.error_here(
                     "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
@@ -7268,7 +7268,7 @@ impl Parser {
             } else {
                 false
             };
-            let has_always_inline_attribute = self.consume_always_inline_attribute()?;
+            let has_always_inline_attribute = self.consume_function_attributes()?;
             if is_inline && !is_static {
                 return Err(self.error_here(
                     "inline function definitions in headers require `static inline` or `static __always_inline`",
@@ -7288,7 +7288,7 @@ impl Parser {
                 )));
             }
             let header = self.parse_function_header(is_static && is_inline)?;
-            let has_trailing_always_inline_attribute = self.consume_always_inline_attribute()?;
+            let has_trailing_always_inline_attribute = self.consume_function_attributes()?;
             if (has_always_inline_attribute || has_trailing_always_inline_attribute) && !is_static {
                 return Err(self.error_here(
                     "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
@@ -7326,7 +7326,14 @@ impl Parser {
         &mut self,
         internal_linkage: bool,
     ) -> Result<C0Function, C0SyntaxError> {
+        let prefix_inline = self.consume_function_attributes()?;
         let header = self.parse_function_header(internal_linkage)?;
+        let suffix_inline = self.consume_function_attributes()?;
+        if (prefix_inline || suffix_inline) && !internal_linkage {
+            return Err(self.error_here(
+                "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
+            ));
+        }
         self.register_function_declaration(&header, true)?;
         if self.peek() != Some(&Token::LBrace) {
             return Err(self.error_here(format!(
@@ -7494,22 +7501,34 @@ impl Parser {
         })
     }
 
-    fn consume_always_inline_attribute(&mut self) -> Result<bool, C0SyntaxError> {
-        if self.peek_ident() != Some("__attribute__") {
-            return Ok(false);
+    /// Consume the explicitly supported declaration annotations, returning
+    /// whether the existing always-inline linkage restriction applies.
+    /// `nothrow` adds no proof facts: C0 has no exception semantics, and the
+    /// annotation says nothing about termination, memory effects, or safety.
+    fn consume_function_attributes(&mut self) -> Result<bool, C0SyntaxError> {
+        let mut always_inline = false;
+        while self.peek_ident() == Some("__attribute__") {
+            self.position += 1;
+            self.expect(Token::LParen)?;
+            self.expect(Token::LParen)?;
+            loop {
+                let attribute = self.expect_ident("GNU function attribute")?;
+                match attribute.as_str() {
+                    "always_inline" | "__always_inline__" => always_inline = true,
+                    "nothrow" | "__nothrow__" => {},
+                    _ => return Err(self.error_at_previous(format!(
+                        "unsupported GNU function attribute `{attribute}`; only `always_inline` and `nothrow` are supported in this slice"
+                    ))),
+                }
+                if self.peek() != Some(&Token::Comma) {
+                    break;
+                }
+                self.position += 1;
+            }
+            self.expect(Token::RParen)?;
+            self.expect(Token::RParen)?;
         }
-        self.position += 1;
-        self.expect(Token::LParen)?;
-        self.expect(Token::LParen)?;
-        let attribute = self.expect_ident("GNU function attribute")?;
-        if attribute != "always_inline" && attribute != "__always_inline__" {
-            return Err(self.error_at_previous(format!(
-                "unsupported GNU function attribute `{attribute}`; only `always_inline` is supported in this slice"
-            )));
-        }
-        self.expect(Token::RParen)?;
-        self.expect(Token::RParen)?;
-        Ok(true)
+        Ok(always_inline)
     }
 
     /// Consume the one layout-affecting GNU attribute needed by the imported

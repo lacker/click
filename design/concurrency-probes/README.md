@@ -91,10 +91,15 @@ and checked layout sizes remain required. The regression
 `mdtests/struct_constant_array_lengths.md` checks the original dimension,
 multidimensional indexing, and embedded-struct copies.
 
-The unchanged probe next stops at the `__sched_cpucount` declaration in
-`bits/cpu-set.h`: glibc's `__THROW` expands to a GNU function attribute list
-containing `__nothrow__`, which the importer currently rejects. Handling the
-relevant declaration attributes is the next import step.
+GNU `nothrow` and `__nothrow__` annotations now import on function
+prototypes and definitions, including comma-separated lists and repeated
+attribute groups. They supply no proof facts in the C model: bodies and
+memory effects remain checked normally. `mdtests/c_nothrow_attributes.md`
+and its ownership-rejection companion pin this behavior.
+
+The unchanged probe next stops in the same `__sched_cpucount` declaration in
+`bits/cpu-set.h`: glibc's `__THROW` also includes `__leaf__`, which is still
+rejected. Handling that declaration attribute is the next import step.
 Declaration-specific runtime identity and checked create/join call binding
 remain subsequent work.
 

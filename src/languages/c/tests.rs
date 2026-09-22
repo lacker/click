@@ -12107,3 +12107,64 @@ fn struct_constant_array_lengths_reject_invalid_values() {
         }
     }
 }
+
+#[test]
+fn c0_nothrow_attributes_accept_aliases_lists_and_repeated_groups() {
+    for attributes in [
+        "__attribute__((nothrow))",
+        "__attribute__((__nothrow__))",
+        "__attribute__((nothrow, __nothrow__))",
+        "__attribute__((nothrow)) __attribute__((__nothrow__))",
+    ] {
+        for (prefix, suffix) in [(attributes, ""), ("", attributes)] {
+            let definition =
+                format!("{prefix} int identity(int value) {suffix} {{ return value; }}");
+            syntax::parse_function(&definition).unwrap();
+            syntax::parse_functions(&definition).unwrap();
+            let prototype = format!("extern {prefix} int identity(int value) {suffix};");
+            syntax::validate_header(&prototype, &source::ExpandedLineMap::empty()).unwrap();
+            syntax::parse_functions(&format!(
+                "{prototype} int identity(int value) {{ return value; }}"
+            ))
+            .unwrap();
+        }
+    }
+    for attributes in ["nothrow, always_inline", "__always_inline__, __nothrow__"] {
+        let source =
+            format!("static inline __attribute__(({attributes})) int f(int n) {{ return n; }}");
+        syntax::validate_header(&source, &source::ExpandedLineMap::empty()).unwrap();
+        syntax::parse_functions(&source).unwrap();
+    }
+}
+
+#[test]
+fn c0_nothrow_attributes_do_not_hide_unsupported_attributes_or_linkage() {
+    for source in [
+        "int f(void) __attribute__((nothrow, noreturn));",
+        "int f(void) __attribute__((nothrow)) __attribute__((aligned(8)));",
+        "int f(void) __attribute__((nothrow, always_inline));",
+        "int f(void) __attribute__((always_inline, nothrow));",
+        "int f(void) __attribute__((nothrow(1)));",
+        "int f(void) __attribute__((nothrow,));",
+        "int f(void) __attribute__((nothrow);",
+    ] {
+        assert!(
+            syntax::validate_header(source, &source::ExpandedLineMap::empty()).is_err(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn c0_nothrow_memory_proof_expands_and_reverifies() {
+    let c = "__attribute__((nothrow)) int set(int *p) { *p = 7; return *p; }";
+    let proof = "verifying \"nothrow.c\"; int set(int *p) { owns p[0..1]; ensures p[0] == 7 by auto; ensures result == 7 by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("nothrow.c", c)]).unwrap();
+    let expanded = crate::surface::expand_c0_claim_source_by_label(
+        proof,
+        &[("nothrow.c", c)],
+        "set.ensures_0",
+    )
+    .unwrap();
+    crate::surface::verify_c0_sources(&expanded, &[("nothrow.c", c)]).unwrap();
+}
