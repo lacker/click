@@ -472,9 +472,24 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     );
     // The returned symbolic load carries the reduced memory snapshot, so
     // other queries must relate it back to its source. Dropping cells
-    // provably distinct from the loaded pointer is a
-    // no-op for every load, which is exactly the `CellsForgotten` edge;
-    // without it the derivation walk dead-ends at this variant.
+    // provably distinct from the loaded pointer is a no-op for this load,
+    // which is exactly the `CellsForgotten` edge; without it the derivation
+    // walk dead-ends at this variant.
+    //
+    // The reduction choice may depend on `assumptions`, and the reduced map
+    // may therefore re-intern as a snapshot older than `reduction_base`.
+    // That spelling is sound but deliberately gains no fact-free derivation
+    // edge: `record_c_memory_derivation` refuses the backwards edge below.
+    // The load judgment remains scoped to this exact assumption context.
+    // Ordinary execution retains those facts on its path; an exhaustive
+    // structural join can retain the value only when both checked arms reach
+    // the same state; and an interface join re-lowers every exported fact in
+    // both concrete arms and again at the fact-free successor. Thus an older
+    // name is not authority to reuse the reduction in a sibling context.
+    // `MemoryLoadAliasCache`'s assumption fingerprint is load-bearing for the
+    // same reason. The regression below exercises one cache first under a
+    // distinct fact (and observes the ancestor name), then under an aliasing
+    // fact (and observes the later stored value).
     if let Some(base) = reduction_base
         && memory.cells.len() != cells_before_reduction
     {
@@ -2976,6 +2991,81 @@ mod tests {
             true,
         );
         assert!(cache.resolution_equal(&left, &right, &equal));
+    }
+
+    #[test]
+    fn ancestor_named_load_does_not_cross_into_an_aliasing_fact_context() {
+        let retained_index = Bitvector32Term::Variable(Variable(812));
+        let written_index = Bitvector32Term::Variable(Variable(813));
+        let read_index = Bitvector32Term::Variable(Variable(814));
+        let at = |index| Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::scale_int32(index, 4),
+        };
+        let retained = at(retained_index);
+        let written = at(written_index.clone());
+        let read = at(read_index.clone());
+
+        // Keep one unresolved cell so the reduced load is still symbolic.
+        // Dropping only the later, proven-distinct write then makes the
+        // reduced memory structurally equal to this already-interned ancestor.
+        let ancestor_memory = CMemory::new().store(retained, int32(1));
+        let ancestor = intern_c_memory_ref(&ancestor_memory);
+        let current = ancestor_memory.store(written.clone(), int32(2));
+        let distinct = PureFactContext::new().assume_condition(
+            ConditionTerm::equal(read_index.clone(), written_index.clone()),
+            false,
+        );
+        let aliasing = PureFactContext::new()
+            .assume_condition(ConditionTerm::equal(read_index, written_index), true);
+        let mut cache = MemoryLoadAliasCache::default();
+
+        let distinct_paths = evaluate_c_memory_load_paths_with_alias_cache(
+            &current,
+            read.clone(),
+            CType::Int32,
+            Vec::new(),
+            Vec::new(),
+            &distinct,
+            true,
+            false,
+            false,
+            &mut cache,
+            None,
+        );
+        let [distinct_path] = distinct_paths.as_slice() else {
+            panic!("the decided distinct load should have one path");
+        };
+        let CExpressionOutcome::Value(CValue::Int32(Bitvector32Term::Variable(variable))) =
+            &distinct_path.outcome
+        else {
+            panic!("the unresolved distinct load should have a symbolic identity");
+        };
+        let (named_memory, named_pointer) = registered_load_for_variable(variable)
+            .expect("the symbolic identity should retain its exact load");
+        assert_eq!(named_memory, ancestor);
+        assert_eq!(named_pointer, read);
+
+        // Reuse the same per-load cache deliberately. Its assumption-context
+        // key must prevent the distinct answer, and therefore the ancestor
+        // name, from leaking into the sibling context where the write aliases.
+        let aliasing_paths = evaluate_c_memory_load_paths_with_alias_cache(
+            &current,
+            read,
+            CType::Int32,
+            Vec::new(),
+            Vec::new(),
+            &aliasing,
+            true,
+            false,
+            false,
+            &mut cache,
+            None,
+        );
+        let [aliasing_path] = aliasing_paths.as_slice() else {
+            panic!("the decided aliasing load should have one path");
+        };
+        assert_eq!(aliasing_path.outcome, CExpressionOutcome::Value(int32(2)));
     }
 
     #[test]

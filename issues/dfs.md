@@ -21,9 +21,9 @@ normal proof failure, not a timeout.
 This is **not yet a routine cleanup handoff**:
 
 - The remaining Part 2 snapshot/aliasing items are investigations, not confirmed
-  false-theorem witnesses or implementation plans. The ancestor-load naming
-  rule and unrelated-snapshot comparison need careful semantic reasoning;
-  retain experienced review for their conclusions and any kernel changes.
+  false-theorem witnesses or implementation plans. The unrelated-snapshot
+  comparison needs careful semantic reasoning; retain experienced review for
+  its conclusion and any kernel changes.
 - The remaining DFS blocker concerns transporting the quantified value fact
   across the loop-entry and iteration-entry snapshots. The viewability half is
   covered by the regression above; do not conflate the residual value failure
@@ -243,23 +243,16 @@ requires the requested width to match the stored cell. Mixed-width effect and
 load-resolution regressions are in the kernel memory-reasoning tests.
 `heap_allocation_may_contain_pointer`'s block-spelling test remains unexamined.
 
-4. **The load-side distinct-cell reduction names a load at an ancestor snapshot**
-   using the current path's facts (`evaluate_c_memory_load_paths_with_alias_cache`,
-   `src/kernel/eval/memory_loads.rs`); 369 refused backwards `CellsForgotten`
-   edges over the corpus come from it. Argued benign (every step skipped is a
-   store it proved distinct; names are assumption-free), and one attack on name
-   reuse across branch arms was refused — but it is fact-dependent naming on the
-   hottest path and deserves a second attack.
-5. **Snapshots unrelated by recorded history are still compared by cell maps**
+4. **Snapshots unrelated by recorded history are still compared by cell maps**
    (`memories_match_for_pointer_load`); the doc comment says what that rests on
    (equal havoc markers, extents, observable cells). No path between them exists
    for the history to speak about.
-6. `one_element_gap_separates_bytes` decides a *direction* from residue indexes
+5. `one_element_gap_separates_bytes` decides a *direction* from residue indexes
    (the `Separate` answer does not depend on it); `range_fold`'s one-step shortcut
    (`term_operations.rs`) uses a wrapping add (`i32::MAX .. i32::MIN` unrolls
    once) — judged unreachable because `(a..b).fold` lowers to the signed Integer
    carrier.
-7. Probed once and found sound (18 sidecars, no false theorem): `uint32`
+6. Probed once and found sound (18 sidecars, no false theorem): `uint32`
    arithmetic and order, signed/unsigned comparison, shifts by ≥ width,
    `INT_MIN % -1`, `uint32`→`int32` conversion, `<` and `-` between pointers into
    different objects; `decreases` on a `uint32` is refused outright. Not modelled
@@ -267,7 +260,7 @@ load-resolution regressions are in the kernel memory-reasoning tests.
    `result == 44` for `200 + 100` is refused too), and the narrowing refusal exits
    as `type mismatch` instead of the message its own mdtests pin. `int8` is not in
    the subset.
-8. Trust-model notes, by design rather than bugs: the `apply` tactic's
+7. Trust-model notes, by design rather than bugs: the `apply` tactic's
    requirement checks (including range extent guards) are enforced on the surface
    side at one shared point
    (`instantiate_theorem_application_with_assumptions`); a top-level `owns`/`views`
