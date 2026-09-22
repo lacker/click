@@ -9,7 +9,9 @@ cells in `visited[0..n]` that still hold zero. The guard establishes that the
 current cell contributes one; the body marks it and the point-update theorem
 proves that the measure drops by exactly one. The proof also exercises an
 early return inside the ranked loop and preserves the quantified bounds on the
-pointer-chasing array.
+pointer-chasing array. Its postcondition records the observable success-path
+facts: a result of `1` names an in-bounds target whose cell is still unmarked,
+because that branch returns before the store.
 
 ```c filename=search_terminates_by_unmarked_count.c
 int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
@@ -311,6 +313,8 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
     requires forall (k: int32) {
         0 <= k and k < n implies 0 <= next[k] and next[k] < n
     };
+    ensures result == 1 implies
+        0 <= to and to < n and visited[to] == 0;
 } by {
     step();
     step();
@@ -338,6 +342,7 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
             if cur == to {
                 step();
                 step();
+                simp();
             } else {
                 step();
             }
