@@ -1,7 +1,12 @@
 # a `return` inside a loop body is not one of the loop's endings
 
-Classification: **missing rule** for the documented route, and a **bad
-diagnostic** for the route that sometimes works.
+Resolved on 2026-09-22. A function return now completes that preservation path
+without running the proof-level `if`'s shared continuation or requiring the
+loop invariant and ranking bundle. The continuing arm still reaches the back
+edge and closes that bundle. Both an explicit proof-level `if` and automatic
+preservation are covered by `mdtests/return_inside_ranked_loop_body.md`.
+
+The remainder records the pre-fix behavior that motivated the regression.
 
 A C loop body that leaves the function directly is ordinary C — it is the first
 statement of the search in `search_terminates_blocked.md`:

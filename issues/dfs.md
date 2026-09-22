@@ -5,29 +5,34 @@ found. Kernel soundness review discovered during the same campaign is tracked
 separately in `issues/bughunt.md`. Everything needed for this example is here
 and in `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
-## Handoff checkpoint — 2026-09-21, after the quantified-viewability fix
+## Handoff checkpoint — 2026-09-22, after the ranked-loop return fix
 
-The loop back edge's quantified viewability obligation for `next` now closes.
-`mdtests/loop_quantified_viewability_across_disjoint_store.md` is the minimal
-regression. The saved DFS proof was rerun unchanged: it advances past that
-leaf and now stops at the value half of the same quantified invariant, while
-the nonnegative count and strict-decrease facts remain available. This is a
-normal proof failure, not a timeout.
+Both the value and generated viewability halves of the quantified invariant
+over `next` now close. The direct pointer-chasing route is covered by
+`mdtests/loop_quantified_value_after_pointer_chase.md`. A return inside a
+ranked loop body also works through the documented proof-level `if` and the
+automatic preservation planner; `mdtests/return_inside_ranked_loop_body.md`
+covers both routes.
+
+The saved DFS proof now advances through that return and the following
+`visited[cur] = 1` store. Its first failure is the immediately expected
+post-store fact, `have visited[cur] != 0 by { simp(); }`; the diagnostic says
+the underlying equality is false but still rejects the `have`. This is a
+prompt proof failure, not a timeout.
 
 This is **not yet a routine cleanup handoff**:
 
-- The remaining DFS blocker concerns transporting the quantified value fact
-  across the loop-entry and iteration-entry snapshots. The viewability half is
-  covered by the regression above; do not conflate the residual value failure
-  with it.
+- The current blocker concerns retaining or normalizing the direct result of a
+  checked store. Reduce that exact post-store `have` before changing the saved
+  proof; do not reopen the now-passing quantified invariant path.
 - Moving an already verified lemma into the checked lemma fixture, refreshing
   old reproductions, and reducing a diagnostic are bounded tasks suitable for
   a less capable agent. Whole-array dependency refinement, reachability, and
   recursive DFS remain design work, not small finishing edits.
 
-For a bounded next assignment, reduce the new quantified-value leaf in
-`design/dfs-gaps/search_terminates_blocked.md`, identifying why the available
-iteration-entry invariant is not selected for the loop-entry load snapshot.
+For a bounded next assignment, reduce the post-store `visited[cur] != 0`
+failure in `design/dfs-gaps/search_terminates_blocked.md`, identifying whether
+the store equation is missing, stale, or simply not normalized by `simp`.
 
 This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
 Those files include historical diagnostics, and other small gaps/tooling notes
@@ -85,28 +90,29 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
   `invariant unmarked(visited, 0, i) == 0`; it carries a verbatim copy of
   `unmarked_frame`).
 - `design/dfs-gaps/search_terminates_blocked.md` is the full C and sidecar for
-  `search` at the furthest point reached. Everything verifies except one
-  loop-invariant bundle member: re-establishing the quantified invariant about
-  `next` (now its value half) at the loop's back edge. The generated quantified
-  viewability member closes first and is regression-covered. Rerun the saved
-  proof first; the refusal may move as transport work lands.
+  `search` at the furthest point reached. It now stops at the post-store
+  `visited[cur] != 0` fact described above; both quantified `next` obligations
+  and the return path are regression-covered. Rerun the saved proof first; the
+  refusal may move as execution-proof work lands.
   It also holds a third lemma, `unmarked_nonnegative`, that verifies and should
   move into `mdtests/unmarked_count_lemmas.md`.
 
 ## Gaps, ranked by the proof text they cost (reductions in `design/dfs-gaps/`)
 
-1. **A quantified fact cannot be transported to another program point**
+1. **A checked store's direct result is not discharged by `simp`.** In the
+   saved proof, immediately after `visited[cur] = 1`, both
+   `have visited[cur] != 0 by { simp(); }` and the stronger
+   `have visited[cur] == 1 by { simp(); }` fail. The diagnostic prints the
+   corresponding equality with the requested truth value, so reduce whether
+   this is missing store provenance, snapshot selection, or normalization.
+   **This blocks `search`.**
+2. **A quantified fact cannot be explicitly transported to another program point**
    (`a_universal_fact_does_not_transport.md`). `transport` refuses a quantified
    proposition and a comparison (`unsupported proof operation transport`), so a
    quantified precondition reaches a loop body one cell at a time — 19 lines per
    premise. A top-level `transport` in a `preserve` body verifies while the same
-   `transport` inside a `have` there is refused. **This blocks `search`.**
-2. **A `return` inside a loop body** (`return_inside_a_ranked_loop_body.md`).
-   `branch { then { execute(); } else { } }` accepts a returning arm only when an
-   unrelated current-snapshot fact is already in context; otherwise
-   `branch did not verify as a checked preservation operation`, which names no
-   goal, premise or target and carries the wrong tactic index. Fix the
-   diagnostic first, then the rule.
+   `transport` inside a `have` there is refused. The automatic invariant route
+   used by `search` now passes, but the explicit language gap remains.
 3. **A fact about part of an array dies at a store outside that part.**
    `unmarked(visited, 0, i)` reads only cells below `i`, but Click records that it
    depends on the whole array, so `visited[i] = 1` discards it; the user pays with

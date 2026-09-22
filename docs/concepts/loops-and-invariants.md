@@ -291,12 +291,13 @@ entered with `a` zero and `b` nonzero, and a `preserve` body that cites the
 first operand's fact on its own is refused
 (`mdtests/loop_disjunctive_guard_entry_join_is_a_disjunction.md`).
 
-### `break` and `continue` in the body
+### `break`, `continue`, and `return` in the body
 
 One certified iteration is a path that reaches the body's end, a `continue`, or
-a `break`. A path that stops anywhere else has not been proved and the loop is
-refused — but a body that merely is not written yet is refused with a *report*
-of where it got to rather than with the bare rule; see
+a `break`, or that returns from the function. A path that stops anywhere else
+has not been proved and the loop is refused — but a body that merely is not
+written yet is refused with a *report* of where it got to rather than with the
+bare rule; see
 [the frontier of an unfinished `preserve`](#the-frontier-of-an-unfinished-preserve).
 
 A `continue` is the back edge, reached early. Everything the body's end owes is
@@ -333,6 +334,13 @@ break;` is written: those arms are never joined, so each path reaches the loop
 rule on its own. A `branch` is the joining form and has nothing to join when
 one arm leaves the loop, so it refuses and names the proof-level spelling
 (`mdtests/loop_body_break_in_branch_arm_rejected.md`).
+
+A `return` is terminal for the whole function. It owes neither the loop's
+invariant and ranking bundle nor a join with the loop's ordinary successor.
+Write a returning C branch as a proof-level `if`: the returning arm stops at
+function exit, while every continuing arm independently reaches the back edge
+and closes the bundle. Omitted preservation uses the same per-path rule
+(`mdtests/return_inside_ranked_loop_body.md`).
 
 ### `do ... while`
 
@@ -809,8 +817,8 @@ with bare `step()`s instead is
 `mdtests/loop_decreases_strict_descendant.md`).
 
 A tactic outside that grammar is refused by name rather than interpreted, and
-so is a path that stops anywhere but the body's end, a `continue`, or a
-`break`.
+so is a path that stops anywhere but the body's end, a `continue`, a `break`,
+or a function `return`.
 
 A `preserve` script ends by discharging the whole invariant bundle at the loop's
 back edge. `close_invariants()` is the surface tactic for that step. It is
@@ -876,6 +884,5 @@ arm is closed while a `continue` and the body's end are still ahead.
 The report is for a body that ran out of written tactics. A tactic that *fails*
 stops the body where it stands and its own diagnostic is what the author sees
 (`mdtests/loop_preserve_tactic_failure_reported.md`). The one-iteration rule is
-still what refuses a body that is complete and wrong — one that leaves the loop
-through a `return`, for instance — because such a path did not stop inside the
-body at all.
+still what refuses a body that is complete and wrong without reaching one of
+those endings, because such a path did not stop inside the body at all.

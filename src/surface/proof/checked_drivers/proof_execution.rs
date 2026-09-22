@@ -1640,11 +1640,20 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
             )
         }
         InternalProofNode::Done => {
+            // A `return` completes this preservation path immediately.  The
+            // syntactic continuation belongs only to paths that remained in
+            // the loop body; attempting to drive it after function exit
+            // misattributes the first continuation tactic as a post-return
+            // operation and, more importantly, loses the terminal loop exit.
+            let terminal_return = proof
+                .execution_view()
+                .is_ok_and(|view| view.frontier.is_at_function_exit());
+            if terminal_return {
+                leaves.push(proof.clone());
+                return Ok(proof);
+            }
             let Some((next, rest)) = pending.split_first() else {
-                let terminal_return = proof
-                    .execution_view()
-                    .is_ok_and(|view| view.frontier.is_at_function_exit());
-                if !proof.is_at_region_boundary() && !terminal_return {
+                if !proof.is_at_region_boundary() {
                     // One certified iteration is a path that reaches the
                     // body's end, a `continue`, or a `break`. A path that
                     // stops anywhere else has not been proved at all. A

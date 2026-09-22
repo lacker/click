@@ -1,10 +1,11 @@
 # a pointer-chasing search terminates on the number of unmarked cells
 
-**BLOCKED — this file does not verify.** Rerun unchanged on 2026-09-21 after
-the quantified-viewability fix: the generated viewability fact for `next`
-closes, and the loop back edge now stops at the quantified value fact over
-`next`; the count's nonnegativity and strict decrease are available. The
-refusals quoted at the end are historical observations from `e120897d`.
+**BLOCKED — this file does not verify.** Rerun on 2026-09-22 after repairing
+returning paths in ranked-loop preservation. Both halves of the quantified
+invariant over `next` now close. The proof advances through the return and the
+store, then stops when `simp` fails to retain the store result as
+`visited[cur] != 0`; the count proof has not run yet. The refusals quoted at
+the end are historical observations from `e120897d`.
 The earlier range-narrowing defect was fixed in `88b05d28`, with regression
 `mdtests/a_second_universal_have_narrows_a_stated_range.md`; it is not the
 remaining prerequisite. See `issues/dfs.md` for the current handoff checkpoint.
@@ -351,12 +352,11 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
                 }, cur) using { 0 <= cur; cur < n; }
                 assumption();
             }
-            branch {
-                then {
-                    execute();
-                }
-                else {
-                }
+            if cur == to {
+                step();
+                step();
+            } else {
+                step();
             }
             step();
             have forall (k: int32) {
@@ -446,26 +446,17 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
 }
 ```
 
-The one open obligation, and the whole of what is left:
+The current first open obligation is the fact immediately established by the
+preceding `visited[cur] = 1` store:
 
 ```text
-this loop declares `decreases`, so the bundle also has
-`0 <= unmarked(visited, 0, n)` at the back edge, `unmarked(visited, 0, n)`
-decreases at the back edge
+`have` failed for `visited[cur] != 0`: `simp` failed: simplified proposition
+was not true: int32 equality is false
 ```
 
-The quantified viewability leaf now closes. The first remaining unclosed leaf
-is the value half of the invariant:
-
-```text
-loop invariant bundle leaf [UnclosedGoal]: checked loop invariant bundle leaf
-remained open; goal: ∀v3000000:CInt32. ((int32 <=(0, v3000000) is true ∧ int32
-<(v3000000, v2) is true) ⇒ (int32 <=(0,
-load(snapshot#1, pointer=pointer(external+(v100000*4+v3000000*4)))) is true ∧
-int32 <(load(snapshot#1,
-pointer=pointer(external+(v100000*4+v3000000*4))), v2) is true))
-```
-
-The old range-narrowing and quantified-viewability defects are fixed; see the
-current checkpoint in `issues/dfs.md` and the remaining transport reduction in
-`a_universal_fact_does_not_transport.md`.
+The quantified value and viewability leaves both close; the pointer-chasing
+value route is covered by
+`mdtests/loop_quantified_value_after_pointer_chase.md`. See the current
+checkpoint in `issues/dfs.md`. The explicit transport limitation remains
+independently reproduced in `a_universal_fact_does_not_transport.md`, but is
+no longer the first blocker in this saved proof.
