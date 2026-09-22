@@ -961,20 +961,19 @@ impl PureFactContext {
         self.proves_loadable_cell_from_region(&base, block.size(), pointer, byte_width)
     }
 
-    pub(in crate::kernel) fn proves_loadable_cell_from_region(
+    /// Coverage through an element count whose byte extent has its validity
+    /// guards. Unlike the general cell resolver, this does not compare a
+    /// potentially wrapped byte-offset sum.
+    pub(in crate::kernel) fn proves_loadable_cell_from_region_elements(
         &self,
         base: &Pointer,
         bytes: &Bitvector32Term,
         pointer: &Pointer,
         byte_width: u32,
     ) -> bool {
-        if crate::kernel::assumptions::reasoning_interrupted() {
+        if crate::kernel::assumptions::reasoning_interrupted() || base.block != pointer.block {
             return false;
         }
-        if base.block != pointer.block {
-            return false;
-        }
-
         if let Some(index) =
             self.pointer_element_index_from_base_with_width(pointer, base, byte_width)
             && let Some(element_count) = element_count_from_bytes(bytes, byte_width)
@@ -992,6 +991,27 @@ impl PureFactContext {
             if lower == Some(true) && upper == Some(true) {
                 return true;
             }
+        }
+
+        false
+    }
+
+    pub(in crate::kernel) fn proves_loadable_cell_from_region(
+        &self,
+        base: &Pointer,
+        bytes: &Bitvector32Term,
+        pointer: &Pointer,
+        byte_width: u32,
+    ) -> bool {
+        if crate::kernel::assumptions::reasoning_interrupted() {
+            return false;
+        }
+        if base.block != pointer.block {
+            return false;
+        }
+
+        if self.proves_loadable_cell_from_region_elements(base, bytes, pointer, byte_width) {
+            return true;
         }
 
         if let Some(byte_offset) = pointer_byte_offset_from_base(pointer, base) {

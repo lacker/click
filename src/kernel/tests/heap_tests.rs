@@ -1733,14 +1733,11 @@ fn freeing_through_one_spelling_retires_the_equal_spelling_too() {
     );
 }
 
-/// Investigation repro (bug hunt phase 2): a calloc'd allocation consumed by
-/// a contract whose continuity is undecided is retired through
-/// `retire_contract_heap_allocation_claim`, which removes the live claim, the
-/// uninitialized status and the zeroed prefix — but leaves the blanket
-/// `zeroed_allocations` entry in place. The post-call load then answers
-/// concrete 0 in the execution where the callee freed the allocation.
+/// A contract that consumes an allocation without deciding continuity may
+/// have freed it. Its former calloc status cannot make a later read concrete,
+/// including through an equal pointer spelling.
 #[test]
-fn retire_investigation_zeroed_status_survives_contract_retire() {
+fn contract_retire_forgets_zeroed_reading_and_records_the_change() {
     let state = CState::new().with_local("p", CValue::pointer(Pointer::null()));
     let paths = execute_c_statement_paths(
         &state,
@@ -1767,27 +1764,58 @@ fn retire_investigation_zeroed_status_survives_contract_retire() {
     let Some(CValue::Pointer(pointer)) = success.locals().get("p") else {
         panic!("allocation should assign a pointer");
     };
+    let base = pointer.pointer().clone();
+    let alias = Pointer {
+        block: PointerBlock::Symbolic(Variable(922_100)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+        ConditionTerm::pointer_equal(alias.clone(), base.clone()),
+        true,
+    ));
     assert!(
         success
             .memory()
-            .is_zeroed_heap_address(pointer, 4, &PureFactContext::new())
+            .is_zeroed_heap_address(&alias, 4, &assumptions)
     );
     let retired = success
         .memory()
         .clone()
-        .retire_contract_heap_allocation_claim(pointer);
+        .retire_contract_heap_allocation_claim(&base, &Bitvector32Term::Constant(4), &assumptions);
     assert!(
-        retired.is_zeroed_heap_address(pointer, 4, &PureFactContext::new()),
-        "BUG: the zeroed reading survives the contract-boundary retirement"
+        !retired.is_zeroed_heap_address(&base, 4, &assumptions)
+            && !retired.is_zeroed_heap_address(&alias, 4, &assumptions),
+        "retiring an allocation must forget its blanket zeroed reading"
+    );
+    assert!(matches!(
+        intern_c_memory_ref(&retired).derivation().as_deref(),
+        Some(CMemoryDerivation::ContractAllocationRetired { allocation_base, .. })
+            if allocation_base == &base
+    ));
+    let after_call = success.with_memory(retired);
+    let read = evaluate_c_expression_paths(
+        &after_call,
+        &c_index(c_variable("p"), c_int32_literal(0)),
+        &assumptions,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("post-retirement load should resolve");
+    assert!(
+        !matches!(
+            read.as_slice(),
+            [CExpressionPath {
+                outcome: CExpressionOutcome::Value(value),
+                ..
+            }] if value == &int32(0)
+        ),
+        "the possible deallocation cannot resolve to a concrete zero"
     );
 }
 
-/// Investigation repro (bug hunt phase 2): `store_union` removes the raw cell
-/// only under the spelling it was handed. A raw cell stored through a
-/// proven-equal alias spelling of the same address stays, and the stale
-/// scalar reads back as known_value at that spelling beside the overlay.
+/// A union overlay invalidates a raw cell at a proven-equal address, even
+/// when the raw cell uses another pointer spelling.
 #[test]
-fn retire_investigation_store_union_leaves_the_aliased_raw_cell() {
+fn store_union_forgets_aliased_raw_cell() {
     let base = Pointer {
         block: PointerBlock::Heap(922_001),
         offset: PointerOffsetTerm::Constant(0),
@@ -1806,9 +1834,19 @@ fn retire_investigation_store_union_leaves_the_aliased_raw_cell() {
         CValue::Int16(Bitvector32Term::Constant(42)),
     );
     assert!(memory.has_union_overlay_at(&base));
-    assert!(
-        memory.known_value(&alias).is_some(),
-        "BUG: the stale raw cell survives under the aliased spelling"
-    );
-    let _ = assumptions;
+    assert_eq!(memory.known_value(&alias), None);
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::pointer_equal(alias.clone(), base.clone()),
+        true,
+    )));
+
+    let memory = CMemory::new()
+        .store_union(
+            base.clone(),
+            CType::Int16,
+            CValue::Int16(Bitvector32Term::Constant(42)),
+        )
+        .store_with_context(alias.clone(), int32(7), &assumptions);
+    assert_eq!(memory.known_value(&alias), Some(int32(7)));
+    assert!(!memory.has_union_overlay_at(&base));
 }

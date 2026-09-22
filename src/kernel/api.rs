@@ -113,15 +113,14 @@ pub fn float64(bits: impl Into<Bitvector32Term>) -> CValue {
 }
 
 /// True when `pointer` addresses within a live heap allocation of `memory`,
-/// matching allocation keys either structurally or up to exact
-/// materialization of the loads embedded in the key and pointer forms.
-/// Deterministic and assumption-free; never matches across an unresolved
-/// havoc.
+/// matching allocation keys through the path's pointer equalities or exact
+/// materialization of loads embedded in the key and pointer forms.
 pub(crate) fn c_memory_holds_live_heap_allocation_at(
     memory: &super::CMemory,
     pointer: &Pointer,
+    assumptions: &PureFactContext,
 ) -> bool {
-    memory.is_live_heap_address(pointer, &PureFactContext::new())
+    memory.is_live_heap_address(pointer, assumptions)
         || memory.heap_live_allocation_bases().any(|base| {
             base.block == pointer.block
                 && super::assumptions::pointer_offsets_equal_after_exact_materialization(

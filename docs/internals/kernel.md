@@ -538,7 +538,11 @@ provenance, not a duplicate pointee allocation or ownership transfer. The
 aggregate still has no runtime `CValue`: expressions decay to its address for
 field loads and stores. Union-containing layouts retain a separate typed
 overlay for each overlapping member, so aggregate copies preserve all member
-views without pretending the members occupy disjoint cells. Direct whole-union
+views without pretending the members occupy disjoint cells. Adding a union view
+forgets raw cells and other-address views that may overlap its bytes, including
+those reached through another pointer spelling; a later scalar store similarly
+forgets possibly overlapping union views. Views at the union's exact address
+remain together when another member is materialized. Direct whole-union
 values and member writes remain outside this by-value slice; other unsupported
 aggregate shapes remain outside it as well.
 
@@ -1051,7 +1055,10 @@ a write through `&local` is visible when the caller next reads that local.
 Memory mutation facts pair every written address with its byte width. Branch
 joins preserve those pairs, and conversion to effect ranges preserves their
 widths. Framing and mutable-footprint checks compare complete accesses rather
-than only their starting addresses. Resolving a load to a stored scalar requires
+than only their starting addresses. The implicit empty-footprint check uses the
+path's equality facts to recognize writes through symbolic pointers to
+preexisting heap or named storage, in both exact-write and effect-range facts.
+Resolving a load to a stored scalar requires
 the load's recorded width to match the stored value; a width-less term cannot
 choose a cell type implicitly.
 
@@ -1129,7 +1136,11 @@ identity tombstones make use-after-free and double-free explicit, but carry no
 resource authority. `HeapAllocated` and `HeapFreed`
 memory derivation DAG edges preserve these transitions for later checking; an allocation
 resource that crosses a verified call also determines the allocation delta,
-not an untrusted ordinary token. Exact execution records every successful
+not an untrusted ordinary token. When that delta leaves continuity undecided,
+the input allocation's cached values and zeroed status are forgotten under
+proven-equal pointer spellings. A `ContractAllocationRetired` edge records the
+possible release without claiming that a C `free` occurred. Exact execution
+records every successful
 free as `CHeapAllocationFreed(before, after, base, bytes)`. Effect
 certification checks that executing `free(base)` from `before` with the stated
 extent produces `after`, and chains that transition separately from ordinary

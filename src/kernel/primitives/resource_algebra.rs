@@ -2119,6 +2119,9 @@ impl ResourceContext {
             CMemoryDerivation::HeapFreed {
                 allocation_base, ..
             }
+            | CMemoryDerivation::ContractAllocationRetired {
+                allocation_base, ..
+            }
             | CMemoryDerivation::HeapAllocationPending {
                 allocation_base, ..
             } => memory_block_may_alias(&allocation_base.block),
@@ -2186,6 +2189,11 @@ impl ResourceContext {
                 }
             }
             CMemoryDerivation::HeapFreed {
+                allocation_base,
+                bytes,
+                ..
+            }
+            | CMemoryDerivation::ContractAllocationRetired {
                 allocation_base,
                 bytes,
                 ..

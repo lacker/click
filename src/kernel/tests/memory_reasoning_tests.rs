@@ -5,6 +5,109 @@ use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
 
 #[test]
+fn loadability_coverage_refuses_a_wrapped_byte_end() {
+    let memory = CMemory::new();
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Variable(Variable(9_300_000)),
+    };
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: base.clone(),
+        bytes: Bitvector32Term::Constant(0x4000_0000),
+    });
+    let goal = Proposition::CMemoryLoadable {
+        memory,
+        base: base.offset_by_bytes(0x4000_0001),
+        bytes: Bitvector32Term::Constant(0xc000_0000),
+    };
+    assert!(
+        !crate::kernel::api::loadable_covered_by_fact(&assumptions, &goal),
+        "a wrapped 32-bit end is not a covered byte count"
+    );
+}
+
+#[test]
+fn loadability_coverage_refuses_a_negative_signed_additive_shift() {
+    let memory = CMemory::new();
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Variable(Variable(9_300_003)),
+    };
+    let count = Bitvector32Term::Variable(Variable(9_300_004));
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: base.clone(),
+        bytes: Bitvector32Term::add(count.clone(), Bitvector32Term::Constant(1)),
+    });
+    let goal = Proposition::CMemoryLoadable {
+        memory,
+        base,
+        bytes: Bitvector32Term::add(count, Bitvector32Term::Constant(0x8000_0000)),
+    };
+    assert!(
+        !crate::kernel::api::loadable_covered_by_fact(&assumptions, &goal),
+        "a large unsigned shift cannot be read as a negative signed shift"
+    );
+}
+
+#[test]
+fn loadability_coverage_compares_wide_concrete_extents_exactly() {
+    let memory = CMemory::new();
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Variable(Variable(9_300_001)),
+    };
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: base.clone(),
+        bytes: Bitvector32Term::Constant(u32::MAX),
+    });
+    let covered = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: base.offset_by_bytes(0x8000_0000),
+        bytes: Bitvector32Term::Constant(1),
+    };
+    assert!(crate::kernel::api::loadable_covered_by_fact(
+        &assumptions,
+        &covered
+    ));
+
+    let beyond = Proposition::CMemoryLoadable {
+        memory,
+        base: base.offset_by_bytes(0x8000_0000),
+        bytes: Bitvector32Term::Constant(0x8000_0000),
+    };
+    assert!(!crate::kernel::api::loadable_covered_by_fact(
+        &assumptions,
+        &beyond
+    ));
+}
+
+#[test]
+fn loadability_coverage_refuses_a_wrapped_pointer_displacement() {
+    let memory = CMemory::new();
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Variable(Variable(9_300_002)),
+    };
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: base.clone(),
+        bytes: Bitvector32Term::Constant(100),
+    });
+    let goal = Proposition::CMemoryLoadable {
+        memory,
+        base: base.offset_by_int32_elements(Bitvector32Term::Constant(0x4000_0001)),
+        bytes: Bitvector32Term::Constant(4),
+    };
+    assert!(
+        !crate::kernel::api::loadable_covered_by_fact(&assumptions, &goal),
+        "the physical pointer displacement exceeds the covering span"
+    );
+}
+
+#[test]
 fn memory_range_can_be_framed_as_a_byte_footprint() {
     let base = Pointer {
         block: "byte-buffer".into(),
@@ -3049,6 +3152,19 @@ fn store_and_union_cells_never_coexist_at_one_pointer() {
     );
     assert_eq!(overlay_over_store.known_value(&cell), None);
     assert!(overlay_over_store.has_union_overlay_at(&cell));
+    let two_views = overlay_over_store.store_union(
+        cell.clone(),
+        CType::Int16,
+        CValue::Int16(Bitvector32Term::Constant(7)),
+    );
+    assert_eq!(
+        two_views.known_union_value(&cell, CType::UInt8),
+        Some(CValue::UInt8(Bitvector32Term::Constant(7))),
+    );
+    assert_eq!(
+        two_views.known_union_value(&cell, CType::Int16),
+        Some(CValue::Int16(Bitvector32Term::Constant(7))),
+    );
 
     let store_over_overlay = base
         .store_union(

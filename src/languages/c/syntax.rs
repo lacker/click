@@ -5519,6 +5519,8 @@ fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
 fn struct_scalar_array_shape(field: &C0StructField) -> Option<(C0Type, Vec<u32>)> {
     let (element_type, length) = match field.c_type {
         C0Type::Int32Array(length) => (C0Type::Int32, length),
+        C0Type::Int64Array(length) => (C0Type::Int64, length),
+        C0Type::UInt64Array(length) => (C0Type::UInt64, length),
         C0Type::CharArray(length) => (C0Type::Char, length),
         C0Type::UInt8Array(length) => (C0Type::UInt8, length),
         _ => return None,
@@ -7024,6 +7026,8 @@ impl Parser {
                         | C0Type::Float32
                         | C0Type::Float64
                         | C0Type::Int32Array(_)
+                        | C0Type::Int64Array(_)
+                        | C0Type::UInt64Array(_)
                         | C0Type::CharArray(_)
                         | C0Type::UInt8Array(_)
                         | C0Type::Float32Array(_)
@@ -7174,7 +7178,7 @@ impl Parser {
             } else {
                 false
             };
-            let has_always_inline_attribute = self.consume_always_inline_attribute()?;
+            let has_always_inline_attribute = self.consume_function_attributes()?;
             if is_inline && !is_static {
                 return Err(self.error_here(
                     "inline function definitions require `static inline` or `static __always_inline` in this slice",
@@ -7199,7 +7203,7 @@ impl Parser {
                 )));
             }
             let header = self.parse_function_header(is_static && is_inline)?;
-            let has_trailing_always_inline_attribute = self.consume_always_inline_attribute()?;
+            let has_trailing_always_inline_attribute = self.consume_function_attributes()?;
             if (has_always_inline_attribute || has_trailing_always_inline_attribute) && !is_static {
                 return Err(self.error_here(
                     "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
@@ -7264,7 +7268,7 @@ impl Parser {
             } else {
                 false
             };
-            let has_always_inline_attribute = self.consume_always_inline_attribute()?;
+            let has_always_inline_attribute = self.consume_function_attributes()?;
             if is_inline && !is_static {
                 return Err(self.error_here(
                     "inline function definitions in headers require `static inline` or `static __always_inline`",
@@ -7284,7 +7288,7 @@ impl Parser {
                 )));
             }
             let header = self.parse_function_header(is_static && is_inline)?;
-            let has_trailing_always_inline_attribute = self.consume_always_inline_attribute()?;
+            let has_trailing_always_inline_attribute = self.consume_function_attributes()?;
             if (has_always_inline_attribute || has_trailing_always_inline_attribute) && !is_static {
                 return Err(self.error_here(
                     "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
@@ -7322,7 +7326,14 @@ impl Parser {
         &mut self,
         internal_linkage: bool,
     ) -> Result<C0Function, C0SyntaxError> {
+        let prefix_inline = self.consume_function_attributes()?;
         let header = self.parse_function_header(internal_linkage)?;
+        let suffix_inline = self.consume_function_attributes()?;
+        if (prefix_inline || suffix_inline) && !internal_linkage {
+            return Err(self.error_here(
+                "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
+            ));
+        }
         self.register_function_declaration(&header, true)?;
         if self.peek() != Some(&Token::LBrace) {
             return Err(self.error_here(format!(
@@ -7490,22 +7501,36 @@ impl Parser {
         })
     }
 
-    fn consume_always_inline_attribute(&mut self) -> Result<bool, C0SyntaxError> {
-        if self.peek_ident() != Some("__attribute__") {
-            return Ok(false);
+    /// Consume the explicitly supported declaration annotations, returning
+    /// whether the existing always-inline linkage restriction applies.
+    /// `nothrow` adds no proof facts: C0 has no exception semantics, and the
+    /// annotation says nothing about termination, memory effects, or safety.
+    /// `leaf` is also accepted without using its cross-unit callback restriction
+    /// as a proof assumption. Calls retain their ordinary checked contracts.
+    fn consume_function_attributes(&mut self) -> Result<bool, C0SyntaxError> {
+        let mut always_inline = false;
+        while self.peek_ident() == Some("__attribute__") {
+            self.position += 1;
+            self.expect(Token::LParen)?;
+            self.expect(Token::LParen)?;
+            loop {
+                let attribute = self.expect_ident("GNU function attribute")?;
+                match attribute.as_str() {
+                    "always_inline" | "__always_inline__" => always_inline = true,
+                    "nothrow" | "__nothrow__" | "leaf" | "__leaf__" => {},
+                    _ => return Err(self.error_at_previous(format!(
+                        "unsupported GNU function attribute `{attribute}`; only `always_inline`, `nothrow`, and `leaf` are supported in this slice"
+                    ))),
+                }
+                if self.peek() != Some(&Token::Comma) {
+                    break;
+                }
+                self.position += 1;
+            }
+            self.expect(Token::RParen)?;
+            self.expect(Token::RParen)?;
         }
-        self.position += 1;
-        self.expect(Token::LParen)?;
-        self.expect(Token::LParen)?;
-        let attribute = self.expect_ident("GNU function attribute")?;
-        if attribute != "always_inline" && attribute != "__always_inline__" {
-            return Err(self.error_at_previous(format!(
-                "unsupported GNU function attribute `{attribute}`; only `always_inline` is supported in this slice"
-            )));
-        }
-        self.expect(Token::RParen)?;
-        self.expect(Token::RParen)?;
-        Ok(true)
+        Ok(always_inline)
     }
 
     /// Consume the one layout-affecting GNU attribute needed by the imported
@@ -8702,7 +8727,7 @@ impl Parser {
 
     fn parse_typedef_declaration(&mut self) -> Result<(), C0SyntaxError> {
         self.expect_ident_spelling("typedef")?;
-        let parsed_type = self.parse_type()?;
+        let parsed_type = self.parse_type_with_anonymous_struct(true)?;
         let alias = self.expect_ident("typedef name")?;
         self.expect(Token::Semicolon)?;
         if self.typedefs.insert(alias.clone(), parsed_type).is_some() {
@@ -8919,6 +8944,13 @@ impl Parser {
     fn parse_struct_declaration(&mut self) -> Result<(), C0SyntaxError> {
         self.expect_ident_spelling("struct")?;
         let name = self.expect_ident("struct name")?;
+        self.parse_struct_body(name)?;
+        self.expect(Token::Semicolon)
+    }
+
+    // Both named declarations and anonymous typedefs use the same layout and
+    // field validation. The caller owns the following declarator/semicolon.
+    fn parse_struct_body(&mut self, name: String) -> Result<(), C0SyntaxError> {
         self.expect(Token::LBrace)?;
 
         let mut fields = BTreeMap::new();
@@ -9016,7 +9048,6 @@ impl Parser {
         if let Some(attribute_alignment) = self.consume_struct_alignment_attribute()? {
             struct_alignment = struct_alignment.max(attribute_alignment);
         }
-        self.expect(Token::Semicolon)?;
 
         if fields.is_empty() {
             return Err(self.error_here("struct declarations must contain at least one field"));
@@ -9114,38 +9145,7 @@ impl Parser {
                 let mut dimensions = Vec::new();
                 while self.peek() == Some(&Token::LBracket) {
                     self.position += 1;
-                    let length = match self.next() {
-                        Some(Token::Number(number)) => {
-                            let length =
-                                parse_integer_literal_magnitude(&number).map_err(|reason| {
-                                    self.error_here(format!(
-                                        "invalid embedded struct array length `{number}`: {reason}"
-                                    ))
-                                })?;
-                            let length = u32::try_from(length).map_err(|_| {
-                                self.error_here(format!(
-                                    "embedded struct array length `{number}` is out of range"
-                                ))
-                            })?;
-                            if length == 0 {
-                                return Err(self.error_here(
-                                    "embedded struct arrays must have positive length",
-                                ));
-                            }
-                            length
-                        }
-                        Some(token) => {
-                            return Err(self.error_at_previous(format!(
-                                "expected embedded struct array length, got {}",
-                                token.describe()
-                            )));
-                        }
-                        None => {
-                            return Err(self.error_here(
-                                "expected embedded struct array length, got end of input",
-                            ));
-                        }
-                    };
+                    let length = self.parse_struct_array_length()?;
                     self.expect(Token::RBracket)?;
                     dimensions.push(length);
                 }
@@ -9183,6 +9183,8 @@ impl Parser {
                 || !matches!(
                     base_type.c_type,
                     C0Type::Int32
+                        | C0Type::Int64
+                        | C0Type::UInt64
                         | C0Type::Char
                         | C0Type::UInt8
                         | C0Type::Float32
@@ -9190,43 +9192,14 @@ impl Parser {
                 )
             {
                 return Err(self.error_here(
-                    "inline scalar arrays in structs currently support int32, uint8, float, and double elements",
+                    "inline scalar arrays in structs currently support int32, int64, uint64, uint8, float, and double elements",
                 ));
             }
             let mut dimensions = Vec::new();
             let mut element_count = 1u32;
             while self.peek() == Some(&Token::LBracket) {
                 self.position += 1;
-                let length = match self.next() {
-                    Some(Token::Number(number)) => {
-                        let length =
-                            parse_integer_literal_magnitude(&number).map_err(|reason| {
-                                self.error_here(format!(
-                                    "invalid struct array length `{number}`: {reason}"
-                                ))
-                            })?;
-                        let length = u32::try_from(length).map_err(|_| {
-                            self.error_here(format!(
-                                "struct array length `{number}` is out of range"
-                            ))
-                        })?;
-                        if length == 0 {
-                            return Err(self.error_here("struct arrays must have positive length"));
-                        }
-                        length
-                    }
-                    Some(token) => {
-                        return Err(self.error_at_previous(format!(
-                            "expected struct array length, got {}",
-                            token.describe()
-                        )));
-                    }
-                    None => {
-                        return Err(
-                            self.error_here("expected struct array length, got end of input")
-                        );
-                    }
-                };
+                let length = self.parse_struct_array_length()?;
                 element_count = element_count.checked_mul(length).ok_or_else(|| {
                     self.error_here(format!(
                         "struct array dimensions are too large for `{struct_name}`"
@@ -9239,6 +9212,8 @@ impl Parser {
             let array_shape = (dimensions.len() > 1).then_some(dimensions);
             let c_type = match base_type.c_type {
                 C0Type::Int32 => C0Type::Int32Array(element_count),
+                C0Type::Int64 => C0Type::Int64Array(element_count),
+                C0Type::UInt64 => C0Type::UInt64Array(element_count),
                 C0Type::Char => C0Type::CharArray(element_count),
                 C0Type::UInt8 => C0Type::UInt8Array(element_count),
                 C0Type::Float32 => C0Type::Float32Array(element_count),
@@ -9275,6 +9250,8 @@ impl Parser {
                 | C0Type::Float32PointerPointer
                 | C0Type::Float64PointerPointer
                 | C0Type::Int32Array(_)
+                | C0Type::Int64Array(_)
+                | C0Type::UInt64Array(_)
                 | C0Type::CharArray(_)
                 | C0Type::UInt8Array(_)
                 | C0Type::Float32Array(_)
@@ -9291,6 +9268,12 @@ impl Parser {
                 })?,
                 4,
             ),
+            C0Type::Int64Array(length) | C0Type::UInt64Array(length) => (
+                length.checked_mul(8).ok_or_else(|| {
+                    self.error_here(format!("struct `{struct_name}` layout is too large"))
+                })?,
+                8,
+            ),
             C0Type::CharArray(length) => (length, 1),
             C0Type::UInt8Array(length) => (length, 1),
             _ => self.abi.size_and_alignment(c_type),
@@ -9303,6 +9286,41 @@ impl Parser {
             None,
             array_shape,
         ))
+    }
+
+    /// Struct members cannot have variable-length array types. Reuse the
+    /// typed constant evaluator, then check the layout's element-count domain
+    /// before multiplication by any other dimensions or the element width.
+    fn parse_struct_array_length(&mut self) -> Result<u32, C0SyntaxError> {
+        let expression = self.parse_expression()?;
+        let value = evaluate_static_integer_expression(&expression).map_err(|error| {
+            self.error_here(match error {
+                StaticIntegerEvaluationError::NotConstant => {
+                    "struct array lengths require integer constant expressions"
+                }
+                StaticIntegerEvaluationError::Overflow => {
+                    "struct array length integer constant expression overflows"
+                }
+                StaticIntegerEvaluationError::DivisionByZero => {
+                    "struct array length integer constant expression divides by zero"
+                }
+                StaticIntegerEvaluationError::InvalidShift => {
+                    "struct array length integer constant expression has an invalid shift"
+                }
+                StaticIntegerEvaluationError::OutOfRange => {
+                    "struct array length integer constant expression is out of range"
+                }
+            })
+        })?;
+        let length = match value {
+            StaticIntegerValue::Signed { value, .. } => u32::try_from(value),
+            StaticIntegerValue::Unsigned { value, .. } => u32::try_from(value),
+        }
+        .map_err(|_| self.error_here("struct array length must be positive and fit in 32 bits"))?;
+        if length == 0 {
+            return Err(self.error_here("struct arrays must have positive length"));
+        }
+        Ok(length)
     }
 
     fn parse_parameters(&mut self) -> Result<Vec<C0Parameter>, C0SyntaxError> {
@@ -9508,6 +9526,13 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<ParsedType, C0SyntaxError> {
+        self.parse_type_with_anonymous_struct(false)
+    }
+
+    fn parse_type_with_anonymous_struct(
+        &mut self,
+        allow_anonymous_struct: bool,
+    ) -> Result<ParsedType, C0SyntaxError> {
         let is_constant = if self.peek_ident() == Some("const") {
             self.position += 1;
             true
@@ -9530,7 +9555,23 @@ impl Parser {
                 // placeholder so `typedef struct S S_t;` can later become
                 // `struct S*` when the declarator supplies `*`.
                 c_type: C0Type::Int32,
-                struct_name: Some(self.expect_ident("struct name")?),
+                struct_name: Some(
+                    if allow_anonymous_struct && self.peek() == Some(&Token::LBrace) {
+                        // Anonymous types have nominal identity per declaration,
+                        // never the typedef spelling or an invented visible tag.
+                        // The source and token position are stable on reparse and
+                        // keep unrelated translation units and declarations apart.
+                        let name = format!(
+                            "#anonymous-struct:{}:{}",
+                            self.source_identity.as_deref().unwrap_or("source"),
+                            self.position
+                        );
+                        self.parse_struct_body(name.clone())?;
+                        name
+                    } else {
+                        self.expect_ident("struct name")?
+                    },
+                ),
                 enum_name: None,
                 union_name: None,
                 is_volatile: false,
@@ -9909,99 +9950,47 @@ impl Parser {
     }
 
     fn parse_named_type(&mut self, name: String) -> Result<ParsedType, C0SyntaxError> {
-        let c_type = match name.as_str() {
-            "void" => C0Type::Void,
-            "_Bool" | "bool" => C0Type::Bool,
-            "int8" | "int8_t" => C0Type::Int8,
-            "int16" | "short" | "int16_t" => C0Type::Int16,
-            "int32" | "int" | "int32_t" => C0Type::Int32,
-            "uint8" | "uint8_t" => C0Type::UInt8,
-            "uint16" | "uint16_t" => C0Type::UInt16,
-            "uint32" | "uint32_t" => C0Type::UInt32,
-            "int64" | "int64_t" | "ssize_t" => C0Type::Int64,
-            "long" => {
-                if self.peek_ident() == Some("double") {
-                    self.position += 1;
-                    return Err(self.error_at_previous(
-                        "unsupported C type `long double`: extended-precision floating-point values are not modeled in C0",
-                    ));
+        let integer = crate::languages::c::integer_specifiers::parse(
+            std::iter::once(name.as_str()).chain(self.tokens[self.position..].iter().map_while(
+                |token| match token {
+                    Token::Ident(word) => Some(word.as_str()),
+                    _ => None,
+                },
+            )),
+        )
+        .map_err(|message| self.error_at_previous(message))?;
+        let c_type = if let Some((c_type, count)) = integer {
+            self.position += count - 1;
+            c_type
+        } else {
+            match name.as_str() {
+                "void" => C0Type::Void,
+                "_Bool" | "bool" => C0Type::Bool,
+                "int8" | "int8_t" => C0Type::Int8,
+                "int16" | "int16_t" => C0Type::Int16,
+                "int32" | "int32_t" => C0Type::Int32,
+                "uint8" | "uint8_t" => C0Type::UInt8,
+                "uint16" | "uint16_t" => C0Type::UInt16,
+                "uint32" | "uint32_t" => C0Type::UInt32,
+                "int64" | "int64_t" | "ssize_t" => C0Type::Int64,
+                "uint64" | "size_t" | "uint64_t" => C0Type::UInt64,
+                "float" => C0Type::Float32,
+                "double" => C0Type::Float64,
+                "volatile" => {
+                    return Err(
+                        self.error_at_previous("the `volatile` qualifier is not supported in C0")
+                    );
                 }
-                if self.peek_ident() == Some("long") {
-                    self.position += 1;
-                }
-                C0Type::Int64
-            }
-            "uint64" | "size_t" | "uint64_t" => C0Type::UInt64,
-            "float" => C0Type::Float32,
-            "double" => C0Type::Float64,
-            "unsigned" => {
-                if self.peek_ident() == Some("char") {
-                    self.position += 1;
-                    C0Type::UInt8
-                } else if self.peek_ident() == Some("int") {
-                    self.position += 1;
-                    C0Type::UInt32
-                } else if self.peek_ident() == Some("short") {
-                    self.position += 1;
-                    C0Type::UInt16
-                } else if self.peek_ident() == Some("long") {
-                    self.position += 1;
-                    if self.peek_ident() == Some("long") {
-                        self.position += 1;
-                    }
-                    C0Type::UInt64
-                } else {
-                    return Err(self.error_at_previous(
-                        "unsupported integer width `unsigned`; only `unsigned char`, `unsigned short`, and `unsigned int` are modeled",
-                    ));
-                }
-            }
-            "signed" => {
-                if self.peek_ident() == Some("char") {
-                    self.position += 1;
-                    C0Type::Int8
-                } else if self.peek_ident() == Some("short") {
-                    self.position += 1;
-                    C0Type::Int16
-                } else if self.peek_ident() == Some("long") {
-                    self.position += 1;
-                    if self.peek_ident() == Some("long") {
-                        self.position += 1;
-                    }
-                    C0Type::Int64
-                } else {
-                    return Err(self.error_at_previous(
-                        "unsupported integer width `signed`; expected `signed char`, `signed short`, or `signed long`",
-                    ));
-                }
-            }
-            "char" => C0Type::Char,
-            "volatile" => {
-                return Err(
-                    self.error_at_previous("the `volatile` qualifier is not supported in C0")
-                );
-            }
-            _ => {
-                let Some(typedef) = self.typedefs.get(&name) else {
-                    return Err(self.error_at_previous(format!(
+                _ => {
+                    let Some(typedef) = self.typedefs.get(&name) else {
+                        return Err(self.error_at_previous(format!(
                         "unknown C type `{name}`; expected a supported standard spelling, typedef, or `struct`"
                     )));
-                };
-                return Ok(typedef.clone());
+                    };
+                    return Ok(typedef.clone());
+                }
             }
         };
-        // Standard width specifiers permit a trailing `int`. Consume it only
-        // for these spellings, never for typedef names or fixed-width aliases,
-        // and never after `char` or an already consumed `int`.
-        if matches!(name.as_str(), "short" | "long" | "signed" | "unsigned")
-            && matches!(
-                c_type,
-                C0Type::Int16 | C0Type::UInt16 | C0Type::Int64 | C0Type::UInt64
-            )
-            && self.peek_ident() == Some("int")
-        {
-            self.position += 1;
-        }
         Ok(ParsedType {
             c_type,
             struct_name: None,
@@ -12427,6 +12416,8 @@ impl Parser {
                 | C0Type::Float32
                 | C0Type::Float64 => (field.c_type, 1),
                 C0Type::Int32Array(length) => (C0Type::Int32, length),
+                C0Type::Int64Array(length) => (C0Type::Int64, length),
+                C0Type::UInt64Array(length) => (C0Type::UInt64, length),
                 C0Type::CharArray(length) => (C0Type::Char, length),
                 C0Type::UInt8Array(length) => (C0Type::UInt8, length),
                 C0Type::Float32Array(length) => (C0Type::Float32, length),
@@ -16187,6 +16178,8 @@ impl Parser {
         };
         let length = match field_type {
             C0Type::Int32Array(length)
+            | C0Type::Int64Array(length)
+            | C0Type::UInt64Array(length)
             | C0Type::CharArray(length)
             | C0Type::UInt8Array(length)
             | C0Type::Float32Array(length)

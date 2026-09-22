@@ -360,6 +360,8 @@ pub(crate) enum Change {
     AllocationPending,
     /// Allocation claims moved across a contract boundary.
     ContractAllocationClaims,
+    /// A contract consumed an allocation and did not guarantee continuity.
+    ContractRetirement { allocation: Pointer },
     /// A block entered the memory model.
     Declaration { block: PointerBlock },
     /// An automatic-storage object was retired.
@@ -420,6 +422,11 @@ impl Change {
             CMemoryDerivation::ContractAllocationClaimsChanged { .. } => {
                 Self::ContractAllocationClaims
             }
+            CMemoryDerivation::ContractAllocationRetired {
+                allocation_base, ..
+            } => Self::ContractRetirement {
+                allocation: allocation_base.clone(),
+            },
             CMemoryDerivation::BlockDeclared { block, .. } => Self::Declaration {
                 block: block.clone(),
             },

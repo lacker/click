@@ -62,12 +62,53 @@ with the existing widths and signedness. Parser regressions and
 
 The `signed char` typedef for `__int8_t` now lowers to the distinct signed
 byte type `int8`, with one-byte storage, integer promotion, and checked
-conversions in the range -128 through 127. The regression next stops at
-`typedef signed int __int32_t;` in `bits/types.h`: the parser has not yet
-accepted the explicit `signed int` spelling. The next small import step is
-to support that spelling using the existing `int32` semantics, then rerun the
-unchanged probe. Declaration-specific runtime identity and checked create/join
-call binding remain subsequent work.
+conversions in the range -128 through 127. The explicit `signed int` spelling
+also now maps to the existing `int32` type in C and Click declarations,
+including typedefs, pointers, casts, and `sizeof`. `mdtests/c_signed_int.md`
+pins its normal verification behavior.
+
+The anonymous struct typedef for `__fsid_t` now imports unchanged:
+`typedef struct { int __val[2]; } __fsid_t;`. It reuses the named-struct layout
+rules, with a private identity for each declaration. The typedef can name
+local values and pointers without inventing a visible C tag.
+`mdtests/c_anonymous_struct_typedef.md` checks its eight-byte layout, field
+access, and independent copies.
+
+GCC's `typedef __SIZE_TYPE__ size_t;` now imports unchanged as well. On
+this host, the macro expands to `long unsigned int`. C and Click share the
+same parser for valid standard integer specifier combinations, regardless of
+order; `mdtests/c_integer_specifier_order.md` checks their existing widths
+and signedness.
+
+Inline arrays of signed and unsigned 64-bit integers now retain their
+eight-byte layout through indexing, resource clauses, initialization, and
+struct copies. `mdtests/struct_wide_integer_arrays.md` checks those paths.
+
+The `cpu_set_t` dimension `1024 / (8 * sizeof(__cpu_mask))` now imports
+unchanged, producing sixteen eight-byte words. Scalar and embedded-struct
+array dimensions reuse the typed integer constant evaluator; positive lengths
+and checked layout sizes remain required. The regression
+`mdtests/struct_constant_array_lengths.md` checks the original dimension,
+multidimensional indexing, and embedded-struct copies.
+
+GNU `nothrow` and `__nothrow__` annotations now import on function
+prototypes and definitions, including comma-separated lists and repeated
+attribute groups. They supply no proof facts in the C model: bodies and
+memory effects remain checked normally. `mdtests/c_nothrow_attributes.md`
+and its ownership-rejection companion pin this behavior.
+
+GNU `leaf` and `__leaf__` are now accepted too, so the combined
+`__attribute__((__nothrow__, __leaf__))` produced by glibc's `__THROW`
+imports unchanged. Click does not use `leaf` to infer purity, absence of
+callbacks, or memory permissions. `mdtests/c_leaf_attributes.md` checks a
+cross-file call with normal ownership and postconditions.
+
+The unchanged probe next stops in `bits/types/struct_tm.h` at the
+`const char *__tm_zone` field of `struct tm`. The importer currently rejects
+const qualification on struct and union fields, including pointee constness.
+Preserving that field qualification is the next import step.
+Declaration-specific runtime identity and checked create/join call binding
+remain subsequent work.
 
 The compiler-backed regression uses the host GCC/header installation and locks
 those actual inputs. This run does not establish the selected Debian GCC

@@ -137,6 +137,7 @@ pub(in crate::kernel) struct Evidence<'a> {
 /// | `HeapAllocated` | separate when the block differs | separate when the fresh object is proven distinct; affected for this one |
 /// | `HeapAllocationPending` | separate: it writes nothing | separate: no read of any block consults a pending request |
 /// | `ContractAllocationClaimsChanged` | separate: it writes nothing | **not shown separate** |
+/// | `ContractAllocationRetired` | separate only when the possibly released allocation misses the cell | separate only for a proven-distinct object |
 /// | `CellsForgotten` | separate: the state is the same | **not shown separate** |
 /// | `LocalLifetimeEnded` | separate on proven distinctness | separate when the retired object is proven distinct; affected for this one |
 /// | `HeapFreed` | separate on two separation ladders | separate when the released allocation's object is proven distinct; affected when it is this one |
@@ -205,7 +206,10 @@ pub(in crate::kernel) fn separation_check(
                 mutable_ranges: None,
                 ..
             } => SeparationCheck::NoCheckedWriteSet,
-            CMemoryDerivation::HeapFreed { .. } => SeparationCheck::HeapAllocationSeparation,
+            CMemoryDerivation::HeapFreed { .. }
+            | CMemoryDerivation::ContractAllocationRetired { .. } => {
+                SeparationCheck::HeapAllocationSeparation
+            }
             CMemoryDerivation::Store { .. }
             | CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocated { .. }
@@ -226,6 +230,7 @@ pub(in crate::kernel) fn separation_check(
             | CMemoryDerivation::CellsForgotten { .. }
             | CMemoryDerivation::LocalLifetimeEnded { .. }
             | CMemoryDerivation::HeapFreed { .. }
+            | CMemoryDerivation::ContractAllocationRetired { .. }
             | CMemoryDerivation::CallHavoc { .. }
             | CMemoryDerivation::LoopHavoc { .. } => SeparationCheck::WholeBlockAgreement,
         },
@@ -237,7 +242,10 @@ pub(in crate::kernel) fn separation_check(
                 mutable_ranges: None,
                 ..
             } => SeparationCheck::NoCheckedWriteSet,
-            CMemoryDerivation::HeapFreed { .. } => SeparationCheck::HeapAllocationSeparation,
+            CMemoryDerivation::HeapFreed { .. }
+            | CMemoryDerivation::ContractAllocationRetired { .. } => {
+                SeparationCheck::HeapAllocationSeparation
+            }
             CMemoryDerivation::Store { .. }
             | CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocated { .. }
@@ -396,7 +404,7 @@ fn cell_effect(
             }
         }
         // Declaring a block, registering unresolved allocation metadata,
-        // moving contract allocation claims, or forgetting cached cells
+        // importing contract allocation claims, or forgetting cached cells
         // writes nothing, so every load is untouched — but only the
         // extended-bridging scope may exploit that: elsewhere these edges
         // must look like the pre-arc absence of an edge.
@@ -439,6 +447,11 @@ fn cell_effect(
             }
         }
         CMemoryDerivation::HeapFreed {
+            allocation_base,
+            bytes,
+            ..
+        }
+        | CMemoryDerivation::ContractAllocationRetired {
             allocation_base,
             bytes,
             ..
@@ -582,6 +595,10 @@ fn cell_effect(
 ///   moment the request resolves is a `HeapAllocated` edge, judged on its own,
 ///   and a pending *reallocation* records no edge at all, so a walk stops at
 ///   it for want of a derivation.
+/// * `ContractAllocationRetired` leaves deallocation undecided but forgets
+///   cached content and status for the consumed allocation. Its affected
+///   footprint is judged with the same separation bounds as `HeapFreed`;
+///   unlike a definite free, it creates no deallocation tombstone.
 /// * `HeapFreed` moves one allocation from live to deallocated, drops its
 ///   uninitialized and zeroed status, removes its extent, and drops the cells
 ///   that allocation may contain — which `heap_allocation_may_contain_pointer`
@@ -673,6 +690,9 @@ fn block_effect(step: &CMemoryDerivation, block: &PointerBlock) -> StepEffect {
             BlockSeparation::PendingAllocationMetadata,
         )),
         CMemoryDerivation::HeapFreed {
+            allocation_base, ..
+        }
+        | CMemoryDerivation::ContractAllocationRetired {
             allocation_base, ..
         } => one_object(
             &allocation_base.block,
@@ -807,6 +827,11 @@ fn footprint_effect(step: &CMemoryDerivation, ranges: Option<&[CMemoryRange]>) -
             }
         }
         CMemoryDerivation::HeapFreed {
+            allocation_base,
+            bytes,
+            ..
+        }
+        | CMemoryDerivation::ContractAllocationRetired {
             allocation_base,
             bytes,
             ..

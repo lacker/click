@@ -2733,70 +2733,42 @@ impl Parser {
             });
         }
 
-        let scalar_type = match spelling.as_str() {
-            "void" => C0Type::Void,
-            "_Bool" | "bool" => C0Type::Bool,
-            "int8" | "int8_t" => C0Type::Int8,
-            "int16" | "short" | "int16_t" => C0Type::Int16,
-            "int32" | "int" | "int32_t" => C0Type::Int32,
-            "uint8" | "uint8_t" => C0Type::UInt8,
-            "uint16" | "uint16_t" => C0Type::UInt16,
-            "uint32" | "uint32_t" => C0Type::UInt32,
-            "int64" | "int64_t" | "ssize_t" => C0Type::Int64,
-            "long" => {
-                if self.peek_ident() == Some("double") {
-                    return Err(self.error(
-                        "unsupported C type `long double`: extended-precision floating-point values are not modeled in C0",
-                    ));
+        let integer = crate::languages::c::integer_specifiers::parse(
+            std::iter::once(spelling.as_str()).chain(
+                self.tokens[self.position..]
+                    .iter()
+                    .map_while(|token| match token {
+                        Token::Ident(word) => Some(word.as_str()),
+                        _ => None,
+                    }),
+            ),
+        )
+        .map_err(|message| self.error(message))?;
+        let scalar_type = if let Some((c_type, count)) = integer {
+            self.position += count - 1;
+            c_type
+        } else {
+            match spelling.as_str() {
+                "void" => C0Type::Void,
+                "_Bool" | "bool" => C0Type::Bool,
+                "int8" | "int8_t" => C0Type::Int8,
+                "int16" | "int16_t" => C0Type::Int16,
+                "int32" | "int32_t" => C0Type::Int32,
+                "uint8" | "uint8_t" => C0Type::UInt8,
+                "uint16" | "uint16_t" => C0Type::UInt16,
+                "uint32" | "uint32_t" => C0Type::UInt32,
+                "int64" | "int64_t" | "ssize_t" => C0Type::Int64,
+                "uint64" | "size_t" | "uint64_t" => C0Type::UInt64,
+                "float" => C0Type::Float32,
+                "double" => C0Type::Float64,
+                "volatile" => {
+                    return Err(self.error("the `volatile` qualifier is not supported in C0"));
                 }
-                C0Type::Int64
-            }
-            "uint64" | "unsigned long" | "size_t" | "uint64_t" => C0Type::UInt64,
-            "float" => C0Type::Float32,
-            "double" => C0Type::Float64,
-            "unsigned" => {
-                if self.peek_ident() == Some("char") {
-                    self.position += 1;
-                    C0Type::UInt8
-                } else if self.peek_ident() == Some("int") {
-                    self.position += 1;
-                    C0Type::UInt32
-                } else if self.peek_ident() == Some("short") {
-                    self.position += 1;
-                    C0Type::UInt16
-                } else if self.peek_ident() == Some("long") {
-                    self.position += 1;
-                    C0Type::UInt64
-                } else {
-                    return Err(self.error(
-                        "unsupported integer width `unsigned`; only `unsigned char`, `unsigned short`, and `unsigned int` are modeled",
-                    ));
-                }
-            }
-            "signed" => {
-                if self.peek_ident() == Some("char") {
-                    self.position += 1;
-                    C0Type::Int8
-                } else if self.peek_ident() == Some("short") {
-                    self.position += 1;
-                    C0Type::Int16
-                } else if self.peek_ident() == Some("long") {
-                    self.position += 1;
-                    C0Type::Int64
-                } else {
-                    return Err(self.error(
-                        "unsupported integer width `signed`; expected `signed char`, `signed short`, or `signed long`",
-                    ));
-                }
-            }
-            "char" => C0Type::Char,
-            "volatile" => {
-                return Err(self.error("the `volatile` qualifier is not supported in C0"));
-            }
-            _ => {
-                return Err(self.error(format!(
+                _ => {
+                    return Err(self.error(format!(
                     "unknown C type `{spelling}`; expected a supported standard spelling or `struct`"
                 )));
+                }
             }
         };
         let mut c_type = scalar_type;
@@ -2944,6 +2916,8 @@ impl Parser {
                         | C0Type::Float32
                         | C0Type::Float64
                         | C0Type::Int32Array(_)
+                        | C0Type::Int64Array(_)
+                        | C0Type::UInt64Array(_)
                         | C0Type::CharArray(_)
                         | C0Type::UInt8Array(_)
                         | C0Type::Float32Array(_)
@@ -7137,6 +7111,8 @@ impl Parser {
     ) -> ContractSegment {
         let array = match field.c_type {
             C0Type::Int32Array(length) => Some((length, 4, CType::Int32)),
+            C0Type::Int64Array(length) => Some((length, 8, CType::Int64)),
+            C0Type::UInt64Array(length) => Some((length, 8, CType::UInt64)),
             C0Type::CharArray(length) | C0Type::UInt8Array(length) => {
                 Some((length, 1, CType::UInt8))
             }
@@ -7422,11 +7398,20 @@ impl Parser {
         }
         if matches!(
             field.c_type,
-            C0Type::Int32Array(_) | C0Type::CharArray(_) | C0Type::UInt8Array(_)
+            C0Type::Int32Array(_)
+                | C0Type::CharArray(_)
+                | C0Type::UInt8Array(_)
+                | C0Type::Int64Array(_)
+                | C0Type::UInt64Array(_)
         ) {
-            if field.slot_end_bytes < field.offset_bytes
-                || (matches!(field.c_type, C0Type::Int32Array(_))
-                    && !(field.slot_end_bytes - field.offset_bytes).is_multiple_of(4))
+            let width = match field.c_type {
+                C0Type::Int64Array(_) | C0Type::UInt64Array(_) => 8,
+                C0Type::Int32Array(_) => 4,
+                _ => 1,
+            };
+            if !field.offset_bytes.is_multiple_of(width)
+                || field.slot_end_bytes < field.offset_bytes
+                || !(field.slot_end_bytes - field.offset_bytes).is_multiple_of(width)
             {
                 return Err(self.error("inline array field has an invalid resource extent"));
             }
@@ -9393,6 +9378,8 @@ fn field_has_direct_memory_place(field: &ResolvedField) -> bool {
             | C0Type::Int64
             | C0Type::UInt64
             | C0Type::Int32Array(_)
+            | C0Type::Int64Array(_)
+            | C0Type::UInt64Array(_)
             | C0Type::CharArray(_)
             | C0Type::UInt8Array(_)
     )
@@ -9404,6 +9391,8 @@ fn scalar_array_field_element(field: &ResolvedField) -> Option<(u32, CType)> {
     }
     match field.c_type {
         C0Type::Int32Array(_) => Some((4, CType::Int32)),
+        C0Type::Int64Array(_) => Some((8, CType::Int64)),
+        C0Type::UInt64Array(_) => Some((8, CType::UInt64)),
         C0Type::CharArray(_) => Some((1, CType::UInt8)),
         C0Type::UInt8Array(_) => Some((1, CType::UInt8)),
         _ => None,

@@ -3931,7 +3931,11 @@ impl AnnotationLowerer<'_> {
         };
         match lowered {
             CExpression::TypedLoad {
-                value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+                value_type:
+                    CType::Int32Array(_)
+                    | CType::UInt8Array(_)
+                    | CType::Int64Array(_)
+                    | CType::UInt64Array(_),
                 ..
             } => Ok(pointer),
             CExpression::TypedLoad { value_type, .. } => Ok(SpecExpression::MemoryLoad {
@@ -5520,7 +5524,11 @@ impl AnnotationLowerer<'_> {
             }
             CExpression::TypedLoad {
                 pointer,
-                value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+                value_type:
+                    CType::Int32Array(_)
+                    | CType::UInt8Array(_)
+                    | CType::Int64Array(_)
+                    | CType::UInt64Array(_),
                 ..
             } => self.lower_c_fragment_to_spec(pointer, environment),
             CExpression::TypedLoad {
@@ -5883,6 +5891,8 @@ impl AnnotationLowerer<'_> {
                 }),
             CExpression::TypedLoad { value_type, .. } => match value_type {
                 CType::Int32Array(_) => Some(CType::Int32),
+                CType::Int64Array(_) => Some(CType::Int64),
+                CType::UInt64Array(_) => Some(CType::UInt64),
                 CType::UInt8Array(_) => Some(CType::UInt8),
                 value_type => value_type.pointee_type(),
             },
@@ -5945,6 +5955,7 @@ impl AnnotationLowerer<'_> {
                 }),
             CExpression::TypedLoad { value_type, .. } => match value_type {
                 CType::Int32Array(_) => Some(4),
+                CType::Int64Array(_) | CType::UInt64Array(_) => Some(8),
                 CType::UInt8Array(_) => Some(1),
                 value_type => value_type.pointee_type().map(CType::byte_width),
             },
@@ -6009,7 +6020,11 @@ fn aggregate_projection_root(expression: &CExpression) -> Option<&str> {
         }
         CExpression::TypedLoad {
             pointer,
-            value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+            value_type:
+                CType::Int32Array(_)
+                | CType::UInt8Array(_)
+                | CType::Int64Array(_)
+                | CType::UInt64Array(_),
             ..
         } => aggregate_projection_root(pointer),
         _ => None,

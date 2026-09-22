@@ -38,8 +38,9 @@ pub(in crate::surface) fn prove_empty_write_footprint(
             .cloned()
             .map(ExecutionPureFact::new),
     );
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     let mut writes = memory_effect_write_pointers(&effect_facts);
-    writes.retain(|pointer| is_preexisting_write_pointer(pointer, pre_state));
+    writes.retain(|pointer| is_preexisting_write_pointer(pointer, pre_state, &assumptions));
     if let Some(pointer) = writes.first() {
         return Err(ClickError::new(format!(
             "`{claim_label}` failed on path {path_index}: write to `{}` is outside the mutable footprint\n  execution pure facts: {}",
@@ -59,12 +60,16 @@ pub(in crate::surface) fn prove_empty_write_footprint(
         })
         .flatten()
         .filter(|(before, range)| {
-            is_preexisting_write_pointer(range.base(), pre_state)
-                && (!crate::kernel::c_memory_holds_live_heap_allocation_at(before, range.base())
-                    || crate::kernel::c_memory_holds_live_heap_allocation_at(
-                        pre_state.memory(),
-                        range.base(),
-                    ))
+            is_preexisting_write_pointer(range.base(), pre_state, &assumptions)
+                && (!crate::kernel::c_memory_holds_live_heap_allocation_at(
+                    before,
+                    range.base(),
+                    &assumptions,
+                ) || crate::kernel::c_memory_holds_live_heap_allocation_at(
+                    pre_state.memory(),
+                    range.base(),
+                    &assumptions,
+                ))
         })
         .map(|(_, range)| range)
         .next();
@@ -78,16 +83,43 @@ pub(in crate::surface) fn prove_empty_write_footprint(
     Ok(())
 }
 
-fn is_preexisting_write_pointer(pointer: &Pointer, pre_state: &CState) -> bool {
-    !pointer.block.starts_with("local:")
-        && !pointer.block.starts_with("havoc:")
-        && (!matches!(
-            pointer.block,
-            PointerBlock::Heap(_) | PointerBlock::Symbolic(_)
-        ) || pre_state.memory().has_block(&pointer.block)
-            || pre_state
-                .memory()
-                .is_live_heap_address(pointer, &crate::kernel::PureFactContext::new()))
+fn is_preexisting_write_pointer(
+    pointer: &Pointer,
+    pre_state: &CState,
+    assumptions: &PureFactContext,
+) -> bool {
+    if pointer.block.starts_with("local:") || pointer.block.starts_with("havoc:") {
+        return false;
+    }
+    if !matches!(
+        pointer.block,
+        PointerBlock::Heap(_) | PointerBlock::Symbolic(_)
+    ) {
+        return true;
+    }
+    let memory = pre_state.memory();
+    if memory.is_live_heap_address(pointer, assumptions) {
+        return true;
+    }
+    // A symbolic spelling may be exactly equal to a preexisting global or
+    // other named object. Follow only the equality component of this pointer,
+    // using the fact index rather than scanning unrelated path facts or blocks.
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![pointer.clone()];
+    while let Some(candidate) = pending.pop() {
+        if !seen.insert(candidate.clone()) {
+            continue;
+        }
+        if !candidate.block.starts_with("local:")
+            && !candidate.block.starts_with("havoc:")
+            && (memory.has_block(&candidate.block)
+                || memory.is_live_heap_address(&candidate, assumptions))
+        {
+            return true;
+        }
+        pending.extend(assumptions.exact_pointer_aliases(&candidate).cloned());
+    }
+    false
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -11843,6 +11843,15 @@ fn c0_body_call_updates_a_local_array_without_rebinding_it_as_a_scalar() {
 fn standard_integer_widths_accept_trailing_int_without_changing_type() {
     use syntax::C0Type;
     for (spelling, expected) in [
+        ("long unsigned int", C0Type::UInt64),
+        ("long int unsigned", C0Type::UInt64),
+        ("int unsigned long", C0Type::UInt64),
+        ("long unsigned long int", C0Type::UInt64),
+        ("signed int short", C0Type::Int16),
+        ("char signed", C0Type::Int8),
+        ("signed", C0Type::Int32),
+        ("unsigned", C0Type::UInt32),
+        ("signed int", C0Type::Int32),
         ("short int", C0Type::Int16),
         ("signed short int", C0Type::Int16),
         ("unsigned short int", C0Type::UInt16),
@@ -11880,6 +11889,8 @@ fn standard_integer_widths_accept_trailing_int_without_changing_type() {
 fn trailing_int_does_not_accept_incompatible_or_duplicate_specifiers() {
     for spelling in [
         "int int",
+        "signed int int",
+        "signed unsigned int",
         "short int int",
         "long int int",
         "unsigned int int",
@@ -11939,4 +11950,249 @@ fn signed_byte_proof_expansion_preserves_memory_and_negative_values() {
         crate::surface::expand_c0_claim_source_by_label(proof, &[("byte.c", c)], "read.ensures_0")
             .unwrap();
     crate::surface::verify_c0_sources(&expanded, &[("byte.c", c)]).unwrap();
+}
+
+#[test]
+fn anonymous_struct_typedef_retains_layout_and_nominal_identity() {
+    let functions = syntax::parse_functions_for_source(
+        "typedef struct { int __val[2]; } __fsid_t;\n\
+         typedef __fsid_t alias;\n\
+         typedef struct { int __val[2]; } other;\n\
+         struct __fsid_t { char tag; };\n\
+         int read(__fsid_t *p, alias *q, other *r) { return p->__val[1]; }",
+        "anonymous.c",
+    )
+    .unwrap();
+    let function = &functions[0];
+    let name = function.parameters()[0].struct_name().unwrap();
+    assert_eq!(function.parameters()[1].struct_name(), Some(name));
+    assert_ne!(function.parameters()[2].struct_name(), Some(name));
+    assert_ne!(name, "__fsid_t");
+    let layout = &function.structs()[name];
+    assert_eq!(layout.size_bytes(), 8);
+    assert_eq!(layout.field("__val").unwrap().byte_width(), 8);
+    assert_eq!(function.structs()["__fsid_t"].size_bytes(), 1);
+
+    let source = "typedef struct { int value; } item; int read(item *p) { return p->value; }";
+    let first = syntax::parse_functions_for_source(source, "a.c").unwrap();
+    let again = syntax::parse_functions_for_source(source, "a.c").unwrap();
+    let other = syntax::parse_functions_for_source(source, "b.c").unwrap();
+    assert_eq!(
+        first[0].parameters()[0].struct_name(),
+        again[0].parameters()[0].struct_name()
+    );
+    assert_ne!(
+        first[0].parameters()[0].struct_name(),
+        other[0].parameters()[0].struct_name()
+    );
+}
+
+#[test]
+fn anonymous_struct_typedef_reuses_field_validation() {
+    for source in [
+        "typedef struct { int a; int a; } item;",
+        "typedef struct { } item;",
+        "typedef struct { int value; } item; typedef int item;",
+        "typedef struct { int a; } first; typedef struct { int a; } second; void f(first *a, second *b) { a = b; }",
+    ] {
+        assert!(syntax::parse_functions(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn anonymous_struct_local_proof_expands_and_reverifies() {
+    let c = "typedef struct { int __val[2]; } __fsid_t; int use_local(void) { __fsid_t a = {{3, 7}}; __fsid_t b = a; b.__val[0] = 11; return a.__val[0] + b.__val[0] + b.__val[1]; }";
+    let proof = "verifying \"anonymous.c\"; int use_local() { ensures result == 21 by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("anonymous.c", c)]).unwrap();
+    let expanded = crate::surface::expand_c0_claim_source_by_label(
+        proof,
+        &[("anonymous.c", c)],
+        "use_local.ensures_0",
+    )
+    .unwrap();
+    crate::surface::verify_c0_sources(&expanded, &[("anonymous.c", c)]).unwrap();
+}
+
+#[test]
+fn struct_wide_array_layout_and_size_overflow() {
+    use syntax::C0Type;
+    let functions = syntax::parse_functions(
+        "struct wide { char tag; long signed_values[2]; unsigned long words[2][3]; int tail; }; int f(void) { return sizeof(struct wide); }",
+    ).unwrap();
+    let layout = &functions[0].structs()["wide"];
+    assert_eq!(layout.alignment_bytes(), 8);
+    assert_eq!(layout.size_bytes(), 80);
+    assert_eq!(layout.field("signed_values").unwrap().offset_bytes(), 8);
+    assert_eq!(
+        layout.field("signed_values").unwrap().c_type(),
+        C0Type::Int64Array(2)
+    );
+    assert_eq!(layout.field("words").unwrap().offset_bytes(), 24);
+    assert_eq!(
+        layout.field("words").unwrap().c_type(),
+        C0Type::UInt64Array(6)
+    );
+    assert_eq!(layout.field("tail").unwrap().offset_bytes(), 72);
+    for declaration in [
+        "long a[0]",
+        "unsigned long a[536870912]",
+        "long a[65536][65536]",
+    ] {
+        let source = format!("struct bad {{ {declaration}; }}; int f(void) {{ return 0; }}");
+        assert!(syntax::parse_functions(&source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn struct_wide_array_proof_expands_and_reverifies() {
+    let c = "struct words { char tag; unsigned long data[3]; }; unsigned long set(struct words *p, unsigned long value) { p->data[1] = value; return p->data[2]; }";
+    let proof = "verifying \"wide.c\"; unsigned long set(struct words *p, unsigned long value) { owns p->data[1..2]; views p->data[2..3]; ensures p->data[1] == value by auto; ensures result == old(p->data[2]) by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("wide.c", c)]).unwrap();
+    let expanded =
+        crate::surface::expand_c0_claim_source_by_label(proof, &[("wide.c", c)], "set.ensures_0")
+            .unwrap();
+    crate::surface::verify_c0_sources(&expanded, &[("wide.c", c)]).unwrap();
+}
+
+#[test]
+fn struct_constant_array_lengths_keep_typed_values_and_layout() {
+    for (expression, count) in [
+        ("1024 / (8 * sizeof(mask))", 16),
+        ("(3 + 5) * 2", 16),
+        ("1 << 4", 16),
+        ("(unsigned long)16", 16),
+        ("0xffffffffu + 3u", 2),
+        ("1 ? 16 : (1 / 0)", 16),
+        ("sizeof(struct item)", 8),
+    ] {
+        let source = format!(
+            "typedef unsigned long mask; struct item {{ long x; }}; struct holder {{ char tag; mask bits[{expression}]; struct item items[{expression}]; }}; int f(void) {{ return sizeof(struct holder); }}"
+        );
+        let functions = syntax::parse_functions(&source).expect(&source);
+        let layout = &functions[0].structs()["holder"];
+        assert_eq!(
+            layout.field("bits").unwrap().byte_width(),
+            count * 8,
+            "{expression}"
+        );
+        assert_eq!(
+            layout.field("items").unwrap().offset_bytes(),
+            8 + count * 8,
+            "{expression}"
+        );
+        assert_eq!(layout.size_bytes(), 8 + count * 16, "{expression}");
+    }
+}
+
+#[test]
+fn struct_constant_array_lengths_reject_invalid_values() {
+    for (expression, diagnostic) in [
+        ("0", "positive length"),
+        ("-1", "positive and fit"),
+        ("4294967296ULL", "positive and fit"),
+        ("1 / 0", "divides by zero"),
+        ("1 << 32", "invalid shift"),
+        ("2147483647 + 1", "overflows"),
+        ("n", "integer constant expressions"),
+        ("f()", "integer constant expressions"),
+        ("(n = 2)", "integer constant expressions"),
+        ("sizeof(long) * 67108864", "layout is too large"),
+    ] {
+        for element in ["long", "struct item"] {
+            let source = format!(
+                "int n; int f(void); struct item {{ long x; }}; struct bad {{ {element} data[{expression}]; }};"
+            );
+            let error = syntax::parse_functions(&source).unwrap_err();
+            assert!(error.to_string().contains(diagnostic), "{source}: {error}");
+        }
+    }
+}
+
+#[test]
+fn c0_nothrow_and_leaf_attributes_accept_aliases_lists_and_repeated_groups() {
+    for attributes in [
+        "__attribute__((leaf))",
+        "__attribute__((__leaf__))",
+        "__attribute__((__nothrow__, __leaf__))",
+        "__attribute__((leaf, nothrow))",
+        "__attribute__((leaf)) __attribute__((__leaf__))",
+        "__attribute__((nothrow))",
+        "__attribute__((__nothrow__))",
+        "__attribute__((nothrow, __nothrow__))",
+        "__attribute__((nothrow)) __attribute__((__nothrow__))",
+    ] {
+        for (prefix, suffix) in [(attributes, ""), ("", attributes)] {
+            let definition =
+                format!("{prefix} int identity(int value) {suffix} {{ return value; }}");
+            syntax::parse_function(&definition).unwrap();
+            syntax::parse_functions(&definition).unwrap();
+            let prototype = format!("extern {prefix} int identity(int value) {suffix};");
+            syntax::validate_header(&prototype, &source::ExpandedLineMap::empty()).unwrap();
+            syntax::parse_functions(&format!(
+                "{prototype} int identity(int value) {{ return value; }}"
+            ))
+            .unwrap();
+        }
+    }
+    for attributes in [
+        "nothrow, always_inline",
+        "__always_inline__, __nothrow__",
+        "leaf, always_inline",
+        "__always_inline__, __leaf__",
+    ] {
+        let source =
+            format!("static inline __attribute__(({attributes})) int f(int n) {{ return n; }}");
+        syntax::validate_header(&source, &source::ExpandedLineMap::empty()).unwrap();
+        syntax::parse_functions(&source).unwrap();
+    }
+}
+
+#[test]
+fn c0_nothrow_and_leaf_attributes_do_not_hide_unsupported_attributes_or_linkage() {
+    for source in [
+        "int f(void) __attribute__((leaf, noreturn));",
+        "int f(void) __attribute__((leaf)) __attribute__((aligned(8)));",
+        "int f(void) __attribute__((leaf, always_inline));",
+        "int f(void) __attribute__((always_inline, leaf));",
+        "int f(void) __attribute__((leaf(1)));",
+        "int f(void) __attribute__((leaf,));",
+        "int f(void) __attribute__((leaf);",
+        "int f(void) __attribute__((nothrow, noreturn));",
+        "int f(void) __attribute__((nothrow)) __attribute__((aligned(8)));",
+        "int f(void) __attribute__((nothrow, always_inline));",
+        "int f(void) __attribute__((always_inline, nothrow));",
+        "int f(void) __attribute__((nothrow(1)));",
+        "int f(void) __attribute__((nothrow,));",
+        "int f(void) __attribute__((nothrow);",
+    ] {
+        assert!(
+            syntax::validate_header(source, &source::ExpandedLineMap::empty()).is_err(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn c0_nothrow_memory_proof_expands_and_reverifies() {
+    let c = "__attribute__((nothrow)) int set(int *p) { *p = 7; return *p; }";
+    let proof = "verifying \"nothrow.c\"; int set(int *p) { owns p[0..1]; ensures p[0] == 7 by auto; ensures result == 7 by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("nothrow.c", c)]).unwrap();
+    let expanded = crate::surface::expand_c0_claim_source_by_label(
+        proof,
+        &[("nothrow.c", c)],
+        "set.ensures_0",
+    )
+    .unwrap();
+    crate::surface::verify_c0_sources(&expanded, &[("nothrow.c", c)]).unwrap();
+}
+
+#[test]
+fn c0_leaf_memory_proof_expands_and_reverifies() {
+    let c = "__attribute__((__nothrow__, __leaf__)) int set(int *p) { *p = 7; return *p; }";
+    let proof = "verifying \"leaf.c\"; int set(int *p) { owns p[0..1]; ensures p[0] == 7 by auto; ensures result == 7 by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("leaf.c", c)]).unwrap();
+    let expanded =
+        crate::surface::expand_c0_claim_source_by_label(proof, &[("leaf.c", c)], "set.ensures_0")
+            .unwrap();
+    crate::surface::verify_c0_sources(&expanded, &[("leaf.c", c)]).unwrap();
 }
