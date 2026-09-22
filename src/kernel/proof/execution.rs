@@ -51,12 +51,15 @@ pub(crate) enum LoopControlExit {
     Break,
     /// A `continue`: the path reaches the back edge before the body's end.
     Continue,
+    /// The natural cycle's checked forward `goto` leaves the loop at its
+    /// named exit target.
+    NaturalExit(crate::kernel::CControlTargetId),
 }
 
 impl LoopControlExit {
     /// Whether this path leaves the loop rather than returning to its head.
     pub(crate) fn is_exit(self) -> bool {
-        matches!(self, Self::Break)
+        matches!(self, Self::Break | Self::NaturalExit(_))
     }
 }
 
@@ -3440,6 +3443,9 @@ pub(crate) struct ExecutionFrontier {
     /// executing that loop body. Matching `goto` evidence reaches the typed
     /// body boundary instead of reopening the source target.
     pub(crate) natural_backedge_target: Option<crate::kernel::CControlTargetId>,
+    /// A proof-only natural cycle's checked forward exit, when this frontier
+    /// is executing that loop body.
+    pub(crate) natural_exit_target: Option<crate::kernel::CControlTargetId>,
 }
 
 /// One entered `try` body tracked for evidence order validation: the
@@ -4107,6 +4113,7 @@ fn checked_condition_event(
                     structural_measure,
                     do_while: false,
                     backedge_target: None,
+                    natural_exit_target: None,
                     body: body.clone(),
                 };
                 prepend_checked_evidence_statement(*body, Some(loop_head))
@@ -4988,6 +4995,13 @@ impl ExecutionProofCore {
                     self.evidence_completed = true;
                     return Ok(());
                 }
+                if self.frontier.natural_exit_target == Some(target) && self.frontier.in_loop_body {
+                    self.frontier.position = FrontierPosition::RegionBoundary;
+                    self.frontier.loop_control = LoopControlExit::NaturalExit(target);
+                    self.evidence_state = Some(state);
+                    self.evidence_completed = true;
+                    return Ok(());
+                }
                 let target = function
                     .control_target(target)
                     .ok_or_else(|| EvidenceRefusal::from("goto target is not in its function"))?;
@@ -5462,6 +5476,7 @@ impl ExecutionProofCore {
                         structural_measure,
                         do_while: true,
                         backedge_target: None,
+                        natural_exit_target: None,
                         body,
                     } if !matches!(proved_statement, CStatement::While { .. }) => {
                         let (body_head, body_tail) = split_shared_source(body);
@@ -5483,6 +5498,7 @@ impl ExecutionProofCore {
                             structural_measure: structural_measure.clone(),
                             do_while: false,
                             backedge_target: None,
+                            natural_exit_target: None,
                             body: body.clone(),
                         };
                         let loop_continuation =
@@ -5606,6 +5622,7 @@ impl ExecutionProofCore {
                         structural_measure: structural_measure.clone(),
                         do_while: false,
                         backedge_target: None,
+                        natural_exit_target: None,
                         body: body.clone(),
                     };
                     let body_then_head = Arc::new(CStatement::Seq(
@@ -8975,6 +8992,7 @@ mod tests {
                 structural_measure: None,
                 do_while: false,
                 backedge_target: None,
+                natural_exit_target: None,
                 body: Box::new(body),
             }
         }

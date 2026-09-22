@@ -857,7 +857,8 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
     } else {
         lowerer.lower_statement(parsed_function.body(), parsed_function.control_targets())?
     };
-    let body = if let Some((backedge_target, _)) = parsed_function.natural_control_loop()
+    let body = if let Some((backedge_target, natural_exit_target, _)) =
+        parsed_function.natural_control_loop()
         && function_block
             .structural_clauses()
             .iter()
@@ -867,7 +868,7 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         let effect_checks = lowerer.loop_frame_checks(0)?;
         let resource_specs = lowerer.loop_resource_specs(0);
         let (ranking_measures, structural_measure) = lowerer.loop_measure_clauses(0)?;
-        crate::kernel::c_while_with_invariant_and_effect_checks(
+        let mut loop_body = crate::kernel::c_while_with_invariant_and_effect_checks(
             crate::kernel::c_int32_literal(1),
             Vec::new(),
             invariant_checks,
@@ -877,7 +878,11 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         .with_loop_resource_specs(resource_specs)
         .with_loop_ranking_measures(ranking_measures)
         .with_loop_structural_measure(structural_measure)
-        .with_backedge_target(backedge_target)
+        .with_backedge_target(backedge_target);
+        if let Some(target) = natural_exit_target {
+            loop_body = loop_body.with_natural_exit_target(target);
+        }
+        loop_body
     } else {
         body
     };

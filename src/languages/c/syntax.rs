@@ -2521,11 +2521,18 @@ impl C0Function {
 
     /// The deliberately narrow natural-cycle shape admitted by the C goto
     /// slice: one direct function-body label at the entry, exactly one
-    /// backward goto in the re-entered region, and no declaration in that
-    /// region. The goto may be nested in an `if`; the proof layer wraps this
-    /// exact source region in a checked loop rule while retaining the original
-    /// goto.
-    pub(crate) fn natural_control_loop(&self) -> Option<(crate::kernel::CControlTargetId, usize)> {
+    /// backward goto in the re-entered region, and optionally one forward goto
+    /// to a final direct function-body exit label. There is no declaration in
+    /// the cycle region. The gotos may be nested in an `if`; the proof layer
+    /// wraps this exact source region in a checked loop rule while retaining
+    /// the original gotos.
+    pub(crate) fn natural_control_loop(
+        &self,
+    ) -> Option<(
+        crate::kernel::CControlTargetId,
+        Option<crate::kernel::CControlTargetId>,
+        usize,
+    )> {
         let mut statements = Vec::new();
         flatten_direct_c0_statements(&self.body, &mut statements);
         if statements.len() < 2 {
@@ -2542,25 +2549,59 @@ impl C0Function {
         let C0Statement::Label { statement, .. } = statements[0] else {
             return None;
         };
+        let exit_label_index = statements
+            .last()
+            .is_some_and(|candidate| matches!(candidate, C0Statement::Label { .. }))
+            .then(|| statements.len() - 1)
+            .filter(|index| *index > 0);
+        let cycle_end = exit_label_index.unwrap_or(statements.len());
         if !natural_cycle_statement_supported(statement)
-            || statements
+            || statements[1..cycle_end]
                 .iter()
-                .skip(1)
                 .any(|statement| !natural_cycle_statement_supported(statement))
+            || exit_label_index.is_some_and(|index| {
+                let C0Statement::Label { statement, .. } = statements[index] else {
+                    unreachable!();
+                };
+                !natural_cycle_statement_supported(statement)
+                    || natural_cycle_statement_contains_goto(statement)
+            })
         {
             return None;
         }
         let mut goto_targets = Vec::new();
         collect_natural_cycle_goto_targets(statement, &mut goto_targets);
-        for statement in statements.iter().skip(1) {
+        for statement in statements.iter().skip(1).take(cycle_end - 1) {
             collect_natural_cycle_goto_targets(statement, &mut goto_targets);
         }
-        if goto_targets.len() != 1 {
+        let required_goto_count = if exit_label_index.is_some() { 2 } else { 1 };
+        if goto_targets.len() != required_goto_count {
             return None;
         }
-        let (label_target, label_index) = *self.control_targets.get(label_name)?;
-        let (goto_target, _) = *self.control_targets.get(goto_targets[0])?;
-        (label_target == goto_target && label_index == 0).then_some((label_target, label_index))
+        let (label_target, _) = *self.control_targets.get(label_name)?;
+        let mut targets = goto_targets
+            .iter()
+            .map(|target| self.control_targets.get(*target).copied())
+            .collect::<Option<Vec<_>>>()?;
+        let backedge = targets
+            .iter()
+            .position(|(target, index)| *target == label_target && *index == 0)
+            .map(|index| targets.remove(index))?;
+        let exit = match exit_label_index {
+            Some(index) => {
+                let (_, exit_name) = match statements[index] {
+                    C0Statement::Label { name, .. } => (index, name),
+                    _ => unreachable!(),
+                };
+                let (_, target_index) = *self.control_targets.get(exit_name)?;
+                (target_index == index)
+                    .then(|| targets.iter().find(|(_, goto_index)| *goto_index == index))
+                    .flatten()
+                    .map(|(target, _)| *target)
+            }
+            None => None,
+        };
+        (exit_label_index.is_none() || exit.is_some()).then_some((backedge.0, exit, backedge.1))
     }
 
     fn static_object_address(&self, name: &str) -> Option<StaticAddress> {
@@ -4239,9 +4280,10 @@ fn control_statement_error(
     }
 }
 
-/// Resolves the deliberately narrow forward-goto slice after the complete
-/// function body is available. Targets remain direct function-body labels;
-/// jumps may also originate in `if` arms. Every accepted edge points forward.
+/// Resolves the deliberately narrow goto slice after the complete function
+/// body is available. Targets remain direct function-body labels; jumps may
+/// also originate in `if` arms. Ordinary accepted edges point forward, with
+/// one reducible natural-cycle exception checked below.
 fn validate_direct_forward_gotos(
     body: &C0Statement,
 ) -> Result<BTreeMap<String, (crate::kernel::CControlTargetId, usize)>, C0SyntaxError> {
@@ -4372,7 +4414,18 @@ fn validate_direct_forward_gotos(
         statements.first(),
         Some(C0Statement::Label { statement, .. })
             if natural_cycle_statement_contains_goto(statement)
-    ));
+    ) || (matches!(
+        statements.last(),
+        Some(C0Statement::Label {
+            direct_function_body: true,
+            ..
+        })
+    ) && statements.len() > 2
+        && matches!(
+            statements.first(),
+            Some(C0Statement::Label { statement, .. })
+                if natural_cycle_statement_contains_goto(statement)
+        )));
     let mut labels = BTreeMap::new();
     let mut gotos = Vec::new();
     let mut source_statement_index = 0;
@@ -4418,8 +4471,11 @@ fn validate_direct_forward_gotos(
                         | C0Statement::Goto { .. }
                         | C0Statement::Label { .. }
                 ) && !(natural_cycle_shape
-                    && index == 0
-                    && natural_cycle_statement_supported(statement))
+                    && ((index == 0 && natural_cycle_statement_supported(statement))
+                        || (index + 1 == statements.len()
+                            && matches!(statements.last(), Some(C0Statement::Label { .. }))
+                            && natural_cycle_statement_supported(statement)
+                            && !natural_cycle_statement_contains_goto(statement))))
                 {
                     return Err(control_statement_error(
                         position,
@@ -4464,6 +4520,7 @@ fn validate_direct_forward_gotos(
     }
     let goto_count = gotos.len();
     let mut backward_gotos = Vec::new();
+    let mut forward_gotos = Vec::new();
     for pending in gotos {
         let Some((target_index, _, _)) = labels.get(&pending.target) else {
             return Err(control_statement_error(
@@ -4475,6 +4532,7 @@ fn validate_direct_forward_gotos(
             backward_gotos.push((pending, *target_index));
             continue;
         }
+        forward_gotos.push((pending.clone(), *target_index));
         if statements[pending.direct_statement_index + 1..*target_index]
             .iter()
             .any(|statement| {
@@ -4499,19 +4557,43 @@ fn validate_direct_forward_gotos(
             if natural_cycle_statement_contains_goto(statement)
     );
     if natural_label_contains_goto || !backward_gotos.is_empty() {
-        let supported = natural_cycle_shape
+        let explicit_exit_shape = natural_cycle_shape
+            && statements.len() > 2
+            && matches!(statements.last(), Some(C0Statement::Label { .. }))
             && backward_gotos.len() == 1
-            && goto_count == 1
-            && labels.len() == 1
+            && forward_gotos.len() == 1
+            && goto_count == 2
+            && labels.len() == 2
             && backward_gotos[0].1 == 0
+            && forward_gotos[0].1 + 1 == statements.len()
             && matches!(
                 statements.first(),
                 Some(C0Statement::Label { statement, .. })
                     if natural_cycle_statement_supported(statement)
             )
-            && statements[1..]
+            && statements[1..statements.len() - 1]
                 .iter()
-                .all(|statement| natural_cycle_statement_supported(statement));
+                .all(|statement| natural_cycle_statement_supported(statement))
+            && matches!(
+                statements.last(),
+                Some(C0Statement::Label { statement, .. })
+                    if natural_cycle_statement_supported(statement)
+                        && !natural_cycle_statement_contains_goto(statement)
+            );
+        let supported = natural_cycle_shape
+            && ((backward_gotos.len() == 1
+                && goto_count == 1
+                && labels.len() == 1
+                && backward_gotos[0].1 == 0
+                && matches!(
+                    statements.first(),
+                    Some(C0Statement::Label { statement, .. })
+                        if natural_cycle_statement_supported(statement)
+                )
+                && statements[1..]
+                    .iter()
+                    .all(|statement| natural_cycle_statement_supported(statement)))
+                || explicit_exit_shape);
         if !supported {
             let position = backward_gotos
                 .first()

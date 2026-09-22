@@ -2020,6 +2020,9 @@ pub enum CStatement {
         /// retains a checked `goto` to the target. The matching jump is the
         /// back edge; ordinary completion of the body is the cycle exit.
         backedge_target: Option<CControlTargetId>,
+        /// When present, a proof-only natural cycle has one checked forward
+        /// `goto` that leaves the cycle at this target.
+        natural_exit_target: Option<CControlTargetId>,
         body: Box<CStatement>,
     },
     Switch {

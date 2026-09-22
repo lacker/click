@@ -570,6 +570,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
         region: ExecutionRegionKind::LoopBody,
         in_loop_body: true,
         natural_backedge_target: source_layout.natural_loop_target(loop_index),
+        natural_exit_target: source_layout.natural_exit_target(loop_index),
         execution_start_state: Some(preservation.state().clone()),
         next_statement_index: loop_body_statement_index,
         ..ExecutionFrontier::default()
@@ -784,6 +785,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         region: ExecutionRegionKind::LoopBody,
         in_loop_body: true,
         natural_backedge_target: source_layout.natural_loop_target(loop_index),
+        natural_exit_target: source_layout.natural_exit_target(loop_index),
         execution_start_state: Some(preservation.state().clone()),
         next_statement_index: loop_body_statement_index,
         ..ExecutionFrontier::default()
@@ -1003,7 +1005,12 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         // owes no invariant and no measure, and the loop rule joins it with
         // the loop's other exits instead of returning it to the head.
         let is_break_exit = context_frontier.loop_control.is_exit();
-        let is_natural_return_exit = natural_loop && context_frontier.is_at_function_exit();
+        let is_natural_return_exit = natural_loop
+            && (context_frontier.is_at_function_exit()
+                || matches!(
+                    context_frontier.loop_control,
+                    crate::kernel::proof::LoopControlExit::NaturalExit(_)
+                ));
         let has_retained_invariant_body =
             context_execution.core.checked_invariant_lowerings.is_some();
         let statement_index = context_frontier.next_statement_index;

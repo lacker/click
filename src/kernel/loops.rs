@@ -1222,6 +1222,7 @@ pub(super) fn execute_c_statement_verification_paths(
             body,
             do_while,
             backedge_target,
+            natural_exit_target,
         } if !invariant_checks.is_empty()
             || !effect_checks.is_empty()
             || !ranking_measures.is_empty()
@@ -1244,6 +1245,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 variables,
                 *do_while,
                 *backedge_target,
+                *natural_exit_target,
             )?
         }
         _ => {
@@ -1358,6 +1360,7 @@ pub(super) fn execute_c_while_verification_paths(
     variables: &mut KernelVariableGenerator,
     do_while: bool,
     backedge_target: Option<CControlTargetId>,
+    natural_exit_target: Option<CControlTargetId>,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     execute_c_while_exit_paths(
         state,
@@ -1378,6 +1381,7 @@ pub(super) fn execute_c_while_verification_paths(
         false,
         do_while,
         backedge_target,
+        natural_exit_target,
         budget,
         variables,
     )
@@ -1587,6 +1591,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     variables: &mut KernelVariableGenerator,
     do_while: bool,
     backedge_target: Option<CControlTargetId>,
+    natural_exit_target: Option<CControlTargetId>,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     execute_c_while_exit_paths(
         state,
@@ -1607,6 +1612,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
         initialization_proven,
         do_while,
         backedge_target,
+        natural_exit_target,
         budget,
         variables,
     )
@@ -2670,6 +2676,7 @@ fn execute_c_while_exit_paths(
     initialization_proven: bool,
     do_while: bool,
     backedge_target: Option<CControlTargetId>,
+    natural_exit_target: Option<CControlTargetId>,
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -2736,6 +2743,7 @@ fn execute_c_while_exit_paths(
                 execution_semantics,
                 do_while,
                 backedge_target,
+                natural_exit_target,
                 budget,
                 variables,
             )?;
@@ -3370,6 +3378,7 @@ pub(super) fn collect_loop_preservation_summary(
     execution_semantics: CExecutionSemantics,
     do_while: bool,
     backedge_target: Option<CControlTargetId>,
+    natural_exit_target: Option<CControlTargetId>,
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<LoopPreservationSummary> {
@@ -3716,6 +3725,39 @@ pub(super) fn collect_loop_preservation_summary(
                                 loop_invariant_correspondence: Default::default(),
                                 outcome: CStatementOutcome::Return {
                                     value,
+                                    state: head.restored_exit_state(&state),
+                                },
+                                facts: exit_facts,
+                                obligations: final_obligations,
+                                loan_evidence: body_path.loan_evidence,
+                            });
+                        }
+                        CStatementOutcome::Jump { target, state }
+                            if natural_exit_target == Some(target) =>
+                        {
+                            let effect_obligations = collect_loop_effect_check_obligations(
+                                top_state,
+                                &state,
+                                effect_checks,
+                                &body_path.facts,
+                                &body_path.obligations,
+                                assumptions,
+                                budget,
+                            )?;
+                            let exit_facts = body_path.facts;
+                            let exit_obligations = body_path.obligations;
+                            let mut final_obligations = exit_obligations.clone();
+                            append_required_proof_obligations_under_path_context(
+                                &mut final_obligations,
+                                assumptions,
+                                &effect_obligations,
+                                &exit_facts,
+                                &exit_obligations,
+                            );
+                            final_exit_paths.push(CStatementExecutionPath {
+                                loop_invariant_correspondence: Default::default(),
+                                outcome: CStatementOutcome::Jump {
+                                    target,
                                     state: head.restored_exit_state(&state),
                                 },
                                 facts: exit_facts,

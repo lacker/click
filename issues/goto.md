@@ -74,6 +74,8 @@ cleanup. Parser tests retain the unsupported-shape diagnostics.
 The first natural-cycle regressions are
 [`natural_goto_cycle.md`](../mdtests/natural_goto_cycle.md) and
 [`natural_goto_conditional_backedge.md`](../mdtests/natural_goto_conditional_backedge.md).
+The natural-cycle slice also accepts one explicit forward exit label, covered
+by [`natural_goto_exit_label.md`](../mdtests/natural_goto_exit_label.md).
 
 ## Intended regression
 

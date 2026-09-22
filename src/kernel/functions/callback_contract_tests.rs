@@ -1333,6 +1333,7 @@ fn resource_derived_loop_frame_rejects_wrapper_range_disagreement() {
         structural_measure: None,
         do_while: false,
         backedge_target: None,
+        natural_exit_target: None,
         body: Box::new(CStatement::Skip),
     };
     let function = c_function(
@@ -1504,6 +1505,7 @@ fn resource_derived_loop_setup_does_not_fallback_to_surface_metadata() {
             structural_measure: None,
             do_while: false,
             backedge_target: None,
+            natural_exit_target: None,
             body: Box::new(CStatement::Skip),
         },
     )

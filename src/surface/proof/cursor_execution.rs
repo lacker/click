@@ -828,6 +828,7 @@ fn execute_concrete_loop_head_step(
         structural_measure: structural_measure.clone(),
         do_while: false,
         backedge_target: None,
+        natural_exit_target: None,
         body: body.clone(),
     };
 
@@ -3256,17 +3257,44 @@ fn execute_step_from_frontier_position_selecting_path(
                 execution.core.state = next_state.into();
                 return Ok(introduced_facts);
             }
-            let target = function.control_target(target).ok_or_else(|| {
+            if execution.core.frontier.natural_exit_target == Some(target)
+                && execution.core.frontier.in_loop_body
+            {
+                *available_pure_facts = successor_pure_facts;
+                execution.core.frontier.position = FrontierPosition::RegionBoundary;
+                execution.core.frontier.loop_control =
+                    crate::kernel::proof::LoopControlExit::NaturalExit(target);
+                execution.core.frontier.execution_start_state = Some(execution_start_state);
+                execution.core.state = next_state.into();
+                return Ok(introduced_facts);
+            }
+            let target_id = target;
+            let target = function.control_target(target_id).ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced an unknown goto target"
                 ))
             })?;
             *available_pure_facts = successor_pure_facts;
             execution.core.frontier.execution_start_state = Some(execution_start_state);
+            let target_statement_index = loop_index
+                .and_then(|loop_index| {
+                    proof_context
+                        .constants
+                        .source_layout
+                        .natural_exit_target(loop_index)
+                        .filter(|natural_target| *natural_target == target_id)
+                        .and_then(|_| {
+                            proof_context
+                                .constants
+                                .source_layout
+                                .natural_exit_statement_index(loop_index)
+                        })
+                })
+                .unwrap_or(target.statement_index);
             record_statement_program_snapshot_state(
                 &mut execution.presentation.recorded_snapshots,
                 function_block,
-                target.statement_index,
+                target_statement_index,
                 ProgramPointKind::Entry,
                 next_state.clone(),
             );

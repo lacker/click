@@ -4267,6 +4267,7 @@ mod address_escape_tests {
             resource_specs: Vec::new(),
             do_while: false,
             backedge_target: None,
+            natural_exit_target: None,
             body: Box::new(branch),
         };
         assert!(statement_takes_address_of(&body, "n"));
@@ -5666,6 +5667,7 @@ mod local_descent_tests {
                 structural_measure: None,
                 do_while: false,
                 backedge_target: None,
+                natural_exit_target: None,
                 body: Box::new(crate::kernel::c_call(name, Vec::new())),
             }),
         );

@@ -1795,6 +1795,7 @@ pub fn c_while_with_invariant_and_effect_checks(
         structural_measure: None,
         do_while: false,
         backedge_target: None,
+        natural_exit_target: None,
         body: Box::new(body),
     }
 }
@@ -1866,6 +1867,18 @@ impl CStatement {
         }
         self
     }
+
+    /// Retains the explicit forward exit target of a proof-only natural cycle.
+    pub fn with_natural_exit_target(mut self, target: CControlTargetId) -> Self {
+        if let Self::While {
+            natural_exit_target,
+            ..
+        } = &mut self
+        {
+            *natural_exit_target = Some(target);
+        }
+        self
+    }
 }
 
 pub fn c_do_while(condition: CExpression, body: CStatement) -> CStatement {
@@ -1888,6 +1901,7 @@ pub fn c_do_while_with_invariant_and_effect_checks(
         structural_measure: None,
         do_while: true,
         backedge_target: None,
+        natural_exit_target: None,
         body: Box::new(body),
     }
 }
@@ -3441,6 +3455,8 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         body,
         do_while,
         backedge_target,
+        natural_exit_target,
+        ..
     } = &statement
     else {
         return (
@@ -3473,6 +3489,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         &mut variables,
         *do_while,
         *backedge_target,
+        *natural_exit_target,
     );
     let paths = match execution {
         Ok(paths) => paths,

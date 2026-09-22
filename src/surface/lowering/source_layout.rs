@@ -42,6 +42,8 @@ struct SourceExecutionLayoutData {
     automatic_break_heads: BTreeMap<usize, usize>,
     loop_bodies: BTreeMap<usize, usize>,
     natural_loop_targets: BTreeMap<usize, crate::kernel::CControlTargetId>,
+    natural_exit_targets: BTreeMap<usize, crate::kernel::CControlTargetId>,
+    natural_exit_statement_indices: BTreeMap<usize, usize>,
     /// The C `if` statement indices whose regions complete when the keyed
     /// statement completes normally: the chain of enclosing branches this
     /// statement ends. Statically derived, so branch-region exits need no
@@ -224,12 +226,26 @@ impl SourceExecutionLayout {
     }
 
     pub(in crate::surface) fn new(statement: &syntax::C0Statement) -> Self {
-        Self::new_with_natural_loop(statement, None)
+        Self::new_with_natural_loop(statement, None, None, None)
     }
 
     pub(in crate::surface) fn new_for_function(function: &syntax::C0Function) -> Self {
-        match function.natural_control_loop().map(|(target, _)| target) {
-            Some(target) => Self::new_with_natural_loop(function.body(), Some(target)),
+        match function.natural_control_loop() {
+            Some((target, exit_target, _)) => {
+                let exit_label = exit_target.and_then(|exit_target| {
+                    function
+                        .control_targets()
+                        .iter()
+                        .find(|(_, (target, _))| *target == exit_target)
+                        .map(|(name, _)| name.clone())
+                });
+                Self::new_with_natural_loop(
+                    function.body(),
+                    Some(target),
+                    exit_target,
+                    exit_label.as_deref(),
+                )
+            }
             None => Self::new(function.body()),
         }
     }
@@ -237,6 +253,8 @@ impl SourceExecutionLayout {
     fn new_with_natural_loop(
         statement: &syntax::C0Statement,
         natural_loop_target: Option<crate::kernel::CControlTargetId>,
+        natural_exit_target: Option<crate::kernel::CControlTargetId>,
+        natural_exit_label: Option<&str>,
     ) -> Self {
         /// Visits one subtree and returns the pre-order index of its last
         /// top-level statement, so an enclosing `if` can redirect its arms'
@@ -395,6 +413,14 @@ impl SourceExecutionLayout {
             let mut next_loop_index = 1;
             data.loop_bodies.insert(loop_index, next_statement_index);
             data.natural_loop_targets.insert(loop_index, target);
+            let exit_label_index = natural_exit_label.and_then(|name| {
+                statements.iter().position(|statement| {
+                    matches!(
+                        statement,
+                        syntax::C0Statement::Label { name: label, .. } if label == name
+                    )
+                })
+            });
             if let Some(syntax::C0Statement::Label { statement, .. }) = statements.first() {
                 visit(
                     statement,
@@ -403,7 +429,25 @@ impl SourceExecutionLayout {
                     &mut data,
                 );
             }
-            for statement in statements.iter().skip(1) {
+            let cycle_tail = exit_label_index.unwrap_or(statements.len());
+            for statement in statements.iter().skip(1).take(cycle_tail.saturating_sub(1)) {
+                visit(
+                    statement,
+                    &mut next_statement_index,
+                    &mut next_loop_index,
+                    &mut data,
+                );
+            }
+            if let (Some(exit_target), Some(exit_label_index)) =
+                (natural_exit_target, exit_label_index)
+            {
+                data.natural_exit_targets.insert(loop_index, exit_target);
+                data.natural_exit_statement_indices
+                    .insert(loop_index, next_statement_index);
+                let syntax::C0Statement::Label { statement, .. } = statements[exit_label_index]
+                else {
+                    unreachable!("natural exit target points to a label");
+                };
                 visit(
                     statement,
                     &mut next_statement_index,
@@ -462,6 +506,23 @@ impl SourceExecutionLayout {
         loop_index: usize,
     ) -> Option<crate::kernel::CControlTargetId> {
         self.data.natural_loop_targets.get(&loop_index).copied()
+    }
+
+    pub(in crate::surface) fn natural_exit_target(
+        &self,
+        loop_index: usize,
+    ) -> Option<crate::kernel::CControlTargetId> {
+        self.data.natural_exit_targets.get(&loop_index).copied()
+    }
+
+    pub(in crate::surface) fn natural_exit_statement_index(
+        &self,
+        loop_index: usize,
+    ) -> Option<usize> {
+        self.data
+            .natural_exit_statement_indices
+            .get(&loop_index)
+            .copied()
     }
 }
 
@@ -706,6 +767,8 @@ mod source_execution_layout_tests {
                 automatic_break_heads: BTreeMap::new(),
                 loop_bodies: BTreeMap::new(),
                 natural_loop_targets: BTreeMap::new(),
+                natural_exit_targets: BTreeMap::new(),
+                natural_exit_statement_indices: BTreeMap::new(),
                 exited_branch_regions: BTreeMap::new(),
             }),
         };

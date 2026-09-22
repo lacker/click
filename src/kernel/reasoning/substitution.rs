@@ -142,6 +142,7 @@ mod resource_frame_substitution_tests {
             body: Box::new(CStatement::Skip),
             do_while: false,
             backedge_target: None,
+            natural_exit_target: None,
         };
         let substituted = substitute_bitvector_variable_in_c_statement(
             &statement,
@@ -185,6 +186,7 @@ mod resource_frame_substitution_tests {
             body: Box::new(CStatement::Skip),
             do_while: false,
             backedge_target: None,
+            natural_exit_target: None,
         };
         let substituted =
             substitute_pointer_variable_in_c_statement(&statement, from, &replacement);
@@ -2977,6 +2979,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             body,
             do_while,
             backedge_target,
+            natural_exit_target,
         } => CStatement::While {
             structural_measure: structural_measure.clone(),
             condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
@@ -3027,6 +3030,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
                 .collect(),
             do_while: *do_while,
             backedge_target: *backedge_target,
+            natural_exit_target: *natural_exit_target,
             body: Box::new(substitute_bitvector_variable_in_c_statement(body, from, to)),
         },
         CStatement::Switch { expression, cases } => CStatement::Switch {
@@ -6185,6 +6189,7 @@ fn substitute_pointer_variable_in_c_statement(
             body,
             do_while,
             backedge_target,
+            natural_exit_target,
         } => CStatement::While {
             structural_measure: structural_measure.clone(),
             condition: substitute_pointer_variable_in_c_expression(condition, from, to),
@@ -6235,6 +6240,7 @@ fn substitute_pointer_variable_in_c_statement(
                 .collect(),
             do_while: *do_while,
             backedge_target: *backedge_target,
+            natural_exit_target: *natural_exit_target,
             body: Box::new(substitute_pointer_variable_in_c_statement(body, from, to)),
         },
         CStatement::Switch { expression, cases } => CStatement::Switch {
