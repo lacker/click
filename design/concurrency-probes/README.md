@@ -54,17 +54,23 @@ support only, not a pthread runtime binding or a concurrent proof.
 
 `tests/compiler_import.rs` prepares the unchanged probe through real GCC/glibc
 headers and checks the bounded parser refusal. On this implementation host
-(Ubuntu GCC 13.3.0 and glibc 2.39), preparation and lock loading succeed; C
-parsing stops at `bits/types.h:32`, on `typedef unsigned short int __u_short;`,
-with ``expected `;`, got identifier `__u_short` ``. The compiler-backed
-regression uses the host GCC/header installation and locks those actual
-inputs. This run does not establish the selected Debian GCC 12/glibc 2.36
-runtime binding; that pinned environment still needs validation. No header
-declarations or probe statements are removed.
+(Ubuntu GCC 13.3.0 and glibc 2.39), preparation and lock loading succeed.
+The original parser gap, `typedef unsigned short int __u_short;`, is fixed:
+standard short/long integer spellings now accept their optional trailing `int`
+with the existing widths and signedness. Parser regressions and
+`mdtests/c_integer_trailing_int.md` pin that behavior.
 
-The next import work is to support this ordinary integer type spelling, then
-inspect the next real-header frontier. Declaration-specific runtime identity
-and checked create/join call binding remain subsequent work.
+The next refusal is the `signed char` type used by the `__int8_t` typedef in
+`bits/types.h`. Click explicitly does not model that signed eight-bit type;
+it must not substitute unsigned `char` or delete the typedef. Supporting it
+requires its own type/semantics slice before continuing through the real
+headers. Declaration-specific runtime identity and checked create/join call
+binding remain subsequent work.
+
+The compiler-backed regression uses the host GCC/header installation and locks
+those actual inputs. This run does not establish the selected Debian GCC
+12/glibc 2.36 runtime binding; that pinned environment still needs validation.
+No header declarations or probe statements are removed.
 
 ## Sequential worker checkpoint
 

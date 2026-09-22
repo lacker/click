@@ -9931,6 +9931,18 @@ impl Parser {
                 return Ok(typedef.clone());
             }
         };
+        // Standard width specifiers permit a trailing `int`. Consume it only
+        // for these spellings, never for typedef names or fixed-width aliases,
+        // and never after `char` or an already consumed `int`.
+        if matches!(name.as_str(), "short" | "long" | "signed" | "unsigned")
+            && matches!(
+                c_type,
+                C0Type::Int16 | C0Type::UInt16 | C0Type::Int64 | C0Type::UInt64
+            )
+            && self.peek_ident() == Some("int")
+        {
+            self.position += 1;
+        }
         Ok(ParsedType {
             c_type,
             struct_name: None,

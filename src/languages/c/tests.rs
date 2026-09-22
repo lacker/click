@@ -11842,3 +11842,68 @@ fn c0_body_call_updates_a_local_array_without_rebinding_it_as_a_scalar() {
     } if value == &crate::kernel::int32(9))
     );
 }
+
+#[test]
+fn standard_integer_widths_accept_trailing_int_without_changing_type() {
+    use syntax::C0Type;
+    for (spelling, expected) in [
+        ("short int", C0Type::Int16),
+        ("signed short int", C0Type::Int16),
+        ("unsigned short int", C0Type::UInt16),
+        ("long int", C0Type::Int64),
+        ("signed long int", C0Type::Int64),
+        ("unsigned long int", C0Type::UInt64),
+        ("long long int", C0Type::Int64),
+        ("signed long long int", C0Type::Int64),
+        ("unsigned long long int", C0Type::UInt64),
+    ] {
+        let source = format!("{spelling} identity({spelling} value) {{ return value; }}");
+        let function = syntax::parse_function(&source).expect(&source);
+        assert_eq!(function.return_type(), expected, "{spelling}");
+        assert_eq!(function.parameters()[0].c_type(), expected, "{spelling}");
+        // Preserve the exact header declaration shape that first exposed this
+        // gap, including typedef resolution at a later declaration.
+        let source =
+            format!("typedef {spelling} alias; alias identity(alias value) {{ return value; }}");
+        let unit = syntax::parse_translation_unit_for_source(
+            &source,
+            "aliases.c",
+            &source::ExpandedLineMap::empty(),
+        )
+        .expect(&source);
+        assert_eq!(unit.functions[0].return_type(), expected, "{spelling}");
+        assert_eq!(
+            unit.functions[0].parameters()[0].c_type(),
+            expected,
+            "{spelling}"
+        );
+    }
+}
+
+#[test]
+fn trailing_int_does_not_accept_incompatible_or_duplicate_specifiers() {
+    for spelling in [
+        "int int",
+        "short int int",
+        "long int int",
+        "unsigned int int",
+        "unsigned char int",
+        "short long int",
+        "unsigned short signed int",
+        "uint16 int",
+        "int64 int",
+    ] {
+        let source = format!("{spelling} bad(void) {{ return 0; }}");
+        assert!(syntax::parse_function(&source).is_err(), "{spelling}");
+    }
+    assert!(
+        syntax::parse_translation_unit_for_source(
+            "typedef short alias; alias int bad(void) { return 0; }",
+            "bad.c",
+            &source::ExpandedLineMap::empty()
+        )
+        .is_err()
+    );
+    // This change does not silently reinterpret the next unsupported type.
+    assert!(syntax::parse_function("signed char bad(void) { return 0; }").is_err());
+}
