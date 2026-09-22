@@ -1,7 +1,7 @@
 # P2: Extend bounded control flow
 
 The selected P1 control-flow milestone is complete: structured C loops and
-loop exits, literal-label `switch`, checked forward `goto` cleanup, and the
+loop exits, constant-expression-label `switch`, checked forward `goto` cleanup, and the
 bounded C++ cleanup/unwind profile all have checked execution and regression
 coverage. This issue records the smaller, independently motivated extensions
 that can improve ordinary control-flow coverage without taking on general
@@ -19,7 +19,7 @@ These are qualitative implementation sizes, not time estimates.
 | Slice | Relative size | Tricky part |
 | --- | --- | --- |
 | Calls in short-circuit operands | Medium | Preserve lazy evaluation while carrying call effects, resources, and outcome-specific state only through the selected operand. |
-| Broader `switch` support | Medium, then high for nested cases | Keep case selection, fallthrough, `break`, loop nesting, and cleanup edges aligned when labels are no longer just direct literal children. |
+| Broader `switch` support | Medium, then high for cleanup-heavy cases | Keep case selection, fallthrough, `break`, loop nesting, and cleanup edges aligned as switch nesting grows. |
 | Broader cleanup and unwind edges | High | Extend the checked edge and constructed-object model without guessing language-specific lifetime effects or merging normal and exceptional states. |
 
 The first two can build on the existing C execution frontier. The cleanup
@@ -45,17 +45,16 @@ reverification, and `scripts/check.sh`.
 
 ## Slice B: broaden the supported `switch` shape
 
-The current implementation supports direct integer or character literal
-labels in one compound body. A reasonable first extension is constant
-expression labels while retaining direct children and the existing checked
-fallthrough model. That should be a medium-sized parser/lowering change.
+The implementation now supports integer constant-expression labels in one
+compound body while retaining direct children and the existing checked
+fallthrough model. This was the intended medium-sized parser/lowering slice.
 
-The harder follow-up is nested switch structure and its interaction with
-surrounding loops, `continue`, `break`, automatic cleanup, and path joins.
-Those edges need source ownership to remain unambiguous: a `break` exits the
-innermost switch or loop as C specifies, while a `continue` belongs to the
-innermost enclosing loop. Jumping into or across a switch remains part of
-`goto.md`, not this slice.
+The simple nested-switch ownership slice is now covered: an inner `break`
+exits the innermost switch, fallthrough remains inside that switch, and a
+`continue` reaches the innermost enclosing loop. The remaining harder
+follow-up is nested switch structure combined with automatic cleanup and
+path joins. Jumping into or across a switch remains part of `goto.md`, not
+this slice.
 
 Acceptance should include positive and negative tests for constant labels,
 fallthrough, duplicate labels, nested switch ownership, loop nesting, and
@@ -94,8 +93,7 @@ checked certificate.
 ## Suggested order
 
 1. Calls in short-circuit operands.
-2. Constant-expression `switch` labels, with the existing direct-label rule.
-3. A narrowly motivated nested-switch or cleanup/unwind extension.
+2. A narrowly motivated cleanup/unwind extension around nested switches.
 
 Revisit general `goto` only after its edge, scope, and termination model is
 designed independently in [`goto.md`](goto.md).
