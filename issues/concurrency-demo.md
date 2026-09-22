@@ -99,12 +99,21 @@ termination evidence, withheld postconditions, pinned backing scopes, and
 recovery work over 8, 16, 32, and 64 outstanding workers.
 
 This checkpoint supports explicit ownership of external memory and nonescaping
-views only. Transfers of caller stack/global/static storage are refused: ordinary
+views only. Exclusive transfers of caller stack/global/static storage are refused: ordinary
 C accesses to that storage can bypass explicit ownership, so per-context storage
 authority must be enforced before permitting such ownership transfers. The frozen
 parent's output buffer is a caller-supplied parameter; its stack-resident job
-records instead need local backing for stable views and lifetime checks through
-join.
+records use local backing for stable views and lifetime checks through join.
+
+The local-view checkpoint is complete, using existing `views` syntax. A live
+local allocation can now back a checked loan without an explicit `owns` fact.
+The kernel checks byte bounds, records the reader share and caller close right,
+and blocks conflicting writes and allocation retirement until the loan ends.
+Nested synchronous readers reborrow through the same bindings. Internal worker
+spawn keeps the loan active through join; join closes it without fabricating
+ownership. All scope-exit outcomes and retained lifetime certificates enforce
+the check. This establishes local **shared-view** authority; it does not enable
+exclusive transfer of implicit stack/global/static authority.
 A second reader cannot yet reborrow an already pinned parent share; the shared
 reader companion still needs explicit share splitting and recombination.
 Composite/escaping borrowing, heap protocols, and counted-resource deltas are
@@ -151,36 +160,211 @@ the example projects. Synthetic examples are acceptable when identified as
 such. Do not add proof-only locals, branches, helper calls, identifier changes,
 or serial execution wrappers to make their proofs work.
 
-## Next implementation sequence
+## Implementation handoff: next design and bounded chunks
 
-1. Build on the checked internal spawn/join ownership checkpoint and its
-   focused positive and hostile kernel tests. On a nonzero `pthread_create` result, the parent keeps
-   its task resources and no child/right exists. On zero, exactly one child
-   receives the selected worker task and the parent receives one linear right
-   tied to the written `pthread_t`, callback, argument, and task. A valid
-   `pthread_join` consumes that right once, returns the worker's resources and
-   postcondition, and establishes the selected synchronization edge. The
-   worker runs in its own context; the parent follows ordinary return-status
-   branches, not simultaneous alternative execution frontiers or enumerated
-   schedules. Check the scoped valid-join-success assumption explicitly.
-2. Bind those rules to the *actual* imported pthread declarations and C call
-   sites. Lock the selected Linux user-space compiler/header inputs and ABI,
-   make that target selectable by the verifier, and include its identity in
-   certificates and incremental caches. Choose any surface notation only
-   after testing whether existing named callback contracts, conditional
-   resources, and call binders can unambiguously select the worker task and
-   success-only completion right. Do not add a proof-only spawn call that can
-   diverge from C execution.
-3. Prove the three parent outcomes on top of the verified worker: first
-   create fails (four zeros), second create fails after the first succeeds
-   (join first, then `[11, 11, 0, 0]`), and both succeed (join both, then
-   `[11, 11, 22, 22]`). The worker task needs an exclusive output subrange and
-   a stable, lifetime-backed view of its stack job. Keep both job lifetimes
-   live until their associated joins. Add the shared-read-only companion and
-   the rejection cases below before moving the source into `examples/`.
-4. Extend the same checked framework to the mutex and release/acquire
-   programs, then establish the deterministic scaling and normal
-   verify/profile/expand/audit gates required below.
+Read this section together with `docs/internals/stable-views.md` and `AGENTS.md`.
+Implement one green chunk at a time. Do not merge the parked branch; its
+`PARKED.md` is historical evidence, and its saved-state join is not the design.
+The frozen C remains `design/concurrency-probes/fork_join.c`. Do not edit it,
+insert immediate status checks, or introduce proof-only locals or helper calls.
+
+### What is already decided
+
+- `views` means stable shared access. Stack-backed views use the existing
+  surface syntax. A loan pins the allocation lifetime and forbids writes,
+  including writes through aliases and same-value stores.
+- An implicit local loan has no owned escrow. Ending it restores implicit
+  access; it must not create a resource fact the caller did not supply.
+- A worker needs a verified task contract and termination evidence for that
+  exact worker. The internal operation refuses an empty or ambiguous summary.
+- Creation failure preserves the parent path and task resources and creates
+  no completion right. Success transfers the task and creates one linear right.
+  The parent receives no worker postcondition until a checked join.
+- Join consumes one matching right, composes only its output delta, and closes
+  its loans against the current parent ledger. Never restore a captured parent
+  frame, memory snapshot, or ledger. Preserve unrelated intervening work.
+- The selected runtime assumption is success of a valid join on this parent's
+  live terminating child. It is scoped evidence, not a theorem that every
+  arbitrary `pthread_join` succeeds or every schedule makes progress.
+- Keep data-race safety over execution prefixes separate from postconditions
+  about completed operations. Do not enumerate schedules.
+
+### Code map and completed regression boundary
+
+- `src/kernel/threads.rs`: `ThreadContext`, opaque `ThreadHandle`, completion
+  registry, spawn, and join. Start here; reuse its checked operations.
+- `src/kernel/functions.rs`: `prepare_contract_resource_transfer` classifies
+  implicit local views and uses the ordinary verified-call boundary. Explicit
+  owners and existing views still take the ordinary lend/reborrow route.
+  Local backing is checked against callee entry memory: by-value aggregate
+  parameter copies are fresh allocations absent from the earlier caller memory.
+  `mdtests/struct_conditional_value.md` pins that distinction.
+- `src/kernel/loans.rs`: `LocalViewBacking` checks live allocation coverage;
+  `StableViewTransferPlan::lend_local_views` emits checked local roots;
+  `recover_suspended_views` discharges against the current ledger. The local
+  root has a close right and no recovery escrow. Do not expose its backing
+  constructor to surface tactics or replace it with unchecked ownership.
+- `src/kernel/eval/statements.rs`: `end_scope_automatic_lifetimes` and
+  `paths_after_scope_exit` reject live-loan retirement. `src/kernel/proof/execution.rs`
+  checks the same rule when recording and rechecking lifetime events.
+- `src/kernel/tests/thread_transition_tests.rs`: internal success/failure,
+  both join orders, invalid completion, ownership overlap, local lifetime,
+  withheld results, termination, and recovery scaling. The local test exercises
+  normal, return, break, continue, jump, and exception exits.
+- `mdtests/stable_view_local_job.md`: ordinary struct-local initialization,
+  direct field views, a nested reader, and a later write. Its expansion
+  regression in `src/surface/tests/expansion_tests.rs` rechecks simple proofs.
+- `mdtests/fork_join_worker_direct_contract.md`: the frozen worker's reusable
+  direct task contract. The output slice is external parameter memory; only
+  the job record is stack storage. Do not block this demo on exclusive stack
+  transfer, which it does not need.
+- `RESOURCE_SEMANTICS_VERSION` is 3 for the local-loan/lifetime rule. Any further
+  authority or artifact interpretation change must invalidate older artifacts.
+
+### Chunk A: settle and lock the pthread binding contract
+
+This is the next design step. First inspect the modeled header/import path and
+existing callback contract selection. Produce an exact binding specification
+before changing the parser. The current `<pthread.h>` is a narrow modeled
+header, not a locked import of glibc.
+
+1. Identify the chosen declarations and ABI from the existing user-space
+   profile: callback `void *(*)(void *)`, argument `void *`, handle output
+   `pthread_t *`, and join result `void **`. Record compiler/driver, opened
+   headers, flags, target, and ABI observations in import identity. Bind this
+   identity into certificates and caches. Reject lookalike user functions,
+   unsupported attributes, mismatched declarations, and the kernel target.
+2. Determine whether existing named callback contracts and call binders can
+   uniquely select a verified worker task at the actual C callback expression.
+   Write a minimal sidecar over the unchanged probe as the design example.
+   Separate the ordinary opaque C argument from its logical task instance.
+3. Specify how a zero create result carries the completion right associated
+   with the handle value actually stored, the worker rule, argument, task, and
+   creation identity. A numeric `pthread_t` value or a user token cannot mint
+   this authority. Aliases or copies of a C handle must not duplicate it.
+4. Specify ordinary status branching: the right and transferred authority are
+   conditional on success. Delaying a test, storing a status, or branching on
+   equivalent checked facts must work without a source-pattern recognizer.
+   Joining branches with different live children must preserve conditional
+   authority or refuse explicitly; it must not erase the distinction.
+
+**Open surface decision:** existing mechanisms may select the callback task,
+but there is not yet a settled user-facing spelling for selecting/retaining a
+success-conditioned completion right. Prefer kernel-issued completion state
+attached to the real C operation. If existing contracts cannot express its
+selection, propose the smallest sidecar extension with one success example,
+one failure example, and a delayed-status-test example. Do not add a parallel
+proof-only spawn operation or a general linear-type syntax just to name a local
+loan. Ask for a language-design decision only when these concrete alternatives
+have been evaluated; do not guess syntax and spread it across the implementation.
+
+**Acceptance:** a documented declaration identity and state-transition schema,
+a concrete candidate sidecar using existing syntax where possible, and explicit
+remaining surface choices. Parsing alone is not concurrency verification.
+
+### Chunk B: wire actual C create/join operations and their evidence
+
+After A settles selection and binding, route recognized C calls to the shared
+checked thread engine. The evaluator and retained certificate checker must use
+the same transition, including the handle store, return status, and memory
+observations. Do not recursively execute Click or execute the worker body in the
+parent. Reuse its verified summary once per application.
+
+- On create failure retain the original parent continuation and resources. On
+  success issue exactly one completion identity and havoc only the transferred
+  mutable footprint. Reject overlap with the handle output store itself.
+- Keep the child's output facts and resources inaccessible until join. Transport
+  supported observations to current memory explicitly; an old snapshot may
+  describe past values but cannot certify current mutable memory.
+- Match join to the actual live right, consume it once, and recover only its
+  output delta against current parent authority. Account for the optional
+  result slot and its writable authority. Check the selected join assumption's
+  scope and preserve the other child's loans in either join order.
+- Retained events must bind predecessor authority, selected declaration/profile,
+  exact worker/termination rules, arguments, handle identity, result case, and
+  output delta. Forged surface certificates cannot bypass these checks.
+
+**Regressions:** zero/nonzero creation, first/second creation failure, delayed
+status testing, invalid/foreign/stale handle, duplicate join, copied handle,
+wrong callback/argument/termination evidence, overlapping output/handle slots,
+parent read/write before join, premature job scope exit, and withheld child
+postconditions. Include forged evidence and cached-profile mismatch cases.
+**Acceptance:** positive and hostile tests through actual unchanged C call sites;
+verify, expand, reverify, profile, and audit agree under normal bounded tooling.
+
+### Chunk C: shared-reader splitting and recombination
+
+A single parent view is currently pinned by its first reborrow. A second worker
+cannot reborrow that same pinned share. Build on the ledger's existing checked
+split/join operations to distribute distinct reader shares and track their
+common backing. Do not repeatedly create new roots from the same implicit
+storage or duplicate one share into both workers.
+
+Track outstanding shares by identity. Joining either worker returns only its
+share; storage remains stable and live until every required share is back.
+Recombine exact siblings before closing the root. A failed creation retains
+its share in the parent. Two disjoint views of different job records already
+work internally and do not require this extension.
+
+**Regressions:** two readers of one range; both join orders; one create failure;
+parent write/scope exit after only one join; duplicate/wrong sibling recovery;
+nested reader; a fixed join among 8/16/32/64 unrelated readers.
+**Acceptance:** a shared-read-only C companion verifies with no invented
+ownership or user-managed fraction arithmetic; hostile recovery refuses locally.
+
+### Chunk D: verify the frozen parent and complete the fork/join slice
+
+Use the existing direct worker contract and local job views. Prove all three
+source outcomes: first creation fails (four zeros), second fails after first
+succeeds (join first, then `[11, 11, 0, 0]`), both succeed (join both, then
+`[11, 11, 22, 22]`). Keep each stack job live through its associated join.
+
+The output buffer is a parameter, so its disjoint `owns` slices use the existing
+external-memory transfer path. Preserve the frozen C byte for byte. If a true
+claim cannot be expressed or proved, reduce the Click gap and fix it; do not
+specialize the C or weaken the required result. Move the source to a verifying
+example only when this proof, the shared-reader companion, and hostile C
+regressions pass. Document runtime assumptions and the exact support boundary.
+
+### Separate extension: exclusive implicit-storage authority
+
+This can follow the first demo; it is not a prerequisite for its stack **views**.
+Keep exclusive transfer of stack/global/static memory refused until implemented.
+
+Define context-local authority over the allocation/range independently of
+explicit resource facts. Every ordinary read, direct assignment, pointer load
+or store, aggregate copy, call effect, lifetime end, and loop havoc that can
+reach transferred bytes must check it. Transfer removes parent access; join
+restores only the returned range. Partition by allocation identity and byte
+range, including aliases and pointer casts. Escaping a function must not leave
+a worker using its automatic storage. Global/static initial authority and
+cross-context discovery require an explicit policy; do not infer ownership
+merely from a known block name. Decide that policy before enabling transfers.
+
+**Regressions:** direct scalar and aggregate local access while transferred,
+aliasing and partial ranges, global/static access by another context, same-value
+stores, premature retirement, both join orders, and access restored only by the
+matching completion. Measure fixed operations with increasing unrelated storage
+as well as increasing explicit deltas. Surface ownership annotations alone do
+not solve this implicit-access problem; the enforcement belongs in the kernel.
+
+### Gates for every chunk and later work
+
+Follow `AGENTS.md`: isolated worktree, ordinary verification before expansion or
+profiling, prompt bounded failures, unchanged C, and `scripts/check.sh` exit
+status as the full gate. Fix unstable tooling before extending the example.
+Do not file new issue entries without explicit user authorization.
+
+Keep authority operations indexed and persistent. Add deterministic curves at
+8/16/32/64 sizes for growing explicit work and fixed operations amid unrelated
+state. Do not scan all locals, resources, completion rights, or histories at
+every step, deep-compare saved environments, or enumerate schedules.
+
+After fork/join, implement the mutex counter and release/acquire publication
+programs below using the same checked authority and observation framework.
+Their protocols, runtime assumptions, and surface notation require separate
+concrete designs. Do not treat stable views as permissions to read changing
+atomic or lock-protected memory.
 
 ## Three required programs
 

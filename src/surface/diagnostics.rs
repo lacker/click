@@ -851,6 +851,7 @@ fn describe_loan_conflict(
     }
     let attempted = subject.memory_range()?;
     let origin = match subject.origin()? {
+        crate::kernel::LoanOriginKind::LocalStorage => "a view of local storage",
         crate::kernel::LoanOriginKind::ContractInputView => "a contract input view",
         crate::kernel::LoanOriginKind::LentOwner => "an owner lent for a call",
         crate::kernel::LoanOriginKind::Reborrow => "a reborrow of a live loan",

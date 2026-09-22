@@ -11900,20 +11900,12 @@ fn prepare_contract_resource_transfer(
             "resource requirement has an inconsistent transfer role".to_string(),
         )));
     }
-    // A view of storage this activation declared, or of read-only storage,
-    // is not a caller-supplied borrow. A local array has implicit authority
-    // rather than an owned resource fact, so there is nothing to escrow: it
-    // keeps the activation-local bounds rule below. A local range the caller
-    // holds as a resource fact, whether an explicit owner or a view it was
-    // itself lent, is ordinary loan-backed memory and goes through the
-    // planner, which also refuses a view whose binding has gone stale.
-    //
-    // This is the implicit local authority rule (see
-    // docs/internals/stable-views.md): while the caller is suspended nothing else can reach its
-    // unowned local storage, a callee cannot write through a view, and a
-    // view returned from the call still has to pass the provenance routes,
-    // so the read is authorized for the call without a ledger transition.
-    let intrinsic_read_views = checked_required_resources
+    // Implicit local storage authority has no owned fact to escrow. At a
+    // call site it backs a checked local loan, so writes and lifetime ends
+    // remain blocked even when a worker outlives the call. Read-only storage
+    // retains intrinsic read authority. An explicitly supplied owner or view
+    // takes the ordinary lend/reborrow route, including stale-binding checks.
+    let implicit_read_views = checked_required_resources
         .iter()
         .filter(|requirement| {
             let unsupplied_local = |range: &CMemoryRange| {
@@ -11938,6 +11930,9 @@ fn prepare_contract_resource_transfer(
         })
         .cloned()
         .collect::<Vec<_>>();
+    let (local_read_views, intrinsic_read_views): (Vec<_>, Vec<_>) = implicit_read_views.into_iter()
+        .partition(|requirement| matches!(requirement.fact.resource(), CResource::Memory(range)
+            if range.base().block.starts_with("local:") && !callee_state.memory().is_read_only_block(&range.base().block)));
     // A composite view whose checked body is empty on this path protects no
     // bytes and holds no token, so there is nothing to lend and nothing a
     // loan could suspend (D6: an empty permission grants no dereference).
@@ -11964,22 +11959,15 @@ fn prepare_contract_resource_transfer(
     } else {
         Vec::new()
     };
-    // D9: a declared mutable effect is a consequence of the authority the
-    // call received and cannot widen it, so the call site compares each
-    // effect against every byte this call keeps as a checked view. A planned
-    // stable view carries its own range, but neither group above is planned
-    // at all -- both are filtered out of `stable_requirements` below -- so
-    // their bytes are recorded on the transfer instead. An intrinsic read
-    // view is always a plain memory range by the filter that selects it; an
-    // empty composite view has an empty checked body and protects no bytes,
-    // which is exactly why it needs no backing. The composite views that do
-    // reach the planner add their checked frontier pieces below.
-    // Neither group is backed by an owned occurrence of the caller's
-    // partition, so neither carries a support and both stay on the
-    // arithmetic comparison.
+    // D9: effects cannot overlap checked views. Implicit locals and read-only
+    // storage have no owned occurrence in the caller's partition, so their
+    // ranges need arithmetic separation rather than the distinct-owner rule.
+    // Empty composite views protect no bytes; other composite frontiers are
+    // added by the ordinary planner below.
     let mut checked_view_frontier = if purpose.lends() {
         intrinsic_read_views
             .iter()
+            .chain(local_read_views.iter())
             .chain(empty_composite_views.iter())
             .filter_map(|requirement| Some((requirement.fact.memory_range().cloned()?, None)))
             .collect::<Vec<_>>()
@@ -12035,10 +12023,15 @@ fn prepare_contract_resource_transfer(
     } else {
         Vec::new()
     };
+    let local_read_facts = local_read_views
+        .iter()
+        .map(|view| &view.fact)
+        .collect::<std::collections::BTreeSet<_>>();
     let stable_requirements = checked_required_resources
         .iter()
         .filter(|requirement| {
             !intrinsic_read_views.contains(requirement)
+                && !local_read_facts.contains(&requirement.fact)
                 && !empty_composite_views.contains(requirement)
                 && !population_quantity_requirements.contains(requirement)
                 && !definitionally_empty_owned.contains(requirement)
@@ -12217,7 +12210,28 @@ fn prepare_contract_resource_transfer(
             caller_state.loan_view_bindings(),
             &composite_backings,
         ) {
-            Ok(plan) => {
+            Ok(mut plan) => {
+                // Argument binding may have created a fresh by-value aggregate
+                // copy. Its views are backed by that checked entry allocation,
+                // which does not exist in the caller's earlier memory. The
+                // entry memory also retains the caller's original local blocks.
+                if let Err(error) =
+                    plan.lend_local_views(callee_state.memory(), &local_read_views, assumptions)
+                {
+                    return Ok(Err(match error {
+                        super::loans::StableViewPlanError::MissingResource(resource) => {
+                            CRuntimeError::MissingResource { resource }
+                        }
+                        error => error
+                            .loan_diagnostic(LoanRefusalOperation::Plan)
+                            .map(CRuntimeError::LoanRefusal)
+                            .unwrap_or_else(|| {
+                                CRuntimeError::FunctionContract(
+                                    "local view loan could not be checked".to_string(),
+                                )
+                            }),
+                    }));
+                }
                 if let Err(error) = plan.recheck_entry(&ledger) {
                     return Ok(Err(CRuntimeError::LoanRefusal(
                         error.diagnostic(LoanRefusalOperation::Entry),
@@ -12388,7 +12402,10 @@ fn prepare_contract_resource_transfer(
             };
         }
     }
-    for intrinsic_view in &intrinsic_read_views {
+    for intrinsic_view in intrinsic_read_views
+        .iter()
+        .chain(local_read_views.iter().filter(|_| !purpose.lends()))
+    {
         // The activation-local bounds rule, decided before any read is
         // attempted. Implicit local authority covers the storage the block
         // has and nothing past it, so a view running off the end is a
@@ -21906,11 +21923,10 @@ mod stable_view_call_tests {
         );
     }
 
-    /// A view of the activation's own local array is implicit authority, not
-    /// a caller-supplied borrow: the call composes the in-bounds view for the
-    /// callee without touching the loan ledger.
+    /// Implicit local authority backs a checked loan without an owned escrow.
+    /// A synchronous call closes it before returning to its caller.
     #[test]
-    fn candidate_local_array_view_is_intrinsic_and_lends_nothing() {
+    fn candidate_local_array_view_uses_a_checked_loan_and_recovers() {
         let pointer = pointer();
         let function = reader("candidate_local_reader", false);
         let caller = CState::new().with_memory(
@@ -21928,6 +21944,11 @@ mod stable_view_call_tests {
             &mut ExecutionBudget::new(),
         )
         .expect("candidate local view call should execute");
+        assert_eq!(
+            paths[0].loan_evidence.len(),
+            1,
+            "the local view must have a checked entry and discharge"
+        );
         assert!(matches!(
             paths.as_slice(),
             [CFunctionPath {
@@ -23247,12 +23268,10 @@ mod stable_view_call_tests {
         ));
     }
 
-    /// F6. An intrinsic local view is filtered out before planning, so no
-    /// plan records it and the effect check could not see it either. The
-    /// transfer carries its range, and an effect over the same bytes is
-    /// refused exactly as it is for a lent view.
+    /// F6. A local view has no caller-owned occurrence, so effect separation
+    /// must check its actual bytes rather than treating it as a distinct owner.
     #[test]
-    fn candidate_rejects_mutable_effect_overlapping_an_intrinsic_local_view() {
+    fn candidate_rejects_mutable_effect_overlapping_a_local_view() {
         let pointer = pointer();
         let function = reader_with_mutable_range("candidate_intrinsic_overlap_effect", 0, 1);
         let caller = CState::new().with_memory(

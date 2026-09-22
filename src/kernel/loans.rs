@@ -495,6 +495,7 @@ fn origin_kind(origin: &LoanOrigin) -> LoanOriginKind {
         LoanOrigin::Escrowed(_) => LoanOriginKind::LentOwner,
         LoanOrigin::Reborrowed => LoanOriginKind::Reborrow,
         LoanOrigin::BorrowedContractInput => LoanOriginKind::ContractInputView,
+        LoanOrigin::LocalStorage(_) => LoanOriginKind::LocalStorage,
     }
 }
 
@@ -508,6 +509,9 @@ enum LoanOrigin {
     /// Modular verification began with a caller-supplied shared borrow. The
     /// caller and its ownership escrow are deliberately outside this ledger.
     BorrowedContractInput,
+    /// A live local object backs a read loan without manufacturing an owned
+    /// resource. Closing it restores implicit access, not an escrowed fact.
+    LocalStorage(LoanParticipantId),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -647,9 +651,10 @@ pub enum LoanRefusalOperation {
 
 /// Where the authority a loan protects came from. A refusal names it so the
 /// reader knows which declaration to look at: a contract's own `views`
-/// clause, an owner lent for a call, or a nested reborrow of a live loan.
+/// clause, live local storage, an owner lent for a call, or a nested reborrow.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum LoanOriginKind {
+    LocalStorage,
     ContractInputView,
     LentOwner,
     Reborrow,
@@ -1033,7 +1038,8 @@ enum LoanTransitionEvidence {
         loan: LoanId,
         root: LoanShareId,
     },
-    BorrowedContractInput {
+    BorrowedRoot {
+        local: Option<(LoanParticipantId, LocalViewBacking)>,
         holder: LoanParticipantId,
         support: ResourceOccurrenceId,
         viewed: CResourceFact,
@@ -1269,6 +1275,52 @@ impl CompositeLoanBacking {
     }
 }
 
+/// Checked backing for a view of live automatic storage. Retain the memory
+/// snapshot whose allocation bounds and lifetime were checked. The loan ledger
+/// enforces the lifetime restriction; fields are private to this module.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LocalViewBacking {
+    memory: super::CMemory,
+    viewed: CResourceFact,
+}
+
+impl LocalViewBacking {
+    fn check(
+        memory: &super::CMemory,
+        viewed: &CResourceFact,
+        assumptions: &PureFactContext,
+    ) -> Option<Self> {
+        let range = viewed.memory_range()?;
+        if !viewed.is_view()
+            || !range.base().block.starts_with("local:")
+            || !memory.has_block(&range.base().block)
+            || memory.is_ended_local_address(range.base())
+        {
+            return None;
+        }
+        let bytes = memory.block_size(&range.base().block)?.clone();
+        let entire = CMemoryRange::new_with_element_width(
+            super::Pointer {
+                block: range.base().block.clone(),
+                offset: super::PointerOffsetTerm::Constant(0),
+            },
+            0.into(),
+            bytes,
+            1,
+        );
+        if !ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own_memory(entire))
+            .satisfies_fact(viewed, assumptions)
+        {
+            return None;
+        }
+        Some(Self {
+            memory: memory.clone(),
+            viewed: viewed.clone(),
+        })
+    }
+}
+
 /// One body-independent partition of a call's resource requirements.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StableViewTransferPlan {
@@ -1371,7 +1423,7 @@ impl StableViewRecovery {
                     support,
                     ..
                 }
-                | LoanTransitionEvidence::BorrowedContractInput {
+                | LoanTransitionEvidence::BorrowedRoot {
                     scope,
                     loan,
                     root,
@@ -2554,6 +2606,74 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
 }
 
 impl StableViewTransferPlan {
+    /// Add the call's implicit local views to the same checked entry trace as
+    /// explicit resources. No owned fact is inserted into either context.
+    pub(crate) fn lend_local_views(
+        &mut self,
+        memory: &super::CMemory,
+        requirements: &[CCheckedResourceFact],
+        assumptions: &PureFactContext,
+    ) -> Result<(), StableViewPlanError> {
+        let mut seen = std::collections::BTreeSet::new();
+        for requirement in requirements {
+            crate::instrumentation::record_deterministic_work(1);
+            if !seen.insert(requirement.fact.clone()) {
+                continue;
+            }
+            let backing = LocalViewBacking::check(memory, &requirement.fact, assumptions)
+                .ok_or_else(|| StableViewPlanError::MissingResource(requirement.fact.clone()))?;
+            let range = requirement
+                .fact
+                .memory_range()
+                .expect("checked memory view");
+            // New local authority cannot bypass an existing loan. Views that
+            // the caller itself borrowed take the ordinary reborrow route.
+            self.parent_ledger
+                .permits_memory_access_with_assumptions(range, assumptions)?;
+            let (resources, occurrence) = self
+                .callee_resources
+                .clone()
+                .try_compose_with_fact_with_occurrence(requirement.fact.clone(), assumptions)
+                .map_err(|_| StableViewPlanError::InvalidResidual)?;
+            let support = occurrence.ok_or(StableViewPlanError::InvalidResidual)?;
+            let opening = self.ledger.open_borrowed_root(
+                self.callee,
+                support,
+                requirement.fact.clone(),
+                None,
+                Some((self.caller, backing)),
+            )?;
+            self.ledger = self.ledger.apply(&opening.transition)?;
+            self.entry_transitions.push(opening.transition);
+            let binding = LoanViewBinding {
+                loan: opening.loan,
+                scope: opening.scope,
+                share: opening.root_share,
+                support,
+                viewed: requirement.fact.clone(),
+                hold: None,
+            };
+            self.callee_resources = resources.with_loan_dependency(support, binding.clone());
+            self.callee_view_bindings = self.callee_view_bindings.with_inserted(support, binding);
+            self.loan_roots.push((
+                opening.scope,
+                opening.loan,
+                opening.root_share,
+                support,
+                false,
+            ));
+            self.stable_views.push(PlannedStableView {
+                requirement: requirement.clone(),
+                support,
+                loan: opening.loan,
+                scope: opening.scope,
+                share: opening.root_share,
+                description: opening.description,
+            });
+        }
+        Ok(())
+    }
+
     pub(crate) fn caller_ledger(&self) -> &LoanLedger {
         &self.parent_ledger
     }
@@ -2943,6 +3063,17 @@ impl LoanLedger {
         viewed: CResourceFact,
         backing: Option<BorrowedContractInputBacking>,
     ) -> Result<LoanOpening, LoanRefusal> {
+        self.open_borrowed_root(holder, support, viewed, backing, None)
+    }
+
+    fn open_borrowed_root(
+        &self,
+        holder: LoanParticipantId,
+        support: ResourceOccurrenceId,
+        viewed: CResourceFact,
+        backing: Option<BorrowedContractInputBacking>,
+        local: Option<(LoanParticipantId, LocalViewBacking)>,
+    ) -> Result<LoanOpening, LoanRefusal> {
         self.require_participant(holder)?;
         if support == ResourceOccurrenceId::default() {
             return Err(LoanRefusal::MissingBacking);
@@ -2971,7 +3102,8 @@ impl LoanLedger {
             arena: self.storage.data.arena,
             ordinal: self.storage.data.next_share,
         };
-        let evidence = LoanTransitionEvidence::BorrowedContractInput {
+        let evidence = LoanTransitionEvidence::BorrowedRoot {
+            local,
             holder,
             support,
             viewed: viewed.clone(),
@@ -4057,7 +4189,8 @@ impl LoanLedger {
                         .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
                 }
             }
-            LoanTransitionEvidence::BorrowedContractInput {
+            LoanTransitionEvidence::BorrowedRoot {
+                local,
                 holder,
                 support,
                 viewed,
@@ -4067,6 +4200,12 @@ impl LoanLedger {
                 root,
             } => {
                 self.require_participant(*holder)?;
+                if let Some((lender, backing)) = local {
+                    self.require_participant(*lender)?;
+                    if backing.viewed != *viewed {
+                        return Err(LoanRefusal::InvalidEvidence);
+                    }
+                }
                 if *support == ResourceOccurrenceId::default() {
                     return Err(LoanRefusal::MissingBacking);
                 }
@@ -4114,7 +4253,7 @@ impl LoanLedger {
                     LoanScopeRecord {
                         loan: *loan,
                         root: *root,
-                        close_right: None,
+                        close_right: local.as_ref().map(|(lender, _)| *lender),
                         active: true,
                         parent: None,
                         parent_share: None,
@@ -4129,7 +4268,11 @@ impl LoanLedger {
                         support: *support,
                         escrow: None,
                         permitted,
-                        origin: LoanOrigin::BorrowedContractInput,
+                        origin: local
+                            .as_ref()
+                            .map_or(LoanOrigin::BorrowedContractInput, |(lender, _)| {
+                                LoanOrigin::LocalStorage(*lender)
+                            }),
                         recovered: false,
                         memory_backing: memory_backing.clone(),
                     },
@@ -4690,6 +4833,17 @@ impl LoanLedger {
                         && scope.close_right.is_some()
                         && scope.parent.is_some()
                         && !loan.recovered
+                }
+                LoanOrigin::LocalStorage(lender) => {
+                    loan.escrow.is_none()
+                        && scope.close_right == Some(*lender)
+                        && scope.parent.is_none()
+                        && !loan.recovered
+                        && loan.support != ResourceOccurrenceId::default()
+                        && loan
+                            .permitted
+                            .iter()
+                            .all(|fact| fact.is_view() && fact.memory_range().is_some())
                 }
                 LoanOrigin::BorrowedContractInput => {
                     loan.escrow.is_none()
@@ -7947,5 +8101,125 @@ mod tests {
         let diagnostic = LoanRefusal::ActiveDependency
             .diagnostic_with_subject(LoanRefusalOperation::Plan, subject);
         assert!(diagnostic.subject().resource_fact().is_some());
+    }
+}
+
+#[cfg(test)]
+mod local_storage_tests {
+    use super::*;
+    use crate::kernel::{CMemory, Pointer, PointerOffsetTerm};
+
+    fn view(index: usize, end: u32) -> CCheckedResourceFact {
+        CCheckedResourceFact {
+            fact: CResourceFact::view_memory(CMemoryRange::new(
+                Pointer {
+                    block: format!("local:loan-{index}").into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                0.into(),
+                end.into(),
+            )),
+            role: CResourceTransferRole::Borrow,
+            snapshot: CResourceSnapshot::Entry,
+            clause_position: None,
+        }
+    }
+
+    fn plan() -> StableViewTransferPlan {
+        let ledger = LoanLedger::new();
+        plan_stable_view_transfer(
+            &ResourceContext::new(),
+            &[],
+            &PureFactContext::new(),
+            &ledger,
+            ledger.fresh_participant().unwrap(),
+            ledger.fresh_participant().unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn local_views_preserve_aliases_check_bounds_and_mint_no_owned_escrow() {
+        let memory = CMemory::new().with_block(
+            view(0, 2).fact.memory_range().unwrap().base().block.clone(),
+            8,
+        );
+        let assumptions = PureFactContext::new();
+        let mut plan = plan();
+        plan.lend_local_views(&memory, &[view(0, 2), view(0, 1), view(0, 2)], &assumptions)
+            .unwrap();
+        assert!(plan.ledger.invariant_holds());
+        assert_eq!(plan.stable_views.len(), 2);
+        assert!(plan.escrowed_owners.is_empty());
+        assert!(plan.caller_resources_after_requirements.is_empty());
+        let entry = plan.ledger.clone();
+        assert_eq!(plan.recheck_entry(plan.caller_ledger()).unwrap(), entry);
+        let recovery = plan
+            .recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+            .unwrap();
+        assert!(recovery.resources.is_empty());
+        assert!(recovery.recovered_escrows.is_empty());
+        assert!(recovery.terminal_ledger.invariant_holds());
+        let mut outside = self::plan();
+        assert!(
+            outside
+                .lend_local_views(&memory, &[view(0, 3)], &assumptions)
+                .is_err()
+        );
+        let ended =
+            memory.without_local_block(&view(0, 2).fact.memory_range().unwrap().base().block);
+        assert!(
+            outside
+                .lend_local_views(&ended, &[view(0, 1)], &assumptions)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn local_view_work_tracks_the_explicit_delta_not_ambient_local_storage() {
+        let assumptions = PureFactContext::new();
+        let mut fixed = Vec::new();
+        let mut growing = Vec::new();
+        for size in [8, 16, 32, 64] {
+            let mut memory = CMemory::new();
+            for index in 0..size {
+                memory = memory.with_block(
+                    view(index, 1)
+                        .fact
+                        .memory_range()
+                        .unwrap()
+                        .base()
+                        .block
+                        .clone(),
+                    4,
+                );
+            }
+            let mut one = plan();
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                one.lend_local_views(&memory, &[view(0, 1)], &assumptions)
+                    .unwrap();
+            });
+            assert!(work > 0);
+            fixed.push(work);
+            let mut all = plan();
+            let requirements = (0..size).map(|index| view(index, 1)).collect::<Vec<_>>();
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                all.lend_local_views(&memory, &requirements, &assumptions)
+                    .unwrap();
+                all.recover_stable_views(&assumptions, &BTreeMap::new(), &[])
+                    .unwrap();
+            });
+            growing.push(work);
+        }
+        assert!(
+            fixed[3] <= fixed[0] * 2,
+            "local loan scans ambient storage: {fixed:?}"
+        );
+        for pair in growing.windows(2) {
+            assert!(
+                pair[1] <= pair[0] * 3,
+                "local loan work exceeds its explicit delta: {growing:?}"
+            );
+        }
     }
 }
