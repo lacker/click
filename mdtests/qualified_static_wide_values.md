@@ -1,8 +1,8 @@
 # Calls in short-circuit right operands remain unsupported
 
 The original wide-static startup example is retained here without rewriting
-its C. It is blocked by the separate short-circuit call lowering gap; see
-`issues/short-circuit-operand-calls.md`.
+its C. It is blocked by the short-circuit call lowering gap; see
+`issues/control-flow.md`.
 
 ```c filename=wide.c
 static long low = -9223372036854775807L - 1;
