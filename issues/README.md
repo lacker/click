@@ -65,6 +65,11 @@ Soundness and kernel shape:
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 - [Verify byte representation copying and pointer preservation](byte-representation-demo.md)
 - [Verify independently owned parents sharing a heap child](shared-heap-graph-demo.md)
+- [Contract retire keeps the zeroed reading](contract-retire-keeps-zeroed-reading.md)
+- [store_union keeps a stale raw cell under an equal spelling](store-union-keeps-aliased-raw-cell.md)
+- [spec-fold binder identities collide with the quantifier bands](spec-fold-binders-collide-with-quantifier-band.md)
+- [Byte-extent residue comparison certifies wrapped loads](byte-extent-residue-compare-certifies-wrapped-loads.md)
+- [Footprint refusals drop fact-aliased writes](footprint-check-drops-fact-aliased-writes.md)
 
 Program import and execution:
 
