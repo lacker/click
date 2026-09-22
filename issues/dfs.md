@@ -5,7 +5,7 @@ found. Kernel soundness review discovered during the same campaign is tracked
 separately in `issues/bughunt.md`. Everything needed for this example is here
 and in `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
-## Handoff checkpoint — 2026-09-22, after the ranked-loop return fix
+## Handoff checkpoint — 2026-09-22, after correcting the store frontier
 
 Both the value and generated viewability halves of the quantified invariant
 over `next` now close. The direct pointer-chasing route is covered by
@@ -14,25 +14,28 @@ ranked loop body also works through the documented proof-level `if` and the
 automatic preservation planner; `mdtests/return_inside_ranked_loop_body.md`
 covers both routes.
 
-The saved DFS proof now advances through that return and the following
-`visited[cur] = 1` store. Its first failure is the immediately expected
-post-store fact, `have visited[cur] != 0 by { simp(); }`; the diagnostic says
-the underlying equality is false but still rejects the `have`. This is a
-prompt proof failure, not a timeout.
+The supposed post-store failure was not a verifier defect. The false arm of
+the lowered C `if` contains an explicit `Skip`: the saved proof stepped into
+that arm and across the `Skip`, then stated `visited[cur] != 0` before it had
+executed `visited[cur] = 1`. The saved proof now has the missing store step.
+`mdtests/post_store_fact_after_ranked_loop_return.md` checks the exact control
+shape and proves both `b[i] == 1` and `b[i] != 0` immediately after the store.
 
 This is **not yet a routine cleanup handoff**:
 
-- The current blocker concerns retaining or normalizing the direct result of a
-  checked store. Reduce that exact post-store `have` before changing the saved
-  proof; do not reopen the now-passing quantified invariant path.
+- The saved full proof has not yet been promoted into the mdtest gate. Its next
+  bounded task is to rerun the corrected source and record the first genuine
+  open obligation; do not reopen the now-passing quantified invariant, return,
+  or post-store paths.
 - Moving an already verified lemma into the checked lemma fixture, refreshing
   old reproductions, and reducing a diagnostic are bounded tasks suitable for
   a less capable agent. Whole-array dependency refinement, reachability, and
   recursive DFS remain design work, not small finishing edits.
 
-For a bounded next assignment, reduce the post-store `visited[cur] != 0`
-failure in `design/dfs-gaps/search_terminates_blocked.md`, identifying whether
-the store equation is missing, stale, or simply not normalized by `simp`.
+For a bounded next assignment, rerun the corrected complete source in
+`design/dfs-gaps/search_terminates_blocked.md` and reduce only its new first
+failure. The previously quoted `visited[cur] != 0` refusal was before the
+store and is no longer evidence of a Click gap.
 
 This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
 Those files include historical diagnostics, and other small gaps/tooling notes
@@ -46,7 +49,7 @@ Preserve the user's design constraints: keep the C fixed, avoid proof hacks,
 and discuss a proof-language migration when it offers a simpler design.
 Direct aggregate `views` remain restricted; use declared resources and the
 accepted pointer/array forms documented in `docs/concepts/resources.md` and
-`docs/concepts/viewability.md`. The fold-read-range design in item 3
+`docs/concepts/viewability.md`. The fold-read-range design in item 2
 still needs discussion before implementation. No scratch files or conversation
 history are required to reproduce the current blocker.
 
@@ -90,30 +93,24 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
   `invariant unmarked(visited, 0, i) == 0`; it carries a verbatim copy of
   `unmarked_frame`).
 - `design/dfs-gaps/search_terminates_blocked.md` is the full C and sidecar for
-  `search` at the furthest point reached. It now stops at the post-store
-  `visited[cur] != 0` fact described above; both quantified `next` obligations
-  and the return path are regression-covered. Rerun the saved proof first; the
-  refusal may move as execution-proof work lands.
+  `search` at the furthest point reached. Its false-arm cursor now explicitly
+  crosses the lowered `Skip` and the store before using the store result. The
+  quantified `next` obligations, return path, and post-store value are all
+  regression-covered. Rerun the corrected saved proof to find its next genuine
+  refusal.
   It also holds a third lemma, `unmarked_nonnegative`, that verifies and should
   move into `mdtests/unmarked_count_lemmas.md`.
 
 ## Gaps, ranked by the proof text they cost (reductions in `design/dfs-gaps/`)
 
-1. **A checked store's direct result is not discharged by `simp`.** In the
-   saved proof, immediately after `visited[cur] = 1`, both
-   `have visited[cur] != 0 by { simp(); }` and the stronger
-   `have visited[cur] == 1 by { simp(); }` fail. The diagnostic prints the
-   corresponding equality with the requested truth value, so reduce whether
-   this is missing store provenance, snapshot selection, or normalization.
-   **This blocks `search`.**
-2. **A quantified fact cannot be explicitly transported to another program point**
+1. **A quantified fact cannot be explicitly transported to another program point**
    (`a_universal_fact_does_not_transport.md`). `transport` refuses a quantified
    proposition and a comparison (`unsupported proof operation transport`), so a
    quantified precondition reaches a loop body one cell at a time — 19 lines per
    premise. A top-level `transport` in a `preserve` body verifies while the same
    `transport` inside a `have` there is refused. The automatic invariant route
    used by `search` now passes, but the explicit language gap remains.
-3. **A fact about part of an array dies at a store outside that part.**
+2. **A fact about part of an array dies at a store outside that part.**
    `unmarked(visited, 0, i)` reads only cells below `i`, but Click records that it
    depends on the whole array, so `visited[i] = 1` discards it; the user pays with
    a frame lemma plus a quantified per-cell transport (about 110 of the sweep
@@ -125,16 +122,16 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    that a store to `a[i]` misses `a[0..i)` because the stored index is the same
    term as the upper bound. It would not help `search` itself (that store is
    inside the range; `unmarked_point_update` is genuinely needed).
-4. **No gate-checked shared lemma library for mdtests.** `import` supplies
+3. **No gate-checked shared lemma library for mdtests.** `import` supplies
    theorem statements and assumes their proofs by design, and nothing in
    `scripts/check.sh` selects a library `.click` file, so lemmas are copied
    verbatim into each example.
-5. **Extent bounds restated at every pure-theorem `apply … using`.** A stated
+4. **Extent bounds restated at every pure-theorem `apply … using`.** A stated
    range carries `0 <= n - lo` and `n - lo <= 1073741823` for the proof, but a
    `using` list in a pure theorem must name them again (the C-proof route accepts
    a cited range's available guards). That checker promises to read only listed
    premises, so this is a design question.
-6. Small ones (`small_refusals_and_spellings.md`): no `!=` symmetry (forces
+5. Small ones (`small_refusals_and_spellings.md`): no `!=` symmetry (forces
    `unmarked_point_update`'s `below`/`above` split; not re-tested recently);
    `have` cannot take a label; `assumption()` cannot close a `viewable` goal;
    `arithmetic() using { j < hi; hi <= n }` will not weaken to `j <= n` and says

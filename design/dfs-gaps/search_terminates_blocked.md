@@ -1,11 +1,14 @@
 # a pointer-chasing search terminates on the number of unmarked cells
 
-**BLOCKED — this file does not verify.** Rerun on 2026-09-22 after repairing
-returning paths in ranked-loop preservation. Both halves of the quantified
-invariant over `next` now close. The proof advances through the return and the
-store, then stops when `simp` fails to retain the store result as
-`visited[cur] != 0`; the count proof has not run yet. The refusals quoted at
-the end are historical observations from `e120897d`.
+**BLOCKED — this file has not yet been shown to verify completely.** Updated on
+2026-09-22 after repairing ranked-loop return paths and correcting the false
+arm's execution cursor. Both halves of the quantified invariant over `next`
+now close. The earlier `visited[cur] != 0` refusal occurred before the store:
+the proof had crossed the lowered empty-`else` `Skip`, but not the following
+`visited[cur] = 1`. The extra `step()` below crosses the store, and
+`mdtests/post_store_fact_after_ranked_loop_return.md` checks both the equality
+and disequality at that exact control shape. The complete proof still needs a
+fresh ordinary verification run to locate its next genuine open obligation.
 The earlier range-narrowing defect was fixed in `88b05d28`, with regression
 `mdtests/a_second_universal_have_narrows_a_stated_range.md`; it is not the
 remaining prerequisite. See `issues/dfs.md` for the current handoff checkpoint.
@@ -359,6 +362,7 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
                 step();
             }
             step();
+            step();
             have forall (k: int32) {
                 0 <= k and k < cur implies at(iter, visited[k]) == visited[k]
             } by {
@@ -446,17 +450,14 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
 }
 ```
 
-The current first open obligation is the fact immediately established by the
-preceding `visited[cur] = 1` store:
+The former `visited[cur] != 0` diagnostic was a proof-cursor mistake, not a
+post-store failure. The false C arm lowers through an explicit `Skip`, so the
+proof needs one step to select that arm, one to execute the `Skip`, and one to
+execute the store before stating its result. The focused regression is
+`mdtests/post_store_fact_after_ranked_loop_return.md`.
 
-```text
-`have` failed for `visited[cur] != 0`: `simp` failed: simplified proposition
-was not true: int32 equality is false
-```
-
-The quantified value and viewability leaves both close; the pointer-chasing
+The quantified value and viewability leaves also close; the pointer-chasing
 value route is covered by
 `mdtests/loop_quantified_value_after_pointer_chase.md`. See the current
 checkpoint in `issues/dfs.md`. The explicit transport limitation remains
-independently reproduced in `a_universal_fact_does_not_transport.md`, but is
-no longer the first blocker in this saved proof.
+independently reproduced in `a_universal_fact_does_not_transport.md`.
