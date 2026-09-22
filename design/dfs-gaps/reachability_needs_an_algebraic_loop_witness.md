@@ -42,6 +42,18 @@ declared separate and `next` is only viewed, the recursive pure-function
 equality is not transported between those snapshots. That is the remaining
 direct blocker.
 
+The focused two-array regression
+`mdtests/recursive_walk_survives_unrelated_store.md` now checks an explicit
+inductive `walk_frame` theorem instead of granting opaque recursive calls an
+implicit frame rule. It proves the two walk values equal when both arrays are
+viewable, the starting index and successors stay in range, and every cell in
+that range agrees. An explicit `separate(memory(next[0..n]),
+memory(visited[0..n]))` premise then supplies the per-cell equality across a
+`visited` store. The unmodified full search can construct the `Nat::Succ`
+witness after applying that theorem, but its loop back-edge closure still
+re-lowers the existential invariant at a distinct snapshot and cannot use the
+constructed fact. That closure transport is the next reduced tooling target.
+
 Numeric fuel still does not replace the witness because a recursive pure
 function with an array argument is refused:
 

@@ -33,6 +33,19 @@ store. The updated reduction is in
 algebraic witness representation is no longer the blocker; snapshot-stable
 transport of the array-dependent relation is.
 
+The focused `mdtests/recursive_walk_survives_unrelated_store.md` now proves a
+sound alternative to opaque-function transport: an inductive `walk_frame`
+lemma derives equality from pointwise equality over the viewed `next[0..n]`
+range. Its store regression uses an explicit separation requirement between
+`next` and `visited`; mere distinct parameter names are not sufficient.
+Nested `instantiate` and theorem application now accept algebraic bindings
+chosen in proofs (`mdtests/algebraic_induction_binding_in_have.md` and the
+extended `mdtests/algebraic_existential_loop_witness.md`). In the complete
+search attempt, initialization and back-edge construction of the existential
+witness passed, but `close_invariants()` could not re-establish that fact at
+its own back-edge snapshot. Keep the complete proof attempt out of the green
+fixture until that closure transport is reduced and repaired.
+
 The explicit
 quantified-transport, whole-array dependency, shared-lemma, extent-restatement,
 and small diagnostic items below remain proof-language or tooling costs, but

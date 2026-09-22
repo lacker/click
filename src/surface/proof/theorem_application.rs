@@ -3,6 +3,7 @@ use super::*;
 pub(super) struct TheoremApplicationContext<'a> {
     pub(super) values: &'a BTreeMap<String, CValue>,
     pub(super) array_refs: &'a ClickArrayRefs,
+    pub(super) algebraic_values: &'a BTreeMap<String, SpecAlgebraicExpression>,
     pub(super) pre_state: &'a CState,
     pub(super) post_state: &'a CState,
     pub(super) result: Option<&'a CValue>,
@@ -735,11 +736,22 @@ pub(super) fn theorem_application_bindings(
                     validation::describe_click_type(parameter.click_type())
                 ));
             };
-            let value = capture_fixed_state_algebraic_expression(
+            let algebraic_bindings = contract_expression_referenced_names(argument)
+                .into_iter()
+                .filter_map(|name| {
+                    context
+                        .algebraic_values
+                        .get(&name)
+                        .cloned()
+                        .map(|value| (name, value))
+                })
+                .collect();
+            let value = capture_fixed_state_algebraic_expression_with_values(
                 argument,
                 assumptions,
                 context.values,
                 context.array_refs,
+                algebraic_bindings,
                 context.pre_state,
                 context.post_state,
                 context.result,

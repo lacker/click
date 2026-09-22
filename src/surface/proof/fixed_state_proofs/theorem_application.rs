@@ -106,6 +106,7 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
     state: &CState,
     result: Option<&CValue>,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
     recorded_snapshots: &RecordedSnapshots,
     surface_propositions: &SurfacePropositionMap,
     unfolded_predicates: &[String],
@@ -205,6 +206,7 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
     let application_context = TheoremApplicationContext {
         values: &values,
         array_refs: &array_refs,
+        algebraic_values,
         pre_state,
         post_state: state,
         result,

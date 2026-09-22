@@ -490,9 +490,23 @@ impl<'a> Proof<'a> {
         let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
         let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
         let integer_values = crate::persistent::PersistentMap::default();
+        let algebraic_values = application
+            .arguments
+            .iter()
+            .flat_map(contract_expression_referenced_names)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|name| {
+                self.local_algebraic_values()
+                    .get(&name)
+                    .cloned()
+                    .map(|value| (name, value))
+            })
+            .collect();
         let application_context = TheoremApplicationContext {
             values: &values,
             array_refs: &array_refs,
+            algebraic_values: &algebraic_values,
             pre_state,
             post_state: state,
             result,
@@ -657,9 +671,31 @@ impl<'a> Proof<'a> {
         };
         let state = CState::new().with_memory(context.theorem_context.memory.clone());
         let recorded_snapshots = RecordedSnapshots::new();
+        let algebraic_values = application
+            .arguments
+            .iter()
+            .flat_map(contract_expression_referenced_names)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|name| {
+                self.local_algebraic_values()
+                    .get(&name)
+                    .cloned()
+                    .or_else(|| {
+                        context
+                            .structural_induction_setup
+                            .as_ref()?
+                            .algebraic_values
+                            .get(&name)
+                            .cloned()
+                    })
+                    .map(|value| (name, value))
+            })
+            .collect();
         let application_context = TheoremApplicationContext {
             values: &context.theorem_context.values,
             array_refs: &context.theorem_context.array_refs,
+            algebraic_values: &algebraic_values,
             pre_state: &state,
             post_state: &state,
             result: None,

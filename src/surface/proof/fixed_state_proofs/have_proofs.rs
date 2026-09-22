@@ -612,18 +612,50 @@ pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel(
     click_function_environment: &ClickFunctionEnvironment,
     opaque_click_functions: &std::collections::BTreeSet<String>,
 ) -> Result<CValue, String> {
+    evaluate_fixed_state_expression_through_kernel_with_algebraic_values(
+        expression,
+        assumptions,
+        values,
+        array_refs,
+        BTreeMap::new(),
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel_with_algebraic_values(
+    expression: &ContractExpression,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &std::collections::BTreeSet<String>,
+) -> Result<CValue, String> {
     let mut click_function_calls = BTreeSet::new();
     crate::surface::validation::collect_click_function_calls(expression, &mut click_function_calls);
     let symbolic_load_assumptions =
         (!click_function_calls.is_empty()).then(|| assumptions.clone().keep_spec_loads_symbolic());
     let assumptions = symbolic_load_assumptions.as_ref().unwrap_or(assumptions);
     let states = FixedStateLowering::new(values, array_refs, pre_state, state, result);
-    let spec = crate::surface::lowering::elaborate_fixed_state_expression(
+    let spec = crate::surface::lowering::elaborate_fixed_state_expression_with_algebraic_values(
         expression,
         states.element_types,
         &states.entry_state,
         states.entry_values,
         states.current_values,
+        algebraic_values,
         result,
         recorded_snapshots,
         assumptions,
@@ -713,6 +745,35 @@ pub(in crate::surface) fn capture_fixed_state_algebraic_expression(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<SpecAlgebraicExpression, String> {
+    capture_fixed_state_algebraic_expression_with_values(
+        expression,
+        assumptions,
+        values,
+        array_refs,
+        BTreeMap::new(),
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn capture_fixed_state_algebraic_expression_with_values(
+    expression: &ContractExpression,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<SpecAlgebraicExpression, String> {
     let states = FixedStateLowering::new(values, array_refs, pre_state, state, result);
     crate::surface::lowering::elaborate_fixed_state_algebraic_expression(
         expression,
@@ -720,7 +781,7 @@ pub(in crate::surface) fn capture_fixed_state_algebraic_expression(
         &states.entry_state,
         states.entry_values,
         states.current_values,
-        BTreeMap::new(),
+        algebraic_values,
         result,
         recorded_snapshots,
         assumptions,

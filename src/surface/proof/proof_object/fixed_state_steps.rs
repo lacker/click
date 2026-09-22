@@ -373,9 +373,31 @@ impl<'a> Proof<'a> {
         for (name, value) in self.local_integer_values().iter() {
             integer_values = integer_values.with_inserted(name.clone(), value.clone());
         }
+        let algebraic_values = application
+            .arguments
+            .iter()
+            .flat_map(contract_expression_referenced_names)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|name| {
+                self.local_algebraic_values()
+                    .get(&name)
+                    .cloned()
+                    .or_else(|| {
+                        context
+                            .structural_induction_setup
+                            .as_ref()?
+                            .algebraic_values
+                            .get(&name)
+                            .cloned()
+                    })
+                    .map(|value| (name, value))
+            })
+            .collect();
         let application_context = TheoremApplicationContext {
             values: &context.theorem_context.values,
             array_refs: &context.theorem_context.array_refs,
+            algebraic_values: &algebraic_values,
             pre_state: &state,
             post_state: &state,
             result: None,
@@ -423,6 +445,19 @@ impl<'a> Proof<'a> {
         surface_premises: &[ClickProposition],
     ) -> Result<CheckedFocusedTransition, ClickError> {
         let unfolded_predicates = self.active_unfolded_predicates();
+        let algebraic_values = application
+            .arguments
+            .iter()
+            .flat_map(contract_expression_referenced_names)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|name| {
+                self.local_algebraic_values()
+                    .get(&name)
+                    .cloned()
+                    .map(|value| (name, value))
+            })
+            .collect();
         let checked = check_fixed_state_theorem_application_using_facts(
             view.theorem_environment,
             application,
@@ -436,6 +471,7 @@ impl<'a> Proof<'a> {
             view.state,
             view.result,
             self.local_integer_values(),
+            &algebraic_values,
             view.recorded_snapshots,
             view.surface_propositions,
             &unfolded_predicates,
@@ -468,6 +504,19 @@ impl<'a> Proof<'a> {
         let pre_state = context
             .old_reference_state(&execution.core.frontier, &execution.core.state)
             .clone();
+        let algebraic_values = application
+            .arguments
+            .iter()
+            .flat_map(contract_expression_referenced_names)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|name| {
+                self.local_algebraic_values()
+                    .get(&name)
+                    .cloned()
+                    .map(|value| (name, value))
+            })
+            .collect();
         let checked = check_fixed_state_theorem_application_using_facts(
             context.theorem_environment,
             application,
@@ -481,6 +530,7 @@ impl<'a> Proof<'a> {
             &execution.core.state,
             None,
             self.local_integer_values(),
+            &algebraic_values,
             &execution.presentation.recorded_snapshots,
             &execution.presentation.surface_propositions,
             &execution.core.unfolded_predicates,
@@ -1650,19 +1700,37 @@ impl<'a> Proof<'a> {
                         .map(|value| (name.clone(), value.clone()))
                 })
                 .collect();
+            let algebraic_values = names
+                .iter()
+                .filter_map(|name| {
+                    self.local_algebraic_values()
+                        .get(name)
+                        .cloned()
+                        .or_else(|| {
+                            context
+                                .structural_induction_setup
+                                .as_ref()?
+                                .algebraic_values
+                                .get(name)
+                                .cloned()
+                        })
+                        .map(|value| (name.clone(), value))
+                })
+                .collect();
             let state = CState::new().with_memory(context.theorem_context.memory.clone());
-            evaluate_contract_expression_with_environment(
+            evaluate_fixed_state_expression_through_kernel_with_algebraic_values(
+                &argument,
+                self.facts().assumptions(),
                 &values,
                 &arrays,
+                algebraic_values,
                 &state,
                 &state,
                 None,
-                self.facts().assumptions(),
-                &argument,
+                &RecordedSnapshots::new(),
                 context.predicate_environment,
                 context.click_function_environment,
-                &RecordedSnapshots::new(),
-                &mut BTreeSet::new(),
+                &BTreeSet::new(),
             )
         } else {
             let view = match self.context.as_ref() {
@@ -1696,19 +1764,28 @@ impl<'a> Proof<'a> {
                 array_refs_for_parameters(view.parameters, &parameter_values, view.state.memory());
             let (values, array_refs) =
                 contract_environment_at_state(&parameter_values, &array_refs, view.state);
-            let mut active_functions = BTreeSet::new();
-            evaluate_contract_expression_with_environment(
+            let algebraic_values = contract_expression_referenced_names(&argument)
+                .into_iter()
+                .filter_map(|name| {
+                    self.local_algebraic_values()
+                        .get(&name)
+                        .cloned()
+                        .map(|value| (name, value))
+                })
+                .collect();
+            evaluate_fixed_state_expression_through_kernel_with_algebraic_values(
+                &argument,
+                self.facts().assumptions(),
                 &values,
                 &array_refs,
+                algebraic_values,
                 view.pre_state,
                 view.state,
                 view.result,
-                self.facts().assumptions(),
-                &argument,
+                view.recorded_snapshots,
                 view.predicate_environment,
                 view.click_function_environment,
-                view.recorded_snapshots,
-                &mut active_functions,
+                &BTreeSet::new(),
             )
         }
         .map_err(|message| {

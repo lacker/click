@@ -1403,7 +1403,40 @@ pub(in crate::surface) fn elaborate_fixed_state_expression(
     opaque_click_functions: BTreeSet<String>,
     pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<SpecExpression, String> {
-    let (mut lowerer, context) = fixed_state_elaboration(
+    elaborate_fixed_state_expression_with_algebraic_values(
+        expression,
+        array_element_types,
+        entry_state,
+        entry_values,
+        current_values,
+        BTreeMap::new(),
+        result,
+        snapshots,
+        assumptions,
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+        pointer_element_widths,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn elaborate_fixed_state_expression_with_algebraic_values(
+    expression: &ContractExpression,
+    array_element_types: BTreeMap<String, CType>,
+    entry_state: &CState,
+    entry_values: BTreeMap<String, CValue>,
+    current_values: BTreeMap<String, CValue>,
+    algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
+    result: Option<&CValue>,
+    snapshots: &RecordedSnapshots,
+    assumptions: &PureFactContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: BTreeSet<String>,
+    pointer_element_widths: BTreeMap<String, u32>,
+) -> Result<SpecExpression, String> {
+    let (mut lowerer, mut context) = fixed_state_elaboration(
         array_element_types,
         BTreeMap::new(),
         entry_state,
@@ -1417,6 +1450,7 @@ pub(in crate::surface) fn elaborate_fixed_state_expression(
         opaque_click_functions,
         pointer_element_widths,
     );
+    context.algebraic_values = algebraic_values.into_iter().collect();
     lowerer.lower_contract_expression_to_spec(expression, &context)
 }
 
