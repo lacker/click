@@ -70,7 +70,11 @@ development-machine wall time.
 - Pointer block names are not separation evidence; use
   `PointerBlock::proven_distinct`.
 - Fresh identifiers must come from a range owned by their producer.
-- Control-flow walks must not silently stop checking after `switch` or `break`.
+- Control-flow walks must not silently stop checking after `switch`, `break`,
+  `continue`, `return`, or a jump. They must retain the complete path state and
+  obligations at every accepted edge. This verifier-wide soundness hardening
+  belongs in this bug hunt, not in a feature issue that broadens the supported
+  control-flow subset.
 
 ## Recently completed reviews
 

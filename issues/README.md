@@ -110,7 +110,7 @@ C language coverage:
 - [Transport current static state through cross-file callers](static-state-caller-transport.md)
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
 - [Give private static storage sound ownership across helper calls](private-static-helper-ownership.md)
-- [Lower calls in short-circuit right operands](short-circuit-operand-calls.md)
+- [Extend bounded control flow](control-flow.md)
 - [Resolve linked initializers in their defining file](linked-initializer-private-names.md)
 - [Model variadic functions](variadic-functions.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)

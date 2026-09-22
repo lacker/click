@@ -1,5 +1,11 @@
 # P2: General backward and irreducible `goto`
 
+This is intentionally deferred P2 work. The selected control-flow milestone
+does not depend on it, and the bounded extensions in
+[`control-flow.md`](control-flow.md) must not broaden accepted jump shapes as
+a side effect. Start this issue only when one edge family has a bounded,
+source-attributed execution and termination rule.
+
 Found during the 2026-09-03 control-flow follow-up after commit 184b4ef2.
 
 The P1 forward-cleanup prerequisite for the selected control-flow demo landed
@@ -14,7 +20,7 @@ C0 accepts the documented forward subset and one narrow reducible natural-cycle
 subset: a direct function-body entry label with exactly one backward edge in
 the re-entered region. That edge may be nested in an `if`, and the existing
 `loop` proof supplies its invariant and termination evidence. General
-general backward edges, jumps involving loops or switches, labels nested below
+backward edges, jumps involving loops or switches, labels nested below
 the function body, and edges across unsupported declaration scopes remain
 rejected. Treating those shapes as
 `break`, a hidden flag, or a source rewrite would lose the C control-flow
@@ -86,10 +92,11 @@ Multiple backedges to the same cycle header are covered by
 The delivered natural-cycle slice covers a small backward edge whose cycle has
 an explicit invariant and deterministic termination measure. The proof resumes
 at the exact label with the current path state, rejects an omitted or
-non-decreasing measure, and expands to a checkable certificate. The remaining
-work is one independently motivated multi-entry or irreducible shape only if
-its edge invariants and source attribution have a bounded rule; do not infer
-general support from the simple cycle.
+non-decreasing measure, and expands to a checkable certificate. Future work may
+begin with one independently motivated multi-entry or irreducible shape only
+if its edge invariants, source attribution, and termination rule are bounded.
+Do not infer general support from the simple cycle or from the multiple-exit
+and multiple-backedge extensions.
 
 ## Acceptance criteria
 
