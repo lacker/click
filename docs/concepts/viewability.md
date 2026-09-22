@@ -229,13 +229,13 @@ For struct fields, prefer field resources:
 <!-- verified-example: mdtests/pointer_range.md -->
 ```click
 views obj->ref_count;
-consumes obj->data;
+consumes &obj->data;
 ```
 
 Those resources imply viewability for the covered fields. A resource addressed
 *through* a field reads that field to name itself, so the contract needs the link
 cell too: `views node->left->augmented` is only meaningful next to a resource
-covering `node->left`, such as `views node->left` or a composite holding it, and
+covering `node->left`, such as `views &node->left` or a composite holding it, and
 a `requires node->left != 0` guarding the link. A contract that names a segment
 through a cell it does not hold is refused where it is prepared.
 

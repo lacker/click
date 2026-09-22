@@ -2059,6 +2059,65 @@ fn execute_verified_function_rule(
     )
 }
 
+/// Prepare one worker summary with its ownership still withheld. Only the
+/// internal thread transition calls this; pthread declarations are not wired.
+pub(super) fn suspend_verified_worker(
+    caller_state: &CState,
+    rule: &CVerifiedFunctionRule,
+    argument: CValue,
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<super::threads::WorkerCompletion, String>> {
+    if !rule
+        .function
+        .contract_interface()
+        .exceptional_signature()
+        .is_empty()
+    {
+        return Ok(Err(
+            "exceptional workers are outside the scoped thread profile".to_string(),
+        ));
+    }
+    let mut completions = Vec::new();
+    let paths = execute_verified_function_applications_with_suspension(
+        caller_state,
+        &[CFunctionContractApplication {
+            name: rule.function.name(),
+            interface_name: rule.function.name(),
+            interface: rule.function.contract_interface(),
+            storage: Some(&rule.function),
+            evidence: Some(&rule.function),
+            representation_copy: None,
+        }],
+        None,
+        None,
+        &[CExpression::Value(argument)],
+        assumptions,
+        environment,
+        budget,
+        Some(&mut completions),
+    )?;
+    if let Some(CFunctionPath {
+        outcome: CFunctionOutcome::RuntimeError(error),
+        ..
+    }) = paths.first()
+    {
+        return Ok(Err(super::api::describe_certification_runtime_error(error)));
+    }
+    Ok(unique_worker_completion(paths.is_empty(), completions))
+}
+
+pub(super) fn unique_worker_completion(
+    no_failure_paths: bool,
+    mut completions: Vec<super::threads::WorkerCompletion>,
+) -> Result<super::threads::WorkerCompletion, String> {
+    if !no_failure_paths || completions.len() != 1 {
+        return Err("worker application must produce exactly one checked completion".to_string());
+    }
+    Ok(completions.pop().expect("one completion"))
+}
+
 /// The binder transport the proof selected for a call to `function`, if the
 /// step named this callee. The transported instances are exactly the
 /// function's own `owns`, `consumes`, and `produces` binders.
@@ -2197,6 +2256,30 @@ fn execute_verified_function_applications(
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CFunctionPath>> {
+    execute_verified_function_applications_with_suspension(
+        caller_state,
+        applications,
+        selected_contract,
+        resource_application,
+        arguments,
+        assumptions,
+        environment,
+        budget,
+        None,
+    )
+}
+
+fn execute_verified_function_applications_with_suspension(
+    caller_state: &CState,
+    applications: &[CFunctionContractApplication<'_>],
+    selected_contract: Option<usize>,
+    resource_application: Option<(usize, &ResourceCallApplication)>,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+    mut suspended: Option<&mut Vec<super::threads::WorkerCompletion>>,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     if applications.is_empty() {
         return Ok(vec![CFunctionPath {
@@ -2700,6 +2783,7 @@ fn execute_verified_function_applications(
             "verified call return resource evaluation",
         );
         let ContractReturnResources {
+            output_resources,
             return_resources,
             ensured_views: returned_views,
             produced_borrowing_pieces,
@@ -2858,6 +2942,61 @@ fn execute_verified_function_applications(
                 budget,
             )?;
             facts.extend(additional_facts.into_iter().skip(entry_fact_count));
+        }
+
+        if let Some(completions) = suspended.as_deref_mut() {
+            // This first internal slice accepts direct memory ownership and
+            // nonescaping stable views. Heap, composite, counted and returned
+            // borrowing protocols need their own checked asynchronous deltas.
+            // Local/global/static storage has implicit C access authority;
+            // removing a resource alone would not suspend that authority.
+            let supported = obligations.is_empty()
+                && transfer
+                    .stable_view_plan
+                    .as_ref()
+                    .is_some_and(|plan| plan.supports_suspended_memory_recovery())
+                && transfer.candidate_output_views.is_empty()
+                && transfer.produced_borrowing_pieces.is_empty()
+                && transfer
+                    .callee_resources
+                    .facts()
+                    .iter()
+                    .all(|fact| match fact.resource() {
+                        CResource::Memory(range) => {
+                            !fact.is_own() || is_external_memory_pointer(range.base())
+                        }
+                        _ => false,
+                    })
+                && transfer
+                    .memory_effects
+                    .iter()
+                    .all(|range| is_external_memory_pointer(range.base()))
+                && output_resources
+                    .facts()
+                    .iter()
+                    .all(|fact| fact.is_own() && matches!(fact.resource(), CResource::Memory(range) if is_external_memory_pointer(range.base())));
+            if !supported {
+                paths.push(resource_call_failure(
+                    "suspended worker requires discharged preconditions, explicit ownership of external memory, and nonescaping views",
+                ));
+                continue;
+            }
+            let Some(plan) = transfer.stable_view_plan else {
+                paths.push(resource_call_failure(
+                    "suspended worker requires a checked resource partition",
+                ));
+                continue;
+            };
+            completions.push(super::threads::WorkerCompletion::checked(
+                plan,
+                output_resources,
+                post_state.memory.clone(),
+                transfer.memory_effects.clone(),
+                facts,
+            ));
+            // The internal caller checks there is exactly one completion.
+            // No worker guarantee or ownership is published as a call return.
+            continue;
         }
 
         let (
@@ -5734,6 +5873,7 @@ fn checked_access_mode_refinement_adapter(
         .clone()
         .with_resource_context(function_resources);
     let ContractReturnResources {
+        output_resources: _,
         return_resources: returned,
         ensured_views: returned_views,
         produced_borrowing_pieces,
@@ -12850,6 +12990,7 @@ fn evaluate_contract_return_resources(
             );
     }
     Ok(Ok(ContractReturnResources {
+        output_resources: ensured_resources,
         return_resources,
         ensured_views,
         produced_borrowing_pieces,
@@ -12858,6 +12999,8 @@ fn evaluate_contract_return_resources(
 
 /// The outputs of a contract's return-resource evaluation.
 pub(crate) struct ContractReturnResources {
+    /// The explicit output delta, without the caller's unrelated frame.
+    pub(crate) output_resources: ResourceContext,
     pub(crate) return_resources: ResourceContext,
     pub(crate) ensured_views: Vec<CResourceFact>,
     pub(crate) produced_borrowing_pieces: Vec<(CResourceFact, CResourceFact)>,
@@ -13250,14 +13393,24 @@ fn apply_counted_population_transitions_with_interface(
     };
     let post_contract_state =
         with_contract_interface_argument_views(post_state, interface, argument_values);
-    let ensured = match evaluate_function_resource_context(
+    // A produced resource may contain an `old(...)` argument.  Its value must
+    // be read from the function entry memory, while the authority that makes
+    // that read legal is the post-call resource context being returned.  Keep
+    // those two roles separate instead of evaluating the whole ensure section
+    // against the post snapshot.
+    let ensures_entry_state = entry_state
+        .clone()
+        .with_resource_context(post_contract_state.resources().clone());
+    let ensured = match evaluate_function_resource_context_with_entry_and_normalization(
+        &ensures_entry_state,
         &post_contract_state,
         interface.resource_ensures(),
         interface.composite_resource_definitions(),
         assumptions,
         budget,
+        true,
     )? {
-        Ok(resources) => resources,
+        Ok((resources, _)) => resources,
         Err(error) => return Ok(Err(error)),
     };
     let population_totals = |resources: &ResourceContext| {
@@ -16808,7 +16961,32 @@ fn evaluate_function_resource_context_with_normalization(
     budget: &mut ExecutionBudget,
     normalize: bool,
 ) -> ExecutionResult<Result<(ResourceContext, Vec<CCheckedResourceFact>), CRuntimeError>> {
+    evaluate_function_resource_context_with_entry_and_normalization(
+        state,
+        state,
+        resources,
+        definitions,
+        assumptions,
+        budget,
+        normalize,
+    )
+}
+
+fn evaluate_function_resource_context_with_entry_and_normalization(
+    entry_state: &CState,
+    state: &CState,
+    resources: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    normalize: bool,
+) -> ExecutionResult<Result<(ResourceContext, Vec<CCheckedResourceFact>), CRuntimeError>> {
+    // `entry_state` supplies only expressions explicitly marked `old(...)`;
+    // `state` supplies current/post expressions and the section's resulting
+    // resource context.  Keeping both states here prevents repeated lowering
+    // of one entry load from inventing a distinct resource argument.
     let evaluated = match evaluate_resource_clauses_against_whole_section(
+        entry_state,
         state,
         resources,
         definitions,
@@ -16961,6 +17139,7 @@ pub(crate) fn contract_entry_partition_facts(
 /// verdict for a dependency cycle between two clauses and for two clauses that
 /// are independently unevaluable; either way the user needs both positions.
 fn evaluate_resource_clauses_against_whole_section(
+    entry_state: &CState,
     state: &CState,
     resources: &[CResourceSpec],
     definitions: &[CCompositeResourceDefinition],
@@ -16980,6 +17159,7 @@ fn evaluate_resource_clauses_against_whole_section(
                 .unchecked_with_facts(supplied.iter().cloned()),
         );
         let (outcome, missing) = evaluate_resource_clause_with_dependencies(
+            entry_state,
             &evaluation_state,
             resource,
             assumptions,
@@ -17018,6 +17198,7 @@ fn evaluate_resource_clauses_against_whole_section(
         resource_clause_unregister_waiters(index, &mut dependencies, &mut waiters);
         let evaluation_state = state.clone().with_resource_context(section_supply.clone());
         let (outcome, missing) = evaluate_resource_clause_with_dependencies(
+            entry_state,
             &evaluation_state,
             &resources[index],
             assumptions,
@@ -17777,6 +17958,7 @@ mod resource_clause_worklist_tests {
 }
 
 fn evaluate_resource_clause_with_dependencies(
+    entry_state: &CState,
     state: &CState,
     resource: &CResourceSpec,
     assumptions: &PureFactContext,
@@ -17785,7 +17967,13 @@ fn evaluate_resource_clause_with_dependencies(
     #[cfg(test)]
     record_resource_clause_attempt();
     let (result, dependencies) = capture_resource_dependencies(|| {
-        evaluate_function_resource_spec(state, resource, assumptions, budget)
+        evaluate_function_resource_spec_with_entry(
+            entry_state,
+            state,
+            resource,
+            assumptions,
+            budget,
+        )
     });
     result.map(|result| (result, dependencies))
 }
@@ -19945,6 +20133,7 @@ fn function_outcome_from_body_with_resource_transfer(
         with_contract_argument_views(caller_state, function, argument_values);
     let mut transfer = transfer.clone();
     let ContractReturnResources {
+        output_resources: _,
         return_resources,
         ensured_views: returned_views,
         produced_borrowing_pieces,

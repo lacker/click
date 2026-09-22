@@ -1,12 +1,12 @@
 resource cell(n: struct node*) {
     owns n->value;
-    owns n->next;
+    owns &n->next;
 }
 
 verifying "field-split.c";
 
 void set_value(struct node* n, int32 v) {
-    views n->next;
+    views &n->next;
     owns n->value;
     ensures n->value == v;
 } by {

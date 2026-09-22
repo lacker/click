@@ -1604,8 +1604,8 @@ resource ctx_at(node: struct tree_node*) {
         Context::Top => {},
         Context::Left(up_node, value, right_model, up_model) => {
             owns node->value;
-            owns node->left;
-            owns node->right;
+            owns &node->left;
+            owns &node->right;
             owns right: tree_at(node->right);
             owns up: ctx_at(up_node);
             fact node != 0;
@@ -1634,8 +1634,8 @@ resource ctx_at(child: struct tree_node*) {
         Context::Top => {},
         Context::Left(parent, value, sibling_model, up_model) => {
             owns parent->value;
-            owns parent->left;
-            owns parent->right;
+            owns &parent->left;
+            owns &parent->right;
             owns sibling: tree_at(parent->right);
             owns up: ctx_at(parent);
             fact parent != 0;
@@ -1676,7 +1676,7 @@ A composite body may instead have one top-level guard:
 resource list(node: struct node*) {
     if node != 0 {
         owns node->value;
-        owns node->next;
+        owns &node->next;
         contains list(node->next);
     }
 }
