@@ -79,6 +79,21 @@ fn scalar_width(left: &CValue, right: &CValue) -> Option<ScalarWidth> {
     }
 }
 
+// Integer promotions turn a boolean rvalue into int before an ordinary
+// scalar operation. Keep pointer cases outside this conversion: a boolean
+// variable is not a null pointer constant, and boolean pointer arithmetic is
+// outside the supported C0 subset.
+fn promote_c_bool_scalar_operands(left: CValue, right: CValue) -> (CValue, CValue) {
+    if scalar_width(&left, &right).is_none() {
+        return (left, right);
+    }
+    let promote = |value| match value {
+        CValue::Bool(bits) => CValue::Int32(bits),
+        value => value,
+    };
+    (promote(left), promote(right))
+}
+
 fn coerce_c_float_operands(
     left: &CValue,
     right: &CValue,
@@ -256,6 +271,7 @@ pub(in crate::kernel) fn apply_c_add(
             obligations,
         );
     }
+    let (left, right) = promote_c_bool_scalar_operands(left, right);
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_add(left, right, width, facts, obligations, assumptions);
     }
@@ -746,6 +762,7 @@ pub(in crate::kernel) fn apply_c_multiply(
             obligations,
         );
     }
+    let (left, right) = promote_c_bool_scalar_operands(left, right);
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_multiply(left, right, width, facts, obligations, assumptions);
     }
@@ -805,6 +822,7 @@ pub(in crate::kernel) fn apply_c_divide(
             obligations,
         );
     }
+    let (left, right) = promote_c_bool_scalar_operands(left, right);
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_divide(left, right, width, facts, obligations, assumptions);
     }
@@ -855,6 +873,7 @@ pub(in crate::kernel) fn apply_c_remainder(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    let (left, right) = promote_c_bool_scalar_operands(left, right);
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_remainder(left, right, width, facts, obligations, assumptions);
     }
@@ -906,6 +925,7 @@ pub(in crate::kernel) fn apply_c_bitwise_binary(
     assumptions: &PureFactContext,
     operation: CBitwiseOperation,
 ) -> Vec<CExpressionPath> {
+    let (left, right) = promote_c_bool_scalar_operands(left, right);
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         let mut facts = facts;
         let Some((left, right, _)) = apply_c_scalar_terms(left, right, &mut facts, assumptions)
@@ -995,6 +1015,11 @@ pub(in crate::kernel) fn apply_c_bitwise_not(
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     match value {
+        CValue::Bool(value) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(Bitvector32Term::bitwise_not(value))),
+            facts,
+            obligations,
+        }],
         CValue::UInt32(value) => vec![CExpressionPath {
             outcome: CExpressionOutcome::Value(uint32(Bitvector32Term::bitwise_not(value))),
             facts,
@@ -1354,6 +1379,7 @@ fn apply_c_comparison(
             assumptions,
         );
     }
+    let (left, right) = promote_c_bool_scalar_operands(left, right);
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_comparison(
             operator,
@@ -1493,6 +1519,7 @@ pub(in crate::kernel) fn apply_c_subtract(
             obligations,
         );
     }
+    let (left, right) = promote_c_bool_scalar_operands(left, right);
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         return apply_c_wide_subtract(left, right, width, facts, obligations, assumptions);
     }
@@ -3413,6 +3440,7 @@ pub(in crate::kernel) fn apply_c_equal(
             assumptions,
         );
     }
+    let (left, right) = promote_c_bool_scalar_operands(left, right);
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         let mut facts = facts;
         let Some((left, right, _)) = apply_c_scalar_terms(left, right, &mut facts, assumptions)
@@ -3559,6 +3587,7 @@ pub(in crate::kernel) fn apply_c_not_equal(
             assumptions,
         );
     }
+    let (left, right) = promote_c_bool_scalar_operands(left, right);
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         let mut facts = facts;
         let Some((left, right, _)) = apply_c_scalar_terms(left, right, &mut facts, assumptions)

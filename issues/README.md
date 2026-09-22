@@ -109,7 +109,6 @@ C language coverage:
 
 - [Support general backward and irreducible goto](goto.md)
 - [Extend static-storage initializers and string-literal coverage](global-variables.md)
-- [Apply Bool integer promotions in ordinary scalar operators](bool-scalar-operator-promotions.md)
 - [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
 - [Verify Linux rbtree inline helpers from the pinned headers](linux-rbtree-inline-helpers.md)
 - [Transport current static state through cross-file callers](static-state-caller-transport.md)
