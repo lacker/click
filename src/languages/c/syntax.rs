@@ -8702,7 +8702,7 @@ impl Parser {
 
     fn parse_typedef_declaration(&mut self) -> Result<(), C0SyntaxError> {
         self.expect_ident_spelling("typedef")?;
-        let parsed_type = self.parse_type()?;
+        let parsed_type = self.parse_type_with_anonymous_struct(true)?;
         let alias = self.expect_ident("typedef name")?;
         self.expect(Token::Semicolon)?;
         if self.typedefs.insert(alias.clone(), parsed_type).is_some() {
@@ -8919,6 +8919,13 @@ impl Parser {
     fn parse_struct_declaration(&mut self) -> Result<(), C0SyntaxError> {
         self.expect_ident_spelling("struct")?;
         let name = self.expect_ident("struct name")?;
+        self.parse_struct_body(name)?;
+        self.expect(Token::Semicolon)
+    }
+
+    // Both named declarations and anonymous typedefs use the same layout and
+    // field validation. The caller owns the following declarator/semicolon.
+    fn parse_struct_body(&mut self, name: String) -> Result<(), C0SyntaxError> {
         self.expect(Token::LBrace)?;
 
         let mut fields = BTreeMap::new();
@@ -9016,7 +9023,6 @@ impl Parser {
         if let Some(attribute_alignment) = self.consume_struct_alignment_attribute()? {
             struct_alignment = struct_alignment.max(attribute_alignment);
         }
-        self.expect(Token::Semicolon)?;
 
         if fields.is_empty() {
             return Err(self.error_here("struct declarations must contain at least one field"));
@@ -9508,6 +9514,13 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<ParsedType, C0SyntaxError> {
+        self.parse_type_with_anonymous_struct(false)
+    }
+
+    fn parse_type_with_anonymous_struct(
+        &mut self,
+        allow_anonymous_struct: bool,
+    ) -> Result<ParsedType, C0SyntaxError> {
         let is_constant = if self.peek_ident() == Some("const") {
             self.position += 1;
             true
@@ -9530,7 +9543,23 @@ impl Parser {
                 // placeholder so `typedef struct S S_t;` can later become
                 // `struct S*` when the declarator supplies `*`.
                 c_type: C0Type::Int32,
-                struct_name: Some(self.expect_ident("struct name")?),
+                struct_name: Some(
+                    if allow_anonymous_struct && self.peek() == Some(&Token::LBrace) {
+                        // Anonymous types have nominal identity per declaration,
+                        // never the typedef spelling or an invented visible tag.
+                        // The source and token position are stable on reparse and
+                        // keep unrelated translation units and declarations apart.
+                        let name = format!(
+                            "#anonymous-struct:{}:{}",
+                            self.source_identity.as_deref().unwrap_or("source"),
+                            self.position
+                        );
+                        self.parse_struct_body(name.clone())?;
+                        name
+                    } else {
+                        self.expect_ident("struct name")?
+                    },
+                ),
                 enum_name: None,
                 union_name: None,
                 is_volatile: false,

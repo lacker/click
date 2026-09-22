@@ -523,6 +523,9 @@ fn userspace_frozen_pthread_probe_records_real_header_boundary() {
         "{error}"
     );
     assert!(error.len() < 4096, "unbounded import diagnostic");
-    assert!(error.contains("bits/types.h:"), "{error}");
-    assert!(error.contains("expected struct name, got `{`"), "{error}");
+    assert!(error.contains("include/stddef.h:"), "{error}");
+    assert!(
+        error.contains("expected `;`, got identifier `int`"),
+        "{error}"
+    );
 }

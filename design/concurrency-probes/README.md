@@ -67,10 +67,17 @@ also now maps to the existing `int32` type in C and Click declarations,
 including typedefs, pointers, casts, and `sizeof`. `mdtests/c_signed_int.md`
 pins its normal verification behavior.
 
-The unchanged probe next stops at the anonymous struct typedef for `__fsid_t`
-in `bits/types.h`: `typedef struct { int __val[2]; } __fsid_t;`. The diagnostic
-reports an expected struct name at the opening brace. Supporting anonymous struct typedefs is
-the next import step; the original header declaration must remain unchanged.
+The anonymous struct typedef for `__fsid_t` now imports unchanged:
+`typedef struct { int __val[2]; } __fsid_t;`. It reuses the named-struct layout
+rules, with a private identity for each declaration. The typedef can name
+local values and pointers without inventing a visible C tag.
+`mdtests/c_anonymous_struct_typedef.md` checks its eight-byte layout, field
+access, and independent copies.
+
+The unchanged probe next stops at GCC's `typedef __SIZE_TYPE__ size_t;` in
+`stddef.h`. On this host, the macro expands to `long unsigned int`; Click
+currently accepts `unsigned long int` but not that reordered spelling.
+Supporting the reordered integer specifiers is the next import step.
 Declaration-specific runtime identity and checked create/join call binding
 remain subsequent work.
 

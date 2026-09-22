@@ -11944,3 +11944,64 @@ fn signed_byte_proof_expansion_preserves_memory_and_negative_values() {
             .unwrap();
     crate::surface::verify_c0_sources(&expanded, &[("byte.c", c)]).unwrap();
 }
+
+#[test]
+fn anonymous_struct_typedef_retains_layout_and_nominal_identity() {
+    let functions = syntax::parse_functions_for_source(
+        "typedef struct { int __val[2]; } __fsid_t;\n\
+         typedef __fsid_t alias;\n\
+         typedef struct { int __val[2]; } other;\n\
+         struct __fsid_t { char tag; };\n\
+         int read(__fsid_t *p, alias *q, other *r) { return p->__val[1]; }",
+        "anonymous.c",
+    )
+    .unwrap();
+    let function = &functions[0];
+    let name = function.parameters()[0].struct_name().unwrap();
+    assert_eq!(function.parameters()[1].struct_name(), Some(name));
+    assert_ne!(function.parameters()[2].struct_name(), Some(name));
+    assert_ne!(name, "__fsid_t");
+    let layout = &function.structs()[name];
+    assert_eq!(layout.size_bytes(), 8);
+    assert_eq!(layout.field("__val").unwrap().byte_width(), 8);
+    assert_eq!(function.structs()["__fsid_t"].size_bytes(), 1);
+
+    let source = "typedef struct { int value; } item; int read(item *p) { return p->value; }";
+    let first = syntax::parse_functions_for_source(source, "a.c").unwrap();
+    let again = syntax::parse_functions_for_source(source, "a.c").unwrap();
+    let other = syntax::parse_functions_for_source(source, "b.c").unwrap();
+    assert_eq!(
+        first[0].parameters()[0].struct_name(),
+        again[0].parameters()[0].struct_name()
+    );
+    assert_ne!(
+        first[0].parameters()[0].struct_name(),
+        other[0].parameters()[0].struct_name()
+    );
+}
+
+#[test]
+fn anonymous_struct_typedef_reuses_field_validation() {
+    for source in [
+        "typedef struct { int a; int a; } item;",
+        "typedef struct { } item;",
+        "typedef struct { int value; } item; typedef int item;",
+        "typedef struct { int a; } first; typedef struct { int a; } second; void f(first *a, second *b) { a = b; }",
+    ] {
+        assert!(syntax::parse_functions(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn anonymous_struct_local_proof_expands_and_reverifies() {
+    let c = "typedef struct { int __val[2]; } __fsid_t; int use_local(void) { __fsid_t a = {{3, 7}}; __fsid_t b = a; b.__val[0] = 11; return a.__val[0] + b.__val[0] + b.__val[1]; }";
+    let proof = "verifying \"anonymous.c\"; int use_local() { ensures result == 21 by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("anonymous.c", c)]).unwrap();
+    let expanded = crate::surface::expand_c0_claim_source_by_label(
+        proof,
+        &[("anonymous.c", c)],
+        "use_local.ensures_0",
+    )
+    .unwrap();
+    crate::surface::verify_c0_sources(&expanded, &[("anonymous.c", c)]).unwrap();
+}
