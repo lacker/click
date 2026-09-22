@@ -3841,6 +3841,7 @@ mod contract_retirement_tests {
     }
 }
 
+#[cfg(test)]
 mod hunt_investigation_tests {
     use super::*;
 
