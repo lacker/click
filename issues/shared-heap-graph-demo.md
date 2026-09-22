@@ -151,6 +151,25 @@ Still failing to compose:
   regressions, and deterministic scaling fixtures therefore remain to be
   composed before this issue can be closed.
 
+## Completed chunk, 2026-09-21: retain initialization through call havoc
+
+The false undefined-behavior boundary is now fixed in the memory model. A
+verified call may invalidate a cached scalar value because its write footprint
+is mutable, but it must not turn a cell that was already initialized back into
+fresh uninitialized storage. Heap memory now carries bounded typed-cell
+initialization metadata separately from cached values; call and interface
+havoc preserve it, joins intersect it, stores establish it, and frees remove
+it. Typed scalar loads consult that metadata only after the ordinary concrete
+cell and established-fact routes.
+
+The kernel regression
+`call_havoc_preserves_initialization_of_a_heap_scalar` covers the exact
+transition: malloc, store, mutable call havoc, then a typed read. Existing
+heap, resource, and shared-parent fixtures remain green. This removes the
+first `UninitializedRead` symptom in the shared-heap reduction; the exact
+frozen diamond still needs to be rerun and its next genuine proof obligation
+recorded before the issue can close.
+
 ## Completed chunk, 2026-09-18: one branch-on-count release
 
 The reduced blocker is the single `child_release` in the frozen
