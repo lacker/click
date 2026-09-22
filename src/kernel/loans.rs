@@ -8223,3 +8223,57 @@ mod local_storage_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod hunt_investigation_tests {
+    use super::*;
+    use crate::kernel::{Pointer, PointerOffsetTerm, PointerBlock};
+
+    /// Investigation repro (bug hunt phase 2b): `hold` inserts a hold into
+    /// the ledger data while returning the *predecessor's*
+    /// `LoanLedgerStateId` (`state: self.storage.state`), and
+    /// `LoanLedger`'s own equality is pure state-identity equality, so a
+    /// ledger with an active hold compares equal to the hold-free clone it
+    /// came from.
+    #[test]
+    fn hunt_investigation_hold_does_not_change_the_ledger_identity() {
+        let base = Pointer {
+            block: PointerBlock::Concrete("global:g".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let fact = CResourceFact::own_memory(CMemoryRange::new(
+            base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(8),
+        ));
+        let context = ResourceContext::new().unchecked_with_fact(fact.clone());
+        let ledger = LoanLedger::new();
+        let owner = ledger.fresh_participant().expect("owner identity");
+        let reader = ledger.fresh_participant().expect("reader identity");
+        let (support, _) = context
+            .unique_owned_occurrence_for_fact(&fact)
+            .expect("memory backing");
+        let opening = ledger
+            .lend(owner, reader, support, fact.clone())
+            .expect("the loan opens");
+        let ledger = ledger
+            .apply(&opening.transition)
+            .expect("the loan applies");
+        let binding = LoanViewBinding {
+            loan: opening.loan,
+            scope: opening.scope,
+            share: opening.root_share,
+            support,
+            viewed: CResourceFact::View(fact.resource().clone()),
+            hold: None,
+        };
+        let (with_hold, _) = ledger
+            .hold(&binding, reader)
+            .expect("the hold opens");
+        let without_hold = ledger.clone();
+        assert!(
+            with_hold == without_hold,
+            "BUG: a ledger with an active hold is equal to the hold-free predecessor"
+        );
+    }
+}

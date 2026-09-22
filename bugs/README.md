@@ -15,3 +15,7 @@ fix, regression coverage, and documentation land.
 - [Entry-partition separation facts are never re-checked after equalities](entry-partition-separation-facts-unrechecked.md) — statically confirmed
 - [Certification outcome equality ignores the heap statuses](outcome-equality-ignores-heap-statuses.md) — machine-confirmed
 - [The annotation quantifier counter is raised into other producers' bands](quantifier-counter-rises-into-other-producers.md) — statically confirmed
+- [A ledger with an active hold is equal to its hold-free predecessor](hold-does-not-change-ledger-identity.md) — machine-confirmed
+- [The storage-footprint check loses the write's byte width](write-footprint-check-loses-byte-width.md) — statically confirmed
+- [The call-havoc retention's `local:` promise has no enforced boundary](call-havoc-local-retention-unenforced.md) — statically confirmed
+- [The ordinary lend path binds a substitute occurrence](lend-binds-equal-looking-occurrence.md) — statically confirmed
