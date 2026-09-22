@@ -97,9 +97,16 @@ attribute groups. They supply no proof facts in the C model: bodies and
 memory effects remain checked normally. `mdtests/c_nothrow_attributes.md`
 and its ownership-rejection companion pin this behavior.
 
-The unchanged probe next stops in the same `__sched_cpucount` declaration in
-`bits/cpu-set.h`: glibc's `__THROW` also includes `__leaf__`, which is still
-rejected. Handling that declaration attribute is the next import step.
+GNU `leaf` and `__leaf__` are now accepted too, so the combined
+`__attribute__((__nothrow__, __leaf__))` produced by glibc's `__THROW`
+imports unchanged. Click does not use `leaf` to infer purity, absence of
+callbacks, or memory permissions. `mdtests/c_leaf_attributes.md` checks a
+cross-file call with normal ownership and postconditions.
+
+The unchanged probe next stops in `bits/types/struct_tm.h` at the
+`const char *__tm_zone` field of `struct tm`. The importer currently rejects
+const qualification on struct and union fields, including pointee constness.
+Preserving that field qualification is the next import step.
 Declaration-specific runtime identity and checked create/join call binding
 remain subsequent work.
 

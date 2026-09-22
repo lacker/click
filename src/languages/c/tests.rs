@@ -12109,8 +12109,13 @@ fn struct_constant_array_lengths_reject_invalid_values() {
 }
 
 #[test]
-fn c0_nothrow_attributes_accept_aliases_lists_and_repeated_groups() {
+fn c0_nothrow_and_leaf_attributes_accept_aliases_lists_and_repeated_groups() {
     for attributes in [
+        "__attribute__((leaf))",
+        "__attribute__((__leaf__))",
+        "__attribute__((__nothrow__, __leaf__))",
+        "__attribute__((leaf, nothrow))",
+        "__attribute__((leaf)) __attribute__((__leaf__))",
         "__attribute__((nothrow))",
         "__attribute__((__nothrow__))",
         "__attribute__((nothrow, __nothrow__))",
@@ -12129,7 +12134,12 @@ fn c0_nothrow_attributes_accept_aliases_lists_and_repeated_groups() {
             .unwrap();
         }
     }
-    for attributes in ["nothrow, always_inline", "__always_inline__, __nothrow__"] {
+    for attributes in [
+        "nothrow, always_inline",
+        "__always_inline__, __nothrow__",
+        "leaf, always_inline",
+        "__always_inline__, __leaf__",
+    ] {
         let source =
             format!("static inline __attribute__(({attributes})) int f(int n) {{ return n; }}");
         syntax::validate_header(&source, &source::ExpandedLineMap::empty()).unwrap();
@@ -12138,8 +12148,15 @@ fn c0_nothrow_attributes_accept_aliases_lists_and_repeated_groups() {
 }
 
 #[test]
-fn c0_nothrow_attributes_do_not_hide_unsupported_attributes_or_linkage() {
+fn c0_nothrow_and_leaf_attributes_do_not_hide_unsupported_attributes_or_linkage() {
     for source in [
+        "int f(void) __attribute__((leaf, noreturn));",
+        "int f(void) __attribute__((leaf)) __attribute__((aligned(8)));",
+        "int f(void) __attribute__((leaf, always_inline));",
+        "int f(void) __attribute__((always_inline, leaf));",
+        "int f(void) __attribute__((leaf(1)));",
+        "int f(void) __attribute__((leaf,));",
+        "int f(void) __attribute__((leaf);",
         "int f(void) __attribute__((nothrow, noreturn));",
         "int f(void) __attribute__((nothrow)) __attribute__((aligned(8)));",
         "int f(void) __attribute__((nothrow, always_inline));",
@@ -12167,4 +12184,15 @@ fn c0_nothrow_memory_proof_expands_and_reverifies() {
     )
     .unwrap();
     crate::surface::verify_c0_sources(&expanded, &[("nothrow.c", c)]).unwrap();
+}
+
+#[test]
+fn c0_leaf_memory_proof_expands_and_reverifies() {
+    let c = "__attribute__((__nothrow__, __leaf__)) int set(int *p) { *p = 7; return *p; }";
+    let proof = "verifying \"leaf.c\"; int set(int *p) { owns p[0..1]; ensures p[0] == 7 by auto; ensures result == 7 by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("leaf.c", c)]).unwrap();
+    let expanded =
+        crate::surface::expand_c0_claim_source_by_label(proof, &[("leaf.c", c)], "set.ensures_0")
+            .unwrap();
+    crate::surface::verify_c0_sources(&expanded, &[("leaf.c", c)]).unwrap();
 }

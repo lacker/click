@@ -523,9 +523,9 @@ fn userspace_frozen_pthread_probe_records_real_header_boundary() {
         "{error}"
     );
     assert!(error.len() < 4096, "unbounded import diagnostic");
-    assert!(error.contains("bits/cpu-set.h:"), "{error}");
+    assert!(error.contains("bits/types/struct_tm.h:"), "{error}");
     assert!(
-        error.contains("unsupported GNU function attribute `__leaf__`"),
+        error.contains("const-qualified struct or union fields are not supported in this slice"),
         "{error}"
     );
 }

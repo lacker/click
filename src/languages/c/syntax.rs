@@ -7505,6 +7505,8 @@ impl Parser {
     /// whether the existing always-inline linkage restriction applies.
     /// `nothrow` adds no proof facts: C0 has no exception semantics, and the
     /// annotation says nothing about termination, memory effects, or safety.
+    /// `leaf` is also accepted without using its cross-unit callback restriction
+    /// as a proof assumption. Calls retain their ordinary checked contracts.
     fn consume_function_attributes(&mut self) -> Result<bool, C0SyntaxError> {
         let mut always_inline = false;
         while self.peek_ident() == Some("__attribute__") {
@@ -7515,9 +7517,9 @@ impl Parser {
                 let attribute = self.expect_ident("GNU function attribute")?;
                 match attribute.as_str() {
                     "always_inline" | "__always_inline__" => always_inline = true,
-                    "nothrow" | "__nothrow__" => {},
+                    "nothrow" | "__nothrow__" | "leaf" | "__leaf__" => {},
                     _ => return Err(self.error_at_previous(format!(
-                        "unsupported GNU function attribute `{attribute}`; only `always_inline` and `nothrow` are supported in this slice"
+                        "unsupported GNU function attribute `{attribute}`; only `always_inline`, `nothrow`, and `leaf` are supported in this slice"
                     ))),
                 }
                 if self.peek() != Some(&Token::Comma) {
