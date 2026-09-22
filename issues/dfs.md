@@ -5,7 +5,7 @@ found. Kernel soundness review discovered during the same campaign is tracked
 separately in `issues/bughunt.md`. Everything needed for this example is here
 and in `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
-## Handoff checkpoint — 2026-09-22, after the first correctness claim
+## Handoff checkpoint — 2026-09-22, after the reachability attempt
 
 The complete unmodified search now verifies termination and memory safety in
 `mdtests/search_terminates_by_unmarked_count.md`. Its `Integer`-valued fold
@@ -16,7 +16,18 @@ bounds and `visited[to] == 0`: success can only use the `cur == to` return,
 which precedes the marking store. `unmarked_nonnegative` also lives with the
 other checked counting lemmas in `mdtests/unmarked_count_lemmas.md`.
 
-The next semantic milestone is graph reachability. The explicit
+Graph reachability has a minimal direct model, but its loop witness cannot yet
+be represented without verifier-only bookkeeping. The reduction and rejected
+alternatives are in
+`design/dfs-gaps/reachability_needs_an_algebraic_loop_witness.md`: recursive
+`walk(next, from, fuel: Nat)` works, while an algebraic existential loop
+invariant does not exist, numeric recursion rejects the array parameter,
+`Integer` equality cannot be rewritten through `to_nat`, and a resource fact
+cannot mention the recursive function. Do not encode the witness as an empty
+produced token merely to route around those gaps; settle the algebraic ghost
+witness design first.
+
+The explicit
 quantified-transport, whole-array dependency, shared-lemma, extent-restatement,
 and small diagnostic items below remain proof-language or tooling costs, but
 none blocks the termination, memory-safety, or branch-local correctness claims.
@@ -122,11 +133,11 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    does not say which constant; a store refusal spells `owns b[0..1]` as
    `owns a[(v100001 - v100000)..]`.
 
-Next stages: reachability (needs recursive pure functions over arrays — they
-use `fuel: Nat` today — or a resource whose field is a pure model of the graph;
-the model route has its own gaps: a loop guard cannot read a cell owned by a
-folded resource, and there is no spelling for a model field at the head of an
-iteration), then the recursive branching DFS.
+Next stages: choose and implement first-class algebraic ghost witnesses for
+loop propositions, use one to prove reachability for this search, then move to
+the recursive branching DFS. The older folded-resource route has its own gaps:
+a loop guard cannot read a cell owned by a folded resource, and recursive
+`walk` is not allowed in a resource fact.
 
 ## Acceptance
 
