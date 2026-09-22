@@ -1,6 +1,11 @@
 # Model concurrency and atomics
 
-C0 has no threads, synchronization, atomics, fences, or data-race model.
+C0 has no production binding from C thread calls to checked concurrent
+execution, nor a supported mutex/atomic/fence or data-race model. Internal
+checked spawn/join ownership operations, stable local job views, and
+compiler-backed user-space imports exist; they do not yet verify a concurrent
+C parent. See the [current P1 handoff](concurrency-demo.md#resume-here-2026-09-22-handoff)
+for completed work and the exact real-header import boundary.
 
 The P1 [concurrency demo](concurrency-demo.md) owns the before-launch slice:
 three programs exercising fork/join ownership, mutex-protected mutation, and
@@ -8,7 +13,12 @@ one-shot release/acquire publication, with production checked rules and
 deterministic scaling regressions. This P2 issue owns broader support beyond
 that slice, including general atomic read-modify-write operations, reusable
 protocols, additional orders/fences and synchronization APIs, and concurrent
-memory reclamation. The atomic-counter regression below remains a follow-up;
+memory reclamation. Future C++ threading is also in scope: keep the shared task
+and completion model independent of pthread's result codes and handle storage,
+with checked adapters for moves, captures, exceptions, and cleanup joins. The
+[accepted binding design](../design/concurrency-probes/pthread-binding-design.md#future-c-threading)
+records these extension constraints; implementing C++ threading is not a P1
+pthread prerequisite. The atomic-counter regression below remains a follow-up;
 the P1 counter uses a mutex and ordinary memory.
 
 The [stable views record](../docs/internals/stable-views.md) establishes stable shared borrowing

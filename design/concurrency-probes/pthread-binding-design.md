@@ -6,9 +6,11 @@ This is the binding design for
 not implemented concurrency support or a verified parent proof.
 
 Implementation checkpoint: the [probe record](README.md#compiler-import-checkpoint)
-now records completion of the user-space compiler-import foundation and the
-real-header parsing gap. Descriptions of the original importer below refer to
-the design baseline, before that first slice.
+records completion of the user-space compiler-import foundation and successive
+real-header fixes through pointer-to-const struct fields (`d3aa4cd8`). The
+remaining parser boundary is `struct sigevent;` in `time.h`. The
+[issue handoff](../../issues/concurrency-demo.md#resume-here-2026-09-22-handoff)
+is the starting point for the remaining implementation.
 
 ## Recommendation
 
@@ -292,11 +294,12 @@ possible without making it a prerequisite for the pthread probe.
 
 ## Lock the runtime binding
 
-The modeled header currently provides declarations only. Further, the actual
-compiler importer currently accepts only `x86_64-linux-kernel`
-(`src/languages/c/compiler_import.rs`, `TARGET` and `validate_config`). The
-user-space source-bundle target does not establish compiler-import support.
-This is a concrete prerequisite, not already-completed plumbing.
+The modeled header provides declarations only. The compiler importer now
+supports both kernel and user-space profiles, with checked locks and target
+agreement. Real host header preparation succeeds, but parsing still stops at
+an incomplete struct declaration. Complete that import path and validate the
+selected Debian environment before enabling the declaration-specific runtime
+binding. A user-space compiler lock alone grants no pthread semantics.
 
 Extend the existing import lock and `PreparedCImport` identity, rather than
 inventing a separate sidecar trust switch. The proposed runtime-binding record
@@ -401,44 +404,21 @@ verification before expansion/profile, and an exit-zero `scripts/check.sh`.
 The design itself does not settle every future pthread operation. It settles
 the ordinary author experience and exact authority boundary for this probe.
 
-## First implementation slice: a locked user-space C import
+## First implementation slice: completed import foundation
 
-Start with the import foundation of increment 1, before declaration-specific
-pthread binding. Deliver a compiler-backed user-space import that uses the
-selected C11 profile and can verify a small ordinary sequential C fixture.
-This provides a useful, independently testable capability and exposes the
-header boundary before thread semantics depend on it.
+The compiler-backed user-space import foundation is implemented. It verifies
+ordinary sequential C fixtures, expands and rechecks proofs, locks the actual
+driver/dependencies/ABI/profile, rejects stale locks and target mismatches,
+and preserves the existing kernel import path. Include roots remain explicit
+and inventoried. `tests/compiler_import.rs` exercises these boundaries.
 
-The current importer hard-codes the kernel target, `-std=gnu11`, and
-`-nostdinc`; its argument allowlist excludes `-pthread`. Make target/profile
-selection explicit in config validation, compiler arguments, ABI probing,
-lock loading, and prepared-import identity. Reuse `CTarget` where appropriate.
-Preserve the existing kernel profile. For user space, select C11, LP64,
-unsigned plain char, the selected pthread compilation flags, and a controlled
-include policy whose opened files are inventoried. Do not simply allow
-arbitrary flags or untracked system headers.
+The unchanged `fork_join.c` is prepared through real host GCC/glibc headers;
+its bounded regression records the next parser refusal. The
+[probe record](README.md#compiler-import-checkpoint) lists the successive
+header constructs now supported. Continue with incomplete struct declarations
+and later observed gaps, then establish the runtime declaration/specification
+identity described above. Do not strip headers or reshape the frozen C.
 
-Acceptance for this first commit:
-
-- A small user-space fixture creates and reloads a real compiler lock, then
-  verifies and checks expanded proofs through the shared engine. It needs no
-  pthread semantics and must not be presented as a concurrency example.
-- The selected flags and ABI agree throughout preparation and checking.
-  A sidecar/config target mismatch, changed profile, changed opened header,
-  or stale lock is rejected. Kernel and user-space artifacts cannot share
-  identity merely because their preprocessed C happens to match.
-- Existing kernel compiler-import regressions still pass. Unsupported
-  configurations retain local diagnostics rather than falling back to the
-  modeled source-bundle headers.
-- Attempt the unchanged `fork_join.c` through the selected real-header import.
-  Record whether preparation and C parsing each succeed. If parsing fails,
-  retain a bounded regression for the exact unsupported construct and report
-  the next importer slice. Do not strip headers, change the probe, or broaden
-  this commit into a general C frontend project.
-- Focused compiler-import tests and the full `scripts/check.sh` pass.
-
-A green first commit may therefore establish user-space compiler imports while
-explicitly refusing a real pthread header construct. That is progress on the
-import prerequisite, not completion of the runtime binding. The next slice
-resolves that concrete import gap, if any, then establishes declaration and
-runtime-specification identity before wiring create/join operations.
+The host regression uses Ubuntu GCC 13.3.0/glibc 2.39. The selected Debian GCC
+12.2.0/glibc 2.36 environment still needs validation. Import progress is not a
+pthread runtime binding or a proof of the concurrent parent.

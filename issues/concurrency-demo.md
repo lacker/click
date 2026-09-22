@@ -20,14 +20,112 @@ program exercises a different boundary in the same production proof engine.
 Small passing examples are necessary but insufficient evidence of scalability:
 this milestone also requires modular rules and deterministic scaling tests.
 
+## Resume here: 2026-09-22 handoff
+
+The session's implementation is merged into `master` through `d3aa4cd8`
+(`Preserve pointee const qualification on struct fields`). The complete
+`scripts/check.sh` passed on that commit: 3,588 unit/documentation tests and
+all 81 integration harness tests. The concurrency milestone remains open:
+**the real pthread header import still stops before C create/join binding,
+and the concurrent parent has not been verified.**
+
+The [pthread binding design](../design/concurrency-probes/pthread-binding-design.md)
+is accepted. Resume implementation from it, rather than reopening the surface
+choice or merging the historical parked branch. The
+[probe record](../design/concurrency-probes/README.md#compiler-import-checkpoint)
+records the exact import progress and frozen-source provenance.
+
+### Completed during this session
+
+- Compiler-backed `x86_64-linux-userspace` imports now lock the C11, LP64,
+  unsigned-char, pthread/POSIX profile, explicit include roots, driver,
+  opened dependencies, and ABI observations. Sequential verification and
+  expansion work through that path. Target/profile mismatch, changed headers,
+  and stale locks are rejected; kernel import support is retained.
+- Real-header gaps closed: optional trailing `int` on short/long spellings;
+  distinct signed-eight-bit `signed char`/`int8`; explicit `signed int`;
+  anonymous struct typedefs; standard integer specifiers in different orders;
+  signed/unsigned 64-bit inline struct arrays; and bounded constant-expression
+  struct array dimensions, including the original `cpu_set_t` expression.
+- GNU `nothrow`/`__nothrow__` and `leaf`/`__leaf__` import on supported function
+  declarations, including combined and repeated attribute groups. They add
+  no exception, purity, callback-absence, or memory-permission proof facts.
+- Pointer-to-const struct fields retain qualification through initializers,
+  copies (including embedded fields), calls, sequential access primitives,
+  checked loads/stores, and proof expansion. A `const char *` member can be
+  reassigned; writes through it and implicit const removal are rejected.
+  Mutable aliases can still change its pointee. Const is not stable-view
+  authority. Top-level const members, const union fields, and qualification
+  beyond the first pointer level remain unsupported; source address-taking
+  that would require nested qualification is explicitly refused.
+
+The regression names and original header shapes are in the probe record.
+`mdtests/const_pointer_fields.md` checks assignment, copies, and mutable-alias
+updates; the C unit tests also expand and reverify the new proofs.
+
+### Immediate next slice: incomplete struct declarations
+
+`tests/compiler_import.rs::userspace_frozen_pthread_probe_records_real_header_boundary`
+prepares and reloads the unchanged `fork_join.c` with real host GCC/glibc
+headers. Preparation and lock loading succeed; parsing currently stops at
+`/usr/include/time.h:49`, `struct sigevent;`, with
+``unknown struct declaration `sigevent` ``.
+
+Add ordinary incomplete struct-tag declarations and their pointer uses,
+retaining tag identity when a later definition completes the type. Do not
+invent a layout or permit operations requiring a complete type (object
+storage, member access, or `sizeof`) before completion. Cover a bare forward
+declaration, pointer declarations before a definition, later completion, and
+invalid incomplete-type operations. Keep the frozen C and opened headers
+unchanged. Advance the bounded real-header regression and probe record to the
+next actual refusal; do not assume this is the final glibc parsing gap.
+
+The observed host is Ubuntu GCC 13.3.0/glibc 2.39. It is **not** validation of
+the selected Debian Bookworm GCC 12.2.0/glibc 2.36 runtime profile. That selected
+environment still needs its own locked import and validation before the
+runtime binding is claimed.
+
+### Important implementation notes
+
+- Keep `branch { then { ... } else { ... } }` for actual C `if` arms.
+  `outcomes` distinguishes checked call outcomes (currently normal/exceptional);
+  no success/failure renaming or new proof split is needed for pthread create.
+  Preserve delayed status tests as guarded authority until an ordinary branch
+  or checked fact selects the case; do not enumerate all combinations.
+- Use ordinary `step`, result binding, and the direct worker's unique verified
+  contract plus exact termination evidence. Completion rights are internal,
+  tied to the actual handle and creation identity. Do not add a public thread
+  resource or proof-only spawn, or reinterpret `step(Contract)` as selection
+  of a nested callback contract.
+- Future C++ threading is part of the long-term scope. Keep task transfer and
+  completion independent of pthread status codes, output slots, and `void *`.
+  Separate child identity from current owner/handle storage so checked moves,
+  captured callables, exceptional creation failure, and cleanup joins can be
+  added later. Those C++ bindings and lifetime rules are not this slice.
+  Creation failure preserves authority at the transfer boundary; it must not
+  rewind earlier argument evaluation, moved captures, or construction.
+- `mdtests/c_nothrow_local_write_call_boundary.md` retains an unchanged C
+  reproduction of a separate limitation: an ordinary call cannot yet lend
+  write ownership of its caller's local scalar. Keep that negative regression;
+  do not rewrite the C or infer ownership from `nothrow`. The frozen thread
+  demo uses external output ownership and shared local job views, so it does
+  not require general exclusive transfer of implicit local storage.
+
+Remaining sequence: finish real-header import and declaration-specific runtime
+identity (Chunk A), bind real C create/join and guarded completion evidence
+(Chunk B), verify the frozen parent, and add shared-reader splitting and its
+companion (Chunks C/D). Then implement the separate mutex and release/acquire
+programs. None of those production concurrency steps landed in this session.
+
 ## Current checkpoint and scope
 
 **Termination prerequisite complete.** Termination is now Click's only judgment for C (see "C
 termination" in `docs/reference/language/index.md`), so a worker's contract
 says whether it returns and a join on it can state what the parent proves.
-The unfinished fork/join slice is parked, not green, on the branch
-`claude/concurrency-demo-slice2-parked`; read its
-`design/concurrency-probes/PARKED.md` before resuming.
+A historical unfinished fork/join implementation remains on
+`claude/concurrency-demo-slice2-parked`. Its `design/concurrency-probes/PARKED.md`
+is failure history only; resume from current `master` and the accepted binding
+design, not from that branch.
 
 The source-selection checkpoint is
 [`design/concurrency-probes/fork_join.c`](../design/concurrency-probes/fork_join.c)
@@ -133,12 +231,13 @@ and checked transitions in the [stable-views record](../docs/internals/stable-vi
 The two-context and mutex experiments in `src/kernel/tests/loan_model_tests.rs`
 are design evidence only; they do not implement concurrent C semantics.
 
-Before claiming verification, lock and validate the selected compiler/header
-profile and make the user-space target available to normal verification.
-The selected C standard, target, thread/mutex API, and initial atomic subset
-are recorded in the probe profile, but its exact driver, opened headers,
-flags, and ABI observations are not yet locked into imports, certificates, or
-caches.
+The user-space target is available to normal verification, and compiler imports
+now lock the actual selected driver, opened headers, flags, and ABI observations.
+Before claiming concurrent verification, finish parsing the real headers,
+validate the selected Debian runtime environment, and bind the exact pthread
+declarations and trusted runtime specification into imports, certificates,
+and caches. A generic compiler lock does not yet identify a trusted thread
+operation.
 Use a coherent C11-compatible account of ordinary accesses, data races, thread
 start/join, mutex synchronization, and release/acquire publication. Bind the
 profile and modeled API identities into imports, certificates, and caches.
@@ -160,7 +259,7 @@ the example projects. Synthetic examples are acceptable when identified as
 such. Do not add proof-only locals, branches, helper calls, identifier changes,
 or serial execution wrappers to make their proofs work.
 
-## Implementation handoff: next design and bounded chunks
+## Implementation handoff: remaining bounded chunks
 
 Read this section together with `docs/internals/stable-views.md` and `AGENTS.md`.
 Implement one green chunk at a time. Do not merge the parked branch; its
@@ -218,53 +317,43 @@ insert immediate status checks, or introduce proof-only locals or helper calls.
   direct task contract. The output slice is external parameter memory; only
   the job record is stack storage. Do not block this demo on exclusive stack
   transfer, which it does not need.
-- `RESOURCE_SEMANTICS_VERSION` is 3 for the local-loan/lifetime rule. Any further
-  authority or artifact interpretation change must invalidate older artifacts.
+- `RESOURCE_SEMANTICS_VERSION` in `src/kernel/mod.rs` is the authoritative
+  current version. The local-loan/lifetime rule introduced version 3; later
+  work has advanced it. Further authority or artifact interpretation changes
+  must invalidate older artifacts.
 
 ### Chunk A: settle and lock the pthread binding contract
 
-This is the next design step. First inspect the modeled header/import path and
-existing callback contract selection. Produce an exact binding specification
-before changing the parser. The current `<pthread.h>` is a narrow modeled
-header, not a locked import of glibc.
+**Design settled; import foundation delivered; runtime binding still open.**
+Follow the accepted [binding design](../design/concurrency-probes/pthread-binding-design.md).
+The candidate sidecar and direct-worker selection are already specified there.
+The remaining work is:
 
-1. Identify the chosen declarations and ABI from the existing user-space
-   profile: callback `void *(*)(void *)`, argument `void *`, handle output
-   `pthread_t *`, and join result `void **`. Record compiler/driver, opened
-   headers, flags, target, and ABI observations in import identity. Bind this
-   identity into certificates and caches. Reject lookalike user functions,
-   unsupported attributes, mismatched declarations, and the kernel target.
-2. Determine whether existing named callback contracts and call binders can
-   uniquely select a verified worker task at the actual C callback expression.
-   Write a minimal sidecar over the unchanged probe as the design example.
-   Separate the ordinary opaque C argument from its logical task instance.
-3. Specify how a zero create result carries the completion right associated
-   with the handle value actually stored, the worker rule, argument, task, and
-   creation identity. A numeric `pthread_t` value or a user token cannot mint
-   this authority. Aliases or copies of a C handle must not duplicate it.
-4. Specify ordinary status branching: the right and transferred authority are
-   conditional on success. Delaying a test, storing a status, or branching on
-   equivalent checked facts must work without a source-pattern recognizer.
-   Joining branches with different live children must preserve conditional
-   authority or refuse explicitly; it must not erase the distinction.
+1. Resolve `struct sigevent;` and subsequent real-header gaps using the bounded
+   probe regression described above, then load the unchanged probe under the
+   selected Debian compiler/runtime profile.
+2. Extend the existing import identity with the resolved external declarations
+   for `pthread_create` and `pthread_join`, canonical callback and handle ABI,
+   and the trusted runtime specification's version/digest and restrictions.
+   Bind this record into certificates and caches. Matching names or the
+   modeled header alone grant no runtime authority. Reject lookalike user
+   definitions, shadowing, mismatched types, unsupported binding attributes,
+   changed headers, stale profiles, and the kernel target.
+3. Carry the accepted schema into the checked binding: a unique direct worker
+   rule and termination rule, guarded transfer on zero create status, a linear
+   completion identity associated with the stored handle, and a scoped valid
+   join-success assumption. Handle copies do not duplicate rights. Keep
+   null attributes and null join-result pointers as the initial restrictions.
 
-**Open surface decision:** existing mechanisms may select the callback task,
-but there is not yet a settled user-facing spelling for selecting/retaining a
-success-conditioned completion right. Prefer kernel-issued completion state
-attached to the real C operation. If existing contracts cannot express its
-selection, propose the smallest sidecar extension with one success example,
-one failure example, and a delayed-status-test example. Do not add a parallel
-proof-only spawn operation or a general linear-type syntax just to name a local
-loan. Ask for a language-design decision only when these concrete alternatives
-have been evaluated; do not guess syntax and spread it across the implementation.
-
-**Acceptance:** a documented declaration identity and state-transition schema,
-a concrete candidate sidecar using existing syntax where possible, and explicit
-remaining surface choices. Parsing alone is not concurrency verification.
+**Acceptance:** the unchanged real-header probe loads under the selected
+profile; exact declaration/runtime identity and hostile mismatch regressions
+are checked and retained in artifacts. This completes the import/binding
+prerequisite, not the concurrent parent proof. Chunk B implements the actual
+checked transitions and ordinary C control-flow integration.
 
 ### Chunk B: wire actual C create/join operations and their evidence
 
-After A settles selection and binding, route recognized C calls to the shared
+After A establishes the locked binding, route recognized C calls to the shared
 checked thread engine. The evaluator and retained certificate checker must use
 the same transition, including the handle store, return status, and memory
 observations. Do not recursively execute Click or execute the worker body in the
