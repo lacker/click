@@ -3486,9 +3486,8 @@ mod hunt_investigation_tests {
             None,
             "the out-of-range count must not decide 'no overflow'"
         );
-        assert_eq!(
-            signed_shift_left_overflows_const(1, 40).unwrap_or(false),
-            false,
+        assert!(
+            !signed_shift_left_overflows_const(1, 40).unwrap_or(false),
             "BUG: the wrapper arm's unwrap_or(false) turns the refusal into 'the shift is safe'"
         );
     }
