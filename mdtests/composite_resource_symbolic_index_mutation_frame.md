@@ -25,7 +25,7 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
 resource vector(owner: struct vector*) {
     owns owner->len;
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..owner->cap];
     fact 1 <= owner->len;
     fact owner->len <= owner->cap;

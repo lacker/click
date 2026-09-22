@@ -24,7 +24,7 @@ int32 increment(struct counter* owner) {
 resource bounded_counter(owner: struct counter*) {
     owns owner->value;
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..owner->cap];
     fact owner->value == 0;
     fact 1 <= owner->cap;

@@ -24,9 +24,15 @@ struct pair *pass_through(struct pair *p) {
 ```click
 verifying "aligned_from_object_resource.c";
 
+resource pair_storage(p: struct pair*) {
+    views object(p);
+    fact aligned(p, 8);
+}
+
+
 int32 object_is_aligned(struct pair* p) {
     requires p != 0;
-    views object(p);
+    views pair_storage(p);
     ensures result == 1;
 } by {
     execute();

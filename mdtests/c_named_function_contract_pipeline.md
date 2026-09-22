@@ -86,9 +86,9 @@ contract int32 Store(
 }
 
 resource callback_suite(table: struct callback_table*) {
-    owns table->add;
-    owns table->subtract;
-    owns table->store;
+    owns &table->add;
+    owns &table->subtract;
+    owns &table->store;
     fact Addition(table->add);
     fact Difference(table->subtract);
     fact Store(table->store);

@@ -153,8 +153,8 @@ resource rb_at(p: struct rb_node*) {
         RbTree::Empty => { fact p == 0; },
         RbTree::Node(identity, parent, color, left_model, right_model) => {
             owns p->__rb_parent_color;
-            owns p->rb_left;
-            owns p->rb_right;
+            owns &p->rb_left;
+            owns &p->rb_right;
             owns left: rb_at(p->rb_left);
             owns right: rb_at(p->rb_right);
             fact p != 0;
@@ -173,14 +173,14 @@ resource ctx_at(child: struct rb_node*, root: struct rb_root*) {
     field model: Context;
     match model {
         Context::Top => {
-            owns root->rb_node;
+            owns &root->rb_node;
             fact root != 0;
             fact root->rb_node == child;
         },
         Context::Left(identity, grandparent, color, sibling_model, up_model) => {
             owns identity->__rb_parent_color;
-            owns identity->rb_left;
-            owns identity->rb_right;
+            owns &identity->rb_left;
+            owns &identity->rb_right;
             owns sibling: rb_at(identity->rb_right);
             owns up: ctx_at(identity, root);
             fact identity != 0;
@@ -202,8 +202,8 @@ void replace_node_with_children(struct rb_node* victim, struct rb_node* new_node
     consumes c: ctx_at(victim, root);
     consumes t: rb_at(victim);
     consumes new_node->__rb_parent_color;
-    consumes new_node->rb_left;
-    consumes new_node->rb_right;
+    consumes &new_node->rb_left;
+    consumes &new_node->rb_right;
     requires parent == 0;
     requires c.model == Context::Top;
     requires t.model == RbTree::Node(victim, parent, Color::Black,

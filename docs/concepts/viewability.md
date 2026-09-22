@@ -67,6 +67,13 @@ has to be *established* — a C call site, applying a theorem whose premise is a
 range, a loop invariant's entry and back edge — the extent half is owed along
 with the viewability half.
 
+`separate(memory(p[a..b]), memory(q[c..d]))` includes the same validity
+conditions for both ranges. A separation premise supplies the bounds; a
+separation goal or call requirement must prove them. Observing or unfolding a
+composite resource exposes the bounds of its contained memory ranges, so a
+proof can use those bounds without repeating them in the resource definition.
+Separation alone does not grant permission to read either range.
+
 Stating a range whose extent is decidably invalid is refused where the clause is
 prepared, so the two directions cannot be played against each other. At the
 program's outer boundary, where no caller is verified, a contract's range is an
@@ -229,13 +236,13 @@ For struct fields, prefer field resources:
 <!-- verified-example: mdtests/pointer_range.md -->
 ```click
 views obj->ref_count;
-consumes obj->data;
+consumes &obj->data;
 ```
 
 Those resources imply viewability for the covered fields. A resource addressed
 *through* a field reads that field to name itself, so the contract needs the link
 cell too: `views node->left->augmented` is only meaningful next to a resource
-covering `node->left`, such as `views node->left` or a composite holding it, and
+covering `node->left`, such as `views &node->left` or a composite holding it, and
 a `requires node->left != 0` guarding the link. A contract that names a segment
 through a cell it does not hold is refused where it is prepared.
 

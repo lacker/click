@@ -95,7 +95,7 @@ resource counted(p: struct cell*, n: int32) {
     field model: Count;
     match model {
         Count::Zero => { fact n == 0; },
-        Count::Many => { owns p->value; owns p->next; fact n != 0; },
+        Count::Many => { owns p->value; owns &p->next; fact n != 0; },
     }
 }
 

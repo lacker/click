@@ -22,12 +22,12 @@ int32 replace_left(struct node* root, struct node* replacement) {
 verifying "struct_pointer_indirection.c";
 
 int32 replace_left(struct node* root, struct node* replacement) {
-    consumes root->left;
+    consumes &root->left;
     consumes replacement->key;
 
     ensures result == replacement->key;
     ensures root->left == replacement;
-    produces root->left;
+    produces &root->left;
     produces replacement->key;
 } by auto;
 ```

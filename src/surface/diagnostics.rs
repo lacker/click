@@ -2624,14 +2624,19 @@ pub(super) fn describe_contract_segment(segment: &ContractSegment) -> String {
             )
         }
         ContractSegmentSurface::Field {
+            address,
             base: surface_base,
             name,
             ..
         } => match surface_base {
             Some(surface_base) => {
-                format!("{}->{name}", describe_contract_expression(surface_base))
+                format!(
+                    "{}{}->{name}",
+                    if *address { "&" } else { "" },
+                    describe_contract_expression(surface_base)
+                )
             }
-            None => format!("{base}->{name}"),
+            None => format!("{}{base}->{name}", if *address { "&" } else { "" }),
         },
         ContractSegmentSurface::Object(_) => format!("object({base})"),
     };

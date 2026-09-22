@@ -41,7 +41,7 @@ int32 only_one_side_is_null(struct node* p, struct node* q) {
 }
 
 int32 only_one_object_is_owned(struct node* a, struct node* b) {
-    owns a->left;
+    owns &a->left;
     ensures result == 0;
 } by {
     execute();

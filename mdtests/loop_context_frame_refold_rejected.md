@@ -45,8 +45,8 @@ resource tree_at(p: struct tree_node*) {
         HeapTree::Empty => { fact p == 0; },
         HeapTree::Node(identity, value, left_model, right_model) => {
             owns p->value;
-            owns p->left;
-            owns p->right;
+            owns &p->left;
+            owns &p->right;
             owns left: tree_at(p->left);
             owns right: tree_at(p->right);
             fact p != 0;
@@ -70,8 +70,8 @@ resource ctx_at(child: struct tree_node*) {
         Context::Top => { },
         Context::Left(parent, value, sibling_model, up_model) => {
             owns parent->value;
-            owns parent->left;
-            owns parent->right;
+            owns &parent->left;
+            owns &parent->right;
             owns sibling: tree_at(parent->right);
             owns up: ctx_at(parent);
             fact parent != 0;
@@ -82,8 +82,8 @@ resource ctx_at(child: struct tree_node*) {
         },
         Context::Right(parent, value, sibling_model, up_model) => {
             owns parent->value;
-            owns parent->left;
-            owns parent->right;
+            owns &parent->left;
+            owns &parent->right;
             owns sibling: tree_at(parent->left);
             owns up: ctx_at(parent);
             fact parent != 0;

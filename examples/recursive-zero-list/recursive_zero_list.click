@@ -1,7 +1,7 @@
 resource zero_list(node: struct node*) {
     if node != 0 {
         owns node->value;
-        owns node->next;
+        owns &node->next;
         fact node->value == 0;
         contains zero_list(node->next);
     }
@@ -26,7 +26,7 @@ struct node* zero_list_empty() {
 int32 zero_list_push(struct node* node, struct node* tail) {
     requires node != 0;
     consumes node->value;
-    consumes node->next;
+    consumes &node->next;
     consumes zero_list(tail);
     produces zero_list(node);
 
@@ -82,9 +82,9 @@ int32 zero_list_pipeline(struct node* first, struct node* second) {
     requires first != 0;
     requires second != 0;
     consumes first->value;
-    consumes first->next;
+    consumes &first->next;
     consumes second->value;
-    consumes second->next;
+    consumes &second->next;
     produces zero_list(first);
 
     ensures result == 0;

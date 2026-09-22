@@ -49,7 +49,7 @@ verifying "field_derived_buffer_push_preserves_first.c";
 resource owned_buffer(owner: struct buffer*) {
     owns owner->len;
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len < owner->cap;

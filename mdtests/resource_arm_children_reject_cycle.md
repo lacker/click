@@ -31,7 +31,7 @@ resource up_at(node: struct tree_node*) {
     match model {
         Up::UpTop => {},
         Up::UpNext(down_model) => {
-            owns node->left;
+            owns &node->left;
             owns down: down_at(node->left);
             fact node != 0;
             fact down.model == down_model;
@@ -44,7 +44,7 @@ resource down_at(node: struct tree_node*) {
     match model {
         Down::DownTop => {},
         Down::DownNext(up_model) => {
-            owns node->right;
+            owns &node->right;
             owns up: up_at(node->right);
             fact node != 0;
             fact up.model == up_model;

@@ -38,8 +38,8 @@ resource tree_at(p: struct tree_node*) {
         HeapTree::Empty => { fact p == 0; },
         HeapTree::Node(identity, value, left_model, right_model) => {
             owns p->value;
-            owns p->left;
-            owns p->right;
+            owns &p->left;
+            owns &p->right;
             owns left: tree_at(p->left);
             owns right: tree_at(p->right);
             fact p != 0;
@@ -56,7 +56,7 @@ resource ctx_at(node: struct tree_node*) {
     match model {
         Context::Top => {},
         Context::Left(right_model, up_model) => {
-            owns node->right;
+            owns &node->right;
             owns right: tree_at(node->right);
             owns up: ctx_at(node->right);
             fact node != 0;
@@ -68,7 +68,7 @@ resource ctx_at(node: struct tree_node*) {
 
 void frame_push(struct tree_node* node, struct tree_node* up,
                 struct tree_node* sibling) {
-    consumes node->right;
+    consumes &node->right;
     consumes s: tree_at(sibling);
     consumes u: ctx_at(up);
     requires node != 0;

@@ -29,7 +29,7 @@ int32 empty_list_value(struct node* node) {
 resource list(node: struct node*) {
     if node != 0 {
         owns node->value;
-        owns node->next;
+        owns &node->next;
         contains list(node->next);
     }
 }

@@ -31,8 +31,7 @@ use crate::kernel::{
     c_contract_refinement_context, c_declare, c_do_while_preservation_contexts,
     c_do_while_with_invariant_and_effect_checks, c_function, c_function_contract_entry_state,
     c_function_contract_refinement_arguments, c_function_contract_refinement_context,
-    c_function_entry_state, c_function_execution_candidates_from_outcomes,
-    c_function_outcome_from_statement_outcome, c_function_specification,
+    c_function_entry_state, c_function_outcome_from_statement_outcome, c_function_specification,
     c_function_termination_plan, c_if, c_loop_invariants_hold_at_entry,
     c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect,
     c_resources_directly_match, c_seq, c_termination_height_plan, c_typed_pointer_value,
@@ -2979,6 +2978,8 @@ enum ContractSegmentSurface {
         end: ContractExpression,
     },
     Field {
+        /// Explicit address-of distinguishes pointer storage from pointed-to data.
+        address: bool,
         /// How the contract spelled the struct the field belongs to, when the
         /// parse had it. A base reached through a link reads as `old->left`
         /// there, which is what the user wrote; the lowered `CExpression` for

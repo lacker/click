@@ -1334,7 +1334,7 @@ impl<'a> Proof<'a> {
                     path_facts.clone(),
                     obligations.clone(),
                 );
-                let path_loan_evidence = arm.execution.core.loan_evidence().clone();
+                let path_loan_evidence = path.loan_evidence().clone();
                 let retained_index = retained_path_keys.get(&path_key).and_then(|entries| {
                     entries
                         .iter()

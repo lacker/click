@@ -26,8 +26,8 @@ int32 both_owned(struct node *a, struct node *b) {
 verifying "pointer_disequality_from_separation.c";
 
 int32 both_owned(struct node* a, struct node* b) {
-    owns a->left;
-    owns b->left;
+    owns &a->left;
+    owns &b->left;
     ensures result == 0;
 } by {
     execute();

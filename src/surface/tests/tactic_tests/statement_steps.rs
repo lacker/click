@@ -194,7 +194,7 @@ fn clone_field_stores_with_observed_source_resource_verify() {
         resource cursor(owner: struct cursor*) {
             owns owner->pos;
             owns owner->len;
-            owns owner->data;
+            owns &owner->data;
             views readable(owner->data, owner->len);
             fact 0 <= owner->pos;
             fact owner->pos <= owner->len;

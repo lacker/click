@@ -39,21 +39,21 @@ resource ctx_at(child: struct rb_node*, parent: struct rb_node*,
     field model: Frame;
     match model {
         Frame::Top => {
-            owns root->rb_node;
+            owns &root->rb_node;
             fact root != 0;
             fact parent == 0;
             fact root->rb_node == child;
         },
         Frame::RedParent => {
             owns parent->__rb_parent_color;
-            owns parent->rb_left;
+            owns &parent->rb_left;
             fact parent != 0;
             fact parent->rb_left == child;
             fact parent->__rb_parent_color == 0;
         },
         Frame::BlackParent => {
             owns parent->__rb_parent_color;
-            owns parent->rb_left;
+            owns &parent->rb_left;
             fact parent != 0;
             fact parent->rb_left == child;
             fact parent->__rb_parent_color == 1;

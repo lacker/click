@@ -81,8 +81,8 @@ resource rb_at(p: struct rb_node*, parent: struct rb_node*) {
         RbTree::Empty => { fact p == 0; },
         RbTree::Node(identity, color, left_model, right_model) => {
             owns p->__rb_parent_color;
-            owns p->rb_left;
-            owns p->rb_right;
+            owns &p->rb_left;
+            owns &p->rb_right;
             owns left: rb_at(p->rb_left, p);
             owns right: rb_at(p->rb_right, p);
             fact p != 0;
@@ -101,8 +101,8 @@ void reparent_left_child(struct rb_node* victim, struct rb_node* new_node,
                          struct rb_node* parent) {
     consumes t: rb_at(victim, parent);
     consumes new_node->__rb_parent_color;
-    consumes new_node->rb_left;
-    consumes new_node->rb_right;
+    consumes &new_node->rb_left;
+    consumes &new_node->rb_right;
     requires t.model != RbTree::Empty;
     requires victim->rb_left != 0;
     requires new_node != 0;

@@ -87,10 +87,6 @@ struct packet choose_packet(int32 choose_left, struct packet left, struct packet
 }
 
 int32 sum_packet(struct packet packet) {
-    views packet->tag;
-    views packet->inner.value;
-    views packet->inner.enabled;
-    views packet->tail;
     requires packet.inner.value >= -1000;
     requires packet.inner.value <= 1000;
     requires packet.tail >= -1000;

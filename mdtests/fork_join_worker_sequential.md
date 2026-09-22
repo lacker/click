@@ -35,7 +35,7 @@ target "x86_64-linux-userspace";
 verifying "fill_range.c";
 
 resource range_task(job: struct range_job*) {
-    views job->output;
+    views &job->output;
     views job->begin;
     views job->end;
     views job->value;
@@ -66,7 +66,7 @@ void *fill_range(void *argument) {
     step();
     loop as fill {
         decreases job->end - index;
-        views job->output;
+        views &job->output;
         views job->begin;
         views job->end;
         views job->value;

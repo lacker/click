@@ -78,6 +78,14 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
             .collect::<Vec<_>>();
         let chain_assumptions = chain_facts
             .iter()
+            .flat_map(|fact| {
+                // A separation's bounds travel with it as a conjunction.
+                // Frame evidence may use its leaves, but never facts under
+                // an implication or a quantifier.
+                let mut parts = Vec::new();
+                atomic_conjuncts(fact, &mut parts);
+                parts
+            })
             .filter(|fact| {
                 // Separations are frame justification too: crossing a call's
                 // havoc edge for a load outside the callee's footprint is
@@ -425,6 +433,14 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
         // load variables denote one unchanged cell.
         let chain_assumptions = chain_facts
             .iter()
+            .flat_map(|fact| {
+                // A separation's bounds travel with it as a conjunction.
+                // Frame evidence may use its leaves, but never facts under
+                // an implication or a quantifier.
+                let mut parts = Vec::new();
+                atomic_conjuncts(fact, &mut parts);
+                parts
+            })
             .filter(|fact| {
                 // Separations are frame justification too: crossing a call's
                 // havoc edge for a load outside the callee's footprint is

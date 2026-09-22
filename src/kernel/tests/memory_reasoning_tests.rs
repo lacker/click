@@ -5351,6 +5351,59 @@ mod stated_range_guard_derivation {
         );
     }
 
+    #[test]
+    fn shared_extent_guards_match_wide_integer_arithmetic_at_boundaries() {
+        let start_var = Variable(9_200_020);
+        let end_var = Variable(9_200_021);
+        let assumptions = PureFactContext::new();
+        for width in [1, 2, 4, 8] {
+            let range = CMemoryRange::new_with_element_width(
+                Pointer {
+                    block: "range".into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                Bitvector32Term::Variable(start_var),
+                Bitvector32Term::Variable(end_var),
+                width,
+            );
+            let guards = crate::kernel::memory_range_extent_guard_spellings(&range);
+            let limit = (u32::MAX / width).min(i32::MAX as u32) as i32;
+            let endpoints = [
+                i32::MIN,
+                i32::MIN + 1,
+                -1,
+                0,
+                1,
+                limit,
+                limit.saturating_add(1),
+                i32::MAX,
+            ];
+            for start in endpoints {
+                for end in endpoints {
+                    let count = i64::from(end) - i64::from(start);
+                    let expected = count >= 0 && count * i64::from(width) <= i64::from(u32::MAX);
+                    let actual = guards.iter().all(|guard| {
+                        let guard = crate::kernel::substitute_int32_variable_in_proposition(
+                            guard,
+                            start_var,
+                            Bitvector32Term::Constant(start as u32),
+                        );
+                        let guard = crate::kernel::substitute_int32_variable_in_proposition(
+                            &guard,
+                            end_var,
+                            Bitvector32Term::Constant(end as u32),
+                        );
+                        crate::kernel::prelude::required_obligation_is_exactly_discharged(
+                            &assumptions,
+                            &guard,
+                        )
+                    });
+                    assert_eq!(actual, expected, "{start}..{end}, width {width}");
+                }
+            }
+        }
+    }
+
     /// A composite or token resource names no range, so a separation over one
     /// owes nothing. Only memory carries an extent.
     #[test]

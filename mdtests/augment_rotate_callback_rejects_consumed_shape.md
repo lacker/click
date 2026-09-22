@@ -36,8 +36,8 @@ struct node *rotate_steal(struct node *node) {
 ```click
 resource shape(node: struct node*) {
     if node != 0 {
-        owns node->left;
-        owns node->right;
+        owns &node->left;
+        owns &node->right;
         contains shape(node->left);
         contains shape(node->right);
     }
@@ -85,8 +85,8 @@ struct node* rotate_left(
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes shape(node->left);
     consumes shape(node->right);
     owns node->augmented;
@@ -117,8 +117,8 @@ struct node* rotate_steal(struct node* node) {
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes shape(node->left);
     consumes shape(node->right);
     owns node->augmented;

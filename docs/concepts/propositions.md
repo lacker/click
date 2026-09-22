@@ -130,8 +130,8 @@ same address, so their pointers differ:
 
 <!-- verified-example: mdtests/pointer_disequality_from_separation.md -->
 ```click
-owns a->left;
-owns b->left;
+owns &a->left;
+owns &b->left;
 ```
 
 Nothing needs to be stated: the composition of those two `owns` clauses

@@ -20,7 +20,7 @@ int32 write_stored_pointer(struct owner* owner) {
 verifying "write_stored_pointer.c";
 
 int32 write_stored_pointer(struct owner* owner) {
-    consumes owner->data;
+    consumes &owner->data;
     consumes owner->data[0..1];
 
     ensures result == 7 by auto;

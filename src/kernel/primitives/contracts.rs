@@ -1991,29 +1991,77 @@ fn collect_stated_loadable_extent_guards(
     }
 }
 
-/// The byte-extent guards a stated resource-separation proposition carries.
-///
-/// `separate(memory(a[s..t]), …)` names two memory ranges, and naming a range
-/// in a contract means the same thing here as it does in `owns a[s..t]` or
-/// `viewable(a[s..t])`: that `s..t` is a valid 32-bit byte extent. Separation
-/// used to be the one stated form that did not carry it, so
-/// `separate(memory(a[s..s + 2]), memory(b[0..1]))` was accepted for every
-/// `s`, including the `s` where `s + 2` wraps past `i32::MAX` and the range
-/// runs backwards over the whole index space. The ranges a separation names
-/// are read back into element arithmetic by the same rules that read back an
-/// owned range, so they need the same premise to mean anything.
-///
-/// This is [`stated_loadable_extent_guards`] for the separation family: one
-/// derivation from the lowered proposition, so that wherever a separation is
-/// assumed these are available with it and wherever it is a goal or a cited
-/// premise a proof owes them. Deriving both from the proposition alone is what
-/// keeps the two directions agreeing without a rule about where the
-/// proposition came from.
-///
-/// Only [`CResource::Memory`] carries an extent. A composite or token
-/// resource is an opaque ownership atom whose arguments are not a range, and
-/// an instance names no bounds, so those contribute nothing. Conjunctions are
-/// walked for the same reason as above: a `requires` clause is written as one.
+/// Public range bounds in signed arithmetic. Two-byte and wider elements
+/// have a maximum count no larger than `i32::MAX`, so their unsigned byte
+/// bound is equivalent to these signed count guards plus forward endpoints.
+/// Byte ranges can span more than `i32::MAX` elements and retain the exact
+/// endpoint form instead.
+pub(crate) fn memory_range_extent_guards(range: &CMemoryRange) -> Vec<Proposition> {
+    match memory_range_byte_count_extent(
+        range.start().clone(),
+        range.end().clone(),
+        range.element_width(),
+    ) {
+        MemoryRangeExtent::ConstantValid => Vec::new(),
+        MemoryRangeExtent::ConstantInvalid { .. } => vec![Proposition::ConditionIs(
+            ConditionTerm::Constant(false),
+            true,
+        )],
+        MemoryRangeExtent::Guards(guards) if range.element_width() == 1 => guards,
+        MemoryRangeExtent::Guards(_) => {
+            let mut guards = vec![Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(range.start().clone(), range.end().clone()),
+                true,
+            )];
+            for guard in memory_range_element_count_guards(
+                memory_range_element_count(range),
+                range.element_width(),
+            ) {
+                if !guards.contains(&guard) {
+                    guards.push(guard);
+                }
+            }
+            guards
+        }
+    }
+}
+
+/// Equivalent forms retained with an actual held range. The original endpoint
+/// form serves memory reasoning; the signed form is available to proof text.
+pub(crate) fn memory_range_extent_guard_spellings(range: &CMemoryRange) -> Vec<Proposition> {
+    let mut guards = memory_range_byte_count_guards(
+        range.start().clone(),
+        range.end().clone(),
+        range.element_width(),
+    );
+    for guard in memory_range_extent_guards(range) {
+        if !guards.contains(&guard) {
+            guards.push(guard);
+        }
+    }
+    guards
+}
+
+/// Proof-facing bounds included in a separation proposition. Assuming it and
+/// proving it use the same list; neither direction may drop a bound.
+/// Bound variables under quantifiers or implications stay in their own scope.
+pub(crate) fn stated_separation_extent_bounds(proposition: &Proposition) -> Vec<Proposition> {
+    let mut guards = Vec::new();
+    for range in stated_separation_memory_ranges(proposition) {
+        for guard in memory_range_extent_guards(range) {
+            if !guards.contains(&guard) {
+                guards.push(guard);
+            }
+        }
+    }
+    guards
+}
+
+/// Endpoint-form validity guards for a stated separation. Lowering uses these
+/// to diagnose ranges already known invalid; the equivalent signed form from
+/// [`stated_separation_extent_bounds`] becomes part of the separation proposition.
+/// Composite and token atoms carry no endpoints. Quantifiers and implications
+/// are not traversed, so their local bounds cannot escape into the outer scope.
 pub(crate) fn stated_separation_extent_guards(proposition: &Proposition) -> Vec<Proposition> {
     let mut guards = Vec::new();
     for range in stated_separation_memory_ranges(proposition) {

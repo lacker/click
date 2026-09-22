@@ -49,7 +49,7 @@ resource parent(p: struct parent*) {
     match link {
         ParentLink::Empty => {},
         ParentLink::Linked(kid) => {
-            owns p->kid;
+            owns &p->kid;
             fact p->kid == kid;
             fact kid != 0;
         },
@@ -95,7 +95,7 @@ void child_release(struct child* obj) {
 void parent_attach(struct parent* p, struct child* kid) {
     requires count(child_ref(kid)) < 2147483647;
     requires kid != 0;
-    consumes p->kid;
+    consumes &p->kid;
     owns child_ref(kid);
     produces child_ref(kid);
     produces link: parent(p);
@@ -128,7 +128,7 @@ void parent_detach(struct parent* p) {
 }
 
 void caller(struct parent* p, struct child* kid) {
-    consumes p->kid;
+    consumes &p->kid;
     requires kid != 0;
     owns child_ref(kid);
 } by {

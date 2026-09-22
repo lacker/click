@@ -3600,6 +3600,15 @@ fn prepare_verified_function_call<'a>(
                     if contract_requirement_is_proven {
                         return true;
                     }
+                    // Range bounds are the definition of this atomic source
+                    // clause. User-written logical structure still needs its
+                    // ordinary explicit proof rather than this unpacking.
+                    if matches!(requirement, SpecProposition::ResourceSeparate { .. }) {
+                        return separation_requirement_parts_are_established(
+                            &path_assumptions,
+                            &requirement_path.proposition,
+                        );
+                    }
                     match &requirement_path.proposition {
                             Proposition::ConditionIs(condition, value) => {
                                 path_assumptions.proves_exact(&requirement_path.proposition)
@@ -4079,6 +4088,36 @@ fn resource_call_failure(message: &str) -> CFunctionPath {
         obligations: vec![],
 
         loan_evidence: empty_checked_loan_evidence_sequence(),
+    }
+}
+
+/// Unpack an atomic separation clause's bounds against the same caller facts,
+/// without assuming any sibling. This checks the definition of separation;
+/// it is not used to discharge user-written conjunctions automatically.
+fn separation_requirement_parts_are_established(
+    assumptions: &PureFactContext,
+    proposition: &Proposition,
+) -> bool {
+    match proposition {
+        Proposition::And(left, right) => {
+            separation_requirement_parts_are_established(assumptions, left)
+                && separation_requirement_parts_are_established(assumptions, right)
+        }
+        Proposition::ConditionIs(condition, value) => {
+            required_obligation_is_exactly_discharged(assumptions, proposition)
+                || assumptions.has_matching_condition_fact_for_memory_resolution(condition, *value)
+        }
+        Proposition::CResourceSeparate {
+            left: CResource::Memory(left),
+            right: CResource::Memory(right),
+        } => {
+            required_obligation_is_exactly_discharged(assumptions, proposition)
+                || assumptions
+                    .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                        left, right,
+                    )
+        }
+        _ => assumptions.proves_exact(proposition),
     }
 }
 
@@ -7831,6 +7870,70 @@ fn spec_expression_parameter_offset(
     }
 }
 
+/// Track storage provenance rather than reads used to compute a store's
+/// address. The exit-state check still detects writes through local aliases.
+fn c_expression_uses_object_address(expression: &CExpression, name: &str) -> bool {
+    match expression {
+        CExpression::Variable(variable) => variable == name,
+        CExpression::Value(_) | CExpression::FunctionAddress(_) => false,
+        // A scalar or pointer load produces a value, not the address of the
+        // containing object. Inline arrays still denote embedded storage.
+        CExpression::TypedLoad {
+            pointer,
+            value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+            ..
+        } => c_expression_uses_object_address(pointer, name),
+        CExpression::Load(_) | CExpression::TypedLoad { .. } => false,
+        CExpression::AddressOf(expression) => match expression.as_ref() {
+            CExpression::Load(pointer) | CExpression::TypedLoad { pointer, .. } => {
+                c_expression_uses_object_address(pointer, name)
+            }
+            expression => c_expression_uses_object_address(expression, name),
+        },
+
+        CExpression::Cast { expression, .. }
+        | CExpression::FloatNegate(expression)
+        | CExpression::FloatClassification { expression, .. }
+        | CExpression::PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | CExpression::Not(expression)
+        | CExpression::BitwiseNot(expression) => c_expression_uses_object_address(expression, name),
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            c_expression_uses_object_address(condition, name)
+                || c_expression_uses_object_address(then_branch, name)
+                || c_expression_uses_object_address(else_branch, name)
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            c_expression_uses_object_address(left, name)
+                || c_expression_uses_object_address(right, name)
+        }
+    }
+}
+
 fn statement_writes_aggregate_parameter(
     statement: &CStatement,
     parameter_name: &str,
@@ -7840,7 +7943,7 @@ fn statement_writes_aggregate_parameter(
     match statement {
         CStatement::Store { pointer, .. } => {
             if c_expression_parameter_offset(pointer, parameter_name).is_some()
-                || c_expression_mentions_variable(pointer, parameter_name)
+                || c_expression_uses_object_address(pointer, parameter_name)
             {
                 *unknown_write = true;
             }
@@ -7854,7 +7957,7 @@ fn statement_writes_aggregate_parameter(
                 if let Some(range) = parameter_access_range(offset, value_type.byte_width()) {
                     writes.push(range);
                 }
-            } else if c_expression_mentions_variable(pointer, parameter_name) {
+            } else if c_expression_uses_object_address(pointer, parameter_name) {
                 *unknown_write = true;
             }
         }
@@ -7863,12 +7966,18 @@ fn statement_writes_aggregate_parameter(
                 if let Some(range) = parameter_access_range(offset, layout.size_bytes()) {
                     writes.push(range);
                 }
-            } else if c_expression_mentions_variable(target, parameter_name) {
+            } else if c_expression_uses_object_address(target, parameter_name) {
                 *unknown_write = true;
             }
         }
         CStatement::Update { target, .. } => {
-            if c_expression_mentions_variable(target, parameter_name) {
+            let pointer = match target {
+                CExpression::Load(pointer)
+                | CExpression::TypedLoad { pointer, .. }
+                | CExpression::Index(pointer, _) => pointer.as_ref(),
+                target => target,
+            };
+            if c_expression_uses_object_address(pointer, parameter_name) {
                 *unknown_write = true;
             }
         }
@@ -13340,14 +13449,24 @@ fn apply_counted_population_transitions_with_interface(
     };
     let post_contract_state =
         with_contract_interface_argument_views(post_state, interface, argument_values);
-    let ensured = match evaluate_function_resource_context(
+    // A produced resource may contain an `old(...)` argument.  Its value must
+    // be read from the function entry memory, while the authority that makes
+    // that read legal is the post-call resource context being returned.  Keep
+    // those two roles separate instead of evaluating the whole ensure section
+    // against the post snapshot.
+    let ensures_entry_state = entry_state
+        .clone()
+        .with_resource_context(post_contract_state.resources().clone());
+    let ensured = match evaluate_function_resource_context_with_entry_and_normalization(
+        &ensures_entry_state,
         &post_contract_state,
         interface.resource_ensures(),
         interface.composite_resource_definitions(),
         assumptions,
         budget,
+        true,
     )? {
-        Ok(resources) => resources,
+        Ok((resources, _)) => resources,
         Err(error) => return Ok(Err(error)),
     };
     let population_totals = |resources: &ResourceContext| {
@@ -14627,6 +14746,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         let Some(range) = fact.memory_range() else {
             continue;
         };
+        facts.extend(crate::kernel::memory_range_extent_guard_spellings(range));
         let width = range.element_width();
         facts.push(Proposition::CMemoryLoadable {
             memory: state.memory.clone(),
@@ -14646,22 +14766,6 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         .prefer_symbolic_external_loads();
     for fact in &facts {
         body_assumptions = body_assumptions.assume_proposition(fact.clone());
-    }
-    // A contained range is stated by the composite's own clause, so while the
-    // body's later clauses are evaluated its byte-count guards are available,
-    // exactly as a contract's range carries them. These stay inside the body
-    // evaluation: the published facts below are unchanged.
-    for guard in facts
-        .iter()
-        .flat_map(crate::kernel::stated_loadable_extent_guards)
-        .chain(
-            facts
-                .iter()
-                .flat_map(crate::kernel::stated_separation_extent_guards),
-        )
-        .collect::<Vec<_>>()
-    {
-        body_assumptions = body_assumptions.assume_proposition(guard);
     }
     let facts_to_rewrite = selected.map_or(&definition.facts, |arm| &arm.facts);
     let (body_clauses, retained_conditions) = if active {
@@ -14868,6 +14972,7 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
         let Some(range) = fact.memory_range() else {
             continue;
         };
+        supporting_facts.extend(crate::kernel::memory_range_extent_guard_spellings(range));
         let width = range.element_width();
         supporting_facts.push(Proposition::CMemoryLoadable {
             memory: state.memory.clone(),
@@ -14886,12 +14991,6 @@ pub(in crate::kernel) fn matched_resource_instance_case_clauses(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
     for fact in supporting_facts {
-        for guard in crate::kernel::stated_loadable_extent_guards(&fact)
-            .into_iter()
-            .chain(crate::kernel::stated_separation_extent_guards(&fact))
-        {
-            body_assumptions = body_assumptions.assume_proposition(guard);
-        }
         body_assumptions = body_assumptions.assume_proposition(fact);
     }
 
@@ -15986,6 +16085,14 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
         expand_composite_resource_context(context, definitions, memory, assumptions)?;
     let mut propositions = Vec::new();
     for composite in composites {
+        // Preserve the bounds of each declared leaf before adjacent resources
+        // normalize into a larger range. The proof can cite either slice.
+        propositions.extend(evaluate_composite_resource_loadable_propositions(
+            &composite,
+            definitions,
+            memory,
+            assumptions,
+        )?);
         propositions.extend(evaluate_composite_resource_relation_propositions(
             &composite,
             definitions,
@@ -16421,6 +16528,7 @@ pub(super) fn evaluate_composite_resource_loadable_propositions(
         };
         let range = evaluated.memory_range()?;
         let element_width = segment.element_width();
+        propositions.extend(crate::kernel::memory_range_extent_guard_spellings(range));
         propositions.push(Proposition::CMemoryLoadable {
             memory: memory.clone(),
             base: range
@@ -16898,7 +17006,32 @@ fn evaluate_function_resource_context_with_normalization(
     budget: &mut ExecutionBudget,
     normalize: bool,
 ) -> ExecutionResult<Result<(ResourceContext, Vec<CCheckedResourceFact>), CRuntimeError>> {
+    evaluate_function_resource_context_with_entry_and_normalization(
+        state,
+        state,
+        resources,
+        definitions,
+        assumptions,
+        budget,
+        normalize,
+    )
+}
+
+fn evaluate_function_resource_context_with_entry_and_normalization(
+    entry_state: &CState,
+    state: &CState,
+    resources: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    normalize: bool,
+) -> ExecutionResult<Result<(ResourceContext, Vec<CCheckedResourceFact>), CRuntimeError>> {
+    // `entry_state` supplies only expressions explicitly marked `old(...)`;
+    // `state` supplies current/post expressions and the section's resulting
+    // resource context.  Keeping both states here prevents repeated lowering
+    // of one entry load from inventing a distinct resource argument.
     let evaluated = match evaluate_resource_clauses_against_whole_section(
+        entry_state,
         state,
         resources,
         definitions,
@@ -17051,6 +17184,7 @@ pub(crate) fn contract_entry_partition_facts(
 /// verdict for a dependency cycle between two clauses and for two clauses that
 /// are independently unevaluable; either way the user needs both positions.
 fn evaluate_resource_clauses_against_whole_section(
+    entry_state: &CState,
     state: &CState,
     resources: &[CResourceSpec],
     definitions: &[CCompositeResourceDefinition],
@@ -17070,6 +17204,7 @@ fn evaluate_resource_clauses_against_whole_section(
                 .unchecked_with_facts(supplied.iter().cloned()),
         );
         let (outcome, missing) = evaluate_resource_clause_with_dependencies(
+            entry_state,
             &evaluation_state,
             resource,
             assumptions,
@@ -17108,6 +17243,7 @@ fn evaluate_resource_clauses_against_whole_section(
         resource_clause_unregister_waiters(index, &mut dependencies, &mut waiters);
         let evaluation_state = state.clone().with_resource_context(section_supply.clone());
         let (outcome, missing) = evaluate_resource_clause_with_dependencies(
+            entry_state,
             &evaluation_state,
             &resources[index],
             assumptions,
@@ -17867,6 +18003,7 @@ mod resource_clause_worklist_tests {
 }
 
 fn evaluate_resource_clause_with_dependencies(
+    entry_state: &CState,
     state: &CState,
     resource: &CResourceSpec,
     assumptions: &PureFactContext,
@@ -17875,7 +18012,13 @@ fn evaluate_resource_clause_with_dependencies(
     #[cfg(test)]
     record_resource_clause_attempt();
     let (result, dependencies) = capture_resource_dependencies(|| {
-        evaluate_function_resource_spec(state, resource, assumptions, budget)
+        evaluate_function_resource_spec_with_entry(
+            entry_state,
+            state,
+            resource,
+            assumptions,
+            budget,
+        )
     });
     result.map(|result| (result, dependencies))
 }
@@ -18892,6 +19035,146 @@ pub(super) fn evaluate_function_resource_spec(
     evaluate_function_resource_spec_with_entry(state, state, resource, assumptions, budget)
 }
 
+/// Resolve logical field values in a resource expression without restoring the
+/// parameter's expired storage. Dereferences through a copied pointer remain
+/// ordinary current-memory reads, and address-taking remains an lvalue operation.
+fn resolve_retained_aggregate_fields(
+    entry: &CState,
+    state: &CState,
+    expression: &mut CExpression,
+    as_value: bool,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<()> {
+    budget.consume_expression_step()?;
+    fn projection(expression: &CExpression) -> Option<(&str, SpecExpression)> {
+        match expression {
+            CExpression::Variable(name) => {
+                Some((name, SpecExpression::CExpression(expression.clone())))
+            }
+            CExpression::PointerOffsetBytes { pointer, bytes } => {
+                let (name, pointer) = projection(pointer)?;
+                Some((
+                    name,
+                    SpecExpression::PointerOffset {
+                        pointer: Box::new(pointer),
+                        elements: Box::new(SpecExpression::Value(int32(*bytes))),
+                        byte_width: 1,
+                    },
+                ))
+            }
+            _ => None,
+        }
+    }
+    if as_value
+        && let CExpression::TypedLoad {
+            pointer,
+            value_type,
+            ..
+        } = expression
+        && let Some((parameter, pointer)) = projection(pointer)
+        && let Some(CLocalBinding::AggregateObject { slot, .. }) = entry.locals.binding(parameter)
+        && !state.memory.has_block(&slot.block)
+        && !matches!(
+            value_type,
+            CType::Int32Array(_)
+                | CType::UInt8Array(_)
+                | CType::Int16Array(_)
+                | CType::UInt16Array(_)
+                | CType::UInt32Array(_)
+                | CType::Int64Array(_)
+                | CType::UInt64Array(_)
+                | CType::Float32Array(_)
+                | CType::Float64Array(_)
+        )
+    {
+        let field = SpecExpression::AggregateFieldValue {
+            parameter: parameter.to_string(),
+            pointer: Box::new(pointer),
+            value_type: *value_type,
+        };
+        let paths = crate::kernel::spec::evaluate_spec_expression_paths_with_loop_entry(
+            state,
+            &field,
+            Some(entry),
+            assumptions,
+            budget,
+        )?;
+        if let [path] = paths.as_slice()
+            && path.obligations.is_empty()
+        {
+            *expression = CExpression::Value(path.value.clone());
+            return Ok(());
+        }
+    }
+    match expression {
+        CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => {}
+        CExpression::AddressOf(inner) => {
+            resolve_retained_aggregate_fields(entry, state, inner, false, assumptions, budget)?
+        }
+        CExpression::Cast {
+            expression: inner, ..
+        }
+        | CExpression::FloatClassification {
+            expression: inner, ..
+        }
+        | CExpression::FloatNegate(inner)
+        | CExpression::Not(inner)
+        | CExpression::BitwiseNot(inner)
+        | CExpression::Load(inner)
+        | CExpression::TypedLoad { pointer: inner, .. }
+        | CExpression::PointerOffsetBytes { pointer: inner, .. } => {
+            resolve_retained_aggregate_fields(entry, state, inner, true, assumptions, budget)?
+        }
+        CExpression::Conditional {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            resolve_retained_aggregate_fields(entry, state, condition, true, assumptions, budget)?;
+            resolve_retained_aggregate_fields(
+                entry,
+                state,
+                then_branch,
+                as_value,
+                assumptions,
+                budget,
+            )?;
+            resolve_retained_aggregate_fields(
+                entry,
+                state,
+                else_branch,
+                as_value,
+                assumptions,
+                budget,
+            )?;
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            resolve_retained_aggregate_fields(entry, state, left, true, assumptions, budget)?;
+            resolve_retained_aggregate_fields(entry, state, right, true, assumptions, budget)?;
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn evaluate_function_resource_spec_with_entry(
     entry_state: &CState,
     state: &CState,
@@ -18961,7 +19244,19 @@ pub(super) fn evaluate_function_resource_spec_with_entry(
         }
         CResourceTerm::Memory(segment) => {
             let element_width = segment.element_width();
-            let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
+            let mut segment = segment.clone();
+            for expression in [&mut segment.base, &mut segment.start, &mut segment.end] {
+                resolve_retained_aggregate_fields(
+                    entry_state,
+                    state,
+                    expression,
+                    true,
+                    assumptions,
+                    budget,
+                )?;
+            }
+            let segment = match evaluate_loop_effect_segment(state, &segment, assumptions, budget)?
+            {
                 Ok(segment) => segment,
                 Err(_) => {
                     return Ok(Err(CRuntimeError::FunctionContract(
@@ -19021,12 +19316,22 @@ pub(super) fn evaluate_function_resource_spec_with_entry(
                         "symbolic quantities require owned user-declared resources".to_string(),
                     )));
                 }
+                let quantity_state = match resource.quantity_snapshot() {
+                    CResourceSnapshot::Entry => entry_state,
+                    CResourceSnapshot::Current | CResourceSnapshot::Post => state,
+                };
+                let mut quantity = quantity.clone();
+                resolve_retained_aggregate_fields(
+                    entry_state,
+                    quantity_state,
+                    &mut quantity,
+                    true,
+                    assumptions,
+                    budget,
+                )?;
                 let quantity = match evaluate_loop_effect_segment_value(
-                    match resource.quantity_snapshot() {
-                        CResourceSnapshot::Entry => entry_state,
-                        CResourceSnapshot::Current | CResourceSnapshot::Post => state,
-                    },
-                    quantity,
+                    quantity_state,
+                    &quantity,
                     assumptions,
                     "declared resource quantity",
                     budget,
@@ -19132,6 +19437,16 @@ fn evaluate_function_declared_resource_spec(
             CResourceSnapshot::Entry => entry_state,
             CResourceSnapshot::Current | CResourceSnapshot::Post => state,
         };
+        let mut argument = argument.clone();
+        resolve_retained_aggregate_fields(
+            entry_state,
+            argument_state,
+            &mut argument,
+            true,
+            assumptions,
+            budget,
+        )?;
+        let argument = &argument;
         let allocation_element_count = (name == CResourceFact::ALLOCATION_RESOURCE_NAME
             && index == 1)
             .then(|| match argument {
@@ -23262,5 +23577,83 @@ mod stable_view_call_tests {
                 if message.contains("counted population `slot` is not initialized")),
             "{refusal:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod retained_aggregate_resource_values_tests {
+    use super::*;
+
+    #[test]
+    fn retained_resource_fields_preserve_lvalues_and_scale_with_expression() {
+        let slot = Pointer {
+            block: "local:frame:0:input".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let pointee = Pointer {
+            block: "pointee".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let value = CValue::typed_pointer(pointee, CType::Int32Pointer);
+        let layout = CAggregateLayout::new(
+            8,
+            8,
+            vec![CAggregateField::new("data", 0, CType::Int32Pointer)],
+        );
+        let field = CExpression::TypedLoad {
+            pointer: Box::new(CExpression::Variable("input".into())),
+            value_type: CType::Int32Pointer,
+            volatile: false,
+            source: Default::default(),
+        };
+        let mut work = Vec::new();
+        for size in [8, 32, 128, 512] {
+            let mut entry = CState::new().with_memory(
+                CMemory::new()
+                    .with_block(slot.block.clone(), 8)
+                    .store(slot.clone(), value.clone()),
+            );
+            entry
+                .locals
+                .set_aggregate_object_at("input".to_string(), layout.clone(), slot.clone());
+            for i in 0..size {
+                entry = entry.with_local(format!("unrelated_{i}"), int32(i));
+            }
+            let state = entry
+                .clone()
+                .with_memory(entry.memory.clone().without_local_block(&slot.block));
+            let resolve = |expression: &mut CExpression| {
+                resolve_retained_aggregate_fields(
+                    &entry,
+                    &state,
+                    expression,
+                    true,
+                    &PureFactContext::new(),
+                    &mut ExecutionBudget::beside_live_state(),
+                )
+                .unwrap();
+            };
+            let mut expression = field.clone();
+            let (_, measured) =
+                crate::instrumentation::measure_deterministic_work(|| resolve(&mut expression));
+            work.push(measured);
+            assert_eq!(expression, CExpression::Value(value.clone()));
+            let address = CExpression::AddressOf(Box::new(field.clone()));
+            let mut expression = address.clone();
+            resolve(&mut expression);
+            assert_eq!(
+                expression, address,
+                "an address must not become a retained value"
+            );
+            let mut expression = CExpression::Load(Box::new(field.clone()));
+            resolve(&mut expression);
+            assert_eq!(
+                expression,
+                CExpression::Load(Box::new(CExpression::Value(value.clone())))
+            );
+            assert!(!state.memory.has_block(&slot.block));
+            assert!(state.resources().facts().is_empty());
+        }
+        assert!(work.windows(2).all(|pair| pair[0] == pair[1]), "{work:?}");
     }
 }

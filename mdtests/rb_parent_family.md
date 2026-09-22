@@ -195,8 +195,8 @@ int32 relinked_is_empty(struct rb_node* node, struct rb_node* parent) {
 void link_node(struct rb_node* node, struct rb_node* parent, struct rb_node** rb_link) {
     requires node != 0;
     owns node->__rb_parent_color;
-    owns node->rb_left;
-    owns node->rb_right;
+    owns &node->rb_left;
+    owns &node->rb_right;
     owns rb_link[0..1];
     ensures node->__rb_parent_color == address(parent);
     ensures node->rb_left == 0;

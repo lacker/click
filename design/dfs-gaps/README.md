@@ -2,6 +2,13 @@
 
 Tracked by `issues/dfs.md`; delete this directory with that issue.
 
+Current checkpoint: the full saved search was rerun unchanged at `624146d4`
+on 2026-09-21 and still fails its quantified viewability obligation at the
+loop back edge. Other reductions and quoted diagnostics below are historical
+until individually rerun; their descriptions are not a current test verdict.
+The deleted `a_second_universal_have_cannot_narrow_a_stated_range.md` references
+refer to the fixed defect listed below, not another missing reproduction.
+
 These files are reductions, not tests. They do not verify, so they are not in
 `mdtests/`. Each one is the smallest thing that still fails, with the exact
 refusal it produces and the rule that would make it pass. The two examples that

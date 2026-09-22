@@ -12,9 +12,7 @@ resource cell(p: int32*) {
     owns p[0..1];
 }
 void dispose(struct packet input) {
-    views input.data;
     consumes cell(input.data);
-    requires separate(memory(input.data), memory(input.data[0..1]));
     ensures input.data[0] == old(input.data[0]);
 } by { unfold(cell(input.data)); execute(); simp(); }
 ```

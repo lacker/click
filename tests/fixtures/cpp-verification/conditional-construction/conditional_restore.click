@@ -1,7 +1,7 @@
 verifying "conditional_restore.cpp";
 
 void Restore_constructor(struct Restore* self, int32* slot) {
-    owns self->p;
+    owns &self->p;
     owns self->saved;
     owns slot[0..1];
     ensures self->p == slot;
@@ -15,7 +15,7 @@ void Restore_constructor(struct Restore* self, int32* slot) {
 void Restore_destructor(struct Restore* self) {
     requires self->saved == 41;
     requires separate(memory(object(self)), memory(self->p[0..1]));
-    owns self->p;
+    owns &self->p;
     owns self->saved;
     owns self->p[0..1];
     ensures self->p == old(self->p);

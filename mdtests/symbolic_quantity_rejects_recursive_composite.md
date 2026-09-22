@@ -17,7 +17,7 @@ void hold_many(struct node* node, int32 amount) {
 ```click
 resource list(node: struct node*) {
     if node != 0 {
-        owns node->next;
+        owns &node->next;
         contains list(node->next);
     }
 }

@@ -18,9 +18,13 @@ unsigned long read_word(struct node* node) {
 ```click
 verifying "object_resource_uint64_field.c";
 
+resource node_storage(p: struct node*) {
+    owns object(p);
+}
+
 unsigned long read_word(struct node* node) {
     requires node != 0;
-    views object(node);
+    views node_storage(node);
     ensures result == node->word;
 } by {
     execute();

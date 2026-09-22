@@ -66,7 +66,7 @@ resource holder_at(child: struct cell*) {
         Holder::Empty => { fact child == 0; },
         Holder::Full(identity, value) => {
             owns identity->value;
-            owns identity->next;
+            owns &identity->next;
             fact identity != 0;
             fact identity->value == value;
             fact identity->next == child;

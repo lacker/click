@@ -297,8 +297,8 @@ resource ctx_at(child: struct tree_node*) {
         Context::Top => {},
         Context::Left(parent, value, sibling_model, up_model) => {
             owns parent->value;
-            owns parent->left;
-            owns parent->right;
+            owns &parent->left;
+            owns &parent->right;
             owns sibling: tree_at(parent->right);
             owns up: ctx_at(parent);
             fact parent != 0;

@@ -547,7 +547,7 @@ A composite resource may put its entire body under one load-free `if`:
 resource list(node: struct node*) {
     if node != 0 {
         owns node->value;
-        owns node->next;
+        owns &node->next;
         contains list(node->next);
     }
 }
@@ -752,7 +752,7 @@ is the verified walk that needs both.
 An arm's cells need not hang off the resource's own parameters. A constructor
 field declared `struct tag*` makes its binding a struct base for the whole
 arm, so a frame keyed by one node can own the cells of another node the model
-carries: `owns parent->left;`, `fact parent->left == child;`, and
+carries: `owns &parent->left;`, `fact parent->left == child;`, and
 `owns sibling: tree_at(parent->right);` all resolve against `struct tag`'s
 layout. That is what lets a context frame own its parent's links while being
 indexed by the child it focuses. A binding of any other type is not a base and

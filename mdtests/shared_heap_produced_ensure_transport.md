@@ -38,7 +38,7 @@ resource parent(p: struct parent*) {
     match link {
         ParentLink::Empty => {},
         ParentLink::Linked(kid) => {
-            owns p->kid;
+            owns &p->kid;
             fact p->kid == kid;
             fact kid != 0;
         },
@@ -48,7 +48,7 @@ resource parent(p: struct parent*) {
 verifying "shared_heap_produced_ensure_transport.c";
 
 void parent_attach(struct parent* p, struct child* kid) {
-    consumes p->kid;
+    consumes &p->kid;
     requires kid != 0;
     produces link: parent(p);
     ensures link.link == ParentLink::Linked(kid);
@@ -75,7 +75,7 @@ void parent_detach(struct parent* p) {
 }
 
 void caller(struct parent* p, struct child* kid) {
-    consumes p->kid;
+    consumes &p->kid;
     requires kid != 0;
 } by {
     let link = step(parent_attach(p, kid), {});

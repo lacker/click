@@ -51,8 +51,8 @@ struct node *rotate_reset(struct node *node) {
 ```click
 resource shape(node: struct node*) {
     if node != 0 {
-        owns node->left;
-        owns node->right;
+        owns &node->left;
+        owns &node->right;
         contains shape(node->left);
         contains shape(node->right);
     }

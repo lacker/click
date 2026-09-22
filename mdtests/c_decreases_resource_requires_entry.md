@@ -15,7 +15,7 @@ int32 unmeasured_walk(struct node* node) {
 resource zero_list(node: struct node*) {
     if node != 0 {
         owns node->value;
-        owns node->next;
+        owns &node->next;
         contains zero_list(node->next);
     }
 }

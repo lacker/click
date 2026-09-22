@@ -48,7 +48,7 @@ resource frame_at(child: struct link*) {
     match model {
         Frame::Top => { fact child == 0; },
         Frame::Held(identity, v) => {
-            owns identity->next;
+            owns &identity->next;
             fact identity != 0;
             fact identity->next == child;
         },

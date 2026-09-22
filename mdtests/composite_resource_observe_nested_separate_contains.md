@@ -23,7 +23,7 @@ resource backing_buffer(owner: struct owner*) {
 resource nested_owned_buffer(owner: struct owner*) {
     owns owner->len;
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     contains backing_buffer(owner);
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;

@@ -28,8 +28,8 @@ resource part(r: struct region*) {
     field tag: Tag;
     match tag {
         Tag::T(x) => {
-            owns r->arena;
-            owns r->arena->data;
+            owns &r->arena;
+            owns &r->arena->data;
             owns r->arena->capacity;
             owns r->arena->data[x..r->arena->capacity];
         },

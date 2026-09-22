@@ -1,17 +1,11 @@
 # An ordinary separation clause needs no extent text
 
-The extent meaning a separation clause now carries costs nothing to state.
-This range's endpoints are symbolic and its validity is not decided either
-way by the surrounding facts, so the clause is accepted as written: no upper
-bound on `n`, no added premise, no repair to the proof.
-
-That is the deliberate limit of the check. A separation is refused only where
-the context already proves one of its ranges runs backwards. An undecided
-extent is *not* turned into a proof obligation, because a range reached
-through a composite clause publishes no extent guard to the code that names
-it, so such an obligation would be one no contract text could discharge.
-Keeping this case passing is what says the check reads the facts it has
-rather than demanding new ones.
+A separation premise includes the validity of the ranges it names. Its
+endpoints can remain symbolic: the function assumes the bounds along with
+separation, so the contract does not have to repeat them. A caller must prove
+both separation and the bounds. The complementary goal and call regressions
+are in `separation_extent_unbounded_goal_rejected.md` and
+`separation_extent_call_rejected.md`.
 
 ```c filename=an_ordinary_separation_clause_needs_no_extent_text.c
 int32 ordinary_separation(int32 a[], int32 b[], int32 n) {

@@ -7422,7 +7422,7 @@ int read_retargeted(struct buffer *owner, int *other) {\n\
 verifying "reader.c";
 
 int32 read_entry(struct buffer* owner, int32* other) {
-    owns owner->data;
+    owns &owner->data;
     views owner->data[0..1];
     ensures result == owner->data[0];
 } by {
@@ -7446,7 +7446,7 @@ int32 read_entry(struct buffer* owner, int32* other) {
 verifying "reader.c";
 
 int32 read_retargeted(struct buffer* owner, int32* other) {
-    owns owner->data;
+    owns &owner->data;
     views owner->data[0..1];
     ensures result == owner->data[0];
 } by {
@@ -7621,7 +7621,7 @@ verifying "reader.c";
 resource box(p: struct s*) {
     owns p->a;
     owns p->b;
-    owns p->d;
+    owns &p->d;
     views p->d[0..p->b];
     fact 0 <= p->b;
 }
@@ -7759,7 +7759,7 @@ verifying "reader.c";
 resource box(p: struct s*) {
     owns p->a;
     owns p->b;
-    owns p->d;
+    owns &p->d;
     views p->d[0..p->b];
     fact 0 <= p->b;
 }

@@ -22,7 +22,7 @@ int32 buffer_get_first(struct owner* owner) {
 resource owned_buffer(owner: struct owner*) {
     owns owner->len;
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..1];
     fact 1 <= owner->len;
     fact owner->len <= owner->cap;

@@ -454,7 +454,7 @@ int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
     let click_source = r#"
 resource owned_box(owner: struct box*) {
     owns owner->value;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..1];
     fact separate(memory(object(owner)), memory(owner->data[0..1]));
 }
@@ -578,7 +578,7 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
     let click_source = r#"
 resource owned_box(owner: struct box*) {
     owns owner->value;
-    owns owner->data;
+    owns &owner->data;
 }
 
 verifying "box_init.c";
@@ -830,7 +830,7 @@ int32 buffer_pipeline(
 resource empty_buffer(owner: struct buffer*) {
     owns owner->len;
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..owner->cap];
     fact owner->len == 0;
     fact 1 <= owner->cap;
@@ -841,7 +841,7 @@ resource empty_buffer(owner: struct buffer*) {
 resource buffer_storage(owner: struct buffer*) {
     owns owner->len;
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
@@ -853,7 +853,7 @@ resource buffer_storage(owner: struct buffer*) {
 resource nonempty_buffer(owner: struct buffer*) {
     owns owner->len;
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..owner->cap];
     fact 1 <= owner->len;
     fact owner->len <= owner->cap;

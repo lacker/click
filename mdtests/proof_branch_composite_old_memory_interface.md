@@ -33,7 +33,7 @@ int32 retain_original(struct buffer* owner, int32 flag) {
 
 ```click
 resource buffer(owner: struct buffer*) {
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..1];
 }
 

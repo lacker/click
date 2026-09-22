@@ -26,7 +26,7 @@ resource readable_input(data: int32*, length: int32) {
 resource input_cursor(owner: struct input_cursor*) {
     owns owner->pos;
     owns owner->len;
-    owns owner->data;
+    owns &owner->data;
     views readable_input(owner->data, owner->len);
     fact 0 <= owner->pos;
     fact owner->pos <= owner->len;

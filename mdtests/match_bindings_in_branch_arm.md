@@ -42,7 +42,7 @@ resource chain_at(p: struct node*) {
     match model {
         Chain::End => { fact p == 0; },
         Chain::Link(identity, rest_model) => {
-            owns p->next;
+            owns &p->next;
             owns rest: chain_at(p->next);
             fact p != 0;
             fact p == identity;

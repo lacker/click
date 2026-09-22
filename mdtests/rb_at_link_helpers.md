@@ -226,8 +226,8 @@ resource rb_at(p: struct rb_node*) {
         RbTree::Empty => { fact p == 0; },
         RbTree::Node(identity, parent, color, left_model, right_model) => {
             owns p->__rb_parent_color;
-            owns p->rb_left;
-            owns p->rb_right;
+            owns &p->rb_left;
+            owns &p->rb_right;
             owns left: rb_at(p->rb_left);
             owns right: rb_at(p->rb_right);
             fact p != 0;
@@ -500,8 +500,8 @@ struct rb_node* red_parent_of(struct rb_node* node) {
 
 void link_node(struct rb_node* node, struct rb_node* parent, struct rb_node** rb_link) {
     consumes node->__rb_parent_color;
-    consumes node->rb_left;
-    consumes node->rb_right;
+    consumes &node->rb_left;
+    consumes &node->rb_right;
     owns rb_link[0..1];
     requires node != 0;
     requires aligned(node, 8);

@@ -1246,6 +1246,13 @@ impl CLocalEnvironment {
         )
     }
 
+    pub(crate) fn aggregate_object_pointer(&self, name: &str) -> Option<&Pointer> {
+        match self.binding(name) {
+            Some(CLocalBinding::AggregateObject { slot, .. }) => Some(slot),
+            _ => None,
+        }
+    }
+
     pub(crate) fn aggregate_layout(&self, name: &str) -> Option<&CAggregateLayout> {
         match self.binding(name) {
             Some(CLocalBinding::AggregateObject { layout, .. }) => Some(layout),

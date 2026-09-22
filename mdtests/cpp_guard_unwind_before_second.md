@@ -37,7 +37,7 @@ int guarded_before_second(int& first_cell, int& second_cell, bool should_throw) 
 verifying "guarded_before_second.cpp";
 
 void Restore_constructor(struct Restore* self, int32* slot) {
-    owns self->pointer;
+    owns &self->pointer;
     owns self->saved;
     owns slot[0..1];
     ensures self->pointer == slot;
@@ -51,7 +51,7 @@ void Restore_constructor(struct Restore* self, int32* slot) {
 
 void Restore_destructor(struct Restore* self) {
     requires separate(memory(object(self)), memory(self->pointer[0..1]));
-    owns self->pointer;
+    owns &self->pointer;
     owns self->saved;
     owns self->pointer[0..1];
     ensures self->pointer == old(self->pointer);

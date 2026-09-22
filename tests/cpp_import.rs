@@ -2805,7 +2805,7 @@ fn record_reference_member_loads_and_stores_verify_offline() {
     verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
         .expect("the expanded record proof must reverify");
 
-    let missing_ownership = STRUCT_MEMBER_SIDECAR.replace("    owns state->pointer;\n", "");
+    let missing_ownership = STRUCT_MEMBER_SIDECAR.replace("    owns &state->pointer;\n", "");
     fs::write(&sidecar, &missing_ownership).unwrap();
     let missing_project = read_click_project(&sidecar, &missing_ownership).unwrap();
     verify_cpp_prepared_project(&missing_project, &import)
@@ -3175,7 +3175,7 @@ fn terminal_return_captures_value_before_checked_destructor_cleanup() {
         .expect("expanded terminal-cleanup proof must reverify");
 
     let missing_destructor = TERMINAL_DESTRUCTOR_SIDECAR.replace(
-        "void RestoreState_destructor(struct RestoreState* self) {\n    requires separate(memory(object(self)), memory(self->pointer[0..1]));\n    owns self->pointer;\n    owns self->saved;\n    owns self->pointer[0..1];\n    ensures self->pointer == old(self->pointer);\n    ensures self->saved == old(self->saved);\n    ensures self->pointer[0] == old(self->saved);\n} by {\n    execute();\n    simp();\n}\n\n",
+        "void RestoreState_destructor(struct RestoreState* self) {\n    requires separate(memory(object(self)), memory(self->pointer[0..1]));\n    owns &self->pointer;\n    owns self->saved;\n    owns self->pointer[0..1];\n    ensures self->pointer == old(self->pointer);\n    ensures self->saved == old(self->saved);\n    ensures self->pointer[0] == old(self->saved);\n} by {\n    execute();\n    simp();\n}\n\n",
         "",
     );
     fs::write(&sidecar, &missing_destructor).unwrap();

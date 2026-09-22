@@ -23,8 +23,8 @@ int32 leftmost_zero(struct node* node) {
 resource zero_tree(node: struct node*) {
     if node != 0 {
         owns node->value;
-        owns node->left;
-        owns node->right;
+        owns &node->left;
+        owns &node->right;
         fact node->value == 0;
         contains zero_tree(node->left);
         contains zero_tree(node->right);

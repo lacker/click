@@ -25,7 +25,7 @@ resource ctx_at(node: struct tree_node*) {
     match model {
         Context::Top => {},
         Context::Left(up_node, up_model) => {
-            owns node->right;
+            owns &node->right;
             owns right: tree_at(node->right);
             owns up: ctx_at(up_node);
             fact node != 0;

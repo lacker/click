@@ -1892,7 +1892,7 @@ fn opaque_reallocation_execute_does_not_invent_an_identity_if() {
         "#;
     let click_source = r#"
             resource allocated_cell(owner: struct cell_owner*) {
-                owns owner->data;
+                owns &owner->data;
                 contains allocation(owner->data, 4);
                 owns owner->data[0..1];
             }
@@ -5844,7 +5844,7 @@ fn restricted_simp_certifies_unchanged_prefix_after_indexed_store() {
         resource vector_storage(owner: struct vector*) {
             owns owner->len;
             owns owner->cap;
-            owns owner->data;
+            owns &owner->data;
             owns owner->data[0..owner->cap];
             fact 0 <= owner->len;
             fact owner->len <= owner->cap;
@@ -12083,7 +12083,7 @@ fn outcome_simp_materializes_selected_composite_separation_on_the_checked_proof(
         resource nested_owned_buffer(owner: struct owner*) {
             owns owner->len;
             owns owner->cap;
-            owns owner->data;
+            owns &owner->data;
             contains backing_buffer(owner);
             fact 0 <= owner->len;
             fact owner->len <= owner->cap;
@@ -12358,9 +12358,13 @@ fn source_expander_preserves_pointer_field_form_inside_smart_have() {
     let click_source = r#"
             verifying "holder.c";
 
+            resource holder_storage(p: struct holder*) {
+                owns object(p);
+            }
+
             int32 holder_zero(struct holder* owner, int32 data[]) {
                 requires owner->data == data;
-                views object(owner);
+                views holder_storage(owner);
                 ensures result == 0;
             } by {
                 have owner->data == data by simp;
@@ -12409,6 +12413,10 @@ fn source_expander_synthesizes_an_indexed_load_through_a_pointer_field() {
     let click_source = r#"
             verifying "holder.c";
 
+            resource holder_storage(p: struct holder*) {
+                owns object(p);
+            }
+
             predicate second_is(owner: struct holder*, value: int32) {
                 owner->data[1] == value
             }
@@ -12421,7 +12429,7 @@ fn source_expander_synthesizes_an_indexed_load_through_a_pointer_field() {
                 requires owner->data == data;
                 requires separate(memory(object(owner)), memory(data[1..2]));
                 requires second_is(owner, value);
-                views object(owner);
+                views holder_storage(owner);
                 views data[1..2];
                 ensures result == 0;
             } by {

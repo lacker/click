@@ -1,0 +1,162 @@
+# Two parent links share one child resource
+
+```c filename=shared_heap_two_parent_caller.c
+struct child { int32 refs; int32 payload; };
+struct parent { struct child* kid; };
+
+void child_retain(struct child* obj) { obj->refs = obj->refs + 1; }
+void child_release(struct child* obj) { obj->refs = obj->refs - 1; }
+void parent_attach(struct parent* p, struct child* kid) {
+    p->kid = kid;
+    child_retain(kid);
+}
+int32 parent_read_payload(struct parent* p) {
+    struct child* kid = p->kid;
+    return kid->payload;
+}
+void parent_detach(struct parent* p) {
+    struct child* kid = p->kid;
+    child_release(kid);
+    p->kid = 0;
+}
+int32 caller(struct parent* first, struct parent* second, struct child* kid) {
+    parent_attach(first, kid);
+    parent_attach(second, kid);
+    parent_detach(first);
+    int32 observed = parent_read_payload(second);
+    parent_detach(second);
+    return observed;
+}
+```
+
+```click
+spec enum ParentLink {
+    Empty,
+    Linked(struct child*),
+}
+
+resource parent(p: struct parent*) {
+    field link: ParentLink;
+    match link {
+        ParentLink::Empty => {},
+        ParentLink::Linked(kid) => {
+            owns &p->kid;
+            fact p->kid == kid;
+            fact kid != 0;
+        },
+    }
+}
+
+resource child_ref(obj: struct child*) {
+    contains allocation(obj, sizeof(struct child));
+    owns object(obj);
+    fact obj->refs == count(child_ref(obj));
+}
+
+verifying "shared_heap_two_parent_caller.c";
+
+void child_retain(struct child* obj) {
+    requires count(child_ref(obj)) < 2147483647;
+    owns child_ref(obj);
+    produces child_ref(obj);
+} by {
+    open(child_ref(obj)) { execute(); }
+    simp();
+}
+
+void child_release(struct child* obj) {
+    requires 1 < count(child_ref(obj));
+    owns child_ref(obj);
+    consumes child_ref(obj);
+} by {
+    open(child_ref(obj)) {
+        have 1 < obj->refs by simp;
+        have obj->refs - 1 >= 1 by {
+            apply(int32_above_one_predecessor_is_at_least_one(obj->refs)) using {
+                1 < obj->refs;
+            }
+        }
+        execute();
+    }
+    simp();
+}
+
+void parent_attach(struct parent* p, struct child* kid) {
+    requires count(child_ref(kid)) < 2147483647;
+    requires kid != 0;
+    consumes &p->kid;
+    owns child_ref(kid);
+    produces child_ref(kid);
+    produces link: parent(p);
+    ensures link.link == ParentLink::Linked(kid);
+} by {
+    execute();
+    let link = fold(parent(p), { link: ParentLink::Linked(kid) });
+    simp();
+}
+
+int32 parent_read_payload(struct parent* p) {
+    owns link: parent(p);
+    requires link.link != ParentLink::Empty;
+    owns child_ref(p->kid);
+    ensures result == p->kid->payload;
+    ensures p->kid == old(p->kid);
+    ensures link.link == ParentLink::Linked(old(p->kid));
+} by {
+    match link.link {
+        ParentLink::Empty => {
+            contradiction(link.link == ParentLink::Empty);
+        },
+        ParentLink::Linked(kid) => {
+            unfold(link);
+            open(child_ref(p->kid)) { execute(); }
+            let link = fold(parent(p), { link: ParentLink::Linked(p->kid) });
+            simp();
+        },
+    }
+}
+
+void parent_detach(struct parent* p) {
+    consumes link: parent(p);
+    requires link.link != ParentLink::Empty;
+    owns child_ref(p->kid);
+    consumes child_ref(p->kid);
+    produces child_ref(old(p->kid));
+    produces out: parent(old(p));
+} by {
+    match link.link {
+        ParentLink::Empty => {
+            contradiction(link.link == ParentLink::Empty);
+        },
+        ParentLink::Linked(kid) => {
+            unfold(link);
+            execute();
+            let out = fold(parent(p), { link: ParentLink::Empty });
+            simp();
+        },
+    }
+}
+
+int32 caller(struct parent* first, struct parent* second, struct child* kid) {
+    consumes &first->kid;
+    consumes &second->kid;
+    requires kid != 0;
+    owns child_ref(kid);
+    ensures result == kid->payload;
+} by {
+    let { link: first_link } = step(parent_attach(first, kid), {});
+    let { link: second_link } = step(parent_attach(second, kid), {});
+    let first_out = step(parent_detach(first), { link: first_link });
+    step();
+    step(parent_read_payload(second), { link: second_link });
+    have second->kid == kid by simp;
+    have observed == kid->payload by simp;
+    let second_out = step(parent_detach(second), { link: second_link });
+    step();
+    simp();
+}
+```
+
+```expect
+pass
+```

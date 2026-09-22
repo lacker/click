@@ -4,7 +4,7 @@ resource owned_borrowable_buffer(
     length: int32
 ) {
     owns owner->len;
-    owns owner->data;
+    owns &owner->data;
     owns data[0..length];
     fact owner->len == length;
     fact owner->data == data;
@@ -23,7 +23,7 @@ resource buffer_without_slice(
     end: int32
 ) {
     owns owner->len;
-    owns owner->data;
+    owns &owner->data;
     owns data[0..start];
     owns data[end..length];
     fact owner->len == length;
@@ -127,7 +127,7 @@ int32 borrowed_slice_buffer_return(
     int32 end
 ) {
     owns owner->len;
-    owns owner->data;
+    owns &owner->data;
 
     ensures result == length;
     ensures owner->len == length;

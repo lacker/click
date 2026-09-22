@@ -22,9 +22,15 @@ int32 forward(struct pair *p) {
 ```click
 verifying "aligned_object_requires_evidence.c";
 
+resource pair_storage(p: struct pair*) {
+    views object(p);
+    fact aligned(p, 8);
+}
+
+
 int32 object_is_aligned(struct pair* p) {
     requires p != 0;
-    views object(p);
+    views pair_storage(p);
     ensures result == 1;
 } by {
     execute();
@@ -36,11 +42,12 @@ int32 forward(struct pair* p) {
     views p[0..4];
     ensures result == 1;
 } by {
+    fold(pair_storage(p));
     execute();
     simp();
 }
 ```
 
 ```expect
-fail: is missing prerequisite (object_is_aligned precondition)
+fail: requires an exact body fact
 ```

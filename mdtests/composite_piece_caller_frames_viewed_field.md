@@ -25,13 +25,13 @@ void caller(struct node* n) {
 ```click
 resource cell(n: struct node*) {
     owns n->value;
-    owns n->next;
+    owns &n->next;
 }
 
 verifying "composite_piece_caller_frames_viewed_field.c";
 
 void set_value(struct node* n, int32 v) {
-    views n->next;
+    views &n->next;
     owns n->value;
     ensures n->value == v;
 } by {

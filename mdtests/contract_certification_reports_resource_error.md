@@ -28,8 +28,8 @@ void probe(struct node *node) { }
 
 ```click
 resource pair(node: struct node*) {
-    owns node->left;
-    owns node->right;
+    owns &node->left;
+    owns &node->right;
 }
 
 verifying "probe.c";

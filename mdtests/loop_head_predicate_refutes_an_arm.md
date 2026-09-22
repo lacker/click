@@ -58,7 +58,7 @@ resource list_at(p: struct cell*) {
         CellList::Nil => { },
         CellList::Cons(identity, value, tail_model) => {
             owns p->value;
-            owns p->next;
+            owns &p->next;
             owns tail: list_at(p->next);
             fact p == identity;
             fact p->value == value;

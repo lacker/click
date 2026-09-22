@@ -35,8 +35,8 @@ struct node *rotate_clobber(struct node *node) {
 ```click
 resource shape(node: struct node*) {
     if node != 0 {
-        owns node->left;
-        owns node->right;
+        owns &node->left;
+        owns &node->right;
         contains shape(node->left);
         contains shape(node->right);
     }
@@ -64,7 +64,7 @@ void clobber(struct node* old, struct node* new) {
     views shape(new);
     owns old->augmented;
     owns new->augmented;
-    owns old->left;
+    owns &old->left;
     ensures 0 <= new->augmented;
     ensures new->augmented <= 1000;
 } by {
@@ -82,8 +82,8 @@ struct node* rotate_left(
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes shape(node->left);
     consumes shape(node->right);
     owns node->augmented;
@@ -114,8 +114,8 @@ struct node* rotate_clobber(struct node* node) {
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes shape(node->left);
     consumes shape(node->right);
     owns node->augmented;

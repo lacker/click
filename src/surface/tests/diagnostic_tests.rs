@@ -54,7 +54,7 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
         resource storage(owner: struct vector*) {
             owns owner->len;
             owns owner->cap;
-            owns owner->data;
+            owns &owner->data;
             owns owner->data[0..owner->cap];
             fact 0 <= owner->len;
             fact owner->len <= owner->cap;
@@ -66,7 +66,7 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
         resource allocated(owner: struct vector*) {
             owns owner->len;
             owns owner->cap;
-            owns owner->data;
+            owns &owner->data;
             contains allocation(owner->data, owner->cap * 4);
             owns owner->data[0..owner->cap];
             fact 0 <= owner->len;
@@ -642,9 +642,14 @@ int32 pick(struct node* node) {
     let click_source = r#"
 verifying "pick.c";
 
+resource node_storage(p: struct node*) {
+    owns object(p);
+}
+
+
 int32 pick(struct node* node) {
     requires node != 0;
-    views object(node);
+    views node_storage(node);
 
     ensures 0 <= result;
 } by {

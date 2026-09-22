@@ -2438,11 +2438,22 @@ fn append_resource_clause_loadable_fact_with_store<F: ResourcePureFacts>(
     memory: &CMemory,
     propositions: &mut F,
 ) -> Result<(), ClickError> {
-    let Some(proposition) = resource_clause_loadable_prop(resource, parameters, arguments, memory)?
+    let state = CState::new().with_memory(memory.clone());
+    let Some(ranges) =
+        resource_clause_memory_ranges_at_state(resource, parameters, arguments, &state)?
     else {
         return Ok(());
     };
-    propositions.insert(proposition);
+    for range in ranges {
+        for guard in crate::kernel::memory_range_extent_guard_spellings(&range) {
+            propositions.insert(guard);
+        }
+    }
+    if let Some(proposition) =
+        resource_clause_loadable_prop(resource, parameters, arguments, memory)?
+    {
+        propositions.insert(proposition);
+    }
     Ok(())
 }
 

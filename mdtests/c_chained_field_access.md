@@ -55,17 +55,17 @@ int32 deep_get(struct root* r) {
 
 ```click
 resource inner_cell(o: struct outer*) {
-    owns o->in;
+    owns &o->in;
     owns (o->in)->value;
 }
 
 resource leaf_cell(m: struct middle*) {
-    owns m->leaf;
+    owns &m->leaf;
     owns (m->leaf)->value;
 }
 
 resource nested(r: struct root*) {
-    owns r->mid;
+    owns &r->mid;
     owns leaf_cell(r->mid);
 }
 

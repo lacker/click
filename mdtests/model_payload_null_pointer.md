@@ -48,7 +48,7 @@ resource tree_at(p: struct node*) {
     match model {
         Tree::Empty => { fact p == 0; },
         Tree::Node(identity, parent, value) => {
-            owns p->parent;
+            owns &p->parent;
             owns p->value;
             fact p != 0;
             fact p == identity;
