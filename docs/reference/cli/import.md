@@ -409,12 +409,35 @@ sources, used headers, toolchain inputs, configuration, or artifact bytes cannot
 reuse an incompatible lock. Refreshing a lock is always a separate explicit
 operation. A supplied digest alone never establishes a validated import.
 
-The first profile uses GCC with `-x c`, `-std=gnu11`, `-m64`, `-funsigned-char`, and
-`-nostdinc`. Configured include roots, forced includes, and ordered `-D` and `-U`
-options select preprocessing inputs. Unsupported compiler options, response
-files, plugins, and execution hooks are rejected. The compiler runs with a
-cleared environment; only the configuration's supported variables are supplied.
-Use explicit `SOURCE_DATE_EPOCH` when source depends on date/time macros.
+Compiler-backed C imports accept two explicit targets. The config target must
+match the sidecar's `target` directive; an omitted directive selects the kernel
+target. Prepared imports retain their target through verification and expansion.
+
+| Target | Fixed compiler profile |
+| --- | --- |
+| `x86_64-linux-kernel` | GCC, `-x c`, `-std=gnu11`, `-m64`, `-funsigned-char`, `-nostdinc`. |
+| `x86_64-linux-userspace` | GCC, `-x c`, `-std=c11`, `-m64`, `-funsigned-char`, `-nostdinc`, `-pthread`, `-D_POSIX_C_SOURCE=200809L`. |
+
+The user-space profile checks C11, POSIX and pthread feature macros as well as
+the LP64, eight-bit-byte, unsigned-char ABI. It does not define `__KERNEL__`.
+Configuration cannot override its fixed standard or profile macros. Target and
+invocation identities distinguish locks even when the emitted C is identical.
+Selecting this profile grants no pthread contract or concurrency semantics.
+
+Both profiles require explicit include directories: `-nostdinc` disables
+ambient system include search. Supply the selected toolchain and libc header
+roots with ordered `-isystem` or `-I` arguments; those roots and opened headers
+participate in the existing inventory and lock checks. For the selected Debian
+GCC 12 environment, these roots are `/usr/lib/gcc/x86_64-linux-gnu/12/include`,
+`/usr/include/x86_64-linux-gnu`, and `/usr/include`. Other installations must
+supply their actual selected roots. Lock preparation may succeed while Click's
+C parser still refuses an unsupported declaration in a real system header.
+
+Configured forced includes and ordered `-D` and `-U` options select additional
+preprocessing inputs. Unsupported compiler options, response files, plugins,
+and execution hooks are rejected. The compiler runs with a cleared environment;
+only the configuration's supported variables are supplied. Use explicit
+`SOURCE_DATE_EPOCH` when source depends on date/time macros.
 
 Compiler invocation has output and time bounds, and failure or cancellation
 stops its owned process group. Partial compiler output cannot become a

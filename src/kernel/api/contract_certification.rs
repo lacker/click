@@ -307,8 +307,8 @@ pub fn c_loadability_obligation_impossible(obligation: &Proposition) -> bool {
         }
         Proposition::CMemoryLoadable { memory, base, .. } => {
             memory.is_ended_local_address(base)
-                || memory.is_deallocated_heap_address(base)
-                || memory.freed_heap_allocation_may_contain(base)
+                || memory.is_deallocated_heap_address(base, &PureFactContext::new())
+                || memory.freed_heap_allocation_may_contain(base, &PureFactContext::new())
         }
         _ => false,
     }
@@ -339,7 +339,12 @@ pub fn loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Propositio
         // embedded memory snapshots and recorded write effects just like an exact-range
         // fact does.
         if fact_memory != memory
-            && !crate::kernel::reasoning::memory_range_still_available(fact_memory, memory, base)
+            && !crate::kernel::reasoning::memory_range_still_available(
+                fact_memory,
+                memory,
+                base,
+                assumptions,
+            )
             && !c_memories_canonically_equal(fact_memory, memory)
             && !c_memories_connected_by_effects(fact_memory, memory, assumptions)
         {
@@ -614,9 +619,13 @@ fn condition_fact_mentions_load_of(
         if crate::kernel::assumptions::reasoning_interrupted() {
             return false;
         }
-        crate::kernel::reasoning::memory_range_still_available(load_memory, memory, pointer)
-            && (canonicalize_pointer_loads(pointer) == canonicalize_pointer_loads(base)
-                || pointers_proven_equal_for_memory_resolution(pointer, base, assumptions))
+        crate::kernel::reasoning::memory_range_still_available(
+            load_memory,
+            memory,
+            pointer,
+            assumptions,
+        ) && (canonicalize_pointer_loads(pointer) == canonicalize_pointer_loads(base)
+            || pointers_proven_equal_for_memory_resolution(pointer, base, assumptions))
     })
 }
 
@@ -847,6 +856,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
                                         fact_memory,
                                         memory,
                                         fact_base,
+                                        assumptions,
                                     )
                                     && (canonicalize_pointer_loads(fact_base)
                                         == canonicalize_pointer_loads(base)

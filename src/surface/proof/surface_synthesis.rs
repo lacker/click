@@ -329,7 +329,7 @@ fn synthesize_snapshot_local(term: &Bitvector32Term) -> Option<ContractExpressio
         let (name, _) = state.locals().object_values().find(|(_, value)| {
             matches!(
                 value,
-                CValue::Int16(local)
+                CValue::Int8(local) | CValue::Int16(local)
                     | CValue::Int32(local)
                     | CValue::UInt8(local)
                     | CValue::UInt16(local)
@@ -1608,7 +1608,8 @@ fn synthesize_surface_atomic_proposition(
                     index += 1;
                 }
                 Term::CValue(
-                    CValue::Int16(value)
+                    CValue::Int8(value)
+                    | CValue::Int16(value)
                     | CValue::Int32(value)
                     | CValue::UInt8(value)
                     | CValue::UInt16(value),
@@ -2226,7 +2227,7 @@ fn synthesize_surface_bitvector(
     if let Some((name, _)) = state.locals().object_values().find(|(_, value)| {
         matches!(
             value,
-            CValue::Int16(local)
+            CValue::Int8(local) | CValue::Int16(local)
                 | CValue::Int32(local)
                 | CValue::UInt8(local)
                 | CValue::UInt16(local)
@@ -2488,7 +2489,7 @@ fn synthesize_surface_bitvector(
             if let Some((name, _)) = state.local_cell_values().find(|(_, value)| {
                 matches!(
                     value,
-                    CValue::Int16(held)
+                    CValue::Int8(held) | CValue::Int16(held)
                         | CValue::Int32(held)
                         | CValue::UInt8(held)
                         | CValue::UInt16(held)
@@ -2819,6 +2820,7 @@ fn synthesize_local_struct_pointer_field(
                 continue;
             };
             let loaded = match loaded {
+                CValue::Int8(value) => value,
                 CValue::Bool(value)
                 | CValue::Int16(value)
                 | CValue::Int32(value)
@@ -2887,6 +2889,7 @@ fn synthesize_local_aggregate_field(
                         return None;
                     };
                     let value_term = match value {
+                        CValue::Int8(value) => value,
                         CValue::Bool(value)
                         | CValue::Int16(value)
                         | CValue::Int32(value)

@@ -3,6 +3,7 @@ use super::*;
 
 pub(super) fn integer_conversion_target(name: &str) -> Option<C0Type> {
     Some(match name {
+        "to_int8" => C0Type::Int8,
         "to_int16" => C0Type::Int16,
         "to_int32" => C0Type::Int32,
         "to_uint8" => C0Type::UInt8,
@@ -21,7 +22,8 @@ pub(super) fn is_integer_conversion(name: &str) -> bool {
 pub(super) fn machine_integer_source_type(c_type: C0Type) -> bool {
     matches!(
         c_type,
-        C0Type::Int16
+        C0Type::Int8
+            | C0Type::Int16
             | C0Type::Int32
             | C0Type::UInt8
             | C0Type::UInt16
@@ -70,6 +72,7 @@ mod tests {
     #[test]
     fn integer_machine_round_trip_laws_require_both_bounds_and_expand() {
         for (target, lower, upper) in [
+            ("int8", "-128", "127"),
             ("int16", "-32768", "32767"),
             ("int32", "-2147483648", "2147483647"),
             ("uint8", "0", "255"),
@@ -436,6 +439,7 @@ mod tests {
     #[test]
     fn integer_conversion_rejects_each_out_of_range_boundary() {
         for (target, lower, upper) in [
+            ("int8", "-129", "128"),
             ("int16", "-32769", "32768"),
             ("int32", "-2147483649", "2147483648"),
             ("uint8", "-1", "256"),
@@ -459,6 +463,7 @@ mod tests {
     #[test]
     fn symbolic_integer_conversions_require_exact_bounds_for_all_targets() {
         for (target, lower, upper) in [
+            ("int8", "-128", "127"),
             ("int16", "-32768", "32767"),
             ("int32", "-2147483648", "2147483647"),
             ("uint8", "0", "255"),
@@ -482,6 +487,7 @@ mod tests {
     #[test]
     fn symbolic_integer_conversions_reject_missing_bounds() {
         for (target, lower, upper) in [
+            ("int8", "-128", "127"),
             ("int16", "-32768", "32767"),
             ("int32", "-2147483648", "2147483647"),
             ("uint8", "0", "255"),

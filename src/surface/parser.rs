@@ -426,6 +426,7 @@ pub(super) fn is_c_type_keyword(name: &str) -> bool {
             | "int32"
             | "int"
             | "int32_t"
+            | "int8"
             | "int16"
             | "int64"
             | "uint8"
@@ -441,6 +442,7 @@ pub(super) fn is_c_type_keyword(name: &str) -> bool {
             | "long"
             | "size_t"
             | "ssize_t"
+            | "int8_t"
             | "int16_t"
             | "int64_t"
             | "uint16_t"
@@ -457,6 +459,7 @@ pub(in crate::surface) fn algebraic_field_c_type_supported(c_type: C0Type) -> bo
         c_type,
         C0Type::Void
             | C0Type::FunctionPointer(_)
+            | C0Type::Int8Array(_)
             | C0Type::Int16Array(_)
             | C0Type::Int32Array(_)
             | C0Type::CharArray(_)
@@ -2733,6 +2736,7 @@ impl Parser {
         let scalar_type = match spelling.as_str() {
             "void" => C0Type::Void,
             "_Bool" | "bool" => C0Type::Bool,
+            "int8" | "int8_t" => C0Type::Int8,
             "int16" | "short" | "int16_t" => C0Type::Int16,
             "int32" | "int" | "int32_t" => C0Type::Int32,
             "uint8" | "uint8_t" => C0Type::UInt8,
@@ -2772,11 +2776,8 @@ impl Parser {
             "signed" => {
                 if self.peek_ident() == Some("char") {
                     self.position += 1;
-                    return Err(self.error(
-                        "unsupported C type `signed char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
-                    ));
-                }
-                if self.peek_ident() == Some("short") {
+                    C0Type::Int8
+                } else if self.peek_ident() == Some("short") {
                     self.position += 1;
                     C0Type::Int16
                 } else if self.peek_ident() == Some("long") {
@@ -2784,7 +2785,7 @@ impl Parser {
                     C0Type::Int64
                 } else {
                     return Err(self.error(
-                        "unsupported integer width `signed`; only `signed short` is modeled among signed standard aliases",
+                        "unsupported integer width `signed`; expected `signed char`, `signed short`, or `signed long`",
                     ));
                 }
             }
@@ -2816,6 +2817,7 @@ impl Parser {
             self.position += 1;
             c_type = match c_type {
                 C0Type::Void => C0Type::VoidPointer,
+                C0Type::Int8 => C0Type::Int8Pointer,
                 C0Type::Int16 => C0Type::Int16Pointer,
                 C0Type::UInt16 => C0Type::UInt16Pointer,
                 C0Type::Int32 => C0Type::Int32Pointer,
@@ -2824,6 +2826,7 @@ impl Parser {
                 C0Type::UInt32 => C0Type::UInt32Pointer,
                 C0Type::Int64 => C0Type::Int64Pointer,
                 C0Type::UInt64 => C0Type::UInt64Pointer,
+                C0Type::Int8Pointer => C0Type::Int8PointerPointer,
                 C0Type::Int16Pointer => C0Type::Int16PointerPointer,
                 C0Type::UInt16Pointer => C0Type::UInt16PointerPointer,
                 C0Type::Int32Pointer => C0Type::Int32PointerPointer,
@@ -2930,7 +2933,7 @@ impl Parser {
                 || (field.struct_name().is_some() && !field.c_type().is_pointer())
                 || !matches!(
                     field.c_type(),
-                    C0Type::Int16
+                    C0Type::Int8 | C0Type::Int16
                         | C0Type::Int32
                         | C0Type::Char
                         | C0Type::UInt8
@@ -3135,6 +3138,7 @@ impl Parser {
             });
         }
         let (pointer_type, element_width) = match parsed_type.c_type {
+            C0Type::Int8 => (C0Type::Int8Pointer, 1),
             C0Type::Int16 => (C0Type::Int16Pointer, 2),
             C0Type::Int32 => (C0Type::Int32Pointer, 4),
             C0Type::Char => (C0Type::CharPointer, 1),
@@ -3143,6 +3147,7 @@ impl Parser {
             C0Type::UInt32 => (C0Type::UInt32Pointer, 4),
             C0Type::Int64 => (C0Type::Int64Pointer, 8),
             C0Type::UInt64 => (C0Type::UInt64Pointer, 8),
+            C0Type::Int8Pointer => (C0Type::Int8PointerPointer, 8),
             C0Type::Int16Pointer => (C0Type::Int16PointerPointer, 8),
             C0Type::UInt16Pointer => (C0Type::UInt16PointerPointer, 8),
             C0Type::Int32Pointer => (C0Type::Int32PointerPointer, 8),
@@ -6811,6 +6816,7 @@ impl Parser {
                         value_type:
                             CType::Int32Array(_)
                             | CType::UInt8Array(_)
+                            | CType::Int8Array(_)
                             | CType::Int16Array(_)
                             | CType::UInt16Array(_)
                             | CType::UInt32Array(_)
@@ -7160,6 +7166,7 @@ impl Parser {
         let element_width = match field.c_type {
             C0Type::Char => 1,
             C0Type::UInt8 => 1,
+            C0Type::Int8 => 1,
             C0Type::Int16 | C0Type::UInt16 => 2,
             C0Type::Int64 | C0Type::UInt64 => 8,
             C0Type::Float32 => 4,
@@ -7447,9 +7454,9 @@ impl Parser {
             }
             return Ok(());
         }
-        if matches!(field.c_type, C0Type::Char | C0Type::UInt8) {
+        if matches!(field.c_type, C0Type::Int8 | C0Type::Char | C0Type::UInt8) {
             if field.byte_width != 1 || field.slot_end_bytes < field.offset_bytes {
-                return Err(self.error("uint8 field places require one-byte width"));
+                return Err(self.error("byte field places require one-byte width"));
             }
             return Ok(());
         }
@@ -9376,7 +9383,8 @@ fn field_has_direct_memory_place(field: &ResolvedField) -> bool {
     }
     matches!(
         field.c_type,
-        C0Type::Int16
+        C0Type::Int8
+            | C0Type::Int16
             | C0Type::Int32
             | C0Type::Char
             | C0Type::UInt8

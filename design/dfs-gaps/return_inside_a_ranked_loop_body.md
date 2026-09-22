@@ -9,7 +9,8 @@ preservation are covered by `mdtests/return_inside_ranked_loop_body.md`.
 The remainder records the pre-fix behavior that motivated the regression.
 
 A C loop body that leaves the function directly is ordinary C — it is the first
-statement of the search in `search_terminates_blocked.md`:
+statement of the checked search in
+`mdtests/search_terminates_by_unmarked_count.md`:
 
 ```c
 while (visited[cur] == 0) {
@@ -106,7 +107,7 @@ No goal, no missing premise, no target, and the tactic index is again the
 `step()` before the loop. Adding an unrelated quantified invariant does not
 change it.
 
-In `search_terminates_blocked.md` the same `branch` *verifies*, but only when
+In the saved search proof the same `branch` verified only when
 `have 0 <= next[cur] and next[cur] < n` — instantiated from a current-snapshot
 quantified invariant — is available before it. Deriving the identical two
 facts through `at(function.entry, ...)` and `rewrite` (see

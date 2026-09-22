@@ -187,9 +187,9 @@ footprint.
 
 ## Type support is still narrow
 
-The verifier supports `void` function returns and scalar `int16`, `int32`,
+The verifier supports `void` function returns and scalar `int8`, `int16`, `int32`,
 `uint8`, `uint16`, `uint32`, `int64`, and `uint64`, including their standard spellings
-(`short`/`int16_t`, `int`/`int32_t`, `unsigned char`/`uint8_t`,
+(`signed char`/`int8_t`, `short`/`int16_t`, `int`/`int32_t`, `unsigned char`/`uint8_t`,
 `unsigned short`/`uint16_t`, `unsigned int`/`uint32_t`,
 `long`/`long long`/`int64_t`/`ssize_t`, and
 `unsigned long`/`unsigned long long`/`uint64_t`/`size_t`), plus the existing
@@ -215,7 +215,7 @@ with sign extension, matching GCC, Clang, and MSVC. Shift counts outside
 `0..32`, negative signed left shifts, and unrepresentable signed left-shift
 results are undefined behavior.
 
-`int16`, `uint8`, and `uint16` rvalues promote to `int32` for arithmetic, ordered
+`int8`, `int16`, `uint8`, and `uint16` rvalues promote to `int32` for arithmetic, ordered
 comparisons, shifts, bitwise operators, assignments, and returns. `uint32` addition and
 subtraction are 32-bit modular operations; equality compares the bit patterns,
 and ordered comparisons use unsigned order. Assigning or returning an `int32`

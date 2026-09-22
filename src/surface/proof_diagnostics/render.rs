@@ -973,6 +973,11 @@ impl Renderer<'_> {
                 self.bitvector(v);
                 self.push(")");
             }
+            crate::kernel::CValue::Int8(v) => {
+                self.push("int8(");
+                self.bitvector(v);
+                self.push(")");
+            }
             crate::kernel::CValue::Int16(v) => {
                 self.push("int16(");
                 self.bitvector(v);

@@ -2,19 +2,19 @@
 
 Tracked by `issues/dfs.md`; delete this directory with that issue.
 
-Current checkpoint: the full saved search was rerun unchanged at `624146d4`
-on 2026-09-21 and still fails its quantified viewability obligation at the
-loop back edge. Other reductions and quoted diagnostics below are historical
-until individually rerun; their descriptions are not a current test verdict.
-The deleted `a_second_universal_have_cannot_narrow_a_stated_range.md` references
-refer to the fixed defect listed below, not another missing reproduction.
+Current checkpoint: the full search termination and memory-safety proof passes
+as `mdtests/search_terminates_by_unmarked_count.md`. Other reductions and
+quoted diagnostics below are historical until individually rerun; their
+descriptions are not a current test verdict. The deleted
+`a_second_universal_have_cannot_narrow_a_stated_range.md` references refer to
+the fixed defect listed below, not another missing reproduction.
 
-These files are reductions, not tests. They do not verify, so they are not in
-`mdtests/`. Each one is the smallest thing that still fails, with the exact
-refusal it produces and the rule that would make it pass. The two examples that
-do verify are `mdtests/unmarked_count_lemmas.md` (the counting lemmas) and
+These files are reductions or historical records, not tests. Current passing
+behavior lives in `mdtests/`. The checked examples include
+`mdtests/unmarked_count_lemmas.md` (the counting lemmas),
 `mdtests/sweep_maintains_a_zero_unmarked_count.md` (the counting invariant
-across the store that changes it).
+across the store that changes it), and
+`mdtests/search_terminates_by_unmarked_count.md` (the complete search proof).
 
 The `decreases unmarked(visited, 0, n)` measure itself is **not** a gap any
 more: an `Integer`-valued fold is accepted as a loop measure, and the ranking
@@ -31,26 +31,19 @@ decrease there. Neither is the fold law after a store, which
   `extract`s, a load-equality transport, and a hand-written orientation flip.
   Nineteen lines for one premise. It is also the escape route from the bug
   above, and it does not reach.
-- `return_inside_a_ranked_loop_body.md` — **missing rule** plus a **bad
-  diagnostic.** A `return` is not one of the loop rule's three body endings, so
-  the documented proof-level-`if` route refuses it honestly and the `loop`
-  automation refuses it with the wrong tactic index. `branch { then {
-  execute(); } else { } }` does accept a returning arm, but only when an
-  unrelated fact is in the context first, and its refusal otherwise
-  (`branch did not verify as a checked preservation operation`) names nothing
-  at all.
+- `return_inside_a_ranked_loop_body.md` — **fixed historical record.** Return
+  paths now terminate loop preservation without owing the back-edge bundle;
+  `mdtests/return_inside_ranked_loop_body.md` covers explicit and automatic
+  preservation.
+- `reachability_needs_an_algebraic_loop_witness.md` — **missing proof-language
+  representation.** The recursive array walk verifies with `Nat` fuel, but the
+  loop cannot carry the changing algebraic witness directly; the numeric,
+  `to_nat`, and resource alternatives each hit a specific checked refusal.
+  `mdtests/algebraic_existential_witness_rejected.md` is the checked minimal
+  reproduction of the first missing layer.
 - `small_refusals_and_spellings.md` — seven one-to-six-line costs: extent
   halves restated at every `apply`, `arithmetic() using` not weakening a
   derived strict bound, a constant-true requirement needing its own `have`,
   `assumption()` not closing a `viewable` goal, a store refusal spelling the
   owned range against the other parameter's base, `have` not taking a label,
   and theorem proofs not being shareable between mdtests.
-- `search_terminates_blocked.md` — the stage-3 example itself, at the furthest
-  point it reaches. Everything verifies except the last bundle member: the
-  contract, the memory safety of the walk, the `Integer` measure's
-  well-formedness, the quantified `next` bound instantiated at `cur`, the early
-  `return` arm, the point update between `at(iter, visited)` and `visited`, the
-  nonnegativity of the count, and the strict decrease. What stays open is the
-  *viewability* half of the quantified invariant at the back edge, for the
-  reason in `a_universal_fact_does_not_transport.md` (the binder bug that used to be
-  listed first here is fixed).

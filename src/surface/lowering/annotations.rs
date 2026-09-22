@@ -3739,7 +3739,8 @@ impl AnnotationLowerer<'_> {
                     .ok_or_else(|| {
                         "to_integer expects a signed or unsigned machine integer".to_string()
                     })?;
-                    let (CValue::Int16(bits)
+                    let (CValue::Int8(bits)
+                    | CValue::Int16(bits)
                     | CValue::Int32(bits)
                     | CValue::UInt8(bits)
                     | CValue::UInt16(bits)

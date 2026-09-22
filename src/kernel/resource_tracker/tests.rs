@@ -434,7 +434,7 @@ fn a_release_of_another_object_keeps_one_version() {
         .expect("a fresh allocation claim");
     let freed = live
         .clone()
-        .free_heap_block(&fresh)
+        .free_heap_block(&fresh, &PureFactContext::new())
         .expect("the allocation is live, so it can be released");
 
     // The release edge records a base that is not the pre-free state -- the
@@ -469,7 +469,7 @@ fn a_release_inside_the_argument_object_stops_a_block_fact() {
         .with_heap_allocation_claim(inside.clone(), 16)
         .expect("a fresh allocation claim");
     let freed = live
-        .free_heap_block(&inside)
+        .free_heap_block(&inside, &PureFactContext::new())
         .expect("the allocation is live, so it can be released");
     let stopped = last_same(
         Resource::Block(&PointerBlock::ExternalArgument),

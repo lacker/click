@@ -5,37 +5,39 @@ found. Kernel soundness review discovered during the same campaign is tracked
 separately in `issues/bughunt.md`. Everything needed for this example is here
 and in `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
-## Handoff checkpoint — 2026-09-22, after correcting the store frontier
+## Handoff checkpoint — 2026-09-22, after the reachability attempt
 
-Both the value and generated viewability halves of the quantified invariant
-over `next` now close. The direct pointer-chasing route is covered by
-`mdtests/loop_quantified_value_after_pointer_chase.md`. A return inside a
-ranked loop body also works through the documented proof-level `if` and the
-automatic preservation planner; `mdtests/return_inside_ranked_loop_body.md`
-covers both routes.
+The complete unmodified search now verifies termination and memory safety in
+`mdtests/search_terminates_by_unmarked_count.md`. Its `Integer`-valued fold
+measure, quantified `next` invariant, early return, checked store, point-update
+lemma, nonnegativity proof, and strict back-edge decrease all pass together in
+the gate. The same proof now establishes that `result == 1` implies `to` is in
+bounds and `visited[to] == 0`: success can only use the `cur == to` return,
+which precedes the marking store. `unmarked_nonnegative` also lives with the
+other checked counting lemmas in `mdtests/unmarked_count_lemmas.md`.
 
-The supposed post-store failure was not a verifier defect. The false arm of
-the lowered C `if` contains an explicit `Skip`: the saved proof stepped into
-that arm and across the `Skip`, then stated `visited[cur] != 0` before it had
-executed `visited[cur] = 1`. The saved proof now has the missing store step.
-`mdtests/post_store_fact_after_ranked_loop_return.md` checks the exact control
-shape and proves both `b[i] == 1` and `b[i] != 0` immediately after the store.
+Graph reachability has a minimal direct model, but its loop witness cannot yet
+be represented without verifier-only bookkeeping. The reduction and rejected
+alternatives are in
+`design/dfs-gaps/reachability_needs_an_algebraic_loop_witness.md`: recursive
+`walk(next, from, fuel: Nat)` works, while an algebraic existential loop
+invariant does not exist, numeric recursion rejects the array parameter,
+`Integer` equality cannot be rewritten through `to_nat`, and a resource fact
+cannot mention the recursive function. Do not encode the witness as an empty
+produced token merely to route around those gaps; settle the algebraic ghost
+witness design first. The root rejection is gate-checked without any DFS
+machinery by `mdtests/algebraic_existential_witness_rejected.md`; the reduction
+also records the narrow algebraic `exists`/`witness`/`choose` implementation
+path that would resolve it.
 
-This is **not yet a routine cleanup handoff**:
+The explicit
+quantified-transport, whole-array dependency, shared-lemma, extent-restatement,
+and small diagnostic items below remain proof-language or tooling costs, but
+none blocks the termination, memory-safety, or branch-local correctness claims.
 
-- The saved full proof has not yet been promoted into the mdtest gate. Its next
-  bounded task is to rerun the corrected source and record the first genuine
-  open obligation; do not reopen the now-passing quantified invariant, return,
-  or post-store paths.
-- Moving an already verified lemma into the checked lemma fixture, refreshing
-  old reproductions, and reducing a diagnostic are bounded tasks suitable for
-  a less capable agent. Whole-array dependency refinement, reachability, and
-  recursive DFS remain design work, not small finishing edits.
-
-For a bounded next assignment, rerun the corrected complete source in
-`design/dfs-gaps/search_terminates_blocked.md` and reduce only its new first
-failure. The previously quoted `visited[cur] != 0` refusal was before the
-store and is no longer evidence of a Click gap.
+Whole-array dependency refinement, reachability, and recursive DFS remain
+design work rather than small finishing edits. In particular, discuss the
+fold-read-range design in item 2 with the user before implementing it.
 
 This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
 Those files include historical diagnostics, and other small gaps/tooling notes
@@ -92,14 +94,9 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
   `mdtests/sweep_maintains_a_zero_unmarked_count.md` (a marking loop keeping
   `invariant unmarked(visited, 0, i) == 0`; it carries a verbatim copy of
   `unmarked_frame`).
-- `design/dfs-gaps/search_terminates_blocked.md` is the full C and sidecar for
-  `search` at the furthest point reached. Its false-arm cursor now explicitly
-  crosses the lowered `Skip` and the store before using the store result. The
-  quantified `next` obligations, return path, and post-store value are all
-  regression-covered. Rerun the corrected saved proof to find its next genuine
-  refusal.
-  It also holds a third lemma, `unmarked_nonnegative`, that verifies and should
-  move into `mdtests/unmarked_count_lemmas.md`.
+- `mdtests/search_terminates_by_unmarked_count.md` checks the complete C and
+  sidecar for `search`, including the success-path result claim. The formerly
+  saved blocked proof now verifies without changing the C.
 
 ## Gaps, ranked by the proof text they cost (reductions in `design/dfs-gaps/`)
 
@@ -139,16 +136,16 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    does not say which constant; a store refusal spells `owns b[0..1]` as
    `owns a[(v100001 - v100000)..]`.
 
-Later stages: a modest correctness claim (`result == 1` only via the `cur == to`
-exit), then reachability (needs recursive pure functions over arrays — they use
-`fuel: Nat` today — or a resource whose field is a pure model of the graph; the
-model route has its own gaps: a loop guard cannot read a cell owned by a folded
-resource, and there is no spelling for a model field at the head of an
-iteration), then the recursive branching DFS.
+Next stages: choose and implement first-class algebraic ghost witnesses for
+loop propositions, use one to prove reachability for this search, then move to
+the recursive branching DFS. The older folded-resource route has its own gaps:
+a loop guard cannot read a cell owned by a folded resource, and recursive
+`walk` is not allowed in a resource fact.
 
 ## Acceptance
 
-`mdtests/search_terminates_by_unmarked_count.md` verifies termination and memory
-safety of the unmodified C; each fixed gap has a minimal regression mdtest; a
-correctness claim is proved or split out at the user's request;
+Termination and memory safety of the unmodified C are checked by
+`mdtests/search_terminates_by_unmarked_count.md`, along with the branch-local
+success claim. For the remaining work, each fixed gap has a minimal regression
+mdtest, reachability is proved or split out at the user's request, and
 `design/dfs-gaps/` is deleted with this issue.

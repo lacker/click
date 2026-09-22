@@ -151,7 +151,8 @@ fn execute_c_lvalue_update_paths(
         };
         let supported_integer_update = matches!(
             lvalue.value_type,
-            CType::Int16
+            CType::Int8
+                | CType::Int16
                 | CType::Int32
                 | CType::UInt8
                 | CType::UInt16
@@ -411,6 +412,9 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     let volatile_pointer = is_volatile.then(|| lvalue.pointer(state)).flatten();
     if lvalue.value_type == CType::Int32 {
         let range_result = match &value {
+            CValue::Int8(value) => {
+                add_int8_range_execution_pure_facts(&mut facts, &effective_assumptions, value)
+            }
             CValue::Int16(value) => {
                 add_int16_range_execution_pure_facts(&mut facts, &effective_assumptions, value)
             }
@@ -522,7 +526,10 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     loan_evidence: empty_checked_loan_evidence_sequence(),
                 }]);
             }
-            if state.memory.is_deallocated_heap_address(&pointer) {
+            if state
+                .memory
+                .is_deallocated_heap_address(&pointer, assumptions)
+            {
                 return Ok(vec![CStatementExecutionPath {
                     loop_invariant_correspondence: Default::default(),
                     outcome: CStatementOutcome::UndefinedBehavior(
@@ -1023,6 +1030,10 @@ fn allocation_size_value(value: CValue, assumptions: &PureFactContext) -> Option
             term,
             unsigned: true,
         }),
+        CValue::Int8(term) => Some(AllocationSize {
+            term,
+            unsigned: false,
+        }),
         CValue::Int16(term) | CValue::UInt8(term) | CValue::UInt16(term) => Some(AllocationSize {
             term,
             unsigned: false,
@@ -1277,9 +1288,12 @@ pub(crate) fn execute_c_realloc_assign_paths(
         }
 
         let Some(old_bytes) = state.memory.live_heap_block_size(&old_pointer).cloned() else {
-            let error = if state.memory.is_deallocated_heap_address(&old_pointer) {
+            let error = if state
+                .memory
+                .is_deallocated_heap_address(&old_pointer, assumptions)
+            {
                 CInvalidFree::DoubleFree
-            } else if state.memory.is_live_heap_address(&old_pointer) {
+            } else if state.memory.is_live_heap_address(&old_pointer, assumptions) {
                 CInvalidFree::InteriorPointer
             } else {
                 CInvalidFree::NonHeapPointer
@@ -1749,7 +1763,9 @@ fn execute_c_heap_free_paths(
         let mut working_memory = state.memory.clone();
         let bytes = if let Some(bytes) = working_memory.live_heap_block_size(pointer.pointer()) {
             bytes.clone()
-        } else if working_memory.is_deallocated_heap_address(pointer.pointer()) {
+        } else if working_memory
+            .is_deallocated_heap_address(pointer.pointer(), &effective_assumptions)
+        {
             let error = CInvalidFree::DoubleFree;
             paths.push(CStatementExecutionPath {
                 loop_invariant_correspondence: Default::default(),
@@ -1760,7 +1776,7 @@ fn execute_c_heap_free_paths(
                 loan_evidence: empty_checked_loan_evidence_sequence(),
             });
             continue;
-        } else if working_memory.is_live_heap_address(pointer.pointer()) {
+        } else if working_memory.is_live_heap_address(pointer.pointer(), &effective_assumptions) {
             let error = CInvalidFree::InteriorPointer;
             paths.push(CStatementExecutionPath {
                 loop_invariant_correspondence: Default::default(),
@@ -1890,7 +1906,7 @@ fn execute_c_heap_free_paths(
             continue;
         }
         let memory = working_memory
-            .free_heap_block(pointer.pointer())
+            .free_heap_block(pointer.pointer(), &effective_assumptions)
             .expect("validated live heap base should free");
         facts.push(ExecutionPureFact::internal(
             Proposition::CHeapAllocationFreed {
@@ -1945,7 +1961,7 @@ pub(crate) fn resolve_pending_heap_allocations(
             let (memory, bytes, resolved_base, _) = state
                 .memory
                 .clone()
-                .resolve_pending_heap_reallocation(&base, !is_null)
+                .resolve_pending_heap_reallocation(&base, !is_null, assumptions)
                 .expect("collected pending reallocation should still exist");
             state = state.with_memory(memory);
             for binding in std::sync::Arc::make_mut(&mut state.locals.bindings).values_mut() {
@@ -3505,11 +3521,13 @@ pub(in crate::kernel) fn declare_local(
         CType::Void => unreachable!("void local objects are not supported"),
         CType::Bool => 1,
         CType::VoidPointer | CType::VoidPointerPointer => C_POINTER_BYTE_WIDTH,
+        CType::Int8 => 1,
         CType::Int16 | CType::UInt16 => 2,
         CType::Int32 => 4,
         CType::Int64 | CType::UInt64 | CType::Float64 => 8,
         CType::UInt8 => 1,
         CType::UInt32 | CType::Float32 => 4,
+        CType::Int8Pointer | CType::Int8PointerPointer => C_POINTER_BYTE_WIDTH,
         CType::Int16Pointer
         | CType::UInt16Pointer
         | CType::Int32Pointer
@@ -3555,6 +3573,22 @@ pub(in crate::kernel) fn declare_local(
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::UInt8,
+                length,
+                pointer,
+                constant,
+            );
+            return Ok(state);
+        }
+        CType::Int8Array(length) => {
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_block(pointer.block.clone(), length),
+            );
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                CType::Int8,
                 length,
                 pointer,
                 constant,

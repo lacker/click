@@ -2181,6 +2181,7 @@ fn equation_states_nothing(equation: &Proposition) -> bool {
 /// The scalar term a C value carries, for the one-variable renaming above.
 fn scalar_bitvector(value: &CValue) -> Option<&Bitvector32Term> {
     match value {
+        CValue::Int8(term) => Some(term),
         CValue::Bool(term)
         | CValue::Int16(term)
         | CValue::Int32(term)
@@ -2529,6 +2530,7 @@ fn fresh_loop_local_value(
     // an array object rather than a scalar one, and `void` has no value, so
     // neither type takes an identity from the counter at all.
     match c_type {
+        CType::Int8Array(_) => return Ok(None),
         CType::Void
         | CType::Int32Array(_)
         | CType::UInt8Array(_)
@@ -2544,6 +2546,7 @@ fn fresh_loop_local_value(
     let variable = variables.next_in(budget)?;
     Ok(Some(match c_type {
         CType::Bool => CValue::Bool(Bitvector32Term::Variable(variable)),
+        CType::Int8 => int8(Bitvector32Term::Variable(variable)),
         CType::Int16 => int16(Bitvector32Term::Variable(variable)),
         CType::Int32 => int32(Bitvector32Term::Variable(variable)),
         CType::UInt8 => uint8(Bitvector32Term::Variable(variable)),

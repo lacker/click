@@ -185,11 +185,11 @@ fn call_havoc_preserves_initialization_of_a_heap_scalar() {
                 &[range],
                 &PureFactContext::new(),
             ));
-    assert!(
-        after_call
-            .memory()
-            .is_uninitialized_heap_address(pointer.pointer(), 4)
-    );
+    assert!(after_call.memory().is_uninitialized_heap_address(
+        pointer.pointer(),
+        4,
+        &PureFactContext::new()
+    ));
     assert!(
         after_call
             .memory()
@@ -243,7 +243,11 @@ fn zeroed_heap_allocation_reads_zero_until_a_store() {
     let Some(CValue::Pointer(pointer)) = success.locals().get("p") else {
         panic!("successful allocation should assign a heap pointer");
     };
-    assert!(success.memory().is_zeroed_heap_address(pointer, 4));
+    assert!(
+        success
+            .memory()
+            .is_zeroed_heap_address(pointer, 4, &PureFactContext::new())
+    );
 
     let read = evaluate_c_expression_paths(
         &success,
@@ -368,13 +372,18 @@ fn realloc_preserves_zeroed_prefix_and_leaves_growth_uninitialized() {
     let Some(CValue::Pointer(resized)) = success.locals().get("q") else {
         panic!("successful realloc should assign a heap pointer");
     };
-    assert!(success.memory().is_zeroed_heap_address(resized, 4));
+    assert!(
+        success
+            .memory()
+            .is_zeroed_heap_address(resized, 4, &PureFactContext::new())
+    );
     assert!(success.memory().is_uninitialized_heap_address(
         &Pointer {
             block: resized.block.clone(),
             offset: PointerOffsetTerm::Constant(8),
         },
         4,
+        &PureFactContext::new(),
     ));
 
     let prefix_read = evaluate_c_expression_paths(
@@ -623,7 +632,7 @@ mod a_free_reaches_every_element_of_its_block {
         let freed = state
             .memory()
             .clone()
-            .free_heap_block(&base)
+            .free_heap_block(&base, &PureFactContext::new())
             .expect("the allocation is live");
         (freed, base)
     }
@@ -686,7 +695,11 @@ fn heap_free_deallocates_the_complete_block_and_rejects_double_free() {
     let Some(CValue::Pointer(pointer)) = freed.locals().get("p") else {
         panic!("freed local should still contain its stale pointer value");
     };
-    assert!(freed.memory().is_deallocated_heap_address(pointer));
+    assert!(
+        freed
+            .memory()
+            .is_deallocated_heap_address(pointer, &PureFactContext::new())
+    );
     assert!(freed.resources().facts().is_empty());
     assert!(matches!(
         free_facts.as_slice(),
@@ -963,13 +976,20 @@ fn free_of_external_allocation_preserves_unrelated_external_cells() {
         after.memory().load(&unrelated),
         CExpressionOutcome::Value(int32(37))
     );
-    assert!(!after.memory().is_deallocated_heap_address(&unrelated));
-    assert!(after.memory().is_deallocated_heap_address(&allocation_base));
+    assert!(
+        !after
+            .memory()
+            .is_deallocated_heap_address(&unrelated, &PureFactContext::new())
+    );
     assert!(
         after
             .memory()
-            .is_deallocated_heap_address(&allocation_base.offset_by_int32_elements(1.into()))
+            .is_deallocated_heap_address(&allocation_base, &PureFactContext::new())
     );
+    assert!(after.memory().is_deallocated_heap_address(
+        &allocation_base.offset_by_int32_elements(1.into()),
+        &PureFactContext::new()
+    ));
 }
 
 #[test]
@@ -987,7 +1007,7 @@ fn interface_heap_join_retains_potential_live_allocation() {
         retained
             .memory()
             .clone()
-            .free_heap_block(&allocation_base)
+            .free_heap_block(&allocation_base, &PureFactContext::new())
             .expect("the retained arm should be able to free the allocation"),
     );
     let siblings = [&freed, &retained];
@@ -1015,7 +1035,7 @@ fn interface_heap_join_retains_potential_live_allocation() {
     assert!(
         !freed_join
             .memory()
-            .is_deallocated_heap_address(&allocation_base)
+            .is_deallocated_heap_address(&allocation_base, &PureFactContext::new())
     );
 }
 
@@ -1200,7 +1220,7 @@ fn realloc_keeps_old_resources_until_result_and_transfers_them_on_success() {
     assert!(
         success
             .memory()
-            .is_deallocated_heap_address(old_pointer.pointer())
+            .is_deallocated_heap_address(old_pointer.pointer(), &PureFactContext::new())
     );
     assert_eq!(
         success.memory().known_value(resized.pointer()),
@@ -1645,4 +1665,150 @@ fn unreturned_unresolved_malloc_result_cannot_cross_a_return() {
             ..
         }]
     ));
+}
+
+/// Differently spelled pointer blocks are not separate unless proven so: a
+/// contract-returned pointer can equal an allocation base while retaining
+/// another block spelling (`ensures result == p`). A free going through the
+/// allocation's own spelling must retire the allocation under the aliased
+/// spelling too — no cached cell, no zeroed reading, and the load reports the
+/// deallocation — while a structurally fresh, proven-distinct allocation
+/// loses nothing.
+#[test]
+fn freeing_through_one_spelling_retires_the_equal_spelling_too() {
+    let alias = Pointer {
+        block: PointerBlock::Symbolic(Variable(921_000)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let base = Pointer {
+        block: PointerBlock::Heap(921_001),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let fresh = Pointer {
+        block: PointerBlock::Heap(921_002),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+        ConditionTerm::pointer_equal(alias.clone(), base.clone()),
+        true,
+    ));
+
+    let memory = CMemory::new()
+        .store(alias.clone(), int32(7))
+        .with_block(fresh.block.clone(), 8)
+        .store(fresh.clone(), int32(11))
+        .with_heap_allocation_claim(base.clone(), 4)
+        .expect("the allocation claim should be fresh")
+        .with_block(base.block.clone(), 4);
+    let before = memory;
+    assert!(before.is_live_heap_address(&base, &assumptions));
+    assert!(before.is_live_heap_address(&alias, &assumptions));
+    let freed = before
+        .free_heap_block(&base, &assumptions)
+        .expect("the live allocation base frees");
+
+    assert!(
+        freed.is_deallocated_heap_address(&alias, &assumptions),
+        "the load through the equal spelling reads freed memory after the free"
+    );
+    assert_eq!(
+        freed.load(&alias),
+        CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+        "no cached cell survives under the aliased spelling"
+    );
+    assert!(
+        !freed.is_zeroed_heap_address(&alias, 4, &assumptions),
+        "no zeroed status survives under the aliased spelling"
+    );
+    assert!(
+        freed.is_deallocated_heap_address(&base, &assumptions)
+            && freed.load(&base)
+                == CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+        "the allocation's own spelling is deallocated and unavailable"
+    );
+    assert_eq!(
+        freed.load(&fresh),
+        CExpressionOutcome::Value(int32(11)),
+        "a structurally fresh, proven-distinct allocation is unaffected"
+    );
+}
+
+/// Investigation repro (bug hunt phase 2): a calloc'd allocation consumed by
+/// a contract whose continuity is undecided is retired through
+/// `retire_contract_heap_allocation_claim`, which removes the live claim, the
+/// uninitialized status and the zeroed prefix — but leaves the blanket
+/// `zeroed_allocations` entry in place. The post-call load then answers
+/// concrete 0 in the execution where the callee freed the allocation.
+#[test]
+fn retire_investigation_zeroed_status_survives_contract_retire() {
+    let state = CState::new().with_local("p", CValue::pointer(Pointer::null()));
+    let paths = execute_c_statement_paths(
+        &state,
+        &c_heap_allocate_sized_with_zeroed("p", c_int32_literal(4), true),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("calloc-shaped allocation should execute");
+    let CStatementOutcome::Normal(pending) = &paths[0].outcome else {
+        panic!("allocation should produce a pending outcome");
+    };
+    let Some(CValue::Pointer(pending_pointer)) = pending.locals().get("p") else {
+        panic!("allocation should assign a pending pointer");
+    };
+    let success = resolve_pending_heap_allocations(
+        pending,
+        &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(pending_pointer.pointer().clone(), Pointer::null()),
+            false,
+        )),
+    );
+    let Some(CValue::Pointer(pointer)) = success.locals().get("p") else {
+        panic!("allocation should assign a pointer");
+    };
+    assert!(
+        success
+            .memory()
+            .is_zeroed_heap_address(pointer, 4, &PureFactContext::new())
+    );
+    let retired = success
+        .memory()
+        .clone()
+        .retire_contract_heap_allocation_claim(pointer);
+    assert!(
+        retired.is_zeroed_heap_address(pointer, 4, &PureFactContext::new()),
+        "BUG: the zeroed reading survives the contract-boundary retirement"
+    );
+}
+
+/// Investigation repro (bug hunt phase 2): `store_union` removes the raw cell
+/// only under the spelling it was handed. A raw cell stored through a
+/// proven-equal alias spelling of the same address stays, and the stale
+/// scalar reads back as known_value at that spelling beside the overlay.
+#[test]
+fn retire_investigation_store_union_leaves_the_aliased_raw_cell() {
+    let base = Pointer {
+        block: PointerBlock::Heap(922_001),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let alias = Pointer {
+        block: PointerBlock::Symbolic(Variable(922_000)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+        ConditionTerm::pointer_equal(alias.clone(), base.clone()),
+        true,
+    ));
+    let memory = CMemory::new().store(alias.clone(), int32(7)).store_union(
+        base.clone(),
+        CType::Int16,
+        CValue::Int16(Bitvector32Term::Constant(42)),
+    );
+    assert!(memory.has_union_overlay_at(&base));
+    assert!(
+        memory.known_value(&alias).is_some(),
+        "BUG: the stale raw cell survives under the aliased spelling"
+    );
+    let _ = assumptions;
 }

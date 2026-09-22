@@ -233,6 +233,9 @@ pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResou
         | (CValue::UInt8(left), CValue::UInt8(right)) => {
             terms_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
         }
+        (CValue::Int8(left), CValue::Int8(right)) => {
+            terms_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
+        }
         (CValue::Int16(left), CValue::Int16(right))
         | (CValue::UInt16(left), CValue::UInt16(right)) => {
             terms_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
@@ -1796,6 +1799,7 @@ fn collect_bitvector_memory_loads_with_width(
         }
         Bitvector32Term::IntegerToMachine { value, destination } => {
             let width = Some(match destination {
+                MachineIntegerType::Int8 => 1,
                 MachineIntegerType::Int16 | MachineIntegerType::UInt16 => 2,
                 MachineIntegerType::UInt8 => 1,
                 MachineIntegerType::Int32 | MachineIntegerType::UInt32 => 4,
@@ -1906,6 +1910,13 @@ fn collect_cvalue_memory_loads(
     match value {
         CValue::Void => Ok(()),
         CValue::Bool(term) | CValue::UInt8(term) => collect_bitvector_memory_loads_with_width(
+            term,
+            current_memory,
+            loads,
+            Some(1),
+            seen_integers,
+        ),
+        CValue::Int8(term) => collect_bitvector_memory_loads_with_width(
             term,
             current_memory,
             loads,
@@ -2058,6 +2069,7 @@ fn collect_integer_node_memory_loads(
             loads,
             Some(match value.ty() {
                 MachineIntegerType::UInt8 => 1,
+                MachineIntegerType::Int8 => 1,
                 MachineIntegerType::Int16 | MachineIntegerType::UInt16 => 2,
                 MachineIntegerType::Int32 | MachineIntegerType::UInt32 => 4,
                 MachineIntegerType::Int64 | MachineIntegerType::UInt64 => 8,

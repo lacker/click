@@ -196,6 +196,7 @@ impl PureFactContext {
         }
         .or_else(|| crate::kernel::eval::recorded_load_access_width(memory, pointer))?;
         let value = match self.resolve_memory_load_value(memory, pointer, byte_width)? {
+            CValue::Int8(value) => value,
             CValue::Bool(value)
             | CValue::Int16(value)
             | CValue::Int32(value)

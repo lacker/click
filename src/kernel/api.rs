@@ -76,6 +76,10 @@ pub fn bool_value(bits: impl Into<Bitvector32Term>) -> CValue {
     ))
 }
 
+pub fn int8(bits: impl Into<Bitvector32Term>) -> CValue {
+    CValue::Int8(bits.into())
+}
+
 pub fn int16(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::Int16(bits.into())
 }
@@ -117,7 +121,7 @@ pub(crate) fn c_memory_holds_live_heap_allocation_at(
     memory: &super::CMemory,
     pointer: &Pointer,
 ) -> bool {
-    memory.is_live_heap_address(pointer)
+    memory.is_live_heap_address(pointer, &PureFactContext::new())
         || memory.heap_live_allocation_bases().any(|base| {
             base.block == pointer.block
                 && super::assumptions::pointer_offsets_equal_after_exact_materialization(
@@ -1016,6 +1020,10 @@ fn abstract_c_state_for_join_across_with_policy(
                     Bitvector32Term::Constant(1),
                     Bitvector32Term::Constant(0),
                 )),
+                CType::Int8 => int8(Bitvector32Term::Variable(join_variable(
+                    &mut variables,
+                    &mut budget,
+                )?)),
                 CType::Int16 => int16(Bitvector32Term::Variable(join_variable(
                     &mut variables,
                     &mut budget,
@@ -1056,6 +1064,9 @@ fn abstract_c_state_for_join_across_with_policy(
                     Pointer::symbolic_function(join_variable(&mut variables, &mut budget)?),
                     *c_type,
                 ),
+                CType::Int8Array(_) => {
+                    unreachable!("array objects use CLocalBinding::ArrayObject")
+                }
                 CType::Int32Array(_)
                 | CType::UInt8Array(_)
                 | CType::Int16Array(_)

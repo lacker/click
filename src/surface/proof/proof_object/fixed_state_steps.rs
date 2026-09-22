@@ -655,6 +655,9 @@ impl<'a> Proof<'a> {
                 var,
                 pointer.pointer(),
             ),
+            CValue::Int8(_) => {
+                unreachable!("unsupported choice sort above")
+            }
             CValue::Void
             | CValue::Bool(_)
             | CValue::Int16(_)

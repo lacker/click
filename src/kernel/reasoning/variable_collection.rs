@@ -1008,6 +1008,9 @@ fn collect_c_value_bound_identities(
 ) {
     match value {
         CValue::Void | CValue::Pointer(_) => {}
+        CValue::Int8(bits) => {
+            collect_bitvector_integer_variables(bits, variables);
+        }
         CValue::Bool(bits)
         | CValue::Int16(bits)
         | CValue::UInt8(bits)
@@ -2504,6 +2507,7 @@ fn collect_c_value_integer_variables(
     }
     match value {
         CValue::Void => {}
+        CValue::Int8(value) => collect_bitvector_integer_variables_seen(value, variables, seen),
         CValue::Bool(value)
         | CValue::Int16(value)
         | CValue::UInt8(value)
@@ -3109,6 +3113,9 @@ fn collect_capture_variables_in_c_value(
     }
     match value {
         CValue::Void => {}
+        CValue::Int8(bits) => {
+            collect_bitvector_capture_variables_seen(bits, variables, integer_seen)
+        }
         CValue::Bool(bits)
         | CValue::Int16(bits)
         | CValue::UInt8(bits)
@@ -3847,6 +3854,7 @@ fn collect_c_value_scope_summary(
     }
     match value {
         CValue::Void => IntegerScopeSummary::default(),
+        CValue::Int8(term) => collect_bitvector_scope_summary(term, summaries),
         CValue::Bool(term)
         | CValue::Int16(term)
         | CValue::UInt8(term)
@@ -4564,6 +4572,12 @@ fn collect_binder_variables_in_c_value(
     }
     match value {
         CValue::Void => {}
+        CValue::Int8(bits) => collect_bitvector_binder_variables_seen(
+            bits,
+            integer_variables,
+            bitvector_variables,
+            integer_seen,
+        ),
         CValue::Bool(bits)
         | CValue::Int16(bits)
         | CValue::UInt8(bits)
@@ -4819,6 +4833,7 @@ pub(crate) fn collect_c_value_bitvector_variables(
 ) {
     match value {
         CValue::Void => {}
+        CValue::Int8(bits) => collect_bitvector_variables(bits, variables),
         CValue::Bool(bits)
         | CValue::Int16(bits)
         | CValue::Int32(bits)

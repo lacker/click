@@ -18,29 +18,23 @@ development-machine wall time.
 
 ## Open reviews
 
-1. **Heap-allocation containment compares block spellings.**
-   `heap_allocation_may_contain_pointer` in
-   `src/kernel/primitives/memory_state.rs` returns false whenever
-   `base.block != pointer.block`. That is stronger than
-   `PointerBlock::proven_distinct`: an unresolved or contract-returned pointer
-   can equal an allocation while retaining another block spelling. The helper
-   feeds freeing, liveness, initialization, implicit-zero, deallocation,
-   path-availability, and contract-certification decisions.
-
-   Intended regression: two pointers with different, not-proven-distinct block
-   identities are known equal; retiring the allocation through one identity
-   must make loads through the other unavailable and must not retain a cached
-   cell or zeroed status. A pointer into a structurally fresh, proven-distinct
-   allocation remains unaffected.
+1. ~~**Heap-allocation containment compares block spellings.**~~ Completed:
+   `heap_allocation_may_contain_pointer` now answers the cross-spelling
+   question through checked pointer equalities, `free_heap_block` retires an
+   allocation under every proven-equal spelling (cached cells, zeroed and
+   uninitialized status, and the block extents), and the heap-status queries
+   take the deciding fact context. Regression:
+   `freeing_through_one_spelling_retires_the_equal_spelling_too`.
 
 2. **One-element byte-gap direction and wrapping range-fold shortcut.**
    `one_element_gap_separates_bytes` derives a direction from residue indexes,
    although its `Separate` result does not depend on that direction.
-   `range_fold`'s one-step shortcut in `term_operations.rs` uses wrapping
-   addition, so `i32::MAX .. i32::MIN` appears to unroll once. The latter has
-   been judged unreachable because surface `(a..b).fold` lowers to the signed
-   `Integer` carrier, but the rule and every direct kernel caller still need a
-   written argument or a checked regression.
+   `range_fold`'s one-step shortcut in `term_operations.rs` used wrapping
+   addition, so `i32::MAX .. i32::MIN` appeared to unroll once. Fixed: the
+   constructor no longer has a one-step shortcut above the endpoint check —
+   the signed empty law is the deciding rule and the concrete path unrolls
+   exact one-element ranges (`range_fold_simplifies_empty_and_one_step_ranges`
+   covers both). The byte-gap direction question remains open.
 
 3. **Machine-integer and pointer edge cases need their soundness arguments
    retained at the deciding rules.** Eighteen small checks found no false
@@ -78,6 +72,12 @@ development-machine wall time.
 
 ## Recently completed reviews
 
+- Heap-allocation retirement is now alias-aware: a free through one block
+  spelling retires every proven-equal spelling of the same allocation, and the
+  liveness, initialization, zero and deallocation heap-status questions consult
+  the deciding fact context.
+- The signed `int32` range fold no longer unrolls a one-element shortcut whose
+  wrapping endpoint equality the certified empty law refutes.
 - Memory-effect summaries now retain write widths, and load resolution requires
   the stored and requested widths to agree.
 - Separation clauses carry checked range-validity bounds.

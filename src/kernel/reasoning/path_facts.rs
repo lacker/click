@@ -10,13 +10,14 @@ pub(in crate::kernel) fn memory_range_still_available(
     range_memory: &CMemory,
     current_memory: &CMemory,
     base: &Pointer,
+    assumptions: &PureFactContext,
 ) -> bool {
     range_memory == current_memory
         || range_memory.has_block(&base.block) == current_memory.has_block(&base.block)
             && range_memory.is_ended_local_address(base)
                 == current_memory.is_ended_local_address(base)
-            && range_memory.freed_heap_allocation_may_contain(base)
-                == current_memory.freed_heap_allocation_may_contain(base)
+            && range_memory.freed_heap_allocation_may_contain(base, assumptions)
+                == current_memory.freed_heap_allocation_may_contain(base, assumptions)
 }
 
 pub(in crate::kernel) fn forall_int32(var: Variable, body: Proposition) -> Proposition {
@@ -429,6 +430,9 @@ fn c_values_definitely_distinct(left: &CValue, right: &CValue) -> bool {
     }
 
     match (left, right) {
+        (CValue::Int8(left), CValue::Int8(right)) => {
+            matches!((constant(left), constant(right)), (Some(left), Some(right)) if left != right)
+        }
         (CValue::Int16(left), CValue::Int16(right))
         | (CValue::Int32(left), CValue::Int32(right))
         | (CValue::UInt8(left), CValue::UInt8(right))

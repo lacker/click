@@ -996,6 +996,9 @@ pub(in crate::kernel) fn c_values_proven_equal_for_memory_resolution(
 ) -> bool {
     match (left, right) {
         (CValue::Void, CValue::Void) => true,
+        (CValue::Int8(left), CValue::Int8(right)) => {
+            bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
         (CValue::Int16(left), CValue::Int16(right))
         | (CValue::Int32(left), CValue::Int32(right))
         | (CValue::UInt8(left), CValue::UInt8(right))
@@ -2290,6 +2293,11 @@ impl StoreByteInterval {
 /// load means.
 fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<SharedCMemory> {
     match value {
+        CValue::Int8(Bitvector32Term::MemoryLoad(source, source_pointer))
+            if source_pointer.as_ref() == cell_pointer =>
+        {
+            Some(source.clone())
+        }
         CValue::Bool(Bitvector32Term::MemoryLoad(source, source_pointer))
         | CValue::Int16(Bitvector32Term::MemoryLoad(source, source_pointer))
         | CValue::UInt16(Bitvector32Term::MemoryLoad(source, source_pointer))
@@ -2302,6 +2310,13 @@ fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<Sh
             if source_pointer.as_ref() == cell_pointer =>
         {
             Some(source.clone())
+        }
+        CValue::Int8(Bitvector32Term::Variable(variable))
+            if crate::kernel::eval::is_load_variable(variable) =>
+        {
+            let (source, source_pointer) =
+                crate::kernel::eval::registered_load_for_variable(variable)?;
+            (&source_pointer == cell_pointer).then_some(source)
         }
         CValue::Bool(Bitvector32Term::Variable(variable))
         | CValue::Int16(Bitvector32Term::Variable(variable))
@@ -2318,6 +2333,7 @@ fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<Sh
                 crate::kernel::eval::registered_load_for_variable(variable)?;
             (&source_pointer == cell_pointer).then_some(source)
         }
+        CValue::Int8(_) => None,
         CValue::Void
         | CValue::Bool(_)
         | CValue::Int16(_)

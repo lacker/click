@@ -580,6 +580,12 @@ theorem docs_use_cstr_len_is_viewable(bytes: uint8[], len: int32) {
         apply(cstr_len_is_viewable(bytes, len));
     }
 }
+theorem use_integer_to_int8_round_trip(z: Integer) {
+    requires z >= -128;
+    requires z <= 127;
+    ensures to_integer(to_int8(z)) == z by { apply(integer_to_int8_round_trip(z)); }
+}
+
 theorem use_integer_to_int16_round_trip(z: Integer) {
     requires z >= -32768;
     requires z <= 32767;

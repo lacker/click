@@ -4466,6 +4466,18 @@ fn parse_c_source_unit(
     c_sources: &CSourceContext<'_>,
     target: CTarget,
 ) -> Result<syntax::C0TranslationUnit, ClickError> {
+    if let Some(import) = c_sources
+        .prepared_by_source
+        .as_ref()
+        .and_then(|imports| imports.get(source_path))
+        && import.target() != target
+    {
+        return Err(ClickError::new(format!(
+            "compiler-prepared C source `{source_path}` targets `{}`, but the sidecar selects `{}`",
+            import.target().name(),
+            target.name()
+        )));
+    }
     if let Some(unit) = c_sources.parsed_units.borrow().get(source_path) {
         return Ok((**unit).clone());
     }

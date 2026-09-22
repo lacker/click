@@ -83,6 +83,7 @@ impl CGlobal {
             matches!(
                 c_type,
                 CType::Bool
+                    | CType::Int8
                     | CType::Int16
                     | CType::Int32
                     | CType::UInt8
@@ -92,6 +93,7 @@ impl CGlobal {
                     | CType::UInt64
                     | CType::Float32
                     | CType::Float64
+                    | CType::Int8Pointer
                     | CType::Int16Pointer
                     | CType::UInt16Pointer
                     | CType::Int32Pointer
@@ -101,6 +103,7 @@ impl CGlobal {
                     | CType::UInt64Pointer
                     | CType::Float32Pointer
                     | CType::Float64Pointer
+                    | CType::Int8PointerPointer
                     | CType::Int16PointerPointer
                     | CType::UInt16PointerPointer
                     | CType::Int32PointerPointer
@@ -194,7 +197,8 @@ impl CGlobalArray {
         assert!(
             matches!(
                 element_type,
-                CType::Int16
+                CType::Int8
+                    | CType::Int16
                     | CType::Int32
                     | CType::UInt8
                     | CType::UInt16
@@ -377,6 +381,7 @@ impl CStaticLocal {
             matches!(
                 c_type,
                 CType::Bool
+                    | CType::Int8
                     | CType::Int16
                     | CType::Int32
                     | CType::UInt8
@@ -384,6 +389,7 @@ impl CStaticLocal {
                     | CType::UInt32
                     | CType::Float32
                     | CType::Float64
+                    | CType::Int8Pointer
                     | CType::Int16Pointer
                     | CType::UInt16Pointer
                     | CType::Int32Pointer
@@ -393,6 +399,7 @@ impl CStaticLocal {
                     | CType::UInt64Pointer
                     | CType::Float32Pointer
                     | CType::Float64Pointer
+                    | CType::Int8PointerPointer
                     | CType::Int16PointerPointer
                     | CType::UInt16PointerPointer
                     | CType::Int32PointerPointer
@@ -486,7 +493,8 @@ impl CStaticArray {
         assert!(
             matches!(
                 element_type,
-                CType::Int16
+                CType::Int8
+                    | CType::Int16
                     | CType::Int32
                     | CType::UInt8
                     | CType::UInt16

@@ -1159,6 +1159,7 @@ pub(super) fn describe_parameter_relative_range(
 /// nothing.
 pub(super) fn unresolved_load(value: &CValue) -> Option<(SharedCMemory, Pointer)> {
     let term = match value {
+        CValue::Int8(term) => term,
         CValue::Bool(term)
         | CValue::Int16(term)
         | CValue::Int32(term)
@@ -2430,6 +2431,7 @@ fn describe_parameter_struct_field_pointer(
 fn diagnostic_c0_type_byte_width(c_type: C0Type, pointer_width: u32) -> i64 {
     match c_type {
         C0Type::Bool | C0Type::Char | C0Type::UInt8 => 1,
+        C0Type::Int8 => 1,
         C0Type::Int16 | C0Type::UInt16 => 2,
         C0Type::Int32 | C0Type::UInt32 => 4,
         C0Type::Int64 | C0Type::UInt64 => 8,
@@ -2447,6 +2449,7 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         | C0Type::CharArray(_)
         | C0Type::UInt8Pointer
         | C0Type::UInt8Array(_) => 1,
+        C0Type::Int8 | C0Type::Int8Array(_) => 1,
         C0Type::Int16 | C0Type::UInt16 | C0Type::Int16Array(_) | C0Type::UInt16Array(_) => 2,
         C0Type::Int32
         | C0Type::Char
@@ -2459,6 +2462,7 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         C0Type::Int64 | C0Type::UInt64 | C0Type::Int64Array(_) | C0Type::UInt64Array(_) => 8,
         C0Type::Float32 | C0Type::Float32Array(_) => 4,
         C0Type::Float64 | C0Type::Float64Array(_) => 8,
+        C0Type::Int8Pointer | C0Type::Int8PointerPointer => 8,
         C0Type::Int16Pointer
         | C0Type::UInt16Pointer
         | C0Type::Int64Pointer
@@ -2558,6 +2562,12 @@ pub(super) fn describe_c_value(
             "{}bool",
             describe_bitvector_with_context(value, parameters, arguments)
         ),
+        CValue::Int8(value) => {
+            format!(
+                "{}i8",
+                describe_bitvector_with_context(value, parameters, arguments)
+            )
+        }
         CValue::Int16(value) => {
             format!(
                 "{}i16",
@@ -2664,6 +2674,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 );
             }
             let spelling = match target_type {
+                CType::Int8 => "int8".to_string(),
                 CType::Int16 => "int16".to_string(),
                 CType::Int32 => "int32".to_string(),
                 CType::UInt8 => "uint8".to_string(),
@@ -2731,6 +2742,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 CType::Bool => "load_bool",
                 CType::VoidPointer => "load_void_pointer",
                 CType::VoidPointerPointer => "load_void_pointer_pointer",
+                CType::Int8 => "load_int8",
                 CType::Int16 => "load_int16",
                 CType::Int32 => "load_int32",
                 CType::UInt8 => "load_uint8",
@@ -2740,6 +2752,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 CType::UInt64 => "load_uint64",
                 CType::Float32 => "load_float",
                 CType::Float64 => "load_double",
+                CType::Int8Pointer => "load_int8_pointer",
                 CType::Int16Pointer => "load_int16_pointer",
                 CType::UInt16Pointer => "load_uint16_pointer",
                 CType::Int32Pointer => "load_int32_pointer",
@@ -2747,6 +2760,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 CType::UInt32Pointer => "load_uint32_pointer",
                 CType::Int64Pointer => "load_int64_pointer",
                 CType::UInt64Pointer => "load_uint64_pointer",
+                CType::Int8PointerPointer => "load_int8_pointer_pointer",
                 CType::Int16PointerPointer => "load_int16_pointer_pointer",
                 CType::UInt16PointerPointer => "load_uint16_pointer_pointer",
                 CType::Int32PointerPointer => "load_int32_pointer_pointer",
@@ -2759,6 +2773,9 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 CType::Float32PointerPointer => "load_float_pointer_pointer",
                 CType::Float64PointerPointer => "load_double_pointer_pointer",
                 CType::FunctionPointer(_) => "load_function_pointer",
+                CType::Int8Array(_) => {
+                    return format!("*{}", describe_c_expression(pointer));
+                }
                 CType::Int32Array(_)
                 | CType::UInt8Array(_)
                 | CType::Int16Array(_)
@@ -3659,6 +3676,11 @@ pub(super) fn describe_parameter_bitvector(
             }
             CExpression::Value(CValue::UInt8(value))
                 if value == term && matches!(parameter.c_type(), C0Type::Char | C0Type::UInt8) =>
+            {
+                return Some(parameter.name().to_string());
+            }
+            CExpression::Value(CValue::Int8(value))
+                if value == term && parameter.c_type() == C0Type::Int8 =>
             {
                 return Some(parameter.name().to_string());
             }

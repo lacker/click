@@ -93,7 +93,10 @@ impl PureFactContext {
                         return Some(false);
                     }
                 }
-                None
+                // Reuse the bounded interval reconstruction already used for
+                // addition and multiplication, including compound operands.
+                self.signed_interval(&Bitvector32Term::Subtract(Box::new(left), Box::new(right)))
+                    .map(|_| false)
             }
             ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
                 if right.as_ref() == &Bitvector32Term::Constant(1) {

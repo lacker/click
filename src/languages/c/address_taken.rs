@@ -100,6 +100,7 @@ fn declare(summary: &mut AddressTakenSummary, name: &str, c_type: C0Type) {
 /// lands in the `false` arm, which refuses the name.
 fn scalar_or_pointer(c_type: C0Type) -> bool {
     match c_type {
+        C0Type::Int8 | C0Type::Int8Pointer | C0Type::Int8PointerPointer => true,
         C0Type::Char
         | C0Type::Bool
         | C0Type::Int16
@@ -134,6 +135,7 @@ fn scalar_or_pointer(c_type: C0Type) -> bool {
         | C0Type::Float32PointerPointer
         | C0Type::Float64PointerPointer
         | C0Type::FunctionPointer(_) => true,
+        C0Type::Int8Array(_) => false,
         C0Type::Void
         | C0Type::CharArray(_)
         | C0Type::Int32Array(_)

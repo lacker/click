@@ -2946,3 +2946,82 @@ fn singleton_integer_range_forces_equality() {
         Some(true)
     );
 }
+
+#[test]
+fn signed_byte_narrowing_checks_each_bound_and_unsigned_inputs() {
+    for (input, valid) in [
+        (int32((-129i32) as u32), false),
+        (int32((-128i32) as u32), true),
+        (int32(127), true),
+        (int32(128), false),
+        (int16((-129i32) as u32), false),
+        (int16((-128i32) as u32), true),
+        (uint8(127), true),
+        (uint8(128), false),
+        (uint8(255), false),
+    ] {
+        let mut obligations = Vec::new();
+        let result = crate::kernel::eval::coerce_c_value_to_type(
+            input.clone(),
+            CType::Int8,
+            &mut obligations,
+            &PureFactContext::new(),
+        );
+        assert_eq!(result.is_some(), valid, "{input:?}");
+        if valid {
+            assert!(obligations.is_empty());
+        }
+    }
+    let value = Bitvector32Term::Variable(Variable(815));
+    let bounds = [
+        ConditionTerm::signed_greater_equal(
+            value.clone(),
+            Bitvector32Term::Constant((-128i32) as u32),
+        ),
+        ConditionTerm::signed_less_equal(value.clone(), Bitvector32Term::Constant(127)),
+    ];
+    for mask in 0u32..4 {
+        let mut assumptions = PureFactContext::new();
+        for (index, bound) in bounds.iter().enumerate() {
+            if mask & (1 << index) != 0 {
+                assumptions = assumptions.assume_condition(bound.clone(), true);
+            }
+        }
+        let mut obligations = Vec::new();
+        let result = crate::kernel::eval::coerce_c_value_to_type(
+            int32(value.clone()),
+            CType::Int8,
+            &mut obligations,
+            &assumptions,
+        );
+        assert_eq!(result, Some(int8(value.clone())));
+        assert_eq!(obligations.len(), 2 - mask.count_ones() as usize);
+    }
+}
+
+#[test]
+fn signed_byte_arithmetic_promotes_with_range_facts() {
+    let value = CExpression::Value(int8(Bitvector32Term::Variable(Variable(817))));
+    let expression = CExpression::Subtract(
+        Box::new(CExpression::Multiply(
+            Box::new(value),
+            Box::new(c_int32_literal(2)),
+        )),
+        Box::new(c_int32_literal(1)),
+    );
+    let paths = evaluate_c_expression_paths(
+        &CState::new(),
+        &expression,
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert_eq!(paths.len(), 1, "{paths:?}");
+    assert!(
+        matches!(
+            paths[0].outcome,
+            CExpressionOutcome::Value(CValue::Int32(_))
+        ),
+        "{paths:?}"
+    );
+}

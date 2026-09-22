@@ -9,6 +9,13 @@ make the normal example gate fail. The source-integrity test in
 `tests/examples.rs` pins its exact bytes. Later example work must use those
 bytes, not reshape the C to expose a friendlier proof state.
 
+## Binding proposal for review
+
+The [pthread binding design](pthread-binding-design.md) proposes how ordinary
+C create/join calls use the existing worker contracts, `step`, and `branch`.
+It covers delayed status tests, completion authority, and the required locked
+runtime identity. It is a design proposal, not implemented support.
+
 ## Selected profile
 
 | Boundary | Selection |
@@ -36,6 +43,36 @@ those preconditions by a checked rule. Thread creation may fail and must not
 transfer ownership on failure. The thread body and both client paths remain
 verification obligations. A native compiler run below checks C syntax only;
 it does not establish any concurrency property.
+
+## Compiler-import checkpoint
+
+Compiler-backed imports now accept the user-space target with a fixed C11,
+LP64, unsigned-char, pthread/POSIX profile. Include roots remain explicit and
+inventoried. The sidecar and prepared import must select the same target;
+changed headers, profiles, and stale locks are rejected. This is import
+support only, not a pthread runtime binding or a concurrent proof.
+
+`tests/compiler_import.rs` prepares the unchanged probe through real GCC/glibc
+headers and checks the bounded parser refusal. On this implementation host
+(Ubuntu GCC 13.3.0 and glibc 2.39), preparation and lock loading succeed.
+The original parser gap, `typedef unsigned short int __u_short;`, is fixed:
+standard short/long integer spellings now accept their optional trailing `int`
+with the existing widths and signedness. Parser regressions and
+`mdtests/c_integer_trailing_int.md` pin that behavior.
+
+The `signed char` typedef for `__int8_t` now lowers to the distinct signed
+byte type `int8`, with one-byte storage, integer promotion, and checked
+conversions in the range -128 through 127. The regression next stops at
+`typedef signed int __int32_t;` in `bits/types.h`: the parser has not yet
+accepted the explicit `signed int` spelling. The next small import step is
+to support that spelling using the existing `int32` semantics, then rerun the
+unchanged probe. Declaration-specific runtime identity and checked create/join
+call binding remain subsequent work.
+
+The compiler-backed regression uses the host GCC/header installation and locks
+those actual inputs. This run does not establish the selected Debian GCC
+12/glibc 2.36 runtime binding; that pinned environment still needs validation.
+No header declarations or probe statements are removed.
 
 ## Sequential worker checkpoint
 

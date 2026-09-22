@@ -3137,16 +3137,12 @@ fn c0_accepts_standard_integer_spellings_and_struct_typedefs() {
 }
 
 #[test]
-fn c0_rejects_unmodeled_signed_char() {
-    {
-        let (source, spelling) = ("signed char unsupported() { return 0; }", "signed char");
-        let error = syntax::parse_function(source)
-            .expect_err("unmodeled standard C types should be rejected");
-        assert!(
-            error.message().contains(spelling),
-            "diagnostic for `{spelling}` did not mention the spelling: {}",
-            error.message()
-        );
+fn c0_models_signed_char_as_distinct_signed_byte() {
+    for spelling in ["signed char", "int8", "int8_t"] {
+        let source = format!("{spelling} identity({spelling} value) {{ return value; }}");
+        let function = syntax::parse_function(&source).unwrap();
+        assert_eq!(function.return_type(), syntax::C0Type::Int8);
+        assert_eq!(function.parameters()[0].c_type(), syntax::C0Type::Int8);
     }
 }
 
@@ -3724,11 +3720,6 @@ fn c0_call_lowering_diagnostics_preserve_original_call_positions() {
             crate::source::SourcePosition::new(2, 21),
         ),
         (
-            "int32 caller() {\n    return ready() && later();\n}\n",
-            "calls in the short-circuit right operand are not supported",
-            crate::source::SourcePosition::new(2, 23),
-        ),
-        (
             "int32 caller() {\n    return outer(left(), right());\n}\n",
             "multiple unsequenced calls in one expression are not supported",
             crate::source::SourcePosition::new(2, 26),
@@ -4236,10 +4227,41 @@ fn c0_syntax_accepts_switch_cases_and_nested_loop_control() {
 }
 
 #[test]
+fn c0_syntax_accepts_integer_constant_switch_case_labels() {
+    let function = syntax::parse_function(
+        r#"
+        int32 choose(int32 kind) {
+            switch (kind) {
+                case 1 + 1:
+                    return 0;
+                case 1 << 2:
+                    return 0;
+                case 0 ? 9 : 6:
+                    return 0;
+                case (uint8) 7:
+                    return 0;
+                default:
+                    return 0;
+            }
+        }
+        "#,
+    )
+    .expect("integer constant expressions should be accepted as switch labels");
+
+    let syntax::C0Statement::Switch { cases, .. } = function.body() else {
+        panic!("expected native switch statement");
+    };
+    assert_eq!(
+        cases.iter().map(|case| case.value()).collect::<Vec<_>>(),
+        vec![Some(2), Some(4), Some(6), Some(7), None]
+    );
+}
+
+#[test]
 fn c0_syntax_rejects_unsupported_switch_shapes() {
     for (source, expected) in [
         (
-            "int32 bad(int32 kind) { switch (kind) { case 1: break; case 1: break; } return 0; }",
+            "int32 bad(int32 kind) { switch (kind) { case 1 + 1: break; case 2: break; } return 0; }",
             "duplicate `case` label",
         ),
         (
@@ -4248,7 +4270,19 @@ fn c0_syntax_rejects_unsupported_switch_shapes() {
         ),
         (
             "int32 bad(int32 kind) { switch (kind) { case kind: break; } return 0; }",
-            "integer or character literal",
+            "integer constant expressions",
+        ),
+        (
+            "int32 bad(int32 kind) { switch (kind) { case 1 / 0: break; } return 0; }",
+            "divides by zero",
+        ),
+        (
+            "int32 bad(int32 kind) { switch (kind) { case 1 << 32: break; } return 0; }",
+            "invalid shift",
+        ),
+        (
+            "int32 bad(int32 kind) { switch (kind) { case 4294967296ULL: break; } return 0; }",
+            "out of range",
         ),
         (
             "int32 bad(int32 kind) { switch (kind) { kind = 1; case 0: break; } return 0; }",
@@ -10044,6 +10078,44 @@ fn c0_syntax_lowers_calls_in_conditional_expression_branches() {
 }
 
 #[test]
+fn c0_syntax_lowers_calls_in_short_circuit_right_operands() {
+    for (source, operator) in [
+        (
+            r#"
+            int32 caller(int32 condition) {
+                return condition && increment(0);
+            }
+            "#,
+            "And",
+        ),
+        (
+            r#"
+            int32 caller(int32 condition) {
+                return condition || increment(0);
+            }
+            "#,
+            "Or",
+        ),
+    ] {
+        let function = syntax::parse_function(source)
+            .expect("calls in short-circuit right operands should be lowered lazily");
+        let debug = format!("{:?}", function.body());
+        assert!(
+            debug.contains("If {"),
+            "{operator} becomes a checked branch"
+        );
+        assert!(
+            debug.contains("CallAssign"),
+            "{operator} checks the selected call"
+        );
+        assert!(
+            !debug.contains(&format!("{operator}(")),
+            "{operator} is lowered out of the expression tree"
+        );
+    }
+}
+
+#[test]
 fn c0_syntax_lowers_aggregate_conditional_call_argument() {
     let functions = syntax::parse_functions(
         r#"
@@ -11765,4 +11837,106 @@ fn c0_body_call_updates_a_local_array_without_rebinding_it_as_a_scalar() {
         outcome: crate::kernel::CFunctionOutcome::Return { value, .. }, ..
     } if value == &crate::kernel::int32(9))
     );
+}
+
+#[test]
+fn standard_integer_widths_accept_trailing_int_without_changing_type() {
+    use syntax::C0Type;
+    for (spelling, expected) in [
+        ("short int", C0Type::Int16),
+        ("signed short int", C0Type::Int16),
+        ("unsigned short int", C0Type::UInt16),
+        ("long int", C0Type::Int64),
+        ("signed long int", C0Type::Int64),
+        ("unsigned long int", C0Type::UInt64),
+        ("long long int", C0Type::Int64),
+        ("signed long long int", C0Type::Int64),
+        ("unsigned long long int", C0Type::UInt64),
+    ] {
+        let source = format!("{spelling} identity({spelling} value) {{ return value; }}");
+        let function = syntax::parse_function(&source).expect(&source);
+        assert_eq!(function.return_type(), expected, "{spelling}");
+        assert_eq!(function.parameters()[0].c_type(), expected, "{spelling}");
+        // Preserve the exact header declaration shape that first exposed this
+        // gap, including typedef resolution at a later declaration.
+        let source =
+            format!("typedef {spelling} alias; alias identity(alias value) {{ return value; }}");
+        let unit = syntax::parse_translation_unit_for_source(
+            &source,
+            "aliases.c",
+            &source::ExpandedLineMap::empty(),
+        )
+        .expect(&source);
+        assert_eq!(unit.functions[0].return_type(), expected, "{spelling}");
+        assert_eq!(
+            unit.functions[0].parameters()[0].c_type(),
+            expected,
+            "{spelling}"
+        );
+    }
+}
+
+#[test]
+fn trailing_int_does_not_accept_incompatible_or_duplicate_specifiers() {
+    for spelling in [
+        "int int",
+        "short int int",
+        "long int int",
+        "unsigned int int",
+        "unsigned char int",
+        "short long int",
+        "unsigned short signed int",
+        "uint16 int",
+        "int64 int",
+    ] {
+        let source = format!("{spelling} bad(void) {{ return 0; }}");
+        assert!(syntax::parse_function(&source).is_err(), "{spelling}");
+    }
+    assert!(
+        syntax::parse_translation_unit_for_source(
+            "typedef short alias; alias int bad(void) { return 0; }",
+            "bad.c",
+            &source::ExpandedLineMap::empty()
+        )
+        .is_err()
+    );
+    // This change does not silently reinterpret the next unsupported type.
+    assert!(syntax::parse_function("signed char int bad(void) { return 0; }").is_err());
+}
+
+#[test]
+fn signed_byte_storage_and_pointer_identity() {
+    use syntax::C0Type;
+    let functions = syntax::parse_functions(
+        "typedef signed char byte; struct bytes { byte a; byte b; int tail; };\n\
+         byte global[2] = {-128, 127};\n\
+         int read(struct bytes *p) { static byte low = -128; return p->b + global[0] + low; }",
+    )
+    .unwrap();
+    let layout = &functions[0].structs()["bytes"];
+    assert_eq!(layout.field("a").unwrap().offset_bytes(), 0);
+    assert_eq!(layout.field("b").unwrap().offset_bytes(), 1);
+    assert_eq!(layout.field("tail").unwrap().offset_bytes(), 4);
+    assert_eq!(C0Type::Int8.to_kernel_type().byte_width(), 1);
+    for source in [
+        "void f(signed char *p, unsigned char *q) { p = q; }",
+        "void f(signed char *p, char *q) { p = q; }",
+        "void f(signed char *p); void f(unsigned char *p);",
+        "void f(int (*cb)(signed char)); void f(int (*cb)(unsigned char));",
+        "signed char invalid = 128; int f(void) { return invalid; }",
+        "signed char invalid = -129; int f(void) { return invalid; }",
+    ] {
+        assert!(syntax::parse_functions(source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn signed_byte_proof_expansion_preserves_memory_and_negative_values() {
+    let c = "int read(signed char *p) { return p[1] + 1; }";
+    let proof = "verifying \"byte.c\"; int read(signed char *p) { views p[0..2]; ensures result == p[1] + 1 by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("byte.c", c)]).unwrap();
+    let expanded =
+        crate::surface::expand_c0_claim_source_by_label(proof, &[("byte.c", c)], "read.ensures_0")
+            .unwrap();
+    crate::surface::verify_c0_sources(&expanded, &[("byte.c", c)]).unwrap();
 }

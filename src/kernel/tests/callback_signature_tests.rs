@@ -8,10 +8,10 @@ fn callback_qualification_identity_is_exact_at_every_position_and_arity() {
         // supported arity: neither a high bit nor leading zero is lost.
         for mask in 0..(1usize << (arity + 1)) {
             let parameters = (0..arity)
-                .map(|index| (CType::VoidPointer, mask & (1 << (index + 1)) != 0))
+                .map(|index| (CType::Int8Pointer, mask & (1 << (index + 1)) != 0))
                 .collect::<Vec<_>>();
             let key = CType::qualified_function_pointer_signature(
-                CType::VoidPointer,
+                CType::Int8Pointer,
                 mask & 1 != 0,
                 &parameters,
             );
@@ -21,9 +21,9 @@ fn callback_qualification_identity_is_exact_at_every_position_and_arity() {
     }
     assert_eq!(
         CType::qualified_function_pointer_signature(
-            CType::VoidPointer,
+            CType::Int8Pointer,
             true,
-            &[(CType::VoidPointer, true); 14]
+            &[(CType::Int8Pointer, true); 14]
         ),
         CallbackSignature::UNSPECIFIED
     );
@@ -54,10 +54,12 @@ fn callback_signature_codes_cannot_overlap_adjacent_types() {
         CType::UInt8Pointer,
         CType::Int32PointerPointer,
         CType::UInt8PointerPointer,
+        CType::Int8,
         CType::Int16,
         CType::UInt16,
         CType::Int64,
         CType::UInt64,
+        CType::Int8Pointer,
         CType::Int16Pointer,
         CType::UInt16Pointer,
         CType::UInt32Pointer,

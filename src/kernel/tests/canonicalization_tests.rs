@@ -23,6 +23,7 @@ fn collect_offset_load_variables_from_value(
     match value {
         CValue::Void => {}
         CValue::Bool(term)
+        | CValue::Int8(term)
         | CValue::Int16(term)
         | CValue::Int32(term)
         | CValue::UInt8(term)
