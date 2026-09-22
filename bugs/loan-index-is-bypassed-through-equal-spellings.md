@@ -30,6 +30,17 @@ area), and `refuse_retiring_a_lent_allocation`
 (`src/kernel/functions.rs`, the ledger scan that is the only guard after the
 owner has left the residual).
 
+Additional caller found by a later audit pass: the unindexed fallback's
+`unindexed_memory.get(&range.base().block)` (`src/kernel/loans.rs:3807`) is
+an exact-block map with no alias consultation, and the free/realloc consult
+wrapper `stable_loan_memory_range_outcome` (called from
+`src/kernel/eval/statements.rs:1868` for free and `:1496` for realloc)
+reaches it with path facts only. A loan recorded under one spelling and a
+free through a proven-equal spelling misses it: the free proceeds without
+the loan refusal, and the stale-resource scan that follows inspects facts,
+not ledger entries. Include this caller in the fix; one deciding route,
+two consumers.
+
 ## Intended regression
 
 The investigation test as a true regression: after applying a loan whose
