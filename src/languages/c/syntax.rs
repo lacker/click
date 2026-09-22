@@ -2520,12 +2520,13 @@ impl C0Function {
     }
 
     /// The deliberately narrow natural-cycle shape admitted by the C goto
-    /// slice: one direct function-body label at the entry, exactly one
-    /// backward goto in the re-entered region, and optionally one or more
-    /// forward gotos to a final direct function-body exit label. There is no
-    /// declaration in the cycle region. The gotos may be nested in an `if`;
-    /// the proof layer wraps this exact source region in a checked loop rule
-    /// while retaining the original gotos.
+    /// slice: one direct function-body label at the entry, one or more
+    /// backward gotos in the re-entered region, and optionally one or more
+    /// forward gotos to a final direct function-body exit label. Every
+    /// backward goto targets the entry label. There is no declaration in the
+    /// cycle region. The gotos may be nested in an `if`; the proof layer wraps
+    /// this exact source region in a checked loop rule while retaining the
+    /// original gotos.
     pub(crate) fn natural_control_loop(
         &self,
     ) -> Option<(
@@ -2574,20 +2575,18 @@ impl C0Function {
         for statement in statements.iter().skip(1).take(cycle_end - 1) {
             collect_natural_cycle_goto_targets(statement, &mut goto_targets);
         }
-        if (exit_label_index.is_none() && goto_targets.len() != 1)
-            || (exit_label_index.is_some() && goto_targets.len() < 2)
-        {
+        if goto_targets.is_empty() || (exit_label_index.is_some() && goto_targets.len() < 2) {
             return None;
         }
         let (label_target, _) = *self.control_targets.get(label_name)?;
-        let mut targets = goto_targets
+        let targets = goto_targets
             .iter()
             .map(|target| self.control_targets.get(*target).copied())
             .collect::<Option<Vec<_>>>()?;
-        let backedge = targets
-            .iter()
-            .position(|(target, index)| *target == label_target && *index == 0)
-            .map(|index| targets.remove(index))?;
+        let (backedges, targets): (Vec<_>, Vec<_>) = targets
+            .into_iter()
+            .partition(|(target, index)| *target == label_target && *index == 0);
+        let backedge = backedges.first().copied()?;
         let exit = match exit_label_index {
             Some(index) => {
                 let (_, exit_name) = match statements[index] {
@@ -2603,7 +2602,8 @@ impl C0Function {
             }
             None => None,
         };
-        (exit_label_index.is_none() || exit.is_some()).then_some((backedge.0, exit, backedge.1))
+        ((exit_label_index.is_none() && targets.is_empty()) || exit.is_some())
+            .then_some((backedge.0, exit, backedge.1))
     }
 
     fn static_object_address(&self, name: &str) -> Option<StaticAddress> {
@@ -4562,11 +4562,13 @@ fn validate_direct_forward_gotos(
         let explicit_exit_shape = natural_cycle_shape
             && statements.len() > 2
             && matches!(statements.last(), Some(C0Statement::Label { .. }))
-            && backward_gotos.len() == 1
+            && !backward_gotos.is_empty()
             && !forward_gotos.is_empty()
-            && goto_count == 1 + forward_gotos.len()
+            && goto_count == backward_gotos.len() + forward_gotos.len()
             && labels.len() == 2
-            && backward_gotos[0].1 == 0
+            && backward_gotos
+                .iter()
+                .all(|(_, target_index)| *target_index == 0)
             && forward_gotos
                 .iter()
                 .all(|(_, target_index)| *target_index + 1 == statements.len())
@@ -4585,10 +4587,13 @@ fn validate_direct_forward_gotos(
                         && !natural_cycle_statement_contains_goto(statement)
             );
         let supported = natural_cycle_shape
-            && ((backward_gotos.len() == 1
-                && goto_count == 1
+            && ((!backward_gotos.is_empty()
+                && forward_gotos.is_empty()
+                && goto_count == backward_gotos.len()
                 && labels.len() == 1
-                && backward_gotos[0].1 == 0
+                && backward_gotos
+                    .iter()
+                    .all(|(_, target_index)| *target_index == 0)
                 && matches!(
                     statements.first(),
                     Some(C0Statement::Label { statement, .. })

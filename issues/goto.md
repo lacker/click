@@ -78,6 +78,8 @@ The natural-cycle slice also accepts one explicit forward exit label, covered
 by [`natural_goto_exit_label.md`](../mdtests/natural_goto_exit_label.md).
 Multiple forward edges to that same exit label are covered by
 [`natural_goto_multiple_exit_labels.md`](../mdtests/natural_goto_multiple_exit_labels.md).
+Multiple backedges to the same cycle header are covered by
+[`natural_goto_multiple_backedges.md`](../mdtests/natural_goto_multiple_backedges.md).
 
 ## Intended regression
 
