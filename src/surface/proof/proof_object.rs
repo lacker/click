@@ -488,6 +488,7 @@ impl CheckedFocusedTransition {
 struct ProofLocals {
     values: PersistentMap<String, ContractExpression>,
     integer_values: PersistentMap<String, crate::kernel::SpecIntegerExpression>,
+    algebraic_values: PersistentMap<String, crate::kernel::SpecAlgebraicExpression>,
     next_choice_variable: u64,
 }
 
@@ -496,6 +497,7 @@ impl Default for ProofLocals {
         Self {
             values: PersistentMap::default(),
             integer_values: PersistentMap::default(),
+            algebraic_values: PersistentMap::default(),
             next_choice_variable: 3_000_000,
         }
     }
@@ -1247,6 +1249,12 @@ impl<'a> Proof<'a> {
         &self,
     ) -> &PersistentMap<String, crate::kernel::SpecIntegerExpression> {
         &self.state().locals().integer_values
+    }
+
+    pub(super) fn local_algebraic_values(
+        &self,
+    ) -> &PersistentMap<String, crate::kernel::SpecAlgebraicExpression> {
+        &self.state().locals().algebraic_values
     }
 
     fn focused_branch_id(&self) -> BranchId {

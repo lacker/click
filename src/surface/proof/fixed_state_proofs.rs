@@ -21,6 +21,7 @@ pub(super) use have_proofs::{
     capture_resource_field_initializer, finish_ordered_proof_units, lower_fixed_state_proposition,
     lower_fixed_state_proposition_through_kernel_with_bound_array_memories,
     lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values,
+    lower_fixed_state_proposition_with_algebraic_values,
     lower_fixed_state_proposition_with_assumptions,
     lower_fixed_state_proposition_with_assumptions_recording_introductions,
     lower_fixed_state_proposition_with_integer_values, plan_smart_have_in_current_state,

@@ -90,6 +90,11 @@ fn collect_spec_proposition_carriers(
             variables.integer.insert(*variable);
             collect_spec_proposition_carriers(body, variables, integer_seen);
         }
+        SpecProposition::ForAllAlgebraic { variable, body, .. }
+        | SpecProposition::ExistsAlgebraic { variable, body, .. } => {
+            variables.algebraic.insert(*variable);
+            collect_spec_proposition_carriers(body, variables, integer_seen);
+        }
         SpecProposition::Predicate { arguments, .. } => {
             for argument in arguments {
                 if variables.exhausted() {
@@ -772,6 +777,23 @@ impl<'a> TermRewrite<'a> {
                     body: Box::new(body),
                 }
             }
+            SpecProposition::ForAllAlgebraic {
+                name,
+                variable,
+                algebraic_type,
+                body,
+            } => {
+                let (variable, body) =
+                    self.with_spec_scope(BindingCarrier::Algebraic, *variable, |rewrite| {
+                        rewrite.rewrite_spec_proposition(body)
+                    })?;
+                SpecProposition::ForAllAlgebraic {
+                    name: name.clone(),
+                    variable,
+                    algebraic_type: algebraic_type.clone(),
+                    body: Box::new(body),
+                }
+            }
             SpecProposition::ForAllPointer {
                 name,
                 variable,
@@ -816,6 +838,23 @@ impl<'a> TermRewrite<'a> {
                 SpecProposition::ExistsInteger {
                     name: name.clone(),
                     variable,
+                    body: Box::new(body),
+                }
+            }
+            SpecProposition::ExistsAlgebraic {
+                name,
+                variable,
+                algebraic_type,
+                body,
+            } => {
+                let (variable, body) =
+                    self.with_spec_scope(BindingCarrier::Algebraic, *variable, |rewrite| {
+                        rewrite.rewrite_spec_proposition(body)
+                    })?;
+                SpecProposition::ExistsAlgebraic {
+                    name: name.clone(),
+                    variable,
+                    algebraic_type: algebraic_type.clone(),
                     body: Box::new(body),
                 }
             }

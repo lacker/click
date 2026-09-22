@@ -690,7 +690,10 @@ fn validate_contract_applications_in_proposition_one(
                 ClickType::Integer => {
                     variables.remove(name);
                 }
-                _ => {
+                ClickType::Algebraic(_) => {
+                    variables.remove(name);
+                }
+                ClickType::Parameter(_) => {
                     return Err(ClickError::new(
                         "this quantifier binder type is not supported",
                     ));

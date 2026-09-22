@@ -188,6 +188,7 @@ impl<'a> Proof<'a> {
             self.facts().assumptions(),
             &values,
             &array_refs,
+            BTreeMap::new(),
             context.old_reference_state(&execution.core.frontier, &execution.core.state),
             &execution.core.state,
             &execution.presentation.recorded_snapshots,

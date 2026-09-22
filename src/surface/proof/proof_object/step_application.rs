@@ -1929,6 +1929,7 @@ impl<'a> Proof<'a> {
     #[inline(never)]
     pub(super) fn apply_intro(&self) -> Result<KernelProofHandle, ClickError> {
         let mut integer_binding = None;
+        let mut algebraic_binding = None;
         let state = self
             .state
             .apply_intro(|current, introduction, introduced| {
@@ -1988,11 +1989,15 @@ impl<'a> Proof<'a> {
                         PropositionIntroduction::Universal {
                             variable,
                             pointer: introduced_pointer,
+                            algebraic,
                         },
                         surface,
                     ) => {
                         if *integer {
                             integer_binding = Some((name.clone(), variable));
+                        } else if let Some(ref algebraic_type) = algebraic {
+                            algebraic_binding =
+                                Some((name.clone(), variable, algebraic_type.clone()));
                         }
                         // The binding names the exact variable the kernel
                         // bound the body to, not the one lowering first
@@ -2004,7 +2009,12 @@ impl<'a> Proof<'a> {
                             }
                             _ => CValue::Int32(Bitvector32Term::Variable(variable)),
                         };
-                        if !*integer {
+                        if algebraic.is_some() {
+                            surface_bindings = surface_bindings.with_inserted(
+                                name.clone(),
+                                ContractExpression::Binding(name.clone()),
+                            );
+                        } else if !*integer {
                             surface_bindings = surface_bindings.with_inserted(
                                 name.clone(),
                                 ContractExpression::CFragment(CExpression::Value(value)),
@@ -2021,15 +2031,28 @@ impl<'a> Proof<'a> {
                     }
                     (
                         None,
-                        PropositionIntroduction::Universal { variable, .. },
+                        PropositionIntroduction::Universal {
+                            variable,
+                            algebraic,
+                            ..
+                        },
                         Some(ClickProposition::ForAll { name, body, .. }),
                     ) => {
-                        surface_bindings = surface_bindings.with_inserted(
-                            name.clone(),
-                            ContractExpression::CFragment(CExpression::Value(CValue::Int32(
-                                Bitvector32Term::Variable(variable),
-                            ))),
-                        );
+                        if let Some(algebraic_type) = algebraic {
+                            algebraic_binding =
+                                Some((name.clone(), variable, algebraic_type.clone()));
+                            surface_bindings = surface_bindings.with_inserted(
+                                name.clone(),
+                                ContractExpression::Binding(name.clone()),
+                            );
+                        } else {
+                            surface_bindings = surface_bindings.with_inserted(
+                                name.clone(),
+                                ContractExpression::CFragment(CExpression::Value(
+                                    CValue::Int32(Bitvector32Term::Variable(variable)),
+                                )),
+                            );
+                        }
                         Some(Arc::new(body.as_ref().clone()))
                     }
                     _ => None,
@@ -2059,7 +2082,17 @@ impl<'a> Proof<'a> {
                 ),
                 _ => unreachable!("kernel returned an unrelated intro error"),
             })?;
-        if let Some((name, variable)) = integer_binding {
+        if let Some((name, variable, algebraic_type)) = algebraic_binding {
+            let mut locals = state.locals().clone();
+            locals.algebraic_values = locals.algebraic_values.with_inserted(
+                name,
+                crate::kernel::SpecAlgebraicExpression {
+                    algebraic_type,
+                    node: crate::kernel::SpecAlgebraicExpressionNode::Variable(variable),
+                },
+            );
+            Ok(state.with_locals(locals))
+        } else if let Some((name, variable)) = integer_binding {
             let mut locals = state.locals().clone();
             locals.integer_values = locals.integer_values.with_inserted(
                 name,

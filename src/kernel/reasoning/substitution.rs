@@ -563,6 +563,132 @@ pub(crate) fn substitute_bitvector_variable_in_proposition(
     }
 }
 
+/// Capture-avoiding substitution for an algebraic quantifier variable.
+///
+/// Algebraic values can contain C and Integer fields, but only algebraic
+/// binders shadow this substitution.  `TermRewrite` owns the corresponding
+/// capture avoidance for constructor-match binders; this traversal adds the
+/// proposition-quantifier layer that its leaf-only proposition API
+/// deliberately does not cross.
+pub(crate) fn substitute_algebraic_variable_in_proposition(
+    proposition: &Proposition,
+    from: Variable,
+    to: &AlgebraicTerm,
+) -> Proposition {
+    fn rewritten_term(term: &Term, from: Variable, to: &AlgebraicTerm) -> Term {
+        let source = AlgebraicTerm {
+            algebraic_type: to.algebraic_type.clone(),
+            node: AlgebraicTermNode::Variable(from),
+        };
+        crate::kernel::proof::term_rewrite::TermRewrite::new(&source, to).term(term)
+    }
+
+    match proposition {
+        Proposition::Equal(left, right) => Proposition::Equal(
+            rewritten_term(left, from, to),
+            rewritten_term(right, from, to),
+        ),
+        Proposition::ConditionIs(condition, value) => {
+            let leaf = Proposition::ConditionIs(condition.clone(), *value);
+            let source = AlgebraicTerm {
+                algebraic_type: to.algebraic_type.clone(),
+                node: AlgebraicTermNode::Variable(from),
+            };
+            crate::kernel::proof::term_rewrite::TermRewrite::new(&source, to).proposition(&leaf)
+        }
+        Proposition::Predicate { name, arguments } => Proposition::Predicate {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| rewritten_term(argument, from, to))
+                .collect(),
+        },
+        Proposition::And(left, right) => Proposition::And(
+            Box::new(substitute_algebraic_variable_in_proposition(left, from, to)),
+            Box::new(substitute_algebraic_variable_in_proposition(
+                right, from, to,
+            )),
+        ),
+        Proposition::Or(left, right) => Proposition::Or(
+            Box::new(substitute_algebraic_variable_in_proposition(left, from, to)),
+            Box::new(substitute_algebraic_variable_in_proposition(
+                right, from, to,
+            )),
+        ),
+        Proposition::Not(body) => Proposition::Not(Box::new(
+            substitute_algebraic_variable_in_proposition(body, from, to),
+        )),
+        Proposition::Implies(left, right) => Proposition::Implies(
+            Box::new(substitute_algebraic_variable_in_proposition(left, from, to)),
+            Box::new(substitute_algebraic_variable_in_proposition(
+                right, from, to,
+            )),
+        ),
+        Proposition::ForAll { var, sort, body } if *var != from => {
+            let (var, body) = capture_avoiding_algebraic_quantifier_body(*var, body, from, to);
+            Proposition::ForAll {
+                var,
+                sort: sort.clone(),
+                body: Box::new(substitute_algebraic_variable_in_proposition(
+                    &body, from, to,
+                )),
+            }
+        }
+        Proposition::Exists {
+            name,
+            var,
+            sort,
+            body,
+        } if *var != from => {
+            let (var, body) = capture_avoiding_algebraic_quantifier_body(*var, body, from, to);
+            Proposition::Exists {
+                name: name.clone(),
+                var,
+                sort: sort.clone(),
+                body: Box::new(substitute_algebraic_variable_in_proposition(
+                    &body, from, to,
+                )),
+            }
+        }
+        // Kernel execution propositions cannot contain algebraic terms except
+        // through their proposition-valued specification fields, and those
+        // are never legal directly under a Surface algebraic quantifier.
+        proposition => proposition.clone(),
+    }
+}
+
+fn capture_avoiding_algebraic_quantifier_body(
+    binder: Variable,
+    body: &Proposition,
+    substituted: Variable,
+    replacement: &AlgebraicTerm,
+) -> (Variable, Proposition) {
+    let replacement_probe = Proposition::Equal(
+        Term::Algebraic(replacement.clone()),
+        Term::Algebraic(replacement.clone()),
+    );
+    let replacement_variables = crate::kernel::proposition_variables(&replacement_probe);
+    if !replacement_variables.contains(&binder) {
+        return (binder, body.clone());
+    }
+
+    let mut reserved = replacement_variables;
+    reserved.extend(crate::kernel::proposition_variables(body));
+    collect_proposition_bound_variables(body, &mut reserved);
+    reserved.insert(binder);
+    reserved.insert(substituted);
+    let fresh = KernelVariableGenerator::fresh_for(0, reserved).next();
+    let renamed = substitute_algebraic_variable_in_proposition(
+        body,
+        binder,
+        &AlgebraicTerm {
+            algebraic_type: replacement.algebraic_type.clone(),
+            node: AlgebraicTermNode::Variable(fresh),
+        },
+    );
+    (fresh, renamed)
+}
+
 /// Applies a finite substitution to free variables simultaneously.
 ///
 /// Sequentially applying a map is unsound when one replacement mentions a
@@ -3484,6 +3610,19 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
                 body, from, to,
             )),
         },
+        SpecProposition::ForAllAlgebraic {
+            name,
+            variable,
+            algebraic_type,
+            body,
+        } if *variable != from => SpecProposition::ForAllAlgebraic {
+            name: name.clone(),
+            variable: *variable,
+            algebraic_type: algebraic_type.clone(),
+            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
+                body, from, to,
+            )),
+        },
         SpecProposition::ForAllInt32 {
             name,
             variable,
@@ -3515,6 +3654,19 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
         } if *variable != from => SpecProposition::ExistsInteger {
             name: name.clone(),
             variable: *variable,
+            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
+                body, from, to,
+            )),
+        },
+        SpecProposition::ExistsAlgebraic {
+            name,
+            variable,
+            algebraic_type,
+            body,
+        } if *variable != from => SpecProposition::ExistsAlgebraic {
+            name: name.clone(),
+            variable: *variable,
+            algebraic_type: algebraic_type.clone(),
             body: Box::new(substitute_bitvector_variable_in_spec_proposition(
                 body, from, to,
             )),
@@ -7192,6 +7344,19 @@ fn substitute_pointer_variable_in_spec_proposition(
                 body, from, to,
             )),
         },
+        SpecProposition::ForAllAlgebraic {
+            name,
+            variable,
+            algebraic_type,
+            body,
+        } => SpecProposition::ForAllAlgebraic {
+            name: name.clone(),
+            variable: *variable,
+            algebraic_type: algebraic_type.clone(),
+            body: Box::new(substitute_pointer_variable_in_spec_proposition(
+                body, from, to,
+            )),
+        },
         SpecProposition::IntegerComparison {
             left,
             operator,
@@ -7295,6 +7460,19 @@ fn substitute_pointer_variable_in_spec_proposition(
         } => SpecProposition::ExistsInteger {
             name: name.clone(),
             variable: *variable,
+            body: Box::new(substitute_pointer_variable_in_spec_proposition(
+                body, from, to,
+            )),
+        },
+        SpecProposition::ExistsAlgebraic {
+            name,
+            variable,
+            algebraic_type,
+            body,
+        } => SpecProposition::ExistsAlgebraic {
+            name: name.clone(),
+            variable: *variable,
+            algebraic_type: algebraic_type.clone(),
             body: Box::new(substitute_pointer_variable_in_spec_proposition(
                 body, from, to,
             )),

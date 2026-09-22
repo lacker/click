@@ -504,7 +504,27 @@ impl<'a> Proof<'a> {
         &self,
         choice: &ProofChoice,
     ) -> Result<CheckedFocusedTransition, ClickError> {
-        if matches!(self.context.as_ref(), ProofContext::Pure(_)) {
+        if let ProofContext::Pure(context) = self.context.as_ref() {
+            let index = match &choice.source {
+                ProofFactSource::Requirement(index) => *index,
+                ProofFactSource::RequirementLabel(_) => {
+                    return self.apply_pure_integer_choose(choice);
+                }
+                ProofFactSource::Invariant(_) => {
+                    return Err(
+                        self.step_error("pure `choose` does not have a loop invariant source")
+                    );
+                }
+            };
+            if matches!(
+                context.theorem_context.requires.get(index),
+                Some(Proposition::Exists {
+                    sort: Sort::Algebraic(_),
+                    ..
+                })
+            ) {
+                return self.apply_pure_algebraic_choose(choice);
+            }
             return self.apply_pure_integer_choose(choice);
         }
         let frontier = matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
@@ -535,6 +555,10 @@ impl<'a> Proof<'a> {
             return Err(self.step_error(format!("`{}` is already in scope", choice.name)));
         }
 
+        if let ProofFactSource::Invariant(index) = choice.source {
+            return self.apply_fixed_state_invariant_choose(choice, &view, index);
+        }
+
         let source_ordinal = match &choice.source {
             ProofFactSource::Requirement(index) => {
                 if *index >= view.original_requirements.len() {
@@ -550,6 +574,7 @@ impl<'a> Proof<'a> {
                 .and_then(|indices| indices.get(label))
                 .copied()
                 .ok_or_else(|| self.step_error(format!("unknown requirement label `{label}`")))?,
+            ProofFactSource::Invariant(_) => unreachable!("handled above"),
         };
         // A caller source always names the immutable entry vector from which
         // its principal fact index was minted, including at function exit.
@@ -704,6 +729,90 @@ impl<'a> Proof<'a> {
             branch.state.execution = Some(Arc::new(execution));
         }
         Ok(transition)
+    }
+
+    fn apply_fixed_state_invariant_choose(
+        &self,
+        choice: &ProofChoice,
+        view: &FixedStateOperationView<'_>,
+        index: usize,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error(
+                "`choose(... from invariant N)` is available only in a loop preservation proof",
+            ));
+        };
+        let bundle = context
+            .constants
+            .invariant_body_context
+            .as_deref()
+            .ok_or_else(|| {
+                self.step_error(
+                    "`choose(... from invariant N)` is available only in a loop preservation proof",
+                )
+            })?;
+        if index >= bundle.declared_invariant_surfaces.len() {
+            return Err(self.step_error(format!(
+                "invariant {index} is out of range; loop has {} invariant(s)",
+                bundle.declared_invariant_surfaces.len()
+            )));
+        }
+        let iteration_index = bundle.declared_invariant_surfaces.len() + index;
+        let surface = bundle
+            .loop_head_premises
+            .get(iteration_index)
+            .ok_or_else(|| {
+                self.step_error(format!(
+                    "invariant {index} has no retained iteration-entry spelling"
+                ))
+            })?;
+        let source = view
+            .surface_propositions
+            .available_kernel_matching(surface, |kernel| self.facts().contains_top_level(kernel))
+            .cloned()
+            .ok_or_else(|| {
+                self.step_error(format!(
+                    "invariant {index} is not available at this proof point"
+                ))
+            })?;
+        let Proposition::Exists {
+            var,
+            sort: Sort::Algebraic(algebraic_type),
+            body,
+            ..
+        } = source
+        else {
+            return Err(self.step_error(
+                "`choose(... from invariant N)` currently requires an algebraic existential invariant",
+            ));
+        };
+        let chosen_variable = Variable(self.state().locals().next_choice_variable);
+        let chosen = crate::kernel::AlgebraicTerm {
+            algebraic_type: algebraic_type.clone(),
+            node: crate::kernel::AlgebraicTermNode::Variable(chosen_variable),
+        };
+        let fact = crate::kernel::reasoning::substitute_algebraic_variable_in_proposition(
+            &body, var, &chosen,
+        );
+        let mut locals = self.state().locals().clone();
+        locals.values = locals.values.with_inserted(
+            choice.name.clone(),
+            ContractExpression::Binding(choice.name.clone()),
+        );
+        locals.algebraic_values = locals.algebraic_values.with_inserted(
+            choice.name.clone(),
+            crate::kernel::SpecAlgebraicExpression {
+                algebraic_type,
+                node: crate::kernel::SpecAlgebraicExpressionNode::Variable(chosen_variable),
+            },
+        );
+        locals.next_choice_variable = chosen_variable.0.saturating_add(1);
+        let added = (!self.facts().contains_top_level(&fact))
+            .then(|| fact.clone())
+            .into_iter()
+            .collect();
+        let facts = self.facts().with_kernel_checked_fact(fact.clone());
+        Ok(self.checked_fact_transition(locals, facts, false, added, vec![fact]))
     }
 
     /// Retains the source spelling of a chosen existential's body leaves for
@@ -891,6 +1000,9 @@ impl<'a> Proof<'a> {
                     "pure `choose` does not support requirement labels (`{label}`)"
                 )));
             }
+            ProofFactSource::Invariant(_) => {
+                return Err(self.step_error("pure `choose` does not have a loop invariant source"));
+            }
         };
         let source = context
             .theorem_context
@@ -930,12 +1042,109 @@ impl<'a> Proof<'a> {
         Ok(self.checked_fact_transition(locals, facts, false, added, vec![fact]))
     }
 
+    fn apply_pure_algebraic_choose(
+        &self,
+        choice: &ProofChoice,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let ProofContext::Pure(context) = self.context.as_ref() else {
+            unreachable!()
+        };
+        if context.theorem_context.values.contains_key(&choice.name)
+            || context
+                .theorem_context
+                .integer_values
+                .get(&choice.name)
+                .is_some()
+            || self.state().locals().values.get(&choice.name).is_some()
+            || self
+                .state()
+                .locals()
+                .integer_values
+                .get(&choice.name)
+                .is_some()
+            || self
+                .state()
+                .locals()
+                .algebraic_values
+                .get(&choice.name)
+                .is_some()
+        {
+            return Err(self.step_error(format!("`{}` is already in scope", choice.name)));
+        }
+        let index = match &choice.source {
+            ProofFactSource::Requirement(index) => *index,
+            ProofFactSource::RequirementLabel(label) => {
+                return Err(self.step_error(format!(
+                    "pure `choose` does not support requirement labels (`{label}`)"
+                )));
+            }
+            ProofFactSource::Invariant(_) => {
+                return Err(self.step_error("pure `choose` does not have a loop invariant source"));
+            }
+        };
+        let source = context
+            .theorem_context
+            .requires
+            .get(index)
+            .cloned()
+            .ok_or_else(|| self.step_error(format!("requirement {index} is out of range")))?;
+        if !self.facts().contains_top_level(&source) {
+            return Err(
+                self.step_error("algebraic choose source is not an exact available requirement")
+            );
+        }
+        let Proposition::Exists {
+            var,
+            sort: Sort::Algebraic(algebraic_type),
+            body,
+            ..
+        } = source
+        else {
+            return Err(self.step_error(
+                "pure algebraic `choose` requires an algebraic existential requirement",
+            ));
+        };
+        let chosen_variable = Variable(self.state().locals().next_choice_variable);
+        let chosen = crate::kernel::AlgebraicTerm {
+            algebraic_type: algebraic_type.clone(),
+            node: crate::kernel::AlgebraicTermNode::Variable(chosen_variable),
+        };
+        let fact = crate::kernel::reasoning::substitute_algebraic_variable_in_proposition(
+            &body, var, &chosen,
+        );
+        let mut locals = self.state().locals().clone();
+        locals.values = locals.values.with_inserted(
+            choice.name.clone(),
+            ContractExpression::Binding(choice.name.clone()),
+        );
+        locals.algebraic_values = locals.algebraic_values.with_inserted(
+            choice.name.clone(),
+            crate::kernel::SpecAlgebraicExpression {
+                algebraic_type,
+                node: crate::kernel::SpecAlgebraicExpressionNode::Variable(chosen_variable),
+            },
+        );
+        locals.next_choice_variable = chosen_variable.0.saturating_add(1);
+        let added = (!self.facts().contains_top_level(&fact))
+            .then(|| fact.clone())
+            .into_iter()
+            .collect();
+        let facts = self.facts().with_kernel_checked_fact(fact.clone());
+        Ok(self.checked_fact_transition(locals, facts, false, added, vec![fact]))
+    }
+
     pub(super) fn apply_fixed_state_witness(
         &self,
         witness: &ProofWitness,
     ) -> Result<CheckedFocusedTransition, ClickError> {
         if matches!(self.context.as_ref(), ProofContext::Pure(_)) {
-            return self.apply_pure_integer_witness(witness);
+            return match self.proposition_goal("`witness` requires a proposition goal")? {
+                Proposition::Exists {
+                    sort: Sort::Algebraic(_),
+                    ..
+                } => self.apply_pure_algebraic_witness(witness),
+                _ => self.apply_pure_integer_witness(witness),
+            };
         }
         let view = match self.context.as_ref() {
             ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
@@ -971,6 +1180,77 @@ impl<'a> Proof<'a> {
             name: witness.name.clone(),
             value: self.substitute_fixed_state_locals_in_expression(&witness.value)?,
         };
+        if let Proposition::Exists {
+            name,
+            var,
+            sort: Sort::Algebraic(algebraic_type),
+            body,
+        } = &goal
+        {
+            if name != &witness.name {
+                return Err(self.step_error(format!(
+                    "`witness` binds `{name}`, but proof provided `{}`",
+                    witness.name
+                )));
+            }
+            let names = contract_expression_referenced_names(&checked_witness.value);
+            let algebraic_values = names
+                .into_iter()
+                .filter_map(|name| {
+                    self.local_algebraic_values()
+                        .get(&name)
+                        .cloned()
+                        .map(|value| (name, value))
+                })
+                .collect();
+            let value = capture_fixed_state_algebraic_value(
+                &checked_witness.value,
+                self.facts().assumptions(),
+                &values,
+                &array_refs,
+                algebraic_values,
+                view.pre_state,
+                view.state,
+                view.recorded_snapshots,
+                view.predicate_environment,
+                view.click_function_environment,
+            )
+            .map_err(|message| {
+                self.step_error(format!("could not capture algebraic witness: {message}"))
+            })?;
+            if &value.algebraic_type != algebraic_type {
+                return Err(self.step_error("algebraic witness has the wrong datatype"));
+            }
+            let proposition =
+                crate::kernel::reasoning::substitute_algebraic_variable_in_proposition(
+                    body, *var, &value,
+                );
+            let surface_goal = match self.surface_goal() {
+                Some(ClickProposition::Exists {
+                    name,
+                    written_name,
+                    body,
+                    ..
+                }) if written_name.as_ref().unwrap_or(name) == &witness.name => {
+                    let substitutions = BTreeMap::from([(name.clone(), witness.value.clone())]);
+                    Some(
+                        substitute_click_proposition(body, &substitutions).map_err(|message| {
+                            self.step_error(format!(
+                                "could not instantiate algebraic witness goal: {message}"
+                            ))
+                        })?,
+                    )
+                }
+                _ => None,
+            };
+            let context = self.refined_branch_state(self.facts().clone());
+            return Ok(CheckedFocusedTransition::replacing(
+                self.state().locals().clone(),
+                Some(self.refined_proposition(context, proposition, surface_goal, true)),
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
         let value = evaluate_witness_tactic_value(
             &checked_witness,
             view.claim_label,
@@ -1124,6 +1404,129 @@ impl<'a> Proof<'a> {
             Vec::new(),
             Vec::new(),
         ))
+    }
+
+    fn apply_pure_algebraic_witness(
+        &self,
+        witness: &ProofWitness,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let goal = self
+            .proposition_goal("`witness` requires a proposition goal")?
+            .clone();
+        let Proposition::Exists {
+            name,
+            var,
+            sort: Sort::Algebraic(algebraic_type),
+            body,
+        } = goal
+        else {
+            return Err(self.step_error(
+                "pure algebraic `witness` requires an algebraic existential proposition",
+            ));
+        };
+        if name != witness.name {
+            return Err(self.step_error(format!(
+                "`witness` binds `{name}`, but proof provided `{}`",
+                witness.name
+            )));
+        }
+        let value = self.capture_pure_algebraic_witness(&witness.value)?;
+        if value.algebraic_type != algebraic_type {
+            return Err(self.step_error("algebraic witness has the wrong datatype"));
+        }
+        let proposition = crate::kernel::reasoning::substitute_algebraic_variable_in_proposition(
+            &body, var, &value,
+        );
+        let surface_goal = match self.surface_goal() {
+            Some(ClickProposition::Exists {
+                name,
+                written_name,
+                body,
+                ..
+            }) if written_name.as_ref().unwrap_or(name) == &witness.name => {
+                let substitutions = BTreeMap::from([(name.clone(), witness.value.clone())]);
+                Some(
+                    substitute_click_proposition(body, &substitutions).map_err(|message| {
+                        self.step_error(format!(
+                            "could not instantiate algebraic witness goal: {message}"
+                        ))
+                    })?,
+                )
+            }
+            _ => None,
+        };
+        let context = self.refined_branch_state(self.facts().clone());
+        Ok(CheckedFocusedTransition::replacing(
+            self.state().locals().clone(),
+            Some(self.refined_proposition(context, proposition, surface_goal, true)),
+            Vec::new(),
+            Vec::new(),
+        ))
+    }
+
+    fn capture_pure_algebraic_witness(
+        &self,
+        expression: &ContractExpression,
+    ) -> Result<crate::kernel::AlgebraicTerm, ClickError> {
+        let ProofContext::Pure(context) = self.context.as_ref() else {
+            unreachable!()
+        };
+        let expression = self.substitute_fixed_state_locals_in_expression(expression)?;
+        let mut names = BTreeSet::new();
+        collect_contract_expression_referenced_names(&expression, &mut names);
+        let values: BTreeMap<_, _> = names
+            .iter()
+            .filter_map(|name| {
+                context
+                    .theorem_context
+                    .values
+                    .get(name)
+                    .map(|value| (name.clone(), value.clone()))
+            })
+            .collect();
+        let arrays: BTreeMap<_, _> = names
+            .iter()
+            .filter_map(|name| {
+                context
+                    .theorem_context
+                    .array_refs
+                    .get(name)
+                    .map(|value| (name.clone(), value.clone()))
+            })
+            .collect();
+        let state = CState::new().with_memory(context.theorem_context.memory.clone());
+        let algebraic_values = names
+            .iter()
+            .filter_map(|name| {
+                self.local_algebraic_values()
+                    .get(name)
+                    .cloned()
+                    .or_else(|| {
+                        context
+                            .structural_induction_setup
+                            .as_ref()?
+                            .algebraic_values
+                            .get(name)
+                            .cloned()
+                    })
+                    .map(|value| (name.clone(), value))
+            })
+            .collect();
+        capture_fixed_state_algebraic_value(
+            &expression,
+            self.facts().assumptions(),
+            &values,
+            &arrays,
+            algebraic_values,
+            &state,
+            &state,
+            &RecordedSnapshots::new(),
+            context.predicate_environment,
+            context.click_function_environment,
+        )
+        .map_err(|message| {
+            self.step_error(format!("could not capture algebraic witness: {message}"))
+        })
     }
 
     fn capture_pure_integer_witness(

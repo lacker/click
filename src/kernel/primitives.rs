@@ -1791,6 +1791,12 @@ pub enum SpecProposition {
         variable: Variable,
         body: Box<SpecProposition>,
     },
+    ForAllAlgebraic {
+        name: String,
+        variable: Variable,
+        algebraic_type: AlgebraicType,
+        body: Box<SpecProposition>,
+    },
     ForAllPointer {
         name: String,
         variable: Variable,
@@ -1805,6 +1811,12 @@ pub enum SpecProposition {
     ExistsInteger {
         name: String,
         variable: Variable,
+        body: Box<SpecProposition>,
+    },
+    ExistsAlgebraic {
+        name: String,
+        variable: Variable,
+        algebraic_type: AlgebraicType,
         body: Box<SpecProposition>,
     },
     ExistsPointer {

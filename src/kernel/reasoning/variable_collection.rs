@@ -665,9 +665,11 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
         }
         SpecProposition::ForAllInt32 { variable, body, .. }
         | SpecProposition::ForAllInteger { variable, body, .. }
+        | SpecProposition::ForAllAlgebraic { variable, body, .. }
         | SpecProposition::ForAllPointer { variable, body, .. }
         | SpecProposition::ExistsInt32 { variable, body, .. }
         | SpecProposition::ExistsInteger { variable, body, .. }
+        | SpecProposition::ExistsAlgebraic { variable, body, .. }
         | SpecProposition::ExistsPointer { variable, body, .. } => {
             collect_spec_proposition_bitvector_variables(body, variables);
             variables.remove(variable);
@@ -1336,9 +1338,11 @@ fn collect_spec_proposition_bound_identities(
         }
         SpecProposition::ForAllInt32 { variable, body, .. }
         | SpecProposition::ForAllInteger { variable, body, .. }
+        | SpecProposition::ForAllAlgebraic { variable, body, .. }
         | SpecProposition::ForAllPointer { variable, body, .. }
         | SpecProposition::ExistsInt32 { variable, body, .. }
         | SpecProposition::ExistsInteger { variable, body, .. }
+        | SpecProposition::ExistsAlgebraic { variable, body, .. }
         | SpecProposition::ExistsPointer { variable, body, .. } => {
             variables.insert(*variable);
             collect_spec_proposition_bound_identities(body, variables, integer_seen);

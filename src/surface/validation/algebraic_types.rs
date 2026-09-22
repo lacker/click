@@ -943,6 +943,37 @@ fn validate_algebraic_proposition(
     definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
     context: &str,
 ) -> Result<(), ClickError> {
+    let mut pending = vec![proposition];
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            proposition => validate_algebraic_proposition_one(
+                proposition,
+                variables,
+                click_functions,
+                predicates,
+                definitions,
+                context,
+            )?,
+        }
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn validate_algebraic_proposition_one(
+    proposition: &ClickProposition,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    predicates: &BTreeMap<&str, &PredicateDefinition>,
+    definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
+    context: &str,
+) -> Result<(), ClickError> {
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
             validate_algebraic_expression(
@@ -976,22 +1007,8 @@ fn validate_algebraic_proposition(
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
-            validate_algebraic_proposition(
-                left,
-                variables,
-                click_functions,
-                predicates,
-                definitions,
-                context,
-            )?;
-            validate_algebraic_proposition(
-                right,
-                variables,
-                click_functions,
-                predicates,
-                definitions,
-                context,
-            )
+            let _ = (left, right);
+            unreachable!("binary propositions are handled iteratively")
         }
         ClickProposition::Not(body)
         | ClickProposition::At {
@@ -1016,6 +1033,18 @@ fn validate_algebraic_proposition(
             body,
             ..
         } => {
+            if let ClickType::Algebraic(application) = c_type {
+                return validate_algebraic_quantifier_body(
+                    name,
+                    application,
+                    body,
+                    variables,
+                    click_functions,
+                    predicates,
+                    definitions,
+                    context,
+                );
+            }
             let mut variables = variables.clone();
             match c_type {
                 ClickType::C(c_type) => {
@@ -1024,7 +1053,8 @@ fn validate_algebraic_proposition(
                 ClickType::Integer => {
                     variables.remove(name);
                 }
-                _ => {
+                ClickType::Algebraic(_) => unreachable!("handled above"),
+                ClickType::Parameter(_) => {
                     return Err(ClickError::new(
                         "this quantifier binder type is not supported",
                     ));
@@ -1178,6 +1208,38 @@ fn validate_algebraic_proposition(
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. } => Ok(()),
     }
+}
+
+#[inline(never)]
+fn validate_algebraic_quantifier_body(
+    name: &str,
+    application: &AlgebraicTypeApplication,
+    body: &ClickProposition,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    predicates: &BTreeMap<&str, &PredicateDefinition>,
+    definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
+    context: &str,
+) -> Result<(), ClickError> {
+    let mut variables = variables.clone();
+    variables.remove(name);
+    let substitutions = BTreeMap::from([(
+        name.to_string(),
+        ContractExpression::AlgebraicVariable {
+            name: name.to_string(),
+            algebraic_type: application.clone(),
+            binder_index: 0,
+        },
+    )]);
+    let body = substitute_click_proposition(body, &substitutions).map_err(ClickError::new)?;
+    validate_algebraic_proposition(
+        &body,
+        &variables,
+        click_functions,
+        predicates,
+        definitions,
+        context,
+    )
 }
 
 fn expression_is_integer_binding(

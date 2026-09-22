@@ -172,6 +172,12 @@ fn validate_proposition_expression_types_one(
             body,
             ..
         } => {
+            if matches!(c_type, ClickType::Algebraic(_)) {
+                // Algebraic validation carries the datatype schema and
+                // validates the complete body. This C-only pass has no
+                // algebraic binding environment to add the name to.
+                return Ok(());
+            }
             let mut body_variables = variables.clone();
             body_variables.insert(
                 name.clone(),
@@ -433,6 +439,12 @@ fn validate_scoped_integer_proposition_one(
                 }
                 ClickType::Integer => {
                     integer_bindings.insert(name.clone());
+                }
+                ClickType::Algebraic(_) => {
+                    // The algebraic validation pass checks this body with a
+                    // typed logical binding; this pass owns only C and
+                    // Integer lexical carriers.
+                    return Ok(());
                 }
                 _ => {
                     return Err(ClickError::new(

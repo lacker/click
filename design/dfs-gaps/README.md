@@ -35,12 +35,11 @@ decrease there. Neither is the fold law after a store, which
   paths now terminate loop preservation without owing the back-edge bundle;
   `mdtests/return_inside_ranked_loop_body.md` covers explicit and automatic
   preservation.
-- `reachability_needs_an_algebraic_loop_witness.md` — **missing proof-language
-  representation.** The recursive array walk verifies with `Nat` fuel, but the
-  loop cannot carry the changing algebraic witness directly; the numeric,
-  `to_nat`, and resource alternatives each hit a specific checked refusal.
-  `mdtests/algebraic_existential_witness_rejected.md` is the checked minimal
-  reproduction of the first missing layer.
+- `reachability_needs_an_algebraic_loop_witness.md` — **algebraic witness layer
+  fixed; snapshot transport remains.** Algebraic `forall`, `exists`,
+  `witness`, and `choose` now carry changing `Nat` witnesses, including from
+  an explicit loop invariant. The full recursive array walk still needs its
+  defining relation transported across a store to a disjoint array.
 - `small_refusals_and_spellings.md` — seven one-to-six-line costs: extent
   halves restated at every `apply`, `arithmetic() using` not weakening a
   derived strict bound, a constant-true requirement needing its own `have`,

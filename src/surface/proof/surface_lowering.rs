@@ -218,6 +218,25 @@ fn integer_values_for_surface_proposition(
     values
 }
 
+fn algebraic_values_for_surface_proposition(
+    proposition: &ClickProposition,
+    theorem_values: &BTreeMap<String, crate::kernel::SpecAlgebraicExpression>,
+    local_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecAlgebraicExpression>,
+) -> BTreeMap<String, crate::kernel::SpecAlgebraicExpression> {
+    let mut referenced = BTreeSet::new();
+    collect_click_proposition_referenced_names(proposition, &mut referenced);
+    referenced
+        .into_iter()
+        .filter_map(|name| {
+            local_values
+                .get(&name)
+                .or_else(|| theorem_values.get(&name))
+                .cloned()
+                .map(|value| (name, value))
+        })
+        .collect()
+}
+
 impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn lower_surface_proposition(
         &self,
@@ -238,6 +257,15 @@ impl<'a> Proof<'a> {
                 // do not mention them.
                 let surface = &self.substitute_goal_surface_bindings_in_proposition(surface)?;
                 let empty_algebraic_values = BTreeMap::new();
+                let algebraic_values = algebraic_values_for_surface_proposition(
+                    surface,
+                    context
+                        .structural_induction_setup
+                        .as_ref()
+                        .map(|setup| &setup.algebraic_values)
+                        .unwrap_or(&empty_algebraic_values),
+                    self.local_algebraic_values(),
+                );
                 let integer_values = integer_values_for_surface_proposition(
                     surface,
                     &context.theorem_context.integer_values,
@@ -255,11 +283,7 @@ impl<'a> Proof<'a> {
                     self.facts().assumptions(),
                     &context.theorem_context.values,
                     &context.theorem_context.array_refs,
-                    context
-                        .structural_induction_setup
-                        .as_ref()
-                        .map(|setup| &setup.algebraic_values)
-                        .unwrap_or(&empty_algebraic_values),
+                    &algebraic_values,
                     &integer_values,
                     &context.theorem_context.memory,
                     context.predicate_environment,
@@ -272,6 +296,11 @@ impl<'a> Proof<'a> {
             }
             ProofContext::FixedState(context) => {
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                let algebraic_values = algebraic_values_for_surface_proposition(
+                    &surface,
+                    &BTreeMap::new(),
+                    self.local_algebraic_values(),
+                );
                 if !proposition_contains_old_expression(&surface)
                     && let Some(recorded) = context
                         .surface_propositions
@@ -279,7 +308,7 @@ impl<'a> Proof<'a> {
                 {
                     return Ok(recorded.clone());
                 }
-                lower_fixed_state_proposition_with_assumptions(
+                lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
                     context.parameters,
@@ -287,6 +316,7 @@ impl<'a> Proof<'a> {
                     context.pre_state,
                     context.state,
                     context.result,
+                    &algebraic_values,
                     context.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
@@ -303,6 +333,11 @@ impl<'a> Proof<'a> {
                     .outcome_fixed_state_view()
                     .expect("a focused outcome judgment resolves its fixed-state view");
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                let algebraic_values = algebraic_values_for_surface_proposition(
+                    &surface,
+                    &BTreeMap::new(),
+                    self.local_algebraic_values(),
+                );
                 // An available historical fact is not the meaning of a
                 // current-state expression with the same spelling: an entry
                 // resource fact such as `cell[0] == 8` survives the store of 7,
@@ -328,7 +363,7 @@ impl<'a> Proof<'a> {
                 {
                     return Ok(recorded.clone());
                 }
-                lower_fixed_state_proposition_with_assumptions(
+                lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
                     view.parameters,
@@ -336,6 +371,7 @@ impl<'a> Proof<'a> {
                     view.pre_state,
                     view.state,
                     view.result,
+                    &algebraic_values,
                     view.recorded_snapshots,
                     view.predicate_environment,
                     view.click_function_environment,
@@ -349,9 +385,14 @@ impl<'a> Proof<'a> {
                     self.step_error("execution proposition proof lost its semantic frontier")
                 })?;
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                let algebraic_values = algebraic_values_for_surface_proposition(
+                    &surface,
+                    &BTreeMap::new(),
+                    self.local_algebraic_values(),
+                );
                 let pre_state =
                     context.old_reference_state(&execution.core.frontier, &execution.core.state);
-                lower_fixed_state_proposition_with_assumptions(
+                lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
                     context.parsed_function.parameters(),
@@ -359,6 +400,7 @@ impl<'a> Proof<'a> {
                     pre_state,
                     &execution.core.state,
                     None,
+                    &algebraic_values,
                     &execution.presentation.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
@@ -397,6 +439,15 @@ impl<'a> Proof<'a> {
             ProofContext::Pure(context) => {
                 let surface = &self.substitute_goal_surface_bindings_in_proposition(surface)?;
                 let empty_algebraic_values = BTreeMap::new();
+                let algebraic_values = algebraic_values_for_surface_proposition(
+                    surface,
+                    context
+                        .structural_induction_setup
+                        .as_ref()
+                        .map(|setup| &setup.algebraic_values)
+                        .unwrap_or(&empty_algebraic_values),
+                    self.local_algebraic_values(),
+                );
                 let integer_values = integer_values_for_surface_proposition(
                     surface,
                     &context.theorem_context.integer_values,
@@ -408,11 +459,7 @@ impl<'a> Proof<'a> {
                     self.facts().assumptions(),
                     &context.theorem_context.values,
                     &context.theorem_context.array_refs,
-                    context
-                        .structural_induction_setup
-                        .as_ref()
-                        .map(|setup| &setup.algebraic_values)
-                        .unwrap_or(&empty_algebraic_values),
+                    &algebraic_values,
                     &integer_values,
                     &context.theorem_context.memory,
                     context.predicate_environment,
@@ -425,7 +472,12 @@ impl<'a> Proof<'a> {
             }),
             ProofContext::FixedState(context) => {
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
-                lower_fixed_state_proposition_with_assumptions(
+                let algebraic_values = algebraic_values_for_surface_proposition(
+                    &surface,
+                    &BTreeMap::new(),
+                    self.local_algebraic_values(),
+                );
+                lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
                     context.parameters,
@@ -433,6 +485,7 @@ impl<'a> Proof<'a> {
                     context.pre_state,
                     context.state,
                     context.result,
+                    &algebraic_values,
                     context.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
@@ -446,7 +499,12 @@ impl<'a> Proof<'a> {
                     .outcome_fixed_state_view()
                     .expect("a focused outcome judgment resolves its fixed-state view");
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
-                lower_fixed_state_proposition_with_assumptions(
+                let algebraic_values = algebraic_values_for_surface_proposition(
+                    &surface,
+                    &BTreeMap::new(),
+                    self.local_algebraic_values(),
+                );
+                lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
                     view.parameters,
@@ -454,6 +512,7 @@ impl<'a> Proof<'a> {
                     view.pre_state,
                     view.state,
                     view.result,
+                    &algebraic_values,
                     view.recorded_snapshots,
                     view.predicate_environment,
                     view.click_function_environment,
@@ -467,9 +526,14 @@ impl<'a> Proof<'a> {
                     self.step_error("execution proposition proof lost its semantic frontier")
                 })?;
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                let algebraic_values = algebraic_values_for_surface_proposition(
+                    &surface,
+                    &BTreeMap::new(),
+                    self.local_algebraic_values(),
+                );
                 let pre_state =
                     context.old_reference_state(&execution.core.frontier, &execution.core.state);
-                lower_fixed_state_proposition_with_assumptions(
+                lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
                     context.parsed_function.parameters(),
@@ -477,6 +541,7 @@ impl<'a> Proof<'a> {
                     pre_state,
                     &execution.core.state,
                     None,
+                    &algebraic_values,
                     &execution.presentation.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
@@ -550,6 +615,15 @@ impl<'a> Proof<'a> {
                         )
                     },
                 );
+                let algebraic_values = algebraic_values_for_surface_proposition(
+                    &surface,
+                    context
+                        .structural_induction_setup
+                        .as_ref()
+                        .map(|setup| &setup.algebraic_values)
+                        .unwrap_or(&empty_algebraic_values),
+                    self.local_algebraic_values(),
+                );
                 // A newly stated pure goal's evaluation conditions are
                 // discharged against the premises in scope where it is
                 // stated, like a fixed-state goal below: the theorem's
@@ -561,11 +635,7 @@ impl<'a> Proof<'a> {
                     self.facts().assumptions(),
                     &context.theorem_context.values,
                     &context.theorem_context.array_refs,
-                    context
-                        .structural_induction_setup
-                        .as_ref()
-                        .map(|setup| &setup.algebraic_values)
-                        .unwrap_or(&empty_algebraic_values),
+                    &algebraic_values,
                     &integer_values,
                     &context.theorem_context.memory,
                     context.predicate_environment,

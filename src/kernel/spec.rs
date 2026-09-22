@@ -320,6 +320,36 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    if let Some(paths) = lower_spec_negation_chain(
+        state,
+        proposition,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )? {
+        return Ok(paths);
+    }
+    if let Some(paths) = lower_spec_conjunction_left_spine(
+        state,
+        proposition,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )? {
+        return Ok(paths);
+    }
+    if let Some(paths) = lower_spec_universal_chain(
+        state,
+        proposition,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )? {
+        return Ok(paths);
+    }
     if let Some(paths) = lower_simple_spec_implication_chain(
         state,
         proposition,
@@ -338,6 +368,294 @@ pub(in crate::kernel) fn lower_spec_proposition_at_state_with_algebraic_bindings
         algebraic_bindings,
         budget,
     )
+}
+
+fn lower_spec_negation_chain(
+    state: &CState,
+    proposition: &SpecProposition,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<Vec<SpecPropositionPath>>> {
+    let mut count = 0;
+    let mut body = proposition;
+    while let SpecProposition::Not(inner) = body {
+        count += 1;
+        body = inner;
+    }
+    if count == 0 {
+        return Ok(None);
+    }
+
+    let mut paths = lower_spec_proposition_at_state_with_algebraic_bindings(
+        state,
+        body,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )?;
+    for _ in 0..count {
+        paths = paths.into_iter().map(wrap_spec_negation_path).collect();
+    }
+    Ok(Some(paths))
+}
+
+fn wrap_spec_negation_path(path: SpecPropositionPath) -> SpecPropositionPath {
+    // A negated condition is the condition with the other value, as an
+    // execution spells the branch it did not take. Only the remaining shape
+    // keeps a `Not` node an introduction can reach.
+    let (proposition, introductions) = match path.proposition {
+        Proposition::ConditionIs(condition, value) => (
+            Proposition::ConditionIs(condition, !value),
+            LoweringIntroductions::new(),
+        ),
+        proposition => (
+            Proposition::Not(Box::new(proposition)),
+            vec![LoweringIntroduction::WrittenNegation],
+        ),
+    };
+    SpecPropositionPath {
+        proposition,
+        facts: path.facts,
+        obligations: path.obligations,
+        introductions,
+    }
+}
+
+/// Lowers the parser's left-associated `and` chain iteratively. Each right
+/// operand still sees the accumulated path context from the complete prefix,
+/// exactly as it does in the recursive binary case.
+fn lower_spec_conjunction_left_spine(
+    state: &CState,
+    proposition: &SpecProposition,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<Vec<SpecPropositionPath>>> {
+    let mut right_operands = Vec::new();
+    let mut leftmost = proposition;
+    while let SpecProposition::And(left, right) = leftmost {
+        right_operands.push(right.as_ref());
+        leftmost = left;
+    }
+    if right_operands.is_empty() {
+        return Ok(None);
+    }
+
+    let mut paths = lower_spec_proposition_at_state_with_algebraic_bindings(
+        state,
+        leftmost,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )?;
+    for right in right_operands.into_iter().rev() {
+        let mut combined = Vec::new();
+        for left_path in paths {
+            let right_assumptions = assumptions_with_path_context(
+                assumptions,
+                &left_path.facts,
+                &left_path.obligations,
+            );
+            for right_path in lower_spec_proposition_at_state_with_algebraic_bindings(
+                state,
+                right,
+                loop_entry_state,
+                &right_assumptions,
+                algebraic_bindings,
+                budget,
+            )? {
+                if let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                    &left_path.facts,
+                    &left_path.obligations,
+                    &right_path.facts,
+                    &right_path.obligations,
+                    assumptions,
+                ) {
+                    combined.push(SpecPropositionPath {
+                        introductions: Vec::new(),
+                        proposition: Proposition::And(
+                            Box::new(left_path.proposition.clone()),
+                            Box::new(right_path.proposition),
+                        ),
+                        facts,
+                        obligations,
+                    });
+                }
+            }
+        }
+        paths = combined;
+    }
+    Ok(Some(paths))
+}
+
+#[derive(Clone)]
+struct SpecUniversalBinder {
+    name: String,
+    variable: Variable,
+    sort: Sort,
+    pointer: bool,
+    integer: bool,
+}
+
+/// Lowers a run of written universal quantifiers without putting one Rust
+/// stack frame around each binder. Surface syntax deliberately supports deep
+/// propositions, and the state extensions for C-valued binders can be
+/// accumulated before lowering the innermost body.
+fn lower_spec_universal_chain(
+    state: &CState,
+    proposition: &SpecProposition,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<Vec<SpecPropositionPath>>> {
+    let mut binders = Vec::new();
+    let mut body = proposition;
+    let mut quantified_state = None;
+
+    loop {
+        let (binder, next_body) = match body {
+            SpecProposition::ForAllInteger {
+                name,
+                variable,
+                body,
+            } => (
+                SpecUniversalBinder {
+                    name: name.clone(),
+                    variable: *variable,
+                    sort: Sort::Integer,
+                    pointer: false,
+                    integer: true,
+                },
+                body.as_ref(),
+            ),
+            SpecProposition::ForAllAlgebraic {
+                name,
+                variable,
+                algebraic_type,
+                body,
+            } => (
+                SpecUniversalBinder {
+                    name: name.clone(),
+                    variable: *variable,
+                    sort: Sort::Algebraic(algebraic_type.clone()),
+                    pointer: false,
+                    integer: false,
+                },
+                body.as_ref(),
+            ),
+            SpecProposition::ForAllInt32 {
+                name,
+                variable,
+                body,
+            } => {
+                let quantified_state = quantified_state.get_or_insert_with(|| state.clone());
+                quantified_state
+                    .locals
+                    .set(name.clone(), int32(Bitvector32Term::Variable(*variable)));
+                (
+                    SpecUniversalBinder {
+                        name: name.clone(),
+                        variable: *variable,
+                        sort: Sort::CInt32,
+                        pointer: false,
+                        integer: false,
+                    },
+                    body.as_ref(),
+                )
+            }
+            SpecProposition::ForAllPointer {
+                name,
+                variable,
+                c_type,
+                body,
+            } => {
+                let quantified_state = quantified_state.get_or_insert_with(|| state.clone());
+                let value = if matches!(c_type, CType::FunctionPointer(_)) {
+                    CValue::typed_pointer(Pointer::symbolic_function(*variable), *c_type)
+                } else {
+                    CValue::typed_pointer(Pointer::symbolic(*variable), *c_type)
+                };
+                quantified_state
+                    .locals
+                    .set_typed(name.clone(), value, *c_type);
+                (
+                    SpecUniversalBinder {
+                        name: name.clone(),
+                        variable: *variable,
+                        sort: Sort::CPointer(*c_type),
+                        pointer: true,
+                        integer: false,
+                    },
+                    body.as_ref(),
+                )
+            }
+            _ => break,
+        };
+        binders.push(binder);
+        body = next_body;
+    }
+
+    if binders.is_empty() {
+        return Ok(None);
+    }
+
+    let body_state = quantified_state.as_ref().unwrap_or(state);
+    let mut paths = lower_spec_proposition_at_state_with_algebraic_bindings(
+        body_state,
+        body,
+        loop_entry_state,
+        assumptions,
+        algebraic_bindings,
+        budget,
+    )?;
+    for binder in binders.into_iter().rev() {
+        paths = paths
+            .into_iter()
+            .map(|path| wrap_spec_universal_path(path, &binder))
+            .collect();
+    }
+    Ok(Some(paths))
+}
+
+fn wrap_spec_universal_path(
+    path: SpecPropositionPath,
+    binder: &SpecUniversalBinder,
+) -> SpecPropositionPath {
+    let (body, guards) = wrap_path_context_with_introductions(path.proposition, &path.facts, &[]);
+    let mut introductions = vec![LoweringIntroduction::WrittenUniversal {
+        name: binder.name.clone(),
+        variable: binder.variable,
+        pointer: binder.pointer,
+        integer: binder.integer,
+    }];
+    introductions.extend(guards);
+    introductions.extend(path.introductions);
+    SpecPropositionPath {
+        proposition: Proposition::ForAll {
+            var: binder.variable,
+            sort: binder.sort.clone(),
+            body: Box::new(body),
+        },
+        facts: Vec::new(),
+        obligations: path
+            .obligations
+            .into_iter()
+            .map(|obligation| {
+                obligation.map_proposition(|proposition| Proposition::ForAll {
+                    var: binder.variable,
+                    sort: binder.sort.clone(),
+                    body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
+                })
+            })
+            .collect(),
+        introductions,
+    }
 }
 
 /// Lowers the common right-associated implication shape iteratively. The
@@ -758,6 +1076,53 @@ fn lower_spec_proposition_at_state_with_algebraic_bindings_one(
             }
         })
         .collect()),
+        SpecProposition::ForAllAlgebraic {
+            name,
+            variable,
+            algebraic_type,
+            body,
+        } => Ok(lower_spec_proposition_at_state_with_algebraic_bindings(
+            state,
+            body,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+        )?
+        .into_iter()
+        .map(|path| {
+            let (body, guards) =
+                wrap_path_context_with_introductions(path.proposition, &path.facts, &[]);
+            let mut introductions = vec![LoweringIntroduction::WrittenUniversal {
+                name: name.clone(),
+                variable: *variable,
+                pointer: false,
+                integer: false,
+            }];
+            introductions.extend(guards);
+            introductions.extend(path.introductions);
+            SpecPropositionPath {
+                proposition: Proposition::ForAll {
+                    var: *variable,
+                    sort: Sort::Algebraic(algebraic_type.clone()),
+                    body: Box::new(body),
+                },
+                facts: Vec::new(),
+                obligations: path
+                    .obligations
+                    .into_iter()
+                    .map(|obligation| {
+                        obligation.map_proposition(|proposition| Proposition::ForAll {
+                            var: *variable,
+                            sort: Sort::Algebraic(algebraic_type.clone()),
+                            body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
+                        })
+                    })
+                    .collect(),
+                introductions,
+            }
+        })
+        .collect()),
         SpecProposition::ForAllInt32 {
             name,
             variable,
@@ -905,6 +1270,37 @@ fn lower_spec_proposition_at_state_with_algebraic_bindings_one(
                     name: name.clone(),
                     var: *variable,
                     sort: Sort::Integer,
+                    body: Box::new(existential_body),
+                },
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }])
+        }
+        SpecProposition::ExistsAlgebraic {
+            name,
+            variable,
+            algebraic_type,
+            body,
+        } => {
+            let body_paths = lower_spec_proposition_at_state_with_algebraic_bindings(
+                state,
+                body,
+                loop_entry_state,
+                assumptions,
+                algebraic_bindings,
+                budget,
+            )?;
+            let branches = body_paths
+                .iter()
+                .map(existential_body_branch)
+                .collect::<Vec<_>>();
+            let existential_body = proposition_or_all(branches);
+            Ok(vec![SpecPropositionPath {
+                introductions: LoweringIntroductions::new(),
+                proposition: Proposition::Exists {
+                    name: name.clone(),
+                    var: *variable,
+                    sort: Sort::Algebraic(algebraic_type.clone()),
                     body: Box::new(existential_body),
                 },
                 facts: Vec::new(),

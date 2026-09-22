@@ -1,19 +1,18 @@
 # reachability needs an algebraic loop witness
 
-Classification: **missing proof-language representation**.
+Classification: **algebraic witness representation fixed; snapshot transport remains**.
 
-The first missing layer now has a checked minimal reproduction:
-`mdtests/algebraic_existential_witness_rejected.md`. It removes DFS, arrays,
-and C execution entirely. The proposition
+The first missing layer now has positive checked regressions:
+`mdtests/algebraic_existential_witness.md` removes DFS, arrays, and C
+execution, while `mdtests/algebraic_existential_loop_witness.md` carries a
+changing witness through a loop. The proposition
 
 ```click
 exists (fuel: Nat) { fuel == Nat::Zero }
 ```
 
-has the immediate witness `Nat::Zero`, but parsing stops at `Nat` with
-`quantifier type must be a C type or Integer`. This is the smallest failure;
-the loop below needs the same proposition plus elimination of its witness at
-the next iteration.
+has the immediate witness `Nat::Zero`; algebraic `forall`, `exists`,
+`witness`, `choose`, and `choose(... from invariant N)` now support it.
 
 The direct correctness invariant for the fixed search C is:
 
@@ -34,10 +33,17 @@ At each loop head, some `fuel` witnesses
 and their array-read obligations verify in isolation. The missing part is a
 sound way to carry that changing algebraic witness through the loop.
 
-The obvious existential invariant is not available: kernel existentials cover
-`int32`, `Integer`, and pointers, but not algebraic types such as `Nat`. Numeric
-fuel does not replace it because a recursive pure function with an array
-argument is refused:
+The obvious existential invariant is now representable. In the complete
+search, the store to `visited[cur]` advances the current memory snapshot. A
+chosen fact for `walk(next, from, fuel) == cur` still names `next` at the
+iteration-entry snapshot, while unfolding the successor witness after the
+store names `next` at the current snapshot. Although `next` and `visited` are
+declared separate and `next` is only viewed, the recursive pure-function
+equality is not transported between those snapshots. That is the remaining
+direct blocker.
+
+Numeric fuel still does not replace the witness because a recursive pure
+function with an array argument is refused:
 
 ```text
 recursive pure function `follow_i32` currently supports only int32 parameters
@@ -70,10 +76,10 @@ equivalent first-class ghost binding) so the invariant above initializes with
 `Nat::Zero`, preserves with `Nat::Succ(fuel)`, and the success return exposes
 the witness without changing the C or manufacturing a resource token.
 
-## Smallest sound implementation
+## Implemented algebraic witness layer
 
-Extend the existing existential machinery rather than adding DFS-specific
-model state or a new ghost-resource convention:
+The implementation extends the existing quantifier machinery rather than
+adding DFS-specific model state or a new ghost-resource convention:
 
 1. Permit algebraic `ClickType` binders in `forall` and `exists`, lower them
    through an algebraic specification proposition to the kernel's existing
@@ -89,9 +95,8 @@ model state or a new ghost-resource convention:
    `choose(name from invariant N)` source (or an equivalent named-invariant
    source), because today's `choose` can only open function requirements.
 
-The implementation should be accepted in layers: first turn the checked
-`Nat::Zero` reproduction into a passing witness proof; then add a pure theorem
-that chooses `fuel` from an algebraic existential and returns
-`Nat::Succ(fuel)` as a new witness; then a one-counter loop using
-`choose(... from invariant 0)`; finally the DFS `walk` invariant. This keeps
-the new rule general, kernel-checked, and independent of array reachability.
+The first three acceptance layers now pass: the `Nat::Zero` witness, a pure
+choice reused beneath `Nat::Succ`, and a loop using
+`choose(... from invariant 0)`. The remaining `walk` layer should retain the
+same C and invariant while repairing snapshot-stable transport; it must not
+specialize the function or move the witness into C.

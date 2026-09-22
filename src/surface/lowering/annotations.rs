@@ -392,7 +392,8 @@ fn contract_expression_is_algebraic(
         }
         ContractExpression::AlgebraicConstructor { .. }
         | ContractExpression::AlgebraicVariable { .. } => true,
-        ContractExpression::Binding(name) => lexical_bindings
+        ContractExpression::Binding(name)
+        | ContractExpression::CFragment(CExpression::Variable(name)) => lexical_bindings
             .iter()
             .rev()
             .find_map(|(binding, algebraic)| (binding == name).then_some(*algebraic))
@@ -1244,6 +1245,7 @@ pub(in crate::surface) fn elaborate_fixed_state_algebraic_expression(
     entry_state: &CState,
     entry_values: BTreeMap<String, CValue>,
     current_values: BTreeMap<String, CValue>,
+    algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
     result: Option<&CValue>,
     snapshots: &RecordedSnapshots,
     assumptions: &PureFactContext,
@@ -1252,7 +1254,7 @@ pub(in crate::surface) fn elaborate_fixed_state_algebraic_expression(
     opaque_click_functions: BTreeSet<String>,
     pointer_element_widths: BTreeMap<String, u32>,
 ) -> Result<SpecAlgebraicExpression, String> {
-    let (mut lowerer, context) = fixed_state_elaboration(
+    let (mut lowerer, mut context) = fixed_state_elaboration(
         array_element_types,
         BTreeMap::new(),
         entry_state,
@@ -1266,6 +1268,7 @@ pub(in crate::surface) fn elaborate_fixed_state_algebraic_expression(
         opaque_click_functions,
         pointer_element_widths,
     );
+    context.algebraic_values = algebraic_values.into_iter().collect();
     lowerer.lower_contract_algebraic_to_spec(expression, &context)
 }
 
@@ -2713,6 +2716,24 @@ impl AnnotationLowerer<'_> {
                         body: Box::new(body),
                     });
                 }
+                if let ClickType::Algebraic(application) = c_type {
+                    let algebraic_type = self.cached_algebraic_kernel_type(application)?;
+                    body_environment.algebraic_values.insert(
+                        name.clone(),
+                        SpecAlgebraicExpression {
+                            algebraic_type: algebraic_type.clone(),
+                            node: SpecAlgebraicExpressionNode::Variable(variable),
+                        },
+                    );
+                    let body =
+                        self.click_proposition_to_spec_proposition(body, &body_environment)?;
+                    return Ok(SpecProposition::ForAllAlgebraic {
+                        name: display_name.clone(),
+                        variable,
+                        algebraic_type,
+                        body: Box::new(body),
+                    });
+                }
                 let c_type = c_type
                     .c_type()
                     .ok_or("only C quantifier binders are currently supported")?
@@ -2792,6 +2813,24 @@ impl AnnotationLowerer<'_> {
                     return Ok(SpecProposition::ExistsInteger {
                         name: display_name.clone(),
                         variable,
+                        body: Box::new(body),
+                    });
+                }
+                if let ClickType::Algebraic(application) = c_type {
+                    let algebraic_type = self.cached_algebraic_kernel_type(application)?;
+                    body_environment.algebraic_values.insert(
+                        name.clone(),
+                        SpecAlgebraicExpression {
+                            algebraic_type: algebraic_type.clone(),
+                            node: SpecAlgebraicExpressionNode::Variable(variable),
+                        },
+                    );
+                    let body =
+                        self.click_proposition_to_spec_proposition(body, &body_environment)?;
+                    return Ok(SpecProposition::ExistsAlgebraic {
+                        name: display_name.clone(),
+                        variable,
+                        algebraic_type,
                         body: Box::new(body),
                     });
                 }
@@ -3412,8 +3451,7 @@ impl AnnotationLowerer<'_> {
                     initial_type.or(body_type)
                 }
             }
-            ContractExpression::CFragment(CExpression::Variable(name))
-            | ContractExpression::CBinding(name) => {
+            ContractExpression::CFragment(CExpression::Variable(name)) => {
                 if let Some((_, click_type)) = lexical_bindings
                     .iter()
                     .rev()
@@ -3422,6 +3460,10 @@ impl AnnotationLowerer<'_> {
                     click_type.clone()
                 } else if environment.integer_values.contains_key(name) {
                     Some(ClickType::Integer)
+                } else if let Some(value) = environment.algebraic_values.get(name) {
+                    Some(generics::click_type_from_algebraic_value_type(
+                        &value.algebraic_type.value_type(),
+                    ))
                 } else {
                     environment
                         .values
@@ -3429,6 +3471,17 @@ impl AnnotationLowerer<'_> {
                         .and_then(spec_expression_click_type)
                 }
             }
+            ContractExpression::CBinding(name) => lexical_bindings
+                .iter()
+                .rev()
+                .find_map(|(binding, click_type)| (binding == name).then(|| click_type.clone()))
+                .flatten()
+                .or_else(|| {
+                    environment
+                        .values
+                        .get(name)
+                        .and_then(spec_expression_click_type)
+                }),
             ContractExpression::Let {
                 name,
                 click_type: Some(ClickType::Integer),
@@ -3991,7 +4044,11 @@ impl AnnotationLowerer<'_> {
             operands.push(right.as_ref());
             current = left;
         }
-        if operands.len() > 128 && matches!(current, ContractExpression::IntegerLiteral(_)) {
+        if !operands.is_empty()
+            && self
+                .contract_pointer_element_type(current, environment)
+                .is_none()
+        {
             operands.push(current);
             let mut lowered = self.lower_contract_expression_to_spec_one(
                 operands.pop().expect("the additive base is present"),
@@ -4573,7 +4630,8 @@ impl AnnotationLowerer<'_> {
                 }
                 self.symbolic_algebraic_variable(name, algebraic_type, *binder_index)
             }
-            ContractExpression::Binding(name) => environment
+            ContractExpression::Binding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => environment
                 .algebraic_values
                 .get(name)
                 .cloned()
@@ -5076,10 +5134,17 @@ impl AnnotationLowerer<'_> {
             ContractExpression::CFragment(CExpression::Value(value)) => Ok(Some(ClickType::C(
                 generics::c0_type_from_kernel(value.c_type()),
             ))),
-            ContractExpression::CFragment(CExpression::Variable(name)) => Ok(environment
-                .values
-                .get(name)
-                .and_then(spec_expression_click_type)),
+            ContractExpression::CFragment(CExpression::Variable(name)) => {
+                if let Some(value) = environment.algebraic_values.get(name) {
+                    return Ok(Some(generics::click_type_from_algebraic_value_type(
+                        &value.algebraic_type.value_type(),
+                    )));
+                }
+                Ok(environment
+                    .values
+                    .get(name)
+                    .and_then(spec_expression_click_type))
+            }
             ContractExpression::Call { name, arguments } => {
                 let definition = self
                     .click_function_environment

@@ -593,6 +593,29 @@ impl ProofFacts {
         Some((fresh, body))
     }
 
+    pub(crate) fn freshen_algebraic_forall_body(
+        &self,
+        binder: Variable,
+        algebraic_type: &crate::kernel::AlgebraicType,
+        body: &Proposition,
+    ) -> Option<(Variable, Proposition)> {
+        if !self.reserved_variables.contains(&binder) {
+            return Some((binder, body.clone()));
+        }
+        let body_variables = crate::kernel::proposition_variables(body);
+        let fresh = self.fresh_universal_witness(&body_variables)?;
+        let replacement = crate::kernel::AlgebraicTerm {
+            algebraic_type: algebraic_type.clone(),
+            node: crate::kernel::AlgebraicTermNode::Variable(fresh),
+        };
+        let body = crate::kernel::reasoning::substitute_algebraic_variable_in_proposition(
+            body,
+            binder,
+            &replacement,
+        );
+        Some((fresh, body))
+    }
+
     pub(crate) fn reserves_variable(&self, variable: Variable) -> bool {
         self.reserved_variables.contains(&variable)
     }

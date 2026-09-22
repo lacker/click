@@ -515,8 +515,10 @@ impl Names {
             Not(p) => self.proposition(p),
             ForAllInt32 { name, body, .. }
             | ForAllInteger { name, body, .. }
+            | ForAllAlgebraic { name, body, .. }
             | ExistsInt32 { name, body, .. }
             | ExistsInteger { name, body, .. }
+            | ExistsAlgebraic { name, body, .. }
             | ForAllPointer { name, body, .. }
             | ExistsPointer { name, body, .. } => {
                 let original = self.bind(name);

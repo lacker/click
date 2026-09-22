@@ -292,6 +292,40 @@ fn charged_token_equal(left: &[Token], right: &[Token]) -> bool {
     true
 }
 
+type ContractBinaryConstructor =
+    fn(Box<ContractExpression>, Box<ContractExpression>) -> ContractExpression;
+
+fn contract_binary_operator(token: &Token) -> Option<(usize, ContractBinaryConstructor)> {
+    let (precedence, constructor): (usize, ContractBinaryConstructor) = match token {
+        Token::PlusPlus => (0, ContractExpression::SequenceConcat),
+        Token::Pipe => (1, ContractExpression::BitwiseOr),
+        Token::Caret => (2, ContractExpression::BitwiseXor),
+        Token::Amp => (3, ContractExpression::BitwiseAnd),
+        Token::ShiftLeft => (4, ContractExpression::ShiftLeft),
+        Token::ShiftRight => (4, ContractExpression::ShiftRight),
+        Token::Plus => (5, ContractExpression::Add),
+        Token::Minus => (5, ContractExpression::Subtract),
+        Token::Star => (6, ContractExpression::Multiply),
+        Token::Slash => (6, ContractExpression::Divide),
+        Token::Percent => (6, ContractExpression::Remainder),
+        _ => return None,
+    };
+    Some((precedence, constructor))
+}
+
+fn reduce_contract_binary_expression(
+    values: &mut Vec<ContractExpression>,
+    constructor: ContractBinaryConstructor,
+) {
+    let right = values
+        .pop()
+        .expect("a parsed binary operator has a right operand");
+    let left = values
+        .pop()
+        .expect("a parsed binary operator has a left operand");
+    values.push(constructor(Box::new(left), Box::new(right)));
+}
+
 struct Parser {
     source_aliases: BTreeMap<String, String>,
     qualified_objects: Option<BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>>,
@@ -4258,7 +4292,17 @@ impl Parser {
                             self.current_contract_bindings.remove(&name);
                             self.integer_literal_context = false;
                         }
-                        _ => return Err(self.error("quantifier type must be a C type or Integer")),
+                        ClickType::Algebraic(_) => {
+                            self.current_integer_params.remove(&name);
+                            self.current_integer_lets.remove(&name);
+                            self.current_contract_bindings.insert(name.clone());
+                            self.integer_literal_context = false;
+                        }
+                        ClickType::Parameter(_) => {
+                            return Err(self.error(
+                                "quantifier type must be a concrete C, Integer, or algebraic type",
+                            ));
+                        }
                     }
                     scopes.push(Scope {
                         forall,
@@ -6270,13 +6314,26 @@ impl Parser {
                 ))),
                 None => Err(self.error("expected requirement index or label, got end of input")),
             },
+            Some(Token::Ident(kind)) if kind == "invariant" => match self.next() {
+                Some(Token::Number(index)) => {
+                    let index = usize::try_from(index)
+                        .map_err(|_| self.error("invariant index does not fit in usize"))?;
+                    Ok(ProofFactSource::Invariant(index))
+                }
+                Some(token) => Err(self.error(format!(
+                    "expected invariant index, got {token:?}"
+                ))),
+                None => Err(self.error("expected invariant index, got end of input")),
+            },
             Some(Token::Ident(kind)) => Err(self.error(format!(
-                "expected proof fact source `requirement N` or `requirement name`, got `{kind}`"
+                "expected proof fact source `requirement N`, `requirement name`, or `invariant N`, got `{kind}`"
             ))),
             Some(token) => Err(self.error(format!(
-                "expected proof fact source `requirement N` or `requirement name`, got {token:?}"
+                "expected proof fact source `requirement N`, `requirement name`, or `invariant N`, got {token:?}"
             ))),
-            None => Err(self.error("expected proof fact source `requirement N`, got end of input")),
+            None => Err(self.error(
+                "expected proof fact source `requirement N` or `invariant N`, got end of input",
+            )),
         }
     }
 
@@ -6331,20 +6388,52 @@ impl Parser {
     }
 
     fn parse_contract_expression(&mut self) -> Result<ContractExpression, ClickError> {
-        self.parse_contract_concat()
+        let first = self.parse_contract_unary()?;
+        self.parse_contract_binary_suffix(first)
     }
 
-    fn parse_contract_concat(&mut self) -> Result<ContractExpression, ClickError> {
-        let mut expression = self.parse_contract_bitwise_or()?;
-        let mut operands = 1;
-        while self.peek() == Some(&Token::PlusPlus) {
-            self.check_expression_chain_limit(operands)?;
+    // Keep the operator stacks out of the recursive primary-expression
+    // parser frame. A nested conditional retains only the small dispatcher
+    // above while its child expression is parsed.
+    #[inline(never)]
+    fn parse_contract_binary_suffix(
+        &mut self,
+        first: ContractExpression,
+    ) -> Result<ContractExpression, ClickError> {
+        let mut values = vec![first];
+        let mut operators: Vec<(usize, ContractBinaryConstructor)> = Vec::new();
+        // Each precedence level has the same independently enforced chain
+        // limit as the former recursive-descent level. A lower-precedence
+        // operator starts a new higher-precedence segment.
+        let mut operands_by_precedence = [0usize; 7];
+
+        while let Some((precedence, constructor)) = self.peek().and_then(contract_binary_operator) {
+            let operands = &mut operands_by_precedence[precedence];
+            if *operands == 0 {
+                *operands = 1;
+            }
+            self.check_expression_chain_limit(*operands)?;
+            *operands += 1;
+            operands_by_precedence[(precedence + 1)..].fill(0);
+
+            while operators
+                .last()
+                .is_some_and(|(pending_precedence, _)| *pending_precedence >= precedence)
+            {
+                let (_, pending) = operators.pop().expect("the operator stack is nonempty");
+                reduce_contract_binary_expression(&mut values, pending);
+            }
             self.position += 1;
-            let right = self.parse_contract_bitwise_or()?;
-            expression = ContractExpression::SequenceConcat(Box::new(expression), Box::new(right));
-            operands += 1;
+            operators.push((precedence, constructor));
+            values.push(self.parse_contract_unary()?);
         }
-        Ok(expression)
+
+        while let Some((_, constructor)) = operators.pop() {
+            reduce_contract_binary_expression(&mut values, constructor);
+        }
+        Ok(values
+            .pop()
+            .expect("a contract expression has at least one operand"))
     }
 
     fn parse_termination_measure(&mut self) -> Result<TerminationMeasure, ClickError> {
@@ -7471,112 +7560,6 @@ impl Parser {
         }
     }
 
-    fn parse_contract_bitwise_or(&mut self) -> Result<ContractExpression, ClickError> {
-        let mut expression = self.parse_contract_bitwise_xor()?;
-        let mut operands = 1;
-        while self.peek() == Some(&Token::Pipe) {
-            self.check_expression_chain_limit(operands)?;
-            self.position += 1;
-            let right = self.parse_contract_bitwise_xor()?;
-            expression = ContractExpression::BitwiseOr(Box::new(expression), Box::new(right));
-            operands += 1;
-        }
-        Ok(expression)
-    }
-
-    fn parse_contract_bitwise_xor(&mut self) -> Result<ContractExpression, ClickError> {
-        let mut expression = self.parse_contract_bitwise_and()?;
-        let mut operands = 1;
-        while self.peek() == Some(&Token::Caret) {
-            self.check_expression_chain_limit(operands)?;
-            self.position += 1;
-            let right = self.parse_contract_bitwise_and()?;
-            expression = ContractExpression::BitwiseXor(Box::new(expression), Box::new(right));
-            operands += 1;
-        }
-        Ok(expression)
-    }
-
-    fn parse_contract_bitwise_and(&mut self) -> Result<ContractExpression, ClickError> {
-        let mut expression = self.parse_contract_shift()?;
-        let mut operands = 1;
-        while self.peek() == Some(&Token::Amp) {
-            self.check_expression_chain_limit(operands)?;
-            self.position += 1;
-            let right = self.parse_contract_shift()?;
-            expression = ContractExpression::BitwiseAnd(Box::new(expression), Box::new(right));
-            operands += 1;
-        }
-        Ok(expression)
-    }
-
-    fn parse_contract_shift(&mut self) -> Result<ContractExpression, ClickError> {
-        let mut expression = self.parse_contract_add()?;
-        let mut operands = 1;
-        loop {
-            expression = match self.peek() {
-                Some(Token::ShiftLeft) => {
-                    self.check_expression_chain_limit(operands)?;
-                    self.position += 1;
-                    let right = self.parse_contract_add()?;
-                    operands += 1;
-                    ContractExpression::ShiftLeft(Box::new(expression), Box::new(right))
-                }
-                Some(Token::ShiftRight) => {
-                    self.check_expression_chain_limit(operands)?;
-                    self.position += 1;
-                    let right = self.parse_contract_add()?;
-                    operands += 1;
-                    ContractExpression::ShiftRight(Box::new(expression), Box::new(right))
-                }
-                _ => return Ok(expression),
-            };
-        }
-    }
-
-    fn parse_contract_add(&mut self) -> Result<ContractExpression, ClickError> {
-        let mut expression = self.parse_contract_multiply()?;
-        let mut operands = 1;
-        loop {
-            expression = match self.peek() {
-                Some(Token::Plus) => {
-                    self.check_expression_chain_limit(operands)?;
-                    self.position += 1;
-                    let right = self.parse_contract_multiply()?;
-                    operands += 1;
-                    ContractExpression::Add(Box::new(expression), Box::new(right))
-                }
-                Some(Token::Minus) => {
-                    self.check_expression_chain_limit(operands)?;
-                    self.position += 1;
-                    let right = self.parse_contract_multiply()?;
-                    operands += 1;
-                    ContractExpression::Subtract(Box::new(expression), Box::new(right))
-                }
-                _ => return Ok(expression),
-            };
-        }
-    }
-
-    fn parse_contract_multiply(&mut self) -> Result<ContractExpression, ClickError> {
-        let mut expression = self.parse_contract_unary()?;
-        let mut operands = 1;
-        while let Some(operator) = self.peek() {
-            let constructor = match operator {
-                Token::Star => ContractExpression::Multiply,
-                Token::Slash => ContractExpression::Divide,
-                Token::Percent => ContractExpression::Remainder,
-                _ => break,
-            };
-            self.check_expression_chain_limit(operands)?;
-            self.position += 1;
-            let right = self.parse_contract_unary()?;
-            operands += 1;
-            expression = constructor(Box::new(expression), Box::new(right));
-        }
-        Ok(expression)
-    }
-
     /// Recognizes `( [const] struct name [const] * )` at the cursor without
     /// consuming it. A struct-pointer cast is the only pointer cast contract
     /// expressions accept; it lets a contract over an opaque `void *`
@@ -8171,6 +8154,17 @@ impl Parser {
             self.match_nesting -= 1;
             return result;
         }
+        if self.peek_ident() == Some("if") {
+            if self.contract_if_nesting >= CONTRACT_IF_NESTING_LIMIT {
+                return Err(self.error(format!(
+                    "contract conditional expression nesting exceeds Click's supported depth of {CONTRACT_IF_NESTING_LIMIT}"
+                )));
+            }
+            self.contract_if_nesting += 1;
+            let result = self.parse_contract_if_expression();
+            self.contract_if_nesting -= 1;
+            return result;
+        }
 
         self.parse_contract_non_match_primary()
     }
@@ -8235,18 +8229,6 @@ impl Parser {
             self.contract_expression_nesting += 1;
             let result = self.parse_contract_value_let_expression();
             self.contract_expression_nesting -= 1;
-            return result;
-        }
-
-        if self.peek_ident() == Some("if") {
-            if self.contract_if_nesting >= CONTRACT_IF_NESTING_LIMIT {
-                return Err(self.error(format!(
-                    "contract conditional expression nesting exceeds Click's supported depth of {CONTRACT_IF_NESTING_LIMIT}"
-                )));
-            }
-            self.contract_if_nesting += 1;
-            let result = self.parse_contract_if_expression();
-            self.contract_if_nesting -= 1;
             return result;
         }
 
@@ -8519,21 +8501,24 @@ impl Parser {
 
     fn parse_contract_if_expression(&mut self) -> Result<ContractExpression, ClickError> {
         self.position += 1;
-        let condition = self.parse_proposition()?;
+        // These children are boxed in the AST. Box each one as soon as it is
+        // parsed so a nested conditional does not retain large enum values in
+        // every parser stack frame while parsing its next child.
+        let condition = Box::new(self.parse_proposition()?);
         self.expect(Token::LBrace)?;
-        let then_branch = self.parse_contract_expression()?;
+        let then_branch = Box::new(self.parse_contract_expression()?);
         self.expect(Token::RBrace)?;
         if self.peek_ident() != Some("else") {
             return Err(self.error("expected `else` in `if` expression"));
         }
         self.position += 1;
         self.expect(Token::LBrace)?;
-        let else_branch = self.parse_contract_expression()?;
+        let else_branch = Box::new(self.parse_contract_expression()?);
         self.expect(Token::RBrace)?;
         Ok(ContractExpression::If {
-            condition: Box::new(condition),
-            then_branch: Box::new(then_branch),
-            else_branch: Box::new(else_branch),
+            condition,
+            then_branch,
+            else_branch,
         })
     }
 

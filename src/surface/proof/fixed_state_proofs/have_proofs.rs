@@ -36,9 +36,11 @@ fn drop_spec_proposition_iteratively(proposition: SpecProposition) {
             SpecProposition::Not(body)
             | SpecProposition::ForAllInt32 { body, .. }
             | SpecProposition::ForAllInteger { body, .. }
+            | SpecProposition::ForAllAlgebraic { body, .. }
             | SpecProposition::ForAllPointer { body, .. }
             | SpecProposition::ExistsInt32 { body, .. }
             | SpecProposition::ExistsInteger { body, .. }
+            | SpecProposition::ExistsAlgebraic { body, .. }
             | SpecProposition::ExistsPointer { body, .. } => pending.push(*body),
             proposition => drop(proposition),
         }
@@ -104,6 +106,45 @@ pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_assumptions(
         click_function_environment,
     )
     .map(|(proposition, _)| proposition)
+}
+
+/// Fixed-state lowering with the exact algebraic proof locals referenced by
+/// the written proposition. Algebraic `choose` bindings live outside C state,
+/// so callers pass them explicitly just as Integer proof locals are passed by
+/// the companion helper below.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface::proof) fn lower_fixed_state_proposition_with_algebraic_values(
+    proposition: &ClickProposition,
+    assumptions: &PureFactContext,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values(
+        proposition,
+        assumptions,
+        &values,
+        &array_refs,
+        algebraic_values,
+        &crate::persistent::PersistentMap::default(),
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        &BTreeSet::new(),
+        parameter_pointer_element_widths(parameters),
+    )
 }
 
 /// Lowers a fixed-state proposition while retaining checked mathematical
@@ -679,6 +720,7 @@ pub(in crate::surface) fn capture_fixed_state_algebraic_expression(
         &states.entry_state,
         states.entry_values,
         states.current_values,
+        BTreeMap::new(),
         result,
         recorded_snapshots,
         assumptions,
@@ -695,6 +737,7 @@ pub(in crate::surface::proof) fn capture_fixed_state_algebraic_value(
     assumptions: &PureFactContext,
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
+    algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
     pre_state: &CState,
     state: &CState,
     snapshots: &RecordedSnapshots,
@@ -708,6 +751,7 @@ pub(in crate::surface::proof) fn capture_fixed_state_algebraic_value(
         &states.entry_state,
         states.entry_values,
         states.current_values,
+        algebraic_values,
         None,
         snapshots,
         assumptions,
@@ -806,6 +850,7 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
                 &states.entry_state,
                 states.entry_values,
                 states.current_values,
+                BTreeMap::new(),
                 None,
                 snapshots,
                 assumptions,

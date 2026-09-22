@@ -3004,6 +3004,9 @@ fn describe_c_update_operator(operator: CUpdateOperator) -> &'static str {
 }
 
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {
+    if matches!(expression, ContractExpression::Add(_, _)) {
+        return describe_add_contract_expression(expression);
+    }
     match expression {
         ContractExpression::IntegerLiteral(value) => value.clone(),
         ContractExpression::ResourceField(access) => {
@@ -3107,9 +3110,7 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
         ContractExpression::Negate(expression) => {
             format!("-{}", describe_contract_expression(expression))
         }
-        ContractExpression::Add(left, right) => {
-            describe_binary_contract_expression(left, "+", right)
-        }
+        ContractExpression::Add(_, _) => unreachable!("addition is rendered iteratively above"),
         ContractExpression::Subtract(left, right) => {
             describe_binary_contract_expression(left, "-", right)
         }
@@ -3234,6 +3235,32 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
                 .join(", ")
         ),
     }
+}
+
+fn describe_add_contract_expression(expression: &ContractExpression) -> String {
+    enum Frame<'a> {
+        Visit(&'a ContractExpression),
+        Build,
+    }
+
+    let mut frames = vec![Frame::Visit(expression)];
+    let mut rendered = Vec::new();
+    while let Some(frame) = frames.pop() {
+        match frame {
+            Frame::Visit(ContractExpression::Add(left, right)) => {
+                frames.push(Frame::Build);
+                frames.push(Frame::Visit(right));
+                frames.push(Frame::Visit(left));
+            }
+            Frame::Visit(expression) => rendered.push(describe_contract_expression(expression)),
+            Frame::Build => {
+                let right = rendered.pop().expect("rendered addition right operand");
+                let left = rendered.pop().expect("rendered addition left operand");
+                rendered.push(format!("({left} + {right})"));
+            }
+        }
+    }
+    rendered.pop().expect("rendered addition expression")
 }
 
 /// Keep generated let bindings source-printable for long left-associated

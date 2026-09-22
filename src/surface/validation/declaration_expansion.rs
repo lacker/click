@@ -1132,9 +1132,33 @@ fn expand_declared_resource_proposition(
 ) -> Result<ClickProposition, ClickError> {
     enum Frame {
         Visit(ClickProposition),
+        BuildAt(SnapshotSelector),
         BuildAnd,
         BuildOr,
+        BuildNot,
         BuildImplies,
+        BuildForAll {
+            click_type: ClickType,
+            name: String,
+            written_name: Option<String>,
+        },
+        BuildExists {
+            click_type: ClickType,
+            name: String,
+            written_name: Option<String>,
+        },
+        BuildRangeAll {
+            start: ContractExpression,
+            end: ContractExpression,
+            item: String,
+            written_item: Option<String>,
+        },
+        BuildRangeAny {
+            start: ContractExpression,
+            end: ContractExpression,
+            item: String,
+            written_item: Option<String>,
+        },
     }
 
     let mut frames = vec![Frame::Visit(proposition)];
@@ -1157,6 +1181,73 @@ fn expand_declared_resource_proposition(
                     frames.push(Frame::Visit(*right));
                     frames.push(Frame::Visit(*left));
                 }
+                ClickProposition::Not(body) => {
+                    frames.push(Frame::BuildNot);
+                    frames.push(Frame::Visit(*body));
+                }
+                ClickProposition::At {
+                    selector,
+                    proposition,
+                } => {
+                    frames.push(Frame::BuildAt(selector));
+                    frames.push(Frame::Visit(*proposition));
+                }
+                ClickProposition::ForAll {
+                    click_type,
+                    name,
+                    written_name,
+                    body,
+                } => {
+                    frames.push(Frame::BuildForAll {
+                        click_type,
+                        name,
+                        written_name,
+                    });
+                    frames.push(Frame::Visit(*body));
+                }
+                ClickProposition::Exists {
+                    click_type,
+                    name,
+                    written_name,
+                    body,
+                } => {
+                    frames.push(Frame::BuildExists {
+                        click_type,
+                        name,
+                        written_name,
+                    });
+                    frames.push(Frame::Visit(*body));
+                }
+                ClickProposition::RangeAll {
+                    start,
+                    end,
+                    item,
+                    written_item,
+                    body,
+                } => {
+                    frames.push(Frame::BuildRangeAll {
+                        start: expand_declared_resource_expression(start, resource_definitions)?,
+                        end: expand_declared_resource_expression(end, resource_definitions)?,
+                        item,
+                        written_item,
+                    });
+                    frames.push(Frame::Visit(*body));
+                }
+                ClickProposition::RangeAny {
+                    start,
+                    end,
+                    item,
+                    written_item,
+                    body,
+                } => {
+                    frames.push(Frame::BuildRangeAny {
+                        start: expand_declared_resource_expression(start, resource_definitions)?,
+                        end: expand_declared_resource_expression(end, resource_definitions)?,
+                        item,
+                        written_item,
+                    });
+                    frames.push(Frame::Visit(*body));
+                }
                 proposition => expanded.push(expand_declared_resource_proposition_one(
                     proposition,
                     resource_definitions,
@@ -1176,6 +1267,73 @@ fn expand_declared_resource_proposition(
                 let right = expanded.pop().expect("expanded implication right operand");
                 let left = expanded.pop().expect("expanded implication left operand");
                 expanded.push(ClickProposition::Implies(Box::new(left), Box::new(right)));
+            }
+            Frame::BuildNot => {
+                let body = expanded.pop().expect("expanded negation body");
+                expanded.push(ClickProposition::Not(Box::new(body)));
+            }
+            Frame::BuildAt(selector) => {
+                let proposition = expanded.pop().expect("expanded snapshot proposition");
+                expanded.push(ClickProposition::At {
+                    selector,
+                    proposition: Box::new(proposition),
+                });
+            }
+            Frame::BuildForAll {
+                click_type,
+                name,
+                written_name,
+            } => {
+                let body = expanded.pop().expect("expanded universal body");
+                expanded.push(ClickProposition::ForAll {
+                    click_type,
+                    name,
+                    written_name,
+                    body: Box::new(body),
+                });
+            }
+            Frame::BuildExists {
+                click_type,
+                name,
+                written_name,
+            } => {
+                let body = expanded.pop().expect("expanded existential body");
+                expanded.push(ClickProposition::Exists {
+                    click_type,
+                    name,
+                    written_name,
+                    body: Box::new(body),
+                });
+            }
+            Frame::BuildRangeAll {
+                start,
+                end,
+                item,
+                written_item,
+            } => {
+                let body = expanded.pop().expect("expanded range universal body");
+                expanded.push(ClickProposition::RangeAll {
+                    start,
+                    end,
+                    item,
+                    written_item,
+                    body: Box::new(body),
+                });
+            }
+            Frame::BuildRangeAny {
+                start,
+                end,
+                item,
+                written_item,
+            } => {
+                let body = expanded.pop().expect("expanded range existential body");
+                expanded.push(ClickProposition::RangeAny {
+                    start,
+                    end,
+                    item,
+                    written_item,
+                    body: Box::new(body),
+                });
             }
         }
     }
@@ -1337,7 +1495,7 @@ fn expand_declared_resource_expression(
         add_depth += 1;
         add_cursor = left;
     }
-    if add_depth > 128 {
+    if add_depth > 0 {
         let mut operands = Vec::with_capacity(add_depth);
         let mut current = expression;
         while let ContractExpression::Add(left, right) = current {
@@ -1356,12 +1514,29 @@ fn expand_declared_resource_expression(
         }
         return Ok(expanded);
     }
+    // Peel a direct conditional chain before entering the large child match.
+    // Conditions and sibling branches retain their source order while the
+    // recursively nested `then` spine is rebuilt from the inside out.
+    let mut conditionals = Vec::new();
+    let mut expression = expression;
+    while let ContractExpression::If {
+        condition,
+        then_branch,
+        else_branch,
+    } = expression
+    {
+        conditionals.push((
+            expand_declared_resource_proposition(*condition, resource_definitions)?,
+            expand_declared_resource_expression(*else_branch, resource_definitions)?,
+        ));
+        expression = *then_branch;
+    }
+
     // Let chains are common in generated specifications and can be much
     // deeper than the surrounding expression tree. Peel consecutive lets
     // iteratively so expanding their bodies does not retain one large match
     // frame per binding.
     let mut lets = Vec::new();
-    let mut expression = expression;
     while let ContractExpression::Let {
         name,
         click_type,
@@ -1383,6 +1558,13 @@ fn expand_declared_resource_expression(
             click_type,
             value: Box::new(value),
             body: Box::new(expanded),
+        };
+    }
+    while let Some((condition, else_branch)) = conditionals.pop() {
+        expanded = ContractExpression::If {
+            condition: Box::new(condition),
+            then_branch: Box::new(expanded),
+            else_branch: Box::new(else_branch),
         };
     }
     Ok(expanded)

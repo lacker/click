@@ -16,19 +16,22 @@ bounds and `visited[to] == 0`: success can only use the `cur == to` return,
 which precedes the marking store. `unmarked_nonnegative` also lives with the
 other checked counting lemmas in `mdtests/unmarked_count_lemmas.md`.
 
-Graph reachability has a minimal direct model, but its loop witness cannot yet
-be represented without verifier-only bookkeeping. The reduction and rejected
-alternatives are in
-`design/dfs-gaps/reachability_needs_an_algebraic_loop_witness.md`: recursive
-`walk(next, from, fuel: Nat)` works, while an algebraic existential loop
-invariant does not exist, numeric recursion rejects the array parameter,
-`Integer` equality cannot be rewritten through `to_nat`, and a resource fact
-cannot mention the recursive function. Do not encode the witness as an empty
-produced token merely to route around those gaps; settle the algebraic ghost
-witness design first. The root rejection is gate-checked without any DFS
-machinery by `mdtests/algebraic_existential_witness_rejected.md`; the reduction
-also records the narrow algebraic `exists`/`witness`/`choose` implementation
-path that would resolve it.
+Graph reachability now has first-class algebraic quantifiers and ghost
+witnesses. `mdtests/algebraic_existential_witness.md` checks algebraic
+`exists`, `forall`, `witness`, and `choose`, including reuse beneath
+`Nat::Succ`; `mdtests/algebraic_existential_loop_witness.md` opens an explicit
+`invariant N` source and rebuilds a changing `Nat` witness at the back edge.
+No C bookkeeping or produced token is involved.
+
+Applying the same mechanism to `walk(next, from, fuel)` exposed the next
+independent boundary: after the store to the disjoint `visited` array, the
+chosen relation names `next` at the iteration-entry memory snapshot while the
+successor defining equation names it at the current snapshot. Click does not
+yet transport that recursive pure-function equality across the disjoint
+store. The updated reduction is in
+`design/dfs-gaps/reachability_needs_an_algebraic_loop_witness.md`. The
+algebraic witness representation is no longer the blocker; snapshot-stable
+transport of the array-dependent relation is.
 
 The explicit
 quantified-transport, whole-array dependency, shared-lemma, extent-restatement,
@@ -136,9 +139,10 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    does not say which constant; a store refusal spells `owns b[0..1]` as
    `owns a[(v100001 - v100000)..]`.
 
-Next stages: choose and implement first-class algebraic ghost witnesses for
-loop propositions, use one to prove reachability for this search, then move to
-the recursive branching DFS. The older folded-resource route has its own gaps:
+Next stages: make the recursive `walk` relation stable across the disjoint
+`visited` store, use the now-supported algebraic witness to prove reachability
+for this search, then move to the recursive branching DFS. The older
+folded-resource route has its own gaps:
 a loop guard cannot read a cell owned by a folded resource, and recursive
 `walk` is not allowed in a resource fact.
 

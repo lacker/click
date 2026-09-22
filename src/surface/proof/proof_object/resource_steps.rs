@@ -305,6 +305,35 @@ impl<'a> Proof<'a> {
         application: &ClickFunctionApplication,
         premises: Option<&[ClickProposition]>,
     ) -> Result<CheckedFocusedTransition, ClickError> {
+        let mut referenced_names = BTreeSet::new();
+        for argument in &application.arguments {
+            collect_contract_expression_referenced_names(argument, &mut referenced_names);
+        }
+        // Unfolding refreshes the complete retained goal, not only the call
+        // selected by this step. Keep every algebraic proof local named by
+        // that goal available while it is lowered again. This remains
+        // output-sensitive: unrelated proof locals are never scanned or
+        // cloned.
+        if let Some(goal) = self.surface_goal() {
+            collect_click_proposition_referenced_names(goal, &mut referenced_names);
+        }
+        if let Some(premises) = premises {
+            for premise in premises {
+                collect_click_proposition_referenced_names(premise, &mut referenced_names);
+            }
+        }
+        let local_algebraic_values = |inherited: BTreeMap<String, SpecAlgebraicExpression>| {
+            referenced_names
+                .iter()
+                .filter_map(|name| {
+                    self.local_algebraic_values()
+                        .get(name)
+                        .or_else(|| inherited.get(name))
+                        .cloned()
+                        .map(|value| (name.clone(), value))
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
         match self.context.as_ref() {
             ProofContext::Pure(context) => {
                 let state = CState::new().with_memory(context.theorem_context.memory.clone());
@@ -313,11 +342,13 @@ impl<'a> Proof<'a> {
                     premises,
                     context.theorem_context.values.clone(),
                     context.theorem_context.array_refs.clone(),
-                    context
-                        .structural_induction_setup
-                        .as_ref()
-                        .map(|setup| setup.algebraic_values.clone())
-                        .unwrap_or_default(),
+                    local_algebraic_values(
+                        context
+                            .structural_induction_setup
+                            .as_ref()
+                            .map(|setup| setup.algebraic_values.clone())
+                            .unwrap_or_default(),
+                    ),
                     &context.theorem_context.integer_values,
                     &state,
                     &state,
@@ -339,7 +370,7 @@ impl<'a> Proof<'a> {
                     premises,
                     values,
                     array_refs,
-                    BTreeMap::new(),
+                    local_algebraic_values(BTreeMap::new()),
                     &crate::persistent::PersistentMap::default(),
                     context.pre_state,
                     context.state,
@@ -364,7 +395,7 @@ impl<'a> Proof<'a> {
                     premises,
                     values,
                     array_refs,
-                    BTreeMap::new(),
+                    local_algebraic_values(BTreeMap::new()),
                     &crate::persistent::PersistentMap::default(),
                     view.pre_state,
                     view.state,
@@ -395,7 +426,7 @@ impl<'a> Proof<'a> {
                     premises,
                     values,
                     array_refs,
-                    BTreeMap::new(),
+                    local_algebraic_values(BTreeMap::new()),
                     &crate::persistent::PersistentMap::default(),
                     pre_state,
                     &execution.core.state,

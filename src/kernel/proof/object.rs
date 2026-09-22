@@ -176,7 +176,7 @@ pub(crate) enum PropositionCloseError {
     InstantiateInvalid(super::fact_reasoning::ForallInt32InstantiationError),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum PropositionIntroduction {
     Implication,
     /// A universal introduction reports the exact kernel variable it bound
@@ -186,6 +186,7 @@ pub(crate) enum PropositionIntroduction {
     Universal {
         variable: crate::kernel::Variable,
         pointer: Option<crate::kernel::CType>,
+        algebraic: Option<crate::kernel::AlgebraicType>,
     },
     Negation,
 }
@@ -830,30 +831,40 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 PropositionIntroduction::Implication,
             ),
             Proposition::ForAll { var, sort, body } => {
-                let (variable, body, pointer) = match sort {
+                let (variable, body, pointer, algebraic) = match sort {
                     Sort::CPointer(c_type) => {
                         let (variable, body) = facts
                             .freshen_pointer_forall_body(*var, *c_type, body)
                             .ok_or(PropositionCloseError::UniversalWitnessFresheningExhausted)?;
-                        (variable, body, Some(*c_type))
+                        (variable, body, Some(*c_type), None)
                     }
                     Sort::Integer => {
                         let (variable, body) = facts
                             .freshen_integer_forall_body(*var, body)
                             .ok_or(PropositionCloseError::IntegerFresheningExhausted)?;
-                        (variable, body, None)
+                        (variable, body, None, None)
+                    }
+                    Sort::Algebraic(algebraic_type) => {
+                        let (variable, body) = facts
+                            .freshen_algebraic_forall_body(*var, algebraic_type, body)
+                            .ok_or(PropositionCloseError::UniversalWitnessFresheningExhausted)?;
+                        (variable, body, None, Some(algebraic_type.clone()))
                     }
                     _ => {
                         let (variable, body) = facts
                             .freshen_int32_forall_body(*var, body)
                             .ok_or(PropositionCloseError::UniversalWitnessFresheningExhausted)?;
-                        (variable, body, None)
+                        (variable, body, None, None)
                     }
                 };
                 (
                     body,
                     None,
-                    PropositionIntroduction::Universal { variable, pointer },
+                    PropositionIntroduction::Universal {
+                        variable,
+                        pointer,
+                        algebraic,
+                    },
                 )
             }
             Proposition::Not(body) => (

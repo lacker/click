@@ -1229,7 +1229,7 @@ pub enum ResourceKind {
     Token,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum ClickProposition {
     Comparison {
         left: ContractExpression,
@@ -1300,6 +1300,62 @@ pub enum ClickProposition {
         name: String,
         arguments: Vec<ContractExpression>,
     },
+}
+
+impl Clone for ClickProposition {
+    fn clone(&self) -> Self {
+        clone_click_proposition_iteratively(self)
+    }
+}
+
+fn clone_click_proposition_atom(proposition: &ClickProposition) -> ClickProposition {
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => ClickProposition::Comparison {
+            left: left.clone(),
+            operator: *operator,
+            right: right.clone(),
+        },
+        ClickProposition::FloatClassification {
+            expression,
+            classification,
+        } => ClickProposition::FloatClassification {
+            expression: expression.clone(),
+            classification: *classification,
+        },
+        ClickProposition::Separate { left, right } => ClickProposition::Separate {
+            left: left.clone(),
+            right: right.clone(),
+        },
+        ClickProposition::Contains { parent, child } => ClickProposition::Contains {
+            parent: parent.clone(),
+            child: child.clone(),
+        },
+        ClickProposition::Loadable { segment } => ClickProposition::Loadable {
+            segment: segment.clone(),
+        },
+        ClickProposition::Defined { expression } => ClickProposition::Defined {
+            expression: expression.clone(),
+        },
+        ClickProposition::PredicateCall { name, arguments } => ClickProposition::PredicateCall {
+            name: name.clone(),
+            arguments: arguments.clone(),
+        },
+        ClickProposition::At { .. }
+        | ClickProposition::And(..)
+        | ClickProposition::Or(..)
+        | ClickProposition::Not(..)
+        | ClickProposition::Implies(..)
+        | ClickProposition::ForAll { .. }
+        | ClickProposition::Exists { .. }
+        | ClickProposition::RangeAll { .. }
+        | ClickProposition::RangeAny { .. } => {
+            unreachable!("structural propositions are cloned by the iterative traversal")
+        }
+    }
 }
 
 pub(crate) fn clone_click_proposition_iteratively(
@@ -1423,7 +1479,7 @@ pub(crate) fn clone_click_proposition_iteratively(
                     });
                     frames.push(Frame::Visit(body));
                 }
-                atomic => values.push(atomic.clone()),
+                atomic => values.push(clone_click_proposition_atom(atomic)),
             },
             Frame::BuildAt(selector) => {
                 let proposition = values.pop().expect("the anchored proposition is cloned");
@@ -5295,6 +5351,7 @@ pub struct ProofChoice {
 pub enum ProofFactSource {
     Requirement(usize),
     RequirementLabel(String),
+    Invariant(usize),
 }
 
 /// A `.click` tactic that may search for a proof.
@@ -6366,7 +6423,9 @@ impl Requirement {
     /// stay refused where this returns `None`.
     pub(crate) fn theorem_proposition(&self) -> Option<ClickProposition> {
         match self.inner() {
-            Self::Proposition(proposition) => Some(proposition.clone()),
+            Self::Proposition(proposition) => {
+                Some(clone_click_proposition_iteratively(proposition))
+            }
             Self::LoadableSegment { segment } => Some(ClickProposition::Loadable {
                 segment: segment.clone(),
             }),
