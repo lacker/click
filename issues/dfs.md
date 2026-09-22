@@ -9,6 +9,52 @@ blocks trusting the first:
   before feature work. Everything a new agent needs is in this file and in
   `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
+## Handoff checkpoint — 2026-09-21, after `624146d4`
+
+The shared separation/range-validity fix is merged and the full
+`scripts/check.sh` gate passes. The saved DFS proof was rerun unchanged against
+this commit: it still fails at the loop back edge's quantified viewability
+obligation for `next`. The nonnegative count and strict-decrease facts appear
+in the checked context; the remaining unclosed leaf is the universal
+`viewable(next[k])` fact. This is a normal proof failure, not a timeout.
+
+This is **not yet a routine cleanup handoff**:
+
+- The remaining Part 2 snapshot/aliasing items are investigations, not confirmed
+  false-theorem witnesses or implementation plans. The ancestor-load naming
+  rule and unrelated-snapshot comparison need careful semantic reasoning;
+  retain experienced review for their conclusions and any kernel changes.
+- The confirmed DFS blocker concerns quantified facts across memory snapshots
+  and the checked loop-invariant bundle. Reduce that failure before choosing
+  a fix; the current evidence does not establish whether the missing step is
+  in proof construction, presentation, or a kernel rule.
+- Moving an already verified lemma into the checked lemma fixture, refreshing
+  old reproductions, and reducing a diagnostic are bounded tasks suitable for
+  a less capable agent. Whole-array dependency refinement, reachability, and
+  recursive DFS remain design work, not small finishing edits.
+
+For a bounded first assignment, reduce
+`design/dfs-gaps/search_terminates_blocked.md` to the smallest reproduction of
+its quantified-viewability failure, identify the producer and consumer
+snapshots, and report a proposed regression and fix before changing semantics.
+The remaining Part 2 audits still precede resuming feature implementation.
+
+This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
+Those files include historical diagnostics, and other small gaps/tooling notes
+below have not all been retested on this commit. In particular, the old
+`a_second_universal_have_cannot_narrow_a_stated_range.md` defect was fixed in
+`88b05d28`; its checked regression is
+`mdtests/a_second_universal_have_narrows_a_stated_range.md`. Do not reopen it
+merely because an old reduction mentions its former filename.
+
+Preserve the user's design constraints: keep the C fixed, avoid proof hacks,
+and discuss a proof-language migration when it offers a simpler design.
+Direct aggregate `views` remain restricted; use declared resources and the
+accepted pointer/array forms documented in `docs/concepts/resources.md` and
+`docs/concepts/viewability.md`. The fold-read-range design in Part 1 item 3
+still needs discussion before implementation. No scratch files or conversation
+history are required to reproduce the current blocker.
+
 ---
 
 # Part 1 — the DFS example

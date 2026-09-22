@@ -1,10 +1,13 @@
 # a pointer-chasing search terminates on the number of unmarked cells
 
-**BLOCKED — this file does not verify.** It is the stage-3 example at the
-furthest point it reaches on master `e120897d`. Everything below verifies
-except the last member of the back-edge bundle; the refusal is quoted at the
-end. Do not move it into `mdtests/` until
-`a_second_universal_have_cannot_narrow_a_stated_range.md` is fixed.
+**BLOCKED — this file does not verify.** Rerun unchanged on 2026-09-21 at
+`624146d4`: the loop back edge still lacks the quantified viewability fact for
+`next`; the count's nonnegativity and strict decrease are available. The
+refusals quoted at the end are historical observations from `e120897d`.
+The earlier range-narrowing defect was fixed in `88b05d28`, with regression
+`mdtests/a_second_universal_have_narrows_a_stated_range.md`; it is not the
+remaining prerequisite. See `issues/dfs.md` for the current handoff checkpoint.
+Do not move this file into `mdtests/` until the complete proof verifies.
 
 
 `next` holds quasi-pointers: every entry of `next[0..n]` is itself an index
@@ -460,4 +463,5 @@ base=pointer(external+(v100000*4+v3000000*4)), bytes=4))
 ```
 
 which is the viewability half of the quantified `next` invariant at the back
-edge. See `a_second_universal_have_cannot_narrow_a_stated_range.md`.
+edge. The old range-narrowing defect is fixed; see the current checkpoint in
+`issues/dfs.md` and `a_universal_fact_does_not_transport.md`.
