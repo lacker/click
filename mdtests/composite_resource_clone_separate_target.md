@@ -24,7 +24,7 @@ int32 clone_cursor(struct cursor* target, struct cursor* source) {
 resource owned_cursor(owner: struct cursor*) {
     owns owner->pos;
     owns owner->len;
-    owns owner->data;
+    owns &owner->data;
     fact 0 <= owner->pos;
     fact owner->pos <= owner->len;
     fact separate(

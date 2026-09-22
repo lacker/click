@@ -1918,6 +1918,7 @@ impl<'a> Proof<'a> {
                     path.outcome().clone(),
                     path.execution_facts(),
                     path.obligations().to_vec(),
+                    path.loan_evidence().clone(),
                 ));
                 outcome_provenance.push(provenance);
                 evidence_plan.push(OutcomeEvidenceFork::Keep);
@@ -1979,18 +1980,20 @@ impl<'a> Proof<'a> {
                         path.outcome().clone(),
                         execution_facts,
                         path.obligations().to_vec(),
+                        path.loan_evidence().clone(),
                     ));
                     outcome_provenance.push(provenance);
                 },
             )?;
             evidence_plan.push(fork);
         }
-        let candidates = crate::kernel::c_function_execution_candidates_from_outcomes(
-            checked.state().clone(),
-            checked.function().clone(),
-            checked.arguments().to_vec(),
-            paths,
-        );
+        let candidates =
+            crate::kernel::c_function_execution_candidates_from_outcomes_with_loan_evidence(
+                checked.state().clone(),
+                checked.function().clone(),
+                checked.arguments().to_vec(),
+                paths,
+            );
         execution
             .core
             .fork_outcome_evidence(&evidence_plan)

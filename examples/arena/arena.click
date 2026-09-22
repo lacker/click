@@ -1,6 +1,6 @@
 resource arena_metadata(arena: struct arena*) {
-    owns arena->data;
-    owns arena->occupied;
+    owns &arena->data;
+    owns &arena->occupied;
     owns arena->capacity;
     owns arena->live_regions;
     contains allocation(arena->data, arena->capacity * 4);

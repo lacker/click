@@ -40,7 +40,7 @@ int32 probe_contract(struct job *j) {
 verifying "probe_contract.c";
 
 resource task(j: struct job*) {
-    views j->p;
+    views &j->p;
     views j->lo;
     views j->hi;
     views j->v;
@@ -54,7 +54,7 @@ int32 probe_contract(struct job *j) {
     requires 0 <= j->lo;
     requires j->lo <= j->hi;
     requires separate(memory(j[0..6]), memory(j->p[j->lo..j->hi]));
-    views j->p;
+    views &j->p;
     views j->lo;
     views j->hi;
     views j->v;

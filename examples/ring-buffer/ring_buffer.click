@@ -1,6 +1,6 @@
 resource ring_frame(owner: struct ring_buffer*) {
     owns owner->head;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..4];
     fact 2 <= owner->head;
     fact owner->head < 4;
@@ -56,7 +56,7 @@ int32 ring_buffer_push_wrap(
     requires owner->head < 4;
     requires separate(memory(object(owner)), memory(owner->data[0..4]));
     views owner->head;
-    views owner->data;
+    views &owner->data;
     views owner->data[1..4];
     owns owner->tail;
     owns owner->data[0..1];
@@ -92,7 +92,7 @@ int32 ring_buffer_pop_to_linear(
     requires owner->head < 4;
     requires separate(memory(object(owner)), memory(owner->data[0..4]));
     views owner->head;
-    views owner->data;
+    views &owner->data;
     views owner->data[0..4];
     owns owner->tail;
 

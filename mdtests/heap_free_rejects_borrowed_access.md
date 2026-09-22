@@ -14,9 +14,13 @@ int32 heap_free_rejects_borrowed_access(struct item* item) {
 ```click
 verifying "heap_free_rejects_borrowed_access.c";
 
+resource item_storage(p: struct item*) {
+    owns object(p);
+}
+
 int32 heap_free_rejects_borrowed_access(struct item* item) {
     requires item != 0;
-    views object(item);
+    views item_storage(item);
 
     ensures result == 0;
 } by {

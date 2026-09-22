@@ -42,7 +42,7 @@ resource parent(p: struct parent*) {
     match link {
         ParentLink::Empty => {},
         ParentLink::Linked(kid) => {
-            owns p->kid;
+            owns &p->kid;
             fact p->kid == kid;
             fact kid != 0;
         },

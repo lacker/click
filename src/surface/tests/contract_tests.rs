@@ -631,7 +631,7 @@ fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
         "#;
     let click_source = r#"
             resource allocated_cell(owner: struct cell_owner*) {
-                owns owner->data;
+                owns &owner->data;
                 contains allocation(owner->data, 4);
                 owns owner->data[0..1];
             }
@@ -745,7 +745,7 @@ pub(super) fn result_case_split_sources() -> (&'static str, &'static str, &'stat
         "#;
     let click_source = r#"
             resource allocated_cell(owner: struct cell_owner*) {
-                owns owner->data;
+                owns &owner->data;
                 contains allocation(owner->data, 4);
                 owns owner->data[0..1];
             }

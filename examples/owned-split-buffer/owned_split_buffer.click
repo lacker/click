@@ -21,7 +21,7 @@ theorem int32_equality_transitive(first: int32, second: int32, third: int32) {
 resource owned_split_buffer(owner: struct owned_split_buffer*) {
     owns owner->split;
     owns owner->len;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..owner->split];
     owns owner->data[owner->split..owner->len];
     fact 0 <= owner->split;
@@ -75,7 +75,7 @@ int32 owned_split_buffer_set_left(
     );
     views owner->split;
     views owner->len;
-    views owner->data;
+    views &owner->data;
     owns owner->data[index..index + 1];
     ensures result == value;
     ensures owner->data[index] == value;
@@ -102,7 +102,7 @@ int32 owned_split_buffer_set_right(
     );
     views owner->split;
     views owner->len;
-    views owner->data;
+    views &owner->data;
     owns owner->data[index..index + 1];
     ensures result == value;
     ensures owner->data[index] == value;
@@ -118,7 +118,7 @@ int32 owned_split_buffer_set_right(
 int32 owned_split_buffer_move_right(struct owned_split_buffer* owner) {
     requires owner->split < owner->len;
     views owner->len;
-    views owner->data;
+    views &owner->data;
     owns owner->split;
     ensures result == old(owner->split) + 1;
     ensures owner->split == old(owner->split) + 1;

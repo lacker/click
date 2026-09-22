@@ -101,8 +101,8 @@ resource rb_at(p: struct rb_node*, parent: struct rb_node*) {
         RbTree::Empty => { fact p == 0; },
         RbTree::Node(identity, color, left_model, right_model) => {
             owns p->__rb_parent_color;
-            owns p->rb_left;
-            owns p->rb_right;
+            owns &p->rb_left;
+            owns &p->rb_right;
             owns left: rb_at(p->rb_left, p);
             owns right: rb_at(p->rb_right, p);
             fact p != 0;
@@ -122,15 +122,15 @@ resource ctx_at(child: struct rb_node*, parent: struct rb_node*,
     field model: Context;
     match model {
         Context::Top => {
-            owns root->rb_node;
+            owns &root->rb_node;
             fact root != 0;
             fact parent == 0;
             fact root->rb_node == child;
         },
         Context::Left(identity, grandparent, color, sibling_model, up_model) => {
             owns parent->__rb_parent_color;
-            owns parent->rb_left;
-            owns parent->rb_right;
+            owns &parent->rb_left;
+            owns &parent->rb_right;
             owns sibling: rb_at(parent->rb_right, parent);
             owns up: ctx_at(parent, grandparent, root);
             fact parent != 0;
@@ -146,8 +146,8 @@ resource ctx_at(child: struct rb_node*, parent: struct rb_node*,
         },
         Context::Right(identity, grandparent, color, sibling_model, up_model) => {
             owns parent->__rb_parent_color;
-            owns parent->rb_left;
-            owns parent->rb_right;
+            owns &parent->rb_left;
+            owns &parent->rb_right;
             owns sibling: rb_at(parent->rb_left, parent);
             owns up: ctx_at(parent, grandparent, root);
             fact parent != 0;

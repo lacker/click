@@ -76,7 +76,7 @@ int32 spin_past_a_switch(struct node* node, int32 k) {
 resource zero_list(node: struct node*) {
     if node != 0 {
         owns node->value;
-        owns node->next;
+        owns &node->next;
         fact node->value == 0;
         contains zero_list(node->next);
     }

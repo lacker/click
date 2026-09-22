@@ -3250,7 +3250,7 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
                 effect_facts,
                 obligations: path.obligations,
                 theorem,
-                loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
+                loan_evidence: path.loan_evidence,
             }
         })
         .collect();
@@ -3529,7 +3529,7 @@ fn symbolic_c_statement_execution_with_loop_rule(
                 effect_facts,
                 obligations: path.obligations,
                 theorem,
-                loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
+                loan_evidence: path.loan_evidence,
             }
         })
         .collect();

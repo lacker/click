@@ -96,8 +96,8 @@ resource rb_at(p: struct rb_node*) {
         RbTree::Empty => { fact p == 0; },
         RbTree::Node(identity, parent, color, left_model, right_model) => {
             owns p->__rb_parent_color;
-            owns p->rb_left;
-            owns p->rb_right;
+            owns &p->rb_left;
+            owns &p->rb_right;
             owns left: rb_at(p->rb_left);
             owns right: rb_at(p->rb_right);
             fact p != 0;
@@ -116,14 +116,14 @@ resource ctx_at(child: struct rb_node*, root: struct rb_root*) {
     field model: Context;
     match model {
         Context::Top => {
-            owns root->rb_node;
+            owns &root->rb_node;
             fact root != 0;
             fact root->rb_node == child;
         },
         Context::Left(identity, grandparent, color, sibling_model, up_model) => {
             owns identity->__rb_parent_color;
-            owns identity->rb_left;
-            owns identity->rb_right;
+            owns &identity->rb_left;
+            owns &identity->rb_right;
             owns sibling: rb_at(identity->rb_right);
             owns up: ctx_at(identity, root);
             fact identity != 0;
@@ -138,8 +138,8 @@ resource ctx_at(child: struct rb_node*, root: struct rb_root*) {
         },
         Context::Right(identity, grandparent, color, sibling_model, up_model) => {
             owns identity->__rb_parent_color;
-            owns identity->rb_left;
-            owns identity->rb_right;
+            owns &identity->rb_left;
+            owns &identity->rb_right;
             owns sibling: rb_at(identity->rb_left);
             owns up: ctx_at(identity, root);
             fact identity != 0;
@@ -397,7 +397,7 @@ theorem plug_keeps_first(ctx: Context, sub: RbTree, node: struct rb_node*) {
 }
 
 struct rb_node* rb_first(const struct rb_root* root) {
-    consumes root->rb_node;
+    consumes &root->rb_node;
     consumes t: rb_at(root->rb_node);
     requires root != 0;
     produces ctx: ctx_at(result, root);

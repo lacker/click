@@ -10,8 +10,8 @@ resource arena_after_first_two(arena: struct arena*) {
     field tag: ArenaOneTag;
     match tag {
         ArenaOneTag::One => {
-            owns arena->data;
-            owns arena->occupied;
+            owns &arena->data;
+            owns &arena->occupied;
             owns arena->capacity;
             owns arena->live_regions;
             owns arena->occupied[0..arena->capacity];
@@ -35,8 +35,8 @@ resource arena_after_second_two(arena: struct arena*) {
     field tag: ArenaTwoTag;
     match tag {
         ArenaTwoTag::Two => {
-            owns arena->data;
-            owns arena->occupied;
+            owns &arena->data;
+            owns &arena->occupied;
             owns arena->capacity;
             owns arena->live_regions;
             owns arena->occupied[0..arena->capacity];

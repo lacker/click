@@ -41,7 +41,7 @@ int32 replace_after_scoped_open(struct cell_owner* owner) {
 
 ```click
 resource allocated_cell(owner: struct cell_owner*) {
-    owns owner->data;
+    owns &owner->data;
     contains allocation(owner->data, 4);
     owns owner->data[0..1];
 }

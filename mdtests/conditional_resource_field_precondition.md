@@ -16,7 +16,7 @@ int32 known_nonempty_next(struct link* node) {
 ```click
 resource maybe_link(node: struct link*) {
     if node != 0 {
-        owns node->next;
+        owns &node->next;
     }
 }
 

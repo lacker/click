@@ -55,29 +55,29 @@ verifying "rb_augment_callbacks.c";
 
 contract void Propagate(struct node* node, struct node* stop) {
     requires node != 0;
-    owns node->left;
+    owns &node->left;
     ensures node->left == old(node->left);
 }
 
 contract void Copy(struct node* old, struct node* new) {
     requires old != 0;
     requires new != 0;
-    owns new->left;
+    owns &new->left;
     ensures new->left == old(new->left);
 }
 
 contract void Rotate(struct node* old, struct node* new) {
     requires new != 0;
-    owns new->left;
-    owns new->right;
+    owns &new->left;
+    owns &new->right;
     ensures new->left == old(new->left);
     ensures new->right == old(new->right);
 }
 
 resource callback_suite(augment: const struct rb_augment_callbacks*) {
-    owns augment->propagate;
-    owns augment->copy;
-    owns augment->rotate;
+    owns &augment->propagate;
+    owns &augment->copy;
+    owns &augment->rotate;
     fact Propagate(augment->propagate);
     fact Copy(augment->copy);
     fact Rotate(augment->rotate);
@@ -89,8 +89,8 @@ void erase_augmented(struct node* node, struct node* parent,
     requires node != 0;
     requires parent != 0;
     requires separate(memory(object(augment)), memory(object(parent)));
-    owns parent->left;
-    owns parent->right;
+    owns &parent->left;
+    owns &parent->right;
     ensures parent->left == old(parent->left);
     ensures parent->right == old(parent->right);
 } by {

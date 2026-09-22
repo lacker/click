@@ -1,7 +1,7 @@
 resource nonempty_vector(owner: struct vector*) {
     owns owner->len;
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..owner->cap];
     fact 1 <= owner->len;
     fact owner->len <= owner->cap;
@@ -16,7 +16,7 @@ int32 vector_push(struct vector* owner, int32 value) {
     requires separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
     consumes owner->len;
     consumes owner->cap;
-    consumes owner->data;
+    consumes &owner->data;
     consumes owner->data[0..owner->cap];
     produces nonempty_vector(owner);
     ensures result == old(owner->len) + 1;

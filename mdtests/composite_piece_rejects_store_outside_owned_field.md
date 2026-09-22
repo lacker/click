@@ -18,13 +18,13 @@ void set_next_to_self(struct node* n) {
 ```click
 resource cell(n: struct node*) {
     owns n->value;
-    owns n->next;
+    owns &n->next;
 }
 
 verifying "composite_piece_rejects_store_outside_owned_field.c";
 
 void set_next_to_self(struct node* n) {
-    views n->next;
+    views &n->next;
     owns n->value;
 } by {
     step();

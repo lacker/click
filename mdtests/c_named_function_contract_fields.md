@@ -23,6 +23,10 @@ int32 use_callbacks(struct callback_table* table, int32 left, int32 right) {
 ```click
 verifying "use_callbacks.c";
 
+resource callback_table_storage(p: struct callback_table*) {
+    owns object(p);
+}
+
 contract int32 Addition(int32 left, int32 right) {
     requires 0 <= left;
     requires 0 <= right;
@@ -46,7 +50,7 @@ contract int32 Difference(int32 left, int32 right) {
 }
 
 int32 use_callbacks(struct callback_table* table, int32 left, int32 right) {
-    views object(table);
+    views callback_table_storage(table);
     requires Addition(table->add);
     requires Difference(table->subtract);
     requires 0 <= left;

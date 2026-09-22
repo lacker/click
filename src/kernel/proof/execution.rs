@@ -3483,6 +3483,7 @@ pub(crate) struct PendingExceptionalPath {
     pub(crate) execution_facts: Vec<ExecutionPureFact>,
     pub(crate) obligations: Vec<crate::kernel::ProofObligation>,
     pub(crate) pure_facts: ProofFacts,
+    pub(crate) loan_evidence: crate::kernel::loans::CheckedLoanCallEvidenceSequence,
 }
 
 /// Surface-independent execution state owned by a checked proof branch.
@@ -4701,6 +4702,7 @@ impl ExecutionProofCore {
         }
         self.pending_exceptional.push(PendingExceptionalPath {
             trace: exceptional.execution_evidence[0].clone(),
+            loan_evidence: exceptional.loan_evidence.clone(),
             outcome,
             execution_facts,
             obligations,
@@ -6709,14 +6711,10 @@ impl ExecutionProofCore {
                     obligations,
                     &statement_assumptions,
                     &mut ExecutionBudget::beside_live_state(),
-                    // A path that lent at entry recovers at exit; one that
-                    // entered from the contract's declared resources reads
-                    // the outcome through them definitionally.
-                    if candidate.loan_evidence().is_empty() {
-                        crate::kernel::functions::ResourceTransitionPurpose::FunctionBoundary
-                    } else {
-                        crate::kernel::functions::ResourceTransitionPurpose::CallSite
-                    },
+                    // This is the enclosing function's boundary. Retained
+                    // call evidence belongs to calls inside its body; it does
+                    // not mean the function lent its own inputs at entry.
+                    crate::kernel::functions::ResourceTransitionPurpose::FunctionBoundary,
                 ) {
                     Ok(Ok(exit)) => exit,
                     Ok(Err(error)) => (

@@ -62,8 +62,8 @@ resource tree_at(p: struct node*) {
     match model {
         Shape::Empty => { fact p == 0; },
         Shape::Node(identity, left_model, right_model) => {
-            owns p->left;
-            owns p->right;
+            owns &p->left;
+            owns &p->right;
             owns left: tree_at(p->left);
             owns right: tree_at(p->right);
             fact p != 0;
@@ -107,7 +107,7 @@ void clobber(struct node* old, struct node* new) {
     requires new != 0;
     requires old != new;
     owns t: tree_at(new);
-    owns old->left;
+    owns &old->left;
     owns old->augmented;
     owns new->augmented;
     ensures 0 <= new->augmented;
@@ -127,8 +127,8 @@ struct node* rotate_left(
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes l: tree_at(node->left);
     consumes r: tree_at(node->right);
     requires r.model != Shape::Empty;
@@ -189,8 +189,8 @@ struct node* rotate_clobber(struct node* node) {
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes a: tree_at(node->left);
     consumes b: tree_at(node->right);
     requires b.model != Shape::Empty;
@@ -216,8 +216,8 @@ struct node* rotate_reset(struct node* node) {
     requires node != node->right;
     requires 0 <= node->augmented;
     requires node->augmented < 1000;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes a: tree_at(node->left);
     consumes b: tree_at(node->right);
     requires b.model != Shape::Empty;

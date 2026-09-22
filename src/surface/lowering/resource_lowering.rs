@@ -17,6 +17,16 @@ pub(in crate::surface) fn initial_call_state(
     parameters: &[syntax::C0Parameter],
     function: &CFunction,
 ) -> Result<(CState, Vec<CExpression>), ClickError> {
+    let aggregate_parameters = parameters
+        .iter()
+        .filter(|parameter| parameter.is_struct_value())
+        .map(|parameter| parameter.name())
+        .collect::<BTreeSet<_>>();
+    for requirement in requires {
+        if let Requirement::Resource(resource) = requirement.inner() {
+            reject_aggregate_parameter_storage_resource(resource, &aggregate_parameters)?;
+        }
+    }
     let mut arguments = Vec::new();
 
     for (index, parameter) in parameters.iter().enumerate() {
@@ -182,6 +192,33 @@ pub(in crate::surface) fn initial_call_state(
         }
     }
 
+    // Install ordinary function storage before adding symbolic loadable
+    // cells. Otherwise a loadable clause can create a block first and leave
+    // entry initialization unable to install its stable typed cells.
+    let mut state = crate::kernel::initialize_c_function_globals(&CState::new(), function);
+    if parameters
+        .iter()
+        .any(|parameter| parameter.is_struct_value())
+    {
+        // A by-value argument is an already-evaluated C value. Materialize its
+        // aggregate image using the same typed copy operation as C calls,
+        // before resource clauses follow any pointer fields. This image is
+        // caller storage; the callee still receives its own fresh copy.
+        state = crate::kernel::c_function_entry_state(&state, function, &arguments)
+            .ok_or_else(|| ClickError::new("could not materialize aggregate argument values"))?;
+        for (parameter, argument) in parameters.iter().zip(&mut arguments) {
+            if parameter.is_struct_value() {
+                *argument = c_typed_pointer_value(
+                    state
+                        .locals()
+                        .aggregate_object_pointer(parameter.name())
+                        .expect("materialized aggregate argument")
+                        .clone(),
+                    parameter.to_kernel_parameter().c_type(),
+                );
+            }
+        }
+    }
     let mut loadable_ranges = BTreeMap::new();
     for requirement in requires {
         if let Some((name, bytes)) = concrete_loadable_block(requirement, parameters, &arguments)? {
@@ -195,10 +232,6 @@ pub(in crate::surface) fn initial_call_state(
         }
     }
 
-    // Install ordinary function storage before adding symbolic loadable
-    // cells. Otherwise a loadable clause can create a block first and leave
-    // entry initialization unable to install its stable typed cells.
-    let state = crate::kernel::initialize_c_function_globals(&CState::new(), function);
     let memory = memory_with_symbolic_loadable_cells(state.memory().clone(), &loadable_ranges);
     // In particular, a resource such as `pointer[0..1]` must follow the
     // pointer value already present in the entry state, rather than deriving
@@ -208,6 +241,47 @@ pub(in crate::surface) fn initial_call_state(
     let state = state.with_memory(memory);
     let resources = resource_context_from_requirements(requires, parameters, &arguments, &state)?;
     Ok((state.with_resource_context(resources), arguments))
+}
+
+/// A contract may transfer memory reached through a copied pointer value,
+/// but cannot borrow or transfer the callee's private parameter object.
+fn reject_aggregate_parameter_storage_resource(
+    resource: &ResourceClause,
+    parameters: &BTreeSet<&str>,
+) -> Result<(), ClickError> {
+    fn root(expression: &CExpression) -> Option<&str> {
+        match expression {
+            CExpression::Variable(name) => Some(name),
+            CExpression::PointerOffsetBytes { pointer, .. } | CExpression::AddressOf(pointer) => {
+                root(pointer)
+            }
+            CExpression::Add(pointer, _) | CExpression::Subtract(pointer, _) => root(pointer),
+            CExpression::TypedLoad {
+                pointer,
+                value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+                ..
+            } => root(pointer),
+            _ => None,
+        }
+    }
+    let segments = match resource {
+        ResourceClause::Named { resource, .. } => {
+            return reject_aggregate_parameter_storage_resource(resource, parameters);
+        }
+        ResourceClause::OwnMemory(segment) | ResourceClause::ViewMemory(segment) => {
+            std::slice::from_ref(segment)
+        }
+        ResourceClause::MemoryAggregate { segments, .. } => segments,
+        _ => return Ok(()),
+    };
+    for segment in segments {
+        if let Some(parameter) = root(&segment.base).filter(|name| parameters.contains(name)) {
+            return Err(ClickError::new(format!(
+                "by-value parameter `{parameter}` supplies its field values directly; its private storage cannot be an input resource"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(in crate::surface) fn memory_with_symbolic_loadable_cells(

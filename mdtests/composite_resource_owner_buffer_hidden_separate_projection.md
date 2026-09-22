@@ -18,7 +18,7 @@ int32 observe_owner(struct owner* owner) {
 ```click
 resource owned_buffer(owner: struct owner*) {
     owns owner->len;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..owner->len];
     fact owner->len == 1;
 }

@@ -46,7 +46,7 @@ int32 replace_after_dynamic_open(struct cell_owner* owner) {
 ```click
 resource allocated_dynamic_cell(owner: struct cell_owner*) {
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     contains allocation(owner->data, owner->cap * 4);
     owns owner->data[0..owner->cap];
     fact owner->cap == 1 or owner->cap == 2;

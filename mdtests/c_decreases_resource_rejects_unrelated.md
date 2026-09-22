@@ -20,7 +20,7 @@ int32 swap_repeat(struct node* node, struct node* other) {
 resource zero_list(node: struct node*) {
     if node != 0 {
         owns node->value;
-        owns node->next;
+        owns &node->next;
         contains zero_list(node->next);
     }
 }

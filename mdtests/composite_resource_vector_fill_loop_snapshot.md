@@ -30,7 +30,7 @@ int32 composite_resource_vector_fill_loop_snapshot(
 resource vector(owner: struct vector*) {
     owns owner->len;
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;

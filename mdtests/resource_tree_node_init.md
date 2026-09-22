@@ -41,8 +41,8 @@ resource tree_at(p: struct tree_node*) {
         HeapTree::Empty => { fact p == 0; },
         HeapTree::Node(identity, value, left_model, right_model) => {
             owns p->value;
-            owns p->left;
-            owns p->right;
+            owns &p->left;
+            owns &p->right;
             owns left: tree_at(p->left);
             owns right: tree_at(p->right);
             fact p != 0;
@@ -57,8 +57,8 @@ resource tree_at(p: struct tree_node*) {
 void tree_node_init(struct tree_node* node, int value,
                     struct tree_node* left, struct tree_node* right) {
     consumes node->value;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes l: tree_at(left);
     consumes r: tree_at(right);
     requires node != 0;

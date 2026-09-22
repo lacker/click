@@ -49,8 +49,8 @@ struct node *rotate_reset(struct node *node) {
 ```click
 resource shape(node: struct node*) {
     if node != 0 {
-        owns node->left;
-        owns node->right;
+        owns &node->left;
+        owns &node->right;
         contains shape(node->left);
         contains shape(node->right);
     }
@@ -64,7 +64,7 @@ contract void AugmentRotate(struct node* old, struct node* new) {
     requires old != new;
     requires old->left != 0;
     views old->left->augmented;
-    views old->left;
+    views &old->left;
     owns old->augmented;
     owns new->augmented;
 }
@@ -75,7 +75,7 @@ void bump(struct node* old, struct node* new) {
     requires old != new;
     requires old->left != 0;
     views old->left->augmented;
-    views old->left;
+    views &old->left;
     owns old->augmented;
     owns new->augmented;
 } by {
@@ -103,8 +103,8 @@ struct node* rotate_left(
     requires node->right != 0;
     requires node != node->right;
     requires node->left != 0;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes shape(node->left);
     consumes shape(node->right);
     views node->left->augmented;
@@ -133,8 +133,8 @@ struct node* rotate_bump(struct node* node) {
     requires node->right != 0;
     requires node != node->right;
     requires node->left != 0;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes shape(node->left);
     consumes shape(node->right);
     views node->left->augmented;
@@ -153,8 +153,8 @@ struct node* rotate_reset(struct node* node) {
     requires node->right != 0;
     requires node != node->right;
     requires node->left != 0;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes shape(node->left);
     consumes shape(node->right);
     views node->left->augmented;

@@ -42,7 +42,7 @@ int32 parameter_is_null(struct node* p, struct node* q) {
 }
 
 int32 cell_is_null(struct node* n, struct node* q) {
-    owns n->left;
+    owns &n->left;
     requires n->left == 0;
     requires q != 0;
     ensures result == 0;

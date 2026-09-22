@@ -45,9 +45,9 @@ resource ptree_at(p: struct tree_node*, parent: struct tree_node*) {
         HeapTree::Empty => { fact p == 0; },
         HeapTree::Node(identity, value, left_model, right_model) => {
             owns p->value;
-            owns p->left;
-            owns p->right;
-            owns p->parent;
+            owns &p->left;
+            owns &p->right;
+            owns &p->parent;
             owns left: ptree_at(p->left, p);
             owns right: ptree_at(p->right, p);
             fact p != 0;
@@ -72,9 +72,9 @@ resource pctx_at(child: struct tree_node*, parent: struct tree_node*) {
         Context::Top => { fact parent == 0; },
         Context::Left(identity, grandparent, value, sibling_model, up_model) => {
             owns parent->value;
-            owns parent->left;
-            owns parent->right;
-            owns parent->parent;
+            owns &parent->left;
+            owns &parent->right;
+            owns &parent->parent;
             owns sibling: ptree_at(parent->right, parent);
             owns up: pctx_at(parent, grandparent);
             fact parent != 0;
@@ -87,9 +87,9 @@ resource pctx_at(child: struct tree_node*, parent: struct tree_node*) {
         },
         Context::Right(identity, grandparent, value, sibling_model, up_model) => {
             owns parent->value;
-            owns parent->left;
-            owns parent->right;
-            owns parent->parent;
+            owns &parent->left;
+            owns &parent->right;
+            owns &parent->parent;
             owns sibling: ptree_at(parent->left, parent);
             owns up: pctx_at(parent, grandparent);
             fact parent != 0;

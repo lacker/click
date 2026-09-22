@@ -27,8 +27,12 @@ int32 run_inspect() {
 ```click
 verifying "struct_aggregate_helper_view.c";
 
+resource inner_storage(p: struct packet*) {
+    owns p->inner;
+}
+
 uint8 inspect_packet(struct packet* source) {
-    views source->inner;
+    views inner_storage(source);
     ensures result == source->inner.flag;
 } by {
     execute();

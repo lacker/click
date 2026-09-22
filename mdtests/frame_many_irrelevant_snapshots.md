@@ -46,7 +46,7 @@ int32 write_after_calls(struct buffer* owner, int32 index) {
 resource buffer_storage(owner: struct buffer*) {
     owns owner->len;
     owns owner->cap;
-    owns owner->data;
+    owns &owner->data;
     owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;

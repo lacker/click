@@ -2622,22 +2622,32 @@ fn execute_step_from_frontier_position_selecting_path(
                 transition.obligations,
                 &return_assumptions,
             );
-            completed_outcomes.push((outcome, completed_execution_facts, obligations));
+            completed_outcomes.push((
+                outcome,
+                completed_execution_facts,
+                obligations,
+                crate::kernel::concat_checked_loan_evidence(
+                    execution.core.loan_evidence(),
+                    &transition.loan_evidence,
+                ),
+            ));
         }
         for pending in execution.core.complete_pending_exceptional_calls() {
             completed_outcomes.push((
                 pending.outcome,
                 pending.execution_facts,
                 pending.obligations,
+                pending.loan_evidence,
             ));
         }
         let state: &mut CState = &mut execution.core.state;
-        let completed = c_function_execution_candidates_from_outcomes(
-            execution_start_state.clone(),
-            function.clone(),
-            arguments.to_vec(),
-            completed_outcomes,
-        );
+        let completed =
+            crate::kernel::c_function_execution_candidates_from_outcomes_with_loan_evidence(
+                execution_start_state.clone(),
+                function.clone(),
+                arguments.to_vec(),
+                completed_outcomes,
+            );
         execution.presentation.call_outcome_edges = call_outcome_edges;
         let execution_state = execution_start_state.clone();
         set_function_exit_execution(
@@ -3184,21 +3194,27 @@ fn execute_step_from_frontier_position_selecting_path(
                     &mut completed_execution_facts,
                     &execution.core.effect_facts,
                 );
-                let mut completed_outcomes =
-                    vec![(outcome, completed_execution_facts, obligations)];
+                let mut completed_outcomes = vec![(
+                    outcome,
+                    completed_execution_facts,
+                    obligations,
+                    execution.core.loan_evidence().clone(),
+                )];
                 for pending in execution.core.complete_pending_exceptional_calls() {
                     completed_outcomes.push((
                         pending.outcome,
                         pending.execution_facts,
                         pending.obligations,
+                        pending.loan_evidence,
                     ));
                 }
-                let completed = c_function_execution_candidates_from_outcomes(
-                    execution_start_state.clone(),
-                    function.clone(),
-                    arguments.to_vec(),
-                    completed_outcomes,
-                );
+                let completed =
+                    crate::kernel::c_function_execution_candidates_from_outcomes_with_loan_evidence(
+                        execution_start_state.clone(),
+                        function.clone(),
+                        arguments.to_vec(),
+                        completed_outcomes,
+                    );
                 let execution_state = execution_start_state.clone();
                 set_function_exit_execution(
                     &mut execution.core.frontier,
@@ -3254,20 +3270,23 @@ fn execute_step_from_frontier_position_selecting_path(
                 CFunctionOutcome::VerificationDiverges,
                 completed_execution_facts,
                 transition_obligations,
+                execution.core.loan_evidence().clone(),
             )];
             for pending in execution.core.complete_pending_exceptional_calls() {
                 completed_outcomes.push((
                     pending.outcome,
                     pending.execution_facts,
                     pending.obligations,
+                    pending.loan_evidence,
                 ));
             }
-            let completed = c_function_execution_candidates_from_outcomes(
-                execution_start_state.clone(),
-                function.clone(),
-                arguments.to_vec(),
-                completed_outcomes,
-            );
+            let completed =
+                crate::kernel::c_function_execution_candidates_from_outcomes_with_loan_evidence(
+                    execution_start_state.clone(),
+                    function.clone(),
+                    arguments.to_vec(),
+                    completed_outcomes,
+                );
             let execution_state = execution_start_state.clone();
             set_function_exit_execution(
                 &mut execution.core.frontier,
@@ -4114,15 +4133,21 @@ pub(super) fn merge_bounded_execution_frontiers(
                     facts.push(fact);
                 }
             }
-            paths.push((path.outcome().clone(), facts, path.obligations().to_vec()));
+            paths.push((
+                path.outcome().clone(),
+                facts,
+                path.obligations().to_vec(),
+                path.loan_evidence().clone(),
+            ));
         }
     }
-    let function_execution = c_function_execution_candidates_from_outcomes(
-        execution_start_state.clone(),
-        function.clone(),
-        arguments.to_vec(),
-        paths,
-    );
+    let function_execution =
+        crate::kernel::c_function_execution_candidates_from_outcomes_with_loan_evidence(
+            execution_start_state.clone(),
+            function.clone(),
+            arguments.to_vec(),
+            paths,
+        );
 
     let mut merged = completed.remove(0);
     merged.execution.presentation.recorded_snapshots = common_snapshots;

@@ -26,7 +26,7 @@ void push(struct buffer* owner, int32 value) {
     requires 0 <= owner->len;
     requires owner->len < 1000;
     requires separate(memory(object(owner)), memory((owner->data + owner->len)[0..1]));
-    views owner->data;
+    views &owner->data;
     owns owner->len;
     owns (owner->data + owner->len)[0..1];
     ensures owner->len == old(owner->len) + 1;

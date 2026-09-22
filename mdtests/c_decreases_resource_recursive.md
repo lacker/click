@@ -26,7 +26,7 @@ int32 zero_walk(struct node* node) {
 resource zero_list(node: struct node*) {
     if node != 0 {
         owns node->value;
-        owns node->next;
+        owns &node->next;
         fact node->value == 0;
         contains zero_list(node->next);
     }

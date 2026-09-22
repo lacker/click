@@ -3496,6 +3496,7 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(1)),
                 surface: ContractSegmentSurface::Field {
+                    address: false,
                     base: Some(Box::new(ContractExpression::CFragment(
                         CExpression::Variable("obj".to_string())
                     ))),
@@ -3600,8 +3601,8 @@ fn nested_field_segments_keep_the_terminal_field_offset() {
         verifying "write_nested.c";
 
         int32 write_nested(struct node* root) {
-            views root->child;
-            consumes root->child->value;
+            views &root->child;
+            consumes &root->child->value;
             ensures result == 7;
         } by {
             execute();
@@ -3683,7 +3684,7 @@ fn parses_struct_object_segments_without_exposing_layout_cells() {
 }
 
 #[test]
-fn aggregate_resource_places_expand_to_typed_nested_leaf_segments() {
+fn aggregate_views_require_a_declared_resource() {
     let c_source = r#"
         struct inner {
             int32 count;
@@ -3707,32 +3708,13 @@ fn aggregate_resource_places_expand_to_typed_nested_leaf_segments() {
             ensures result == packet->inner.count;
         }
     "#;
-    let file = parse_c0_click_file(click_source, &[("aggregate_resource_places.c", c_source)])
-        .expect("aggregate resource places should parse");
-    let function = &file.function_blocks()[0];
-    let resources = function
-        .requires()
-        .iter()
-        .filter_map(|requirement| match requirement {
-            Requirement::Resource(ResourceClause::ViewMemory(segment)) => Some(segment),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(resources.len(), 2);
-    assert_eq!(resources[0].start, CExpression::Value(int32(1)));
-    assert_eq!(resources[0].end, CExpression::Value(int32(2)));
-    assert_eq!(resources[0].field_element_width(), Some(4));
-    assert_eq!(resources[1].start, CExpression::Value(int32(8)));
-    assert_eq!(resources[1].end, CExpression::Value(int32(12)));
-    assert_eq!(resources[1].field_element_width(), Some(1));
-    assert!(matches!(
-        &resources[0].surface,
-        ContractSegmentSurface::Field { name, .. } if name == "inner.count"
-    ));
-    assert!(matches!(
-        &resources[1].surface,
-        ContractSegmentSurface::Field { name, .. } if name == "inner.flag"
-    ));
+    let error = parse_c0_click_file(click_source, &[("aggregate_resource_places.c", c_source)])
+        .expect_err("whole-struct views require an explicit resource definition");
+    assert!(
+        error
+            .message
+            .contains("whole-struct views require a declared resource")
+    );
 }
 
 #[test]
@@ -3760,6 +3742,7 @@ fn parses_pilot_struct_field_owned_segment() {
             start: CExpression::Value(int32(0)),
             end: CExpression::Value(int32(1)),
             surface: ContractSegmentSurface::Field {
+                address: false,
                 base: Some(Box::new(ContractExpression::CFragment(
                     CExpression::Variable("obj".to_string())
                 ))),
@@ -4286,4 +4269,72 @@ fn parses_built_in_expressions_on_either_comparison_side() {
         }",
     )
     .expect("`byte_offset` keeps its built-in meaning");
+}
+
+#[test]
+fn resource_array_extent_excludes_struct_padding() {
+    let c_source = "struct packet { uint8 bytes[3]; int64 aligned; }; uint8 read(struct packet* p) { return p->bytes[2]; }";
+    let click_source = r#"
+        verifying "array.c";
+        uint8 read(struct packet* p) { views p->bytes; ensures result == p->bytes[2]; }
+    "#;
+    let file = parse_c0_click_file(click_source, &[("array.c", c_source)]).unwrap();
+    let Requirement::Resource(ResourceClause::ViewMemory(segment)) =
+        &file.function_blocks()[0].requires()[0]
+    else {
+        panic!("expected an array view");
+    };
+    assert_eq!(segment.start, CExpression::Value(int32(0)));
+    assert_eq!(segment.end, CExpression::Value(int32(3)));
+    assert_eq!(segment.field_element_width(), Some(1));
+}
+
+#[test]
+fn pointer_storage_views_require_and_preserve_address_of() {
+    let c_source =
+        "struct packet { int32* data; }; int32 read(struct packet* p) { return p->data[0]; }";
+    let click_source = r#"
+        verifying "pointer.c";
+        int32 read(struct packet* p) {
+            views &p->data;
+            views p->data[0..1];
+            ensures result == p->data[0];
+        } by { execute(); simp(); }
+    "#;
+    verify_c0_sources(click_source, &[("pointer.c", c_source)]).unwrap();
+    let file = parse_c0_click_file(click_source, &[("pointer.c", c_source)]).unwrap();
+    let Requirement::Resource(ResourceClause::ViewMemory(segment)) =
+        &file.function_blocks()[0].requires()[0]
+    else {
+        panic!("expected a pointer storage view");
+    };
+    assert_eq!(
+        super::diagnostics::describe_contract_segment(segment),
+        "&p->data"
+    );
+    let old_spelling = click_source.replace("views &p->data;", "views p->data;");
+    let error = parse_c0_click_file(&old_spelling, &[("pointer.c", c_source)]).unwrap_err();
+    assert!(
+        error
+            .message
+            .contains("explicit range for its contents or `&` for its storage")
+    );
+}
+
+#[test]
+fn whole_struct_view_requires_a_declared_resource() {
+    let c_source =
+        "struct packet { int32 data; }; int32 read(struct packet* p) { return p->data; }";
+    for target in ["p", "object(p)"] {
+        let source = format!(
+            "verifying \"pointer.c\"; int32 read(struct packet* p) {{ views {target}; ensures result == p->data; }}"
+        );
+        let error = parse_c0_click_file(&source, &[("pointer.c", c_source)]).unwrap_err();
+        assert!(
+            error
+                .message
+                .contains("whole-struct views require a declared resource"),
+            "{error:?}"
+        );
+    }
 }

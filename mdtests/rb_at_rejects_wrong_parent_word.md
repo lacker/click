@@ -60,8 +60,8 @@ resource rb_at(p: struct rb_node*) {
         RbTree::Empty => { fact p == 0; },
         RbTree::Node(identity, parent, color, left_model, right_model) => {
             owns p->__rb_parent_color;
-            owns p->rb_left;
-            owns p->rb_right;
+            owns &p->rb_left;
+            owns &p->rb_right;
             owns left: rb_at(p->rb_left);
             owns right: rb_at(p->rb_right);
             fact p != 0;

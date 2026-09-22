@@ -40,11 +40,11 @@ int32 aggregate_copy_skipped_field_rejected(struct packet* source) {
     requires source->data == 0;
     consumes source->tag;
     consumes source->payload.number;
-    consumes source->data;
+    consumes &source->data;
     ensures result == 20;
     produces source->tag;
     produces source->payload.number;
-    produces source->data;
+    produces &source->data;
 }
 ```
 

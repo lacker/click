@@ -66,7 +66,7 @@ resource tree_at(p: struct node*) {
         Tree::Empty => { fact p == 0; },
         Tree::Node(id, value, left_model) => {
             owns p->value;
-            owns p->left;
+            owns &p->left;
             owns left: tree_at(p->left);
             fact p != 0;
             fact p == id;

@@ -21,7 +21,7 @@ resource suffix_after_prefix(buffer: struct buffer*) {
     field tag: SuffixTag;
     match tag {
         SuffixTag::Available(start) => {
-            owns buffer->data;
+            owns &buffer->data;
             owns buffer->capacity;
             owns buffer->data[start..buffer->capacity];
             fact 0 <= start;

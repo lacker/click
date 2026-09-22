@@ -43,6 +43,11 @@ int32 caller() {
 ```click
 verifying "abstract_table.c";
 
+resource callbacks_storage(p: struct callbacks*) {
+    views &p->propagate;
+    views &p->copy;
+}
+
 contract int32 Propagate() {
     ensures result == 3;
 }
@@ -60,14 +65,20 @@ int32 copy() {
 }
 
 int32 run_suite(const struct callbacks *callbacks) {
-    views object(callbacks);
+    views callbacks_storage(callbacks);
     requires Propagate(callbacks->propagate);
     requires Copy(callbacks->copy);
     ensures result == 35 by auto;
 }
 
 int32 caller() {
-    ensures result == 35 by auto;
+    views &suite.propagate;
+    views &suite.copy;
+    ensures result == 35;
+} by {
+    fold(callbacks_storage(&suite));
+    execute();
+    simp();
 }
 ```
 

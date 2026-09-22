@@ -3,7 +3,7 @@
 A context frame keyed by the focused child owns its parent's cells through the
 `parent` binding of the matched constructor. The binding is declared
 `struct tree_node*` by `Context::Left`, so inside the arm it is a struct base:
-`owns parent->left;` covers exactly that cell, `tree_at(parent->right)` names
+`owns &parent->left;` covers exactly that cell, `tree_at(parent->right)` names
 the sibling subtree, and `fact parent->left == child` links the frame to the
 node it is keyed by.
 
@@ -55,8 +55,8 @@ resource tree_at(p: struct tree_node*) {
         HeapTree::Empty => { fact p == 0; },
         HeapTree::Node(identity, value, left_model, right_model) => {
             owns p->value;
-            owns p->left;
-            owns p->right;
+            owns &p->left;
+            owns &p->right;
             owns left: tree_at(p->left);
             owns right: tree_at(p->right);
             fact p != 0;
@@ -74,8 +74,8 @@ resource ctx_at(child: struct tree_node*) {
         Context::Top => {},
         Context::Left(parent, value, sibling_model, up_model) => {
             owns parent->value;
-            owns parent->left;
-            owns parent->right;
+            owns &parent->left;
+            owns &parent->right;
             owns sibling: tree_at(parent->right);
             owns up: ctx_at(parent);
             fact parent != 0;
@@ -99,8 +99,8 @@ void frame_top(struct tree_node* child) {
 void frame_push(struct tree_node* parent, struct tree_node* child,
                 struct tree_node* sibling, int value) {
     consumes parent->value;
-    consumes parent->left;
-    consumes parent->right;
+    consumes &parent->left;
+    consumes &parent->right;
     consumes s: tree_at(sibling);
     consumes u: ctx_at(parent);
     requires parent != 0;

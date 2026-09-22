@@ -23,7 +23,7 @@ resource zero_prefix(buffer: struct buffer*) {
     field tag: PrefixTag;
     match tag {
         PrefixTag::End(end) => {
-            owns buffer->data;
+            owns &buffer->data;
             owns buffer->data[0..end];
             fact end == 1;
             fact forall (k: int32) {

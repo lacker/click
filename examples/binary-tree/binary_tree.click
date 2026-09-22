@@ -1,8 +1,8 @@
 resource tree(node: struct node*) {
     if node != 0 {
         owns node->value;
-        owns node->left;
-        owns node->right;
+        owns &node->left;
+        owns &node->right;
         contains tree(node->left);
         contains tree(node->right);
     }
@@ -50,8 +50,8 @@ int32 tree_make_root(
 ) {
     requires node != 0;
     consumes node->value;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     consumes tree(left);
     consumes tree(right);
     produces tree(node);
@@ -88,8 +88,8 @@ int32 tree_make_root(
 int32 tree_swap_children(struct node* node) {
     requires node != 0;
     views node->value;
-    owns node->left;
-    owns node->right;
+    owns &node->left;
+    owns &node->right;
 
     ensures result == old(node->value);
     ensures node->value == old(node->value);
@@ -103,8 +103,8 @@ int32 tree_swap_children(struct node* node) {
 int32 tree_leaf_pipeline(struct node* node, int32 value) {
     requires node != 0;
     consumes node->value;
-    consumes node->left;
-    consumes node->right;
+    consumes &node->left;
+    consumes &node->right;
     produces tree(node);
 
     ensures result == value;

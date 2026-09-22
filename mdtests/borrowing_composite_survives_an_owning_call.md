@@ -16,7 +16,7 @@ resource src(d: int32*, n: int32) {
 resource box(p: struct s*) {
     owns p->a;
     owns p->b;
-    owns p->d;
+    owns &p->d;
     views src(p->d, p->b);
     fact 0 <= p->b;
 }

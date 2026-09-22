@@ -1,8 +1,8 @@
 # Aggregate struct resource places expand to typed leaf ranges
 
-An embedded struct place can be named directly by each resource verb. Click
-expands the place into its leaf field ranges, retaining each leaf's ABI width
-instead of pretending that a mixed-width aggregate is one int32 range.
+An ownership clause can name an embedded struct place directly. Views use a
+declared resource that describes those fields. Click expands the owned place
+into typed leaf ranges, retaining each leaf's ABI width.
 
 ```c filename=struct_aggregate_resources.c
 struct inner {
@@ -47,8 +47,12 @@ int32 write_array(struct array_outer* packet) {
 ```click
 verifying "struct_aggregate_resources.c";
 
+resource inner_storage(p: struct outer*) {
+    owns p->inner;
+}
+
 int32 read_inner(struct outer* packet) {
-    views packet->inner;
+    views inner_storage(packet);
     ensures result == packet->inner.count by auto;
 }
 

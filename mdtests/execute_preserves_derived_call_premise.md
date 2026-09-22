@@ -28,6 +28,10 @@ int32 execute_preserves_derived_call_premise(struct owner* owner) {
 verifying "accept_larger_capacity.c";
 verifying "execute_preserves_derived_call_premise.c";
 
+resource owner_storage(p: struct owner*) {
+    owns object(p);
+}
+
 int32 accept_larger_capacity(int32 length, int32 capacity) {
     requires length <= capacity;
     ensures result == length;
@@ -36,7 +40,7 @@ int32 accept_larger_capacity(int32 length, int32 capacity) {
 int32 execute_preserves_derived_call_premise(struct owner* owner) {
     requires owner->length <= owner->capacity;
     requires owner->capacity < 2147483647;
-    views object(owner);
+    views owner_storage(owner);
     ensures result == owner->length;
 } by {
     execute();

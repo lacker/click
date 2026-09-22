@@ -30,8 +30,8 @@ verifying "leaf_flag.c";
 
 int32 leaf_flag(struct pair* p) {
     requires p != 0;
-    views p->left;
-    views p->right;
+    views &p->left;
+    views &p->right;
 
     ensures result == 1 implies p->left == 0;
     ensures result == 1 implies p->right == 0;

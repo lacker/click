@@ -36,8 +36,12 @@ int32 heap_scoped_borrow_then_free() {
 verifying "read_item.c";
 verifying "heap_scoped_borrow_then_free.c";
 
+resource item_storage(p: struct item*) {
+    owns object(p);
+}
+
 int32 read_item(struct item* item) {
-    views object(item);
+    views item_storage(item);
 
     ensures result == item->value by auto;
 }

@@ -292,12 +292,12 @@ fn tree_node_init_rejects_invalid_models_and_ownership() {
         ),
         ("{ left: l, right: r });", "{ left: r, right: l });"),
         ("{ left: l, right: r });", "{ left: l, right: l });"),
-        ("consumes node->left;", ""),
+        ("consumes &node->left;", ""),
         ("consumes r: tree_at(right);", ""),
         ("requires p == 0;", ""),
         // A child address may not be read from an unowned stored link.
-        ("owns p->left;", ""),
-        ("owns p->right;", ""),
+        ("owns &p->left;", ""),
+        ("owns &p->right;", ""),
         // Child ownership has been consumed into root, so it cannot be reused.
         (
             "}, { left: l, right: r });\n    simp();",
@@ -2401,4 +2401,29 @@ fn aggregate_parameter_symbolic_index_expands_and_checks() {
     let expanded =
         expand_c0_claim_source(source, &inputs, "indexed", CProofClaim::Grouped).unwrap();
     verify_c0_sources(&expanded, &inputs).unwrap();
+}
+
+#[test]
+fn resource_contract_regressions_expand_and_check() {
+    for (fixture_name, function_name) in [
+        ("aggregate_parameter_pointee_contract", "touch"),
+        ("aggregate_parameter_pointee_resource", "touch"),
+        ("aggregate_parameter_old_pointee", "dispose"),
+        ("const_callback_table_abstract", "caller"),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("mdtests/{fixture_name}.md"));
+        let fixture = crate::cli::read_mdtest(&path).unwrap();
+        let source = fixture.click_source.as_deref().unwrap();
+        let inputs = fixture
+            .c_sources
+            .iter()
+            .map(|(name, body)| (name.as_str(), body.as_str()))
+            .collect::<Vec<_>>();
+        verify_c0_sources(source, &inputs).unwrap();
+        let expanded =
+            expand_c0_claim_source(source, &inputs, function_name, CProofClaim::Grouped).unwrap();
+        verify_c0_sources(&expanded, &inputs)
+            .unwrap_or_else(|error| panic!("{error:?}\n{expanded}"));
+    }
 }
