@@ -84,11 +84,17 @@ Inline arrays of signed and unsigned 64-bit integers now retain their
 eight-byte layout through indexing, resource clauses, initialization, and
 struct copies. `mdtests/struct_wide_integer_arrays.md` checks those paths.
 
-The unchanged probe still stops in `bits/cpu-set.h` at the `cpu_set_t`
-anonymous struct's `__cpu_mask __bits[...]` array, now at its dimension:
-`1024 / (8 * sizeof(__cpu_mask))`. The element type is supported, but struct
-array dimensions currently require positive integer literals. Supporting
-constant expressions in those dimensions is the next import step.
+The `cpu_set_t` dimension `1024 / (8 * sizeof(__cpu_mask))` now imports
+unchanged, producing sixteen eight-byte words. Scalar and embedded-struct
+array dimensions reuse the typed integer constant evaluator; positive lengths
+and checked layout sizes remain required. The regression
+`mdtests/struct_constant_array_lengths.md` checks the original dimension,
+multidimensional indexing, and embedded-struct copies.
+
+The unchanged probe next stops at the `__sched_cpucount` declaration in
+`bits/cpu-set.h`: glibc's `__THROW` expands to a GNU function attribute list
+containing `__nothrow__`, which the importer currently rejects. Handling the
+relevant declaration attributes is the next import step.
 Declaration-specific runtime identity and checked create/join call binding
 remain subsequent work.
 

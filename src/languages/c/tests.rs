@@ -12053,3 +12053,57 @@ fn struct_wide_array_proof_expands_and_reverifies() {
             .unwrap();
     crate::surface::verify_c0_sources(&expanded, &[("wide.c", c)]).unwrap();
 }
+
+#[test]
+fn struct_constant_array_lengths_keep_typed_values_and_layout() {
+    for (expression, count) in [
+        ("1024 / (8 * sizeof(mask))", 16),
+        ("(3 + 5) * 2", 16),
+        ("1 << 4", 16),
+        ("(unsigned long)16", 16),
+        ("0xffffffffu + 3u", 2),
+        ("1 ? 16 : (1 / 0)", 16),
+        ("sizeof(struct item)", 8),
+    ] {
+        let source = format!(
+            "typedef unsigned long mask; struct item {{ long x; }}; struct holder {{ char tag; mask bits[{expression}]; struct item items[{expression}]; }}; int f(void) {{ return sizeof(struct holder); }}"
+        );
+        let functions = syntax::parse_functions(&source).expect(&source);
+        let layout = &functions[0].structs()["holder"];
+        assert_eq!(
+            layout.field("bits").unwrap().byte_width(),
+            count * 8,
+            "{expression}"
+        );
+        assert_eq!(
+            layout.field("items").unwrap().offset_bytes(),
+            8 + count * 8,
+            "{expression}"
+        );
+        assert_eq!(layout.size_bytes(), 8 + count * 16, "{expression}");
+    }
+}
+
+#[test]
+fn struct_constant_array_lengths_reject_invalid_values() {
+    for (expression, diagnostic) in [
+        ("0", "positive length"),
+        ("-1", "positive and fit"),
+        ("4294967296ULL", "positive and fit"),
+        ("1 / 0", "divides by zero"),
+        ("1 << 32", "invalid shift"),
+        ("2147483647 + 1", "overflows"),
+        ("n", "integer constant expressions"),
+        ("f()", "integer constant expressions"),
+        ("(n = 2)", "integer constant expressions"),
+        ("sizeof(long) * 67108864", "layout is too large"),
+    ] {
+        for element in ["long", "struct item"] {
+            let source = format!(
+                "int n; int f(void); struct item {{ long x; }}; struct bad {{ {element} data[{expression}]; }};"
+            );
+            let error = syntax::parse_functions(&source).unwrap_err();
+            assert!(error.to_string().contains(diagnostic), "{source}: {error}");
+        }
+    }
+}

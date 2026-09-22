@@ -9124,38 +9124,7 @@ impl Parser {
                 let mut dimensions = Vec::new();
                 while self.peek() == Some(&Token::LBracket) {
                     self.position += 1;
-                    let length = match self.next() {
-                        Some(Token::Number(number)) => {
-                            let length =
-                                parse_integer_literal_magnitude(&number).map_err(|reason| {
-                                    self.error_here(format!(
-                                        "invalid embedded struct array length `{number}`: {reason}"
-                                    ))
-                                })?;
-                            let length = u32::try_from(length).map_err(|_| {
-                                self.error_here(format!(
-                                    "embedded struct array length `{number}` is out of range"
-                                ))
-                            })?;
-                            if length == 0 {
-                                return Err(self.error_here(
-                                    "embedded struct arrays must have positive length",
-                                ));
-                            }
-                            length
-                        }
-                        Some(token) => {
-                            return Err(self.error_at_previous(format!(
-                                "expected embedded struct array length, got {}",
-                                token.describe()
-                            )));
-                        }
-                        None => {
-                            return Err(self.error_here(
-                                "expected embedded struct array length, got end of input",
-                            ));
-                        }
-                    };
+                    let length = self.parse_struct_array_length()?;
                     self.expect(Token::RBracket)?;
                     dimensions.push(length);
                 }
@@ -9209,36 +9178,7 @@ impl Parser {
             let mut element_count = 1u32;
             while self.peek() == Some(&Token::LBracket) {
                 self.position += 1;
-                let length = match self.next() {
-                    Some(Token::Number(number)) => {
-                        let length =
-                            parse_integer_literal_magnitude(&number).map_err(|reason| {
-                                self.error_here(format!(
-                                    "invalid struct array length `{number}`: {reason}"
-                                ))
-                            })?;
-                        let length = u32::try_from(length).map_err(|_| {
-                            self.error_here(format!(
-                                "struct array length `{number}` is out of range"
-                            ))
-                        })?;
-                        if length == 0 {
-                            return Err(self.error_here("struct arrays must have positive length"));
-                        }
-                        length
-                    }
-                    Some(token) => {
-                        return Err(self.error_at_previous(format!(
-                            "expected struct array length, got {}",
-                            token.describe()
-                        )));
-                    }
-                    None => {
-                        return Err(
-                            self.error_here("expected struct array length, got end of input")
-                        );
-                    }
-                };
+                let length = self.parse_struct_array_length()?;
                 element_count = element_count.checked_mul(length).ok_or_else(|| {
                     self.error_here(format!(
                         "struct array dimensions are too large for `{struct_name}`"
@@ -9325,6 +9265,41 @@ impl Parser {
             None,
             array_shape,
         ))
+    }
+
+    /// Struct members cannot have variable-length array types. Reuse the
+    /// typed constant evaluator, then check the layout's element-count domain
+    /// before multiplication by any other dimensions or the element width.
+    fn parse_struct_array_length(&mut self) -> Result<u32, C0SyntaxError> {
+        let expression = self.parse_expression()?;
+        let value = evaluate_static_integer_expression(&expression).map_err(|error| {
+            self.error_here(match error {
+                StaticIntegerEvaluationError::NotConstant => {
+                    "struct array lengths require integer constant expressions"
+                }
+                StaticIntegerEvaluationError::Overflow => {
+                    "struct array length integer constant expression overflows"
+                }
+                StaticIntegerEvaluationError::DivisionByZero => {
+                    "struct array length integer constant expression divides by zero"
+                }
+                StaticIntegerEvaluationError::InvalidShift => {
+                    "struct array length integer constant expression has an invalid shift"
+                }
+                StaticIntegerEvaluationError::OutOfRange => {
+                    "struct array length integer constant expression is out of range"
+                }
+            })
+        })?;
+        let length = match value {
+            StaticIntegerValue::Signed { value, .. } => u32::try_from(value),
+            StaticIntegerValue::Unsigned { value, .. } => u32::try_from(value),
+        }
+        .map_err(|_| self.error_here("struct array length must be positive and fit in 32 bits"))?;
+        if length == 0 {
+            return Err(self.error_here("struct arrays must have positive length"));
+        }
+        Ok(length)
     }
 
     fn parse_parameters(&mut self) -> Result<Vec<C0Parameter>, C0SyntaxError> {
