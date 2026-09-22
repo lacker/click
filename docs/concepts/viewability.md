@@ -99,6 +99,14 @@ such promise, and reading it as an element count is refused:
 Since Click's surface has no unsigned comparison, the condition is stated in the
 signed spelling above, as `0 <= b - a` together with `b - a <= 1073741823`.
 
+
+A narrower viewability claim can also be covered by a wider one. The
+displacement from the wider base plus the narrower claim's byte count must fit
+inside the wider byte extent as an exact count. A 32-bit sum that wraps to a
+small residue does not establish coverage. For symbolic byte sums, Click
+requires bounds that keep the arithmetic nonnegative and unwrapped; a
+constant-size element read can instead use the range's guarded element count.
+
 ## In a pure theorem
 
 A theorem has no resource context: nothing is lent to it, nothing is consumed,

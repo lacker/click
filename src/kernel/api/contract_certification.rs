@@ -136,30 +136,50 @@ fn proposition_conjuncts(proposition: &Proposition, into: &mut Vec<Proposition>)
     }
 }
 
-/// Converts a pointer offset to its size in bytes as a bitvector term.
-fn pointer_offset_bytes(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
+/// Converts a nonnegative pointer displacement to a byte count. Symbolic
+/// scaling and addition are admitted only with bounds that make the 32-bit
+/// term agree with the pointer offset's exact integer arithmetic.
+fn pointer_offset_bytes(
+    assumptions: &PureFactContext,
+    offset: &PointerOffsetTerm,
+) -> Option<Bitvector32Term> {
+    if let Some(bytes) = offset.as_const() {
+        return u32::try_from(bytes).ok().map(Bitvector32Term::Constant);
+    }
+    let zero = Bitvector32Term::Constant(0);
+    let max = i32::MAX as u32;
     match offset {
-        PointerOffsetTerm::Constant(value) => {
-            u32::try_from(*value).ok().map(Bitvector32Term::Constant)
+        PointerOffsetTerm::Constant(_) => None,
+        PointerOffsetTerm::Variable(_) | PointerOffsetTerm::Int64Scaled { .. } => None,
+        PointerOffsetTerm::Add(left, right) => {
+            let left = pointer_offset_bytes(assumptions, left)?;
+            let right = pointer_offset_bytes(assumptions, right)?;
+            let sum = assumptions.simplify_bitvector_under_assumptions(&Bitvector32Term::add(
+                left.clone(),
+                right.clone(),
+            ));
+            (certification_proves_signed_le(assumptions, &zero, &left)
+                && certification_proves_signed_le(assumptions, &zero, &right)
+                && certification_proves_signed_le(assumptions, &zero, &sum)
+                && certification_proves_signed_le(assumptions, &left, &sum)
+                && certification_proves_signed_le(assumptions, &right, &sum))
+            .then_some(sum)
         }
-        PointerOffsetTerm::Variable(_) => None,
-        PointerOffsetTerm::Add(left, right) => Some(Bitvector32Term::add(
-            pointer_offset_bytes(left)?,
-            pointer_offset_bytes(right)?,
-        )),
-        PointerOffsetTerm::Int32Scaled { value, byte_width }
-        | PointerOffsetTerm::Int64Scaled {
-            value, byte_width, ..
-        } => {
-            let width = u32::try_from(*byte_width).ok()?;
-            if width == 1 {
-                Some(value.as_ref().clone())
-            } else {
-                Some(Bitvector32Term::multiply(
-                    value.as_ref().clone(),
-                    Bitvector32Term::Constant(width),
-                ))
-            }
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            let width = u32::try_from(*byte_width).ok().filter(|width| *width > 0)?;
+            let limit = Bitvector32Term::Constant(max / width);
+            (certification_proves_signed_le(assumptions, &zero, value)
+                && (width == 1 || certification_proves_signed_le(assumptions, value, &limit)))
+            .then(|| {
+                if width == 1 {
+                    value.as_ref().clone()
+                } else {
+                    Bitvector32Term::multiply(
+                        value.as_ref().clone(),
+                        Bitvector32Term::Constant(width),
+                    )
+                }
+            })
         }
     }
 }
@@ -167,6 +187,7 @@ fn pointer_offset_bytes(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
 /// The byte distance from `fact_offset` to `goal_offset` when the goal
 /// offset extends the fact offset additively.
 fn pointer_offset_byte_delta(
+    assumptions: &PureFactContext,
     goal_offset: &PointerOffsetTerm,
     fact_offset: &PointerOffsetTerm,
 ) -> Option<Bitvector32Term> {
@@ -175,10 +196,10 @@ fn pointer_offset_byte_delta(
     }
     if let PointerOffsetTerm::Add(left, right) = goal_offset {
         if left.as_ref() == fact_offset {
-            return pointer_offset_bytes(right);
+            return pointer_offset_bytes(assumptions, right);
         }
         if right.as_ref() == fact_offset {
-            return pointer_offset_bytes(left);
+            return pointer_offset_bytes(assumptions, left);
         }
     }
     None
@@ -317,38 +338,70 @@ pub fn loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Propositio
         {
             return false;
         }
-        let Some(delta_bytes) = pointer_offset_byte_delta(&base.offset, &fact_base.offset) else {
-            return false;
-        };
-        let start = assumptions.simplify_bitvector_under_assumptions(&Bitvector32Term::Constant(0));
-        let delta = assumptions.simplify_bitvector_under_assumptions(&delta_bytes);
-        let end = assumptions.simplify_bitvector_under_assumptions(&Bitvector32Term::add(
-            delta_bytes,
-            bytes.clone(),
-        ));
-        let span = assumptions.simplify_bitvector_under_assumptions(fact_bytes);
-        let starts_in_bounds = certification_proves_signed_le(assumptions, &start, &delta);
-        let ends_in_bounds = certification_proves_signed_le(assumptions, &end, &span) || {
-            // Strip a shared additive constant: `a + b <= x + c` follows
-            // from `a <= x` when `b <= c`.
-            let (end_base, end_shift) = split_additive_constant(&end);
-            let (span_base, span_shift) = split_additive_constant(&span);
-            (end_shift as i32) <= (span_shift as i32)
-                && certification_proves_signed_le(assumptions, &end_base, &span_base)
-        };
-        if starts_in_bounds && ends_in_bounds {
-            return true;
-        }
-        // Byte-scaled bounds can overflow the arithmetic the order prover
-        // handles; retry at element granularity when the goal width folds to
-        // a constant.
-        assumptions
+        // The region rule reasons at element granularity and can cover a
+        // constant-size cell even when its symbolic byte offset is too wide
+        // for this rule's signed arithmetic.
+        if assumptions
             .simplify_bitvector_under_assumptions(bytes)
             .as_const()
             .is_some_and(|byte_width| {
-                assumptions
-                    .proves_loadable_cell_from_region(fact_base, fact_bytes, base, byte_width)
+                assumptions.proves_loadable_cell_from_region_elements(
+                    fact_base, fact_bytes, base, byte_width,
+                )
             })
+        {
+            return true;
+        }
+        let Some(delta_bytes) =
+            pointer_offset_byte_delta(assumptions, &base.offset, &fact_base.offset)
+        else {
+            return false;
+        };
+        let delta = assumptions.simplify_bitvector_under_assumptions(&delta_bytes);
+        let width = assumptions.simplify_bitvector_under_assumptions(bytes);
+        let span = assumptions.simplify_bitvector_under_assumptions(fact_bytes);
+        // Concrete byte counts are mathematical extents, including counts
+        // above i32::MAX. Never compare their wrapped 32-bit sum.
+        if let (Some(delta), Some(width), Some(span)) =
+            (delta.as_const(), width.as_const(), span.as_const())
+        {
+            return u64::from(delta) + u64::from(width) <= u64::from(span);
+        }
+
+        let start = Bitvector32Term::Constant(0);
+        let end = assumptions.simplify_bitvector_under_assumptions(&Bitvector32Term::add(
+            delta.clone(),
+            width.clone(),
+        ));
+        // The signed order prover can establish a byte inequality only
+        // while every operand and the sum retain their nonnegative integer
+        // meaning. The sum of two nonnegative signed words cannot wrap the
+        // 32-bit word; end >= delta rules out signed overflow.
+        let nonwrapping_sum = certification_proves_signed_le(assumptions, &start, &delta)
+            && certification_proves_signed_le(assumptions, &start, &width)
+            && certification_proves_signed_le(assumptions, &delta, &end);
+        let ends_in_bounds = nonwrapping_sum
+            && ((certification_proves_signed_le(assumptions, &start, &span)
+                && certification_proves_signed_le(assumptions, &end, &span))
+                || {
+                    // Strip additive constants in exact unsigned byte counts.
+                    // Two nonnegative signed bases plus nonnegative signed
+                    // shifts cannot wrap a 32-bit word, even when the resulting
+                    // byte span exceeds i32::MAX.
+                    let (end_base, end_shift) = split_additive_constant(&end);
+                    let (span_base, span_shift) = split_additive_constant(&span);
+                    end_shift <= i32::MAX as u32
+                        && span_shift <= i32::MAX as u32
+                        && end_shift <= span_shift
+                        && certification_proves_signed_le(assumptions, &start, &end_base)
+                        && certification_proves_signed_le(assumptions, &start, &span_base)
+                        && certification_proves_signed_le(assumptions, &end_base, &end)
+                        && certification_proves_signed_le(assumptions, &end_base, &span_base)
+                });
+        if ends_in_bounds {
+            return true;
+        }
+        false
     });
     if covered {
         crate::kernel::record_implicit_reasoning_provenance(assumptions, goal);

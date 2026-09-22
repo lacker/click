@@ -9,5 +9,4 @@ fix, regression coverage, and documentation land.
 - [Contract retire keeps the zeroed reading](contract-retire-keeps-zeroed-reading.md) — machine-confirmed
 - [store_union keeps a stale raw cell under an equal spelling](store-union-keeps-aliased-raw-cell.md) — machine-confirmed
 - [spec-fold binder identities collide with the quantifier bands](spec-fold-binders-collide-with-quantifier-band.md) — structurally confirmed
-- [Byte-extent residue comparison certifies wrapped loads](byte-extent-residue-compare-certifies-wrapped-loads.md) — statically confirmed
 - [Footprint refusals drop fact-aliased writes](footprint-check-drops-fact-aliased-writes.md) — statically confirmed
