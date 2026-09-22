@@ -1671,17 +1671,31 @@ fn synthesize_surface_atomic_proposition(
                 bound_variables,
             )
         })?;
+        if state.memory() == memory {
+            return Some(loadable);
+        }
         let at_entry = SYNTHESIS_ENTRY_STATE.with(|slot| {
             slot.borrow()
                 .as_ref()
-                .is_some_and(|entry| entry.memory() == memory && state.memory() != entry.memory())
+                .is_some_and(|entry| entry.memory() == memory)
         });
-        return Some(if at_entry {
-            ClickProposition::At {
+        if at_entry {
+            return Some(ClickProposition::At {
                 selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
                     region: CodeRegionRef::Function,
                     kind: ProgramPointKind::Entry,
                 }),
+                proposition: Box::new(loadable),
+            });
+        }
+        let snapshot_selector = SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+            let slot = slot.borrow();
+            let (snapshot, selector) = slot.as_ref()?;
+            (snapshot.memory() == memory).then(|| selector.clone())
+        });
+        return Some(if let Some(selector) = snapshot_selector {
+            ClickProposition::At {
+                selector,
                 proposition: Box::new(loadable),
             }
         } else {

@@ -56,6 +56,8 @@ pub(in crate::surface::proof) struct FixedStateProofContext<'a> {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::surface::proof) struct InvariantBodyContext {
     pub(in crate::surface::proof) loop_entry_state: CState,
+    /// The recorded program point that names `loop_entry_state` in source.
+    pub(in crate::surface::proof) loop_entry_selector: Option<SnapshotSelector>,
     pub(in crate::surface::proof) iteration_entry_state: CState,
     /// The recorded snapshot that names `iteration_entry_state` in source.
     /// Ranking members read their `pre` values there, so their synthesized

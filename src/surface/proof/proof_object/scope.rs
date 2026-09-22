@@ -569,8 +569,12 @@ impl<'a> ProofScope<'a> {
     pub(in crate::surface::proof) fn plan_invariant_bundle_closure(
         &self,
         premises: &[(Proposition, ClickProposition)],
+        loop_head_surfaces: &[ClickProposition],
     ) -> Result<Option<Self>, ClickError> {
-        let Some(body) = self.body.plan_invariant_bundle_closure(premises)? else {
+        let Some(body) = self
+            .body
+            .plan_invariant_bundle_closure(premises, loop_head_surfaces)?
+        else {
             return Ok(None);
         };
         let mut next = self.clone();

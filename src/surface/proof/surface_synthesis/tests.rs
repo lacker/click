@@ -1199,6 +1199,56 @@ fn external_argument_range_loadability_round_trips_through_the_range_form() {
 }
 
 #[test]
+fn quantified_loadability_uses_saved_snapshot() {
+    let (parameters, arguments, snapshot) = external_byte_range_caller();
+    let length = Bitvector32Term::Variable(Variable(1));
+    let requirement = external_byte_range_requirement(Variable(3_100_000), &length);
+    let post = snapshot.clone().with_memory(
+        snapshot
+            .memory()
+            .clone()
+            .with_block("later-unrelated-write", 1),
+    );
+    let selector = SnapshotSelector::Mark("quantified_viewability_head".into());
+    let spelled = synthesize_surface_proposition_at_entry_post_and_snapshot(
+        &requirement,
+        &parameters,
+        &arguments,
+        &post,
+        &post,
+        Some((&snapshot, &selector)),
+    )
+    .expect("the quantified loadability goal must retain its saved snapshot");
+
+    let ClickProposition::ForAll { body, .. } = &spelled else {
+        panic!("the saved requirement is one universal: {spelled:?}");
+    };
+    let ClickProposition::Implies(_, consequent) = body.as_ref() else {
+        panic!("the saved universal has one guarded body: {spelled:?}");
+    };
+    assert!(
+        matches!(
+            consequent.as_ref(),
+            ClickProposition::At {
+                selector: actual,
+                proposition,
+            } if actual == &selector
+                && matches!(proposition.as_ref(), ClickProposition::Loadable { .. })
+        ),
+        "the loadability leaf must be read at the saved loop state: {spelled:?}"
+    );
+
+    let mut snapshots = RecordedSnapshots::new();
+    snapshots.insert(selector, snapshot);
+    let lowered = relower_written_proposition_with_snapshots(&spelled, &post, &post, &snapshots)
+        .expect("the saved quantified spelling must lower at the later state");
+    assert_eq!(
+        crate::kernel::proof::proposition_identity_key(&lowered),
+        crate::kernel::proof::proposition_identity_key(&requirement),
+    );
+}
+
+#[test]
 fn named_element_ranges_preserve_nonzero_starts_and_folded_byte_counts() {
     for (parameter_type, pointer_type, width, spelling) in [
         (

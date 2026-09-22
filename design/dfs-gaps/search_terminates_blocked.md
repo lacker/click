@@ -1,7 +1,8 @@
 # a pointer-chasing search terminates on the number of unmarked cells
 
-**BLOCKED — this file does not verify.** Rerun unchanged on 2026-09-21 at
-`624146d4`: the loop back edge still lacks the quantified viewability fact for
+**BLOCKED — this file does not verify.** Rerun unchanged on 2026-09-21 after
+the quantified-viewability fix: the generated viewability fact for `next`
+closes, and the loop back edge now stops at the quantified value fact over
 `next`; the count's nonnegativity and strict decrease are available. The
 refusals quoted at the end are historical observations from `e120897d`.
 The earlier range-narrowing defect was fixed in `88b05d28`, with regression
@@ -453,15 +454,18 @@ this loop declares `decreases`, so the bundle also has
 decreases at the back edge
 ```
 
-with the first unclosed leaf
+The quantified viewability leaf now closes. The first remaining unclosed leaf
+is the value half of the invariant:
 
 ```text
 loop invariant bundle leaf [UnclosedGoal]: checked loop invariant bundle leaf
 remained open; goal: ∀v3000000:CInt32. ((int32 <=(0, v3000000) is true ∧ int32
-<(v3000000, v2) is true) ⇒ viewable(memory=snapshot#1,
-base=pointer(external+(v100000*4+v3000000*4)), bytes=4))
+<(v3000000, v2) is true) ⇒ (int32 <=(0,
+load(snapshot#1, pointer=pointer(external+(v100000*4+v3000000*4)))) is true ∧
+int32 <(load(snapshot#1,
+pointer=pointer(external+(v100000*4+v3000000*4))), v2) is true))
 ```
 
-which is the viewability half of the quantified `next` invariant at the back
-edge. The old range-narrowing defect is fixed; see the current checkpoint in
-`issues/dfs.md` and `a_universal_fact_does_not_transport.md`.
+The old range-narrowing and quantified-viewability defects are fixed; see the
+current checkpoint in `issues/dfs.md` and the remaining transport reduction in
+`a_universal_fact_does_not_transport.md`.

@@ -212,6 +212,7 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn plan_invariant_bundle_closure(
         &self,
         premises: &[NamedArithmeticPremise],
+        loop_head_surfaces: &[ClickProposition],
     ) -> Result<Option<Self>, ClickError> {
         let mut scope = attempt::search_scope("loop invariant bundle closure");
         check_verification_deadline()?;
@@ -227,13 +228,13 @@ impl<'a> Proof<'a> {
             let marker = split_proof.checkpoint();
             let Some(left) = split_proof
                 .focus_branch(ids[0])?
-                .plan_invariant_bundle_closure(premises)?
+                .plan_invariant_bundle_closure(premises, loop_head_surfaces)?
             else {
                 return Ok(None);
             };
             let Some(right) = left
                 .focus_branch(ids[1])?
-                .plan_invariant_bundle_closure(premises)?
+                .plan_invariant_bundle_closure(premises, loop_head_surfaces)?
             else {
                 return Ok(None);
             };
@@ -248,7 +249,7 @@ impl<'a> Proof<'a> {
             else {
                 return Ok(None);
             };
-            let result = introduced.plan_invariant_bundle_closure(premises)?;
+            let result = introduced.plan_invariant_bundle_closure(premises, loop_head_surfaces)?;
             if result.is_some() {
                 scope.succeed();
             }
@@ -271,7 +272,9 @@ impl<'a> Proof<'a> {
                     let Some(scope) = attempt::candidate_outcome(self.begin_have(surface))? else {
                         return Ok(None);
                     };
-                    let Some(scope) = scope.plan_invariant_bundle_closure(premises)? else {
+                    let Some(scope) =
+                        scope.plan_invariant_bundle_closure(premises, loop_head_surfaces)?
+                    else {
                         return Ok(None);
                     };
                     let Some(joined) = attempt::candidate_outcome(scope.join())? else {
@@ -286,7 +289,8 @@ impl<'a> Proof<'a> {
             }
             return Ok(None);
         }
-        let result = self.close_bundle_member(premises)?;
+        let presented = self.with_synthesized_bundle_member_surface();
+        let result = presented.close_bundle_member(premises, loop_head_surfaces)?;
         if result.is_none() {
             // Keep one bounded, lazy diagnostic for the actual kernel leaf.
             // The enclosing closure may try several ordinary candidates, so
@@ -308,6 +312,7 @@ impl<'a> Proof<'a> {
     fn close_bundle_member(
         &self,
         premises: &[NamedArithmeticPremise],
+        loop_head_surfaces: &[ClickProposition],
     ) -> Result<Option<Self>, ClickError> {
         if !premises.is_empty()
             && let Some(goal) = self.goal()
@@ -329,29 +334,11 @@ impl<'a> Proof<'a> {
             // ranking member names the measure at iteration entry, which has
             // a source spelling only as `at(<iteration entry>, name)`. This
             // is one synthesis of one leaf, not a search.
-            let surface_goal = self.surface_goal().cloned().or_else(|| {
-                let context = self.execution_context()?;
-                let execution = self.execution()?;
-                let bundle = context.constants.invariant_body_context.as_deref();
-                crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
-                    goal,
-                    context.parsed_function.parameters(),
-                    context.arguments,
-                    context.old_reference_state(&execution.core.frontier, &execution.core.state),
-                    &execution.core.state,
-                    bundle.and_then(|bundle| {
-                        bundle
-                            .iteration_entry_selector
-                            .as_ref()
-                            .map(|selector| (&bundle.iteration_entry_state, selector))
-                    }),
-                )
-            });
             // A plan that exists but cannot be printed is not an unproved
             // leaf, and repairing the proof does not help it; say so, or the
             // report below names the leaf as open and sends the user after a
             // premise it does not lack.
-            if surface_goal.is_none()
+            if self.surface_goal().is_none()
                 && crate::surface::checking::plan_signed_arithmetic_certificate(goal, &kernels)
                     .is_some()
             {
@@ -362,7 +349,7 @@ impl<'a> Proof<'a> {
             }
             if let Some(plan) =
                 crate::surface::checking::plan_signed_arithmetic_certificate(goal, &kernels)
-                && let Some(surface_goal) = surface_goal.as_ref()
+                && let Some(surface_goal) = self.surface_goal()
                 && let Some(certificate) =
                     { self.signed_plan_to_surface_certificate(&plan, premises, surface_goal) }
                 && let Some(closed) = {
@@ -376,7 +363,86 @@ impl<'a> Proof<'a> {
                 return Ok(Some(closed));
             }
         }
-        self.try_simp_closure()
+        if let Some(closed) = self.try_simp_closure()? {
+            return Ok(Some(closed));
+        }
+        let mut forall_surfaces = loop_head_surfaces.to_vec();
+        for (_, surface) in premises {
+            if !forall_surfaces.contains(surface) {
+                forall_surfaces.push(surface.clone());
+            }
+        }
+        if let Some(closed) = self.try_named_forall_goal_from_surfaces(&forall_surfaces) {
+            return Ok(Some(closed));
+        }
+        Ok(None)
+    }
+
+    /// Restores presentation metadata for one generated bundle leaf from the
+    /// two program points the loop rule itself owns. The candidate must lower
+    /// alpha-equivalently to the focused kernel goal; attaching it changes no
+    /// facts, proof topology, or checked proposition.
+    fn with_synthesized_bundle_member_surface(&self) -> Self {
+        if self.surface_goal().is_some() {
+            return self.clone();
+        }
+        let Some(goal) = self.goal() else {
+            return self.clone();
+        };
+        let Some(context) = self.execution_context() else {
+            return self.clone();
+        };
+        let Some(execution) = self.execution() else {
+            return self.clone();
+        };
+        let Some(bundle) = context.constants.invariant_body_context.as_deref() else {
+            return self.clone();
+        };
+        let synthesize_at = |state: &CState, selector: &SnapshotSelector| {
+            crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
+                goal,
+                context.parsed_function.parameters(),
+                context.arguments,
+                context.old_reference_state(&execution.core.frontier, &execution.core.state),
+                &execution.core.state,
+                Some((state, selector)),
+            )
+            .filter(|surface| {
+                self.lower_surface_goal(surface, "loop invariant bundle member")
+                    .ok()
+                    .is_some_and(|lowered| {
+                        crate::kernel::proof::propositions_are_alpha_equal(&lowered, goal)
+                    })
+            })
+        };
+        let surface = bundle
+            .iteration_entry_selector
+            .as_ref()
+            .and_then(|selector| synthesize_at(&bundle.iteration_entry_state, selector))
+            .or_else(|| {
+                bundle
+                    .loop_entry_selector
+                    .as_ref()
+                    .and_then(|selector| synthesize_at(&bundle.loop_entry_state, selector))
+            });
+        let Some(surface) = surface else {
+            return self.clone();
+        };
+        let Some(state) = self
+            .state
+            .with_focused_proposition_presentation(|presentation| PropositionPresentation {
+                surface: Some(Arc::new(surface)),
+                ..presentation.clone()
+            })
+        else {
+            return self.clone();
+        };
+        Self {
+            site: self.site.clone(),
+            context: self.context.clone(),
+            state,
+            node: self.node.clone(),
+        }
     }
 
     /// The C local the call at the current frontier assigns its result to.
@@ -789,6 +855,7 @@ impl<'a> Proof<'a> {
         };
         let mut search = attempt::search_scope("close invariants body");
         let checkpoint = root.checkpoint();
+        let named_loop_surfaces = bundle.loop_head_premises.clone();
         // This smart request owns two bounded strategies on the same root:
         // ordinary simplification, then the loop-specific member planner.
         // Explicit source bodies use the source driver exactly once.
@@ -801,7 +868,7 @@ impl<'a> Proof<'a> {
                         context.function_block.requires(),
                         &path_branch_premises,
                     )?;
-                    candidate.plan_invariant_bundle_closure(&premises)
+                    candidate.plan_invariant_bundle_closure(&premises, &named_loop_surfaces)
                 }
             }
         } else {

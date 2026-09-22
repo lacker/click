@@ -331,7 +331,7 @@ fn invariant_bundle_closure_descends_surface_free_both_and_intro_and_rechecks() 
     );
     assert!(root.surface_goal().is_none());
     let checked = root
-        .plan_invariant_bundle_closure(&[])
+        .plan_invariant_bundle_closure(&[], &[])
         .expect("bundle planning should remain a checked operation")
         .expect("explicit leaf facts should close the generated bundle");
     assert!(checked.is_complete());
@@ -380,7 +380,7 @@ fn invariant_bundle_closure_rejects_surface_free_bundle_without_fold_equality() 
         &theorems,
     );
     assert!(
-        root.plan_invariant_bundle_closure(&[])
+        root.plan_invariant_bundle_closure(&[], &[])
             .expect("missing leaf should be a bounded rejection")
             .is_none()
     );

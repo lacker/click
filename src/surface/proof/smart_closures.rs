@@ -4399,7 +4399,63 @@ impl<'a> Proof<'a> {
         premise_pairs: &[(Proposition, ClickProposition)],
     ) -> Option<Self> {
         let tactics = plan_explicit_forall_goal_from_premises(goal, surface_goal, premise_pairs)?;
-        self.try_planned_explicit_steps(&tactics)
+        if tactics
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::Have(_)))
+        {
+            self.try_authoritative_linear_script(&tactics)
+                .ok()
+                .flatten()
+        } else {
+            self.try_planned_explicit_steps(&tactics)
+        }
+    }
+
+    /// Specializes a universal premise from a caller-owned, bounded Surface
+    /// list. Loop preservation uses this for the invariants named at the loop
+    /// head: their iteration-entry spellings lower to the historical facts
+    /// that a back-edge goal may transport pointwise. Every selected premise
+    /// must still be available in this Proof, and the resulting instantiate
+    /// and transport operations are checked normally.
+    pub(super) fn try_named_forall_goal_from_surfaces(
+        &self,
+        surfaces: &[ClickProposition],
+    ) -> Option<Self> {
+        let goal = self.goal()?;
+        let surface_goal = self.surface_goal()?;
+        let premise_pairs = surfaces
+            .iter()
+            .filter_map(|surface| {
+                let lowered = self
+                    .lower_surface_proposition(surface, "named universal premise")
+                    .ok()?;
+                if !matches!(lowered, Proposition::ForAll { .. })
+                    || !self.facts().quantified_fact_available(&lowered)
+                {
+                    return None;
+                }
+                Some((lowered, surface.clone()))
+            })
+            .collect::<Vec<_>>();
+        let auxiliary_pairs = surfaces
+            .iter()
+            .filter_map(|surface| {
+                let lowered = self
+                    .lower_surface_proposition(surface, "named loop transport premise")
+                    .ok()?;
+                (!matches!(lowered, Proposition::ForAll { .. })
+                    && self.facts().exact_available_across_effects(&lowered, &[]))
+                .then_some((lowered, surface.clone()))
+            })
+            .collect::<Vec<_>>();
+        for premise in premise_pairs {
+            let mut selected = vec![premise];
+            selected.extend(auxiliary_pairs.iter().cloned());
+            if let Some(closed) = self.try_selected_forall_goal(goal, surface_goal, &selected) {
+                return Some(closed);
+            }
+        }
+        None
     }
 
     /// Retains the pointwise unchanged-load certificate for a guarded

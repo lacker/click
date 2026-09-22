@@ -2066,16 +2066,94 @@ fn plan_explicit_universal_conclusion_discharge(
         premises: using_surfaces.to_vec(),
     }];
     if let Some((source, target)) = transport_closure {
-        let mut transport_premises = vec![source.clone()];
-        transport_premises.extend(using_surfaces.iter().cloned());
-        tactics.push(ProofTactic::TransportUsing {
-            source,
-            target,
-            premises: transport_premises,
-        });
+        if let Some((historical, current)) = comparison_snapshot_expression_pair(&source, &target) {
+            let reflexive = ClickProposition::Comparison {
+                left: historical.clone(),
+                operator: ComparisonOperator::Equal,
+                right: historical.clone(),
+            };
+            let forward = ClickProposition::Comparison {
+                left: historical.clone(),
+                operator: ComparisonOperator::Equal,
+                right: current.clone(),
+            };
+            let reverse = ClickProposition::Comparison {
+                left: current,
+                operator: ComparisonOperator::Equal,
+                right: historical,
+            };
+            let mut bridge_premises = vec![reflexive.clone()];
+            bridge_premises.extend(using_surfaces.iter().cloned());
+            tactics.push(ProofTactic::Have(ProofHave {
+                proposition: forward.clone(),
+                proof: SourceProof::Script(vec![ProofTactic::TransportUsing {
+                    source: reflexive,
+                    target: forward.clone(),
+                    premises: bridge_premises,
+                }]),
+            }));
+            tactics.push(ProofTactic::Have(ProofHave {
+                proposition: reverse.clone(),
+                proof: SourceProof::Script(vec![
+                    ProofTactic::Rewrite(forward),
+                    ProofTactic::Normalize,
+                ]),
+            }));
+            tactics.push(ProofTactic::Rewrite(reverse));
+        } else {
+            let mut transport_premises = vec![source.clone()];
+            transport_premises.extend(using_surfaces.iter().cloned());
+            tactics.push(ProofTactic::TransportUsing {
+                source,
+                target,
+                premises: transport_premises,
+            });
+        }
     }
     tactics.push(ProofTactic::Assumption);
     Some(tactics)
+}
+
+/// Finds the comparison operand written as the same expression at a named
+/// snapshot and at the current state. An equality bridge for that operand can
+/// then carry the surrounding comparison by an ordinary checked rewrite.
+fn comparison_snapshot_expression_pair(
+    source: &ClickProposition,
+    target: &ClickProposition,
+) -> Option<(ContractExpression, ContractExpression)> {
+    let (
+        ClickProposition::Comparison {
+            left: source_left,
+            operator: source_operator,
+            right: source_right,
+        },
+        ClickProposition::Comparison {
+            left: target_left,
+            operator: target_operator,
+            right: target_right,
+        },
+    ) = (source, target)
+    else {
+        return None;
+    };
+    if source_operator != target_operator {
+        return None;
+    }
+    [
+        (source_left, target_left, source_right, target_right),
+        (source_right, target_right, source_left, target_left),
+    ]
+    .into_iter()
+    .find_map(
+        |(historical, current, source_other, target_other)| match historical {
+            ContractExpression::At { expression, .. }
+                if expression.as_ref() == current && source_other == target_other =>
+            {
+                Some((historical.clone(), current.clone()))
+            }
+            _ => None,
+        },
+    )
 }
 
 pub(super) fn plan_explicit_forall_goal_from_premises(

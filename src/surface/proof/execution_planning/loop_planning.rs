@@ -793,6 +793,10 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         proof_site: Some(preserve_site),
         invariant_body_context: Some(Arc::new(InvariantBodyContext {
             loop_entry_state: preservation.loop_entry_state().clone(),
+            loop_entry_selector: Some(SnapshotSelector::ProgramPoint(ProgramPointRef {
+                region: CodeRegionRef::Loop(loop_index),
+                kind: ProgramPointKind::Entry,
+            })),
             iteration_entry_state: preservation.state().clone(),
             iteration_entry_selector: Some(SnapshotSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Statement(loop_body_statement_index),

@@ -9,14 +9,14 @@ blocks trusting the first:
   before feature work. Everything a new agent needs is in this file and in
   `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
-## Handoff checkpoint — 2026-09-21, after `624146d4`
+## Handoff checkpoint — 2026-09-21, after the quantified-viewability fix
 
-The shared separation/range-validity fix is merged and the full
-`scripts/check.sh` gate passes. The saved DFS proof was rerun unchanged against
-this commit: it still fails at the loop back edge's quantified viewability
-obligation for `next`. The nonnegative count and strict-decrease facts appear
-in the checked context; the remaining unclosed leaf is the universal
-`viewable(next[k])` fact. This is a normal proof failure, not a timeout.
+The loop back edge's quantified viewability obligation for `next` now closes.
+`mdtests/loop_quantified_viewability_across_disjoint_store.md` is the minimal
+regression. The saved DFS proof was rerun unchanged: it advances past that
+leaf and now stops at the value half of the same quantified invariant, while
+the nonnegative count and strict-decrease facts remain available. This is a
+normal proof failure, not a timeout.
 
 This is **not yet a routine cleanup handoff**:
 
@@ -24,19 +24,18 @@ This is **not yet a routine cleanup handoff**:
   false-theorem witnesses or implementation plans. The ancestor-load naming
   rule and unrelated-snapshot comparison need careful semantic reasoning;
   retain experienced review for their conclusions and any kernel changes.
-- The confirmed DFS blocker concerns quantified facts across memory snapshots
-  and the checked loop-invariant bundle. Reduce that failure before choosing
-  a fix; the current evidence does not establish whether the missing step is
-  in proof construction, presentation, or a kernel rule.
+- The remaining DFS blocker concerns transporting the quantified value fact
+  across the loop-entry and iteration-entry snapshots. The viewability half is
+  covered by the regression above; do not conflate the residual value failure
+  with it.
 - Moving an already verified lemma into the checked lemma fixture, refreshing
   old reproductions, and reducing a diagnostic are bounded tasks suitable for
   a less capable agent. Whole-array dependency refinement, reachability, and
   recursive DFS remain design work, not small finishing edits.
 
-For a bounded first assignment, reduce
-`design/dfs-gaps/search_terminates_blocked.md` to the smallest reproduction of
-its quantified-viewability failure, identify the producer and consumer
-snapshots, and report a proposed regression and fix before changing semantics.
+For a bounded next assignment, reduce the new quantified-value leaf in
+`design/dfs-gaps/search_terminates_blocked.md`, identifying why the available
+iteration-entry invariant is not selected for the loop-entry load snapshot.
 The remaining Part 2 audits still precede resuming feature implementation.
 
 This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
@@ -97,8 +96,9 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
 - `design/dfs-gaps/search_terminates_blocked.md` is the full C and sidecar for
   `search` at the furthest point reached. Everything verifies except one
   loop-invariant bundle member: re-establishing the quantified invariant about
-  `next` (its `viewable` half) at the loop's back edge. Rerun it first; a lot of
-  kernel work has landed since it was last run and the refusal may have moved.
+  `next` (now its value half) at the loop's back edge. The generated quantified
+  viewability member closes first and is regression-covered. Rerun the saved
+  proof first; the refusal may move as transport work lands.
   It also holds a third lemma, `unmarked_nonnegative`, that verifies and should
   move into `mdtests/unmarked_count_lemmas.md`.
 
