@@ -32,6 +32,7 @@ verifying "child_release_branch_on_count.c";
 void child_release(struct child* obj) {
     requires 1 <= obj->refs;
     consumes child_ref(obj);
+    ensures count(child_ref(obj)) == old(count(child_ref(obj))) - 1;
 } by {
     if obj->refs == 1 {
         unfold(child_ref(obj));
