@@ -62,12 +62,17 @@ with the existing widths and signedness. Parser regressions and
 
 The `signed char` typedef for `__int8_t` now lowers to the distinct signed
 byte type `int8`, with one-byte storage, integer promotion, and checked
-conversions in the range -128 through 127. The regression next stops at
-`typedef signed int __int32_t;` in `bits/types.h`: the parser has not yet
-accepted the explicit `signed int` spelling. The next small import step is
-to support that spelling using the existing `int32` semantics, then rerun the
-unchanged probe. Declaration-specific runtime identity and checked create/join
-call binding remain subsequent work.
+conversions in the range -128 through 127. The explicit `signed int` spelling
+also now maps to the existing `int32` type in C and Click declarations,
+including typedefs, pointers, casts, and `sizeof`. `mdtests/c_signed_int.md`
+pins its normal verification behavior.
+
+The unchanged probe next stops at the anonymous struct typedef for `__fsid_t`
+in `bits/types.h`: `typedef struct { int __val[2]; } __fsid_t;`. The diagnostic
+reports an expected struct name at the opening brace. Supporting anonymous struct typedefs is
+the next import step; the original header declaration must remain unchanged.
+Declaration-specific runtime identity and checked create/join call binding
+remain subsequent work.
 
 The compiler-backed regression uses the host GCC/header installation and locks
 those actual inputs. This run does not establish the selected Debian GCC

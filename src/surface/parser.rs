@@ -2735,7 +2735,10 @@ impl Parser {
                 }
             }
             "signed" => {
-                if self.peek_ident() == Some("char") {
+                if self.peek_ident() == Some("int") {
+                    self.position += 1;
+                    C0Type::Int32
+                } else if self.peek_ident() == Some("char") {
                     self.position += 1;
                     C0Type::Int8
                 } else if self.peek_ident() == Some("short") {
@@ -2746,7 +2749,7 @@ impl Parser {
                     C0Type::Int64
                 } else {
                     return Err(self.error(
-                        "unsupported integer width `signed`; expected `signed char`, `signed short`, or `signed long`",
+                        "unsupported integer width `signed`; expected `signed char`, `signed short`, `signed int`, or `signed long`",
                     ));
                 }
             }

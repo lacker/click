@@ -11843,6 +11843,7 @@ fn c0_body_call_updates_a_local_array_without_rebinding_it_as_a_scalar() {
 fn standard_integer_widths_accept_trailing_int_without_changing_type() {
     use syntax::C0Type;
     for (spelling, expected) in [
+        ("signed int", C0Type::Int32),
         ("short int", C0Type::Int16),
         ("signed short int", C0Type::Int16),
         ("unsigned short int", C0Type::UInt16),
@@ -11880,6 +11881,9 @@ fn standard_integer_widths_accept_trailing_int_without_changing_type() {
 fn trailing_int_does_not_accept_incompatible_or_duplicate_specifiers() {
     for spelling in [
         "int int",
+        "signed int int",
+        "signed int short",
+        "signed unsigned int",
         "short int int",
         "long int int",
         "unsigned int int",
