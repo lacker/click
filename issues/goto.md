@@ -10,9 +10,13 @@ function-scope labels, exact target resumption, path joins, and chained
 ordinary C cleanup. This issue now tracks only the deferred general jump
 shapes.
 
-C0 accepts the documented forward subset but still rejects backward edges,
-jumps involving loops or switches, labels nested below the function body, and
-edges across unsupported declaration scopes. Treating those shapes as
+C0 accepts the documented forward subset and one narrow reducible natural-cycle
+subset: a direct function-body entry label with exactly one backward edge in
+the re-entered region. That edge may be nested in an `if`, and the existing
+`loop` proof supplies its invariant and termination evidence. General
+general backward edges, jumps involving loops or switches, labels nested below
+the function body, and edges across unsupported declaration scopes remain
+rejected. Treating those shapes as
 `break`, a hidden flag, or a source rewrite would lose the C control-flow
 semantics that Click is meant to verify.
 
@@ -67,15 +71,19 @@ They cover checked edges, skipped statements and conditionals, conditional
 path joins, label chains, allocation cleanup, expansion, and hostile missing
 cleanup. Parser tests retain the unsupported-shape diagnostics.
 
+The first natural-cycle regressions are
+[`natural_goto_cycle.md`](../mdtests/natural_goto_cycle.md) and
+[`natural_goto_conditional_backedge.md`](../mdtests/natural_goto_conditional_backedge.md).
+
 ## Intended regression
 
-Add a small backward edge whose cycle has an explicit invariant and
-deterministic termination measure. The proof must resume at the exact label
-with the current path state, reject an omitted or non-decreasing measure, and
-expand to a checkable certificate. Then add one independently motivated
-multi-entry or irreducible shape only if its edge invariants and source
-attribution have a bounded rule; do not infer general support from the simple
-cycle.
+The delivered natural-cycle slice covers a small backward edge whose cycle has
+an explicit invariant and deterministic termination measure. The proof resumes
+at the exact label with the current path state, rejects an omitted or
+non-decreasing measure, and expands to a checkable certificate. The remaining
+work is one independently motivated multi-entry or irreducible shape only if
+its edge invariants and source attribution have a bounded rule; do not infer
+general support from the simple cycle.
 
 ## Acceptance criteria
 
