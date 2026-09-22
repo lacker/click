@@ -4739,6 +4739,7 @@ pub(in crate::surface) fn parse_c_layouts_for_target(
                         pointer: Box::new(CExpression::Value(value)),
                         value_type,
                         volatile: false,
+                        pointee_constant: false,
                         source: Default::default(),
                     }
                 };
@@ -4859,6 +4860,7 @@ pub(in crate::surface) fn parse_c_layouts_for_target(
                             pointer: Box::new(CExpression::Value(value)),
                             value_type,
                             volatile: false,
+                            pointee_constant: false,
                             source: Default::default(),
                         }
                     };

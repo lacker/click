@@ -1824,6 +1824,7 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             pointer: pointer_expression,
             value_type,
             volatile,
+            pointee_constant,
             ..
         } => {
             let mut paths = Vec::new();
@@ -1838,7 +1839,8 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                                 *value_type,
                                 *volatile || pointer.pointee_volatile(),
                             )
-                            .with_constant(pointer.pointee_constant()),
+                            .with_constant(pointer.pointee_constant())
+                            .with_pointee_constant(*pointee_constant),
                         ),
                         facts: pointer_path.facts,
                         obligations: pointer_path.obligations,

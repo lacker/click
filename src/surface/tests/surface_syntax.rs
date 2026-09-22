@@ -2990,6 +2990,7 @@ fn qualified_storage_source_index_preserves_forks_and_scales() {
                 ))),
                 value_type: CType::UInt64,
                 volatile: false,
+                pointee_constant: false,
                 source: Default::default(),
             },
         };

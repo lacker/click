@@ -549,6 +549,7 @@ fn algebraic_parameter_types(
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ResolvedField {
     c_type: C0Type,
+    pointee_constant: bool,
     struct_name: Option<String>,
     union_name: Option<String>,
     function_pointer_signature: Option<syntax::C0FunctionPointerSignature>,
@@ -7215,6 +7216,7 @@ impl Parser {
                     pointer: Box::new(field_base),
                     value_type: field.c_type.to_kernel_type(),
                     volatile: false,
+                    pointee_constant: field.pointee_constant,
                     source: Default::default(),
                 },
                 start: CExpression::Value(int32(0)),
@@ -7270,6 +7272,7 @@ impl Parser {
             pointer: Box::new(self.offset_field_pointer(base, field.offset_bytes)),
             value_type: field.c_type.to_kernel_type(),
             volatile: false,
+            pointee_constant: field.pointee_constant,
             source: Default::default(),
         })
     }
@@ -7309,6 +7312,7 @@ impl Parser {
                     C0Expression::Field {
                         pointer: Box::new(pointer),
                         field_type: field.c_type,
+                        pointee_constant: field.pointee_constant,
                         field_struct_name: None,
                         function_pointer_signature: None,
                         array_shape: None,
@@ -7319,6 +7323,7 @@ impl Parser {
                 C0Expression::Field {
                     pointer: Box::new(pointer),
                     field_type: field.c_type,
+                    pointee_constant: field.pointee_constant,
                     field_struct_name: field.struct_name,
                     function_pointer_signature: field.function_pointer_signature.clone(),
                     array_shape: field.array_shape,
@@ -7437,6 +7442,7 @@ impl Parser {
             .unwrap_or_else(|| layout.size_bytes());
         Ok(ResolvedField {
             c_type: field.c_type(),
+            pointee_constant: field.pointee_is_constant(),
             struct_name: field.struct_name().map(str::to_string),
             union_name: field.union_name().map(str::to_string),
             function_pointer_signature: field.function_pointer_signature().cloned(),
@@ -7461,6 +7467,7 @@ impl Parser {
         };
         Ok(ResolvedField {
             c_type: field.c_type(),
+            pointee_constant: false,
             struct_name: None,
             union_name: None,
             function_pointer_signature: None,
@@ -8316,6 +8323,7 @@ impl Parser {
                 pointer: Box::new(pointer),
                 value_type,
                 volatile: false,
+                pointee_constant: false,
                 source: Default::default(),
             }));
         }
@@ -9342,6 +9350,7 @@ fn lowered_field_expression(pointer: CExpression, field: &ResolvedField) -> CExp
             pointer: Box::new(pointer),
             value_type: field.c_type.to_kernel_type(),
             volatile: false,
+            pointee_constant: field.pointee_constant,
             source: Default::default(),
         }
     }

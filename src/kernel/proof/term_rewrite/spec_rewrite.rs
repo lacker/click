@@ -1541,11 +1541,13 @@ impl<'a> TermRewrite<'a> {
                 pointer,
                 value_type,
                 volatile,
+                pointee_constant,
                 source,
             } => CExpression::TypedLoad {
                 pointer: Box::new(self.rewrite_c_expression(pointer)?),
                 value_type: *value_type,
                 volatile: *volatile,
+                pointee_constant: *pointee_constant,
                 source: source.clone(),
             },
             CExpression::Index(left, right) => CExpression::Index(

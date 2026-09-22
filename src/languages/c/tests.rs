@@ -12196,3 +12196,99 @@ fn c0_leaf_memory_proof_expands_and_reverifies() {
             .unwrap();
     crate::surface::verify_c0_sources(&expanded, &[("leaf.c", c)]).unwrap();
 }
+
+#[test]
+fn c0_const_pointer_fields_preserve_qualification_and_layout() {
+    let unit = syntax::parse_translation_unit_for_source(
+        r#"
+        struct holder { int tag; const char *text; const int *value; };
+        const char *get(struct holder *h) { return h->text; }
+        int read(struct holder *h) { return h->value[0]; }
+        void set(struct holder *h, const char *p) { h->text = p; }
+        const char *copy(const char *p) {
+            struct holder h = { 0, p, 0 };
+            struct holder copy = h;
+            return copy.text;
+        }
+    "#,
+        "fields.c",
+        &source::ExpandedLineMap::empty(),
+    )
+    .expect("pointer-to-const fields should parse and copy");
+    let layout = &unit.structs["holder"];
+    assert_eq!(layout.size_bytes(), 24);
+    assert_eq!(layout.field("text").unwrap().offset_bytes(), 8);
+    assert!(layout.field("text").unwrap().pointee_is_constant());
+    assert!(layout.field("value").unwrap().pointee_is_constant());
+    assert!(!layout.field("tag").unwrap().pointee_is_constant());
+}
+
+#[test]
+fn c0_const_pointer_fields_reject_writes_and_qualifier_loss() {
+    for body in [
+        "int bad(struct holder *h) { h->text[0] = 1; return 0; }",
+        "int bad(struct holder *h) { *h->text = 1; return 0; }",
+        "char *bad(struct holder *h) { return h->text; }",
+        "int bad(struct holder *h) { char *p = h->text; return 0; }",
+        "void take(char *p); int bad(struct holder *h) { take(h->text); return 0; }",
+        "int bad(struct holder *h) { h->mutable = h->text; return 0; }",
+        "int bad(struct holder *h) { struct holder copy = { 0, h->text }; return 0; }",
+        "int bad(struct holder *h) { struct holder copy = { .mutable = h->text }; return 0; }",
+        "int bad(struct holder *h) { char **p = &h->text; return 0; }",
+        "int bad(struct holder *h) { char *p = 1 + h->text; return 0; }",
+        "int bad(struct holder *h) { h->next->mutable = 0; return 0; }",
+        "int bad(struct holder *h) { char *p = READ_ONCE(h->text); return 0; }",
+        "int bad(struct holder *h) { WRITE_ONCE(h->mutable, h->text); return 0; }",
+    ] {
+        let source = format!(
+            "struct holder {{ const char *text; char *mutable; const struct holder *next; }}; {body}"
+        );
+        let error = syntax::parse_functions(&source).expect_err(body);
+        assert!(
+            error.message().contains("const"),
+            "{body}: {}",
+            error.message()
+        );
+    }
+}
+
+#[test]
+fn c0_const_pointer_fields_keep_deeper_qualifiers_out_of_scope() {
+    for source in [
+        "struct holder { char *const text; };",
+        "struct holder { const int value; };",
+        "struct holder { const char **text; };",
+        "union holder { const char *text; };",
+    ] {
+        let error =
+            syntax::validate_header(source, &source::ExpandedLineMap::empty()).expect_err(source);
+        assert!(error.message().contains("const"), "{}", error.message());
+    }
+}
+
+#[test]
+fn c0_const_pointer_fields_alias_proof_expands_and_reverifies() {
+    let c = "struct holder { const int *value; }; int update(struct holder *h, int *p) { *p = 7; return h->value[0]; }";
+    let proof = "verifying \"fields.c\"; int update(struct holder *h, int *p) { views &h->value; owns p[0..1]; requires h->value == p; ensures result == 7 by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("fields.c", c)]).unwrap();
+    let expanded = crate::surface::expand_c0_claim_source_by_label(
+        proof,
+        &[("fields.c", c)],
+        "update.ensures_0",
+    )
+    .unwrap();
+    crate::surface::verify_c0_sources(&expanded, &[("fields.c", c)]).unwrap();
+}
+
+#[test]
+fn c0_const_pointer_fields_store_proof_expands_and_reverifies() {
+    let c = "struct holder { const int *value; }; const int *set(struct holder *h, const int *p) { h->value = p; return h->value; }";
+    let proof = "verifying \"fields.c\"; const int *set(struct holder *h, const int *p) { owns &h->value; ensures result == p by auto; ensures h->value == p by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("fields.c", c)]).unwrap();
+    for label in ["set.ensures_0", "set.ensures_1"] {
+        let expanded =
+            crate::surface::expand_c0_claim_source_by_label(proof, &[("fields.c", c)], label)
+                .unwrap();
+        crate::surface::verify_c0_sources(&expanded, &[("fields.c", c)]).unwrap();
+    }
+}

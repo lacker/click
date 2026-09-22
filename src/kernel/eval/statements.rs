@@ -2730,12 +2730,14 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             value,
             value_type,
             volatile,
+            pointee_constant,
         } => execute_c_lvalue_assignment_paths(
             state,
             &CExpression::TypedLoad {
                 pointer: Box::new(pointer.clone()),
                 value_type: *value_type,
                 volatile: *volatile,
+                pointee_constant: *pointee_constant,
                 source: Default::default(),
             },
             value,

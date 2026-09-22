@@ -502,6 +502,7 @@ fn stored_child_arguments_require_owned_memory() {
         pointer: Box::new(c_variable("p")),
         value_type: CType::Int32Pointer,
         volatile: false,
+        pointee_constant: false,
         source: Default::default(),
     }];
     let children = vec![
@@ -567,6 +568,7 @@ fn stored_child_arguments_require_owned_memory() {
             pointer: Box::new(c_pointer_value(concrete.clone())),
             value_type: CType::Int32Pointer,
             volatile: false,
+            pointee_constant: false,
             source: Default::default(),
         }];
     // A materialized C block is not authority to read a link outside the
@@ -5170,6 +5172,7 @@ fn dependent_resource_clause_work_scales_with_dependency_nodes() {
         pointer: Box::new(c_pointer_value(pointer)),
         value_type: CType::Int32Pointer,
         volatile: false,
+        pointee_constant: false,
         source: Default::default(),
     };
     let samples = [4_usize, 8, 16, 32]
@@ -5259,6 +5262,7 @@ fn symbolic_supplied_range_wakes_concrete_pending_dependency() {
         pointer: Box::new(c_pointer_value(pointer)),
         value_type: CType::Int32Pointer,
         volatile: false,
+        pointee_constant: false,
         source: Default::default(),
     };
     let owned = |base: CExpression, end: CExpression| {

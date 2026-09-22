@@ -74,6 +74,7 @@ fn an_expression_form_names_itself_its_cell_and_its_repair() {
             )),
             value_type: CType::Int32,
             volatile: false,
+            pointee_constant: false,
             source: Default::default(),
         })],
     };
@@ -270,6 +271,7 @@ fn fold_defining_equation() -> ClickProposition {
             )),
             value_type: CType::Int32,
             volatile: false,
+            pointee_constant: false,
             source: Default::default(),
         },
     };

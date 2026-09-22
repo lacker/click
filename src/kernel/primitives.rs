@@ -842,6 +842,8 @@ pub enum CExpression {
         /// A sequential kernel access primitive forces one observable access
         /// even when the source lvalue itself was not declared volatile.
         volatile: bool,
+        /// Qualification of a loaded pointer's pointee, not of this cell.
+        pointee_constant: bool,
         /// Source provenance is presentation metadata only. Its comparison
         /// traits intentionally ignore the value.
         source: CExpressionLoadSource,
@@ -1996,6 +1998,8 @@ pub enum CStatement {
         value_type: CType,
         /// See [`CExpression::TypedLoad::volatile`].
         volatile: bool,
+        /// The destination pointer cell's declared pointee qualification.
+        pointee_constant: bool,
     },
     /// Evaluate a compound-assignment or increment target as one lvalue,
     /// read it, apply the operator with the operand, and write the result back.

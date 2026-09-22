@@ -1617,6 +1617,7 @@ pub struct C0StructLayout {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct C0AggregateField {
+    pointee_constant: bool,
     name: String,
     offset_bytes: u32,
     c_type: C0Type,
@@ -1699,6 +1700,7 @@ pub struct C0UnionField {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0StructField {
     c_type: C0Type,
+    pointee_constant: bool,
     struct_name: Option<String>,
     enum_name: Option<String>,
     union_name: Option<String>,
@@ -2107,6 +2109,7 @@ pub enum C0Statement {
         pointer: C0Expression,
         value: C0Expression,
         value_type: Option<C0Type>,
+        pointee_constant: bool,
     },
     /// A checked sequential access primitive imported from the Linux-style
     /// READ_ONCE/WRITE_ONCE/RCU macro family. The kernel records the access as
@@ -2116,6 +2119,7 @@ pub enum C0Statement {
         target: C0Expression,
         value: C0Expression,
         value_type: C0Type,
+        pointee_constant: bool,
     },
     /// Copy an address-backed aggregate whose layout includes overlapping
     /// union storage. Ordinary scalar stores cannot represent this copy
@@ -2303,6 +2307,7 @@ pub enum C0Expression {
     /// One observable sequential read of the source lvalue. `struct_name`
     /// carries nominal pointer provenance through the lowering boundary.
     SequentialRead {
+        pointee_constant: bool,
         target: Box<C0Expression>,
         c_type: C0Type,
         struct_name: Option<String>,
@@ -2326,6 +2331,7 @@ pub enum C0Expression {
     Field {
         pointer: Box<C0Expression>,
         field_type: C0Type,
+        pointee_constant: bool,
         field_struct_name: Option<String>,
         function_pointer_signature: Option<C0FunctionPointerSignature>,
         array_shape: Option<Vec<u32>>,
@@ -3198,6 +3204,7 @@ impl C0StructLayout {
                     name.clone(),
                     C0StructField {
                         c_type,
+                        pointee_constant: false,
                         struct_name: None,
                         enum_name: None,
                         union_name: None,
@@ -3213,6 +3220,7 @@ impl C0StructLayout {
                 return Err(format!("duplicate explicit struct field `{name}`"));
             }
             aggregate_fields.push(C0AggregateField {
+                pointee_constant: false,
                 name,
                 offset_bytes,
                 c_type,
@@ -3334,6 +3342,10 @@ impl C0UnionField {
 }
 
 impl C0StructField {
+    pub fn pointee_is_constant(&self) -> bool {
+        self.pointee_constant
+    }
+
     pub fn c_type(&self) -> C0Type {
         self.c_type
     }
@@ -3796,11 +3808,14 @@ impl C0Statement {
                 pointer,
                 value,
                 value_type,
+                pointee_constant,
             } => match value_type {
-                Some(value_type) => crate::kernel::c_typed_store(
+                Some(value_type) => crate::kernel::c_qualified_typed_store(
                     pointer.to_kernel_expression(),
                     value.to_kernel_expression(),
                     value_type.to_kernel_type(),
+                    *pointee_constant,
+                    false,
                 ),
                 None => crate::kernel::c_store(
                     pointer.to_kernel_expression(),
@@ -3811,10 +3826,13 @@ impl C0Statement {
                 target,
                 value,
                 value_type,
-            } => crate::kernel::c_volatile_typed_store(
+                pointee_constant,
+            } => crate::kernel::c_qualified_typed_store(
                 C0Expression::AddressOf(Box::new(target.clone())).to_kernel_expression(),
                 value.to_kernel_expression(),
                 value_type.to_kernel_type(),
+                *pointee_constant,
+                true,
             ),
             Self::AggregateCopy {
                 target,
@@ -4050,9 +4068,15 @@ impl C0Expression {
                 crate::kernel::c_bitwise_not(expression.to_kernel_expression())
             }
             Self::Load(pointer) => crate::kernel::c_load(pointer.to_kernel_expression()),
-            Self::SequentialRead { target, c_type, .. } => crate::kernel::c_volatile_typed_load(
+            Self::SequentialRead {
+                target,
+                c_type,
+                pointee_constant,
+                ..
+            } => crate::kernel::c_qualified_volatile_typed_load(
                 C0Expression::AddressOf(Box::new(target.as_ref().clone())).to_kernel_expression(),
                 c_type.to_kernel_type(),
+                *pointee_constant,
             ),
             Self::SequentialWrite { .. } => {
                 unreachable!(
@@ -4062,11 +4086,13 @@ impl C0Expression {
             Self::Field {
                 pointer,
                 field_type,
+                pointee_constant,
                 source,
                 ..
-            } => crate::kernel::c_typed_load_with_source(
+            } => crate::kernel::c_qualified_typed_load_with_source(
                 pointer.to_kernel_expression(),
                 field_type.to_kernel_type(),
+                *pointee_constant,
                 source.as_ref().and_then(|source| {
                     source.id().source_identity().map(|source_identity| {
                         crate::kernel::LoadSourceId {
@@ -5596,6 +5622,7 @@ fn flatten_aggregate_layout(
     ) {
         for nested_field in nested_layout.aggregate_fields() {
             aggregate_fields.push(C0AggregateField {
+                pointee_constant: nested_field.pointee_constant,
                 name: format!("{prefix}.{}", nested_field.name),
                 offset_bytes: base_offset
                     .checked_add(nested_field.offset_bytes)
@@ -5700,6 +5727,7 @@ fn flatten_aggregate_layout(
             });
         } else {
             aggregate_fields.push(C0AggregateField {
+                pointee_constant: field.pointee_constant,
                 name: field_name.clone(),
                 offset_bytes: field.offset_bytes,
                 c_type: field.c_type,
@@ -5721,6 +5749,7 @@ fn field_expression(
     function_pointer_signature: Option<C0FunctionPointerSignature>,
     array_shape: Option<Vec<u32>>,
     source: Option<C0FieldSource>,
+    pointee_constant: bool,
 ) -> C0Expression {
     if let Some(union_name) = field_union_name {
         return C0Expression::UnionAddress {
@@ -5739,6 +5768,7 @@ fn field_expression(
     C0Expression::Field {
         pointer: Box::new(pointer),
         field_type,
+        pointee_constant,
         field_struct_name,
         function_pointer_signature,
         array_shape,
@@ -6585,6 +6615,16 @@ impl Parser {
 
     fn expression_pointee_is_constant(&self, expression: &C0Expression) -> bool {
         match expression {
+            C0Expression::Field {
+                pointee_constant, ..
+            } => *pointee_constant,
+            C0Expression::Assignment {
+                pointee_constant, ..
+            } => *pointee_constant,
+            C0Expression::SequentialRead { target, .. }
+            | C0Expression::SequentialWrite { target, .. } => {
+                self.expression_pointee_is_constant(target)
+            }
             C0Expression::Call { function_name, .. } => {
                 self.call_return_pointee_is_constant(function_name)
             }
@@ -6612,8 +6652,11 @@ impl Parser {
             }
             C0Expression::AddressOf(target) => self.expression_is_constant_lvalue(target),
             C0Expression::PointerOffsetBytes { pointer, .. }
-            | C0Expression::Subtract(pointer, _)
-            | C0Expression::Add(pointer, _) => self.expression_pointee_is_constant(pointer),
+            | C0Expression::Subtract(pointer, _) => self.expression_pointee_is_constant(pointer),
+            C0Expression::Add(left, right) => {
+                self.expression_pointee_is_constant(left)
+                    || self.expression_pointee_is_constant(right)
+            }
             C0Expression::Cast {
                 expression,
                 pointee_constant,
@@ -8973,6 +9016,7 @@ impl Parser {
                         field_name.clone(),
                         C0StructField {
                             c_type,
+                            pointee_constant: false,
                             struct_name: None,
                             enum_name: None,
                             union_name: None,
@@ -9013,6 +9057,7 @@ impl Parser {
                         field_name.clone(),
                         C0StructField {
                             c_type,
+                            pointee_constant: field_type.pointee_constant,
                             struct_name: field_struct_name,
                             enum_name: (c_type == field_type.c_type)
                                 .then(|| field_type.enum_name.clone())
@@ -9096,7 +9141,7 @@ impl Parser {
                 "the small volatile model does not support volatile struct or union fields",
             ));
         }
-        if base_type.is_constant || base_type.pointee_constant {
+        if base_type.is_constant {
             return Err(self.error_here(
                 "const-qualified struct or union fields are not supported in this slice",
             ));
@@ -10653,6 +10698,7 @@ impl Parser {
                 ),
                 value,
                 value_type: Some(element_type),
+                pointee_constant: false,
             });
         }
         Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
@@ -11092,6 +11138,7 @@ impl Parser {
                 value,
             )]);
         }
+        self.reject_discarded_const_pointer(field.c_type, field.pointee_constant, &value)?;
         validate_aggregate_initializer(self, field.c_type, &value)?;
         Ok(vec![C0AggregateInitializer::new(
             field_offset,
@@ -11427,15 +11474,18 @@ impl Parser {
                     ),
                     value,
                     value_type: Some(element_type),
+                    pointee_constant: false,
                 })
                 .collect());
         }
 
         let value = self.parse_expression()?;
+        self.reject_discarded_const_pointer(field.c_type, field.pointee_constant, &value)?;
         Ok(vec![C0Statement::Store {
             pointer: field_pointer,
             value,
             value_type: Some(field.c_type),
+            pointee_constant: field.pointee_constant,
         }])
     }
 
@@ -11674,6 +11724,7 @@ impl Parser {
                     ),
                     value: zero_initializer_value(element_type),
                     value_type: Some(element_type),
+                    pointee_constant: false,
                 })
                 .collect();
         }
@@ -11682,6 +11733,7 @@ impl Parser {
             pointer: field_pointer,
             value: zero_initializer_value(field.c_type),
             value_type: Some(field.c_type),
+            pointee_constant: field.pointee_constant,
         }]
     }
 
@@ -12462,12 +12514,14 @@ impl Parser {
                     value: C0Expression::Field {
                         pointer: Box::new(source_pointer),
                         field_type: element_type,
+                        pointee_constant: field.pointee_constant,
                         field_struct_name: None,
                         function_pointer_signature: element_signature.clone(),
                         array_shape: None,
                         source: None,
                     },
                     value_type: Some(element_type),
+                    pointee_constant: field.pointee_constant,
                 });
             }
         }
@@ -12794,7 +12848,11 @@ impl Parser {
             }
             let value = self.parse_expression()?;
             if let Some(target_type) = self.source_expression_type(&target) {
-                self.validate_char_pointer_assignment(target_type, &value)?;
+                self.reject_discarded_const_pointer(
+                    target_type,
+                    self.expression_pointee_is_constant(&target),
+                    &value,
+                )?;
             }
             return match target {
                 C0Expression::Load(pointer) => {
@@ -12805,11 +12863,13 @@ impl Parser {
                         pointer: *pointer,
                         value,
                         value_type: None,
+                        pointee_constant: false,
                     })
                 }
                 C0Expression::Field {
                     pointer,
                     field_type,
+                    pointee_constant,
                     field_struct_name,
                     function_pointer_signature,
                     ..
@@ -12841,6 +12901,7 @@ impl Parser {
                         pointer: *pointer,
                         value,
                         value_type: Some(field_type),
+                        pointee_constant,
                     })
                 }
                 C0Expression::AggregateAddress { .. } => unreachable!(
@@ -12856,6 +12917,7 @@ impl Parser {
                     pointer: C0Expression::Add(base, index),
                     value,
                     value_type: None,
+                    pointee_constant: false,
                 }),
                 target => Err(self.error_here(format!(
                     "expected memory lvalue assignment target in {context}, got {target:?}"
@@ -13986,6 +14048,7 @@ impl Parser {
                 pointer,
                 value,
                 value_type,
+                pointee_constant,
             } => {
                 let (prefix, pointer, value) = self.lower_expression_pair(pointer, value)?;
                 Ok(prepend_statements(
@@ -13994,6 +14057,7 @@ impl Parser {
                         pointer,
                         value,
                         value_type,
+                        pointee_constant,
                     },
                 ))
             }
@@ -14001,6 +14065,7 @@ impl Parser {
                 target,
                 value,
                 value_type,
+                pointee_constant,
             } => {
                 // The macro contract evaluates the value into a temporary
                 // before evaluating the destination access. This makes the
@@ -14015,6 +14080,7 @@ impl Parser {
                         target,
                         value,
                         value_type,
+                        pointee_constant,
                     },
                 ))
             }
@@ -14640,11 +14706,13 @@ impl Parser {
                 target,
                 c_type,
                 struct_name,
+                pointee_constant,
             } => {
                 let (prefix, target) = self.lower_expression_calls(*target)?;
                 Ok((
                     prefix,
                     C0Expression::SequentialRead {
+                        pointee_constant,
                         target: Box::new(target),
                         c_type,
                         struct_name,
@@ -14664,7 +14732,11 @@ impl Parser {
                 let (mut prefix, value) = self.lower_expression_calls(*value)?;
                 let (target_prefix, target) = self.lower_expression_calls(*target)?;
                 prefix.extend(target_prefix);
+                let pointee_constant = self.expression_pointee_is_constant(&target);
                 let temporary = self.fresh_synthesized_call_name();
+                if pointee_constant {
+                    self.variable_pointee_constants.insert(temporary.clone());
+                }
                 self.variable_types.insert(temporary.clone(), c_type);
                 if let Some(struct_name) = &struct_name {
                     self.variable_structs
@@ -14676,7 +14748,7 @@ impl Parser {
                     volatile: false,
                     pointee_volatile: false,
                     constant: false,
-                    pointee_constant: false,
+                    pointee_constant,
                 });
                 prefix.push(C0Statement::Assign {
                     name: temporary.clone(),
@@ -14686,6 +14758,7 @@ impl Parser {
                     target,
                     value: C0Expression::Variable(temporary.clone()),
                     value_type: c_type,
+                    pointee_constant,
                 });
                 Ok((prefix, C0Expression::Variable(temporary)))
             }
@@ -14705,6 +14778,7 @@ impl Parser {
             C0Expression::Field {
                 pointer,
                 field_type,
+                pointee_constant,
                 field_struct_name,
                 function_pointer_signature,
                 array_shape,
@@ -14716,6 +14790,7 @@ impl Parser {
                     C0Expression::Field {
                         pointer: Box::new(pointer),
                         field_type,
+                        pointee_constant,
                         field_struct_name,
                         function_pointer_signature,
                         array_shape,
@@ -15569,6 +15644,15 @@ impl Parser {
                 ));
             }
             let target = self.parse_unary()?;
+            if self
+                .source_expression_type(&target)
+                .is_some_and(C0Type::is_pointer)
+                && self.expression_pointee_is_constant(&target)
+            {
+                return Err(self.error_here(
+                    "address of a pointer-to-const requires unsupported nested const qualification",
+                ));
+            }
             if let C0Expression::Variable(name) = &target {
                 self.address_taken_variables.insert(name.clone());
             }
@@ -15624,6 +15708,7 @@ impl Parser {
                 let (c_type, struct_name) =
                     self.sequential_access_target(target, source_name, position.clone())?;
                 Ok(Some(C0Expression::SequentialRead {
+                    pointee_constant: self.expression_pointee_is_constant(target),
                     target: Box::new(target.clone()),
                     c_type,
                     struct_name,
@@ -15756,7 +15841,11 @@ impl Parser {
         struct_name: Option<&str>,
     ) -> Result<(), C0SyntaxError> {
         self.reject_constant_lvalue_write(target)?;
-        self.validate_char_pointer_assignment(c_type, value)?;
+        self.reject_discarded_const_pointer(
+            c_type,
+            self.expression_pointee_is_constant(target),
+            value,
+        )?;
         if let Some(struct_name) = struct_name {
             let expected_struct = struct_name.to_string();
             self.validate_struct_pointer_assignment(Some(&expected_struct), Some(c_type), value)?;
@@ -15820,6 +15909,7 @@ impl Parser {
                     target: target.clone(),
                     value: value.clone(),
                     value_type: c_type,
+                    pointee_constant: self.expression_pointee_is_constant(target),
                 }))
             }
             "READ_ONCE" | "likely" | "unlikely" | "__builtin_expect" => Err(
@@ -16103,6 +16193,7 @@ impl Parser {
                         field_union_name,
                         function_pointer_signature,
                         array_shape,
+                        pointee_constant,
                     ) = if dot {
                         let struct_value = matches!(
                             &expression,
@@ -16138,6 +16229,7 @@ impl Parser {
                             function_pointer_signature,
                             array_shape,
                             self.mint_field_source_id(field_name, field_position),
+                            pointee_constant,
                         )
                     };
                 }
@@ -16768,6 +16860,7 @@ impl Parser {
             Option<String>,
             Option<C0FunctionPointerSignature>,
             Option<Vec<u32>>,
+            bool,
         ),
         C0SyntaxError,
     > {
@@ -16820,6 +16913,7 @@ impl Parser {
                 field.union_name.clone(),
                 field.function_pointer_signature.clone(),
                 field.array_shape.clone(),
+                field.pointee_constant,
             ));
         }
         if let Some(union_name) = union_name {
@@ -16836,6 +16930,7 @@ impl Parser {
                 None,
                 None,
                 None,
+                false,
             ));
         }
         Err(self.error_here(format!(
@@ -16855,6 +16950,7 @@ impl Parser {
             Option<String>,
             Option<C0FunctionPointerSignature>,
             Option<Vec<u32>>,
+            bool,
         ),
         C0SyntaxError,
     > {
@@ -16909,6 +17005,7 @@ impl Parser {
             field.union_name.clone(),
             field.function_pointer_signature.clone(),
             field.array_shape.clone(),
+            field.pointee_constant,
         ))
     }
 

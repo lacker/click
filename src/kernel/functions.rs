@@ -23967,6 +23967,7 @@ mod retained_aggregate_resource_values_tests {
             pointer: Box::new(CExpression::Variable("input".into())),
             value_type: CType::Int32Pointer,
             volatile: false,
+            pointee_constant: false,
             source: Default::default(),
         };
         let mut work = Vec::new();

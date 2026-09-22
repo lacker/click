@@ -2768,6 +2768,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
             pointer,
             value_type,
             volatile,
+            pointee_constant,
             source,
         } => CExpression::TypedLoad {
             pointer: Box::new(substitute_bitvector_variable_in_c_expression(
@@ -2775,6 +2776,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
             )),
             value_type: *value_type,
             volatile: *volatile,
+            pointee_constant: *pointee_constant,
             source: source.clone(),
         },
         CExpression::LessThan(left, right) => CExpression::LessThan(
@@ -3054,11 +3056,13 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             value,
             value_type,
             volatile,
+            pointee_constant,
         } => CStatement::TypedStore {
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
             value: substitute_bitvector_variable_in_c_expression(value, from, to),
             value_type: *value_type,
             volatile: *volatile,
+            pointee_constant: *pointee_constant,
         },
         CStatement::CopyAggregate {
             target,
@@ -6130,6 +6134,7 @@ fn substitute_pointer_variable_in_c_expression(
             pointer,
             value_type,
             volatile,
+            pointee_constant,
             source,
         } => CExpression::TypedLoad {
             pointer: Box::new(substitute_pointer_variable_in_c_expression(
@@ -6137,6 +6142,7 @@ fn substitute_pointer_variable_in_c_expression(
             )),
             value_type: *value_type,
             volatile: *volatile,
+            pointee_constant: *pointee_constant,
             source: source.clone(),
         },
         CExpression::Not(body) | CExpression::BitwiseNot(body) => {
@@ -6291,11 +6297,13 @@ fn substitute_pointer_variable_in_c_statement(
             value,
             value_type,
             volatile,
+            pointee_constant,
         } => CStatement::TypedStore {
             pointer: substitute_pointer_variable_in_c_expression(pointer, from, to),
             value: substitute_pointer_variable_in_c_expression(value, from, to),
             value_type: *value_type,
             volatile: *volatile,
+            pointee_constant: *pointee_constant,
         },
         CStatement::CopyAggregate {
             target,

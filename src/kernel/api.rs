@@ -1498,10 +1498,20 @@ pub(crate) fn c_typed_load_with_source(
     value_type: CType,
     source: Option<crate::kernel::LoadSourceId>,
 ) -> CExpression {
+    c_qualified_typed_load_with_source(pointer, value_type, false, source)
+}
+
+pub(crate) fn c_qualified_typed_load_with_source(
+    pointer: CExpression,
+    value_type: CType,
+    pointee_constant: bool,
+    source: Option<crate::kernel::LoadSourceId>,
+) -> CExpression {
     CExpression::TypedLoad {
         pointer: Box::new(pointer),
         value_type,
         volatile: false,
+        pointee_constant,
         source: source
             .map(crate::kernel::CExpressionLoadSource::new)
             .unwrap_or_default(),
@@ -1513,10 +1523,19 @@ pub(crate) fn c_typed_load_with_source(
 /// lvalue side of `WRITE_ONCE`/`rcu_assign_pointer`; it is deliberately an
 /// observable sequential access, not an atomic or release/acquire operation.
 pub fn c_volatile_typed_load(pointer: CExpression, value_type: CType) -> CExpression {
+    c_qualified_volatile_typed_load(pointer, value_type, false)
+}
+
+pub(crate) fn c_qualified_volatile_typed_load(
+    pointer: CExpression,
+    value_type: CType,
+    pointee_constant: bool,
+) -> CExpression {
     CExpression::TypedLoad {
         pointer: Box::new(pointer),
         value_type,
         volatile: true,
+        pointee_constant,
         source: crate::kernel::CExpressionLoadSource::none(),
     }
 }
@@ -1692,11 +1711,22 @@ pub fn c_store(pointer: CExpression, value: CExpression) -> CStatement {
 }
 
 pub fn c_typed_store(pointer: CExpression, value: CExpression, value_type: CType) -> CStatement {
+    c_qualified_typed_store(pointer, value, value_type, false, false)
+}
+
+pub(crate) fn c_qualified_typed_store(
+    pointer: CExpression,
+    value: CExpression,
+    value_type: CType,
+    pointee_constant: bool,
+    volatile: bool,
+) -> CStatement {
     CStatement::TypedStore {
         pointer,
         value,
         value_type,
-        volatile: false,
+        pointee_constant,
+        volatile,
     }
 }
 
@@ -1714,6 +1744,7 @@ pub fn c_volatile_typed_store(
         value,
         value_type,
         volatile: true,
+        pointee_constant: false,
     }
 }
 

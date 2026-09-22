@@ -173,11 +173,13 @@ fn substitute_c_expression_variables(
             pointer,
             value_type,
             volatile,
+            pointee_constant,
             source,
         } => TypedLoad {
             pointer: unary(pointer),
             value_type: *value_type,
             volatile: *volatile,
+            pointee_constant: *pointee_constant,
             source: source.clone(),
         },
         Index(left, right) => {
@@ -4305,6 +4307,7 @@ mod ranking_member_tests {
             pointer: Box::new(CExpression::Variable("device".to_string())),
             value_type: CType::Int32,
             volatile: true,
+            pointee_constant: false,
             source: CExpressionLoadSource::none(),
         };
         let measures = vec![CRankingComponent::CExpression(CExpression::Subtract(

@@ -103,10 +103,16 @@ imports unchanged. Click does not use `leaf` to infer purity, absence of
 callbacks, or memory permissions. `mdtests/c_leaf_attributes.md` checks a
 cross-file call with normal ownership and postconditions.
 
-The unchanged probe next stops in `bits/types/struct_tm.h` at the
-`const char *__tm_zone` field of `struct tm`. The importer currently rejects
-const qualification on struct and union fields, including pointee constness.
-Preserving that field qualification is the next import step.
+The `const char *__tm_zone` field of `struct tm` now imports unchanged.
+Struct fields retain first-level pointee constness through reads, initializers,
+copies, and calls, while rejecting writes through that pointer or implicit
+const removal. The pointer member remains assignable; const qualification
+does not freeze memory reachable through mutable aliases.
+`mdtests/const_pointer_fields.md` checks those distinctions.
+
+The unchanged probe next stops in `time.h` at `struct sigevent;` with
+``unknown struct declaration `sigevent` ``. Incomplete struct forward declarations
+are the next import step.
 Declaration-specific runtime identity and checked create/join call binding
 remain subsequent work.
 
