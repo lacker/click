@@ -2670,14 +2670,60 @@ fn a_budget_beside_a_live_state_refuses_an_execution_identity() {
     );
 }
 
+/// Fold binders must occupy their own range, disjoint from every identity
+/// producer that can contribute free variables to a fold body.
+#[test]
+fn the_spec_fold_binder_range_is_disjoint_from_every_other_producer() {
+    let fold_binders = crate::kernel::spec::SPEC_FOLD_BINDER_VARIABLE_BASE
+        ..crate::kernel::spec::SPEC_FOLD_BINDER_VARIABLE_CEILING;
+    let reserved: [(&str, std::ops::Range<u64>); 9] = [
+        ("C identities", 0..1_000_000),
+        ("execution identities", 1_000_000..2_000_000),
+        ("surface quantifiers", 2_000_000..4_000_000),
+        ("surface algebraic binders", 4_000_000..4_000_000_000),
+        ("symbolic pointer blocks", 4_000_000_000..8_000_000_000),
+        ("load variables", (1 << 40)..(1 << 41)),
+        (
+            "match binders",
+            ExecutionBudget::MATCH_BINDER_VARIABLE_BASE
+                ..ExecutionBudget::MATCH_BINDER_VARIABLE_CEILING,
+        ),
+        (
+            "universal witnesses",
+            ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_BASE
+                ..ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_CEILING,
+        ),
+        ("arm refutations", (1 << 56)..(1 << 57)),
+    ];
+    for (name, range) in reserved {
+        assert!(
+            fold_binders.end <= range.start || range.end <= fold_binders.start,
+            "fold binders {fold_binders:?} overlap {name} at {range:?}"
+        );
+    }
+    assert!(
+        fold_binders.end <= (1 << 60),
+        "structural induction begins at 1 << 60"
+    );
+    for name in ["accumulator", "item", "index", "sum", "nested"] {
+        for salt in [0, 1] {
+            let variable = crate::kernel::spec::spec_fold_bound_variable(name, salt);
+            assert!(
+                fold_binders.contains(&variable.0),
+                "{name} salt {salt}: {variable:?}"
+            );
+        }
+    }
+}
+
 /// Match binders are bound variables, and their range overlaps nothing that
 /// can appear free beside them.
 ///
-/// The execution counter runs `1_000_000 .. 2_000_000`; the surface's
-/// quantifier variables start at `2_000_000`; the spec fold binders span
-/// `3_000_000 .. 1_003_000_000`, which contains the surface's algebraic
-/// binders stepping by `65_536` from `4_000_000`; symbolic pointer blocks span
-/// `4_000_000_000 .. 8_000_000_000`; load variables span `1 << 40 .. 1 << 41`.
+/// The execution counter runs `1_000_000 .. 2_000_000`; quantifier variables
+/// run `2_000_000 .. 4_000_000`; algebraic binders run
+/// `4_000_000 .. 4_000_000_000`; symbolic pointer blocks run
+/// `4_000_000_000 .. 8_000_000_000`. Load, witness, and fold binders have
+/// separate higher ranges.
 /// The match-binder range has to miss all of them, because a binder that
 /// equals a free identity is exactly the capture the binder-elimination
 /// rewrite cannot see.
@@ -2685,14 +2731,17 @@ fn a_budget_beside_a_live_state_refuses_an_execution_identity() {
 fn the_match_binder_range_is_disjoint_from_every_other_producer() {
     let binders =
         ExecutionBudget::MATCH_BINDER_VARIABLE_BASE..ExecutionBudget::MATCH_BINDER_VARIABLE_CEILING;
-    let reserved: [(&str, std::ops::Range<u64>); 5] = [
+    let reserved: [(&str, std::ops::Range<u64>); 7] = [
         (
             "the execution counter",
             ExecutionBudget::KERNEL_VARIABLE_BASE..ExecutionBudget::KERNEL_VARIABLE_CEILING,
         ),
+        ("surface quantifiers", 2_000_000..4_000_000),
+        ("surface algebraic binders", 4_000_000..4_000_000_000),
         (
-            "the surface quantifier, fold and algebraic binder bases",
-            2_000_000..1_003_000_000,
+            "spec fold binders",
+            crate::kernel::spec::SPEC_FOLD_BINDER_VARIABLE_BASE
+                ..crate::kernel::spec::SPEC_FOLD_BINDER_VARIABLE_CEILING,
         ),
         ("symbolic pointer blocks", 4_000_000_000..8_000_000_000),
         ("load variables", (1 << 40)..(1 << 41)),
@@ -2740,15 +2789,18 @@ fn the_match_binder_range_is_disjoint_from_every_other_producer() {
 fn the_universal_witness_range_is_disjoint_from_every_other_producer() {
     let witnesses = ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_BASE
         ..ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_CEILING;
-    let reserved: [(&str, std::ops::Range<u64>); 6] = [
+    let reserved: [(&str, std::ops::Range<u64>); 8] = [
         ("the C identities below every reserved base", 0..1_000_000),
         (
             "the execution counter",
             ExecutionBudget::KERNEL_VARIABLE_BASE..ExecutionBudget::KERNEL_VARIABLE_CEILING,
         ),
+        ("surface quantifiers", 2_000_000..4_000_000),
+        ("surface algebraic binders", 4_000_000..4_000_000_000),
         (
-            "the surface quantifier, fold and algebraic binder bases",
-            2_000_000..1_003_000_000,
+            "spec fold binders",
+            crate::kernel::spec::SPEC_FOLD_BINDER_VARIABLE_BASE
+                ..crate::kernel::spec::SPEC_FOLD_BINDER_VARIABLE_CEILING,
         ),
         ("symbolic pointer blocks", 4_000_000_000..8_000_000_000),
         ("load variables", (1 << 40)..(1 << 41)),

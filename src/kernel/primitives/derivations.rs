@@ -1113,10 +1113,10 @@ impl ExecutionBudget {
     pub(in crate::kernel) const KERNEL_VARIABLE_BASE: u64 = 1_000_000;
 
     /// The first identity a symbolic execution may not invent: the surface's
-    /// quantifier variables start here, the spec fold binders at `3_000_000`,
-    /// the algebraic binders at `4_000_000`, and the load variables at
-    /// `1 << 40`. Those producers pick identities by a constant base and a
-    /// hash rather than from this counter, so they cannot avoid an execution
+    /// quantifier variables start here, algebraic binders at `4_000_000`,
+    /// and load and fold variables in separate higher bands beginning at
+    /// `1 << 40`. Those producers use bounded counters or a name hash in
+    /// their own ranges, so they cannot avoid an execution
     /// that has counted into their range; the execution refuses instead.
     pub(in crate::kernel) const KERNEL_VARIABLE_CEILING: u64 = 2_000_000;
 
@@ -1130,12 +1130,11 @@ impl ExecutionBudget {
     /// bound occurrence of that arm's binder and nothing else.
     ///
     /// The range overlaps none of the reserved ones: the execution counter
-    /// runs `1_000_000 .. 2_000_000`, the surface's quantifier variables
-    /// start at `2_000_000`, the spec fold binders span
-    /// `3_000_000 .. 1_003_000_000`, the surface's algebraic binders step by
-    /// `65_536` from `4_000_000`, symbolic pointer blocks span
-    /// `4_000_000_000 .. 8_000_000_000`, and the load variables span
-    /// `1 << 40 .. 1 << 41`. The kernel test
+    /// runs `1_000_000 .. 2_000_000`, quantifiers stop at `4_000_000`,
+    /// algebraic binders stop at `4_000_000_000`, symbolic pointer blocks span
+    /// `4_000_000_000 .. 8_000_000_000`, load variables span
+    /// `1 << 40 .. 1 << 41`, and spec fold binders span
+    /// `1 << 43 .. 1 << 44`. The kernel test
     /// `the_match_binder_range_is_disjoint_from_every_other_producer` asserts
     /// that rather than leaving it to this comment.
     pub(in crate::kernel) const MATCH_BINDER_VARIABLE_BASE: u64 = 1 << 41;
@@ -1170,10 +1169,11 @@ impl ExecutionBudget {
     ///
     /// The range overlaps none of the reserved ones: the C identities run
     /// below `1_000_000`, the execution counter runs
-    /// `1_000_000 .. 2_000_000`, the surface's quantifier, fold and algebraic
-    /// binder bases span `2_000_000 .. 1_003_000_000`, symbolic pointer blocks
-    /// span `4_000_000_000 .. 8_000_000_000`, the load variables span
-    /// `1 << 40 .. 1 << 41`, and the match binders `1 << 41 .. 1 << 42`. The
+    /// `1_000_000 .. 2_000_000`, surface quantifiers run below `4_000_000`,
+    /// algebraic binders stop at `4_000_000_000`, symbolic pointer blocks span
+    /// `4_000_000_000 .. 8_000_000_000`, load variables span
+    /// `1 << 40 .. 1 << 41`, match binders span `1 << 41 .. 1 << 42`, and
+    /// spec fold binders span `1 << 43 .. 1 << 44`. The
     /// kernel test
     /// `the_universal_witness_range_is_disjoint_from_every_other_producer`
     /// asserts that rather than leaving it to this comment.
@@ -1468,8 +1468,8 @@ impl ExecutionBudget {
     /// refuses at [`ExecutionBudget::KERNEL_VARIABLE_CEILING`], which is the
     /// lowest identity some other producer reserves by a constant. Without
     /// that check a long enough execution would walk into the surface's
-    /// quantifier variables, then the spec fold binders, then the algebraic
-    /// binders, silently: each of those ranges is chosen to be disjoint from
+    /// quantifier variables and then the other reserved ranges, silently:
+    /// each producer has its own bounded range, disjoint from
     /// this one and nothing else enforces it. The check is one comparison.
     ///
     /// A budget built by [`Self::beside_live_state`] cannot issue one at all:

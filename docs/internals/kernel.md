@@ -910,26 +910,30 @@ The counter's range is bounded at both ends. It starts at
 `ExecutionBudget::KERNEL_VARIABLE_BASE` and refuses at
 `ExecutionBudget::KERNEL_VARIABLE_CEILING`, which is the lowest identity a
 producer outside the execution reserves by a constant base. Those producers
-pick identities by a constant and a hash and so cannot avoid an execution that
-has counted into their range; the execution refuses with
+use bounded counters or a name hash within their own ranges, so the execution
+refuses before entering any of them with
 `ExecutionLimit::KernelVariables` instead, which is one comparison per
 allocation. The reserved ranges are:
 
 | Range | Producer |
 | --- | --- |
 | `1_000_000 .. 2_000_000` | the execution's fresh-identity counter |
-| `2_000_000 ..` | the surface's quantifier variables |
-| `3_000_000 .. 1_003_000_000` | the spec fold binders (`spec_fold_bound_variable`, base plus hash) |
-| `4_000_000` by `65_536` | the surface's algebraic binders (`ALGEBRAIC_VARIABLE_BASE`) |
+| `2_000_000 .. 4_000_000` | the surface's quantifier variables; lowering refuses at the ceiling |
+| `4_000_000 .. 4_000_000_000`, stepping by `65_536` | the surface's algebraic binders; lowering refuses at the ceiling |
 | `4_000_000_000 .. 8_000_000_000` | symbolic pointer blocks |
 | `1 << 40 .. 1 << 41` | load variables (`LOAD_VARIABLE_BASE`) |
 | `1 << 41 .. 1 << 42` | match-arm binders (`MATCH_BINDER_VARIABLE_BASE`) |
 | `1 << 42 .. 1 << 43` | universal-introduction witnesses (`UNIVERSAL_WITNESS_VARIABLE_BASE`) |
+| `1 << 43 .. 1 << 44` | spec fold binders (`spec_fold_bound_variable`, base plus hash) |
 
-The match-binder range is the one that carries a soundness obligation rather
-than a hygiene one, so `the_match_binder_range_is_disjoint_from_every_other_producer`
-asserts the disjointness instead of leaving it to this table. A lowering that
-exhausts it refuses with `ExecutionLimit::MatchBinderVariables`.
+The match-binder and spec-fold-binder ranges carry soundness obligations:
+a binder that equals an unrelated free identity can capture it. The
+`the_match_binder_range_is_disjoint_from_every_other_producer` and
+`the_spec_fold_binder_range_is_disjoint_from_every_other_producer` tests assert
+their boundaries. Match lowering refuses with
+`ExecutionLimit::MatchBinderVariables` if it exhausts its range. Arm refutations
+start at `1 << 56`, and structural induction starts at `1 << 60`, above the
+fold range.
 
 The witness range carries the same kind of obligation. `intro` on
 `forall v. body` replaces `v` by a free identity standing for an arbitrary

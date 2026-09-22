@@ -1,6 +1,33 @@
 use super::*;
 use crate::kernel::{AlgebraicTerm, AlgebraicTermNode, CLoopEffectOrigin};
 
+// The lowerers share these two finite bands. Refusing at each ceiling keeps
+// quantifiers, algebraic binders, pointer identities, and spec fold binders
+// structurally separate even for unusually large source terms.
+const SURFACE_QUANTIFIER_VARIABLE_CEILING: u64 = 4_000_000;
+const ALGEBRAIC_VARIABLE_BASE: u64 = SURFACE_QUANTIFIER_VARIABLE_CEILING;
+const ALGEBRAIC_VARIABLE_CEILING: u64 = 4_000_000_000;
+const ALGEBRAIC_BINDER_STRIDE: u64 = 65_536;
+
+fn allocate_quantifier_variable(next: &mut u64) -> Result<Variable, String> {
+    if *next >= SURFACE_QUANTIFIER_VARIABLE_CEILING {
+        return Err("quantifier variable identity exhausted".to_string());
+    }
+    let variable = Variable(*next);
+    *next += 1;
+    Ok(variable)
+}
+
+fn algebraic_binder_variable(binder_index: usize) -> Result<Variable, String> {
+    let index = u64::try_from(binder_index).map_err(|_| "too many algebraic binders")?;
+    let identity = index
+        .checked_mul(ALGEBRAIC_BINDER_STRIDE)
+        .and_then(|offset| ALGEBRAIC_VARIABLE_BASE.checked_add(offset))
+        .filter(|identity| *identity < ALGEBRAIC_VARIABLE_CEILING)
+        .ok_or("too many algebraic binders")?;
+    Ok(Variable(identity))
+}
+
 fn integer_comparison_operator(
     operator: ComparisonOperator,
 ) -> Result<crate::kernel::IntegerComparisonOperator, String> {
@@ -1192,7 +1219,9 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_i
     collect_click_proposition_referenced_names(proposition, &mut referenced);
     for name in referenced {
         if let Some(crate::kernel::SpecIntegerExpression::Term(term)) = integer_values.get(&name)
-            && let Some(variable) = term.max_variable()
+            && let Some(variable) = max_spec_integer_expression_variable(
+                &crate::kernel::SpecIntegerExpression::Term(term.clone()),
+            )
         {
             lowerer.next_quantifier_variable = lowerer.next_quantifier_variable.max(
                 variable
@@ -1337,16 +1366,20 @@ pub(in crate::surface) fn elaborate_fixed_state_integer_expression_with_integer_
     lowerer.lower_contract_integer_to_spec(expression, &context)
 }
 
-/// Finds the largest variable identity nested in a captured Integer binding.
-/// The kernel visitor includes free identities, quantifier identities, fold
-/// binders, and identities nested in machine/C payloads. Keeping this query
-/// here makes the lowering path independent of the visitor's representation.
+/// Finds the largest identity in the surface quantifier band nested in a
+/// captured Integer binding. Fold and other high identities are already
+/// disjoint; they must not push the quantifier counter into another band.
+/// The kernel visitor includes both free and bound identities, including
+/// those nested in machine/C payloads.
 fn max_spec_integer_expression_variable(
     expression: &crate::kernel::SpecIntegerExpression,
 ) -> Option<crate::kernel::Variable> {
     let mut variables = BTreeSet::new();
     crate::kernel::collect_spec_integer_bound_variables(expression, &mut variables);
-    variables.into_iter().next_back()
+    variables
+        .into_iter()
+        .rev()
+        .find(|variable| variable.0 < SURFACE_QUANTIFIER_VARIABLE_CEILING)
 }
 
 /// Elaborates an expression stated in a fixed-state proof into the kernel's
@@ -2659,11 +2692,7 @@ impl AnnotationLowerer<'_> {
                 body,
             } => {
                 let display_name = written_name.as_ref().unwrap_or(name);
-                let variable = Variable(self.next_quantifier_variable);
-                self.next_quantifier_variable = self
-                    .next_quantifier_variable
-                    .checked_add(1)
-                    .ok_or("quantifier variable identity exhausted")?;
+                let variable = allocate_quantifier_variable(&mut self.next_quantifier_variable)?;
                 let mut body_environment = environment.clone();
                 body_environment.integer_values.remove(name);
                 body_environment.values.remove(name);
@@ -2745,11 +2774,7 @@ impl AnnotationLowerer<'_> {
                 body,
             } => {
                 let display_name = written_name.as_ref().unwrap_or(name);
-                let variable = Variable(self.next_quantifier_variable);
-                self.next_quantifier_variable = self
-                    .next_quantifier_variable
-                    .checked_add(1)
-                    .ok_or("quantifier variable identity exhausted")?;
+                let variable = allocate_quantifier_variable(&mut self.next_quantifier_variable)?;
                 let mut body_environment = environment.clone();
                 body_environment.integer_values.remove(name);
                 body_environment.values.remove(name);
@@ -2834,8 +2859,7 @@ impl AnnotationLowerer<'_> {
                 let display_item = written_item.as_ref().unwrap_or(item);
                 let start = self.lower_contract_expression_to_spec(start, environment)?;
                 let end = self.lower_contract_expression_to_spec(end, environment)?;
-                let variable = Variable(self.next_quantifier_variable);
-                self.next_quantifier_variable += 1;
+                let variable = allocate_quantifier_variable(&mut self.next_quantifier_variable)?;
                 let item_value =
                     SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable)));
                 let mut body_environment = environment.clone();
@@ -2883,8 +2907,7 @@ impl AnnotationLowerer<'_> {
                 let display_item = written_item.as_ref().unwrap_or(item);
                 let start = self.lower_contract_expression_to_spec(start, environment)?;
                 let end = self.lower_contract_expression_to_spec(end, environment)?;
-                let variable = Variable(self.next_quantifier_variable);
-                self.next_quantifier_variable += 1;
+                let variable = allocate_quantifier_variable(&mut self.next_quantifier_variable)?;
                 let item_value =
                     SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable)));
                 let mut body_environment = environment.clone();
@@ -3617,8 +3640,8 @@ impl AnnotationLowerer<'_> {
                         AlgebraicValueType::Integer => {
                             body_environment.values.remove(binding);
                             body_environment.algebraic_values.remove(binding);
-                            let variable = crate::kernel::Variable(self.next_quantifier_variable);
-                            self.next_quantifier_variable += 1;
+                            let variable =
+                                allocate_quantifier_variable(&mut self.next_quantifier_variable)?;
                             body_environment.integer_values.insert(
                                 binding.clone(),
                                 crate::kernel::SpecIntegerExpression::Term(
@@ -3809,10 +3832,10 @@ impl AnnotationLowerer<'_> {
                 body,
             } => {
                 let initial = self.lower_contract_integer_to_spec(initial, environment)?;
-                let accumulator_variable = crate::kernel::Variable(self.next_quantifier_variable);
-                self.next_quantifier_variable = self.next_quantifier_variable.saturating_add(1);
-                let item_variable = crate::kernel::Variable(self.next_quantifier_variable);
-                self.next_quantifier_variable = self.next_quantifier_variable.saturating_add(1);
+                let accumulator_variable =
+                    allocate_quantifier_variable(&mut self.next_quantifier_variable)?;
+                let item_variable =
+                    allocate_quantifier_variable(&mut self.next_quantifier_variable)?;
                 let integer_expression = |expression: &ContractExpression| {
                     fn is_integer(
                         expression: &ContractExpression,
@@ -4115,9 +4138,9 @@ impl AnnotationLowerer<'_> {
                                 AlgebraicValueType::Integer => {
                                     body_environment.values.remove(binding);
                                     body_environment.algebraic_values.remove(binding);
-                                    let variable =
-                                        crate::kernel::Variable(self.next_quantifier_variable);
-                                    self.next_quantifier_variable += 1;
+                                    let variable = allocate_quantifier_variable(
+                                        &mut self.next_quantifier_variable,
+                                    )?;
                                     body_environment.integer_values.insert(
                                         binding.clone(),
                                         crate::kernel::SpecIntegerExpression::Term(
@@ -4687,9 +4710,9 @@ impl AnnotationLowerer<'_> {
                             AlgebraicValueType::Integer => {
                                 body_environment.values.remove(binding);
                                 body_environment.algebraic_values.remove(binding);
-                                let variable =
-                                    crate::kernel::Variable(self.next_quantifier_variable);
-                                self.next_quantifier_variable += 1;
+                                let variable = allocate_quantifier_variable(
+                                    &mut self.next_quantifier_variable,
+                                )?;
                                 body_environment.integer_values.insert(
                                     binding.clone(),
                                     crate::kernel::SpecIntegerExpression::Term(
@@ -4774,14 +4797,10 @@ impl AnnotationLowerer<'_> {
         if let Some(value) = self.algebraic_variables.get(name) {
             return Ok(value.clone());
         }
-        const ALGEBRAIC_VARIABLE_BASE: u64 = 4_000_000;
-        const ALGEBRAIC_BINDER_STRIDE: u64 = 65_536;
-        let binder_base = ALGEBRAIC_VARIABLE_BASE
-            .checked_add((binder_index as u64).saturating_mul(ALGEBRAIC_BINDER_STRIDE))
-            .ok_or_else(|| "too many algebraic binders".to_string())?;
+        let binder = algebraic_binder_variable(binder_index)?;
         let value = SpecAlgebraicExpression {
             algebraic_type: self.cached_algebraic_kernel_type(algebraic_type)?,
-            node: SpecAlgebraicExpressionNode::Variable(Variable(binder_base)),
+            node: SpecAlgebraicExpressionNode::Variable(binder),
         };
         self.algebraic_variables
             .insert(name.to_string(), value.clone());

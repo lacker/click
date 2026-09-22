@@ -7079,13 +7079,21 @@ pub(super) fn concrete_spec_fold_range(start: i32, end: i32) -> std::ops::Range<
     }
 }
 
+/// The fold binder's range is above universal witnesses and below the
+/// refutation/induction producers. Surface lowerers refuse before reaching it.
+pub(super) const SPEC_FOLD_BINDER_VARIABLE_BASE: u64 = 1 << 43;
+pub(super) const SPEC_FOLD_BINDER_VARIABLE_CEILING: u64 = 1 << 44;
+
 pub(super) fn spec_fold_bound_variable(name: &str, salt: u64) -> Variable {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ salt;
     for byte in name.bytes() {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x1000_0000_01b3);
     }
-    Variable(3_000_000 + (hash % 1_000_000_000))
+    Variable(
+        SPEC_FOLD_BINDER_VARIABLE_BASE
+            + (hash % (SPEC_FOLD_BINDER_VARIABLE_CEILING - SPEC_FOLD_BINDER_VARIABLE_BASE)),
+    )
 }
 
 pub(super) fn symbolic_spec_range_fold_value(
