@@ -524,8 +524,5 @@ fn userspace_frozen_pthread_probe_records_real_header_boundary() {
     );
     assert!(error.len() < 4096, "unbounded import diagnostic");
     assert!(error.contains("bits/cpu-set.h:"), "{error}");
-    assert!(
-        error.contains("inline scalar arrays in structs currently support int32, uint8, float, and double elements"),
-        "{error}"
-    );
+    assert!(error.contains("expected `]`, got `/`"), "{error}");
 }

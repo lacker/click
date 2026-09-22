@@ -2877,6 +2877,8 @@ impl Parser {
                         | C0Type::Float32
                         | C0Type::Float64
                         | C0Type::Int32Array(_)
+                        | C0Type::Int64Array(_)
+                        | C0Type::UInt64Array(_)
                         | C0Type::CharArray(_)
                         | C0Type::UInt8Array(_)
                         | C0Type::Float32Array(_)
@@ -7069,6 +7071,8 @@ impl Parser {
     ) -> ContractSegment {
         let array = match field.c_type {
             C0Type::Int32Array(length) => Some((length, 4, CType::Int32)),
+            C0Type::Int64Array(length) => Some((length, 8, CType::Int64)),
+            C0Type::UInt64Array(length) => Some((length, 8, CType::UInt64)),
             C0Type::CharArray(length) | C0Type::UInt8Array(length) => {
                 Some((length, 1, CType::UInt8))
             }
@@ -7354,11 +7358,20 @@ impl Parser {
         }
         if matches!(
             field.c_type,
-            C0Type::Int32Array(_) | C0Type::CharArray(_) | C0Type::UInt8Array(_)
+            C0Type::Int32Array(_)
+                | C0Type::CharArray(_)
+                | C0Type::UInt8Array(_)
+                | C0Type::Int64Array(_)
+                | C0Type::UInt64Array(_)
         ) {
-            if field.slot_end_bytes < field.offset_bytes
-                || (matches!(field.c_type, C0Type::Int32Array(_))
-                    && !(field.slot_end_bytes - field.offset_bytes).is_multiple_of(4))
+            let width = match field.c_type {
+                C0Type::Int64Array(_) | C0Type::UInt64Array(_) => 8,
+                C0Type::Int32Array(_) => 4,
+                _ => 1,
+            };
+            if !field.offset_bytes.is_multiple_of(width)
+                || field.slot_end_bytes < field.offset_bytes
+                || !(field.slot_end_bytes - field.offset_bytes).is_multiple_of(width)
             {
                 return Err(self.error("inline array field has an invalid resource extent"));
             }
@@ -9322,6 +9335,8 @@ fn field_has_direct_memory_place(field: &ResolvedField) -> bool {
             | C0Type::Int64
             | C0Type::UInt64
             | C0Type::Int32Array(_)
+            | C0Type::Int64Array(_)
+            | C0Type::UInt64Array(_)
             | C0Type::CharArray(_)
             | C0Type::UInt8Array(_)
     )
@@ -9333,6 +9348,8 @@ fn scalar_array_field_element(field: &ResolvedField) -> Option<(u32, CType)> {
     }
     match field.c_type {
         C0Type::Int32Array(_) => Some((4, CType::Int32)),
+        C0Type::Int64Array(_) => Some((8, CType::Int64)),
+        C0Type::UInt64Array(_) => Some((8, CType::UInt64)),
         C0Type::CharArray(_) => Some((1, CType::UInt8)),
         C0Type::UInt8Array(_) => Some((1, CType::UInt8)),
         _ => None,

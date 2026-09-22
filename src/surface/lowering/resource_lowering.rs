@@ -300,7 +300,11 @@ fn reject_aggregate_parameter_storage_resource(
             CExpression::Add(pointer, _) | CExpression::Subtract(pointer, _) => root(pointer),
             CExpression::TypedLoad {
                 pointer,
-                value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+                value_type:
+                    CType::Int32Array(_)
+                    | CType::UInt8Array(_)
+                    | CType::Int64Array(_)
+                    | CType::UInt64Array(_),
                 ..
             } => root(pointer),
             _ => None,
@@ -394,16 +398,23 @@ pub(in crate::surface) fn visit_struct_field_cells(
 ) -> CMemory {
     let field_pointer = element_pointer.offset_by_bytes(field.offset_bytes());
     match field.c_type().to_kernel_type() {
-        CType::Int32Array(length) => {
+        array_type @ (CType::Int32Array(length)
+        | CType::Int64Array(length)
+        | CType::UInt64Array(length)) => {
+            let element_type = match array_type {
+                CType::Int64Array(_) => CType::Int64,
+                CType::UInt64Array(_) => CType::UInt64,
+                _ => CType::Int32,
+            };
             for index in 0..length {
                 memory = visit(
                     memory,
                     field_pointer.offset_by_bytes(
-                        index.checked_mul(CType::Int32.byte_width()).expect(
-                            "validated int32 array field stride must fit in the pointer offset",
+                        index.checked_mul(element_type.byte_width()).expect(
+                            "validated integer array field stride must fit in the pointer offset",
                         ),
                     ),
-                    CType::Int32,
+                    element_type,
                 );
             }
         }

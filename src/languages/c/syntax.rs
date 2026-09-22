@@ -5519,6 +5519,8 @@ fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
 fn struct_scalar_array_shape(field: &C0StructField) -> Option<(C0Type, Vec<u32>)> {
     let (element_type, length) = match field.c_type {
         C0Type::Int32Array(length) => (C0Type::Int32, length),
+        C0Type::Int64Array(length) => (C0Type::Int64, length),
+        C0Type::UInt64Array(length) => (C0Type::UInt64, length),
         C0Type::CharArray(length) => (C0Type::Char, length),
         C0Type::UInt8Array(length) => (C0Type::UInt8, length),
         _ => return None,
@@ -7024,6 +7026,8 @@ impl Parser {
                         | C0Type::Float32
                         | C0Type::Float64
                         | C0Type::Int32Array(_)
+                        | C0Type::Int64Array(_)
+                        | C0Type::UInt64Array(_)
                         | C0Type::CharArray(_)
                         | C0Type::UInt8Array(_)
                         | C0Type::Float32Array(_)
@@ -9189,6 +9193,8 @@ impl Parser {
                 || !matches!(
                     base_type.c_type,
                     C0Type::Int32
+                        | C0Type::Int64
+                        | C0Type::UInt64
                         | C0Type::Char
                         | C0Type::UInt8
                         | C0Type::Float32
@@ -9196,7 +9202,7 @@ impl Parser {
                 )
             {
                 return Err(self.error_here(
-                    "inline scalar arrays in structs currently support int32, uint8, float, and double elements",
+                    "inline scalar arrays in structs currently support int32, int64, uint64, uint8, float, and double elements",
                 ));
             }
             let mut dimensions = Vec::new();
@@ -9245,6 +9251,8 @@ impl Parser {
             let array_shape = (dimensions.len() > 1).then_some(dimensions);
             let c_type = match base_type.c_type {
                 C0Type::Int32 => C0Type::Int32Array(element_count),
+                C0Type::Int64 => C0Type::Int64Array(element_count),
+                C0Type::UInt64 => C0Type::UInt64Array(element_count),
                 C0Type::Char => C0Type::CharArray(element_count),
                 C0Type::UInt8 => C0Type::UInt8Array(element_count),
                 C0Type::Float32 => C0Type::Float32Array(element_count),
@@ -9281,6 +9289,8 @@ impl Parser {
                 | C0Type::Float32PointerPointer
                 | C0Type::Float64PointerPointer
                 | C0Type::Int32Array(_)
+                | C0Type::Int64Array(_)
+                | C0Type::UInt64Array(_)
                 | C0Type::CharArray(_)
                 | C0Type::UInt8Array(_)
                 | C0Type::Float32Array(_)
@@ -9296,6 +9306,12 @@ impl Parser {
                     self.error_here(format!("struct `{struct_name}` layout is too large"))
                 })?,
                 4,
+            ),
+            C0Type::Int64Array(length) | C0Type::UInt64Array(length) => (
+                length.checked_mul(8).ok_or_else(|| {
+                    self.error_here(format!("struct `{struct_name}` layout is too large"))
+                })?,
+                8,
             ),
             C0Type::CharArray(length) => (length, 1),
             C0Type::UInt8Array(length) => (length, 1),
@@ -12404,6 +12420,8 @@ impl Parser {
                 | C0Type::Float32
                 | C0Type::Float64 => (field.c_type, 1),
                 C0Type::Int32Array(length) => (C0Type::Int32, length),
+                C0Type::Int64Array(length) => (C0Type::Int64, length),
+                C0Type::UInt64Array(length) => (C0Type::UInt64, length),
                 C0Type::CharArray(length) => (C0Type::Char, length),
                 C0Type::UInt8Array(length) => (C0Type::UInt8, length),
                 C0Type::Float32Array(length) => (C0Type::Float32, length),
@@ -16164,6 +16182,8 @@ impl Parser {
         };
         let length = match field_type {
             C0Type::Int32Array(length)
+            | C0Type::Int64Array(length)
+            | C0Type::UInt64Array(length)
             | C0Type::CharArray(length)
             | C0Type::UInt8Array(length)
             | C0Type::Float32Array(length)

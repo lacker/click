@@ -12012,3 +12012,44 @@ fn anonymous_struct_local_proof_expands_and_reverifies() {
     .unwrap();
     crate::surface::verify_c0_sources(&expanded, &[("anonymous.c", c)]).unwrap();
 }
+
+#[test]
+fn struct_wide_array_layout_and_size_overflow() {
+    use syntax::C0Type;
+    let functions = syntax::parse_functions(
+        "struct wide { char tag; long signed_values[2]; unsigned long words[2][3]; int tail; }; int f(void) { return sizeof(struct wide); }",
+    ).unwrap();
+    let layout = &functions[0].structs()["wide"];
+    assert_eq!(layout.alignment_bytes(), 8);
+    assert_eq!(layout.size_bytes(), 80);
+    assert_eq!(layout.field("signed_values").unwrap().offset_bytes(), 8);
+    assert_eq!(
+        layout.field("signed_values").unwrap().c_type(),
+        C0Type::Int64Array(2)
+    );
+    assert_eq!(layout.field("words").unwrap().offset_bytes(), 24);
+    assert_eq!(
+        layout.field("words").unwrap().c_type(),
+        C0Type::UInt64Array(6)
+    );
+    assert_eq!(layout.field("tail").unwrap().offset_bytes(), 72);
+    for declaration in [
+        "long a[0]",
+        "unsigned long a[536870912]",
+        "long a[65536][65536]",
+    ] {
+        let source = format!("struct bad {{ {declaration}; }}; int f(void) {{ return 0; }}");
+        assert!(syntax::parse_functions(&source).is_err(), "{source}");
+    }
+}
+
+#[test]
+fn struct_wide_array_proof_expands_and_reverifies() {
+    let c = "struct words { char tag; unsigned long data[3]; }; unsigned long set(struct words *p, unsigned long value) { p->data[1] = value; return p->data[2]; }";
+    let proof = "verifying \"wide.c\"; unsigned long set(struct words *p, unsigned long value) { owns p->data[1..2]; views p->data[2..3]; ensures p->data[1] == value by auto; ensures result == old(p->data[2]) by auto; }";
+    crate::surface::verify_c0_sources(proof, &[("wide.c", c)]).unwrap();
+    let expanded =
+        crate::surface::expand_c0_claim_source_by_label(proof, &[("wide.c", c)], "set.ensures_0")
+            .unwrap();
+    crate::surface::verify_c0_sources(&expanded, &[("wide.c", c)]).unwrap();
+}

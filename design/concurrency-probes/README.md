@@ -80,11 +80,15 @@ same parser for valid standard integer specifier combinations, regardless of
 order; `mdtests/c_integer_specifier_order.md` checks their existing widths
 and signedness.
 
-The unchanged probe next stops in `bits/cpu-set.h` at the `cpu_set_t`
-anonymous struct's `__cpu_mask __bits[...]` array. `__cpu_mask` is an
-`unsigned long int`, but inline scalar arrays in structs currently support
-only int32, uint8, float, and double elements. Extending those array fields
-to the existing 64-bit integer types is the next import step.
+Inline arrays of signed and unsigned 64-bit integers now retain their
+eight-byte layout through indexing, resource clauses, initialization, and
+struct copies. `mdtests/struct_wide_integer_arrays.md` checks those paths.
+
+The unchanged probe still stops in `bits/cpu-set.h` at the `cpu_set_t`
+anonymous struct's `__cpu_mask __bits[...]` array, now at its dimension:
+`1024 / (8 * sizeof(__cpu_mask))`. The element type is supported, but struct
+array dimensions currently require positive integer literals. Supporting
+constant expressions in those dimensions is the next import step.
 Declaration-specific runtime identity and checked create/join call binding
 remain subsequent work.
 

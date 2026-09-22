@@ -10802,6 +10802,12 @@ fn materialize_symbolic_aggregate_fields(
             CType::Int32Array(length) => {
                 memory = materialize_symbolic_array(memory, &field_base, CType::Int32, length);
             }
+            CType::Int64Array(length) => {
+                memory = materialize_symbolic_array(memory, &field_base, CType::Int64, length);
+            }
+            CType::UInt64Array(length) => {
+                memory = materialize_symbolic_array(memory, &field_base, CType::UInt64, length);
+            }
             CType::UInt8Array(length) => {
                 memory = materialize_symbolic_array(memory, &field_base, CType::UInt8, length);
             }
@@ -10876,6 +10882,8 @@ fn zero_aggregate_fields(
             // function pointer, just like a data-pointer field.
             | CType::FunctionPointer(_) => (field.c_type(), 1),
             CType::Int32Array(length) => (CType::Int32, length),
+            CType::Int64Array(length) => (CType::Int64, length),
+            CType::UInt64Array(length) => (CType::UInt64, length),
             CType::UInt8Array(length) => (CType::UInt8, length),
             CType::Float32Array(length) => (CType::Float32, length),
             CType::Float64Array(length) => (CType::Float64, length),
@@ -10889,8 +10897,8 @@ fn zero_aggregate_fields(
             CType::UInt8 => uint8(0),
             CType::UInt16 => uint16(0),
             CType::UInt32 => uint32(0),
-            CType::Int64 => CValue::Int64(Bitvector32Term::Constant(0)),
-            CType::UInt64 => CValue::UInt64(Bitvector32Term::Constant(0)),
+            CType::Int64 => CValue::Int64(Bitvector32Term::Int64Constant(0)),
+            CType::UInt64 => CValue::UInt64(Bitvector32Term::UInt64Constant(0)),
             CType::Float32 => CValue::Float32(Bitvector32Term::Constant(0)),
             CType::Float64 => CValue::Float64(Bitvector32Term::UInt64Constant(0)),
             CType::Int32Pointer
@@ -11074,6 +11082,8 @@ fn aggregate_copy_reads_uninitialized(
             | CType::Float32
             | CType::Float64 => (field.c_type(), 1),
             CType::Int32Array(length) => (CType::Int32, length),
+            CType::Int64Array(length) => (CType::Int64, length),
+            CType::UInt64Array(length) => (CType::UInt64, length),
             CType::UInt8Array(length) => (CType::UInt8, length),
             CType::Int32Pointer
             | CType::UInt8Pointer
@@ -11198,6 +11208,8 @@ fn copy_aggregate_fields(
             | CType::Float32
             | CType::Float64 => (field.c_type(), 1),
             CType::Int32Array(length) => (CType::Int32, length),
+            CType::Int64Array(length) => (CType::Int64, length),
+            CType::UInt64Array(length) => (CType::UInt64, length),
             CType::UInt8Array(length) => (CType::UInt8, length),
             CType::Int32Pointer
             | CType::UInt8Pointer
@@ -11245,8 +11257,8 @@ fn copy_aggregate_fields(
                         }
                         CType::UInt16 => Some(uint16(0)),
                         CType::UInt32 => Some(uint32(0)),
-                        CType::Int64 => Some(CValue::Int64(Bitvector32Term::Constant(0))),
-                        CType::UInt64 => Some(CValue::UInt64(Bitvector32Term::Constant(0))),
+                        CType::Int64 => Some(CValue::Int64(Bitvector32Term::Int64Constant(0))),
+                        CType::UInt64 => Some(CValue::UInt64(Bitvector32Term::UInt64Constant(0))),
                         CType::Float32 => Some(CValue::Float32(Bitvector32Term::Constant(0))),
                         CType::Float64 => Some(CValue::Float64(Bitvector32Term::UInt64Constant(0))),
                         _ => None,
