@@ -2849,3 +2849,40 @@ int32 array_fold_append_at_zero(int32 a[]) {
         assert!(!entry_assumptions.contains_proposition_fact(&body_fact));
     }
 }
+
+#[cfg(test)]
+mod hunt_investigation_tests {
+    use super::*;
+
+    /// Investigation repro (bug hunt phase 2b): the outcome-equality
+    /// comparator never compares the `heap` statuses, unlike the effect-side
+    /// wrapper (`c_effect_memories_definitionally_equal`), so a zeroed
+    /// allocation beside an uninitialized spelling of the same allocation
+    /// same-size state pair is declared definitionally equal.
+    #[test]
+    fn hunt_investigation_outcome_equality_ignores_heap_statuses() {
+        let block = Pointer {
+            block: PointerBlock::Heap(424_242),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let mut base = CMemory::new().with_block(block.block.clone(), 4);
+        std::sync::Arc::make_mut(&mut base.heap)
+            .live_allocations
+            .insert(block.clone(), Bitvector32Term::Constant(4));
+        std::sync::Arc::make_mut(&mut base.heap)
+            .zeroed_allocations
+            .insert(block.clone());
+        let mut other = base.clone();
+        std::sync::Arc::make_mut(&mut other.heap)
+            .zeroed_allocations
+            .remove(&block);
+        std::sync::Arc::make_mut(&mut other.heap)
+            .uninitialized_allocations
+            .insert(block.clone());
+        assert_ne!(base.heap, other.heap, "setup: the heap statuses differ");
+        assert!(
+            c_memories_definitionally_equal(&base, &other, &PureFactContext::new()),
+            "BUG: two states with different heap statuses are declared definitionally equal"
+        );
+    }
+}
