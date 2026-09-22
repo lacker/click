@@ -2762,8 +2762,13 @@ fn loops_executed_to_exit(
     loop_semantics: CLoopSemantics,
     ruled_loops: &BTreeSet<usize>,
 ) -> BTreeSet<usize> {
+    let source_body = if contains_natural_control_loop(function.body()) {
+        function.body()
+    } else {
+        &function.source_body
+    };
     let mut source_loops = Vec::new();
-    collect_loops(&function.source_body, &mut source_loops);
+    collect_loops(source_body, &mut source_loops);
     let mut certified_loops = Vec::new();
     collect_loops(function.body(), &mut certified_loops);
     if source_loops.len() != certified_loops.len()
@@ -2809,6 +2814,33 @@ fn loops_executed_to_exit(
         })
         .map(|(index, _)| index)
         .collect()
+}
+
+fn contains_natural_control_loop(statement: &CStatement) -> bool {
+    match statement {
+        CStatement::While {
+            backedge_target: Some(_),
+            ..
+        } => true,
+        CStatement::Seq(first, second) => {
+            contains_natural_control_loop(first) || contains_natural_control_loop(second)
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            contains_natural_control_loop(then_branch) || contains_natural_control_loop(else_branch)
+        }
+        CStatement::TryCatchInt32 {
+            try_body, handler, ..
+        } => contains_natural_control_loop(try_body) || contains_natural_control_loop(handler),
+        CStatement::Switch { cases, .. } => cases
+            .iter()
+            .any(|case| contains_natural_control_loop(&case.body)),
+        CStatement::ForStep { step, .. } => contains_natural_control_loop(step),
+        _ => false,
+    }
 }
 
 /// Confirms that every loop the plan ranks has a checked back-edge bundle
@@ -4005,16 +4037,19 @@ pub fn c_verified_function_termination_rules(
                         )?;
                     }
                 }
+                let loop_source_body = if contains_natural_control_loop(function.body()) {
+                    function.body()
+                } else {
+                    &function.source_body
+                };
                 let certified = match verified_loop_rules.get(name) {
-                    Some(rules) => {
-                        verified_loop_ranking_measures(name, &function.source_body, rules)?
-                    }
+                    Some(rules) => verified_loop_ranking_measures(name, loop_source_body, rules)?,
                     None => BTreeMap::new(),
                 };
                 let mut next_loop = 0;
                 let mut unranked = Vec::new();
                 check_loops(
-                    &function.source_body,
+                    loop_source_body,
                     loop_measures,
                     &certified,
                     name,
@@ -4231,6 +4266,7 @@ mod address_escape_tests {
             effect_checks: Vec::new(),
             resource_specs: Vec::new(),
             do_while: false,
+            backedge_target: None,
             body: Box::new(branch),
         };
         assert!(statement_takes_address_of(&body, "n"));
@@ -5629,6 +5665,7 @@ mod local_descent_tests {
                 ranking_measures: vec![declared_component()],
                 structural_measure: None,
                 do_while: false,
+                backedge_target: None,
                 body: Box::new(crate::kernel::c_call(name, Vec::new())),
             }),
         );

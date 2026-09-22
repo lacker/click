@@ -3037,7 +3037,7 @@ pub(super) fn prove_claim_by_simp(
     theorem_environment: &TheoremEnvironment,
     function_source_registry: Arc<FunctionSourceRegistry>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    if count_loops(parsed_function.body()) != 0 {
+    if count_loop_regions(parsed_function) != 0 {
         return Err(ClickError::new(format!(
             "`simp` does not prove loop-backed claims for `{claim_label}`; use `by auto;`"
         )));

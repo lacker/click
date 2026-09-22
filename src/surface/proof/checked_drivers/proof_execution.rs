@@ -1641,7 +1641,10 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
         }
         InternalProofNode::Done => {
             let Some((next, rest)) = pending.split_first() else {
-                if !proof.is_at_region_boundary() {
+                let terminal_return = proof
+                    .execution_view()
+                    .is_ok_and(|view| view.frontier.is_at_function_exit());
+                if !proof.is_at_region_boundary() && !terminal_return {
                     // One certified iteration is a path that reaches the
                     // body's end, a `continue`, or a `break`. A path that
                     // stops anywhere else has not been proved at all. A

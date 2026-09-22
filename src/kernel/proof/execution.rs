@@ -3436,6 +3436,10 @@ pub(crate) struct ExecutionFrontier {
     pub(crate) in_loop_body: bool,
     /// How this path reached the loop body's boundary, once it has.
     pub(crate) loop_control: LoopControlExit,
+    /// A proof-only natural cycle's source back edge, when this frontier is
+    /// executing that loop body. Matching `goto` evidence reaches the typed
+    /// body boundary instead of reopening the source target.
+    pub(crate) natural_backedge_target: Option<crate::kernel::CControlTargetId>,
 }
 
 /// One entered `try` body tracked for evidence order validation: the
@@ -4005,6 +4009,7 @@ fn checked_source_statement_matches(proved: &CStatement, source: &CStatement) ->
             structural_measure,
             do_while: source_do_while,
             body: source_body,
+            ..
         },
     ) = (proved, source)
     else {
@@ -4101,6 +4106,7 @@ fn checked_condition_event(
                     ranking_measures,
                     structural_measure,
                     do_while: false,
+                    backedge_target: None,
                     body: body.clone(),
                 };
                 prepend_checked_evidence_statement(*body, Some(loop_head))
@@ -4973,6 +4979,15 @@ impl ExecutionProofCore {
                 self.evidence_completed = false;
             }
             CStatementOutcome::Jump { target, state } => {
+                if self.frontier.natural_backedge_target == Some(target)
+                    && self.frontier.in_loop_body
+                {
+                    self.frontier.position = FrontierPosition::RegionBoundary;
+                    self.frontier.loop_control = LoopControlExit::BodyEnd;
+                    self.evidence_state = Some(state);
+                    self.evidence_completed = true;
+                    return Ok(());
+                }
                 let target = function
                     .control_target(target)
                     .ok_or_else(|| EvidenceRefusal::from("goto target is not in its function"))?;
@@ -5446,6 +5461,7 @@ impl ExecutionProofCore {
                         ranking_measures,
                         structural_measure,
                         do_while: true,
+                        backedge_target: None,
                         body,
                     } if !matches!(proved_statement, CStatement::While { .. }) => {
                         let (body_head, body_tail) = split_shared_source(body);
@@ -5466,6 +5482,7 @@ impl ExecutionProofCore {
                             ranking_measures: ranking_measures.clone(),
                             structural_measure: structural_measure.clone(),
                             do_while: false,
+                            backedge_target: None,
                             body: body.clone(),
                         };
                         let loop_continuation =
@@ -5588,6 +5605,7 @@ impl ExecutionProofCore {
                         ranking_measures: ranking_measures.clone(),
                         structural_measure: structural_measure.clone(),
                         do_while: false,
+                        backedge_target: None,
                         body: body.clone(),
                     };
                     let body_then_head = Arc::new(CStatement::Seq(
@@ -8956,6 +8974,7 @@ mod tests {
                 ranking_measures: Vec::new(),
                 structural_measure: None,
                 do_while: false,
+                backedge_target: None,
                 body: Box::new(body),
             }
         }

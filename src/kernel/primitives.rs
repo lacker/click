@@ -2016,6 +2016,10 @@ pub enum CStatement {
         /// Whether the body runs before the first condition check, as in C's
         /// `do ... while` statement.
         do_while: bool,
+        /// When present, this is a proof-only natural cycle whose source body
+        /// retains a checked `goto` to the target. The matching jump is the
+        /// back edge; ordinary completion of the body is the cycle exit.
+        backedge_target: Option<CControlTargetId>,
         body: Box<CStatement>,
     },
     Switch {

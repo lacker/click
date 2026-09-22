@@ -1,4 +1,5 @@
 use super::*;
+use crate::surface::syntax::flatten_direct_c0_statements;
 
 pub(in crate::surface) fn count_loops(statement: &syntax::C0Statement) -> usize {
     match statement {
@@ -24,6 +25,10 @@ pub(in crate::surface) fn count_loops(statement: &syntax::C0Statement) -> usize 
     }
 }
 
+pub(in crate::surface) fn count_loop_regions(function: &syntax::C0Function) -> usize {
+    count_loops(function.body()) + usize::from(function.natural_control_loop().is_some())
+}
+
 #[derive(Clone, Default)]
 pub(in crate::surface) struct SourceExecutionLayout {
     data: std::sync::Arc<SourceExecutionLayoutData>,
@@ -36,6 +41,7 @@ struct SourceExecutionLayoutData {
     automatic_abrupt_exits: BTreeMap<usize, Vec<String>>,
     automatic_break_heads: BTreeMap<usize, usize>,
     loop_bodies: BTreeMap<usize, usize>,
+    natural_loop_targets: BTreeMap<usize, crate::kernel::CControlTargetId>,
     /// The C `if` statement indices whose regions complete when the keyed
     /// statement completes normally: the chain of enclosing branches this
     /// statement ends. Statically derived, so branch-region exits need no
@@ -77,7 +83,7 @@ impl SourceExecutionLayout {
         function: &syntax::C0Function,
     ) -> Result<Self, ClickError> {
         let Some(function) = function.prelowered_kernel_function() else {
-            return Ok(Self::new(function.body()));
+            return Ok(Self::new_for_function(function));
         };
         let mut layout = SourceExecutionLayoutData::default();
         let mut next_statement_index = 0;
@@ -218,6 +224,20 @@ impl SourceExecutionLayout {
     }
 
     pub(in crate::surface) fn new(statement: &syntax::C0Statement) -> Self {
+        Self::new_with_natural_loop(statement, None)
+    }
+
+    pub(in crate::surface) fn new_for_function(function: &syntax::C0Function) -> Self {
+        match function.natural_control_loop().map(|(target, _)| target) {
+            Some(target) => Self::new_with_natural_loop(function.body(), Some(target)),
+            None => Self::new(function.body()),
+        }
+    }
+
+    fn new_with_natural_loop(
+        statement: &syntax::C0Statement,
+        natural_loop_target: Option<crate::kernel::CControlTargetId>,
+    ) -> Self {
         /// Visits one subtree and returns the pre-order index of its last
         /// top-level statement, so an enclosing `if` can redirect its arms'
         /// control successors past the sibling arm to its own continuation.
@@ -366,7 +386,41 @@ impl SourceExecutionLayout {
         }
 
         let mut data = SourceExecutionLayoutData::default();
-        visit(statement, &mut 0, &mut 0, &mut data);
+        if let Some(target) = natural_loop_target {
+            let mut statements = Vec::new();
+            flatten_direct_c0_statements(statement, &mut statements);
+            let loop_index = 0;
+            let statement_index = 0;
+            let mut next_statement_index = 1;
+            let mut next_loop_index = 1;
+            data.loop_bodies.insert(loop_index, next_statement_index);
+            data.natural_loop_targets.insert(loop_index, target);
+            if let Some(syntax::C0Statement::Label { statement, .. }) = statements.first() {
+                visit(
+                    statement,
+                    &mut next_statement_index,
+                    &mut next_loop_index,
+                    &mut data,
+                );
+            }
+            for statement in statements.iter().skip(1) {
+                visit(
+                    statement,
+                    &mut next_statement_index,
+                    &mut next_loop_index,
+                    &mut data,
+                );
+            }
+            data.statements.insert(
+                statement_index,
+                SourceStatementRegion {
+                    continuation_node: next_statement_index,
+                    kind: SourceStatementKind::Loop { loop_index },
+                },
+            );
+        } else {
+            visit(statement, &mut 0, &mut 0, &mut data);
+        }
         collect_automatic_exits(statement, &mut data);
         Self {
             data: std::sync::Arc::new(data),
@@ -401,6 +455,13 @@ impl SourceExecutionLayout {
 
     pub(in crate::surface) fn loop_body_entry(&self, loop_index: usize) -> Option<usize> {
         self.data.loop_bodies.get(&loop_index).copied()
+    }
+
+    pub(in crate::surface) fn natural_loop_target(
+        &self,
+        loop_index: usize,
+    ) -> Option<crate::kernel::CControlTargetId> {
+        self.data.natural_loop_targets.get(&loop_index).copied()
     }
 }
 
@@ -644,6 +705,7 @@ mod source_execution_layout_tests {
                 automatic_abrupt_exits: BTreeMap::new(),
                 automatic_break_heads: BTreeMap::new(),
                 loop_bodies: BTreeMap::new(),
+                natural_loop_targets: BTreeMap::new(),
                 exited_branch_regions: BTreeMap::new(),
             }),
         };

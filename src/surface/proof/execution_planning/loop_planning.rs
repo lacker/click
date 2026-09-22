@@ -559,6 +559,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
         |source| source.claim_label.clone(),
     );
     let source_layout = SourceExecutionLayout::for_function(environment.parsed_function)?;
+    let natural_loop = source_layout.natural_loop_target(loop_index).is_some();
     let loop_body_statement_index = source_layout.loop_body_entry(loop_index).ok_or_else(|| {
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
@@ -568,6 +569,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
         },
         region: ExecutionRegionKind::LoopBody,
         in_loop_body: true,
+        natural_backedge_target: source_layout.natural_loop_target(loop_index),
         execution_start_state: Some(preservation.state().clone()),
         next_statement_index: loop_body_statement_index,
         ..ExecutionFrontier::default()
@@ -631,7 +633,9 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
     let mut completed = Vec::new();
     let mut steps = 0;
     while let Some(proof) = pending.pop() {
-        if proof.is_at_region_boundary() {
+        if proof.is_at_region_boundary()
+            || (natural_loop && proof.execution_view()?.frontier.is_at_function_exit())
+        {
             completed.push(proof);
             continue;
         }
@@ -768,6 +772,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         detach_generated_suffix_from_source_indices(&mut program, first_generated_tactic_index);
     }
     let source_layout = SourceExecutionLayout::for_function(environment.parsed_function)?;
+    let natural_loop = source_layout.natural_loop_target(loop_index).is_some();
     let loop_body_statement_index = source_layout.loop_body_entry(loop_index).ok_or_else(|| {
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
@@ -778,6 +783,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         },
         region: ExecutionRegionKind::LoopBody,
         in_loop_body: true,
+        natural_backedge_target: source_layout.natural_loop_target(loop_index),
         execution_start_state: Some(preservation.state().clone()),
         next_statement_index: loop_body_statement_index,
         ..ExecutionFrontier::default()
@@ -993,6 +999,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         // owes no invariant and no measure, and the loop rule joins it with
         // the loop's other exits instead of returning it to the head.
         let is_break_exit = context_frontier.loop_control.is_exit();
+        let is_natural_return_exit = natural_loop && context_frontier.is_at_function_exit();
         let has_retained_invariant_body =
             context_execution.core.checked_invariant_lowerings.is_some();
         let statement_index = context_frontier.next_statement_index;
@@ -1051,7 +1058,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         // now becomes a nested proof `if` here instead of recursive search in
         // proposition reasoning.
         let mut leaf = leaf;
-        if is_break_exit {
+        if is_natural_return_exit || is_break_exit {
             // Nothing is closed on an exit path, so nothing is planned here.
         } else if has_retained_invariant_body {
             // A completed body is bound to this exact premise store. Validate
@@ -1074,7 +1081,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 leaf = proved.join()?;
             }
         }
-        let checked = if is_break_exit {
+        let checked = if is_natural_return_exit || is_break_exit {
             leaf.clone()
         } else if invariant_checks.is_empty()
             && ranking_measures.is_empty()
@@ -1124,7 +1131,19 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             })?
         };
         let checked_execution = checked.execution_view()?.execution.clone();
-        if is_break_exit {
+        if is_natural_return_exit {
+            // A natural-cycle return is a terminal loop exit. It does not
+            // owe the loop invariant or ranking bundle; the kernel joins its
+            // checked return path with the other exits.
+            let exit = CLoopFinalExitCandidate::new(
+                (*checked_execution.core.state).clone(),
+                checked.facts().to_vec(),
+            )
+            .with_loan_evidence(checked_execution.core.loan_evidence().clone());
+            if !final_exit_candidates.contains(&exit) {
+                final_exit_candidates.push(exit);
+            }
+        } else if is_break_exit {
             // The exit is this path's own state and the facts it retained
             // there. The loop rule joins it with every other exit into the
             // single successor, so nothing about this path is dropped and
@@ -1187,7 +1206,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 }
             }
         }
-        let closer_tactics = if is_break_exit
+        let closer_tactics = if is_natural_return_exit
+            || is_break_exit
             || (invariant_checks.is_empty()
                 && ranking_measures.is_empty()
                 && structural_measure.is_none())

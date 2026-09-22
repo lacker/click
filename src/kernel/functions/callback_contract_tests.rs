@@ -1332,6 +1332,7 @@ fn resource_derived_loop_frame_rejects_wrapper_range_disagreement() {
         ranking_measures: vec![],
         structural_measure: None,
         do_while: false,
+        backedge_target: None,
         body: Box::new(CStatement::Skip),
     };
     let function = c_function(
@@ -1502,6 +1503,7 @@ fn resource_derived_loop_setup_does_not_fallback_to_surface_metadata() {
             ranking_measures: vec![],
             structural_measure: None,
             do_while: false,
+            backedge_target: None,
             body: Box::new(CStatement::Skip),
         },
     )

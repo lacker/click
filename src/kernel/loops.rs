@@ -1221,6 +1221,7 @@ pub(super) fn execute_c_statement_verification_paths(
             structural_measure,
             body,
             do_while,
+            backedge_target,
         } if !invariant_checks.is_empty()
             || !effect_checks.is_empty()
             || !ranking_measures.is_empty()
@@ -1242,6 +1243,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 budget,
                 variables,
                 *do_while,
+                *backedge_target,
             )?
         }
         _ => {
@@ -1355,6 +1357,7 @@ pub(super) fn execute_c_while_verification_paths(
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
     do_while: bool,
+    backedge_target: Option<CControlTargetId>,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     execute_c_while_exit_paths(
         state,
@@ -1374,6 +1377,7 @@ pub(super) fn execute_c_while_verification_paths(
         execution_semantics,
         false,
         do_while,
+        backedge_target,
         budget,
         variables,
     )
@@ -1582,6 +1586,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
     do_while: bool,
+    backedge_target: Option<CControlTargetId>,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     execute_c_while_exit_paths(
         state,
@@ -1601,6 +1606,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
         execution_semantics,
         initialization_proven,
         do_while,
+        backedge_target,
         budget,
         variables,
     )
@@ -2663,6 +2669,7 @@ fn execute_c_while_exit_paths(
     execution_semantics: CExecutionSemantics,
     initialization_proven: bool,
     do_while: bool,
+    backedge_target: Option<CControlTargetId>,
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -2728,6 +2735,7 @@ fn execute_c_while_exit_paths(
                 environment,
                 execution_semantics,
                 do_while,
+                backedge_target,
                 budget,
                 variables,
             )?;
@@ -3361,6 +3369,7 @@ pub(super) fn collect_loop_preservation_summary(
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     do_while: bool,
+    backedge_target: Option<CControlTargetId>,
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<LoopPreservationSummary> {
@@ -3436,255 +3445,305 @@ pub(super) fn collect_loop_preservation_summary(
                 )?,
                 &body_declared,
             ) {
-                match body_path.outcome {
-                    CStatementOutcome::Normal(next_state)
-                    | CStatementOutcome::Continue(next_state) => {
-                        // The back edge binds the loop's names again exactly as
-                        // the head did. A body that refolded its instance under
-                        // another name still hands the binder back, and a body
-                        // that ends with no instance at those arguments fails
-                        // here, named.
-                        let back_edge_assumptions = assumptions_with_path_context(
-                            assumptions,
-                            &body_path.facts,
-                            &body_path.obligations,
-                        );
-                        let (next_state, binder_failure) =
-                            match c_loop_state_with_loop_binders_rebound(
-                                top_state,
-                                &next_state,
-                                &binders,
-                                &back_edge_assumptions,
-                            ) {
-                                Ok(rebound) => (rebound, None),
-                                Err(failure) => (next_state, Some(failure)),
-                            };
-                        // Both back-edge directions come from one evaluation
-                        // of the guard, so a path the guard did not decide is
-                        // reported once instead of twice.
-                        let condition_contexts = assume_condition_branches(
-                            &next_state,
-                            condition,
-                            composite_resource_definitions,
-                            assumptions,
-                            &body_path.facts,
-                            &body_path.obligations,
-                            budget,
-                        )?;
-                        for assumption in condition_contexts {
-                            // Neither the back edge nor the exit is taken
-                            // when the guard produced no value; the loop
-                            // rule cannot certify this edge at all.
-                            if let Some(outcome) = assumption.undecided_outcome() {
-                                obligations.push(
-                                    ProofObligation::verification_condition(
-                                        false_equals_true_proposition(),
-                                    )
-                                    .with_context(undecided_loop_guard_context(outcome)),
-                                );
-                                continue;
-                            }
-                            let CConditionAssumption {
-                                branch,
-                                facts: condition_facts,
-                                obligations: condition_obligations,
-                            } = assumption;
-                            let may_continue = matches!(branch, CConditionBranch::Decided(true));
-                            let path_assumptions = assumptions_with_path_context(
-                                assumptions,
-                                &condition_facts,
-                                &condition_obligations,
-                            );
-                            let effect_obligations = collect_loop_effect_check_obligations(
-                                top_state,
-                                &next_state,
-                                effect_checks,
-                                &condition_facts,
-                                &condition_obligations,
-                                assumptions,
-                                budget,
-                            )?;
-                            let mut path_obligations = if do_while && !may_continue {
-                                Vec::new()
-                            } else {
-                                collect_invariant_check_obligations(
-                                    &next_state,
-                                    loop_entry_state,
-                                    invariant_checks,
-                                    InvariantPhase::Preservation,
-                                    &path_assumptions,
-                                    budget,
-                                )?
-                            };
-                            // A ranked loop's back edge carries the same
-                            // ranking members the surface bundle spells.
-                            // Only a continuing edge is a back edge.
-                            if may_continue {
-                                path_obligations.extend(loop_ranking_obligations_or_refusal(
-                                    &next_state,
-                                    top_state,
-                                    ranking_measures,
-                                    &path_assumptions,
-                                    budget,
-                                ));
-                                // A structural measure is not a ranking
-                                // member: the kernel decides the descent
-                                // here and reports a refusal obligation
-                                // naming the binder when it does not hold.
-                                if let Some(measure) = structural_measure
-                                    && let Some(failure) = loop_structural_descent_failure(
-                                        top_state,
-                                        &next_state,
-                                        &binders,
-                                        measure,
-                                        composite_resource_definitions,
-                                        &path_assumptions,
-                                    )
-                                {
-                                    path_obligations.push(
-                                        ProofObligation::verification_condition(
-                                            false_equals_true_proposition(),
-                                        )
-                                        .with_context(failure),
-                                    );
-                                }
-                            }
-                            let mut state_obligations = condition_obligations.clone();
-                            // A binder the body did not hand back is the
-                            // whole verdict for this edge; the ownership
-                            // join would only repeat it less precisely.
-                            let join_failure = if !may_continue {
-                                None
-                            } else if let Some(failure) = &binder_failure {
-                                Some(failure.clone())
-                            } else {
-                                c_loop_state_components_match_at_back_edge_inner(
-                                    top_state,
-                                    &c_loop_state_with_head_binder_models(
-                                        &next_state,
-                                        top_state,
-                                        &binders,
-                                    ),
-                                    composite_resource_definitions,
-                                    &path_assumptions,
+                let outcome = body_path.outcome;
+                let natural_backedge = matches!(
+                    &outcome,
+                    CStatementOutcome::Jump { target, .. }
+                        if backedge_target == Some(*target)
+                );
+                if matches!(
+                    &outcome,
+                    CStatementOutcome::Normal(_) | CStatementOutcome::Continue(_)
+                ) || natural_backedge
+                {
+                    let next_state = match outcome {
+                        CStatementOutcome::Normal(state)
+                        | CStatementOutcome::Continue(state)
+                        | CStatementOutcome::Jump { state, .. } => state,
+                        _ => unreachable!("classified loop back edge has another outcome"),
+                    };
+                    // The back edge binds the loop's names again exactly as
+                    // the head did. A body that refolded its instance under
+                    // another name still hands the binder back, and a body
+                    // that ends with no instance at those arguments fails
+                    // here, named.
+                    let back_edge_assumptions = assumptions_with_path_context(
+                        assumptions,
+                        &body_path.facts,
+                        &body_path.obligations,
+                    );
+                    let (next_state, binder_failure) = match c_loop_state_with_loop_binders_rebound(
+                        top_state,
+                        &next_state,
+                        &binders,
+                        &back_edge_assumptions,
+                    ) {
+                        Ok(rebound) => (rebound, None),
+                        Err(failure) => (next_state, Some(failure)),
+                    };
+                    // Both back-edge directions come from one evaluation
+                    // of the guard, so a path the guard did not decide is
+                    // reported once instead of twice.
+                    let condition_contexts = assume_condition_branches(
+                        &next_state,
+                        condition,
+                        composite_resource_definitions,
+                        assumptions,
+                        &body_path.facts,
+                        &body_path.obligations,
+                        budget,
+                    )?;
+                    for assumption in condition_contexts {
+                        // Neither the back edge nor the exit is taken
+                        // when the guard produced no value; the loop
+                        // rule cannot certify this edge at all.
+                        if let Some(outcome) = assumption.undecided_outcome() {
+                            obligations.push(
+                                ProofObligation::verification_condition(
+                                    false_equals_true_proposition(),
                                 )
-                                .err()
-                            };
-                            if let Some(message) = join_failure {
-                                state_obligations.push(
-                                    ProofObligation::verification_condition(
-                                        false_equals_true_proposition(),
-                                    )
-                                    .with_context(message),
-                                );
-                            }
-                            append_required_proof_obligations(
-                                &mut obligations,
-                                assumptions,
-                                &state_obligations,
+                                .with_context(undecided_loop_guard_context(outcome)),
                             );
-                            append_required_proof_obligations_under_path_context(
-                                &mut obligations,
-                                assumptions,
-                                &effect_obligations,
-                                &condition_facts,
-                                &condition_obligations,
-                            );
-                            append_required_proof_obligations_under_path_context(
-                                &mut obligations,
-                                assumptions,
-                                &path_obligations,
-                                &condition_facts,
-                                &condition_obligations,
-                            );
-                            if !may_continue {
-                                let final_path_facts = condition_facts.clone();
-                                let final_path_obligations = condition_obligations.clone();
-                                let mut final_obligations = condition_obligations;
-                                append_required_proof_obligations_under_path_context(
-                                    &mut final_obligations,
-                                    assumptions,
-                                    &effect_obligations,
-                                    &final_path_facts,
-                                    &final_path_obligations,
-                                );
-                                append_required_proof_obligations_under_path_context(
-                                    &mut final_obligations,
-                                    assumptions,
-                                    &path_obligations,
-                                    &final_path_facts,
-                                    &final_path_obligations,
-                                );
-                                final_exit_paths.push(CStatementExecutionPath {
-                                    loop_invariant_correspondence: Default::default(),
-                                    outcome: CStatementOutcome::Normal(
-                                        head.restored_exit_state(&next_state),
-                                    ),
-                                    facts: final_path_facts,
-                                    obligations: final_obligations,
-                                    loan_evidence: body_path.loan_evidence.clone(),
-                                });
-                            }
+                            continue;
                         }
-                    }
-                    CStatementOutcome::Break(next_state) => {
-                        // A `break` is an exit: the invariants are not
-                        // closed on it and no measure is required to
-                        // decrease on it. What the body wrote on the way
-                        // out is still checked against the loop's declared
-                        // effects, and the path itself becomes one of the
-                        // exits the rule joins into the loop's successor.
+                        let CConditionAssumption {
+                            branch,
+                            facts: condition_facts,
+                            obligations: condition_obligations,
+                        } = assumption;
+                        let may_continue = matches!(branch, CConditionBranch::Decided(true));
+                        let path_assumptions = assumptions_with_path_context(
+                            assumptions,
+                            &condition_facts,
+                            &condition_obligations,
+                        );
                         let effect_obligations = collect_loop_effect_check_obligations(
                             top_state,
                             &next_state,
                             effect_checks,
-                            &body_path.facts,
-                            &body_path.obligations,
+                            &condition_facts,
+                            &condition_obligations,
                             assumptions,
                             budget,
                         )?;
-                        let exit_facts = body_path.facts;
-                        let exit_obligations = body_path.obligations;
-                        let loan_evidence = body_path.loan_evidence;
+                        let mut path_obligations = if do_while && !may_continue {
+                            Vec::new()
+                        } else {
+                            collect_invariant_check_obligations(
+                                &next_state,
+                                loop_entry_state,
+                                invariant_checks,
+                                InvariantPhase::Preservation,
+                                &path_assumptions,
+                                budget,
+                            )?
+                        };
+                        // A ranked loop's back edge carries the same
+                        // ranking members the surface bundle spells.
+                        // Only a continuing edge is a back edge.
+                        if may_continue {
+                            path_obligations.extend(loop_ranking_obligations_or_refusal(
+                                &next_state,
+                                top_state,
+                                ranking_measures,
+                                &path_assumptions,
+                                budget,
+                            ));
+                            // A structural measure is not a ranking
+                            // member: the kernel decides the descent
+                            // here and reports a refusal obligation
+                            // naming the binder when it does not hold.
+                            if let Some(measure) = structural_measure
+                                && let Some(failure) = loop_structural_descent_failure(
+                                    top_state,
+                                    &next_state,
+                                    &binders,
+                                    measure,
+                                    composite_resource_definitions,
+                                    &path_assumptions,
+                                )
+                            {
+                                path_obligations.push(
+                                    ProofObligation::verification_condition(
+                                        false_equals_true_proposition(),
+                                    )
+                                    .with_context(failure),
+                                );
+                            }
+                        }
+                        let mut state_obligations = condition_obligations.clone();
+                        // A binder the body did not hand back is the
+                        // whole verdict for this edge; the ownership
+                        // join would only repeat it less precisely.
+                        let join_failure = if !may_continue {
+                            None
+                        } else if let Some(failure) = &binder_failure {
+                            Some(failure.clone())
+                        } else {
+                            c_loop_state_components_match_at_back_edge_inner(
+                                top_state,
+                                &c_loop_state_with_head_binder_models(
+                                    &next_state,
+                                    top_state,
+                                    &binders,
+                                ),
+                                composite_resource_definitions,
+                                &path_assumptions,
+                            )
+                            .err()
+                        };
+                        if let Some(message) = join_failure {
+                            state_obligations.push(
+                                ProofObligation::verification_condition(
+                                    false_equals_true_proposition(),
+                                )
+                                .with_context(message),
+                            );
+                        }
                         append_required_proof_obligations(
                             &mut obligations,
                             assumptions,
-                            &exit_obligations,
+                            &state_obligations,
                         );
                         append_required_proof_obligations_under_path_context(
                             &mut obligations,
                             assumptions,
                             &effect_obligations,
-                            &exit_facts,
-                            &exit_obligations,
+                            &condition_facts,
+                            &condition_obligations,
                         );
-                        break_exits.push(
-                            CLoopBreakExit::new(
-                                next_state,
-                                exit_facts
-                                    .iter()
-                                    .map(|fact| fact.proposition().clone())
-                                    .collect(),
-                            )
-                            .with_loan_evidence(loan_evidence),
-                        );
-                    }
-                    CStatementOutcome::Return { .. }
-                    | CStatementOutcome::Throw { .. }
-                    | CStatementOutcome::Jump { .. }
-                    | CStatementOutcome::VerificationDiverges
-                    | CStatementOutcome::UndefinedBehavior(_)
-                    | CStatementOutcome::RuntimeError(_) => {
-                        let mut path_obligations = body_path.obligations;
-                        path_obligations.push(
-                            ProofObligation::verification_condition(false_equals_true_proposition())
-                                .with_context("loop preservation body safety"),
-                        );
-                        append_required_proof_obligations(
+                        append_required_proof_obligations_under_path_context(
                             &mut obligations,
                             assumptions,
                             &path_obligations,
+                            &condition_facts,
+                            &condition_obligations,
                         );
+                        if !may_continue {
+                            let final_path_facts = condition_facts.clone();
+                            let final_path_obligations = condition_obligations.clone();
+                            let mut final_obligations = condition_obligations;
+                            append_required_proof_obligations_under_path_context(
+                                &mut final_obligations,
+                                assumptions,
+                                &effect_obligations,
+                                &final_path_facts,
+                                &final_path_obligations,
+                            );
+                            append_required_proof_obligations_under_path_context(
+                                &mut final_obligations,
+                                assumptions,
+                                &path_obligations,
+                                &final_path_facts,
+                                &final_path_obligations,
+                            );
+                            final_exit_paths.push(CStatementExecutionPath {
+                                loop_invariant_correspondence: Default::default(),
+                                outcome: CStatementOutcome::Normal(
+                                    head.restored_exit_state(&next_state),
+                                ),
+                                facts: final_path_facts,
+                                obligations: final_obligations,
+                                loan_evidence: body_path.loan_evidence.clone(),
+                            });
+                        }
+                    }
+                } else {
+                    match outcome {
+                        CStatementOutcome::Break(next_state) => {
+                            // A `break` is an exit: the invariants are not
+                            // closed on it and no measure is required to
+                            // decrease on it. What the body wrote on the way
+                            // out is still checked against the loop's declared
+                            // effects, and the path itself becomes one of the
+                            // exits the rule joins into the loop's successor.
+                            let effect_obligations = collect_loop_effect_check_obligations(
+                                top_state,
+                                &next_state,
+                                effect_checks,
+                                &body_path.facts,
+                                &body_path.obligations,
+                                assumptions,
+                                budget,
+                            )?;
+                            let exit_facts = body_path.facts;
+                            let exit_obligations = body_path.obligations;
+                            let loan_evidence = body_path.loan_evidence;
+                            append_required_proof_obligations(
+                                &mut obligations,
+                                assumptions,
+                                &exit_obligations,
+                            );
+                            append_required_proof_obligations_under_path_context(
+                                &mut obligations,
+                                assumptions,
+                                &effect_obligations,
+                                &exit_facts,
+                                &exit_obligations,
+                            );
+                            break_exits.push(
+                                CLoopBreakExit::new(
+                                    next_state,
+                                    exit_facts
+                                        .iter()
+                                        .map(|fact| fact.proposition().clone())
+                                        .collect(),
+                                )
+                                .with_loan_evidence(loan_evidence),
+                            );
+                        }
+                        CStatementOutcome::Return { value, state } if backedge_target.is_some() => {
+                            let effect_obligations = collect_loop_effect_check_obligations(
+                                top_state,
+                                &state,
+                                effect_checks,
+                                &body_path.facts,
+                                &body_path.obligations,
+                                assumptions,
+                                budget,
+                            )?;
+                            let exit_facts = body_path.facts;
+                            let exit_obligations = body_path.obligations;
+                            let mut final_obligations = exit_obligations.clone();
+                            append_required_proof_obligations_under_path_context(
+                                &mut final_obligations,
+                                assumptions,
+                                &effect_obligations,
+                                &exit_facts,
+                                &exit_obligations,
+                            );
+                            final_exit_paths.push(CStatementExecutionPath {
+                                loop_invariant_correspondence: Default::default(),
+                                outcome: CStatementOutcome::Return {
+                                    value,
+                                    state: head.restored_exit_state(&state),
+                                },
+                                facts: exit_facts,
+                                obligations: final_obligations,
+                                loan_evidence: body_path.loan_evidence,
+                            });
+                        }
+                        CStatementOutcome::Return { .. }
+                        | CStatementOutcome::Normal(_)
+                        | CStatementOutcome::Continue(_)
+                        | CStatementOutcome::Throw { .. }
+                        | CStatementOutcome::Jump { .. }
+                        | CStatementOutcome::VerificationDiverges
+                        | CStatementOutcome::UndefinedBehavior(_)
+                        | CStatementOutcome::RuntimeError(_) => {
+                            let mut path_obligations = body_path.obligations;
+                            path_obligations.push(
+                                ProofObligation::verification_condition(
+                                    false_equals_true_proposition(),
+                                )
+                                .with_context("loop preservation body safety"),
+                            );
+                            append_required_proof_obligations(
+                                &mut obligations,
+                                assumptions,
+                                &path_obligations,
+                            );
+                        }
                     }
                 }
             }

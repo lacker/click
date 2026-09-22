@@ -2519,6 +2519,49 @@ impl C0Function {
         &self.control_targets
     }
 
+    /// The deliberately narrow natural-cycle shape admitted by the C goto
+    /// slice: one direct function-body label at the entry, one direct
+    /// function-body backward goto as the final statement, and no declaration
+    /// in the re-entered region. The entry label may govern a compound
+    /// statement; the proof layer wraps this exact source region in a checked
+    /// loop rule while retaining the original goto.
+    pub(crate) fn natural_control_loop(&self) -> Option<(crate::kernel::CControlTargetId, usize)> {
+        let mut statements = Vec::new();
+        flatten_direct_c0_statements(&self.body, &mut statements);
+        if statements.len() < 2 {
+            return None;
+        }
+        let C0Statement::Label {
+            name: label_name,
+            direct_function_body: true,
+            ..
+        } = statements.first()?
+        else {
+            return None;
+        };
+        let C0Statement::Goto {
+            target,
+            direct_function_body: true,
+            ..
+        } = statements.last()?
+        else {
+            return None;
+        };
+        let C0Statement::Label { statement, .. } = statements[0] else {
+            return None;
+        };
+        if !natural_cycle_statement_supported(statement)
+            || statements[1..statements.len() - 1]
+                .iter()
+                .any(|statement| !natural_cycle_statement_supported(statement))
+        {
+            return None;
+        }
+        let (label_target, label_index) = *self.control_targets.get(label_name)?;
+        let (goto_target, _) = *self.control_targets.get(target)?;
+        (label_target == goto_target && label_index == 0).then_some((label_target, label_index))
+    }
+
     fn static_object_address(&self, name: &str) -> Option<StaticAddress> {
         if let Some(global) = self
             .globals
@@ -2955,6 +2998,33 @@ impl C0Function {
                     })
                     .collect(),
             )
+    }
+}
+
+fn natural_cycle_statement_supported(statement: &C0Statement) -> bool {
+    match statement {
+        C0Statement::Seq(first, second) => {
+            natural_cycle_statement_supported(first) && natural_cycle_statement_supported(second)
+        }
+        C0Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            natural_cycle_statement_supported(then_branch)
+                && natural_cycle_statement_supported(else_branch)
+        }
+        C0Statement::While { .. }
+        | C0Statement::DoWhile { .. }
+        | C0Statement::For { .. }
+        | C0Statement::Switch { .. }
+        | C0Statement::Goto { .. }
+        | C0Statement::Label { .. }
+        | C0Statement::Break
+        | C0Statement::Continue
+        | C0Statement::Declare { .. }
+        | C0Statement::DeclareStructValue { .. } => false,
+        _ => true,
     }
 }
 
@@ -4073,7 +4143,7 @@ fn validate_function_returns(
     }
 }
 
-fn flatten_direct_c0_statements<'a>(
+pub(crate) fn flatten_direct_c0_statements<'a>(
     statement: &'a C0Statement,
     statements: &mut Vec<&'a C0Statement>,
 ) {
@@ -4248,6 +4318,19 @@ fn validate_direct_forward_gotos(
         Ok(())
     }
 
+    let natural_cycle_shape = matches!(
+        statements.first(),
+        Some(C0Statement::Label {
+            direct_function_body: true,
+            ..
+        })
+    ) && matches!(
+        statements.last(),
+        Some(C0Statement::Goto {
+            direct_function_body: true,
+            ..
+        })
+    );
     let mut labels = BTreeMap::new();
     let mut gotos = Vec::new();
     let mut source_statement_index = 0;
@@ -4292,10 +4375,13 @@ fn validate_direct_forward_gotos(
                         | C0Statement::Switch { .. }
                         | C0Statement::Goto { .. }
                         | C0Statement::Label { .. }
-                ) {
+                ) && !(natural_cycle_shape
+                    && index == 0
+                    && natural_cycle_statement_supported(statement))
+                {
                     return Err(control_statement_error(
                         position,
-                        "the forward goto slice requires a label to govern one ordinary statement",
+                        "the goto slice requires a label to govern one ordinary statement",
                     ));
                 }
                 if labels
@@ -4331,6 +4417,7 @@ fn validate_direct_forward_gotos(
             .map_err(|_| C0SyntaxError::new("too many control-flow labels"))?;
         targets.insert(name.clone(), (identity, *source_index));
     }
+    let mut backward_gotos = Vec::new();
     for pending in gotos {
         let Some((target_index, _, _)) = labels.get(&pending.target) else {
             return Err(control_statement_error(
@@ -4339,10 +4426,8 @@ fn validate_direct_forward_gotos(
             ));
         };
         if *target_index <= pending.direct_statement_index {
-            return Err(control_statement_error(
-                &pending.position,
-                format!("backward goto to `{}` is not supported", pending.target),
-            ));
+            backward_gotos.push((pending, *target_index));
+            continue;
         }
         if statements[pending.direct_statement_index + 1..*target_index]
             .iter()
@@ -4357,6 +4442,31 @@ fn validate_direct_forward_gotos(
                 &pending.position,
                 format!(
                     "goto to `{}` would bypass a local declaration",
+                    pending.target
+                ),
+            ));
+        }
+    }
+    if !backward_gotos.is_empty() {
+        let supported = backward_gotos.len() == 1
+            && labels.len() == 1
+            && backward_gotos[0].1 == 0
+            && backward_gotos[0].0.direct_statement_index + 1 == statements.len()
+            && matches!(statements.last(), Some(C0Statement::Goto { .. }))
+            && matches!(
+                statements.first(),
+                Some(C0Statement::Label { statement, .. })
+                    if natural_cycle_statement_supported(statement)
+            )
+            && statements[1..backward_gotos[0].0.direct_statement_index]
+                .iter()
+                .all(|statement| natural_cycle_statement_supported(statement));
+        if !supported {
+            let pending = &backward_gotos[0].0;
+            return Err(control_statement_error(
+                &pending.position,
+                format!(
+                    "backward goto to `{}` is not a supported natural cycle",
                     pending.target
                 ),
             ));

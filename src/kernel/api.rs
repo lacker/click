@@ -1794,6 +1794,7 @@ pub fn c_while_with_invariant_and_effect_checks(
         ranking_measures: Vec::new(),
         structural_measure: None,
         do_while: false,
+        backedge_target: None,
         body: Box::new(body),
     }
 }
@@ -1852,6 +1853,19 @@ impl CStatement {
         }
         self
     }
+
+    /// Retains the source target of a proof-only natural cycle. The cycle
+    /// wrapper is an internal loop region; its body still contains the
+    /// original checked `goto` statement.
+    pub fn with_backedge_target(mut self, target: CControlTargetId) -> Self {
+        if let Self::While {
+            backedge_target, ..
+        } = &mut self
+        {
+            *backedge_target = Some(target);
+        }
+        self
+    }
 }
 
 pub fn c_do_while(condition: CExpression, body: CStatement) -> CStatement {
@@ -1873,6 +1887,7 @@ pub fn c_do_while_with_invariant_and_effect_checks(
         ranking_measures: Vec::new(),
         structural_measure: None,
         do_while: true,
+        backedge_target: None,
         body: Box::new(body),
     }
 }
@@ -3425,6 +3440,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         structural_measure,
         body,
         do_while,
+        backedge_target,
     } = &statement
     else {
         return (
@@ -3456,6 +3472,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         budget,
         &mut variables,
         *do_while,
+        *backedge_target,
     );
     let paths = match execution {
         Ok(paths) => paths,

@@ -6924,7 +6924,7 @@ pub(in crate::surface) fn validate_region_proof_clauses(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
 ) -> Result<(), ClickError> {
-    let loop_count = count_loops(parsed_function.body());
+    let loop_count = count_loop_regions(parsed_function);
     for region_proof_clause in function_block.structural_clauses() {
         match region_proof_clause.region() {
             CodeRegion::Function => {

@@ -857,6 +857,30 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
     } else {
         lowerer.lower_statement(parsed_function.body(), parsed_function.control_targets())?
     };
+    let body = if let Some((backedge_target, _)) = parsed_function.natural_control_loop()
+        && function_block
+            .structural_clauses()
+            .iter()
+            .any(|clause| clause.region() == &CodeRegion::Loop(0))
+    {
+        let invariant_checks = lowerer.loop_invariant_checks(0)?;
+        let effect_checks = lowerer.loop_frame_checks(0)?;
+        let resource_specs = lowerer.loop_resource_specs(0);
+        let (ranking_measures, structural_measure) = lowerer.loop_measure_clauses(0)?;
+        crate::kernel::c_while_with_invariant_and_effect_checks(
+            crate::kernel::c_int32_literal(1),
+            Vec::new(),
+            invariant_checks,
+            effect_checks,
+            body,
+        )
+        .with_loop_resource_specs(resource_specs)
+        .with_loop_ranking_measures(ranking_measures)
+        .with_loop_structural_measure(structural_measure)
+        .with_backedge_target(backedge_target)
+    } else {
+        body
+    };
     let source_body = parsed_kernel_function.body().clone();
     let mut function = c_function(
         if parsed_function.return_struct_name().is_some() {
