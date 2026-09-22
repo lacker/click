@@ -4231,10 +4231,41 @@ fn c0_syntax_accepts_switch_cases_and_nested_loop_control() {
 }
 
 #[test]
+fn c0_syntax_accepts_integer_constant_switch_case_labels() {
+    let function = syntax::parse_function(
+        r#"
+        int32 choose(int32 kind) {
+            switch (kind) {
+                case 1 + 1:
+                    return 0;
+                case 1 << 2:
+                    return 0;
+                case 0 ? 9 : 6:
+                    return 0;
+                case (uint8) 7:
+                    return 0;
+                default:
+                    return 0;
+            }
+        }
+        "#,
+    )
+    .expect("integer constant expressions should be accepted as switch labels");
+
+    let syntax::C0Statement::Switch { cases, .. } = function.body() else {
+        panic!("expected native switch statement");
+    };
+    assert_eq!(
+        cases.iter().map(|case| case.value()).collect::<Vec<_>>(),
+        vec![Some(2), Some(4), Some(6), Some(7), None]
+    );
+}
+
+#[test]
 fn c0_syntax_rejects_unsupported_switch_shapes() {
     for (source, expected) in [
         (
-            "int32 bad(int32 kind) { switch (kind) { case 1: break; case 1: break; } return 0; }",
+            "int32 bad(int32 kind) { switch (kind) { case 1 + 1: break; case 2: break; } return 0; }",
             "duplicate `case` label",
         ),
         (
@@ -4243,7 +4274,19 @@ fn c0_syntax_rejects_unsupported_switch_shapes() {
         ),
         (
             "int32 bad(int32 kind) { switch (kind) { case kind: break; } return 0; }",
-            "integer or character literal",
+            "integer constant expressions",
+        ),
+        (
+            "int32 bad(int32 kind) { switch (kind) { case 1 / 0: break; } return 0; }",
+            "divides by zero",
+        ),
+        (
+            "int32 bad(int32 kind) { switch (kind) { case 1 << 32: break; } return 0; }",
+            "invalid shift",
+        ),
+        (
+            "int32 bad(int32 kind) { switch (kind) { case 4294967296ULL: break; } return 0; }",
+            "out of range",
         ),
         (
             "int32 bad(int32 kind) { switch (kind) { kind = 1; case 0: break; } return 0; }",

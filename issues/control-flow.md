@@ -1,7 +1,7 @@
 # P2: Extend bounded control flow
 
 The selected P1 control-flow milestone is complete: structured C loops and
-loop exits, literal-label `switch`, checked forward `goto` cleanup, and the
+loop exits, constant-expression-label `switch`, checked forward `goto` cleanup, and the
 bounded C++ cleanup/unwind profile all have checked execution and regression
 coverage. This issue records the smaller, independently motivated extensions
 that can improve ordinary control-flow coverage without taking on general
@@ -45,10 +45,9 @@ reverification, and `scripts/check.sh`.
 
 ## Slice B: broaden the supported `switch` shape
 
-The current implementation supports direct integer or character literal
-labels in one compound body. A reasonable first extension is constant
-expression labels while retaining direct children and the existing checked
-fallthrough model. That should be a medium-sized parser/lowering change.
+The implementation now supports integer constant-expression labels in one
+compound body while retaining direct children and the existing checked
+fallthrough model. This was the intended medium-sized parser/lowering slice.
 
 The harder follow-up is nested switch structure and its interaction with
 surrounding loops, `continue`, `break`, automatic cleanup, and path joins.
@@ -94,8 +93,7 @@ checked certificate.
 ## Suggested order
 
 1. Calls in short-circuit operands.
-2. Constant-expression `switch` labels, with the existing direct-label rule.
-3. A narrowly motivated nested-switch or cleanup/unwind extension.
+2. A narrowly motivated nested-switch or cleanup/unwind extension.
 
 Revisit general `goto` only after its edge, scope, and termination model is
 designed independently in [`goto.md`](goto.md).

@@ -56,10 +56,31 @@ int32 switch_loop_control() {
 }
 ```
 
+```c filename=switch_constant_labels.c
+int32 switch_constant_labels(int32 kind) {
+    int32 result = 0;
+    switch (kind) {
+        case 1 + 1:
+            result = 10;
+        case 1 + 2:
+            result = result + 2;
+            break;
+        case 1 << 2:
+            result = 40;
+            break;
+        default:
+            result = 50;
+            break;
+    }
+    return result;
+}
+```
+
 ```click
 verifying "switch_break.c";
 verifying "switch_fallthrough.c";
 verifying "switch_loop_control.c";
+verifying "switch_constant_labels.c";
 
 int32 switch_break(int32 kind) {
     ensures result == 10 or result == 20 or result == 30 by auto;
@@ -71,6 +92,10 @@ int32 switch_fallthrough(int32 kind) {
 
 int32 switch_loop_control() {
     ensures result == 3 by auto;
+}
+
+int32 switch_constant_labels(int32 kind) {
+    ensures result == 12 or result == 2 or result == 40 or result == 50 by auto;
 }
 ```
 

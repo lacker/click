@@ -5210,6 +5210,22 @@ fn evaluate_static_integer_expression(
     }
 }
 
+fn evaluate_static_switch_case_value(
+    expression: &C0Expression,
+) -> Result<u32, StaticIntegerEvaluationError> {
+    let value = evaluate_static_integer_expression(expression)?;
+    match value {
+        StaticIntegerValue::Signed { value, .. } => {
+            let value =
+                i32::try_from(value).map_err(|_| StaticIntegerEvaluationError::OutOfRange)?;
+            Ok(value as u32)
+        }
+        StaticIntegerValue::Unsigned { value, .. } => {
+            u32::try_from(value).map_err(|_| StaticIntegerEvaluationError::OutOfRange)
+        }
+    }
+}
+
 fn static_integer_literal_for_type(
     c_type: C0Type,
     value: StaticIntegerValue,
@@ -10094,9 +10110,10 @@ impl Parser {
         Ok(body)
     }
 
-    /// Parses the first supported C `switch` shape: a compound statement whose
+    /// Parses the supported C `switch` shape: a compound statement whose
     /// direct children are `case`/`default` labels and their statement bodies.
-    /// Keeping the cases in source order is what preserves C fallthrough.
+    /// Case labels are integer constant expressions. Keeping the cases in
+    /// source order is what preserves C fallthrough.
     fn parse_switch_body(&mut self) -> Result<Vec<C0SwitchCase>, C0SyntaxError> {
         self.expect(Token::LBrace)?;
         self.push_scope();
@@ -10110,16 +10127,27 @@ impl Parser {
                 Some("case") => {
                     self.position += 1;
                     let expression = self.parse_expression()?;
-                    let value = match expression {
-                        C0Expression::Int32Literal(value) => value,
-                        C0Expression::UInt8Literal(value) => u32::from(value),
-                        C0Expression::UInt32Literal(value) => value,
-                        _ => {
-                            return Err(self.error_here(
-                                "`case` labels currently require an integer or character literal",
-                            ));
-                        }
-                    };
+                    let value =
+                        evaluate_static_switch_case_value(&expression).map_err(|error| {
+                            let message = match error {
+                                StaticIntegerEvaluationError::NotConstant => {
+                                    "`case` labels require integer constant expressions"
+                                }
+                                StaticIntegerEvaluationError::Overflow => {
+                                    "`case` label integer constant expression overflows"
+                                }
+                                StaticIntegerEvaluationError::DivisionByZero => {
+                                    "`case` label integer constant expression divides by zero"
+                                }
+                                StaticIntegerEvaluationError::InvalidShift => {
+                                    "`case` label integer constant expression has an invalid shift"
+                                }
+                                StaticIntegerEvaluationError::OutOfRange => {
+                                    "`case` label integer constant expression is out of range"
+                                }
+                            };
+                            self.error_here(message)
+                        })?;
                     self.expect(Token::Colon)?;
                     if cases
                         .iter()
