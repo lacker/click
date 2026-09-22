@@ -1,6 +1,7 @@
 # Pthread calls as ordinary checked C steps
 
-Status: proposal for review, 2026-09-22. This is the binding design for
+Status: design direction accepted, 2026-09-22; clarified after review.
+This is the binding design for
 [Chunk A](../../issues/concurrency-demo.md#chunk-a-settle-and-lock-the-pthread-binding-contract),
 not implemented concurrency support or a verified parent proof.
 
@@ -20,7 +21,7 @@ explicit task selection, nonnull result slots, and escaping child handles as
 separate extensions. This restriction is on supported operations, not on the
 number of workers or the placement of status tests.
 
-The review decisions are:
+The agreed design decisions are:
 
 1. Use existing `step()`, scalar result binding, and `branch` syntax for this
    slice, with no new public thread resource or spawn tactic.
@@ -64,6 +65,23 @@ arbitrary applicable contract. Selection is indexed by function identity.
 
 This is a semantic extension to existing proof syntax. None of the create or
 join proof fragments below works on the current implementation.
+
+## Why `branch`, not `outcomes`
+
+`branch` currently follows a C `if`; `then` and `else` name the source arms.
+For `if (rc != 0)`, `then` handles failure. For `if (rc == 0)`, it handles
+success. Keeping that correspondence makes the proof readable beside the C.
+
+`outcomes` currently separates the normal-return and caught-exception paths
+of a checked call. A future `outcomes` with success/failure arms could split
+an operation's possible results independently of a source condition, but that
+would be an additional proof operation. This slice does not need it: creation
+records conditional authority, and the eventual C condition gets an ordinary
+`branch`. A delayed test does not force an immediate proof split.
+
+The implementation may share checked case-handling machinery. Public names
+should still tell the author whether they are following source control flow
+or distinguishing an operation's outcomes. No naming change is proposed here.
 
 ## Candidate sidecar and the author's experience
 
@@ -233,6 +251,40 @@ exponential proof execution. The user can always supply explicit case proofs
 when the program's actual dependent behavior requires cases; checking work
 then follows that explicit certificate.
 
+## Future C++ threading
+
+Supporting C++ threading is part of the long-term scope. Keep the reusable
+kernel operation as starting a verified task with transferred resources and
+recovering its completion once. Pthread status codes, output parameters,
+`void *` arguments, and handle representation belong to the runtime binding.
+They must not define the generic task or completion interfaces.
+
+Four future uses constrain that boundary without adding implementation now:
+
+| Future use | Commitment in this design |
+| --- | --- |
+| Creation reports failure through an exception | The core describes whether a child was created and which resources transferred. The binding relates that outcome to a return value or exceptional edge. |
+| A thread object is moved | Completion identity is separate from its current owner and the storage holding its handle. A future checked move can transfer authority without creating a second right. |
+| A worker is a callable object with captures | A task consists of verified invocation/termination evidence and its resource bindings. A direct function plus `void *` is the initial adapter. |
+| Cleanup joins a child | Explicit calls and supported cleanup actions invoke the same checked join transition, with their own runtime preconditions. |
+
+The first slice still requires a child to remain with its creating parent.
+"This parent" is an initial supported ownership policy, not an immutable part
+of child identity. Supporting transfer later will require explicit checked
+rules; no ordinary assignment, function return, or C++ move gets those rules
+implicitly. Likewise, the abstract creation outcome is not intrinsically an
+integer test: the pthread binding supplies the relation to `rc == 0`.
+
+The failure rule preserves resources at the task-transfer boundary. A future
+C++ binding must separately account for argument evaluation, moved captures,
+object construction, exceptions, and cleanup; failure must not restore an
+earlier C++ program state. Each wrapper needs its own checked runtime mapping,
+not an assumption that all thread APIs have identical behavior.
+
+C++ syntax, thread-object lifetime rules, callable lowering, ownership moves,
+and automatic joining remain later work. These commitments keep that work
+possible without making it a prerequisite for the pthread probe.
+
 ## Lock the runtime binding
 
 The modeled header currently provides declarations only. Further, the actual
@@ -324,7 +376,7 @@ The selector would choose evidence only; the kernel would still check the
 actual callback identity and exact worker termination. General contracts that
 promise a result without terminating worker evidence remain insufficient.
 
-After design review, implement in these independently checkable increments:
+Implement in these independently checkable increments:
 
 1. **Runtime import identity:** user-space compiler lock, declaration binding,
    profile invalidation, and hostile lookalike/mismatch tests. Resolve any real
@@ -343,3 +395,45 @@ Each code increment needs focused hostile and positive tests, ordinary
 verification before expansion/profile, and an exit-zero `scripts/check.sh`.
 The design itself does not settle every future pthread operation. It settles
 the ordinary author experience and exact authority boundary for this probe.
+
+## First implementation slice: a locked user-space C import
+
+Start with the import foundation of increment 1, before declaration-specific
+pthread binding. Deliver a compiler-backed user-space import that uses the
+selected C11 profile and can verify a small ordinary sequential C fixture.
+This provides a useful, independently testable capability and exposes the
+header boundary before thread semantics depend on it.
+
+The current importer hard-codes the kernel target, `-std=gnu11`, and
+`-nostdinc`; its argument allowlist excludes `-pthread`. Make target/profile
+selection explicit in config validation, compiler arguments, ABI probing,
+lock loading, and prepared-import identity. Reuse `CTarget` where appropriate.
+Preserve the existing kernel profile. For user space, select C11, LP64,
+unsigned plain char, the selected pthread compilation flags, and a controlled
+include policy whose opened files are inventoried. Do not simply allow
+arbitrary flags or untracked system headers.
+
+Acceptance for this first commit:
+
+- A small user-space fixture creates and reloads a real compiler lock, then
+  verifies and checks expanded proofs through the shared engine. It needs no
+  pthread semantics and must not be presented as a concurrency example.
+- The selected flags and ABI agree throughout preparation and checking.
+  A sidecar/config target mismatch, changed profile, changed opened header,
+  or stale lock is rejected. Kernel and user-space artifacts cannot share
+  identity merely because their preprocessed C happens to match.
+- Existing kernel compiler-import regressions still pass. Unsupported
+  configurations retain local diagnostics rather than falling back to the
+  modeled source-bundle headers.
+- Attempt the unchanged `fork_join.c` through the selected real-header import.
+  Record whether preparation and C parsing each succeed. If parsing fails,
+  retain a bounded regression for the exact unsupported construct and report
+  the next importer slice. Do not strip headers, change the probe, or broaden
+  this commit into a general C frontend project.
+- Focused compiler-import tests and the full `scripts/check.sh` pass.
+
+A green first commit may therefore establish user-space compiler imports while
+explicitly refusing a real pthread header construct. That is progress on the
+import prerequisite, not completion of the runtime binding. The next slice
+resolves that concrete import gap, if any, then establishes declaration and
+runtime-specification identity before wiring create/join operations.
