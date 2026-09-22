@@ -1647,6 +1647,7 @@ pub(in crate::surface) fn apply_contract_lets_to_ensure_clause(
         ensure,
         proof,
         borrowed,
+        condition,
     } = clause;
     let ensure = match ensure {
         Ensure::Proposition(proposition) => {
@@ -1661,6 +1662,9 @@ pub(in crate::surface) fn apply_contract_lets_to_ensure_clause(
         ensure,
         proof,
         borrowed,
+        condition: condition
+            .map(|condition| apply_contract_lets_to_proposition(condition, bindings))
+            .transpose()?,
     })
 }
 

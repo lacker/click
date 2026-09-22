@@ -2655,6 +2655,11 @@ pub struct CExecutionEnvironment {
     /// anchor emitted no descent obligation, and certification must not take
     /// it for one that did.
     pub(super) recursion_anchor: Option<std::sync::Arc<CRecursionAnchor>>,
+    /// Exact contract certification may split an undecided conditional
+    /// resource effect at a verified call boundary. Ordinary proof execution
+    /// leaves this off, so an undecided guard remains an actionable call
+    /// failure there.
+    pub(super) allow_conditional_resource_cases: bool,
     pub(super) variable_index: CExecutionEnvironmentVariableIndex,
 }
 
@@ -2678,6 +2683,10 @@ impl std::fmt::Debug for CExecutionEnvironment {
             )
             .field("verified_loop_rules", &self.verified_loop_rules)
             .field("recursion_anchor", &self.recursion_anchor)
+            .field(
+                "allow_conditional_resource_cases",
+                &self.allow_conditional_resource_cases,
+            )
             .finish()
     }
 }
@@ -2694,6 +2703,7 @@ impl PartialEq for CExecutionEnvironment {
             && self.verified_function_termination_rules == other.verified_function_termination_rules
             && self.verified_loop_rules == other.verified_loop_rules
             && self.recursion_anchor == other.recursion_anchor
+            && self.allow_conditional_resource_cases == other.allow_conditional_resource_cases
     }
 }
 
@@ -5276,6 +5286,9 @@ pub struct CResourceSpec {
     quantity_snapshot: CResourceSnapshot,
     role: CResourceTransferRole,
     snapshot: CResourceSnapshot,
+    /// A pre-state proposition controlling a conditional resource effect.
+    /// `None` is the ordinary unconditional clause.
+    guard: Option<SpecProposition>,
     /// Source-level clause identity, when lowering expanded one source
     /// clause into more than one normalized specification.  Keeping this on
     /// the spec lets kernel diagnostics retain the surface clause numbering
@@ -5417,6 +5430,7 @@ impl CResourceSpec {
             quantity_snapshot: CResourceSnapshot::Current,
             role,
             snapshot,
+            guard: None,
             clause_position: None,
         };
         spec.validate()?;
@@ -5632,6 +5646,15 @@ impl CResourceSpec {
         self.snapshot
     }
 
+    pub fn guard(&self) -> Option<&SpecProposition> {
+        self.guard.as_ref()
+    }
+
+    pub fn with_guard(mut self, guard: SpecProposition) -> Self {
+        self.guard = Some(guard);
+        self
+    }
+
     /// Attach the zero-based source clause position and the total number of
     /// source resource clauses represented by this normalized specification.
     /// All leaves produced from one aggregate carry the same position.
@@ -5777,6 +5800,7 @@ impl PartialEq for CResourceSpec {
             && self.quantity_snapshot == other.quantity_snapshot
             && self.role == other.role
             && self.snapshot == other.snapshot
+            && self.guard == other.guard
     }
 }
 
@@ -5790,6 +5814,7 @@ impl Hash for CResourceSpec {
         self.quantity_snapshot.hash(state);
         self.role.hash(state);
         self.snapshot.hash(state);
+        self.guard.hash(state);
     }
 }
 
@@ -7011,6 +7036,19 @@ pub struct CContractPathSet {
     /// kernel resource/lifetime checker for that path.
     pub(super) checked_resource_claims: Vec<Vec<CFunctionContractClaimKey>>,
     pub(super) checked_resource_transitions: Vec<bool>,
+    /// Paths whose contract exit resource transition was deferred because a
+    /// conditional produced effect was not decided by the proof entry facts.
+    /// Contract certification must resolve these paths under an exhaustive
+    /// guard case before using their post-state.
+    pub(super) deferred_contract_exits: Vec<bool>,
+    /// Exact boundary error retained for each deferred path. A deferred marker
+    /// is valid only when this records the conditional-effect selection error
+    /// that caused the deferral.
+    pub(super) deferred_contract_exit_errors: Vec<Option<CRuntimeError>>,
+    /// Resource facts independently checked by the surface proof for each
+    /// path. Deferred exit resolution composes these facts into the body
+    /// outcome before applying the remaining conditional boundary effect.
+    pub(super) checked_returned_resources: Vec<ResourceContext>,
     /// The caller state the reused artifact's proof ran at, when its paths
     /// were rebased onto this contract's caller state. A claim the proof
     /// completed at that state certifies the rebased path: the rebase
@@ -7076,6 +7114,19 @@ pub struct CCheckedFunctionExecution {
     /// later contract certification.
     pub(super) checked_resource_claims: Vec<Vec<CFunctionContractClaimKey>>,
     pub(super) checked_resource_transitions: Vec<bool>,
+    /// Paths whose contract exit resource transition was deferred because a
+    /// conditional produced effect was not decided by the proof entry facts.
+    /// Contract certification must resolve these paths under an exhaustive
+    /// guard case before using their post-state.
+    pub(super) deferred_contract_exits: Vec<bool>,
+    /// Exact boundary error retained for each deferred path. A deferred marker
+    /// is valid only when this records the conditional-effect selection error
+    /// that caused the deferral.
+    pub(super) deferred_contract_exit_errors: Vec<Option<CRuntimeError>>,
+    /// Resource facts independently checked by the surface proof for each
+    /// path. Deferred exit resolution composes these facts into the body
+    /// outcome before applying the remaining conditional boundary effect.
+    pub(super) checked_returned_resources: Vec<ResourceContext>,
     /// Original contract caller state when a kernel-checked proof entered C
     /// execution through a definitionally equal resource representation.
     pub(super) entry_representation_origin: Option<CState>,
@@ -7151,6 +7202,15 @@ impl CCheckedFunctionExecution {
     ) -> Self {
         let mut checked = self.clone();
         checked.checked_resource_transitions = checked_resource_transitions;
+        checked
+    }
+
+    pub(crate) fn with_checked_returned_resources(
+        &self,
+        checked_returned_resources: Vec<ResourceContext>,
+    ) -> Self {
+        let mut checked = self.clone();
+        checked.checked_returned_resources = checked_returned_resources;
         checked
     }
 

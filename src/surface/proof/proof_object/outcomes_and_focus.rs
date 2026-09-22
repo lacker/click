@@ -158,6 +158,81 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("resource claim lost its execution"))?;
+        let (guard_active, guard_deferred) = match claim.key() {
+            CFunctionContractClaimKey::Ensure(index) => {
+                let guard = checked_execution
+                    .function()
+                    .resource_ensures()
+                    .get(index)
+                    .and_then(|resource| resource.guard());
+                let Some(guard) = guard else {
+                    return prove_ensure_resource(
+                        checked_execution,
+                        claim.key(),
+                        context.claim_label,
+                        goal.path_index,
+                        &goal.allocation_lifetime,
+                        &goal.data.core.effect_facts,
+                        self.facts(),
+                        resource,
+                        claim.clause().borrowed(),
+                        context.parsed_function.parameters(),
+                        context.arguments,
+                        execution
+                            .core
+                            .frontier
+                            .execution_start_state(&execution.core.state),
+                        context
+                            .constants
+                            .function_entry_state
+                            .as_ref()
+                            .unwrap_or_else(|| {
+                                execution
+                                    .core
+                                    .frontier
+                                    .execution_start_state(&execution.core.state)
+                            }),
+                        &self.focused_outcome_snapshot()?,
+                        None,
+                        false,
+                    );
+                };
+                let decision = {
+                    let mut budget = ExecutionBudget::beside_live_state();
+                    let guard_assumptions = goal.data.core.effect_facts.iter().fold(
+                        self.facts().assumptions().clone(),
+                        |assumptions, fact| {
+                            assumptions.assume_proposition(fact.proposition().clone())
+                        },
+                    );
+                    let guard_state = context
+                        .constants
+                        .function_entry_state
+                        .as_ref()
+                        .unwrap_or_else(|| {
+                            execution
+                                .core
+                                .frontier
+                                .execution_start_state(&execution.core.state)
+                        });
+                    let guard_post_state = match self.focused_outcome_snapshot() {
+                        Ok(CFunctionOutcome::Return { state, .. }) => state,
+                        _ => guard_state.clone(),
+                    };
+                    crate::kernel::evaluate_guarded_contract_condition_with_loop_entry(
+                        guard,
+                        &guard_post_state,
+                        Some(guard_state),
+                        &guard_assumptions,
+                        &mut budget,
+                    )
+                };
+                (decision, decision.is_none())
+            }
+            CFunctionContractClaimKey::BodySafety
+            | CFunctionContractClaimKey::ExceptionalEnsure(_)
+            | CFunctionContractClaimKey::Effect(_) => (None, false),
+        };
         prove_ensure_resource(
             checked_execution,
             claim.key(),
@@ -185,6 +260,8 @@ impl<'a> Proof<'a> {
                         .execution_start_state(&execution.core.state)
                 }),
             &self.focused_outcome_snapshot()?,
+            guard_active,
+            guard_deferred,
         )
     }
 

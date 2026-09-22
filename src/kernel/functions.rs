@@ -1174,6 +1174,7 @@ pub(super) fn execute_c_function_paths(
         execution_semantics,
         budget,
         false,
+        false,
     )
 }
 
@@ -1194,6 +1195,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
     prepare_contract_resources: bool,
+    defer_conditional_resource_effect: bool,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     budget.consume_function_call()?;
     if arguments.len() != function.parameters().len() {
@@ -1336,9 +1338,21 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             }
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            let (outcome, obligations, loan_evidence) = if let Some(resource_transfer) =
-                &resource_transfer
-            {
+            let (outcome, obligations, loan_evidence) = if defer_conditional_resource_effect {
+                // This is the body-only candidate used to assemble a checked
+                // proof frontier. Its function-boundary transition is applied
+                // by `checked_contract_exit_outcome`, which records an explicit
+                // deferred marker when a conditional produced effect is not
+                // decided by the proof entry facts.
+                without_loan_evidence(function_outcome_from_body(
+                    state,
+                    function,
+                    complete_void_fallthrough(function, body_path.outcome),
+                    obligations,
+                    &return_assumptions,
+                    None,
+                ))
+            } else if let Some(resource_transfer) = &resource_transfer {
                 if resource_transfer.stable_view_plan.is_some()
                     || function_needs_outcome_resource_transfer(function)
                 {
@@ -1479,6 +1493,7 @@ pub(super) fn execute_c_function_verification_paths(
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
     prepare_contract_resources: bool,
+    defer_conditional_resource_effect: bool,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     budget.consume_function_call()?;
     if arguments.len() != function.parameters().len() {
@@ -1668,9 +1683,16 @@ pub(super) fn execute_c_function_verification_paths(
             }
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            let (outcome, obligations, loan_evidence) = if let Some(resource_transfer) =
-                &resource_transfer
-            {
+            let (outcome, obligations, loan_evidence) = if defer_conditional_resource_effect {
+                without_loan_evidence(function_outcome_from_body(
+                    state,
+                    function,
+                    complete_void_fallthrough(function, body_path.outcome),
+                    obligations,
+                    &return_assumptions,
+                    None,
+                ))
+            } else if let Some(resource_transfer) = &resource_transfer {
                 if resource_transfer.stable_view_plan.is_some()
                     || function_needs_outcome_resource_transfer(function)
                 {
@@ -1814,7 +1836,7 @@ pub(super) fn execute_c_function_call_paths(
                         loan_evidence: empty_checked_loan_evidence_sequence(),
                     }]);
                 };
-                return execute_verified_function_rule(
+                let result = execute_verified_function_rule(
                     caller_state,
                     rule,
                     arguments,
@@ -1822,6 +1844,7 @@ pub(super) fn execute_c_function_call_paths(
                     environment,
                     budget,
                 );
+                return result;
             }
         }
     }
@@ -2257,7 +2280,57 @@ fn execute_verified_function_applications(
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
-    execute_verified_function_applications_with_suspension(
+    // Exact contract certification may encounter a conditional produced
+    // effect inside a caller's body. If the guard is not established at the
+    // call boundary, split the verified contract application before applying
+    // its resource transition. This reruns only the body-independent call
+    // rule; neither the caller nor callee C body is executed again.
+    if environment.allows_conditional_resource_cases() {
+        let cases = applications.iter().find_map(|application| {
+            application
+                .evidence
+                .or(application.storage)
+                .and_then(|function| {
+                    crate::kernel::api::contract_certification::contract_resource_condition_cases(
+                        caller_state,
+                        function,
+                        arguments,
+                        assumptions,
+                    )
+                })
+        });
+        if let Some(cases) = cases.filter(|cases| cases.len() > 1) {
+            let mut split_paths = Vec::new();
+            for case in cases {
+                let case_assumptions = assumptions_with_propositions(assumptions, &case);
+                let case_paths = execute_verified_function_applications_with_suspension(
+                    caller_state,
+                    applications,
+                    selected_contract,
+                    resource_application,
+                    arguments,
+                    &case_assumptions,
+                    environment,
+                    budget,
+                    None,
+                )?;
+                for mut path in case_paths {
+                    if is_deferred_conditional_resource_effect_outcome(&path.outcome) {
+                        continue;
+                    }
+                    path.facts
+                        .extend(case.iter().cloned().map(ExecutionPureFact::new));
+                    split_paths.push(path);
+                }
+            }
+            if !split_paths.is_empty() {
+                budget.check_path_width(split_paths.len())?;
+                return Ok(split_paths);
+            }
+        }
+    }
+
+    let paths = execute_verified_function_applications_with_suspension(
         caller_state,
         applications,
         selected_contract,
@@ -2267,6 +2340,15 @@ fn execute_verified_function_applications(
         environment,
         budget,
         None,
+    )?;
+    Ok(paths)
+}
+
+fn is_deferred_conditional_resource_effect_outcome(outcome: &CFunctionOutcome) -> bool {
+    matches!(
+        outcome,
+        CFunctionOutcome::RuntimeError(error)
+            if is_deferred_conditional_resource_effect_error(error)
     )
 }
 
@@ -2888,7 +2970,6 @@ fn execute_verified_function_applications_with_suspension(
             &with_contract_interface_argument_views(&post_state, interface, &argument_values),
             &transfer.canonical_borrowed_owners,
         );
-
         let ensure_timing = crate::instrumentation::OperationTiming::new(
             name,
             "verified function rule application",
@@ -2905,7 +2986,6 @@ fn execute_verified_function_applications_with_suspension(
             budget,
         )?;
         drop(ensure_timing);
-
         // The applicable interfaces share the result and post-call memory,
         // but bind their own argument names against the original entry state.
         for additional in additional_calls {
@@ -12669,8 +12749,12 @@ fn evaluate_contract_return_resource_context(
         .resource_ensures()
         .iter()
         .take(count)
-        .any(|resource| resource.snapshot() == CResourceSnapshot::Entry)
-    {
+        .any(|resource| {
+            resource.snapshot() == CResourceSnapshot::Entry
+                || resource
+                    .declared_argument_snapshots()
+                    .is_some_and(|snapshots| snapshots.contains(&CResourceSnapshot::Entry))
+        }) {
         opened_composite_read_views(
             entry_state.resources(),
             interface.composite_resource_definitions(),
@@ -12680,7 +12764,42 @@ fn evaluate_contract_return_resource_context(
     } else {
         Vec::new()
     };
+    let mut entry_argument_views = entry_opened_views.clone();
+    entry_argument_views.extend(instance_arm_views(
+        entry_state.resources(),
+        interface.composite_resource_definitions(),
+        entry_state,
+        assumptions,
+    ));
+    let entry_state_for_argument_reads = if entry_argument_views.is_empty() {
+        entry_state.clone()
+    } else {
+        entry_state.clone().with_resource_context(
+            entry_state
+                .resources()
+                .clone()
+                .unchecked_with_facts(entry_argument_views.iter().cloned()),
+        )
+    };
     for resource in interface.resource_ensures().iter().take(count) {
+        if let Some(guard) = resource.guard() {
+            match evaluate_guarded_contract_condition_with_loop_entry(
+                guard,
+                post_state,
+                Some(entry_state),
+                assumptions,
+                budget,
+            ) {
+                Some(true) => {}
+                Some(false) => continue,
+                None => {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "could not select a conditional resource effect: its pre-state condition is not proven"
+                            .to_string(),
+                    )))
+                }
+            }
+        }
         // Snapshot selection is carried by the normalized specification. A
         // named instance is always post-evaluated by lowering, so its
         // identity remains stable while its fields can be fresh.
@@ -12710,7 +12829,7 @@ fn evaluate_contract_return_resource_context(
             .clone()
             .with_resource_context(supply.unchecked_with_facts(views));
         let evaluated = match evaluate_function_resource_spec_with_entry(
-            entry_state,
+            &entry_state_for_argument_reads,
             &evaluation_state,
             resource,
             assumptions,
@@ -15731,10 +15850,20 @@ pub(super) fn evaluate_guarded_contract_condition(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> Option<bool> {
+    evaluate_guarded_contract_condition_with_loop_entry(condition, state, None, assumptions, budget)
+}
+
+pub(crate) fn evaluate_guarded_contract_condition_with_loop_entry(
+    condition: &SpecProposition,
+    state: &CState,
+    loop_entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> Option<bool> {
     let paths = lower_spec_proposition_at_state_with_loop_entry(
         state,
         condition,
-        None,
+        loop_entry_state,
         assumptions,
         budget,
     )
@@ -15751,11 +15880,24 @@ pub(super) fn evaluate_guarded_contract_condition(
         Proposition::ConditionIs(condition, value) => {
             assumptions.proves_condition_exact_or_snapshot(condition, *value)
                 || assumptions.decide(condition) == Some(*value)
+                || assumptions.proves_atomic_without_search(proposition)
+                || crate::kernel::api::contract_certification::certification_proves_proposition(
+                    assumptions,
+                    proposition,
+                )
         }
         Proposition::Not(body) => match body.as_ref() {
             Proposition::ConditionIs(condition, value) => {
                 assumptions.proves_condition_exact_or_snapshot(condition, !*value)
                     || assumptions.decide(condition) == Some(!*value)
+                    || assumptions.proves_atomic_without_search(&Proposition::ConditionIs(
+                        condition.clone(),
+                        !*value,
+                    ))
+                    || crate::kernel::api::contract_certification::certification_proves_proposition(
+                        assumptions,
+                        &Proposition::ConditionIs(condition.clone(), !*value),
+                    )
             }
             _ => false,
         },
@@ -15774,6 +15916,34 @@ pub(super) fn evaluate_guarded_contract_condition(
         Some(false)
     } else {
         None
+    }
+}
+
+/// Select one conditional resource effect from the facts available before a
+/// call (or at a function's entry). A resource clause is not a new proof
+/// search: its guard must already be decided by the caller's proof facts.
+fn resource_spec_guard_is_active(
+    entry_state: &CState,
+    state: &CState,
+    resource: &CResourceSpec,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<bool, CRuntimeError>> {
+    let Some(guard) = resource.guard() else {
+        return Ok(Ok(true));
+    };
+    match evaluate_guarded_contract_condition_with_loop_entry(
+        guard,
+        state,
+        Some(entry_state),
+        assumptions,
+        budget,
+    ) {
+        Some(active) => Ok(Ok(active)),
+        None => Ok(Err(CRuntimeError::FunctionContract(
+            "could not select a conditional resource effect: its pre-state condition is not proven"
+                .to_string(),
+        ))),
     }
 }
 
@@ -17192,11 +17362,20 @@ fn evaluate_resource_clauses_against_whole_section(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<Vec<CCheckedResourceFact>, CRuntimeError>> {
     let mut evaluated: Vec<Option<CResourceFact>> = vec![None; resources.len()];
+    let mut active = vec![true; resources.len()];
     let mut supplied: Vec<CResourceFact> = Vec::new();
     let mut failures: Vec<Option<CRuntimeError>> = vec![None; resources.len()];
     let mut dependencies: Vec<Vec<CResourceFact>> = vec![Vec::new(); resources.len()];
     let mut waiters = ResourceClauseWaiterIndex::default();
     for (index, resource) in resources.iter().enumerate() {
+        match resource_spec_guard_is_active(entry_state, state, resource, assumptions, budget)? {
+            Ok(true) => {}
+            Ok(false) => {
+                active[index] = false;
+                continue;
+            }
+            Err(error) => return Ok(Err(error)),
+        }
         let evaluation_state = state.clone().with_resource_context(
             state
                 .resources()
@@ -17287,7 +17466,7 @@ fn evaluate_resource_clauses_against_whole_section(
     let unresolved = evaluated
         .iter()
         .enumerate()
-        .filter_map(|(index, resource)| resource.is_none().then_some(index))
+        .filter_map(|(index, resource)| (active[index] && resource.is_none()).then_some(index))
         .collect::<Vec<_>>();
     let refused = unresolved
         .iter()
@@ -20400,6 +20579,120 @@ pub(super) fn contract_exit_outcome(
     }
 }
 
+pub(crate) fn is_deferred_conditional_resource_effect_error(error: &CRuntimeError) -> bool {
+    matches!(
+        error,
+        CRuntimeError::FunctionContract(message)
+            if message == "could not select a conditional resource effect: its pre-state condition is not proven"
+    )
+}
+
+/// Completes a checked body path at the function boundary. An undecided
+/// conditional produced effect is not a successful transition. It produces a
+/// body-only path only with the exact boundary error retained alongside an
+/// explicit deferred marker; certification must resolve that marker under an
+/// exhaustive contract case before using the path post-state.
+pub(crate) fn checked_contract_exit_outcome(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    outcome: CStatementOutcome,
+    body_outcome: CFunctionOutcome,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    purpose: ResourceTransitionPurpose,
+) -> ExecutionResult<
+    Result<
+        (
+            CFunctionOutcome,
+            Vec<ProofObligation>,
+            Option<Arc<CheckedLoanCallEvidence>>,
+            bool,
+            Option<CRuntimeError>,
+        ),
+        CRuntimeError,
+    >,
+> {
+    let deferred_obligations = obligations.clone();
+    match contract_exit_outcome(
+        caller_state,
+        function,
+        arguments,
+        outcome,
+        obligations,
+        assumptions,
+        budget,
+        purpose,
+    )? {
+        Ok((outcome, obligations, loan_evidence)) => {
+            if let CFunctionOutcome::RuntimeError(error) = &outcome
+                && is_deferred_conditional_resource_effect_error(error)
+            {
+                return Ok(Ok((
+                    body_outcome,
+                    deferred_obligations,
+                    None,
+                    true,
+                    Some(error.clone()),
+                )));
+            }
+            Ok(Ok((outcome, obligations, loan_evidence, false, None)))
+        }
+        Err(error) if is_deferred_conditional_resource_effect_error(&error) => Ok(Ok((
+            body_outcome,
+            deferred_obligations,
+            None,
+            true,
+            Some(error),
+        ))),
+        Err(error) => Ok(Err(error)),
+    }
+}
+
+/// Resolves a body-only path whose conditional contract exit was deferred.
+/// The caller supplies the exhaustive contract-case assumptions; this helper
+/// reruns only the boundary transition, never the C body or its proof trace.
+pub(crate) fn resolve_deferred_contract_exit(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    body_outcome: &CFunctionOutcome,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CFunctionOutcome, CRuntimeError>> {
+    let statement_outcome = match body_outcome {
+        CFunctionOutcome::Return { value, state } => CStatementOutcome::Return {
+            value: value.clone(),
+            state: state.clone(),
+        },
+        CFunctionOutcome::Throw { value, state } => CStatementOutcome::Throw {
+            value: value.clone(),
+            state: state.clone(),
+        },
+        CFunctionOutcome::VerificationDiverges => {
+            return Ok(Ok(CFunctionOutcome::VerificationDiverges));
+        }
+        CFunctionOutcome::UndefinedBehavior(error) => {
+            return Ok(Ok(CFunctionOutcome::UndefinedBehavior(error.clone())));
+        }
+        CFunctionOutcome::RuntimeError(error) => return Ok(Err(error.clone())),
+    };
+    match contract_exit_outcome(
+        caller_state,
+        function,
+        arguments,
+        statement_outcome,
+        Vec::new(),
+        assumptions,
+        budget,
+        ResourceTransitionPurpose::FunctionBoundary,
+    )? {
+        Ok((outcome, _, _)) => Ok(Ok(outcome)),
+        Err(error) => Ok(Err(error)),
+    }
+}
+
 pub(super) fn apply_verified_contract_resource_transition(
     caller_state: &CState,
     function: &CFunction,
@@ -21096,6 +21389,7 @@ mod stable_view_call_tests {
             &mut budget,
             &mut variables,
             true,
+            false,
         )
         .expect("verification should execute through the transfer boundary");
         assert!(matches!(

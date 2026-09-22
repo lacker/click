@@ -845,6 +845,12 @@ mod exit_claim {
                 _ => false,
             }
         }
+        pub(super) fn defers_checked_resource_transition(&self) -> bool {
+            match &self.evidence {
+                ClaimEvidence::Resource(checked) => checked.defers_resource_transition(),
+                _ => false,
+            }
+        }
         pub(super) fn checked_resource_claim_has_grouped_transition(&self) -> bool {
             matches!(
                 (&self.evidence, &self.certificate),
@@ -1755,6 +1761,8 @@ pub(super) fn finish_ordered_proof<'a>(
         let mut checked_resource_claims_by_path =
             vec![Vec::<CFunctionContractClaimKey>::new(); execution.paths().len()];
         let mut checked_resource_transitions_by_path = vec![false; execution.paths().len()];
+        let mut checked_returned_resources_by_path =
+            vec![crate::kernel::ResourceContext::new(); execution.paths().len()];
         let mut returned_core = proof_execution.core.clone();
         let mut any_return_instance_rewrite = false;
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
@@ -4062,6 +4070,13 @@ pub(super) fn finish_ordered_proof<'a>(
                         let lifetime_assumptions = path_requirements.assumptions();
                         let lifetime_obligation =
                             required_outcome(&outcome_proof)?.allocation_lifetime_obligation()?;
+                        let deferred_resource_transition =
+                            claims.iter().enumerate().any(|(claim_index, claim)| {
+                                matches!(claim.clause().ensure(), Ensure::Resource(_))
+                                    && closures[claim_index].closed().is_some_and(
+                                        ClosedClaim::defers_checked_resource_transition,
+                                    )
+                            });
                         let has_returned_resource_claims =
                             claims.iter().enumerate().any(|(claim_index, claim)| {
                                 matches!(claim.clause().ensure(), Ensure::Resource(_))
@@ -4094,38 +4109,40 @@ pub(super) fn finish_ordered_proof<'a>(
                                 }
                             }
                         }
-                        match check_allocation_lifetime(
-                            &completed_execution,
-                            lifetime_obligation,
-                            path_index,
-                            lifetime_assumptions,
-                            all_resource_claims_checked.then_some(&checked_returned_resources),
-                            &outcome,
-                        )? {
-                            Ok(Some(obligation)) => {
-                                return Err(ClickError::new(format!(
-                                    "`{proof_label}` path {path_index}: runtime error: {}",
-                                    describe_runtime_error(
-                                        &crate::kernel::CRuntimeError::LiveAllocationLeak {
-                                            allocation: obligation.allocation().clone(),
-                                            resource: obligation.holder().cloned(),
-                                            hint: None,
-                                        },
-                                        parsed_function.parameters(),
-                                        arguments,
-                                    )
-                                )));
-                            }
-                            Ok(None) => {}
-                            Err(error) => {
-                                return Err(ClickError::new(format!(
-                                    "`{proof_label}` path {path_index}: runtime error: {}",
-                                    describe_runtime_error(
-                                        &error,
-                                        parsed_function.parameters(),
-                                        arguments,
-                                    )
-                                )));
+                        if !deferred_resource_transition {
+                            match check_allocation_lifetime(
+                                &completed_execution,
+                                lifetime_obligation,
+                                path_index,
+                                lifetime_assumptions,
+                                all_resource_claims_checked.then_some(&checked_returned_resources),
+                                &outcome,
+                            )? {
+                                Ok(Some(obligation)) => {
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}: runtime error: {}",
+                                        describe_runtime_error(
+                                            &crate::kernel::CRuntimeError::LiveAllocationLeak {
+                                                allocation: obligation.allocation().clone(),
+                                                resource: obligation.holder().cloned(),
+                                                hint: None,
+                                            },
+                                            parsed_function.parameters(),
+                                            arguments,
+                                        )
+                                    )));
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}: runtime error: {}",
+                                        describe_runtime_error(
+                                            &error,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                        )
+                                    )));
+                                }
                             }
                         }
                     }
@@ -4272,6 +4289,13 @@ pub(super) fn finish_ordered_proof<'a>(
                                     ClosedClaim::contributes_checked_resource_claim_resources,
                                 )
                         });
+                    let deferred_resource_transition =
+                        claims.iter().enumerate().any(|(claim_index, claim)| {
+                            matches!(claim.clause().ensure(), Ensure::Resource(_))
+                                && closures[claim_index]
+                                    .closed()
+                                    .is_some_and(ClosedClaim::defers_checked_resource_transition)
+                        });
                     let all_resource_claims_checked = has_returned_resource_claims
                         && claims
                             .iter()
@@ -4312,7 +4336,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             }
                         }
                     }
-                    let returned_resources_are_jointly_available = matches!(outcome, CFunctionOutcome::Return { state, .. } if state
+                    let returned_resources_are_jointly_available = matches!(outcome, CFunctionOutcome::Return { ref state, .. } if state
                             .resources()
                             .clone()
                             .without_facts(
@@ -4320,10 +4344,15 @@ pub(super) fn finish_ordered_proof<'a>(
                                 &assumptions_from_propositions(&path_requirements),
                             )
                             .is_some());
-                    checked_resource_transitions_by_path[path_index] = resource_transition_applied
-                        || (all_resource_claims_checked
-                            && returned_claims_have_grouped_transition
-                            && returned_resources_are_jointly_available);
+                    checked_resource_transitions_by_path[path_index] = !deferred_resource_transition
+                        && (resource_transition_applied
+                            || (all_resource_claims_checked
+                                && returned_claims_have_grouped_transition
+                                && returned_resources_are_jointly_available));
+                    if all_resource_claims_checked {
+                        checked_returned_resources_by_path[path_index] =
+                            checked_returned_resources.clone();
+                    }
 
                     // The specification's requirements are the certified path's
                     // own entry premises: exactly what the proof object checked the
@@ -4415,10 +4444,24 @@ pub(super) fn finish_ordered_proof<'a>(
                             path_index,
                             &claim.key(),
                         )?;
-                        let checked_proposition = closed.checked_proposition().map(|completion| {
-                            c_checked_function_proposition(function, &specification, &theorem, completion, certified_path)
-                                .ok_or_else(|| ClickError::new(format!("claim {:?} on path {path_index} has mismatched proposition completion evidence", claim.key())))
-                        }).transpose()?;
+                        let checked_proposition = closed
+                            .checked_proposition()
+                            .map(|completion| {
+                                crate::kernel::c_checked_function_proposition_with_reason(
+                                    function,
+                                    &specification,
+                                    &theorem,
+                                    completion,
+                                    certified_path,
+                                )
+                                .map_err(|reason| {
+                                    ClickError::new(format!(
+                                        "`{proof_label}` claim {:?} on path {path_index} has mismatched proposition completion evidence: {reason}",
+                                        claim.key()
+                                    ))
+                                })
+                            })
+                            .transpose()?;
                         verified.push(VerifiedCTheorem {
                             source_path: source_path.to_string(),
                             import_identity: None,
@@ -4498,6 +4541,8 @@ pub(super) fn finish_ordered_proof<'a>(
             final_checked_execution.with_checked_resource_claims(checked_resource_claims_by_path);
         let completed_with_resource_claims = completed_with_resource_claims
             .with_checked_resource_transitions(checked_resource_transitions_by_path);
+        let completed_with_resource_claims = completed_with_resource_claims
+            .with_checked_returned_resources(checked_returned_resources_by_path);
         for theorem in &mut verified {
             theorem.checked_execution = completed_with_resource_claims.clone();
         }
@@ -4908,6 +4953,8 @@ mod evidence_tests {
             state,
             state,
             outcome,
+            None,
+            false,
         )
         .unwrap();
         let closure = ClaimClosure::resource(ClaimCertificate::GroupedTransition, checked);

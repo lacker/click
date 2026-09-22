@@ -1,15 +1,12 @@
 use super::*;
 
-/// Binds a completed kernel proposition proof to the exact function path
-/// theorem that produced its outcome. This records proof authority; it does
-/// not attempt to prove or simplify the proposition again.
-pub(crate) fn c_checked_function_proposition(
+pub(crate) fn c_checked_function_proposition_with_reason(
     function: &CFunction,
     specification: &CFunctionSpecification,
     theorem: &Theorem,
     completion: &crate::kernel::proof::CheckedProposition,
     path: &SymbolicCExecutionPath,
-) -> Option<CCheckedFunctionProposition> {
+) -> Result<CCheckedFunctionProposition, String> {
     fn conclusion(theorem: &Theorem) -> &Proposition {
         let mut proposition = theorem.proposition();
         while let Proposition::Implies(_, body) = proposition {
@@ -26,7 +23,11 @@ pub(crate) fn c_checked_function_proposition(
             function: proved_function,
             specification: proved_specification,
         } if proved_function == function && proved_specification == specification => {}
-        _ => return None,
+        _ => {
+            return Err(
+                "the completion theorem does not certify the requested specification".to_string(),
+            );
+        }
     }
     // The origin is evidence for this exact checked path, never an arbitrary
     // caller-supplied snapshot. Its producer checked the body against its
@@ -41,16 +42,37 @@ pub(crate) fn c_checked_function_proposition(
             && proved_function == function
             && arguments == specification.arguments()
             && outcome == specification.outcome() => {}
-        _ => return None,
+        _ => {
+            return Err(
+                "the checked path does not produce the requested specification outcome".to_string(),
+            );
+        }
     }
-    let completed = completion.outcome()?;
+    let completed = completion
+        .outcome()
+        .ok_or_else(|| "the proposition completion has no concrete function outcome".to_string())?;
     let exceptional = match specification.outcome() {
         CFunctionOutcome::Return { .. } => false,
         CFunctionOutcome::Throw { .. } => true,
-        _ => return None,
+        CFunctionOutcome::VerificationDiverges => {
+            return Err("the checked path outcome is verification divergence".to_string());
+        }
+        CFunctionOutcome::UndefinedBehavior(_) => {
+            return Err("the checked path outcome is undefined behavior".to_string());
+        }
+        CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)) => {
+            return Err(format!(
+                "the checked path outcome is a function-contract runtime error: {message}"
+            ));
+        }
+        CFunctionOutcome::RuntimeError(_) => {
+            return Err("the checked path outcome is a runtime error".to_string());
+        }
     };
     if completed.is_exceptional != exceptional {
-        return None;
+        return Err(
+            "the proposition completion has the wrong exceptional outcome kind".to_string(),
+        );
     }
     let matches_program_state = |outcome: &CFunctionOutcome| {
         let (value, state, exceptional) = match outcome {
@@ -75,9 +97,11 @@ pub(crate) fn c_checked_function_proposition(
             .as_ref()
             .is_some_and(matches_program_state)
     {
-        return None;
+        return Err(
+            "the proposition completion does not match the checked program state".to_string(),
+        );
     }
-    Some(CCheckedFunctionProposition {
+    Ok(CCheckedFunctionProposition {
         function: function.clone(),
         specification: specification.clone(),
         proposition: completion.proposition().clone(),
@@ -865,6 +889,9 @@ fn prepare_function_claim_path(
     path: &SymbolicCExecutionPath,
     checked_resource_claims: Vec<CFunctionContractClaimKey>,
     checked_resource_transition: bool,
+    deferred_contract_exit: bool,
+    deferred_contract_exit_error: Option<CRuntimeError>,
+    checked_returned_resources: crate::kernel::ResourceContext,
 ) -> Result<CertifiedFunctionClaimPath, String> {
     let Some((caller_state, arguments, outcome, assumptions)) =
         certified_function_path_parts(function, path)
@@ -915,6 +942,68 @@ fn prepare_function_claim_path(
         return Err("the counted population facts cannot be evaluated".to_string());
     };
     assumptions = assumptions_with_propositions(&assumptions, &population_facts);
+    let deferred_body_outcome = if deferred_contract_exit {
+        match outcome {
+            CFunctionOutcome::Return { value, state } => {
+                let resources = state
+                    .resources()
+                    .clone()
+                    .try_compose_with_facts(
+                        checked_returned_resources.facts().iter().cloned(),
+                        &assumptions,
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "the checked returned resources cannot be composed into the deferred body outcome: {error:?}"
+                        )
+                    })?;
+                let mut state = state.clone();
+                state = state.with_resource_context(resources);
+                Some(CFunctionOutcome::Return {
+                    value: value.clone(),
+                    state,
+                })
+            }
+            CFunctionOutcome::Throw { .. } => Some(outcome.clone()),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let resolved_outcome = if deferred_contract_exit {
+        let Some(error) = deferred_contract_exit_error.as_ref().filter(|error| {
+            crate::kernel::functions::is_deferred_conditional_resource_effect_error(error)
+        }) else {
+            return Err(
+                "the deferred conditional contract exit has no valid boundary error".to_string(),
+            );
+        };
+        let _ = error;
+        match crate::kernel::functions::resolve_deferred_contract_exit(
+            caller_state,
+            function,
+            arguments,
+            deferred_body_outcome.as_ref().unwrap_or(outcome),
+            &assumptions,
+            &mut budget,
+        ) {
+            Ok(Ok(outcome)) => Some(outcome),
+            Ok(Err(error)) => {
+                return Err(format!(
+                    "the deferred conditional contract exit cannot be resolved: {error:?}"
+                ));
+            }
+            Err(limit) => {
+                return Err(format!(
+                    "the deferred conditional contract exit stopped at {}",
+                    limit.describe()
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    let outcome = resolved_outcome.as_ref().unwrap_or(outcome);
     let Some(entry_resources) = expand_all_composite_resource_facts(
         entry_state.resources(),
         function.composite_resource_definitions(),
@@ -1408,7 +1497,7 @@ fn function_claim_holds_on_prepared_path(
             // A borrowed resource is what the callee was lent: it is
             // evaluated at entry, where the clause's address expressions
             // still read the values the caller saw.
-            let Ok(Ok(expected)) =
+            let expected_result =
                 crate::kernel::functions::evaluate_function_return_resource_context(
                     function,
                     entry_state,
@@ -1416,8 +1505,8 @@ fn function_claim_holds_on_prepared_path(
                     *index + 1,
                     assumptions,
                     &mut budget,
-                )
-            else {
+                );
+            let Ok(Ok(expected)) = expected_result else {
                 return false;
             };
             expected.facts().iter().all(|fact| {
@@ -2199,6 +2288,21 @@ impl ContractPathSetView<'_> {
                                 path,
                                 checked_resource_claims,
                                 checked_resource_transition,
+                                self.set
+                                    .deferred_contract_exits
+                                    .get(index)
+                                    .copied()
+                                    .unwrap_or(false),
+                                self.set
+                                    .deferred_contract_exit_errors
+                                    .get(index)
+                                    .cloned()
+                                    .unwrap_or(None),
+                                self.set
+                                    .checked_returned_resources
+                                    .get(index)
+                                    .cloned()
+                                    .unwrap_or_else(crate::kernel::ResourceContext::new),
                             )
                             .map_err(|reason| {
                                 format!("execution path {index} is invalid: {reason}")

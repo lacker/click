@@ -6552,7 +6552,7 @@ impl ExecutionProofCore {
                  function but was certified without its recursion anchor",
             );
         }
-        let (paths, has_checked_entry) =
+        let (paths, has_checked_entry, deferred_contract_exits, deferred_contract_exit_errors) =
             self.checked_execution_paths(candidates, checked_function, &assumptions, None)?;
         let path_count = paths.len();
         Ok(crate::kernel::CCheckedFunctionExecution {
@@ -6566,6 +6566,9 @@ impl ExecutionProofCore {
             execution: crate::kernel::SymbolicCExecution { paths, limit: None },
             checked_resource_claims: vec![Vec::new(); path_count],
             checked_resource_transitions: vec![false; path_count],
+            deferred_contract_exits,
+            deferred_contract_exit_errors,
+            checked_returned_resources: vec![crate::kernel::ResourceContext::new(); path_count],
             entry_representation_origin: has_checked_entry
                 .then_some(self.function_entry.as_ref())
                 .flatten()
@@ -6621,7 +6624,15 @@ impl ExecutionProofCore {
         checked_function: &CFunction,
         assumptions: &PureFactContext,
         selected: Option<usize>,
-    ) -> Result<(Vec<crate::kernel::SymbolicCExecutionPath>, bool), &'static str> {
+    ) -> Result<
+        (
+            Vec<crate::kernel::SymbolicCExecutionPath>,
+            bool,
+            Vec<bool>,
+            Vec<Option<crate::kernel::CRuntimeError>>,
+        ),
+        &'static str,
+    > {
         if candidates.paths().len() != self.execution_evidence.len() {
             return Err("the published paths do not match the retained traces one to one");
         }
@@ -6681,6 +6692,8 @@ impl ExecutionProofCore {
             }
         }
         let mut paths = Vec::with_capacity(range.len());
+        let mut deferred_contract_exits = Vec::with_capacity(range.len());
+        let mut deferred_contract_exit_errors = Vec::with_capacity(range.len());
         for path_index in range {
             let candidate = &candidates.paths()[path_index];
             let trace = self
@@ -6731,35 +6744,51 @@ impl ExecutionProofCore {
             // same resource transfer or population transition an independent
             // execution applies at return. A contract the body violates at
             // exit ends the path in that runtime error.
-            let (outcome, obligations, loan_evidence) =
-                match crate::kernel::functions::contract_exit_outcome(
-                    if has_checked_entry {
-                        self.function_entry
-                            .as_ref()
-                            .expect("checked entry exists")
-                            .caller_state()
-                    } else {
-                        candidates.state()
-                    },
-                    function,
-                    candidates.arguments(),
-                    completed,
-                    obligations,
-                    &statement_assumptions,
-                    &mut ExecutionBudget::beside_live_state(),
-                    // This is the enclosing function's boundary. Retained
-                    // call evidence belongs to calls inside its body; it does
-                    // not mean the function lent its own inputs at entry.
-                    crate::kernel::functions::ResourceTransitionPurpose::FunctionBoundary,
-                ) {
-                    Ok(Ok(exit)) => exit,
-                    Ok(Err(error)) => (
-                        crate::kernel::CFunctionOutcome::RuntimeError(error),
-                        candidate.obligations().to_vec(),
-                        None,
-                    ),
-                    Err(_) => return Err("the contract's exit rule hit an execution limit"),
-                };
+            let body_outcome = candidate.outcome().clone();
+            let boundary_assumptions = candidate
+                .facts()
+                .iter()
+                .map(|fact| fact.proposition().clone())
+                .fold(statement_assumptions.clone(), |assumptions, fact| {
+                    assumptions.assume_proposition(fact)
+                });
+            let (
+                outcome,
+                obligations,
+                loan_evidence,
+                deferred_contract_exit,
+                deferred_contract_exit_error,
+            ) = match crate::kernel::functions::checked_contract_exit_outcome(
+                if has_checked_entry {
+                    self.function_entry
+                        .as_ref()
+                        .expect("checked entry exists")
+                        .caller_state()
+                } else {
+                    candidates.state()
+                },
+                function,
+                candidates.arguments(),
+                completed,
+                body_outcome.clone(),
+                obligations,
+                &boundary_assumptions,
+                &mut ExecutionBudget::beside_live_state(),
+                // This is the enclosing function's boundary. Retained
+                // call evidence belongs to calls inside its body; it does
+                // not mean the function lent its own inputs at entry.
+                crate::kernel::functions::ResourceTransitionPurpose::FunctionBoundary,
+            ) {
+                Ok(Ok(exit)) => exit,
+                Ok(Err(error)) => (
+                    crate::kernel::CFunctionOutcome::RuntimeError(error),
+                    candidate.obligations().to_vec(),
+                    None,
+                    false,
+                    None,
+                ),
+                Err(_) => return Err("the contract's exit rule hit an execution limit"),
+            };
             let loan_evidence = match loan_evidence {
                 Some(evidence) => crate::kernel::loans::concat_checked_loan_evidence(
                     candidate.loan_evidence(),
@@ -6809,8 +6838,15 @@ impl ExecutionProofCore {
                 theorem,
                 loan_evidence,
             });
+            deferred_contract_exits.push(deferred_contract_exit);
+            deferred_contract_exit_errors.push(deferred_contract_exit_error);
         }
-        Ok((paths, has_checked_entry))
+        Ok((
+            paths,
+            has_checked_entry,
+            deferred_contract_exits,
+            deferred_contract_exit_errors,
+        ))
     }
 
     /// Checks that every retained event carries the kernel judgment its tag

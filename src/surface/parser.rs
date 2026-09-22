@@ -1834,6 +1834,7 @@ impl Parser {
                                 ensure: Ensure::Resource(resource),
                                 proof,
                                 borrowed: true,
+                                condition: None,
                             },
                             &contract_lets,
                         )
@@ -1875,6 +1876,7 @@ impl Parser {
                                 ensure: Ensure::Resource(resource),
                                 proof,
                                 borrowed: false,
+                                condition: None,
                             },
                             &contract_lets,
                         )
@@ -2108,6 +2110,41 @@ impl Parser {
                             .map_err(|message| self.error(message))?,
                     );
                 }
+                Some("if") => {
+                    self.position += 1;
+                    let condition = self.parse_proposition()?;
+                    self.expect(Token::LBrace)?;
+                    while self.peek() != Some(&Token::RBrace) {
+                        if self.peek_ident() != Some("produces") {
+                            let keyword = self.peek_ident().unwrap_or("end of input");
+                            return Err(self.error(format!(
+                                "conditional function contracts currently accept only `produces`, got `{keyword}`"
+                            )));
+                        }
+                        self.position += 1;
+                        let resource = self.parse_owned_resource_binding()?;
+                        if matches!(resource, ResourceClause::Named { .. }) {
+                            return Err(self.error(
+                                "conditional `produces` clauses cannot introduce named resource instances yet",
+                            ));
+                        }
+                        let proof = self.parse_proof_clause_or_default()?;
+                        ensures.push(
+                            apply_contract_lets_to_ensure_clause(
+                                EnsureClause {
+                                    name: None,
+                                    ensure: Ensure::Resource(resource),
+                                    proof,
+                                    borrowed: false,
+                                    condition: Some(condition.clone()),
+                                },
+                                &contract_lets,
+                            )
+                            .map_err(|message| self.error(message))?,
+                        );
+                    }
+                    self.expect(Token::RBrace)?;
+                }
                 Some("decreases") => {
                     self.position += 1;
                     if decreases.is_some() {
@@ -2157,6 +2194,7 @@ impl Parser {
                                 ensure: Ensure::Resource(resource),
                                 proof,
                                 borrowed: true,
+                                condition: None,
                             },
                             &contract_lets,
                         )
@@ -2216,6 +2254,7 @@ impl Parser {
                                 ensure: Ensure::Resource(resource),
                                 proof,
                                 borrowed: false,
+                                condition: None,
                             },
                             &contract_lets,
                         )
@@ -3749,6 +3788,7 @@ impl Parser {
                 ensure,
                 proof,
                 borrowed: false,
+                condition: None,
             },
             introduced,
         ))
@@ -9216,6 +9256,7 @@ fn expand_aggregate_ensure_clause(clause: EnsureClause) -> Vec<EnsureClause> {
         ensure,
         proof,
         borrowed,
+        condition,
     } = clause;
     match ensure {
         Ensure::Resource(resource) => expand_aggregate_resource_clause(resource)
@@ -9225,6 +9266,7 @@ fn expand_aggregate_ensure_clause(clause: EnsureClause) -> Vec<EnsureClause> {
                 ensure: Ensure::Resource(resource),
                 proof: proof.clone(),
                 borrowed,
+                condition: condition.clone(),
             })
             .collect(),
         ensure => vec![EnsureClause {
@@ -9232,6 +9274,7 @@ fn expand_aggregate_ensure_clause(clause: EnsureClause) -> Vec<EnsureClause> {
             ensure,
             proof,
             borrowed,
+            condition,
         }],
     }
 }

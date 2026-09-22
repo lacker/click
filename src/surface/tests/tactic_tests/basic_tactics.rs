@@ -428,6 +428,7 @@ fn parses_resource_verb_function_clauses() {
                 })),
                 proof: SourceProof::Default,
                 borrowed: true,
+                condition: None,
             },
             EnsureClause {
                 name: None,
@@ -440,6 +441,7 @@ fn parses_resource_verb_function_clauses() {
                 }),
                 proof: SourceProof::Default,
                 borrowed: false,
+                condition: None,
             },
         ]
     );

@@ -27,11 +27,11 @@ use crate::kernel::{
     ResourceFamily, Sort, SpecAlgebraicExpression, SpecExpression, SpecMemory,
     SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term, Theorem,
     Variable, abstract_c_state_for_join, assume_universally_quantified_pure_implication, c_assign,
-    c_checked_function_proposition, c_condition_fact_has_memory, c_condition_fact_memories,
-    c_contract_refinement_context, c_declare, c_do_while_preservation_contexts,
-    c_do_while_with_invariant_and_effect_checks, c_function, c_function_contract_entry_state,
-    c_function_contract_refinement_arguments, c_function_contract_refinement_context,
-    c_function_entry_state, c_function_outcome_from_statement_outcome, c_function_specification,
+    c_condition_fact_has_memory, c_condition_fact_memories, c_contract_refinement_context,
+    c_declare, c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks,
+    c_function, c_function_contract_entry_state, c_function_contract_refinement_arguments,
+    c_function_contract_refinement_context, c_function_entry_state,
+    c_function_outcome_from_statement_outcome, c_function_specification,
     c_function_termination_plan, c_if, c_loop_invariants_hold_at_entry,
     c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect,
     c_resources_directly_match, c_seq, c_termination_height_plan, c_typed_pointer_value,
@@ -1089,6 +1089,10 @@ pub struct EnsureClause {
     /// A resource ensure desugared from `owns`: the function returns what it
     /// was lent, so the clause is evaluated at entry, not at exit.
     borrowed: bool,
+    /// A resource ensure nested in a contract `if`. The condition is a
+    /// pre-state proposition; the clause is present in the post-state only
+    /// when that proposition is established at the call boundary.
+    condition: Option<ClickProposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1553,6 +1557,7 @@ fn clone_ensure_clause_iteratively(clause: &EnsureClause) -> EnsureClause {
         },
         proof: clause.proof.clone(),
         borrowed: clause.borrowed,
+        condition: clause.condition.clone(),
     }
 }
 
@@ -6418,6 +6423,11 @@ impl EnsureClause {
     /// the function's entry state rather than its exit.
     pub fn borrowed(&self) -> bool {
         self.borrowed
+    }
+
+    /// The pre-state guard of a conditional resource ensure, if any.
+    pub fn condition(&self) -> Option<&ClickProposition> {
+        self.condition.as_ref()
     }
 
     pub fn ensure(&self) -> &Ensure {

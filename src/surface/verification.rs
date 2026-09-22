@@ -2390,9 +2390,13 @@ fn verify_c0_sources_with_context(
             &theorem_environment,
             function_source_registry.clone(),
         )?;
-        let verification_function_environment = function_environment
+        let mut verification_function_environment = function_environment
             .clone()
             .with_verified_loop_rules(verified_loop_rules);
+        if function_environment.has_conditional_resource_effects() {
+            verification_function_environment =
+                verification_function_environment.with_conditional_resource_cases();
+        }
         let implicit_safety_clause = EnsureClause {
             name: None,
             ensure: Ensure::Proposition(ClickProposition::Comparison {
@@ -2402,6 +2406,7 @@ fn verify_c0_sources_with_context(
             }),
             proof: SourceProof::Tactic(SmartTactic::Auto),
             borrowed: false,
+            condition: None,
         };
         let mut claims = function_claims(&function_block);
         let has_explicit_claims = !claims.is_empty();
@@ -5997,8 +6002,13 @@ pub(in crate::surface) fn build_function_environment(
             .find(|block| block.signature().name() == function.source_name())
         {
             Some(function_block) => {
-                let (resource_requires, resource_ensures) =
-                    function_resource_summary(function_block, function, resource_environment)?;
+                let (resource_requires, resource_ensures) = function_resource_summary(
+                    function_block,
+                    function,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                )?;
                 let resource_constructors = function_resource_constructors(function_block)?;
                 let (
                     contract_requires,
@@ -6119,6 +6129,8 @@ fn is_recognized_representation_copy_block(
 pub(in crate::surface) fn function_resource_summary(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
 ) -> Result<(Vec<CResourceSpec>, Vec<CResourceSpec>), ClickError> {
     let borrowed_resources = function_block
@@ -6211,6 +6223,18 @@ pub(in crate::surface) fn function_resource_summary(
             role,
             snapshot,
         )?;
+        let guard = ensure
+            .condition()
+            .map(|condition| {
+                crate::surface::lowering::elaborate_requirement_proposition(
+                    parsed_function.parameters(),
+                    condition,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(ClickError::new)
+            })
+            .transpose()?;
         for mut spec in specs {
             // Instance ownership is identity-borrowed but field-produced: its
             // selected identity comes from entry while its declared fields are
@@ -6218,6 +6242,9 @@ pub(in crate::surface) fn function_resource_summary(
             // snapshot explicit in the normalized descriptor.
             if ensure.borrowed() && spec.is_instance() {
                 spec = spec.with_snapshot(CResourceSnapshot::Post);
+            }
+            if let Some(guard) = &guard {
+                spec = spec.with_guard(guard.clone());
             }
             ensures.push(spec.with_clause_position(clause_index, clause_count));
         }

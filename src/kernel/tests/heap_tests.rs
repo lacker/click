@@ -1458,6 +1458,36 @@ fn contract_certification_splits_undecided_conditional_resource_guards() {
 }
 
 #[test]
+fn contract_certification_splits_undecided_conditional_produced_resources() {
+    let (state, function, arguments) = nullable_owner_contract(c_return(c_int32_literal(0)));
+    let guard = SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable("item")),
+        operator: CComparisonOperator::NotEqual,
+        right: SpecExpression::Value(CValue::pointer(Pointer::null())),
+    };
+    let resource = CResourceSpec::composite(
+        CResourceAccessMode::Own,
+        "owned_item".to_string(),
+        vec![c_variable("item")],
+        vec![CType::Int32Pointer],
+    );
+    let function =
+        function.with_resource_summary(vec![resource.clone()], vec![resource.with_guard(guard)]);
+    let execution = certify_contract_with_kernel_artifacts(
+        state,
+        function.clone(),
+        arguments,
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+
+    assert_eq!(execution.path_count(), 2);
+    assert!(c_verified_function_contract_claims(&function, &execution).is_some());
+}
+
+#[test]
 fn conditional_resource_certification_checks_the_unsafe_case_too() {
     let (state, function, arguments) = nullable_owner_contract(c_seq(
         c_heap_free(c_variable("item")),

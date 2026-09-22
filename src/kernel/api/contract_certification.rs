@@ -89,6 +89,39 @@ pub(crate) fn contract_resource_condition_cases(
             guards.push(path.proposition.clone());
         }
     }
+    // A conditional produced resource is also a contract-entry case split.
+    // Its guard selects whether the post-state effect exists, so exact
+    // certification must check both selections when the caller leaves the
+    // pre-state symbolic. Callers with an established guard still take the
+    // single selected route at ordinary call application time.
+    for resource in function.resource_ensures() {
+        let Some(condition) = resource.guard() else {
+            continue;
+        };
+        let lowering_assumptions = assumptions
+            .clone()
+            .allow_symbolic_contract_loads()
+            .prefer_symbolic_external_loads();
+        let paths = lower_spec_proposition_at_state_with_loop_entry(
+            &entry_state,
+            condition,
+            Some(&entry_state),
+            &lowering_assumptions,
+            &mut budget,
+        )
+        .ok()?;
+        let [path] = paths.as_slice() else {
+            return None;
+        };
+        if !path.obligations.iter().all(|obligation| {
+            certification_proves_proposition(assumptions, obligation.proposition())
+        }) {
+            return None;
+        }
+        if !guards.contains(&path.proposition) {
+            guards.push(path.proposition.clone());
+        }
+    }
 
     let mut cases = vec![Vec::new()];
     for guard in guards {
@@ -1828,6 +1861,7 @@ pub(super) fn prove_symbolic_c_function_verification_paths(
     execution_semantics: CExecutionSemantics,
     mut budget: ExecutionBudget,
     prepare_contract_resources: bool,
+    defer_conditional_resource_effect: bool,
 ) -> SymbolicCExecution {
     let existing = crate::instrumentation::measure_operation(
         function.name(),
@@ -1861,6 +1895,7 @@ pub(super) fn prove_symbolic_c_function_verification_paths(
                 &mut budget,
                 &mut variables,
                 prepare_contract_resources,
+                defer_conditional_resource_effect,
             )
         },
     ) {
@@ -2794,7 +2829,7 @@ fn certification_proves_equality_via_load_fact(
     })
 }
 
-pub(super) fn certification_proves_proposition(
+pub(crate) fn certification_proves_proposition(
     assumptions: &PureFactContext,
     proposition: &Proposition,
 ) -> bool {

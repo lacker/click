@@ -97,6 +97,7 @@ pub(crate) use functions::arm_binding_program_spelling;
 pub(crate) use functions::checked_composite_projection_evidence;
 pub(crate) use functions::decide_resource_model_arm;
 pub(crate) use functions::establish_resource_derived_loop_frames;
+pub(crate) use functions::evaluate_guarded_contract_condition_with_loop_entry;
 pub(crate) use functions::initialize_c_function_globals;
 pub(crate) use functions::initialize_c_program_storage;
 #[cfg(test)]

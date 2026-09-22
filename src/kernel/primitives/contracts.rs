@@ -2466,6 +2466,45 @@ impl CExecutionEnvironment {
         self
     }
 
+    /// Enables proof-only case splitting at verified conditional-resource
+    /// call boundaries. The flag is part of the environment identity so a
+    /// checked artifact produced with one call policy cannot be reused under
+    /// another.
+    pub(crate) fn with_conditional_resource_cases(mut self) -> Self {
+        self.allow_conditional_resource_cases = true;
+        self.variable_index = CExecutionEnvironmentVariableIndex::default();
+        self
+    }
+
+    pub(crate) fn allows_conditional_resource_cases(&self) -> bool {
+        self.allow_conditional_resource_cases
+    }
+
+    pub(crate) fn has_conditional_resource_effects(&self) -> bool {
+        self.functions.values().any(|function| {
+            function
+                .resource_ensures()
+                .iter()
+                .any(|resource| resource.guard().is_some())
+        }) || self.function_contracts.values().any(|contract| {
+            contract
+                .interface()
+                .resource_ensures()
+                .iter()
+                .any(|resource| resource.guard().is_some())
+        }) || self.external_function_rules.values().any(|rule| {
+            rule.function
+                .resource_ensures()
+                .iter()
+                .any(|resource| resource.guard().is_some())
+        }) || self.verified_function_rules.values().any(|rule| {
+            rule.function
+                .resource_ensures()
+                .iter()
+                .any(|resource| resource.guard().is_some())
+        })
+    }
+
     pub(in crate::kernel) fn recursion_anchor(&self) -> Option<&CRecursionAnchor> {
         self.recursion_anchor.as_deref()
     }

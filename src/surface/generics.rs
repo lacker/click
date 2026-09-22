@@ -516,6 +516,15 @@ fn instantiate_ensure_clause(
         ensure: ensure_value,
         proof: instantiate_source_proof(ensure.proof(), substitution, algebraic_parameters)?,
         borrowed: ensure.borrowed,
+        condition: ensure
+            .condition()
+            .map(|condition| {
+                substitute_click_proposition(
+                    &instantiate_proposition(condition, substitution)?,
+                    algebraic_parameters,
+                )
+            })
+            .transpose()?,
     })
 }
 

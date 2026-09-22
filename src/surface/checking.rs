@@ -28,9 +28,42 @@ pub(super) struct CheckedResourceClaim<'e> {
     key: CFunctionContractClaimKey,
     returned_resources: crate::kernel::ResourceContext,
     borrowed: bool,
+    deferred_guard: bool,
 }
 
 impl CheckedResourceClaim<'_> {
+    pub(super) fn inactive(
+        execution: &CCheckedFunctionExecution,
+        path_index: usize,
+        key: CFunctionContractClaimKey,
+        borrowed: bool,
+    ) -> CheckedResourceClaim<'_> {
+        CheckedResourceClaim {
+            execution,
+            path_index,
+            key,
+            returned_resources: crate::kernel::ResourceContext::new(),
+            borrowed,
+            deferred_guard: false,
+        }
+    }
+
+    pub(super) fn deferred(
+        execution: &CCheckedFunctionExecution,
+        path_index: usize,
+        key: CFunctionContractClaimKey,
+        borrowed: bool,
+    ) -> CheckedResourceClaim<'_> {
+        CheckedResourceClaim {
+            execution,
+            path_index,
+            key,
+            returned_resources: crate::kernel::ResourceContext::new(),
+            borrowed,
+            deferred_guard: true,
+        }
+    }
+
     pub(super) fn matches(
         &self,
         execution: &CCheckedFunctionExecution,
@@ -49,7 +82,10 @@ impl CheckedResourceClaim<'_> {
         &self.returned_resources
     }
     pub(super) fn contributes_returned_resources(&self) -> bool {
-        !self.borrowed
+        !self.borrowed && !self.deferred_guard
+    }
+    pub(super) fn defers_resource_transition(&self) -> bool {
+        self.deferred_guard
     }
 }
 
@@ -122,6 +158,8 @@ pub(super) fn prove_ensure_resource<'e>(
     pre_state: &CState,
     entry_state: &CState,
     outcome: &CFunctionOutcome,
+    guard_active: Option<bool>,
+    guard_deferred: bool,
 ) -> Result<CheckedResourceClaim<'e>, ClickError> {
     // Post-return resource folds can extend the checked path before final
     // contract certification. Its typed outcome Proof supplies the returning
@@ -151,6 +189,22 @@ pub(super) fn prove_ensure_resource<'e>(
             )
         )));
     };
+    if guard_deferred {
+        return Ok(CheckedResourceClaim::deferred(
+            checked_execution,
+            path_index,
+            claim_key,
+            borrowed,
+        ));
+    }
+    if guard_active == Some(false) {
+        return Ok(CheckedResourceClaim::inactive(
+            checked_execution,
+            path_index,
+            claim_key,
+            borrowed,
+        ));
+    }
     // A borrowed resource is returned as it was lent: its clause is read at
     // entry, where address expressions still see the caller's values.
     let clause_state = if borrowed && !matches!(resource, ResourceClause::Named { .. }) {
@@ -180,6 +234,7 @@ pub(super) fn prove_ensure_resource<'e>(
             returned_resources: crate::kernel::ResourceContext::new()
                 .unchecked_with_facts(expected.iter().cloned()),
             borrowed,
+            deferred_guard: false,
         });
     }
     let expected = expected

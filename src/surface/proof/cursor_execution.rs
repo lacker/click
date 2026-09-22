@@ -2612,28 +2612,35 @@ fn execute_step_from_frontier_position_selecting_path(
         }
         let mut completed_outcomes = Vec::new();
         for transition in transitions {
-            let mut completed_execution_facts = transition.execution_facts;
-            append_execution_effect_facts(
-                &mut completed_execution_facts,
-                &execution.core.effect_facts,
-            );
             let return_assumptions = assumptions_from_propositions(&transition.pure_facts);
-            let (outcome, obligations) = c_function_outcome_from_statement_outcome(
-                &execution_start_state,
-                function,
-                transition.outcome,
-                transition.obligations,
-                &return_assumptions,
-            );
-            completed_outcomes.push((
-                outcome,
-                completed_execution_facts,
-                obligations,
-                crate::kernel::concat_checked_loan_evidence(
-                    execution.core.loan_evidence(),
-                    &transition.loan_evidence,
-                ),
-            ));
+            let case_outcomes =
+                crate::kernel::c_function_outcomes_from_statement_outcome_with_resource_cases(
+                    &execution_start_state,
+                    function,
+                    arguments,
+                    transition.outcome.clone(),
+                    transition.obligations.clone(),
+                    &return_assumptions,
+                );
+            for (outcome, obligations, case_facts) in case_outcomes {
+                let mut completed_execution_facts = transition.execution_facts.clone();
+                append_execution_effect_facts(
+                    &mut completed_execution_facts,
+                    &execution.core.effect_facts,
+                );
+                for fact in case_facts {
+                    completed_execution_facts.push(ExecutionPureFact::new(fact));
+                }
+                completed_outcomes.push((
+                    outcome,
+                    completed_execution_facts,
+                    obligations,
+                    crate::kernel::concat_checked_loan_evidence(
+                        execution.core.loan_evidence(),
+                        &transition.loan_evidence,
+                    ),
+                ));
+            }
         }
         for pending in execution.core.complete_pending_exceptional_calls() {
             completed_outcomes.push((
@@ -3185,24 +3192,32 @@ fn execute_step_from_frontier_position_selecting_path(
             if !routed {
                 record_completed_continuation_exits(&mut execution.core.frontier);
                 let return_assumptions = assumptions_from_propositions(&successor_pure_facts);
-                let (outcome, obligations) = c_function_outcome_from_statement_outcome(
-                    &execution_start_state,
-                    function,
-                    outcome,
-                    transition_obligations,
-                    &return_assumptions,
-                );
-                let mut completed_execution_facts = execution_pure_facts;
-                append_execution_effect_facts(
-                    &mut completed_execution_facts,
-                    &execution.core.effect_facts,
-                );
-                let mut completed_outcomes = vec![(
-                    outcome,
-                    completed_execution_facts,
-                    obligations,
-                    execution.core.loan_evidence().clone(),
-                )];
+                let case_outcomes =
+                    crate::kernel::c_function_outcomes_from_statement_outcome_with_resource_cases(
+                        &execution_start_state,
+                        function,
+                        arguments,
+                        outcome.clone(),
+                        transition_obligations.clone(),
+                        &return_assumptions,
+                    );
+                let mut completed_outcomes = Vec::new();
+                for (outcome, obligations, case_facts) in case_outcomes {
+                    let mut completed_execution_facts = execution_pure_facts.clone();
+                    append_execution_effect_facts(
+                        &mut completed_execution_facts,
+                        &execution.core.effect_facts,
+                    );
+                    for fact in case_facts {
+                        completed_execution_facts.push(ExecutionPureFact::new(fact));
+                    }
+                    completed_outcomes.push((
+                        outcome,
+                        completed_execution_facts,
+                        obligations,
+                        execution.core.loan_evidence().clone(),
+                    ));
+                }
                 for pending in execution.core.complete_pending_exceptional_calls() {
                     completed_outcomes.push((
                         pending.outcome,

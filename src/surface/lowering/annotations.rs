@@ -765,8 +765,13 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
     // lowering reads every clause through that scope.
     let resolved_block = resolved_function_block(function_block)?;
     let function_block: &FunctionBlock = &resolved_block;
-    let (resource_requires, resource_ensures) =
-        function_resource_summary(function_block, parsed_function, resource_environment)?;
+    let (resource_requires, resource_ensures) = function_resource_summary(
+        function_block,
+        parsed_function,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+    )?;
     let resource_constructors = function_resource_constructors(function_block)?;
     let (
         contract_requires,

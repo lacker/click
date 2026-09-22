@@ -2617,6 +2617,8 @@ fn evaluate_entry_resource_context(
     let (resource_specs, _) = crate::surface::verification::function_resource_summary(
         function_block,
         parsed_function,
+        predicate_environment,
+        click_function_environment,
         resource_environment,
     )?;
     if resource_specs.is_empty() {

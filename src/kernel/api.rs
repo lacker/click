@@ -2829,6 +2829,64 @@ pub fn c_function_outcome_from_statement_outcome(
     )
 }
 
+/// Applies the ordinary function-exit transition, splitting only the
+/// transition boundary when a conditional resource effect is undecided. The
+/// C body is not executed again: each returned case reuses the supplied statement
+/// outcome and carries the guard facts that authorized its boundary check.
+pub(crate) fn c_function_outcomes_from_statement_outcome_with_resource_cases(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    outcome: CStatementOutcome,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Vec<(CFunctionOutcome, Vec<ProofObligation>, Vec<Proposition>)> {
+    let original_outcome = outcome.clone();
+    let original_obligations = obligations.clone();
+    let (outcome, obligations) = c_function_outcome_from_statement_outcome(
+        caller_state,
+        function,
+        outcome,
+        obligations,
+        assumptions,
+    );
+    let CFunctionOutcome::RuntimeError(error) = &outcome else {
+        return vec![(outcome, obligations, Vec::new())];
+    };
+    if !crate::kernel::functions::is_deferred_conditional_resource_effect_error(error) {
+        return vec![(outcome, obligations, Vec::new())];
+    }
+    let Some(cases) =
+        contract_resource_condition_cases(caller_state, function, arguments, assumptions)
+    else {
+        return vec![(outcome, obligations, Vec::new())];
+    };
+    let mut resolved = Vec::new();
+    for case in cases {
+        let case_assumptions = assumptions_with_propositions(assumptions, &case);
+        let (case_outcome, case_obligations) = c_function_outcome_from_statement_outcome(
+            caller_state,
+            function,
+            original_outcome.clone(),
+            original_obligations.clone(),
+            &case_assumptions,
+        );
+        if !matches!(
+            case_outcome,
+            CFunctionOutcome::RuntimeError(
+                ref error
+            ) if crate::kernel::functions::is_deferred_conditional_resource_effect_error(error)
+        ) {
+            resolved.push((case_outcome, case_obligations, case));
+        }
+    }
+    if resolved.is_empty() {
+        vec![(outcome, obligations, Vec::new())]
+    } else {
+        resolved
+    }
+}
+
 pub fn c_function_specification(
     state: CState,
     arguments: Vec<CExpression>,
@@ -3723,6 +3781,13 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
     )
 }
 
+fn function_has_conditional_resource_effect(function: &CFunction) -> bool {
+    function
+        .resource_ensures()
+        .iter()
+        .any(|resource| resource.guard().is_some())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prove_symbolic_c_function_execution_paths_with_contract_resources(
     state: CState,
@@ -3734,6 +3799,7 @@ fn prove_symbolic_c_function_execution_paths_with_contract_resources(
     mut budget: ExecutionBudget,
     prepare_contract_resources: bool,
 ) -> SymbolicCExecution {
+    let defer_conditional_resource_effect = function_has_conditional_resource_effect(&function);
     let paths = match execute_c_function_paths_with_contract_resources(
         &state,
         &function,
@@ -3743,6 +3809,7 @@ fn prove_symbolic_c_function_execution_paths_with_contract_resources(
         execution_semantics,
         &mut budget,
         prepare_contract_resources,
+        defer_conditional_resource_effect,
     ) {
         Ok(paths) => paths,
         Err(limit) => {
@@ -3832,6 +3899,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
         execution_semantics,
         budget,
         false,
+        false,
     )
 }
 
@@ -3848,6 +3916,14 @@ pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
+    let environment = if environment.has_conditional_resource_effects()
+        || function_has_conditional_resource_effect(&function)
+    {
+        environment.with_conditional_resource_cases()
+    } else {
+        environment
+    };
+    let defer_conditional_resource_effect = function_has_conditional_resource_effect(&function);
     let budget = ExecutionBudget::for_new_execution()
         .with_c_function_verification_cost(&function, &arguments);
     prove_symbolic_c_function_verification_paths(
@@ -3859,6 +3935,7 @@ pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
         execution_semantics,
         budget,
         true,
+        defer_conditional_resource_effect,
     )
 }
 
@@ -3875,6 +3952,14 @@ pub fn prove_checked_c_function_execution_with_environment(
     mode: CFunctionContractExecutionMode,
 ) -> CCheckedFunctionExecution {
     record_checked_function_body_execution();
+    let environment = if environment.has_conditional_resource_effects()
+        || function_has_conditional_resource_effect(&function)
+    {
+        environment.with_conditional_resource_cases()
+    } else {
+        environment
+    };
+    let defer_conditional_resource_effect = function_has_conditional_resource_effect(&function);
     let execution = match mode {
         CFunctionContractExecutionMode::VerifyLoops => {
             prove_symbolic_c_function_verification_paths(
@@ -3887,6 +3972,7 @@ pub fn prove_checked_c_function_execution_with_environment(
                 ExecutionBudget::for_new_execution()
                     .with_c_function_verification_cost(&function, &arguments),
                 true,
+                defer_conditional_resource_effect,
             )
         }
         CFunctionContractExecutionMode::ExecuteLoops => {
@@ -3914,6 +4000,9 @@ pub fn prove_checked_c_function_execution_with_environment(
         execution,
         checked_resource_claims: vec![Vec::new(); path_count],
         checked_resource_transitions: vec![false; path_count],
+        deferred_contract_exits: vec![false; path_count],
+        deferred_contract_exit_errors: vec![None; path_count],
+        checked_returned_resources: vec![ResourceContext::new(); path_count],
         entry_representation_origin: None,
         checked_call_events: Default::default(),
     }
@@ -4977,6 +5066,13 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
     checked_artifacts: &[CCheckedFunctionExecution],
     pure_theorems: &[CVerifiedPureTheorem],
 ) -> CFunctionContractExecution {
+    let environment = if environment.has_conditional_resource_effects()
+        || function_has_conditional_resource_effect(&function)
+    {
+        environment.with_conditional_resource_cases()
+    } else {
+        environment
+    };
     // Certification derives the anchor itself rather than trusting the one
     // the caller stepped with. An artifact whose environment carries no
     // anchor, or a different one, then fails `matches_execution_metadata`
@@ -5438,6 +5534,11 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                         paths: checked.execution.paths.clone(),
                         checked_resource_claims: checked.checked_resource_claims.clone(),
                         checked_resource_transitions: checked.checked_resource_transitions.clone(),
+                        deferred_contract_exits: checked.deferred_contract_exits.clone(),
+                        deferred_contract_exit_errors: checked
+                            .deferred_contract_exit_errors
+                            .clone(),
+                        checked_returned_resources: checked.checked_returned_resources.clone(),
                         completion_origin_state: Some(checked.state.clone()),
                     })
                     .collect()
@@ -5471,6 +5572,11 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                             checked_resource_transitions: checked
                                 .checked_resource_transitions
                                 .clone(),
+                            deferred_contract_exits: checked.deferred_contract_exits.clone(),
+                            deferred_contract_exit_errors: checked
+                                .deferred_contract_exit_errors
+                                .clone(),
+                            checked_returned_resources: checked.checked_returned_resources.clone(),
                             completion_origin_state: Some(checked.state.clone()),
                         })
                     })
@@ -5515,6 +5621,14 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     let right_claims = right.checked_resource_claims.clone();
                     let left_transitions = left.checked_resource_transitions.clone();
                     let right_transitions = right.checked_resource_transitions.clone();
+                    let left_deferred_contract_exits = left.deferred_contract_exits.clone();
+                    let right_deferred_contract_exits = right.deferred_contract_exits.clone();
+                    let left_deferred_contract_exit_errors =
+                        left.deferred_contract_exit_errors.clone();
+                    let right_deferred_contract_exit_errors =
+                        right.deferred_contract_exit_errors.clone();
+                    let left_checked_returned_resources = left.checked_returned_resources.clone();
+                    let right_checked_returned_resources = right.checked_returned_resources.clone();
                     let left = checked_execution_at_definitionally_equal_entry_state(
                         left,
                         &state,
@@ -5533,10 +5647,19 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     checked_resource_claims.extend(right_claims);
                     let mut checked_resource_transitions = left_transitions;
                     checked_resource_transitions.extend(right_transitions);
+                    let mut deferred_contract_exits = left_deferred_contract_exits;
+                    deferred_contract_exits.extend(right_deferred_contract_exits);
+                    let mut deferred_contract_exit_errors = left_deferred_contract_exit_errors;
+                    deferred_contract_exit_errors.extend(right_deferred_contract_exit_errors);
+                    let mut checked_returned_resources = left_checked_returned_resources;
+                    checked_returned_resources.extend(right_checked_returned_resources);
                     return Some(CContractPathSet {
                         paths,
                         checked_resource_claims,
                         checked_resource_transitions,
+                        deferred_contract_exits,
+                        deferred_contract_exit_errors,
+                        checked_returned_resources,
                         completion_origin_state: origin,
                     });
                 }

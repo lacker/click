@@ -1,4 +1,4 @@
-# Entry-state resource arguments remain valid at function exit
+# Conditional entry-state resource arguments remain valid at function exit
 
 ```c filename=shared_heap_detach_old_resource_handoff.c
 struct child {
@@ -61,9 +61,12 @@ void child_release_nonfinal(struct child* obj) {
 void parent_detach(struct parent* p) {
     consumes link: parent(p);
     requires link.link != ParentLink::Empty;
+    requires 1 < count(child_ref(p->kid));
     owns child_ref(p->kid);
     consumes child_ref(p->kid);
-    produces child_ref(old(p->kid));
+    if old(count(child_ref(p->kid))) > 1 {
+        produces child_ref(old(p->kid));
+    }
     produces out: parent(old(p));
 } by {
     match link.link {
