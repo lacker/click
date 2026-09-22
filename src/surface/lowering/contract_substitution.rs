@@ -2676,10 +2676,12 @@ pub(in crate::surface) fn substitute_contract_expression_in(
             base,
             field,
             lowered,
+            offset_bytes,
         } => Ok(ContractExpression::Field {
             base: Box::new(substitute_contract_expression_in(base, substitutions)?),
             field: field.clone(),
             lowered: substitute_c_fragment_in(lowered, substitutions)?,
+            offset_bytes: *offset_bytes,
         }),
         ContractExpression::Old(expression) => Ok(ContractExpression::Old(Box::new(
             substitute_contract_expression_in(expression, substitutions)?,

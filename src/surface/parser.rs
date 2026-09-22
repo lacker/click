@@ -6713,6 +6713,7 @@ impl Parser {
                 next_array_element_width,
                 next_array_shape,
                 field_memory_pointer,
+                field_offset_bytes,
             ) = if let Some(base_union_name) = &union_name
                 && self.union_layouts.contains_key(base_union_name)
             {
@@ -6726,6 +6727,7 @@ impl Parser {
                     None,
                     None,
                     field_memory_pointer,
+                    field.offset_bytes,
                 )
             } else if let Some(base_struct_name) = &struct_name
                 && self.struct_layouts.contains_key(base_struct_name)
@@ -6742,6 +6744,7 @@ impl Parser {
                     field.array_element_width,
                     field.array_shape,
                     field_memory_pointer,
+                    field.offset_bytes,
                 )
             } else {
                 indexed_scalar_field = None;
@@ -6752,6 +6755,7 @@ impl Parser {
                     None,
                     None,
                     false,
+                    0,
                 )
             };
             let range_base = if field_memory_pointer
@@ -6784,6 +6788,7 @@ impl Parser {
                 base: Box::new(surface_base),
                 field: field_name,
                 lowered: lowered.clone(),
+                offset_bytes: field_offset_bytes,
             };
             base = range_base.unwrap_or(lowered);
             struct_name = next_struct_name;
@@ -7242,6 +7247,38 @@ impl Parser {
         }
         self.resolve_struct_field_metadata(struct_name, field_name)
             .map(Some)
+    }
+
+    /// Finds the struct layout reached by a contract expression, retaining
+    /// the layout through an entry-state or recorded-state wrapper. The
+    /// pointer value may come from another snapshot while a later field load
+    /// still reads the surrounding state.
+    fn contract_expression_struct_name(&self, expression: &ContractExpression) -> Option<String> {
+        match expression {
+            ContractExpression::CFragment(CExpression::Cast { pointee_struct, .. }) => {
+                pointee_struct.clone()
+            }
+            ContractExpression::QualifiedC { name, .. } => self
+                .qualified_object(name)
+                .and_then(|object| object.struct_name.clone()),
+            ContractExpression::Binding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => self
+                .current_struct_params
+                .get(name)
+                .or_else(|| self.current_aggregate_objects.get(name))
+                .cloned(),
+            ContractExpression::Field { base, field, .. } => {
+                let struct_name = self.contract_expression_struct_name(base)?;
+                self.resolve_struct_field_metadata(&struct_name, field)
+                    .ok()?
+                    .struct_name
+            }
+            ContractExpression::Old(inner)
+            | ContractExpression::At {
+                expression: inner, ..
+            } => self.contract_expression_struct_name(inner),
+            _ => None,
+        }
     }
 
     /// Refuses a match-arm constructor binding that is not a struct pointer as
@@ -7707,6 +7744,10 @@ impl Parser {
                 .get(name)
                 .or_else(|| self.current_aggregate_objects.get(name))
                 .cloned(),
+            ContractExpression::Old(inner)
+            | ContractExpression::At {
+                expression: inner, ..
+            } => self.contract_expression_struct_name(inner),
             _ => None,
         };
         let mut union_name: Option<String> = None;
@@ -7938,11 +7979,14 @@ impl Parser {
                     self.position += 1;
                     let field_name = self.expect_ident("field name")?;
                     let surface_base = expression.clone();
-                    let Some(base) = contract_expression_as_c_fragment(&expression) else {
-                        return Err(
-                            self.error("field access is only supported on current C fragments")
-                        );
-                    };
+                    let base = match &expression {
+                        ContractExpression::Old(inner)
+                        | ContractExpression::At {
+                            expression: inner, ..
+                        } => contract_expression_as_c_fragment(inner),
+                        _ => contract_expression_as_c_fragment(&expression),
+                    }
+                    .ok_or_else(|| self.error("field access requires a C pointer expression"))?;
                     if let Some(base_union_name) = &union_name
                         && self.union_layouts.contains_key(base_union_name)
                     {
@@ -7957,6 +8001,7 @@ impl Parser {
                             base: Box::new(surface_base),
                             field: field_name,
                             lowered: lowered_field_expression(pointer, &field),
+                            offset_bytes: field.offset_bytes,
                         };
                     } else if let Some(base_struct_name) = &struct_name
                         && self.struct_layouts.contains_key(base_struct_name)
@@ -7973,12 +8018,14 @@ impl Parser {
                             base: Box::new(surface_base),
                             field: field_name,
                             lowered: lowered_field_expression(pointer, &field),
+                            offset_bytes: field.offset_bytes,
                         };
                     } else {
                         expression = ContractExpression::Field {
                             base: Box::new(surface_base),
                             field: field_name.clone(),
                             lowered: self.resolve_field_load(base, &field_name)?,
+                            offset_bytes: 0,
                         };
                         struct_array_element_width = None;
                         struct_array_shape = None;

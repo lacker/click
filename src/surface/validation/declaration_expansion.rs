@@ -1532,10 +1532,12 @@ fn expand_declared_resource_expression_children(
             base,
             field,
             lowered,
+            offset_bytes,
         } => ContractExpression::Field {
             base: Box::new(recurse(*base)?),
             field,
             lowered,
+            offset_bytes,
         },
         ContractExpression::Old(body) => ContractExpression::Old(Box::new(recurse(*body)?)),
         ContractExpression::At {

@@ -218,6 +218,7 @@ fn field_pointer_bases(
                     base: Box::new(ContractExpression::CFragment(owner.base.clone())),
                     field: field_name.clone(),
                     lowered: lowered.clone(),
+                    offset_bytes: field.offset_bytes(),
                 },
                 lowered,
                 pointer: loaded,
@@ -2138,6 +2139,7 @@ fn synthesize_parameter_field_pointer_value(
                     volatile: false,
                     source: Default::default(),
                 },
+                offset_bytes: field.offset_bytes(),
             });
         }
     }
@@ -2171,6 +2173,7 @@ fn synthesize_parameter_field_pointer_value(
                     volatile: false,
                     source: Default::default(),
                 },
+                offset_bytes: field.offset_bytes(),
             });
         }
     }
@@ -2840,6 +2843,7 @@ fn synthesize_local_struct_pointer_field(
                     volatile: false,
                     source: Default::default(),
                 },
+                offset_bytes: field.offset_bytes(),
             });
         }
     }
@@ -2917,6 +2921,7 @@ fn synthesize_local_aggregate_field(
                             volatile: false,
                             source: Default::default(),
                         },
+                        offset_bytes: field.offset_bytes(),
                     };
                     if element_count == 1 {
                         Some(field_expression)
@@ -3121,6 +3126,7 @@ fn synthesize_parameter_field_load(
                 volatile: false,
                 source: Default::default(),
             },
+            offset_bytes,
         });
     }
     None
@@ -3162,6 +3168,7 @@ fn synthesize_local_field_load(
                 volatile: false,
                 source: Default::default(),
             },
+            offset_bytes: field.offset_bytes(),
         });
     }
     None

@@ -2370,6 +2370,10 @@ pub enum ContractExpression {
         base: Box<ContractExpression>,
         field: String,
         lowered: CExpression,
+        /// Byte offset of `field` from the address denoted by `base`.
+        /// Keeping this separately lets lowering rebuild the field load when
+        /// `base` is evaluated in a different snapshot from the field value.
+        offset_bytes: u32,
     },
     /// A binding from the verified C function's lexical environment.
     ///

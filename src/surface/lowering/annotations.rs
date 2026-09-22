@@ -3902,6 +3902,48 @@ impl AnnotationLowerer<'_> {
         }
     }
 
+    /// Lower a field whose base pointer is named in another snapshot. The
+    /// base expression supplies the pointer value from that snapshot, while
+    /// the field itself is read from the surrounding environment's memory.
+    /// This is the meaning of `old(p->kid)->payload`.
+    fn lower_snapshot_field_to_spec(
+        &mut self,
+        base: &ContractExpression,
+        lowered: &CExpression,
+        offset_bytes: u32,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecExpression, String> {
+        let pointer = self.lower_contract_expression_to_spec(base, environment)?;
+        let pointer = if offset_bytes == 0 {
+            pointer
+        } else {
+            SpecExpression::PointerOffset {
+                pointer: Box::new(pointer),
+                elements: Box::new(SpecExpression::Value(int32(offset_bytes))),
+                byte_width: 1,
+            }
+        };
+        match lowered {
+            CExpression::TypedLoad {
+                value_type: CType::Int32Array(_) | CType::UInt8Array(_),
+                ..
+            } => Ok(pointer),
+            CExpression::TypedLoad { value_type, .. } => Ok(SpecExpression::MemoryLoad {
+                memory: environment.current_memory.clone(),
+                pointer: Box::new(pointer),
+                value_type: *value_type,
+            }),
+            CExpression::Load(pointer_expression) => Ok(SpecExpression::MemoryLoad {
+                memory: environment.current_memory.clone(),
+                pointer: Box::new(pointer),
+                value_type: self
+                    .c_expression_array_element_type(pointer_expression, environment)
+                    .unwrap_or(CType::Int32),
+            }),
+            _ => Ok(pointer),
+        }
+    }
+
     fn lower_contract_expression_to_spec(
         &mut self,
         expression: &ContractExpression,
@@ -4094,14 +4136,25 @@ impl AnnotationLowerer<'_> {
                 ..
             }
             | ContractExpression::CFragment(expression)
-            | ContractExpression::Field {
-                lowered: expression,
-                ..
-            }
             | ContractExpression::ArrayIndex {
                 lowered: expression,
                 ..
             } => self.lower_c_fragment_to_spec(expression, environment),
+            ContractExpression::Field {
+                base,
+                lowered,
+                offset_bytes,
+                ..
+            } if matches!(
+                base.as_ref(),
+                ContractExpression::Old(_) | ContractExpression::At { .. }
+            ) =>
+            {
+                self.lower_snapshot_field_to_spec(base, lowered, *offset_bytes, environment)
+            }
+            ContractExpression::Field { lowered, .. } => {
+                self.lower_c_fragment_to_spec(lowered, environment)
+            }
             ContractExpression::Binding(name) => {
                 if environment.algebraic_values.contains_key(name) {
                     return Err(format!(
