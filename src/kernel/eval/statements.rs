@@ -2257,7 +2257,7 @@ pub(in crate::kernel) fn scope_declared_names(statement: &CStatement) -> Vec<Str
 pub(in crate::kernel) fn end_scope_automatic_lifetimes(
     state: &CState,
     declared: &[String],
-) -> CState {
+) -> Result<CState, crate::kernel::LoanRefusalDiagnostic> {
     let mut state = state.clone();
     let mut memory = state.memory.clone();
     let mut retired = false;
@@ -2267,6 +2267,22 @@ pub(in crate::kernel) fn end_scope_automatic_lifetimes(
             continue;
         };
         if slot.block.starts_with("local:") && memory.has_block(&slot.block) {
+            let range = CMemoryRange::new_with_element_width(
+                slot.clone(),
+                0.into(),
+                memory
+                    .block_size(&slot.block)
+                    .expect("live local block")
+                    .clone(),
+                1,
+            );
+            if let Some(refusal) = state.stable_loan_memory_access_refusal(
+                &range,
+                &PureFactContext::default(),
+                crate::kernel::LoanRefusalOperation::MemoryAccess,
+            ) {
+                return Err(refusal);
+            }
             memory = memory.without_local_block(&slot.block);
             retired = true;
         }
@@ -2275,7 +2291,7 @@ pub(in crate::kernel) fn end_scope_automatic_lifetimes(
     if retired {
         state.set_memory(memory);
     }
-    state
+    Ok(state)
 }
 
 /// Applies a scope exit to every outcome a scope's body produced.
@@ -2295,30 +2311,33 @@ pub(in crate::kernel) fn paths_after_scope_exit(
         .map(|path| {
             let outcome = match path.outcome {
                 CStatementOutcome::Normal(state) => {
-                    CStatementOutcome::Normal(end_scope_automatic_lifetimes(&state, declared))
+                    end_scope_automatic_lifetimes(&state, declared).map(CStatementOutcome::Normal)
                 }
                 CStatementOutcome::Break(state) => {
-                    CStatementOutcome::Break(end_scope_automatic_lifetimes(&state, declared))
+                    end_scope_automatic_lifetimes(&state, declared).map(CStatementOutcome::Break)
                 }
                 CStatementOutcome::Continue(state) => {
-                    CStatementOutcome::Continue(end_scope_automatic_lifetimes(&state, declared))
+                    end_scope_automatic_lifetimes(&state, declared).map(CStatementOutcome::Continue)
                 }
-                CStatementOutcome::Jump { target, state } => CStatementOutcome::Jump {
-                    target,
-                    state: end_scope_automatic_lifetimes(&state, declared),
-                },
-                CStatementOutcome::Return { value, state } => CStatementOutcome::Return {
-                    value,
-                    state: end_scope_automatic_lifetimes(&state, declared),
-                },
-                CStatementOutcome::Throw { value, state } => CStatementOutcome::Throw {
-                    value,
-                    state: end_scope_automatic_lifetimes(&state, declared),
-                },
+                CStatementOutcome::Jump { target, state } => {
+                    end_scope_automatic_lifetimes(&state, declared)
+                        .map(|state| CStatementOutcome::Jump { target, state })
+                }
+                CStatementOutcome::Return { value, state } => {
+                    end_scope_automatic_lifetimes(&state, declared)
+                        .map(|state| CStatementOutcome::Return { value, state })
+                }
+                CStatementOutcome::Throw { value, state } => {
+                    end_scope_automatic_lifetimes(&state, declared)
+                        .map(|state| CStatementOutcome::Throw { value, state })
+                }
                 outcome @ (CStatementOutcome::VerificationDiverges
                 | CStatementOutcome::UndefinedBehavior(_)
-                | CStatementOutcome::RuntimeError(_)) => outcome,
-            };
+                | CStatementOutcome::RuntimeError(_)) => Ok(outcome),
+            }
+            .unwrap_or_else(|refusal| {
+                CStatementOutcome::RuntimeError(CRuntimeError::LoanRefusal(refusal))
+            });
             CStatementExecutionPath {
                 loop_invariant_correspondence: Default::default(),
                 outcome,
@@ -2383,7 +2402,20 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             exited_locals,
             continue_after,
         } => {
-            let retired = end_scope_automatic_lifetimes(state, exited_locals);
+            let retired = match end_scope_automatic_lifetimes(state, exited_locals) {
+                Ok(state) => state,
+                Err(refusal) => {
+                    return Ok(vec![CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
+                        outcome: CStatementOutcome::RuntimeError(CRuntimeError::LoanRefusal(
+                            refusal,
+                        )),
+                        facts: Vec::new(),
+                        obligations: Vec::new(),
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
+                    }]);
+                }
+            };
             let mut paths = Vec::new();
             for step_path in execute_c_statement_paths(
                 &retired,

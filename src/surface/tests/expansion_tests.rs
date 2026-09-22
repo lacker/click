@@ -14909,3 +14909,25 @@ fn a_consumed_arm_instance_equation_is_cited_at_entry_after_its_unfold() {
         panic!("the expanded closing simp should reverify: {error:?}\n{expanded}")
     });
 }
+
+#[test]
+fn local_job_views_expand_and_reverify_without_ownership_annotations() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/stable_view_local_job.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let mut click = fixture.click_source.unwrap();
+    verify_c0_sources(&click, &sources).expect("local job must verify before expansion");
+    for function in ["read_local_job", "relay_local_job", "use_local_job"] {
+        click = expand_c0_claim_source(&click, &sources, function, CProofClaim::Grouped)
+            .expect("local loan and lifetime certificates should expand");
+    }
+    assert!(!click.contains("execute();"), "{click}");
+    assert!(!click.contains("simp();"), "{click}");
+    verify_c0_sources(&click, &sources).expect("expanded local job must independently reverify");
+}

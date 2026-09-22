@@ -604,3 +604,162 @@ fn thread_parent_c_access_requires_join_and_implicit_storage_transfers_refuse() 
         );
     }
 }
+
+#[test]
+fn thread_local_view_blocks_writes_and_all_scope_exits_until_join() {
+    let reader = c_function(
+        CType::Int32,
+        "local_job_reader",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_return(c_load(c_variable("p"))),
+    )
+    .with_resource_summary(
+        vec![CResourceSpec::viewed_memory(CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        ))],
+        vec![],
+    )
+    .with_contract(
+        vec![],
+        vec![],
+        vec![],
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let (reader, termination) = certify_worker(reader);
+    let mut declaration = crate::kernel::eval::execute_c_statement_paths(
+        &CState::new(),
+        &c_declare("job", CType::Int32Array(2)),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    let CStatementOutcome::Normal(declared) = declaration.remove(0).outcome else {
+        panic!("local declaration");
+    };
+    let local = declared.locals().slot("job").unwrap().clone();
+    let declared = declared
+        .clone()
+        .with_memory(declared.memory().clone().store(local.clone(), int32(7)));
+    let original = ThreadContext::new(declared).unwrap();
+    let (active, handle, _) = original
+        .spawn(
+            &reader,
+            Some(&termination),
+            CValue::pointer(local.clone()),
+            &PureFactContext::new(),
+            &CExecutionEnvironment::new(),
+            &mut ExecutionBudget::new(),
+        )
+        .unwrap()
+        .unwrap();
+    assert!(
+        active.parent().resources().is_empty(),
+        "lending a local must not invent explicit ownership"
+    );
+    assert!(
+        active
+            .parent()
+            .loan_ledger()
+            .unwrap()
+            .has_active_memory_loans()
+    );
+    let names = vec!["job".to_string()];
+    assert!(crate::kernel::eval::end_scope_automatic_lifetimes(active.parent(), &names).is_err());
+    let state = active.parent();
+    for outcome in [
+        CStatementOutcome::Normal(state.clone()),
+        CStatementOutcome::Break(state.clone()),
+        CStatementOutcome::Continue(state.clone()),
+        CStatementOutcome::Return {
+            value: int32(0),
+            state: state.clone(),
+        },
+        CStatementOutcome::Throw {
+            value: int32(0),
+            state: state.clone(),
+        },
+        CStatementOutcome::Jump {
+            target: crate::kernel::CControlTargetId(1),
+            state: state.clone(),
+        },
+    ] {
+        let paths = crate::kernel::eval::paths_after_scope_exit(
+            vec![CStatementExecutionPath {
+                outcome,
+                facts: vec![],
+                obligations: vec![],
+                loop_invariant_correspondence: Default::default(),
+                loan_evidence: crate::kernel::empty_checked_loan_evidence_sequence(),
+            }],
+            &names,
+        );
+        assert!(matches!(
+            paths[0].outcome,
+            CStatementOutcome::RuntimeError(CRuntimeError::LoanRefusal(_))
+        ));
+    }
+    let writer = c_function(
+        CType::Void,
+        "alias_write",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_store(c_variable("p"), c_int32_literal(7)),
+    );
+    let theorem = prove_symbolic_c_function_execution_with_environment(
+        active.parent().clone(),
+        writer.clone(),
+        vec![c_pointer_value(local.clone())],
+        PureFactContext::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            theorem.proposition(),
+            Proposition::CFunctionExecutes {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::LoanRefusal(_)),
+                ..
+            }
+        ),
+        "even a same-value write through an alias conflicts with the local loan"
+    );
+    let (joined, _) = active
+        .join(
+            handle,
+            JoinRuntimeAssumption::ValidJoinSucceeds,
+            &PureFactContext::new(),
+        )
+        .unwrap();
+    assert!(joined.parent().resources().is_empty());
+    assert!(
+        !joined
+            .parent()
+            .loan_ledger()
+            .unwrap()
+            .has_active_memory_loans()
+    );
+    let theorem = prove_symbolic_c_function_execution_with_environment(
+        joined.parent().clone(),
+        writer,
+        vec![c_pointer_value(local.clone())],
+        PureFactContext::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .unwrap();
+    assert!(matches!(
+        theorem.proposition(),
+        Proposition::CFunctionExecutes {
+            outcome: CFunctionOutcome::Return { .. },
+            ..
+        }
+    ));
+    let ended =
+        crate::kernel::eval::end_scope_automatic_lifetimes(joined.parent(), &names).unwrap();
+    assert!(ended.memory().is_ended_local_address(&local));
+}

@@ -118,8 +118,13 @@ lending the requested subrange and keeping the remainder usable, from the
 caller's own view by a reborrow, from an owned composite by a composite
 lend, and from a different owned composite or the caller's owned frontier
 when the viewed composite's checked expansion is covered piecewise and its
-facts hold at the call. A view of caller-local or read-only storage the
-caller holds no resource fact for is intrinsic read authority for the call
+facts hold at the call. A view of live caller-local storage with no explicit
+resource is backed by a checked local-storage loan. Its byte range must fit
+inside the live allocation. Checked entry storage includes fresh by-value
+aggregate parameter copies as well as the caller's original locals. The loan
+grants a callee share and a caller close
+right, but escrows no owned fact; closing it restores implicit access without
+adding an ownership resource. Read-only storage retains intrinsic read authority
 and is neither lent nor recovered. Cross-clause conflicts (an owned clause
 overlapping a viewed one, or an owned piece inside a viewed frontier) are
 refused at planning as proven overlaps.
@@ -129,7 +134,12 @@ Each effect range is compared with the full checked view frontier; an effect
 and a view reserved from distinct caller occurrences are disjoint by the
 partition invariant, while the same occurrence needs an arithmetic proof.
 Every path that retires an allocation, definite or of undecided continuity,
-consults the ledger that carries the call's own loans.
+consults the ledger that carries the call's own loans. Automatic lifetime ends
+also consult it: normal scope exit, return, break, continue, jump, exception,
+and the retained proof event refuse to retire a block with a live loan.
+The same ledger already guards direct local assignments and alias stores,
+including same-value writes. A nested reader reborrows the local loan through
+its exact resource binding. No new surface clause is needed.
 
 At return, obligations are validated before recovery: the callee's shares
 are transferred back, call-created scopes end, escrows are recovered, and the
@@ -216,7 +226,8 @@ audit run under the same rules and agree with verification. Refusals carry
 a category, the operation, a bounded subject, identifiers, and the origin;
 proven overlap is distinguished from unproved separation. Artifacts carry a
 resource-semantics version so no artifact minted under the retired
-interpretation certifies a claim.
+interpretation certifies a claim. Version 3 includes checked implicit-local
+loans and automatic lifetime retirement.
 
 Shares, loans, and support are indexed by identity; memory by allocation
 and range; dependencies by their immediate parent. Persistent edits are
@@ -243,7 +254,10 @@ cannot authorize recovery. The runtime assumption that a valid join succeeds
 is explicit and scoped to this parent's live, terminating child.
 
 This is an internal ownership checkpoint, not a C threading API. It supports
-explicit external-memory ownership and nonescaping stable views. Transfers of
+explicit external-memory ownership and nonescaping stable views, including
+views backed by live local storage without an ownership annotation. The local
+loan remains active from spawn to join, so the parent cannot write its viewed
+bytes or end the allocation lifetime early. Exclusive transfers of
 caller stack/global/static storage are refused until ordinary accesses to that
 storage enforce thread authority; dropping an ownership fact alone would not
 block the caller's implicit storage access. A reborrow pins its
@@ -272,6 +286,7 @@ exclusive production reborrows and C thread APIs remain outside this checkpoint.
 | Aliased views and nested readers | `candidate_joint_planner_reuses_one_escrow_for_two_aliases`, `candidate_rejects_new_output_view`, `mdtests/stable_view_nested_reader.md` |
 | Partial borrows and widths | `mdtests/stable_view_partial_borrow.md`, `bytewise_overlap_is_decided_across_mismatched_element_widths`, `memory_entailment_relates_two_spellings_of_one_byte_footprint` |
 | Free and realloc under a loan | `active_stable_loan_rejects_overlapping_heap_free_and_realloc`, `undecided_continuity_retire_refuses_a_lent_allocation` |
+| Local loans, bounds, and lifetime | `candidate_local_array_view_uses_a_checked_loan_and_recovers`, `thread_local_view_blocks_writes_and_all_scope_exits_until_join`, `automatic_lifetime_event_rejects_active_local_loan_and_forged_retirement`, `local_views_preserve_aliases_check_bounds_and_mint_no_owned_escrow`, `mdtests/stable_view_local_job.md`, `local_job_views_expand_and_reverify_without_ownership_annotations` |
 | Locals and empty views | `active_stable_loan_rejects_direct_local_assignment_and_alias_store`, `candidate_local_array_view_out_of_bounds_is_refused`, `mdtests/empty_view_authorizes_nothing.md` |
 | Entry footprint | `field_derived_view_does_not_retarget_after_a_pointer_write` |
 | Composites | `composite_loan_protects_primitive_frontier_and_restores_head_once`, `projection_extends_permitted_descriptions_without_a_transition`, `candidate_composite_with_unstable_facts_is_refused`, `candidate_composite_view_is_backed_by_a_covering_owned_composite`, `mdtests/produced_composite_body_overlapping_a_held_owner.md` |
@@ -283,5 +298,5 @@ exclusive production reborrows and C thread APIs remain outside this checkpoint.
 | Loops and branches | `loop_havoc_requires_a_checked_set_disjoint_from_active_loans`, `loop_back_edge_refuses_a_dropped_share_or_a_regenerated_root`, `abstract_join_rejects_a_loan_ended_on_only_one_arm` |
 | Suspended workers | `src/kernel/tests/thread_transition_tests.rs` (both join orders, refusal paths, scoped termination, withheld guarantees, backing lifetime, and four-size recovery scaling) |
 | Evidence | `hostile_transition_payload_is_rechecked`, `transitions_are_bound_to_their_exact_predecessor`, `session_rejects_a_stale_identity_before_reverification` |
-| Scaling | the four-size curves in `src/kernel/loans.rs`, `interface_binding_inheritance_is_near_linear_in_the_binding_count`, `loop_head_havoc_work_over_cells_and_symbolic_loans` |
+| Scaling | `local_view_work_tracks_the_explicit_delta_not_ambient_local_storage`, the four-size curves in `src/kernel/loans.rs`, `interface_binding_inheritance_is_near_linear_in_the_binding_count`, `loop_head_havoc_work_over_cells_and_symbolic_loans` |
 | Model | the `r27_`, `r28_`, `r29_`, and `r30_` tests in `loan_model_tests.rs` |
