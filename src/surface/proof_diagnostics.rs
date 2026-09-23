@@ -29,6 +29,8 @@ pub(crate) trait ProofDiagnosticState: Send + Sync {
 pub(crate) struct ProofDiagnosticOrigin {
     pub stage: String,
     pub location: String,
+    /// Written outer tactic and each nested `have`/`open` body position.
+    pub source_tactic_path: Option<Vec<usize>>,
 }
 
 #[derive(Clone)]
@@ -280,6 +282,7 @@ mod tests {
             origin: ProofDiagnosticOrigin {
                 stage: "proof step".into(),
                 location: "source tactic 4".into(),
+                source_tactic_path: None,
             },
             claim_label: "claim".into(),
             reason: "reason".into(),
@@ -302,6 +305,7 @@ mod tests {
             origin: ProofDiagnosticOrigin {
                 stage: "step".into(),
                 location: "source tactic 44".into(),
+                source_tactic_path: None,
             },
             claim_label: "claim".into(),
             reason: "failed".into(),
@@ -370,6 +374,7 @@ mod tests {
                 origin: ProofDiagnosticOrigin {
                     stage: "proof step".into(),
                     location: "source tactic 1".into(),
+                    source_tactic_path: None,
                 },
                 claim_label: "f.contract".into(),
                 reason: "failed".into(),
@@ -415,6 +420,7 @@ mod tests {
             origin: ProofDiagnosticOrigin {
                 stage: "proof step".into(),
                 location: "loop closure".into(),
+                source_tactic_path: None,
             },
             claim_label: "claim".into(),
             reason: "leaf remained open".into(),
@@ -426,6 +432,7 @@ mod tests {
                 origin: ProofDiagnosticOrigin {
                     stage: "proof step".into(),
                     location: "loop closure".into(),
+                    source_tactic_path: None,
                 },
                 claim_label: "claim".into(),
                 reason: "closure failed".into(),

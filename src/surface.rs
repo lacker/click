@@ -121,8 +121,9 @@ pub use expansion::{
     expand_c0_tactic_source_at, expand_cpp_prepared_claim_source_by_label,
     expand_cpp_prepared_project_claim_source_by_label,
     expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
-    map_verifying_source_paths, selected_c_target, selected_project_c_target,
-    selected_project_thread_runtime, selected_thread_runtime, verifying_source_paths,
+    map_verifying_source_paths, nested_tactic_source_position, selected_c_target,
+    selected_project_c_target, selected_project_thread_runtime, selected_thread_runtime,
+    verifying_source_paths,
 };
 use expansion::{
     ExpansionCapture, ProofSite, VerificationTarget, verification_target_at,
@@ -6947,6 +6948,51 @@ impl VerifiedPureTheorem {
     }
 }
 
+/// Split only diagnostic context separators, not colons in Click binders,
+/// quoted source, or nested expressions.
+fn concise_error_segments(reason: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut depths = [0_usize; 3];
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in reason.char_indices() {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '`' | '"' => quote = Some(character),
+            '\'' if !reason[..index]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_alphanumeric) =>
+            {
+                quote = Some(character);
+            }
+            '(' => depths[0] += 1,
+            ')' => depths[0] = depths[0].saturating_sub(1),
+            '[' => depths[1] += 1,
+            ']' => depths[1] = depths[1].saturating_sub(1),
+            '{' => depths[2] += 1,
+            '}' => depths[2] = depths[2].saturating_sub(1),
+            ':' if depths == [0; 3] && reason[index + 1..].starts_with(' ') => {
+                segments.push(reason[start..index].trim());
+                start = index + 2;
+            }
+            _ => {}
+        }
+    }
+    segments.push(reason[start..].trim());
+    segments
+}
+
 impl ClickError {
     fn reported_kind(message: &str) -> ClickErrorKind {
         // A few kernel checker interfaces still return strings. They already
@@ -7098,6 +7144,70 @@ impl ClickError {
             report.push_str(&trace);
         }
         report
+    }
+
+    /// A source-facing verification failure. The full `report()` retains
+    /// bounded kernel premises and search context for `--trace-proof`; the
+    /// ordinary CLI starts with the failed check and its Click goal.
+    pub fn concise_report(&self) -> String {
+        let reason = self
+            .diagnostic
+            .as_ref()
+            .map_or(self.message.as_str(), |diagnostic| {
+                diagnostic.reason.as_str()
+            });
+        let reason = reason.split("\nproof context:").next().unwrap_or(reason);
+        let mut report = format!("{}:", self.kind.label());
+        for segment in concise_error_segments(reason) {
+            for line in segment
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+            {
+                report.push_str("\n  ");
+                report.push_str(line);
+            }
+        }
+        if let Some(tactic) = self.failed_tactic {
+            report.push_str("\n  tactic: ");
+            report.push_str(tactic);
+        }
+        if let Some(diagnostic) = &self.diagnostic
+            && let Some(state) = diagnostic.state.as_ref()
+        {
+            let source_goal = state.source_goal();
+            if let Some(goal) = &source_goal {
+                report.push_str("\n  goal: ");
+                report.push_str(goal);
+            }
+            if self.failed_tactic == Some("assumption()")
+                && matches!(state.kernel_goal(), Some(Proposition::Exists { .. }))
+            {
+                let binder = source_goal
+                    .as_deref()
+                    .and_then(|goal| goal.strip_prefix("exists ("))
+                    .and_then(|rest| rest.split_once(':'))
+                    .map(|(name, _)| name.trim())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("name");
+                report.push_str(&format!(
+                    "\n  help: choose a witness with `witness({binder} = <value>);`, then prove its body"
+                ));
+            }
+        }
+        report
+    }
+
+    pub fn proof_source_tactic_path(&self) -> Option<&[usize]> {
+        self.diagnostic
+            .as_ref()?
+            .origin
+            .source_tactic_path
+            .as_deref()
+    }
+
+    pub fn proof_step_location(&self) -> Option<&str> {
+        Some(&self.diagnostic.as_ref()?.origin.location)
     }
 
     pub fn kind(&self) -> ClickErrorKind {
