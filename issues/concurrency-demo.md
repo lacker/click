@@ -166,8 +166,10 @@ the last join removes the parent view occurrence before returning the exact
 owner. Source proofs cover both join orders, second-create failure cleanup,
 the final parent write, and rejection of a write after only one join. A kernel
 test checks owner absence during concurrent reads, exact view removal, and
-owner recovery. Forged recovery checks and the frozen parent sidecar remain.
-These source proofs use the modeled runtime.
+owner recovery. Kernel checks now reject wrong-sibling joins, reused and
+stale join evidence, and duplicated or cross-path completion rights while
+allowing both valid join orders. The frozen parent sidecar remains. These
+source proofs use the modeled runtime.
 
 ### Important implementation notes
 

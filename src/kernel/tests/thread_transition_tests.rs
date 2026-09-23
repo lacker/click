@@ -1479,6 +1479,87 @@ fn two_workers_recover_one_escrowed_owner_only_after_both_join() {
 }
 
 #[test]
+fn shared_reader_completion_right_is_consumed_once_on_its_own_path() {
+    let function = c_function(
+        CType::Int32,
+        "thread_reader",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_return(c_load(c_variable("p"))),
+    )
+    .with_resource_summary(
+        vec![CResourceSpec::viewed_memory(CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        ))],
+        vec![],
+    )
+    .with_contract(
+        vec![],
+        vec![],
+        vec![],
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let (reader, termination) = certify_worker(function.clone());
+    let view = CResourceFact::view_memory(range(0, 0, 1));
+    let state = c_state_with_borrowed_contract_inputs(
+        parent(1).with_resource_context(ResourceContext::new().unchecked_with_fact(view)),
+        &function,
+        &[c_pointer_value(pointer(0))],
+        &PureFactContext::new(),
+    )
+    .unwrap();
+    let original = ThreadContext::new(state).unwrap();
+    let mut budget = ExecutionBudget::new();
+    let (first, a) = spawn(&original, 0, &reader, &termination, &mut budget);
+    let (second, b) = spawn(&first, 0, &reader, &termination, &mut budget);
+    let (after_a, _) = second
+        .join(
+            a,
+            JoinRuntimeAssumption::ValidJoinSucceeds,
+            &PureFactContext::new(),
+        )
+        .unwrap();
+    assert_eq!(
+        after_a
+            .join(
+                a,
+                JoinRuntimeAssumption::ValidJoinSucceeds,
+                &PureFactContext::new(),
+            )
+            .err(),
+        Some("no live completion right for this handle")
+    );
+    assert_eq!(
+        first
+            .join(
+                b,
+                JoinRuntimeAssumption::ValidJoinSucceeds,
+                &PureFactContext::new(),
+            )
+            .err(),
+        Some("no live completion right for this handle"),
+        "a handle from a later path cannot recover a sibling here"
+    );
+    assert!(
+        after_a
+            .parent()
+            .loan_ledger()
+            .unwrap()
+            .has_active_memory_loans()
+    );
+    let (finished, _) = after_a
+        .join(
+            b,
+            JoinRuntimeAssumption::ValidJoinSucceeds,
+            &PureFactContext::new(),
+        )
+        .unwrap();
+    assert!(finished.parent().loan_bindings_are_consistent());
+}
+
+#[test]
 fn joining_one_of_many_shared_readers_touches_only_its_share_branch() {
     let function = c_function(
         CType::Int32,

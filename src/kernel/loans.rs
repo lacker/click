@@ -6325,6 +6325,91 @@ mod tests {
         );
     }
 
+    #[test]
+    fn shared_reader_recovery_rejects_wrong_sibling_reuse_and_stale_branch() {
+        let (ledger, owner, first_reader) = participants();
+        let second_reader = ledger.fresh_participant().unwrap();
+        let opening = lend_test(&ledger, owner, owner, owned("shared_cell"));
+        let ledger = ledger.apply(&opening.transition).unwrap();
+
+        // Splitting the parent's remaining share for a second reader makes
+        // the workers' shares cousins, not siblings of one another.
+        let (split_first, parent_share, first_share) = ledger
+            .split(opening.root_share, owner, owner, first_reader)
+            .unwrap();
+        let ledger = ledger.apply(&split_first).unwrap();
+        let (split_second, retained_share, second_share) = ledger
+            .split(parent_share, owner, owner, second_reader)
+            .unwrap();
+        let ledger = ledger.apply(&split_second).unwrap();
+        assert_eq!(
+            ledger.join(retained_share, first_share, owner),
+            Err(LoanRefusal::WrongHolder)
+        );
+
+        let return_first = ledger.transfer(first_share, first_reader, owner).unwrap();
+        let after_first_return = ledger.apply(&return_first).unwrap();
+        assert_eq!(
+            after_first_return.join(first_share, retained_share, owner),
+            Err(LoanRefusal::NotSiblings),
+            "a returned worker share cannot join the other branch's retained share"
+        );
+        assert_eq!(
+            after_first_return
+                .join_available_share_ancestors(first_share, owner)
+                .unwrap()
+                .2
+                .len(),
+            0,
+            "the other worker still pins the sibling subtree"
+        );
+        assert_eq!(
+            after_first_return.end(opening.scope, owner),
+            Err(LoanRefusal::ShareStillSplit)
+        );
+
+        let return_second = after_first_return
+            .transfer(second_share, second_reader, owner)
+            .unwrap();
+        let after_both_returns = after_first_return.apply(&return_second).unwrap();
+        let (recombined, root, joins) = after_both_returns
+            .join_available_share_ancestors(second_share, owner)
+            .unwrap();
+        assert_eq!(root, opening.root_share);
+        assert_eq!(joins.len(), 2);
+        assert_eq!(
+            after_first_return.apply(&joins[0]),
+            Err(LoanRefusal::StalePredecessor),
+            "a join certificate cannot be transplanted before the second return"
+        );
+        assert_eq!(
+            recombined.apply(&joins[0]),
+            Err(LoanRefusal::StalePredecessor),
+            "a consumed sibling join cannot be used twice"
+        );
+        assert_eq!(
+            recombined.join(first_share, second_share, owner),
+            Err(LoanRefusal::WrongHolder),
+            "consumed shares cannot be joined again"
+        );
+        let mut forged = joins[0].clone();
+        if let LoanTransitionEvidence::Join { right, .. } = &mut forged.evidence {
+            *right = first_share;
+        } else {
+            panic!("expected a checked sibling join");
+        }
+        assert_eq!(
+            after_both_returns.apply(&forged),
+            Err(LoanRefusal::InvalidEvidence),
+            "a changed sibling identity invalidates the checked payload"
+        );
+        assert!(recombined.invariant_holds());
+        let end = recombined.end(opening.scope, owner).unwrap();
+        let ended = recombined.apply(&end).unwrap();
+        let (recover, _, _) = ended.recover(opening.loan, owner).unwrap();
+        assert!(ended.apply(&recover).unwrap().invariant_holds());
+    }
+
     /// D2 law 4: a description outlives its authority, and D2 law 5: a
     /// reused resource term is not a reused identity. The first loan over a
     /// cell ends and is recovered, then a fresh loan starts over the very

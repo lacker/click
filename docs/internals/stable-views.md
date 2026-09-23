@@ -302,7 +302,7 @@ exclusive production reborrows and C thread APIs remain outside this checkpoint.
 | Rule | Tests |
 | --- | --- |
 | Lend, read, close, recover, write; same-value store refused | `checked_two_reader_lifecycle_recovers_exact_escrow_once`, `owner_authorized_write_into_a_lent_range_is_refused`, `owner_authorized_same_value_store_into_a_lent_range_is_refused`, `owner_authorized_aggregate_copy_into_a_lent_range_is_refused` |
-| Shares and scopes | `splitting_and_joining_require_exact_linear_siblings`, `nested_reborrow_must_rejoin_each_parent_before_scope_end`, `an_old_descriptor_is_refused_after_a_fresh_scope_over_the_same_resource`, `checked_call_evidence_rejects_stale_or_swapped_recovery` |
+| Shares and scopes | `splitting_and_joining_require_exact_linear_siblings`, `shared_reader_recovery_rejects_wrong_sibling_reuse_and_stale_branch`, `nested_reborrow_must_rejoin_each_parent_before_scope_end`, `an_old_descriptor_is_refused_after_a_fresh_scope_over_the_same_resource`, `checked_call_evidence_rejects_stale_or_swapped_recovery` |
 | Aliased views and nested readers | `candidate_joint_planner_reuses_one_escrow_for_two_aliases`, `candidate_rejects_new_output_view`, `mdtests/stable_view_nested_reader.md` |
 | Partial borrows and widths | `mdtests/stable_view_partial_borrow.md`, `bytewise_overlap_is_decided_across_mismatched_element_widths`, `memory_entailment_relates_two_spellings_of_one_byte_footprint` |
 | Free and realloc under a loan | `active_stable_loan_rejects_overlapping_heap_free_and_realloc`, `undecided_continuity_retire_refuses_a_lent_allocation` |
@@ -316,7 +316,7 @@ exclusive production reborrows and C thread APIs remain outside this checkpoint.
 | Effects | `candidate_rejects_mutable_effect_overlapping_a_composite_view_piece`, `candidate_allows_a_mutable_effect_reserved_from_another_owned_occurrence` |
 | Callbacks and refinement | `stable_view_refinement_uses_checked_variance_for_subranges`, `mdtests/rb_augment_callbacks_helper_owns_rejects_unseparated.md`, `mdtests/rb_augment_callbacks_helper_calls_after_close_through_view.md` (a viewed suite's callback stays callable after an open closes), `mdtests/rb_augment_callbacks_helper_rejects_call_after_close.md` (an owned suite's does not) |
 | Loops and branches | `loop_havoc_requires_a_checked_set_disjoint_from_active_loans`, `loop_back_edge_refuses_a_dropped_share_or_a_regenerated_root`, `abstract_join_rejects_a_loan_ended_on_only_one_arm` |
-| Suspended workers | `src/kernel/tests/thread_transition_tests.rs` (both join orders, refusal paths, scoped termination, withheld guarantees, backing lifetime, and four-size recovery scaling) |
+| Suspended workers | `src/kernel/tests/thread_transition_tests.rs` (both join orders, linear completion rights, refusal paths, scoped termination, withheld guarantees, backing lifetime, and four-size recovery scaling) |
 | Evidence | `hostile_transition_payload_is_rechecked`, `transitions_are_bound_to_their_exact_predecessor`, `session_rejects_a_stale_identity_before_reverification` |
 | Scaling | `local_view_work_tracks_the_explicit_delta_not_ambient_local_storage`, the four-size curves in `src/kernel/loans.rs`, `interface_binding_inheritance_is_near_linear_in_the_binding_count`, `loop_head_havoc_work_over_cells_and_symbolic_loans` |
 | Model | the `r27_`, `r28_`, `r29_`, and `r30_` tests in `loan_model_tests.rs` |
