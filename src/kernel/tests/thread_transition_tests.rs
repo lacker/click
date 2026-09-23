@@ -240,6 +240,134 @@ fn completion_right_survives_an_unrelated_c_statement_in_path_state() {
 }
 
 #[test]
+fn modeled_pthread_join_call_consumes_only_the_named_completion() {
+    let (worker, termination) = worker();
+    let original = ThreadContext::new(parent(2)).unwrap();
+    let (first, first_handle) = spawn(
+        &original,
+        0,
+        &worker,
+        &termination,
+        &mut ExecutionBudget::new(),
+    );
+    let (second, second_handle) = spawn(
+        &first,
+        1,
+        &worker,
+        &termination,
+        &mut ExecutionBudget::new(),
+    );
+    let environment = CExecutionEnvironment::new().with_modeled_pthread_binding(Some(
+        crate::languages::c::thread_runtime::ModeledPthreadBinding::builtin(),
+    ));
+    let join = |handle: ThreadHandle| {
+        c_call_assign(
+            "status",
+            "pthread_join",
+            vec![
+                CExpression::Value(handle.c_value()),
+                c_pointer_value(Pointer::null()),
+            ],
+        )
+    };
+    let state = second
+        .parent()
+        .clone()
+        .with_local("status", int32(9))
+        .with_local("copied_handle", first_handle.c_value());
+    let guessed = execute_c_statement_paths(
+        &state,
+        &c_call(
+            "pthread_join",
+            vec![c_uint64_literal(1), c_pointer_value(Pointer::null())],
+        ),
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    assert!(matches!(
+        &guessed[0].outcome,
+        CStatementOutcome::RuntimeError(_)
+    ));
+    let paths = execute_c_statement_paths(
+        &state,
+        &c_call_assign(
+            "status",
+            "pthread_join",
+            vec![
+                c_variable("copied_handle"),
+                c_pointer_value(Pointer::null()),
+            ],
+        ),
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    let CStatementOutcome::Normal(after_first) = &paths[0].outcome else {
+        panic!("modeled C join should consume the first child");
+    };
+    assert_eq!(after_first.locals.get("status"), Some(&int32(0)));
+    let (checked, _) =
+        prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
+            state.clone(),
+            c_call_assign(
+                "status",
+                "pthread_join",
+                vec![
+                    c_variable("copied_handle"),
+                    c_pointer_value(Pointer::null()),
+                ],
+            ),
+            PureFactContext::new(),
+            environment.clone(),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        );
+    assert_eq!(checked.paths().len(), 1);
+    let mut conclusion = checked.paths()[0].theorem().proposition();
+    while let Proposition::Implies(_, body) = conclusion {
+        conclusion = body;
+    }
+    assert!(matches!(
+        conclusion,
+        Proposition::CStatementVerifies {
+            outcome: CStatementOutcome::Normal(_),
+            ..
+        }
+    ));
+    let duplicate = execute_c_statement_paths(
+        after_first,
+        &join(first_handle),
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    assert!(matches!(
+        &duplicate[0].outcome,
+        CStatementOutcome::RuntimeError(_)
+    ));
+    let remaining = execute_c_statement_paths(
+        after_first,
+        &join(second_handle),
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    assert!(matches!(
+        &remaining[0].outcome,
+        CStatementOutcome::Normal(_)
+    ));
+}
+
+#[test]
 fn thread_join_preserves_other_child_loans_in_both_orders() {
     let (worker, termination) = worker();
     let assumptions = PureFactContext::new();

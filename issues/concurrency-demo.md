@@ -108,6 +108,16 @@ call is enabled, the guarded transfer must also handle symbolic state
 substitution and memory observations without reviving pre-create facts or
 rewinding unrelated writes on the failure branch.
 
+The modeled `pthread_join` C statement now consumes an existing checked
+completion right, returns zero, and rejects a copied handle after its first
+join or a guessed integer handle. A kernel statement theorem covers the call
+transition. This is not yet a source-level pthread client proof: the actual
+`pthread_create` call is still refused. The create result needs a pending
+status guard that keeps both the success transfer and failure memory facts
+valid through unrelated intervening C statements. The worker termination rule
+must also be available when the parent call is checked, rather than only
+after all function contracts finish certification.
+
 Use the checked modeled binding to give ordinary `step` on the unchanged
 `pthread_create` and `pthread_join` calls guarded create outcomes and one
 completion right tied to the actual handle and child identity. The selected

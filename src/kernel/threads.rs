@@ -129,6 +129,33 @@ impl ThreadLedger {
     }
 }
 
+impl ThreadHandle {
+    pub(super) fn c_value(self) -> CValue {
+        CValue::UInt64(super::Bitvector32Term::PureFunctionApplication {
+            // This name cannot be spelled by C or Click source. The term is
+            // copied as an opaque pthread_t value, never derived from its
+            // machine integer representation.
+            name: "\0click.pthread.handle".to_string(),
+            arguments: vec![super::Bitvector32Term::Variable(super::Variable(self.0))],
+        })
+    }
+
+    pub(super) fn from_c_value(value: &CValue) -> Option<Self> {
+        match value {
+            CValue::UInt64(super::Bitvector32Term::PureFunctionApplication { name, arguments })
+                if name == "\0click.pthread.handle"
+                    && matches!(arguments.as_slice(), [super::Bitvector32Term::Variable(_)]) =>
+            {
+                let super::Bitvector32Term::Variable(variable) = &arguments[0] else {
+                    unreachable!()
+                };
+                Some(Self(variable.0))
+            }
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Debug for ThreadLedger {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

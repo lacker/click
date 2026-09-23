@@ -390,6 +390,20 @@ pub(super) fn execute_c_call_assign_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    if environment
+        .modeled_pthread_binding
+        .as_ref()
+        .is_some_and(|binding| function_name == binding.join_name)
+    {
+        return execute_modeled_pthread_join_paths(
+            state,
+            Some(target),
+            arguments,
+            assumptions,
+            environment,
+            budget,
+        );
+    }
     if let Some(path) = unbound_modeled_pthread_call(function_name, environment) {
         return Ok(vec![path]);
     }
@@ -625,6 +639,20 @@ pub(super) fn execute_c_call_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    if environment
+        .modeled_pthread_binding
+        .as_ref()
+        .is_some_and(|binding| function_name == binding.join_name)
+    {
+        return execute_modeled_pthread_join_paths(
+            state,
+            None,
+            arguments,
+            assumptions,
+            environment,
+            budget,
+        );
+    }
     if let Some(path) = unbound_modeled_pthread_call(function_name, environment) {
         return Ok(vec![path]);
     }
@@ -722,6 +750,92 @@ fn unbound_modeled_pthread_call(
         obligations: Vec::new(),
         loan_evidence: empty_checked_loan_evidence_sequence(),
     })
+}
+
+fn execute_modeled_pthread_join_paths(
+    state: &CState,
+    target: Option<&str>,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let refusal = |message: &str| {
+        CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message.to_string()))
+    };
+    if environment.selected_call_contract.is_some() || arguments.len() != 2 {
+        return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
+            outcome: refusal("modeled-pthread join requires its direct two-argument C call"),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        }]);
+    }
+    let mut paths = Vec::new();
+    for mut path in super::functions::evaluate_c_arguments_paths(
+        state,
+        arguments,
+        assumptions,
+        budget,
+        Some(environment),
+    )? {
+        let outcome = if let Some(outcome) = path.outcome {
+            match outcome {
+                CFunctionOutcome::UndefinedBehavior(error) => {
+                    CStatementOutcome::UndefinedBehavior(error)
+                }
+                CFunctionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+                _ => refusal("modeled-pthread join argument did not evaluate"),
+            }
+        } else if !matches!(&path.values[1], CValue::Pointer(pointer) if pointer.is_null()) {
+            refusal("modeled-pthread join requires a null result slot")
+        } else if let Some(handle) = super::threads::ThreadHandle::from_c_value(&path.values[0]) {
+            let current = super::reasoning::path_facts::assumptions_with_path_context(
+                assumptions,
+                &path.facts,
+                &path.obligations,
+            );
+            match super::threads::ThreadContext::new(state.clone()).and_then(|context| {
+                context.join(
+                    handle,
+                    super::threads::JoinRuntimeAssumption::ValidJoinSucceeds,
+                    &current,
+                )
+            }) {
+                Ok((joined, facts)) => {
+                    path.facts.extend(facts);
+                    let mut next = joined.parent().clone();
+                    if target.is_some_and(|target| {
+                        assign_call_result(
+                            &mut next,
+                            target,
+                            CValue::Int32(Bitvector32Term::Constant(0)),
+                            &mut path.obligations,
+                            &current,
+                        )
+                        .is_none()
+                    }) {
+                        CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                    } else {
+                        CStatementOutcome::Normal(next)
+                    }
+                }
+                Err(message) => refusal(message),
+            }
+        } else {
+            refusal("modeled-pthread join handle does not name a live child")
+        };
+        paths.push(CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
+            outcome,
+            facts: path.facts,
+            obligations: path.obligations,
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        });
+    }
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
 }
 
 fn execute_c_indirect_call_assign_paths(
