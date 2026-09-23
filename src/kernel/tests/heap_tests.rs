@@ -1083,9 +1083,10 @@ fn interface_heap_join_retains_potential_live_allocation() {
         Some(&Bitvector32Term::Constant(16))
     );
     assert!(
-        !freed_join
+        freed_join
             .memory()
-            .is_deallocated_heap_address(&allocation_base, &PureFactContext::new())
+            .is_deallocated_heap_address(&allocation_base, &PureFactContext::new()),
+        "the freed arm keeps an alias unsafe at the join"
     );
 }
 
