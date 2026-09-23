@@ -9,7 +9,6 @@ fix, regression coverage, and documentation land.
 - [The indexed loan route is bypassed through a proven-equal spelling](loan-index-is-bypassed-through-equal-spellings.md) — machine-confirmed
 - [The owned-overlap rule misses cross-block pairs with proven equal bases](owned-overlap-rule-misses-alias-equal-pairs.md) — machine-confirmed
 - [Spec-carrier substitution has no binder handling: capture and silent drops](spec-substitution-captures-and-drops-binders.md) — machine-confirmed
-- [The loadable byte-offset route certifies a wrapped goal extent](wrapped-byte-extent-passes-loadable-bounds.md) — machine-confirmed
 - [Entry-partition separation facts are never re-checked after equalities](entry-partition-separation-facts-unrechecked.md) — statically confirmed
 - [The annotation quantifier counter is raised into other producers' bands](quantifier-counter-rises-into-other-producers.md) — statically confirmed
 - [The call-havoc retention's `local:` promise has no enforced boundary](call-havoc-local-retention-unenforced.md) — statically confirmed
