@@ -4807,6 +4807,10 @@ pub(super) struct ResourceContextIndex {
     pub(super) by_resource: PersistentMap<CResource, ResourceEntryIds>,
     pub(super) exact_shapes: PersistentMap<(ResourceFamily, String, usize), ResourceEntryIds>,
     pub(super) memory_by_block: PersistentMap<PointerBlock, ResourceEntryIds>,
+    /// Memory facts keyed by their exact base spelling. Direct pointer
+    /// equalities can then find only the facts whose bases they identify,
+    /// without scanning every resource in an aliased block.
+    pub(super) memory_by_base: PersistentMap<Pointer, ResourceEntryIds>,
     pub(super) owned_memory_by_block: PersistentMap<PointerBlock, ResourceEntryIds>,
     pub(super) memory_starts:
         PersistentMap<(PointerBlock, bool, Bitvector32Term), ResourceEntryIds>,

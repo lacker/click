@@ -4136,6 +4136,153 @@ fn checked_resource_composition_rejects_invalid_state_before_normalizing() {
 }
 
 #[test]
+fn equal_cross_block_pointer_bases_cannot_be_owned_twice() {
+    let symbolic = Pointer::symbolic(Variable(41_000));
+    let argument = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let symbolic_range = CMemoryRange::new(
+        symbolic.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    );
+    let argument_range = CMemoryRange::new(
+        argument.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    );
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::pointer_equal(symbolic.clone(), argument.clone()),
+        true,
+    );
+
+    assert!(memory_ranges_proven_overlapping(
+        &symbolic_range,
+        &argument_range,
+        &assumptions,
+    ));
+
+    let symbolic_owner = CResourceFact::own_memory(symbolic_range.clone());
+    let argument_owner = CResourceFact::own_memory(argument_range.clone());
+    let existing = ResourceContext::new().unchecked_with_fact(symbolic_owner.clone());
+    assert!(matches!(
+        existing
+            .clone()
+            .try_compose_with_fact(argument_owner.clone(), &assumptions),
+        Err(ResourceContextValidityError::OverlappingOwnedMemoryResources { .. })
+    ));
+
+    let unchecked = ResourceContext::new().unchecked_with_facts([symbolic_owner, argument_owner]);
+    assert!(matches!(
+        unchecked.validity_error(&assumptions),
+        Some(ResourceContextValidityError::OverlappingOwnedMemoryResources { .. })
+    ));
+
+    let adjacent = CResourceFact::own_memory(CMemoryRange::new(
+        argument,
+        Bitvector32Term::Constant(1),
+        Bitvector32Term::Constant(2),
+    ));
+    assert!(
+        existing
+            .try_compose_with_fact(adjacent, &assumptions)
+            .is_ok()
+    );
+}
+
+#[test]
+fn equal_content_string_literals_remain_readable_without_separation_evidence() {
+    let literal = |identity: &str| Pointer {
+        block: PointerBlock::StringLiteral {
+            identity: identity.to_string(),
+            bytes: b"ok\0".to_vec(),
+        },
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let first = literal("first");
+    let second = literal("second");
+    let range = |base| {
+        CMemoryRange::new_with_element_width(
+            base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(3),
+            1,
+        )
+    };
+    let first_range = range(first.clone());
+    let second_range = range(second.clone());
+    let assumptions =
+        PureFactContext::new().assume_condition(ConditionTerm::pointer_equal(first, second), true);
+
+    assert!(memory_ranges_proven_overlapping(
+        &first_range,
+        &second_range,
+        &assumptions,
+    ));
+    let resources = ResourceContext::new()
+        .try_compose_with_fact(CResourceFact::own_memory(first_range.clone()), &assumptions)
+        .unwrap()
+        .try_compose_with_fact(
+            CResourceFact::own_memory(second_range.clone()),
+            &assumptions,
+        )
+        .expect("equal read-only literals may share their bytes");
+    assert!(resources.is_valid(&assumptions));
+    assert!(!resources.proves_owned_memory_ranges_separate_shallow(&first_range, &second_range,));
+}
+
+#[test]
+fn cross_block_alias_owner_lookup_ignores_unrelated_bases() {
+    let target = Pointer {
+        block: PointerBlock::Symbolic(Variable(41_100)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let argument = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::pointer_equal(target.clone(), argument.clone()),
+        true,
+    );
+    let query = CResourceFact::own_memory(memory_range(argument, 0, 1));
+    let samples = [8usize, 16, 32, 64].map(|size| {
+        let mut facts = vec![CResourceFact::own_memory(memory_range(
+            target.clone(),
+            0,
+            1,
+        ))];
+        facts.extend((1..size).map(|index| {
+            CResourceFact::own_memory(memory_range(
+                Pointer {
+                    block: target.block.clone(),
+                    offset: PointerOffsetTerm::Constant((index * 8) as i64),
+                },
+                0,
+                1,
+            ))
+        }));
+        let existing = ResourceContext::new().unchecked_with_facts(facts);
+        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+            existing.try_compose_into_valid_context_delaying_normalization(
+                [query.clone()],
+                &assumptions,
+            )
+        });
+        assert!(
+            result.is_err(),
+            "the exact alias must be checked at size {size}"
+        );
+        work
+    });
+    assert!(
+        samples.windows(2).all(|pair| pair[1] <= pair[0] + 2),
+        "unrelated bases increased exact-alias lookup work: {samples:?}"
+    );
+}
+
+#[test]
 fn symbolic_same_block_ranges_emit_no_pairs_with_near_linear_work() {
     // The lazy-separation acceptance curve: N symbolic same-block owned
     // ranges expose one compact composition authority and zero pairwise
