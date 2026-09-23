@@ -16,7 +16,7 @@ theorem not_always_zero(x: int32) {
 ```
 
 ```expect
-fail: kernel goal: int32 =(v0, 0) is true
+fail: kernel goal: int32 =(value A, 0) is true
   recent premises (showing 1 of 1):
-    int32 =(v0, 0) is false
+    int32 =(value A, 0) is false
 ```

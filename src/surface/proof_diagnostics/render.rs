@@ -8,8 +8,9 @@
 use crate::kernel::{
     AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, Bitvector32Term, CExpressionOutcome, CMemory,
     CResource, CResourceFact, CState, ConditionTerm, IntegerRangeFoldIndex, IntegerTerm, Pointer,
-    PointerOffsetTerm, Proposition, PureFunctionArgument, SpecCaptureRefusal, Term,
+    PointerOffsetTerm, Proposition, PureFunctionArgument, SpecCaptureRefusal, Term, Variable,
 };
+use std::collections::HashMap;
 use std::fmt::Write;
 
 const MAX_BYTES: usize = 32 * 1024;
@@ -21,20 +22,40 @@ const MAX_DEPTH: usize = 96;
 /// sharing a label with a different memory.
 const MAX_SNAPSHOT_LABELS: usize = 32;
 
-/// The snapshot labels of one report.
+/// Report-local labels for memory snapshots and symbolic values.
 ///
 /// A snapshot used to print the addresses of the five `Arc` roots it is built
 /// from, so two structurally identical memories printed as different tuples
 /// and a reader could not tell "same memory" from "different memory" — the one
 /// thing those labels exist to show. A label is now a small ordinal, assigned
 /// in order of first appearance and shared by equal memories, so `snapshot#1`
-/// twice means one memory and `snapshot#1`/`snapshot#2` means two.
+/// twice means one memory and `snapshot#1`/`snapshot#2` means two. Internal
+/// variable IDs likewise become source names when the checked state provides
+/// one, or distinct alphabetic labels when it does not.
 #[derive(Default)]
 pub(crate) struct SnapshotLabels {
     memories: Vec<CMemory>,
+    source_names: HashMap<Variable, String>,
+    anonymous_names: HashMap<Variable, String>,
 }
 
 impl SnapshotLabels {
+    pub(crate) fn source_name(&mut self, variable: Variable, name: String) {
+        self.source_names.entry(variable).or_insert(name);
+    }
+
+    fn variable_name(&mut self, variable: Variable, kind: &str) -> String {
+        if let Some(name) = self.source_names.get(&variable) {
+            return name.clone();
+        }
+        if let Some(name) = self.anonymous_names.get(&variable) {
+            return name.clone();
+        }
+        let name = format!("{kind} {}", alphabetic_label(self.anonymous_names.len()));
+        self.anonymous_names.insert(variable, name.clone());
+        name
+    }
+
     /// The label of this memory: an existing ordinal when an equal memory has
     /// already been labeled, otherwise the next one.
     fn label(&mut self, memory: &CMemory) -> Option<usize> {
@@ -51,6 +72,19 @@ impl SnapshotLabels {
         self.memories.push(memory.clone());
         Some(self.memories.len())
     }
+}
+
+fn alphabetic_label(mut index: usize) -> String {
+    let mut letters = Vec::new();
+    loop {
+        letters.push((b'A' + (index % 26) as u8) as char);
+        index /= 26;
+        if index == 0 {
+            break;
+        }
+        index -= 1;
+    }
+    letters.into_iter().rev().collect()
 }
 
 /// Render one proposition without allowing its shape or attached snapshots to
@@ -76,6 +110,7 @@ pub(crate) fn render_resource_fact_labeled(
         depth: 0,
         truncated: false,
         labels,
+        bound_names: Vec::new(),
     };
     match fact {
         CResourceFact::Own(resource, quantity) => {
@@ -107,6 +142,7 @@ pub(crate) fn render_proposition_labeled(
         depth: 0,
         truncated: false,
         labels,
+        bound_names: Vec::new(),
     };
     renderer.proposition(proposition);
     if renderer.truncated {
@@ -135,6 +171,7 @@ pub(crate) fn render_integer_term(term: &IntegerTerm) -> String {
         depth: 0,
         truncated: false,
         labels: &mut labels,
+        bound_names: Vec::new(),
     };
     renderer.integer(term);
     if renderer.truncated {
@@ -165,9 +202,19 @@ struct Renderer<'a> {
     depth: usize,
     truncated: bool,
     labels: &'a mut SnapshotLabels,
+    bound_names: Vec<(Variable, String)>,
 }
 
 impl Renderer<'_> {
+    fn variable_name(&mut self, variable: Variable, kind: &str) -> String {
+        self.bound_names
+            .iter()
+            .rev()
+            .find(|(bound, _)| *bound == variable)
+            .map(|(_, name)| name.clone())
+            .unwrap_or_else(|| self.labels.variable_name(variable, kind))
+    }
+
     fn fmt(&mut self, arguments: std::fmt::Arguments<'_>) {
         struct Sink<'a, 'b>(&'a mut Renderer<'b>);
         impl std::fmt::Write for Sink<'_, '_> {
@@ -239,8 +286,11 @@ impl Renderer<'_> {
                 self.push(")");
             }
             Proposition::ForAll { var, sort, body } => {
-                self.fmt(format_args!("∀v{}:{sort:?}. ", var.0));
+                let name = self.variable_name(*var, "bound");
+                self.fmt(format_args!("∀{name}:{sort:?}. "));
+                self.bound_names.push((*var, name));
                 self.proposition(body);
+                self.bound_names.pop();
             }
             Proposition::Exists {
                 name,
@@ -248,8 +298,15 @@ impl Renderer<'_> {
                 sort,
                 body,
             } => {
-                self.fmt(format_args!("∃{name}/v{}:{sort:?}. ", var.0));
+                let binder = if name.is_empty() {
+                    self.variable_name(*var, "bound")
+                } else {
+                    name.clone()
+                };
+                self.fmt(format_args!("∃{binder}:{sort:?}. "));
+                self.bound_names.push((*var, binder));
                 self.proposition(body);
+                self.bound_names.pop();
             }
             Proposition::CMemoryLoadable {
                 memory,
@@ -485,7 +542,8 @@ impl Renderer<'_> {
         self.depth += 1;
         match &term.node {
             AlgebraicTermNode::Variable(variable) => {
-                self.fmt(format_args!("v{}:{}", variable.0, term.algebraic_type.name))
+                let name = self.variable_name(*variable, "value");
+                self.fmt(format_args!("{name}:{}", term.algebraic_type.name))
             }
             AlgebraicTermNode::Constructor { variant, fields } => {
                 self.fmt(format_args!("{}::{variant}", term.algebraic_type.name));
@@ -585,7 +643,10 @@ impl Renderer<'_> {
     fn condition(&mut self, c: &ConditionTerm) {
         match c {
             ConditionTerm::Constant(v) => self.push(if *v { "true" } else { "false" }),
-            ConditionTerm::Variable(v) => self.fmt(format_args!("condition-v{}", v.0)),
+            ConditionTerm::Variable(v) => {
+                let name = self.variable_name(*v, "condition");
+                self.push(&name);
+            }
             ConditionTerm::IntegerLessThan(a, b)
             | ConditionTerm::IntegerLessEqual(a, b)
             | ConditionTerm::IntegerGreaterThan(a, b)
@@ -708,7 +769,10 @@ impl Renderer<'_> {
             IntegerTerm::Variable(variable) => {
                 match crate::kernel::model_fields::model_field_spelling(*variable) {
                     Some(spelling) => self.push(&spelling),
-                    None => self.fmt(format_args!("i{}", variable.0)),
+                    None => {
+                        let name = self.variable_name(*variable, "integer");
+                        self.push(&name);
+                    }
                 }
             }
             IntegerTerm::Machine(value) => {
@@ -767,13 +831,14 @@ impl Renderer<'_> {
                         self.integer_shared(end);
                     }
                 }
-                self.fmt(format_args!(
-                    ", acc=i{}, item=i{}, init=",
-                    accumulator.0, item.0
-                ));
+                self.push(", acc=acc, item=item, init=");
                 self.integer_shared(initial);
                 self.push(", body=");
+                self.bound_names.push((*accumulator, "acc".into()));
+                self.bound_names.push((*item, "item".into()));
                 self.integer_shared(body);
+                self.bound_names.pop();
+                self.bound_names.pop();
                 self.push(")");
             }
         }
@@ -824,7 +889,8 @@ impl Renderer<'_> {
             && crate::kernel::is_load_variable(variable)
             && let Some((snapshot, pointer)) = crate::kernel::registered_load_for_variable(variable)
         {
-            self.fmt(format_args!("v{}=load(", variable.0));
+            let name = self.variable_name(*variable, "load");
+            self.fmt(format_args!("{name}=load("));
             self.memory(snapshot.memory());
             self.push(", pointer=");
             self.pointer(&pointer);
@@ -843,9 +909,13 @@ impl Renderer<'_> {
             Bitvector32Term::Variable(v)
                 if let Some(spelling) = crate::kernel::model_fields::model_field_spelling(*v) =>
             {
-                self.fmt(format_args!("v{}={spelling}", v.0))
+                let name = self.variable_name(*v, "value");
+                self.fmt(format_args!("{name}={spelling}"))
             }
-            Bitvector32Term::Variable(v) => self.fmt(format_args!("v{}", v.0)),
+            Bitvector32Term::Variable(v) => {
+                let name = self.variable_name(*v, "value");
+                self.push(&name);
+            }
             Bitvector32Term::Add(a, b) => self.binary_bv("+", a, b),
             Bitvector32Term::Subtract(a, b) => self.binary_bv("-", a, b),
             Bitvector32Term::Multiply(a, b) => self.binary_bv("*", a, b),
@@ -863,11 +933,12 @@ impl Renderer<'_> {
                 self.bitvector(end);
                 self.push(", init=");
                 self.bitvector(initial);
-                self.fmt(format_args!(
-                    ", acc=v{}, item=v{}, body=",
-                    accumulator.0, item.0
-                ));
+                self.push(", acc=acc, item=item, body=");
+                self.bound_names.push((*accumulator, "acc".into()));
+                self.bound_names.push((*item, "item".into()));
                 self.bitvector(body);
+                self.bound_names.pop();
+                self.bound_names.pop();
                 self.push(")");
             }
             Bitvector32Term::PureFunctionApplication { name, arguments } => {
@@ -930,7 +1001,10 @@ impl Renderer<'_> {
         }
         match o {
             PointerOffsetTerm::Constant(v) => self.fmt(format_args!("{v}")),
-            PointerOffsetTerm::Variable(v) => self.fmt(format_args!("off{}", v.0)),
+            PointerOffsetTerm::Variable(v) => {
+                let name = self.variable_name(*v, "offset");
+                self.push(&name);
+            }
             PointerOffsetTerm::Add(a, b) => {
                 self.depth += 1;
                 self.push("(");
@@ -960,7 +1034,8 @@ impl Renderer<'_> {
             crate::kernel::PointerBlock::Symbolic(v)
             | crate::kernel::PointerBlock::FunctionSymbolic(v)
             | crate::kernel::PointerBlock::ExternalObject(v) => {
-                self.fmt(format_args!("symbolic#{}", v.0))
+                let name = self.variable_name(*v, "pointer");
+                self.push(&name);
             }
             crate::kernel::PointerBlock::ExternalArgument => self.push("external"),
             crate::kernel::PointerBlock::StringLiteral { identity, .. } => self.push(identity),
@@ -1144,8 +1219,27 @@ mod tests {
             )),
         };
         let rendered = render_proposition(&proposition);
-        assert!(rendered.contains("∀v7:Integer"));
+        assert!(rendered.contains("∀bound A:Integer"), "{rendered}");
         assert!(rendered.contains("2"));
+    }
+
+    #[test]
+    fn source_names_and_report_local_names_replace_variable_ids() {
+        let mut labels = SnapshotLabels::default();
+        labels.source_name(Variable(7), "cur".into());
+        let proposition = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(Variable(7))),
+                Box::new(Bitvector32Term::Variable(Variable(8))),
+            ),
+            true,
+        );
+        let first = render_proposition_labeled(&proposition, &mut labels);
+        let second = render_proposition_labeled(&proposition, &mut labels);
+        assert_eq!(first, second);
+        assert!(first.contains("cur"), "{first}");
+        assert!(first.contains("value A"), "{first}");
+        assert!(!first.contains("v7") && !first.contains("v8"), "{first}");
     }
 
     #[test]
@@ -1187,8 +1281,8 @@ mod tests {
             Term::Bitvector32(Bitvector32Term::Constant(0)),
         ));
         assert!(rendered.contains("fold("));
-        assert!(rendered.contains("acc=v8"));
-        assert!(rendered.contains("body=v10"));
+        assert!(rendered.contains("acc=acc, item=item"), "{rendered}");
+        assert!(rendered.contains("body=value A"), "{rendered}");
     }
 
     fn loadable_at(memory: CMemory) -> Proposition {
@@ -1312,8 +1406,8 @@ mod tests {
         ));
         assert!(rendered.contains("2"));
         assert!(rendered.contains("9"));
-        assert!(rendered.contains("i8"));
-        assert!(rendered.contains("i9"));
+        assert!(rendered.contains("acc=acc, item=item"), "{rendered}");
+        assert!(rendered.contains("body=(acc+item)"), "{rendered}");
     }
 
     #[test]

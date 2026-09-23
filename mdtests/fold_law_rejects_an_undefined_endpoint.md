@@ -23,5 +23,5 @@ theorem fold_rejects_an_undefined_endpoint(lo: int32, hi: int32) {
 ```
 
 ```expect
-fail: the fold's range endpoint denotes this value only where `int32 overflow(v1 - 1) is false` holds, and that is not available here
+fail: the fold's range endpoint denotes this value only where `int32 overflow(value A - 1) is false` holds, and that is not available here
 ```

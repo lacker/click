@@ -13,6 +13,7 @@ pub(crate) mod render;
 /// A lazily inspectable proof state. Implementations retain a persistent proof
 /// handle rather than cloning the goal, environment, or derivation history.
 pub(crate) trait ProofDiagnosticState: Send + Sync {
+    fn register_names(&self, _labels: &mut render::SnapshotLabels) {}
     fn kernel_goal(&self) -> Option<&Proposition>;
     fn premises(&self, limit: usize) -> Vec<&Proposition>;
     fn premise_count(&self) -> usize;
@@ -104,6 +105,9 @@ pub(crate) fn render_terminal_message_labeled(
     search_failures: &[ProofSearchFailure],
     labels: &mut render::SnapshotLabels,
 ) -> String {
+    if let Some(state) = &diagnostic.state {
+        state.register_names(labels);
+    }
     // Keep the established summary as the first line. The richer context is
     // deliberately bounded and rendered only at this terminal boundary.
     let mut rendered = summary.to_owned();

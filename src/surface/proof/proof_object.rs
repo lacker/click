@@ -848,7 +848,63 @@ type OutcomeObligation = FunctionOutcomeObligation<Arc<OutcomeProofData>>;
 /// checker. Formatting happens only when the terminal error message is read.
 struct ProofDiagnosticProofState(KernelProofHandle, Arc<ProofNode>);
 
+fn diagnostic_value_variable(value: &CValue) -> Option<Variable> {
+    match value {
+        CValue::Bool(term)
+        | CValue::Int8(term)
+        | CValue::Int16(term)
+        | CValue::Int32(term)
+        | CValue::UInt8(term)
+        | CValue::UInt16(term)
+        | CValue::UInt32(term)
+        | CValue::Int64(term)
+        | CValue::UInt64(term)
+        | CValue::Float32(term)
+        | CValue::Float64(term) => match term {
+            Bitvector32Term::Variable(variable) => Some(*variable),
+            _ => None,
+        },
+        CValue::Pointer(pointer) => match &pointer.pointer().offset {
+            PointerOffsetTerm::Variable(variable) => Some(*variable),
+            // C pointers to sized elements keep their direct symbolic offset
+            // in element units. An added displacement is composite and does
+            // not identify the pointer local itself.
+            PointerOffsetTerm::Int32Scaled { value, .. }
+            | PointerOffsetTerm::Int64Scaled { value, .. } => match value.as_ref() {
+                Bitvector32Term::Variable(variable) => Some(*variable),
+                _ => None,
+            },
+            _ => None,
+        },
+        CValue::Void => None,
+    }
+}
+
 impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnosticProofState {
+    fn register_names(
+        &self,
+        labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+    ) {
+        // A proof `let r = step(...)` holds the exact scalar result, so its
+        // user-chosen name wins over the synthesized C assignment target.
+        for (name, expression) in self.0.state().locals().values.iter() {
+            if let ContractExpression::CFragment(CExpression::Value(value)) = expression
+                && let Some(variable) = diagnostic_value_variable(value)
+            {
+                labels.source_name(variable, name.clone());
+            }
+        }
+        if let Some(branch) = self.0.state().open_branches().get(self.0.focused_branch())
+            && let Some(execution) = branch.state.execution.as_deref()
+        {
+            for (name, value) in execution.core.state.locals().object_values() {
+                if let Some(variable) = diagnostic_value_variable(value) {
+                    labels.source_name(variable, name.to_string());
+                }
+            }
+        }
+    }
+
     fn kernel_goal(&self) -> Option<&Proposition> {
         let branch = self
             .0

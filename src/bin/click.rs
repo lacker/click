@@ -204,6 +204,67 @@ mod tests {
     }
 
     #[test]
+    fn trace_names_source_values_and_distinguishes_saved_loads() {
+        let directory =
+            std::env::temp_dir().join(format!("click-trace-source-names-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("calls.c"),
+            "int32 child(int32 *a, int32 *visited, int32 x) { visited[0] = 1; return 1; }\nint32 parent(int32 *a, int32 *visited, int32 cur) { return child(a, visited, a[cur]); }\n",
+        )
+        .unwrap();
+        let sidecar = directory.join("calls.click");
+        fs::write(
+            &sidecar,
+            r#"verifying "calls.c";
+int32 child(int32 *a, int32 *visited, int32 x) {
+    views a[0..2];
+    owns visited[0..1];
+    requires separate(memory(a[0..2]), memory(visited[0..1]));
+    ensures result == 1 by { execute(); simp(); }
+    ensures result != 0 implies exists (z: int32) { z == x } by {
+        execute(); intro(); witness(z = x); normalize();
+    }
+}
+int32 parent(int32 *a, int32 *visited, int32 cur) {
+    views a[0..2];
+    owns visited[0..1];
+    requires separate(memory(a[0..2]), memory(visited[0..1]));
+    requires 0 <= cur;
+    requires cur < 2;
+    ensures result == 1;
+} by {
+    let r = step(child(a, visited, a[cur]), { });
+    have r != 0 by { simp(); }
+    have defined(a[cur]) by { simp(); }
+    have exists (z: int32) { z == a[cur] } by {
+        extract(exists (z: int32) { z == a[cur] });
+        assumption();
+    }
+    step(); simp();
+}
+"#,
+        )
+        .unwrap();
+        let report = entry([
+            "verify".to_string(),
+            "--trace-proof".to_string(),
+            "parent".to_string(),
+            sidecar.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(report.contains("int32 =(r, 0) is false"), "{report}");
+        assert!(report.contains("(a*4+cur*4)"), "{report}");
+        assert!(report.contains("load A=load("), "{report}");
+        assert!(report.contains("load B=load("), "{report}");
+        assert!(!report.contains("v1000001"), "{report}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn failed_call_names_the_c_operation_and_parameter_bindings() {
         let directory =
             std::env::temp_dir().join(format!("click-call-error-context-{}", std::process::id()));
