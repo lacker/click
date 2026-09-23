@@ -348,6 +348,10 @@ pub(in crate::surface) enum FunctionRequirementSource {
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub(in crate::surface) struct FunctionSourceRequirements {
     requirements: Vec<Option<FunctionRequirementSource>>,
+    /// Source-only call-trace context. These are declaration templates, not
+    /// claims that their caller-instantiated facts have an exact spelling.
+    parameter_names: Vec<String>,
+    proposition_ensures: Vec<ClickProposition>,
 }
 
 impl FunctionSourceRequirements {
@@ -365,7 +369,25 @@ impl FunctionSourceRequirements {
                 Requirement::Resource(_) | Requirement::Labeled { .. } => None,
             })
             .collect();
-        Self { requirements }
+        let parameter_names = function
+            .signature()
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.name().to_string())
+            .collect();
+        let proposition_ensures = function
+            .ensures()
+            .iter()
+            .filter_map(|clause| match clause.ensure() {
+                Ensure::Proposition(proposition) => Some(proposition.clone()),
+                Ensure::Resource(_) => None,
+            })
+            .collect();
+        Self {
+            requirements,
+            parameter_names,
+            proposition_ensures,
+        }
     }
 
     /// Returns the source form at the exact outer requirement ordinal.  A
@@ -374,6 +396,10 @@ impl FunctionSourceRequirements {
     #[allow(dead_code)]
     pub(in crate::surface) fn get(&self, ordinal: usize) -> Option<&FunctionRequirementSource> {
         self.requirements.get(ordinal).and_then(Option::as_ref)
+    }
+
+    pub(in crate::surface) fn trace_guarantees(&self) -> (&[String], &[ClickProposition]) {
+        (&self.parameter_names, &self.proposition_ensures)
     }
 
     #[cfg(test)]

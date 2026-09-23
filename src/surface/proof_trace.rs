@@ -19,11 +19,22 @@ struct Capture {
 
 pub(super) struct TraceStep {
     pub header: String,
+    pub call_source: Option<TraceCallSource>,
     pub facts: Vec<TraceFact>,
     pub more_facts: usize,
     pub frontier: Option<String>,
     pub resources: Vec<(usize, usize, CResourceFact)>,
     pub more_resources: usize,
+}
+
+/// Written call context, deliberately separate from exact checked facts.
+/// Instantiating a callee guarantee with an evaluated historical load can
+/// produce a fact that no Click proposition currently lowers to exactly.
+pub(super) struct TraceCallSource {
+    pub call: String,
+    pub arguments: Vec<(String, String)>,
+    pub guarantees: Vec<String>,
+    pub more_guarantees: usize,
 }
 
 pub(super) struct TraceFact {
@@ -126,6 +137,28 @@ pub(super) fn render(
                 continue;
             };
             let mut detail = step.header.clone();
+            if let Some(call) = &step.call_source {
+                detail.push_str("\n      source call: ");
+                detail.push_str(&trace_text(&call.call, 240));
+                for (parameter, argument) in &call.arguments {
+                    detail.push_str("\n      argument ");
+                    detail.push_str(&trace_text(parameter, 60));
+                    detail.push_str(" = ");
+                    detail.push_str(&trace_text(argument, 160));
+                }
+                for guarantee in &call.guarantees {
+                    detail.push_str("\n      callee ensures (source template): ");
+                    detail.push_str(&trace_text(guarantee, 240));
+                }
+                if call.more_guarantees > 0 {
+                    detail.push_str(&format!(
+                        "\n      … {} more source guarantees",
+                        call.more_guarantees
+                    ));
+                }
+            }
+            let mut unspelled = 0;
+            let mut unspelled_snapshots = Vec::new();
             for fact in &step.facts {
                 if let Some(source) = fact.source.as_ref() {
                     detail.push_str("\n      fact + ");
@@ -135,6 +168,17 @@ pub(super) fn render(
                 {
                     detail.push_str("\n      fact + ");
                     detail.push_str(&trace_text(&source, 240));
+                } else if step
+                    .call_source
+                    .as_ref()
+                    .is_some_and(|call| !call.guarantees.is_empty())
+                {
+                    // The source guarantees already explain this call. A
+                    // historical evaluated argument can prevent any exact
+                    // caller-side Click proposition from naming its fact;
+                    // do not turn the kernel rendering into a rival syntax.
+                    unspelled += 1;
+                    append_fact_snapshots(&fact.kernel, labels, &mut unspelled_snapshots);
                 } else {
                     detail.push_str("\n      internal fact + (no exact Click spelling)");
                     detail.push_str("\n        kernel detail: ");
@@ -142,6 +186,15 @@ pub(super) fn render(
                         &render::render_proposition_labeled(&fact.kernel, labels),
                         240,
                     ));
+                }
+            }
+            if unspelled > 0 {
+                detail.push_str(&format!(
+                    "\n      {unspelled} checked fact(s) have no exact caller-side Click spelling"
+                ));
+                if !unspelled_snapshots.is_empty() {
+                    detail.push_str("; checked fact snapshot(s): ");
+                    detail.push_str(&unspelled_snapshots.join(", "));
                 }
             }
             if step.more_facts > 0 {
@@ -191,6 +244,67 @@ fn trace_text(text: &str, max_bytes: usize) -> String {
     format!("{}…", &text[..end])
 }
 
+/// The source template cannot express a historical evaluated argument, but
+/// the checked fact can still identify its memory without printing a second
+/// pseudo-language. Keep this diagnostic traversal independent of synthesis.
+fn append_fact_snapshots(
+    fact: &Proposition,
+    labels: &mut SnapshotLabels,
+    snapshots: &mut Vec<String>,
+) {
+    let mut pending = vec![fact];
+    let mut visited = 0;
+    while let Some(fact) = pending.pop() {
+        visited += 1;
+        if visited > 256 || snapshots.len() >= 32 {
+            break;
+        }
+        let memories = match fact {
+            Proposition::ConditionIs(condition, _) => {
+                let mut memories = crate::kernel::c_condition_fact_memories(fact);
+                let mut variables = std::collections::BTreeSet::new();
+                crate::kernel::collect_condition_bitvector_variables(condition, &mut variables);
+                for variable in variables {
+                    if let Some((memory, _)) =
+                        crate::kernel::registered_load_for_variable(&variable)
+                    {
+                        memories.push(memory.memory().clone());
+                    }
+                }
+                memories
+            }
+            Proposition::CMemoryLoads { memory, .. }
+            | Proposition::CMemoryCanStore { memory, .. }
+            | Proposition::CMemoryLoadable { memory, .. } => vec![memory.clone()],
+            Proposition::CMemoryMutatesOnly { before, after, .. }
+            | Proposition::CMemoryEffectSummary { before, after, .. }
+            | Proposition::CHeapAllocationFreed { before, after, .. } => {
+                vec![before.clone(), after.clone()]
+            }
+            Proposition::And(left, right)
+            | Proposition::Or(left, right)
+            | Proposition::Implies(left, right) => {
+                pending.push(right);
+                pending.push(left);
+                Vec::new()
+            }
+            Proposition::Not(body)
+            | Proposition::ForAll { body, .. }
+            | Proposition::Exists { body, .. } => {
+                pending.push(body);
+                Vec::new()
+            }
+            _ => Vec::new(),
+        };
+        for memory in memories {
+            let name = labels.snapshot_name(&memory);
+            if !snapshots.contains(&name) {
+                snapshots.push(name);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +330,7 @@ mod tests {
                 1,
                 TraceStep {
                     header: "\n    source tactic 0: step".into(),
+                    call_source: None,
                     facts: vec![
                         TraceFact {
                             kernel: loadable_at(first.clone()),
@@ -252,6 +367,7 @@ mod tests {
         with_proof_trace("f", || {
             let step = |header| TraceStep {
                 header,
+                call_source: None,
                 facts: Vec::new(),
                 more_facts: 0,
                 frontier: None,
@@ -274,6 +390,7 @@ mod tests {
                 1,
                 TraceStep {
                     header: "\n    source tactic 0: have".into(),
+                    call_source: None,
                     facts: vec![TraceFact {
                         kernel: Proposition::ConditionIs(
                             crate::kernel::ConditionTerm::Constant(true),

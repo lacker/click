@@ -77,6 +77,13 @@ impl SnapshotLabels {
         self.memories.push(memory.clone());
         Some(self.memories.len())
     }
+
+    pub(crate) fn snapshot_name(&mut self, memory: &CMemory) -> String {
+        self.label(memory).map_or_else(
+            || "snapshot<untracked>".to_owned(),
+            |index| format!("snapshot#{index}"),
+        )
+    }
 }
 
 /// A deliberately small, exact Click spelling for facts whose operands are

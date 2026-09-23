@@ -263,14 +263,93 @@ int32 parent(int32 *a, int32 *visited, int32 cur) {
         assert!(report.contains("    r != 0"), "{report}");
         assert!(report.contains("fact + r == 1"), "{report}");
         assert!(
-            report.contains("internal fact + (no exact Click spelling)"),
+            report.contains("callee ensures (source template): result != 0 implies exists"),
+            "{report}"
+        );
+        assert!(
+            report.contains("1 checked fact(s) have no exact caller-side Click spelling; checked fact snapshot(s): snapshot#4"),
             "{report}"
         );
         assert!(report.contains("snapshot identity (internal):"), "{report}");
         assert!(report.contains("(a*4+cur*4)"), "{report}");
         assert!(report.contains("load A=load("), "{report}");
-        assert!(report.contains("load B=load("), "{report}");
         assert!(!report.contains("v1000001"), "{report}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn trace_shows_call_guarantee_source_without_claiming_an_exact_instantiation() {
+        let directory =
+            std::env::temp_dir().join(format!("click-trace-call-guarantee-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("calls.c"),
+            "extern int32 child(int32 *a, int32 *b, int32 n, int32 x);\nint32 parent(int32 *a, int32 *b, int32 n, int32 i) { return child(a, b, n, a[i]); }\n",
+        )
+        .unwrap();
+        let sidecar = directory.join("calls.click");
+        fs::write(
+            &sidecar,
+            r#"verifying "calls.c";
+spec enum Path { Here }
+function pick(x: int32, path: Path) -> int32 {
+    match path { Path::Here => x }
+}
+extern int32 child(int32 *a, int32 *b, int32 n, int32 x) {
+    views a[0..n];
+    owns b[0..1];
+    requires separate(memory(a[0..n]), memory(b[0..1]));
+    ensures exists (path: Path) { pick(x, path) == x };
+}
+int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
+    requires 0 <= i;
+    requires i < n;
+    views a[0..n];
+    owns b[0..1];
+    requires separate(memory(a[0..n]), memory(b[0..1]));
+    ensures result == result;
+} by {
+    mark before_call;
+    let r = step(child(a, b, n, a[i]), {});
+    have defined(at(before_call, a[i])) by { simp(); }
+    have exists (path: Path) {
+        pick(at(before_call, a[i]), path) == at(before_call, a[i])
+    } by { assumption(); }
+    step(); simp();
+}
+"#,
+        )
+        .unwrap();
+        let report = entry([
+            "verify".to_string(),
+            "--trace-proof".to_string(),
+            "parent".to_string(),
+            sidecar.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(
+            report.contains("source call: let r = step(child("),
+            "{report}"
+        );
+        assert!(report.contains("argument x = a[i]"), "{report}");
+        assert!(
+            report.contains(
+                "callee ensures (source template): exists (path: Path) { pick(x, path) == x }"
+            ),
+            "{report}"
+        );
+        assert!(
+            report.contains("1 checked fact(s) have no exact caller-side Click spelling"),
+            "{report}"
+        );
+        assert!(
+            report.contains("checked fact snapshot(s): snapshot#"),
+            "{report}"
+        );
+        assert!(!report.contains("kernel detail: ∃path"), "{report}");
         fs::remove_dir_all(directory).unwrap();
     }
 

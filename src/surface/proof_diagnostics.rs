@@ -355,6 +355,7 @@ mod tests {
                 1,
                 crate::surface::proof_trace::TraceStep {
                     header: "\n    source tactic 0: step".into(),
+                    call_source: None,
                     facts: vec![crate::surface::proof_trace::TraceFact {
                         kernel: at(memory.clone()),
                         source: None,

@@ -573,6 +573,9 @@ impl<'a> Proof<'a> {
         origin: Option<ProofStepOrigin>,
     ) -> Result<Self, ClickError> {
         let tactic = proof_step_source_name(&step);
+        let call_source = crate::surface::proof_trace::enabled_for(self.claim_label())
+            .then(|| self.trace_call_source(&step))
+            .flatten();
         let result = self
             .apply_step_with_origin_inner(step, origin)
             .map_err(|error| {
@@ -583,20 +586,136 @@ impl<'a> Proof<'a> {
             && crate::surface::proof_trace::enabled_for(self.claim_label())
             && !Arc::ptr_eq(&self.node, &next.node)
         {
-            self.record_checked_trace_step(next, tactic);
+            self.record_checked_trace_step(next, tactic, call_source);
         }
         result
     }
 
+    /// The callee's written guarantees are useful provenance for a checked
+    /// call, but are not claimed to be exact caller-side spellings after
+    /// evaluated arguments and memory snapshots are substituted.
+    fn trace_call_source(
+        &self,
+        step: &ProofStep,
+    ) -> Option<crate::surface::proof_trace::TraceCallSource> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return None;
+        };
+        let (callee, call, written_arguments, named_contract) = match step {
+            ProofStep::StepCall(transport) => (
+                transport.callee().to_string(),
+                transport.to_string(),
+                transport
+                    .arguments()
+                    .iter()
+                    .map(crate::surface::diagnostics::describe_contract_expression)
+                    .collect::<Vec<_>>(),
+                false,
+            ),
+            ProofStep::StepContract(application) => (
+                application.name.clone(),
+                format!("step({})", application.name),
+                Vec::new(),
+                true,
+            ),
+            ProofStep::Step => {
+                let execution = self.execution()?;
+                let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
+                    execution.view(context),
+                    &execution.core.state,
+                    context.function,
+                    context.arguments,
+                    context.claim_label,
+                    context.tactic_index,
+                    "step",
+                )
+                .ok()?;
+                let callee = match statement {
+                    CStatement::CallAssign { function_name, .. }
+                    | CStatement::Call { function_name, .. } => function_name,
+                    _ => return None,
+                };
+                (
+                    callee.clone(),
+                    format!("step({callee}(...))"),
+                    Vec::new(),
+                    false,
+                )
+            }
+            _ => return None,
+        };
+        let ordinary = (!named_contract)
+            .then(|| {
+                context
+                    .constants
+                    .function_source_registry
+                    .ordinary_function(&callee)
+            })
+            .flatten();
+        let (parameter_names, guarantees, more_guarantees) = if let Some(source) = ordinary {
+            let (names, propositions) = source.trace_guarantees();
+            (
+                names.iter().take(8).cloned().collect::<Vec<_>>(),
+                propositions
+                    .iter()
+                    .take(4)
+                    .map(crate::surface::printing::source_click_proposition)
+                    .collect::<Vec<_>>(),
+                propositions.len().saturating_sub(4),
+            )
+        } else {
+            let definition = context.predicate_environment.contract_definition(&callee)?;
+            let block = definition.function_block();
+            let propositions = block
+                .ensures()
+                .iter()
+                .filter_map(|clause| match clause.ensure() {
+                    Ensure::Proposition(proposition) => Some(proposition),
+                    Ensure::Resource(_) => None,
+                });
+            let proposition_count = propositions.clone().count();
+            let guarantees = propositions
+                .take(4)
+                .map(crate::surface::printing::source_click_proposition)
+                .collect::<Vec<_>>();
+            let more_guarantees = proposition_count.saturating_sub(guarantees.len());
+            let parameter_names = block
+                .signature()
+                .parameters()
+                .iter()
+                .take(8)
+                .map(|parameter| parameter.name().to_string())
+                .collect();
+            (parameter_names, guarantees, more_guarantees)
+        };
+        let arguments = parameter_names
+            .into_iter()
+            .zip(written_arguments)
+            .take(8)
+            .collect();
+        Some(crate::surface::proof_trace::TraceCallSource {
+            call,
+            arguments,
+            guarantees,
+            more_guarantees,
+        })
+    }
+
     /// Read only the changed fact/resource keys, and only under an explicit
     /// trace request. The checked successor and its certificate are untouched.
-    fn record_checked_trace_step(&self, next: &Self, tactic: &str) {
+    fn record_checked_trace_step(
+        &self,
+        next: &Self,
+        tactic: &str,
+        call_source: Option<crate::surface::proof_trace::TraceCallSource>,
+    ) {
         let location = self
             .site()
             .path()
             .unwrap_or_else(|| format!("checked step {}", next.node.depth));
         let mut detail = crate::surface::proof_trace::TraceStep {
             header: format!("\n    {location}: {tactic}"),
+            call_source,
             facts: Vec::new(),
             more_facts: 0,
             frontier: None,
@@ -613,7 +732,6 @@ impl<'a> Proof<'a> {
         for fact in added.iter().take(8) {
             let source = next.branch_execution().and_then(|execution| {
                 let forms = &execution.presentation.surface_propositions;
-                forms.surfaces(fact).next()?;
                 next.available_surface_fact(forms, None, fact)
                     .map(|surface| crate::surface::printing::source_click_proposition(&surface))
                     .filter(|source| !source.contains("__click_"))
