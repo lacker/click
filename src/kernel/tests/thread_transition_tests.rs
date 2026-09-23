@@ -1165,75 +1165,143 @@ fn thread_reborrowed_view_stays_pinned_until_child_joins() {
     let occurrence = state.resources().occurrences_for_fact(&view)[0];
     let binding = state.loan_view_bindings().get(&occurrence).unwrap().clone();
     let participant = state.loan_participant().unwrap();
-    let original_bindings = state.loan_view_bindings().clone();
     let parent = ThreadContext::new(state).unwrap();
     let mut budget = ExecutionBudget::new();
-    let (first, a) = spawn(&parent, 0, &reader, &termination, &mut budget);
-    assert!(
-        first
-            .parent()
-            .resources()
-            .loan_dependency(occurrence)
-            .is_some(),
-        "first spawn must preserve the parent's view binding"
-    );
-    assert!(
-        first
-            .parent()
-            .loan_ledger()
-            .unwrap()
-            .validate_view_binding(binding.clone(), participant)
-            .is_err()
-    );
-    // The initial slice has no explicit share-splitting protocol: a pinned
-    // parent view cannot be reborrowed by a second concurrent reader.
-    assert!(
-        first
-            .spawn(
-                &reader,
-                Some(&termination),
-                CValue::pointer(pointer(0)),
+    for reverse in [false, true] {
+        let (first, a) = spawn(&parent, 0, &reader, &termination, &mut budget);
+        let (second, b) = spawn(&first, 0, &reader, &termination, &mut budget);
+        assert!(
+            second
+                .parent()
+                .loan_ledger()
+                .unwrap()
+                .validate_view_binding(binding.clone(), participant)
+                .is_err(),
+            "the original whole share is split while children are live"
+        );
+        assert!(second.parent().loan_bindings_are_consistent());
+        assert!(
+            !second
+                .parent()
+                .thread_ledger
+                .as_ref()
+                .unwrap()
+                .witnesses_loan_recovery(
+                    parent.parent().loan_ledger().unwrap(),
+                    second.parent().loan_ledger().unwrap(),
+                    participant,
+                )
+        );
+        let (joined, _) = second
+            .join(
+                if reverse { b } else { a },
+                JoinRuntimeAssumption::ValidJoinSucceeds,
                 &PureFactContext::new(),
-                &CExecutionEnvironment::new(),
-                &mut budget,
             )
-            .unwrap()
-            .is_err()
+            .unwrap();
+        assert!(joined.parent().loan_bindings_are_consistent());
+        let (finished, _) = joined
+            .join(
+                if reverse { a } else { b },
+                JoinRuntimeAssumption::ValidJoinSucceeds,
+                &PureFactContext::new(),
+            )
+            .unwrap();
+        assert_eq!(
+            finished.parent().loan_view_bindings().get(&occurrence),
+            Some(&binding),
+            "the exact root share must be reconstructed after both joins"
+        );
+        assert!(finished.parent().loan_bindings_are_consistent());
+        assert!(
+            finished
+                .parent()
+                .thread_ledger
+                .as_ref()
+                .unwrap()
+                .witnesses_loan_recovery(
+                    parent.parent().loan_ledger().unwrap(),
+                    finished.parent().loan_ledger().unwrap(),
+                    participant,
+                )
+        );
+    }
+}
+
+#[test]
+fn joining_one_of_many_shared_readers_touches_only_its_share_branch() {
+    let function = c_function(
+        CType::Int32,
+        "thread_reader",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_return(c_load(c_variable("p"))),
+    )
+    .with_resource_summary(
+        vec![CResourceSpec::viewed_memory(CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        ))],
+        vec![],
+    )
+    .with_contract(
+        vec![],
+        vec![],
+        vec![],
+        vec![CFunctionContractClaim::body_safety()],
+        true,
     );
-    let (joined, _) = first
-        .join(
-            a,
-            JoinRuntimeAssumption::ValidJoinSucceeds,
-            &PureFactContext::new(),
-        )
-        .unwrap();
+    let (reader, termination) = certify_worker(function.clone());
+    let view = CResourceFact::view_memory(range(0, 0, 1));
+    let state = c_state_with_borrowed_contract_inputs(
+        parent(1).with_resource_context(ResourceContext::new().unchecked_with_fact(view.clone())),
+        &function,
+        &[c_pointer_value(pointer(0))],
+        &PureFactContext::new(),
+    )
+    .unwrap();
+    let occurrence = state.resources().occurrences_for_fact(&view)[0];
+    let root_binding = state.loan_view_bindings().get(&occurrence).unwrap().clone();
+    let mut samples = Vec::new();
+    for size in [8, 16, 32, 64] {
+        let mut context = ThreadContext::new(state.clone()).unwrap();
+        let mut handles = Vec::new();
+        let mut budget = ExecutionBudget::new();
+        for _ in 0..size {
+            let (next, handle) = spawn(&context, 0, &reader, &termination, &mut budget);
+            context = next;
+            handles.push(handle);
+        }
+        let ((next, _), work) = crate::instrumentation::measure_deterministic_work(|| {
+            context
+                .join(
+                    handles[0],
+                    JoinRuntimeAssumption::ValidJoinSucceeds,
+                    &PureFactContext::new(),
+                )
+                .unwrap()
+        });
+        samples.push((size, work));
+        context = next;
+        for handle in handles.into_iter().skip(1) {
+            context = context
+                .join(
+                    handle,
+                    JoinRuntimeAssumption::ValidJoinSucceeds,
+                    &PureFactContext::new(),
+                )
+                .unwrap()
+                .0;
+        }
+        assert_eq!(
+            context.parent().loan_view_bindings().get(&occurrence),
+            Some(&root_binding)
+        );
+    }
     assert!(
-        joined
-            .parent()
-            .loan_ledger()
-            .unwrap()
-            .validate_view_binding(binding.clone(), participant)
-            .is_ok()
+        samples.last().unwrap().1 <= samples[0].1 * 3,
+        "joining a fixed shared reader scanned unrelated children: {samples:?}"
     );
-    assert_eq!(joined.parent().loan_view_bindings(), &original_bindings);
-    let (second, b) = spawn(&joined, 0, &reader, &termination, &mut budget);
-    let (finished, _) = second
-        .join(
-            b,
-            JoinRuntimeAssumption::ValidJoinSucceeds,
-            &PureFactContext::new(),
-        )
-        .unwrap();
-    assert!(
-        finished
-            .parent()
-            .loan_ledger()
-            .unwrap()
-            .validate_view_binding(binding.clone(), participant)
-            .is_ok()
-    );
-    assert_eq!(finished.parent().loan_view_bindings(), &original_bindings);
-    assert!(finished.parent().loan_bindings_are_consistent());
 }
 
 #[test]

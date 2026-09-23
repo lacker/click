@@ -139,6 +139,25 @@ must establish exact declaration, ABI, and runtime identity before making a
 Linux runtime claim. The observed Ubuntu GCC 13.3.0/glibc 2.39 is not the
 selected Debian Bookworm GCC 12.2.0/glibc 2.36 profile.
 
+### Current shared-reader checkpoint
+
+A parent with one explicit `views` input can now lend separate checked reader
+shares to two concurrent workers. Each successful create splits the parent's
+current share; each join returns only that child's share and recombines any
+available siblings. A failed create keeps the parent's current share. C source
+proofs cover one reader, two readers, both join orders, and the second-create
+failure cleanup path. A hostile source proof rejects returning while the first
+reader remains live. Contract certification retains the checked thread loan
+transition summary across function return; it accepts the changed ledger only
+when all completion rights have been consumed and the summary reaches that
+exact ledger. An internal deterministic-work test joins one fixed reader among
+8, 16, 32, and 64 outstanding shares without scanning the other children.
+
+This checkpoint starts Chunk C for an explicitly supplied parent view. It does
+not yet turn an owned or implicit stack view into a reusable parent share.
+Local lifetime and parent-write regressions, forged recovery checks, and the
+frozen parent sidecar remain. The source proofs use the modeled runtime.
+
 ### Important implementation notes
 
 - Keep `branch { then { ... } else { ... } }` for actual C `if` arms.

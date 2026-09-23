@@ -2,7 +2,8 @@ use super::loans::{
     CheckedLoanCallEvidence, CompositeLoanBacking, CompositeProjectionEvidence, LoanId, LoanLedger,
     LoanRefusal, LoanRefusalOperation, LoanRefusalSubject, LoanViewBinding, LoanViewBindings,
     StableViewTransferPlan, append_checked_loan_evidence, concat_checked_loan_evidence,
-    empty_checked_loan_evidence_sequence, plan_stable_view_transfer_with_bindings_and_composites,
+    empty_checked_loan_evidence_sequence,
+    plan_stable_view_transfer_with_bindings_and_composites_for_worker,
 };
 use super::model_fields::{ModelFieldOrigin, ModelMint, algebraic_value_variable};
 use super::prelude::*;
@@ -2505,6 +2506,7 @@ fn execute_verified_function_applications_with_suspension(
                 resource_application
                     .filter(|(selected, _)| *selected == index)
                     .map(|(_, application)| application),
+                suspended.is_some(),
             )?;
             match prepared {
                 Ok(prepared) => {
@@ -3112,6 +3114,7 @@ fn execute_verified_function_applications_with_suspension(
         return_state.loan_ledger = return_ledger;
         return_state.loan_participant = return_participant;
         return_state = return_state.with_loan_view_bindings(return_view_bindings);
+        return_state.thread_ledger = post_state.thread_ledger.clone();
         return_state.counted_populations = post_state.counted_populations;
         return_state.next_local_frame = post_state.next_local_frame;
         return_state.next_local_lifetime = post_state.next_local_lifetime;
@@ -3371,6 +3374,7 @@ fn prepare_verified_function_call<'a>(
     environment: &CExecutionEnvironment,
     budget: &mut ExecutionBudget,
     resource_application: Option<&ResourceCallApplication>,
+    suspend_worker: bool,
 ) -> ExecutionResult<Result<PreparedVerifiedFunctionCall<'a>, CFunctionPath>> {
     let contract_interface = application.interface;
     if contract_interface.contract_requirement_sources().len()
@@ -3479,7 +3483,11 @@ fn prepare_verified_function_call<'a>(
                 &path_assumptions,
                 budget,
                 false,
-                ResourceTransitionPurpose::CallSite,
+                if suspend_worker {
+                    ResourceTransitionPurpose::SuspendedWorker
+                } else {
+                    ResourceTransitionPurpose::CallSite
+                },
             )
         },
     )? {
@@ -12006,6 +12014,10 @@ pub(super) enum ResourceTransitionPurpose {
     /// A call site: the caller lends its authority, so the views the callee
     /// declares become loans of this application and recovery returns them.
     CallSite,
+    /// A worker call suspended across pthread create/join. Reborrowing a
+    /// caller view reserves a separate reader share while the parent keeps
+    /// one for another child.
+    SuspendedWorker,
     /// A function's own boundary: a whole-function judgment executes,
     /// certifies, or reads the body's outcome from the resources the contract
     /// declares, consumed definitionally. The loan roots of its input views
@@ -12018,7 +12030,7 @@ pub(super) enum ResourceTransitionPurpose {
 
 impl ResourceTransitionPurpose {
     fn lends(self) -> bool {
-        self == Self::CallSite
+        self != Self::FunctionBoundary
     }
 }
 
@@ -12390,7 +12402,7 @@ fn prepare_contract_resource_transfer(
         } else {
             BTreeMap::new()
         };
-        match plan_stable_view_transfer_with_bindings_and_composites(
+        match plan_stable_view_transfer_with_bindings_and_composites_for_worker(
             &planning_resources,
             &stable_requirements,
             assumptions,
@@ -12399,6 +12411,7 @@ fn prepare_contract_resource_transfer(
             callee,
             caller_state.loan_view_bindings(),
             &composite_backings,
+            purpose == ResourceTransitionPurpose::SuspendedWorker,
         ) {
             Ok(mut plan) => {
                 // Argument binding may have created a fresh by-value aggregate
@@ -20814,6 +20827,7 @@ fn function_outcome_from_body_with_resource_transfer(
     return_state.loan_ledger = return_ledger;
     return_state.loan_participant = return_participant;
     return_state = return_state.with_loan_view_bindings(return_view_bindings);
+    return_state.thread_ledger = state.thread_ledger.clone();
     return_state.counted_populations = state.counted_populations;
     return_state.next_local_frame = state.next_local_frame;
     return_state.next_local_lifetime = state.next_local_lifetime;
@@ -21217,6 +21231,7 @@ pub(super) fn function_outcome_from_body(
             caller_state = caller_state
                 .with_loan_ledger(state.loan_ledger().cloned())
                 .with_loan_participant(state.loan_participant());
+            caller_state.thread_ledger = state.thread_ledger.clone();
             if return_resources.is_none() {
                 caller_state.instance_field_scope = state.instance_field_scope;
             }
@@ -21249,6 +21264,7 @@ pub(super) fn function_outcome_from_body(
             } else {
                 end_function_body_automatic_lifetimes(&state, function, caller_state.memory(), None)
             });
+            caller_state.thread_ledger = state.thread_ledger.clone();
             if function.has_inline_body() {
                 let memory = caller_state.memory.clone();
                 caller_state.sync_scalar_locals_from_memory(&memory);

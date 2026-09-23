@@ -362,6 +362,19 @@ pub(super) struct ThreadLedger {
 struct ThreadLedgerStorage {
     state: u64,
     rights: PersistentMap<ThreadHandle, Arc<CompletionRight>>,
+    loan_trace: Option<ThreadLoanTrace>,
+}
+
+/// The checked loan root before the first outstanding create and the root
+/// reached by subsequent checked creates and joins on this path. This is
+/// retained beside the linear rights, so contract certification can check a
+/// view-bearing parent after every child has joined without reconstructing
+/// unrelated ledger history.
+#[derive(Clone)]
+struct ThreadLoanTrace {
+    origin: LoanLedger,
+    current: LoanLedger,
+    participant: super::loans::LoanParticipantId,
 }
 
 impl ThreadLedger {
@@ -375,6 +388,7 @@ impl ThreadLedger {
             storage: Arc::new(ThreadLedgerStorage {
                 state: Self::fresh_state(),
                 rights: PersistentMap::default(),
+                loan_trace: None,
             }),
         }
     }
@@ -387,20 +401,72 @@ impl ThreadLedger {
         !self.storage.rights.is_empty()
     }
 
-    fn with_right(&self, handle: ThreadHandle, right: CompletionRight) -> Self {
+    pub(super) fn witnesses_loan_recovery(
+        &self,
+        origin: &LoanLedger,
+        current: &LoanLedger,
+        participant: super::loans::LoanParticipantId,
+    ) -> bool {
+        self.storage.rights.is_empty()
+            && self.storage.loan_trace.as_ref().is_some_and(|trace| {
+                trace.origin == *origin
+                    && trace.current == *current
+                    && trace.participant == participant
+            })
+    }
+
+    fn advanced_loan_trace(
+        &self,
+        before: &LoanLedger,
+        after: &LoanLedger,
+        participant: super::loans::LoanParticipantId,
+    ) -> Option<ThreadLoanTrace> {
+        match self.storage.loan_trace.as_ref() {
+            Some(trace) if trace.current == *before && trace.participant == participant => {
+                Some(ThreadLoanTrace {
+                    origin: trace.origin.clone(),
+                    current: after.clone(),
+                    participant,
+                })
+            }
+            _ if self.storage.rights.is_empty() => Some(ThreadLoanTrace {
+                origin: before.clone(),
+                current: after.clone(),
+                participant,
+            }),
+            _ => None,
+        }
+    }
+
+    fn with_right(
+        &self,
+        handle: ThreadHandle,
+        right: CompletionRight,
+        before: &LoanLedger,
+        after: &LoanLedger,
+        participant: super::loans::LoanParticipantId,
+    ) -> Self {
         Self {
             storage: Arc::new(ThreadLedgerStorage {
                 state: Self::fresh_state(),
                 rights: self.storage.rights.with_inserted(handle, Arc::new(right)),
+                loan_trace: self.advanced_loan_trace(before, after, participant),
             }),
         }
     }
 
-    fn without_right(&self, handle: ThreadHandle) -> Self {
+    fn without_right(
+        &self,
+        handle: ThreadHandle,
+        before: &LoanLedger,
+        after: &LoanLedger,
+        participant: super::loans::LoanParticipantId,
+    ) -> Self {
         Self {
             storage: Arc::new(ThreadLedgerStorage {
                 state: Self::fresh_state(),
                 rights: self.storage.rights.without_key(&handle),
+                loan_trace: self.advanced_loan_trace(before, after, participant),
             }),
         }
     }
@@ -521,7 +587,16 @@ impl PreparedThreadCreate<'_> {
                     .clone(),
             )
             .with_loan_ledger(Some(self.completion.plan.ledger.clone()))
+            .with_loan_view_bindings(
+                self.completion
+                    .plan
+                    .caller_view_bindings_after_requirements()
+                    .clone(),
+            )
             .with_memory(self.completion.memory.clone());
+        let before_loans = self.parent.parent.loan_ledger().expect("parent ledger");
+        let after_loans = next.parent.loan_ledger().expect("spawn ledger").clone();
+        let participant = next.parent.loan_participant().expect("parent participant");
         let ledger = next.parent.thread_ledger.as_ref().expect("thread ledger");
         next.parent.thread_ledger = Some(ledger.with_right(
             handle,
@@ -530,6 +605,9 @@ impl PreparedThreadCreate<'_> {
                 argument: self.argument,
                 completion: self.completion,
             },
+            before_loans,
+            &after_loans,
+            participant,
         ));
         (next, handle, effect)
     }
@@ -673,6 +751,14 @@ impl ThreadContext {
                 assumptions,
             )
             .map_err(|_| "worker loans cannot be recovered in the current parent context")?;
+        if recovery
+            .recheck_transitions(ledger, completion.plan.caller_participant())
+            .map_err(|_| "worker loan recovery evidence is invalid")?
+            != recovery.terminal_ledger
+        {
+            return Err("worker loan recovery evidence is invalid");
+        }
+        let after_loans = recovery.ledger.clone();
         let mut next = self.clone();
         next.parent = next
             .parent
@@ -684,7 +770,12 @@ impl ThreadContext {
                 .thread_ledger
                 .as_ref()
                 .expect("thread ledger")
-                .without_right(handle),
+                .without_right(
+                    handle,
+                    ledger,
+                    &after_loans,
+                    completion.plan.caller_participant(),
+                ),
         );
         Ok((next, completion.facts.clone()))
     }

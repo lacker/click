@@ -4868,6 +4868,17 @@ fn checked_loan_evidence_is_valid(
         (None, None) => (None, None, true),
         _ => return false,
     };
+    let thread_recovered = |return_state: &CState| match (
+        checked.state.loan_ledger(),
+        checked.state.loan_participant(),
+        return_state.loan_ledger(),
+        return_state.thread_ledger.as_ref(),
+    ) {
+        (Some(origin), Some(participant), Some(current), Some(threads)) => {
+            threads.witnesses_loan_recovery(origin, current, participant)
+        }
+        _ => false,
+    };
     checked.execution.paths.iter().all(|path| {
         let Some(outcome) = path_function_outcome(path) else {
             return false;
@@ -4886,7 +4897,8 @@ fn checked_loan_evidence_is_valid(
                     state: return_state,
                     ..
                 } => {
-                    checked.state.loan_ledger() == return_state.loan_ledger()
+                    (checked.state.loan_ledger() == return_state.loan_ledger()
+                        || thread_recovered(return_state))
                         && checked.state.loan_participant() == return_state.loan_participant()
                         && return_state.loan_bindings_are_consistent()
                         && checked.state.loan_bindings_are_consistent()
@@ -4921,7 +4933,8 @@ fn checked_loan_evidence_is_valid(
             CFunctionOutcome::Return { state, .. } | CFunctionOutcome::Throw { state, .. } => state,
             _ => return true,
         };
-        return_state.loan_ledger() == outer_recovered_ledger.as_ref()
+        (return_state.loan_ledger() == outer_recovered_ledger.as_ref()
+            || thread_recovered(return_state))
             && return_state.loan_participant() == outer_recovered_participant
             && return_state.loan_bindings_are_consistent()
             && checked.state.loan_bindings_are_consistent()

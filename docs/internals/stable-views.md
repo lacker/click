@@ -141,6 +141,17 @@ The same ledger already guards direct local assignments and alias stores,
 including same-value writes. A nested reader reborrows the local loan through
 its exact resource binding. No new surface clause is needed.
 
+For a suspended modeled-pthread worker borrowing a parent view, the checked
+entry splits the parent's current share. The parent retains one sibling and
+the worker reborrows the other. A join ends that worker's child scope, returns
+its share, and joins only available siblings on that share's ancestry path.
+The parent binding advances when its retained share is recombined, so any
+other live child stays pinned and the original root returns only after every
+share is back. The thread ledger retains the checked sequence's origin and
+current loan roots across function return for contract certification. This
+first asynchronous path starts from an explicit parent view; implicit local
+view sharing and repeated lending from one owner remain separate work.
+
 At return, obligations are validated before recovery: the callee's shares
 are transferred back, call-created scopes end, escrows are recovered, and the
 evidence (entry transitions, releases, recovery transitions, the recovered

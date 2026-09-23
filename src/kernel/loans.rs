@@ -1370,6 +1370,8 @@ pub(crate) struct StableViewTransferPlan {
     /// For a view lent as a child of the caller's own binding: that parent
     /// binding, which an escaping borrow holds after the child ends.
     pub(crate) rebound_parents: BTreeMap<LoanId, LoanViewBinding>,
+    /// Reborrows whose parent share was split for a suspended worker.
+    suspended_split_reborrows: BTreeMap<LoanId, (ResourceOccurrenceId, LoanShareId)>,
     /// For an adapter lend whose escrowed head was materialized for the call
     /// out of owned facts the caller already held: exactly those facts, which
     /// recovery hands back in place of the head (docs/internals/stable-views.md). The
@@ -1969,6 +1971,30 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
     parent_view_bindings: &LoanViewBindings,
     composite_backings: &BTreeMap<ResourceOccurrenceId, CompositeLoanBacking>,
 ) -> Result<StableViewTransferPlan, StableViewPlanError> {
+    plan_stable_view_transfer_with_bindings_and_composites_for_worker(
+        caller_resources,
+        requirements,
+        assumptions,
+        ledger,
+        caller,
+        callee,
+        parent_view_bindings,
+        composite_backings,
+        false,
+    )
+}
+
+pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
+    caller_resources: &ResourceContext,
+    requirements: &[CCheckedResourceFact],
+    assumptions: &PureFactContext,
+    ledger: &LoanLedger,
+    caller: LoanParticipantId,
+    callee: LoanParticipantId,
+    parent_view_bindings: &LoanViewBindings,
+    composite_backings: &BTreeMap<ResourceOccurrenceId, CompositeLoanBacking>,
+    split_reborrowed_views: bool,
+) -> Result<StableViewTransferPlan, StableViewPlanError> {
     if requirements.iter().any(|requirement| {
         requirement.snapshot == CResourceSnapshot::Post
             || requirement.role == CResourceTransferRole::Produce
@@ -1978,10 +2004,12 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
     }
 
     let mut residual = caller_resources.clone();
+    let mut parent_view_bindings = parent_view_bindings.clone();
     let mut callee_resources = ResourceContext::new();
     let mut transferred_ownership = Vec::new();
     let mut transferred_holds = Vec::new();
     let mut rebound_parents = BTreeMap::new();
+    let mut suspended_split_reborrows = BTreeMap::new();
     let mut stable_views = Vec::new();
     let mut callee_view_bindings = LoanViewBindings::default();
     let mut memory_effects = Vec::new();
@@ -2514,7 +2542,26 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         }
     }
     for (binding, group) in rebound {
-        let opening = planned_ledger.reborrow(binding.clone(), caller, callee)?;
+        let worker_binding = if split_reborrowed_views {
+            let (split, retained, worker) =
+                planned_ledger.split(binding.share, caller, caller, caller)?;
+            planned_ledger = planned_ledger.apply(&split)?;
+            entry_transitions.push(split);
+            let retained_binding = LoanViewBinding {
+                share: retained,
+                ..binding.clone()
+            };
+            parent_view_bindings =
+                parent_view_bindings.with_inserted(binding.support, retained_binding.clone());
+            residual = residual.with_loan_dependency(binding.support, retained_binding);
+            LoanViewBinding {
+                share: worker,
+                ..binding.clone()
+            }
+        } else {
+            binding.clone()
+        };
+        let opening = planned_ledger.reborrow(worker_binding.clone(), caller, callee)?;
         entry_transitions.push(opening.transition.clone());
         planned_ledger = planned_ledger.apply(&opening.transition)?;
         let child_binding = LoanViewBinding {
@@ -2533,6 +2580,9 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
             false,
         ));
         rebound_parents.insert(opening.loan, binding.clone());
+        if split_reborrowed_views {
+            suspended_split_reborrows.insert(opening.loan, (binding.support, worker_binding.share));
+        }
         let mut child_occurrence = None;
         for (index, requirement) in group {
             if !ResourceContext::new()
@@ -2601,6 +2651,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
         escrowed_holds,
         transferred_holds,
         rebound_parents,
+        suspended_split_reborrows,
         adapter_restorations,
     })
 }
@@ -2682,6 +2733,10 @@ impl StableViewTransferPlan {
         self.caller
     }
 
+    pub(crate) fn caller_view_bindings_after_requirements(&self) -> &LoanViewBindings {
+        &self.parent_view_bindings
+    }
+
     pub(crate) fn callee_participant(&self) -> LoanParticipantId {
         self.callee
     }
@@ -2757,6 +2812,7 @@ impl StableViewTransferPlan {
         let loan_roots = self.loan_roots.clone();
         let mut ledger = self.ledger;
         let mut resources = self.caller_resources_after_requirements;
+        let mut view_bindings = self.parent_view_bindings.clone();
         let mut transitions = Vec::new();
         let mut recovered_escrows = Vec::new();
         let mut pending_holds: Vec<(Vec<CResourceFact>, LoanViewBinding)> = Vec::new();
@@ -2805,6 +2861,28 @@ impl StableViewTransferPlan {
             let end = ledger.end(scope, self.caller)?;
             ledger = ledger.apply(&end)?;
             transitions.push(end);
+            if let Some((occurrence, worker_share)) = self.suspended_split_reborrows.get(&loan) {
+                let (joined, merged_share, joins) =
+                    ledger.join_available_share_ancestors(*worker_share, self.caller)?;
+                ledger = joined;
+                transitions.extend(joins);
+                let binding = view_bindings
+                    .get(occurrence)
+                    .cloned()
+                    .ok_or(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding))?;
+                if ledger
+                    .validate_view_binding(binding.clone(), self.caller)
+                    .is_err()
+                {
+                    let binding = LoanViewBinding {
+                        share: merged_share,
+                        ..binding
+                    };
+                    ledger.validate_view_binding(binding.clone(), self.caller)?;
+                    view_bindings = view_bindings.with_inserted(*occurrence, binding.clone());
+                    resources = resources.with_loan_dependency(*occurrence, binding);
+                }
+            }
             if recoverable {
                 let (recover, escrow, recovered_support) = ledger.recover(loan, self.caller)?;
                 ledger = ledger.apply(&recover)?;
@@ -2893,7 +2971,7 @@ impl StableViewTransferPlan {
             recovered_escrows,
             escaped_holds,
             released_holds,
-            view_bindings: self.parent_view_bindings,
+            view_bindings,
             transitions,
         })
     }
@@ -3566,6 +3644,62 @@ impl LoanLedger {
             right,
             holder,
         })
+    }
+
+    /// Recombine only siblings already returned to this holder. A live
+    /// worker's pinned share stops the climb; joining that worker later can
+    /// resume from its own returned share. Work is proportional to the
+    /// affected branch of the explicit share tree.
+    pub(crate) fn join_available_share_ancestors(
+        &self,
+        share: LoanShareId,
+        holder: LoanParticipantId,
+    ) -> Result<(Self, LoanShareId, Vec<CheckedLoanTransition>), LoanRefusal> {
+        let mut ledger = self.clone();
+        let mut current = share;
+        let mut transitions = Vec::new();
+        loop {
+            let record = ledger
+                .storage
+                .data
+                .shares
+                .get(&current)
+                .ok_or(LoanRefusal::MissingShare)?;
+            if record.holder != Some(holder) || record.pinned_by.is_some() {
+                return Err(LoanRefusal::WrongHolder);
+            }
+            let Some(parent) = record.parent else {
+                break;
+            };
+            let Some((left, right)) = ledger
+                .storage
+                .data
+                .shares
+                .get(&parent)
+                .and_then(|record| record.children)
+            else {
+                return Err(LoanRefusal::NotSiblings);
+            };
+            let sibling = match current {
+                current if current == left => right,
+                current if current == right => left,
+                _ => return Err(LoanRefusal::NotSiblings),
+            };
+            if !ledger
+                .storage
+                .data
+                .shares
+                .get(&sibling)
+                .is_some_and(|record| record.holder == Some(holder) && record.pinned_by.is_none())
+            {
+                break;
+            }
+            let join = ledger.join(left, right, holder)?;
+            ledger = ledger.apply(&join)?;
+            transitions.push(join);
+            current = parent;
+        }
+        Ok((ledger, current, transitions))
     }
 
     pub(crate) fn end(
