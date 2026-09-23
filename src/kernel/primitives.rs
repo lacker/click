@@ -4496,6 +4496,9 @@ pub struct CState {
     /// Exact resource-occurrence bindings for live borrowed views. This map
     /// is carried with checked state so nested calls can reborrow by identity.
     pub(super) loan_view_bindings: super::loans::LoanViewBindings,
+    /// Live child completion rights travel with the C path through ordinary
+    /// statements. `None` is the canonical state before any thread operation.
+    pub(super) thread_ledger: Option<super::threads::ThreadLedger>,
     pub(super) counted_populations: std::sync::Arc<Vec<CCountedPopulation>>,
     /// Monotonic identity source for stack frames created by nested calls.
     /// Keeping this in the symbolic state makes frame identities deterministic

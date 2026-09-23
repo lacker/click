@@ -161,6 +161,85 @@ fn spawn(
 }
 
 #[test]
+fn completion_right_survives_an_unrelated_c_statement_in_path_state() {
+    let (worker, termination) = worker();
+    let original = ThreadContext::new(parent(2)).unwrap();
+    let (spawned, handle) = spawn(
+        &original,
+        0,
+        &worker,
+        &termination,
+        &mut ExecutionBudget::new(),
+    );
+    let paths = execute_c_statement_paths(
+        spawned.parent(),
+        &c_declare("unrelated", CType::Int32),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    assert_eq!(paths.len(), 1);
+    let CStatementOutcome::Normal(after) = &paths[0].outcome else {
+        panic!("unrelated declaration should execute normally");
+    };
+    let carried = ThreadContext::new(after.clone()).unwrap();
+    let returned = execute_c_statement_paths(
+        carried.parent(),
+        &c_return(c_int32_literal(0)),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    assert!(matches!(
+        &returned[0].outcome,
+        CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message))
+            if message.contains("live pthread completion right")
+    ));
+    let (joined, _) = carried
+        .join(
+            handle,
+            JoinRuntimeAssumption::ValidJoinSucceeds,
+            &PureFactContext::new(),
+        )
+        .unwrap();
+    assert!(
+        joined
+            .join(
+                handle,
+                JoinRuntimeAssumption::ValidJoinSucceeds,
+                &PureFactContext::new(),
+            )
+            .is_err()
+    );
+    assert!(
+        spawned
+            .join(
+                handle,
+                JoinRuntimeAssumption::ValidJoinSucceeds,
+                &PureFactContext::new()
+            )
+            .is_ok()
+    );
+    let returned = execute_c_statement_paths(
+        joined.parent(),
+        &c_return(c_int32_literal(0)),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    assert!(matches!(
+        &returned[0].outcome,
+        CStatementOutcome::Return { .. }
+    ));
+}
+
+#[test]
 fn thread_join_preserves_other_child_loans_in_both_orders() {
     let (worker, termination) = worker();
     let assumptions = PureFactContext::new();
