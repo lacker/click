@@ -390,6 +390,9 @@ pub(super) fn execute_c_call_assign_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    if let Some(path) = unbound_modeled_pthread_call(function_name, environment) {
+        return Ok(vec![path]);
+    }
     if function_name == "realloc" {
         if environment.selected_call_contract.is_some() {
             return Ok(vec![CStatementExecutionPath {
@@ -622,6 +625,9 @@ pub(super) fn execute_c_call_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    if let Some(path) = unbound_modeled_pthread_call(function_name, environment) {
+        return Ok(vec![path]);
+    }
     if let Some(CType::FunctionPointer(signature)) = state.locals.object_type(function_name) {
         let paths = execute_c_indirect_call_paths(
             state,
@@ -697,6 +703,25 @@ pub(super) fn execute_c_call_paths(
     .collect::<Vec<_>>();
     budget.check_path_width(paths.len())?;
     Ok(paths)
+}
+
+fn unbound_modeled_pthread_call(
+    function_name: &str,
+    environment: &CExecutionEnvironment,
+) -> Option<CStatementExecutionPath> {
+    let binding = environment.modeled_pthread_binding.as_ref()?;
+    if function_name != binding.create_name && function_name != binding.join_name {
+        return None;
+    }
+    Some(CStatementExecutionPath {
+        loop_invariant_correspondence: Default::default(),
+        outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+            "modeled-pthread `{function_name}` has no checked C transition yet"
+        ))),
+        facts: Vec::new(),
+        obligations: Vec::new(),
+        loan_evidence: empty_checked_loan_evidence_sequence(),
+    })
 }
 
 fn execute_c_indirect_call_assign_paths(

@@ -18466,7 +18466,8 @@ mod hunt_investigation_tests {
     fn hunt_investigation_array_element_count_saturates_instead_of_refusing() {
         let (size, _) = CAbi::SUPPORTED.size_and_alignment(C0Type::Int32Array(0x4000_0000));
         assert_eq!(
-            size, u32::MAX,
+            size,
+            u32::MAX,
             "BUG: the 2^32-byte layout saturates to u32::MAX instead of being refused"
         );
     }

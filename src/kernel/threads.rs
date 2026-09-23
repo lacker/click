@@ -71,6 +71,53 @@ struct CompletionRight {
     completion: WorkerCompletion,
 }
 
+/// A checked task application before the runtime chooses whether creation
+/// succeeded. Both outcomes are available only after the worker contract and
+/// exact termination evidence have been validated against this parent.
+pub(super) struct PreparedThreadCreate<'a> {
+    parent: &'a ThreadContext,
+    worker: &'a CVerifiedFunctionRule,
+    argument: CValue,
+    completion: WorkerCompletion,
+}
+
+impl PreparedThreadCreate<'_> {
+    pub(super) fn failure(&self) -> ThreadContext {
+        self.parent.clone()
+    }
+
+    pub(super) fn success(self) -> (ThreadContext, ThreadHandle, ExecutionPureFact) {
+        static NEXT_HANDLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let handle = ThreadHandle(NEXT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        let effect = ExecutionPureFact::internal(Proposition::CMemoryEffectSummary {
+            before: self.parent.parent.memory().clone(),
+            after: self.completion.memory.clone(),
+            mutable_ranges: self.completion.effects.clone(),
+        })
+        .into_certified();
+        let mut next = self.parent.clone();
+        next.parent = next
+            .parent
+            .with_resource_context(
+                self.completion
+                    .plan
+                    .caller_resources_after_requirements
+                    .clone(),
+            )
+            .with_loan_ledger(Some(self.completion.plan.ledger.clone()))
+            .with_memory(self.completion.memory.clone());
+        next.rights.insert(
+            handle,
+            Arc::new(CompletionRight {
+                worker: Arc::new(self.worker.clone()),
+                argument: self.argument,
+                completion: self.completion,
+            }),
+        );
+        (next, handle, effect)
+    }
+}
+
 /// One parent path. Clones share immutable roots, just like ordinary C state;
 /// a successful join consumes its entry in the successor path's registry.
 #[derive(Clone)]
@@ -104,22 +151,15 @@ impl ThreadContext {
         &self.parent
     }
 
-    /// A failed creation has no child effects, even when worker application
-    /// would be impossible. Its parent continuation is never conditional on
-    /// obtaining a worker return path.
-    pub(super) fn creation_failed(&self) -> Self {
-        self.clone()
-    }
-
-    pub(super) fn spawn(
-        &self,
-        worker: &CVerifiedFunctionRule,
+    pub(super) fn prepare_create<'a>(
+        &'a self,
+        worker: &'a CVerifiedFunctionRule,
         termination: Option<&CVerifiedFunctionTerminationRule>,
         argument: CValue,
         assumptions: &PureFactContext,
         environment: &CExecutionEnvironment,
         budget: &mut ExecutionBudget,
-    ) -> ExecutionResult<Result<(Self, ThreadHandle, ExecutionPureFact), String>> {
+    ) -> ExecutionResult<Result<PreparedThreadCreate<'a>, String>> {
         if termination.is_none_or(|termination| termination.function != worker.function) {
             return Ok(Err(
                 "spawn requires termination evidence for the exact worker".to_string(),
@@ -150,29 +190,33 @@ impl ThreadContext {
         {
             return Ok(Err("invalid worker entry evidence".to_string()));
         }
-        static NEXT_HANDLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        let handle = ThreadHandle(NEXT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-        let effect = ExecutionPureFact::internal(Proposition::CMemoryEffectSummary {
-            before: self.parent.memory().clone(),
-            after: completion.memory.clone(),
-            mutable_ranges: completion.effects.clone(),
-        })
-        .into_certified();
-        let mut next = self.clone();
-        next.parent = next
-            .parent
-            .with_resource_context(completion.plan.caller_resources_after_requirements.clone())
-            .with_loan_ledger(Some(completion.plan.ledger.clone()))
-            .with_memory(completion.memory.clone());
-        next.rights.insert(
-            handle,
-            Arc::new(CompletionRight {
-                worker: Arc::new(worker.clone()),
+        Ok(Ok(PreparedThreadCreate {
+            parent: self,
+            worker,
+            argument,
+            completion,
+        }))
+    }
+
+    pub(super) fn spawn(
+        &self,
+        worker: &CVerifiedFunctionRule,
+        termination: Option<&CVerifiedFunctionTerminationRule>,
+        argument: CValue,
+        assumptions: &PureFactContext,
+        environment: &CExecutionEnvironment,
+        budget: &mut ExecutionBudget,
+    ) -> ExecutionResult<Result<(Self, ThreadHandle, ExecutionPureFact), String>> {
+        Ok(self
+            .prepare_create(
+                worker,
+                termination,
                 argument,
-                completion,
-            }),
-        );
-        Ok(Ok((next, handle, effect)))
+                assumptions,
+                environment,
+                budget,
+            )?
+            .map(PreparedThreadCreate::success))
     }
 
     pub(super) fn join(

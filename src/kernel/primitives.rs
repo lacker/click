@@ -2673,6 +2673,11 @@ pub struct CExecutionEnvironment {
     pub(super) verified_function_rules: std::sync::Arc<BTreeMap<String, CVerifiedFunctionRule>>,
     pub(super) verified_function_termination_rules:
         std::sync::Arc<BTreeMap<String, CVerifiedFunctionTerminationRule>>,
+    /// Installed only after the surface checks the exact built-in header and
+    /// selected runtime. A pthread call must use its checked transition; an
+    /// ordinary external function contract is never a substitute.
+    pub(super) modeled_pthread_binding:
+        Option<crate::languages::c::thread_runtime::ModeledPthreadBinding>,
     pub(super) verified_loop_rules: std::sync::Arc<Vec<CVerifiedLoopRule>>,
     /// The function currently being certified, when it declares an expression
     /// `decreases` measure. It is part of this environment's identity below,
@@ -2707,6 +2712,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
                 "verified_function_termination_rules",
                 &self.verified_function_termination_rules,
             )
+            .field("modeled_pthread_binding", &self.modeled_pthread_binding)
             .field("verified_loop_rules", &self.verified_loop_rules)
             .field("recursion_anchor", &self.recursion_anchor)
             .field(
@@ -2727,6 +2733,7 @@ impl PartialEq for CExecutionEnvironment {
             && self.external_function_rules == other.external_function_rules
             && self.verified_function_rules == other.verified_function_rules
             && self.verified_function_termination_rules == other.verified_function_termination_rules
+            && self.modeled_pthread_binding == other.modeled_pthread_binding
             && self.verified_loop_rules == other.verified_loop_rules
             && self.recursion_anchor == other.recursion_anchor
             && self.allow_conditional_resource_cases == other.allow_conditional_resource_cases
