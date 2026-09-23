@@ -1356,6 +1356,129 @@ fn two_workers_share_one_implicit_local_root_until_both_join() {
 }
 
 #[test]
+fn two_workers_recover_one_escrowed_owner_only_after_both_join() {
+    let function = c_function(
+        CType::Int32,
+        "thread_reader",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_return(c_load(c_variable("p"))),
+    )
+    .with_resource_summary(
+        vec![CResourceSpec::viewed_memory(CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        ))],
+        vec![],
+    )
+    .with_contract(
+        vec![],
+        vec![],
+        vec![],
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let (reader, termination) = certify_worker(function);
+    let owned = CResourceFact::own_memory(range(0, 0, 1));
+    let viewed = CResourceFact::view_memory(range(0, 0, 1));
+    let state =
+        parent(1).with_resource_context(ResourceContext::new().unchecked_with_fact(owned.clone()));
+    let original = ThreadContext::new(state).unwrap();
+    let failed = original
+        .prepare_create(
+            &reader,
+            Some(&termination),
+            CValue::pointer(pointer(0)),
+            &PureFactContext::new(),
+            &CExecutionEnvironment::new(),
+            &mut ExecutionBudget::new(),
+        )
+        .unwrap()
+        .unwrap()
+        .failure();
+    assert_eq!(failed.parent().resources(), original.parent().resources());
+    assert_eq!(
+        failed.parent().loan_ledger(),
+        original.parent().loan_ledger()
+    );
+    assert!(
+        !failed
+            .parent()
+            .thread_ledger
+            .as_ref()
+            .unwrap()
+            .has_live_rights()
+    );
+    for reverse in [false, true] {
+        let mut budget = ExecutionBudget::new();
+        let (first, a) = spawn(&original, 0, &reader, &termination, &mut budget);
+        assert!(
+            !first
+                .parent()
+                .resources()
+                .satisfies_fact(&owned, &PureFactContext::new())
+        );
+        assert_eq!(
+            first
+                .parent()
+                .resources()
+                .view_occurrences_for_fact(&viewed, &PureFactContext::new())
+                .len(),
+            1
+        );
+        let (second, b) = spawn(&first, 0, &reader, &termination, &mut budget);
+        let (once, _) = second
+            .join(
+                if reverse { b } else { a },
+                JoinRuntimeAssumption::ValidJoinSucceeds,
+                &PureFactContext::new(),
+            )
+            .unwrap();
+        assert!(
+            !once
+                .parent()
+                .resources()
+                .satisfies_fact(&owned, &PureFactContext::new())
+        );
+        assert!(
+            once.parent()
+                .loan_ledger()
+                .unwrap()
+                .permits_memory_access(&range(0, 0, 1))
+                .is_err()
+        );
+        let (finished, _) = once
+            .join(
+                if reverse { a } else { b },
+                JoinRuntimeAssumption::ValidJoinSucceeds,
+                &PureFactContext::new(),
+            )
+            .unwrap();
+        assert!(
+            finished
+                .parent()
+                .resources()
+                .satisfies_fact(&owned, &PureFactContext::new())
+        );
+        assert!(
+            finished
+                .parent()
+                .resources()
+                .view_occurrences_for_fact(&viewed, &PureFactContext::new())
+                .is_empty()
+        );
+        assert!(
+            !finished
+                .parent()
+                .loan_ledger()
+                .unwrap()
+                .has_active_memory_loans()
+        );
+        assert!(finished.parent().loan_bindings_are_consistent());
+    }
+}
+
+#[test]
 fn joining_one_of_many_shared_readers_touches_only_its_share_branch() {
     let function = c_function(
         CType::Int32,

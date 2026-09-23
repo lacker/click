@@ -1178,6 +1178,27 @@ impl ResourceContext {
         fact.is_view().then_some(fact)
     }
 
+    /// Retire the exact principal view installed for a checked loan. General
+    /// resource consumption leaves views in place because descriptions are
+    /// copyable; closing an escrow instead removes its particular occurrence
+    /// before returning the owner. The dependency ties this removal to the
+    /// same live binding the loan recovery just discharged.
+    pub(crate) fn without_bound_view_occurrence(
+        mut self,
+        occurrence: ResourceOccurrenceId,
+        binding: &crate::kernel::loans::LoanViewBinding,
+    ) -> Option<Self> {
+        if !self.view_occurrence_is_principal(occurrence)
+            || self.view_fact_at_occurrence(occurrence) != Some(&binding.viewed)
+            || self.loan_dependency(occurrence) != Some(binding)
+        {
+            return None;
+        }
+        let entry = *self.storage.entry_by_occurrence.get(&occurrence)?;
+        self.remove_entry(entry);
+        Some(self)
+    }
+
     pub(crate) fn view_occurrence_is_principal(&self, occurrence: ResourceOccurrenceId) -> bool {
         self.storage
             .entry_by_occurrence

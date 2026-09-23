@@ -154,7 +154,12 @@ by the exact viewed fact, without adding a resource fact to the parent. Each
 join returns its own share; the final join closes the root and restores
 implicit access. The thread ledger also retains the checked sequence's origin
 and current loan roots across function return for contract certification.
-Repeated lending from one explicitly owned resource remains separate work.
+For an explicitly owned memory piece, the first worker escrows that piece in
+a parent-held root. Its checked view remains in the parent resource context;
+later workers split that view's retained share. The final join removes that
+exact bound view occurrence before recovering the owner. Ordinary resource
+consumption cannot remove a view description, so this removal requires the
+loan binding and occurrence identity checked at recovery.
 
 At return, obligations are validated before recovery: the callee's shares
 are transferred back, call-created scopes end, escrows are recovered, and the

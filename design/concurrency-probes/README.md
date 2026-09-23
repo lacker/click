@@ -24,6 +24,8 @@ parent can now split one explicit stable view between two read-only workers;
 their source proof covers both join orders and cleanup after a failed second
 create. The same sharing now works for a parent stack cell without an
 ownership annotation, and rejects writes or scope exit while a reader lives.
+An explicitly owned cell can likewise back both readers; the owner returns
+only after the final join, including when joins occur in reverse order.
 The frozen parent still needs its complete sidecar proof, broader
 guarded operations, and the separate native runtime binding described below.
 

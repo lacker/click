@@ -192,6 +192,18 @@ impl LoanViewBindings {
             }),
         }
     }
+
+    pub(crate) fn without(&self, occurrence: ResourceOccurrenceId) -> Self {
+        if !self.state.map.contains_key(&occurrence) {
+            return self.clone();
+        }
+        Self {
+            state: Arc::new(LoanViewBindingsState {
+                identity: next_loan_binding_identity(),
+                map: self.state.map.without_key(&occurrence),
+            }),
+        }
+    }
 }
 
 fn update_active_memory_index(
@@ -1990,6 +2002,63 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites(
     )
 }
 
+/// Suspend one owned memory piece under a parent-held root, then lend a
+/// sibling share to this worker. The parent receives a genuine checked view
+/// of the escrowed piece, so later workers use the ordinary split/reborrow
+/// path. The view is removed when the final join recovers the exact escrow.
+fn lend_owned_view_to_suspended_worker(
+    ledger: &mut LoanLedger,
+    transitions: &mut Vec<CheckedLoanTransition>,
+    residual: &mut ResourceContext,
+    parent_bindings: &mut LoanViewBindings,
+    split_reborrows: &mut BTreeMap<LoanId, (ResourceOccurrenceId, LoanShareId)>,
+    selected: &CResourceFact,
+    support: ResourceOccurrenceId,
+    caller: LoanParticipantId,
+    callee: LoanParticipantId,
+    assumptions: &PureFactContext,
+) -> Result<LoanOpening, StableViewPlanError> {
+    let range = selected
+        .memory_own_range()
+        .cloned()
+        .ok_or(StableViewPlanError::UnsupportedPartition)?;
+    let root = ledger.lend(caller, caller, support, selected.clone())?;
+    *ledger = ledger.apply(&root.transition)?;
+    transitions.push(root.transition);
+    *residual = residual
+        .clone()
+        .without_fact_incrementally(selected, assumptions)
+        .ok_or_else(|| StableViewPlanError::MissingResource(selected.clone()))?;
+    let viewed = CResourceFact::view_memory(range);
+    let (next_residual, occurrence) = residual
+        .clone()
+        .try_compose_with_fact_with_occurrence(viewed.clone(), assumptions)
+        .map_err(|_| StableViewPlanError::InvalidResidual)?;
+    let occurrence = occurrence.ok_or(StableViewPlanError::InvalidResidual)?;
+    let (split, retained, worker) = ledger.split(root.root_share, caller, caller, caller)?;
+    *ledger = ledger.apply(&split)?;
+    transitions.push(split);
+    let binding = LoanViewBinding {
+        loan: root.loan,
+        scope: root.scope,
+        share: retained,
+        support,
+        viewed,
+        hold: None,
+    };
+    *residual = next_residual.with_loan_dependency(occurrence, binding.clone());
+    *parent_bindings = parent_bindings.with_inserted(occurrence, binding.clone());
+    let worker_binding = LoanViewBinding {
+        share: worker,
+        ..binding
+    };
+    let child = ledger.reborrow(worker_binding, caller, callee)?;
+    *ledger = ledger.apply(&child.transition)?;
+    transitions.push(child.transition.clone());
+    split_reborrows.insert(child.loan, (occurrence, worker));
+    Ok(child)
+}
+
 pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
     caller_resources: &ResourceContext,
     requirements: &[CCheckedResourceFact],
@@ -2115,7 +2184,10 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
     let mut planned_ledger = ledger.clone();
     let mut entry_transitions = Vec::new();
     let mut grouped = BTreeMap::<ResourceOccurrenceId, Vec<(usize, CCheckedResourceFact)>>::new();
-    let mut rebound = BTreeMap::<LoanViewBinding, Vec<(usize, CCheckedResourceFact)>>::new();
+    let mut rebound = BTreeMap::<
+        LoanViewBinding,
+        (ResourceOccurrenceId, Vec<(usize, CCheckedResourceFact)>),
+    >::new();
     // The checked adapter entry that permits a viewed composite beside a
     // different escrowed head (docs/internals/stable-views.md). Only a backing the caller
     // built at the kernel's expansion boundary can answer here, and only for
@@ -2138,10 +2210,13 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
         }
         let view_occurrences =
             caller_resources.view_occurrences_for_fact(&requirement.fact, assumptions);
-        let binding = view_occurrences
-            .iter()
-            .find_map(|occurrence| parent_view_bindings.get(occurrence).cloned());
-        if binding.is_none()
+        let bound_occurrence = view_occurrences.iter().find_map(|occurrence| {
+            parent_view_bindings
+                .get(occurrence)
+                .cloned()
+                .map(|binding| (*occurrence, binding))
+        });
+        if bound_occurrence.is_none()
             && !view_occurrences.is_empty()
             && caller_resources
                 .directly_supporting_owned_entry(&requirement.fact, assumptions)
@@ -2152,7 +2227,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
             // for backing that the caller does not hold.
             return Err(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding));
         }
-        if let Some(binding) = binding {
+        if let Some((parent_occurrence, binding)) = bound_occurrence {
             ledger.validate_view_binding(binding.clone(), caller)?;
             if !ResourceContext::new()
                 .unchecked_with_fact(binding.viewed.clone())
@@ -2160,10 +2235,13 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
             {
                 return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
             }
-            rebound
+            let grouped = rebound
                 .entry(binding)
-                .or_default()
-                .push((index, requirement.clone()));
+                .or_insert_with(|| (parent_occurrence, Vec::new()));
+            if grouped.0 != parent_occurrence {
+                return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
+            }
+            grouped.1.push((index, requirement.clone()));
             continue;
         }
         let direct = caller_resources
@@ -2233,18 +2311,34 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
                 // one the coverage was checked against.
                 return Err(StableViewPlanError::ConflictingRequirement(selected));
             }
-            let opening = planned_ledger.lend(caller, callee, support, selected.clone())?;
-            entry_transitions.push(opening.transition.clone());
-            planned_ledger = planned_ledger.apply(&opening.transition)?;
-            residual = residual
-                .without_fact_incrementally(&selected, assumptions)
-                .ok_or_else(|| StableViewPlanError::MissingResource(owned.clone()))?;
+            let opening = if split_reborrowed_views {
+                lend_owned_view_to_suspended_worker(
+                    &mut planned_ledger,
+                    &mut entry_transitions,
+                    &mut residual,
+                    &mut parent_view_bindings,
+                    &mut suspended_split_reborrows,
+                    &selected,
+                    support,
+                    caller,
+                    callee,
+                    assumptions,
+                )?
+            } else {
+                let opening = planned_ledger.lend(caller, callee, support, selected.clone())?;
+                entry_transitions.push(opening.transition.clone());
+                planned_ledger = planned_ledger.apply(&opening.transition)?;
+                residual = residual
+                    .without_fact_incrementally(&selected, assumptions)
+                    .ok_or_else(|| StableViewPlanError::MissingResource(owned.clone()))?;
+                opening
+            };
             loan_roots.push((
                 opening.scope,
                 opening.loan,
                 opening.root_share,
                 support,
-                true,
+                !split_reborrowed_views,
             ));
             escrowed_owners.push(selected.clone());
             if let Some(binding) = parent_view_bindings.get(&support)
@@ -2430,7 +2524,22 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
             else {
                 return Err(StableViewPlanError::ConflictingRequirement(selected));
             };
-            let opening = if let Some(backing) = composite_backings.get(&support) {
+            let suspended_owned_reader =
+                split_reborrowed_views && selected.memory_own_range().is_some();
+            let opening = if suspended_owned_reader {
+                lend_owned_view_to_suspended_worker(
+                    &mut planned_ledger,
+                    &mut entry_transitions,
+                    &mut residual,
+                    &mut parent_view_bindings,
+                    &mut suspended_split_reborrows,
+                    &selected,
+                    support,
+                    caller,
+                    callee,
+                    assumptions,
+                )?
+            } else if let Some(backing) = composite_backings.get(&support) {
                 let remaining = residual
                     .clone()
                     .without_fact_incrementally(&selected, assumptions)
@@ -2464,18 +2573,19 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
             } else {
                 planned_ledger.lend(caller, callee, support, selected.clone())?
             };
-            entry_transitions.push(opening.transition.clone());
-            planned_ledger = planned_ledger.apply(&opening.transition)?;
-            residual = residual
-                .without_fact_incrementally(&selected, assumptions)
-                .ok_or_else(|| StableViewPlanError::MissingResource(owned.clone()))?;
-            let root_index = loan_roots.len();
+            if !suspended_owned_reader {
+                entry_transitions.push(opening.transition.clone());
+                planned_ledger = planned_ledger.apply(&opening.transition)?;
+                residual = residual
+                    .without_fact_incrementally(&selected, assumptions)
+                    .ok_or_else(|| StableViewPlanError::MissingResource(owned.clone()))?;
+            }
             loan_roots.push((
                 opening.scope,
                 opening.loan,
                 opening.root_share,
                 support,
-                true,
+                !suspended_owned_reader,
             ));
             // What the caller actually holds across the call: for an adapter
             // lend the head is a name the planner gave to owned facts the
@@ -2544,10 +2654,9 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
                     },
                 ));
             }
-            let _ = root_index;
         }
     }
-    for (binding, group) in rebound {
+    for (binding, (parent_occurrence, group)) in rebound {
         let worker_binding = if split_reborrowed_views {
             let (split, retained, worker) =
                 planned_ledger.split(binding.share, caller, caller, caller)?;
@@ -2558,8 +2667,8 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
                 ..binding.clone()
             };
             parent_view_bindings =
-                parent_view_bindings.with_inserted(binding.support, retained_binding.clone());
-            residual = residual.with_loan_dependency(binding.support, retained_binding);
+                parent_view_bindings.with_inserted(parent_occurrence, retained_binding.clone());
+            residual = residual.with_loan_dependency(parent_occurrence, retained_binding);
             LoanViewBinding {
                 share: worker,
                 ..binding.clone()
@@ -2587,7 +2696,8 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
         ));
         rebound_parents.insert(opening.loan, binding.clone());
         if split_reborrowed_views {
-            suspended_split_reborrows.insert(opening.loan, (binding.support, worker_binding.share));
+            suspended_split_reborrows
+                .insert(opening.loan, (parent_occurrence, worker_binding.share));
         }
         let mut child_occurrence = None;
         for (index, requirement) in group {
@@ -3000,15 +3110,37 @@ impl StableViewTransferPlan {
                 local_view_updates.insert(fact.clone(), updated);
             }
             if let Some((occurrence, worker_share)) = self.suspended_split_reborrows.get(&loan) {
-                let (joined, merged_share, joins) =
-                    ledger.join_available_share_ancestors(*worker_share, self.caller)?;
-                ledger = joined;
-                transitions.extend(joins);
                 let binding = view_bindings
                     .get(occurrence)
                     .cloned()
                     .ok_or(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding))?;
-                if ledger
+                ledger.validate_view_binding(binding.clone(), self.caller)?;
+                let (joined, merged_share, joins) =
+                    ledger.join_available_share_ancestors(*worker_share, self.caller)?;
+                ledger = joined;
+                transitions.extend(joins);
+                if ledger.loan_is_recoverable_by(binding.loan, self.caller)
+                    && ledger.scope_can_end(binding.scope, self.caller)
+                {
+                    let close = ledger.end(binding.scope, self.caller)?;
+                    ledger = ledger.apply(&close)?;
+                    transitions.push(close);
+                    let (recover, escrow, recovered_support) =
+                        ledger.recover(binding.loan, self.caller)?;
+                    ledger = ledger.apply(&recover)?;
+                    transitions.push(recover);
+                    if recovered_support != binding.support {
+                        return Err(StableViewPlanError::Loan(LoanRefusal::InvalidEvidence));
+                    }
+                    resources = resources
+                        .without_bound_view_occurrence(*occurrence, &binding)
+                        .ok_or(StableViewPlanError::InvalidResidual)?;
+                    view_bindings = view_bindings.without(*occurrence);
+                    resources = resources
+                        .try_compose_with_fact(escrow.clone(), assumptions)
+                        .map_err(|_| StableViewPlanError::InvalidResidual)?;
+                    recovered_escrows.push((escrow, None));
+                } else if ledger
                     .validate_view_binding(binding.clone(), self.caller)
                     .is_err()
                 {

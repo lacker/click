@@ -160,8 +160,14 @@ share. The parent gets no resource fact. Source proofs cover both join orders,
 second-create failure cleanup, a nested reader, and a parent write after both
 joins. Hostile proofs reject a write or scope exit after only one join. A
 kernel test checks one root identity, no invented resource, and final closure.
-Repeated lending from one explicit owner, forged recovery checks, and the
-frozen parent sidecar remain. These source proofs use the modeled runtime.
+The next checkpoint also shares one explicitly owned cell: the first worker
+escrows it under a parent-held root, later workers borrow sibling shares, and
+the last join removes the parent view occurrence before returning the exact
+owner. Source proofs cover both join orders, second-create failure cleanup,
+the final parent write, and rejection of a write after only one join. A kernel
+test checks owner absence during concurrent reads, exact view removal, and
+owner recovery. Forged recovery checks and the frozen parent sidecar remain.
+These source proofs use the modeled runtime.
 
 ### Important implementation notes
 
