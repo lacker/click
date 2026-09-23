@@ -2335,8 +2335,10 @@ fn execute_step_from_frontier_position_selecting_path(
             }
             _ => {
                 return Err(ClickError::new(format!(
-                    "`step({}(...), {{ ... }})` requires a call to `{}` at the current frontier",
-                    transport.function, transport.function
+                    "`step({}(...), {{ ... }})` requires a call to `{}` at the current frontier; next operation: {}",
+                    transport.function,
+                    transport.function,
+                    describe_statement_head(&step_statement)
                 )));
             }
         }

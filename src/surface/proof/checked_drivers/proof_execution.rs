@@ -911,11 +911,13 @@ fn try_check_flat_function_proof_inner<'a>(
     };
     check_verification_deadline()?;
     if !proof.is_at_function_exit() {
-        if let Some(error) = remaining
-            .first()
-            .and_then(|indexed| pre_exit_outcome_tactic_error(&indexed.tactic))
-        {
-            return Err(error);
+        if let Some((indexed, reason)) = remaining.first().and_then(|indexed| {
+            pre_exit_outcome_tactic_error(&indexed.tactic).map(|reason| (indexed, reason))
+        }) {
+            return Err(proof
+                .at_source_tactic(indexed.source_index)
+                .step_error(reason)
+                .with_failed_tactic(tactic_name(&indexed.tactic)));
         }
         return decline();
     }
@@ -1428,11 +1430,13 @@ fn try_check_structural_function_proof_inner<'a>(
     }
     check_verification_deadline()?;
     if !proof.is_at_function_exit() {
-        if let Some(error) = remaining
-            .first()
-            .and_then(|indexed| pre_exit_outcome_tactic_error(&indexed.tactic))
-        {
-            return Err(error);
+        if let Some((indexed, reason)) = remaining.first().and_then(|indexed| {
+            pre_exit_outcome_tactic_error(&indexed.tactic).map(|reason| (indexed, reason))
+        }) {
+            return Err(proof
+                .at_source_tactic(indexed.source_index)
+                .step_error(reason)
+                .with_failed_tactic(tactic_name(&indexed.tactic)));
         }
         return decline();
     }
@@ -1460,8 +1464,11 @@ fn defer_post_exit_outcome_tactic<'a>(
     indexed: &IndexedTactic,
     expansion_capture: Option<&mut ExpansionCapture>,
 ) -> Result<Option<Proof<'a>>, ClickError> {
-    if let Some(error) = post_exit_execution_tactic_error(&indexed.tactic) {
-        return Err(error);
+    if let Some(reason) = post_exit_execution_tactic_error(&indexed.tactic) {
+        return Err(proof
+            .at_source_tactic(indexed.source_index)
+            .step_error(reason)
+            .with_failed_tactic(tactic_name(&indexed.tactic)));
     }
     let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
         return decline();
@@ -2179,8 +2186,11 @@ fn advance_focused_execution_arm<'a>(
 ) -> Result<Option<Proof<'a>>, ClickError> {
     for indexed in tactics {
         if proof.is_at_function_exit() {
-            if let Some(error) = post_exit_execution_tactic_error(&indexed.tactic) {
-                return Err(error);
+            if let Some(reason) = post_exit_execution_tactic_error(&indexed.tactic) {
+                return Err(proof
+                    .at_source_tactic(indexed.source_index)
+                    .step_error(reason)
+                    .with_failed_tactic(tactic_name(&indexed.tactic)));
             }
             let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
                 return decline();
@@ -3726,7 +3736,7 @@ pub(in crate::surface::proof) fn add_proof_branch_path(
 
 /// The diagnostic for an execution tactic written after execution already
 /// reached function exit: the tactic has no statement to run.
-fn post_exit_execution_tactic_error(tactic: &ProofTactic) -> Option<ClickError> {
+fn post_exit_execution_tactic_error(tactic: &ProofTactic) -> Option<String> {
     let name = match tactic {
         ProofTactic::Step => "step()".to_string(),
         ProofTactic::StepContract(name) => format!("step({name})"),
@@ -3738,21 +3748,21 @@ fn post_exit_execution_tactic_error(tactic: &ProofTactic) -> Option<ClickError> 
         ),
         _ => return None,
     };
-    Some(ClickError::new(format!(
+    Some(format!(
         "`{name}` cannot run after execution already reached function exit"
-    )))
+    ))
 }
 
 /// The diagnostic for a function-exit tactic written before execution
 /// reached function exit.
-fn pre_exit_outcome_tactic_error(tactic: &ProofTactic) -> Option<ClickError> {
+fn pre_exit_outcome_tactic_error(tactic: &ProofTactic) -> Option<String> {
     let name = match tactic {
         ProofTactic::Witness(_) => "witness",
         ProofTactic::Choose(_) => "choose",
         ProofTactic::Simp => "simp",
         _ => return None,
     };
-    Some(ClickError::new(format!(
+    Some(format!(
         "`{name}` requires execution to reach function exit first"
-    )))
+    ))
 }

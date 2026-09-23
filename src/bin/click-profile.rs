@@ -550,7 +550,7 @@ fn profile_target(
         Some(project) => click::surface::selected_project_thread_runtime(project),
         None => click::surface::selected_thread_runtime(&source.click_source),
     }
-    .map_err(|error| error.message().to_string())?;
+    .map_err(|error| error.report())?;
     profile.runtime_assumptions = runtime
         .assumption()
         .map(str::to_string)
@@ -603,7 +603,7 @@ fn count_smart_source_sites(events: &[VerificationEvent]) -> Result<usize, Strin
             format!(
                 "could not inventory `{}`: {}",
                 path.display(),
-                error.message()
+                error.report()
             )
         })?;
         Ok(total + sites.len())
@@ -1408,7 +1408,7 @@ fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
                 format!(
                     "could not read imports in mdtest `{}`: {}",
                     path.display(),
-                    error.message()
+                    error.report()
                 )
             })?
             .is_empty();
@@ -1549,7 +1549,7 @@ fn verify_mdtest(path: &Path) -> Result<(), String> {
         instrumentation::emit(VerificationEvent::Source(path.to_path_buf()));
     }
     let has_imports = !click_import_sites(click_source)
-        .map_err(|error| error.message().to_string())?
+        .map_err(|error| error.report())?
         .is_empty();
     let result = match &inputs {
         CInput::Bundle(sources) if has_imports => {
@@ -1571,7 +1571,7 @@ fn verify_mdtest(path: &Path) -> Result<(), String> {
                 Err(format!(
                     "mdtest `{}` expected a failure containing `{expected}`, got: {}",
                     path.display(),
-                    error.message()
+                    error.report()
                 ))
             }
         }
@@ -1583,7 +1583,7 @@ fn verify_mdtest(path: &Path) -> Result<(), String> {
         (_, Err(error)) => Err(format!(
             "mdtest `{}` failed: {}",
             path.display(),
-            error.message()
+            error.report()
         )),
     }
 }
@@ -1622,7 +1622,7 @@ fn verify_project(project: &Path) -> Result<(), String> {
             format!(
                 "example sidecar `{}` failed: {}",
                 click_path.display(),
-                error.message()
+                error.report()
             )
         })?;
     }

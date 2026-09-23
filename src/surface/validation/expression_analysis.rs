@@ -1141,6 +1141,7 @@ fn validate_recursive_call_edge(
                 "internal error locating decreases parameter `{}` for `{callee}`",
                 callee_measure.parameter()
             ))
+            .with_kind(ClickErrorKind::Internal)
         })?;
     let next = arguments.get(measure_index).ok_or_else(|| {
         ClickError::new(format!(

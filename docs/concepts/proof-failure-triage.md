@@ -1,5 +1,17 @@
 # Triaging proof failures
 
+Click's terminal report labels a failure as a syntax error, type error, proof
+error, or internal error. A proof error means a checked proof operation could
+not establish its prerequisite or goal. It does not assert that the C program
+is wrong. When a simple tactic was being checked, the report names that tactic;
+when the checker retained an exact unresolved condition, it prints it as
+`needed:`. The focused goal and recent premises provide bounded context, not
+an exhaustive list of everything derivable from the proof state.
+
+These labels describe what the CLI observed. The rest of this guide diagnoses
+why a proof error happened. A rejected proof may need an available explicit
+step, expose a missing capability, or reveal a bug in a documented rule.
+
 A failed proof is evidence, but it does not by itself identify a Click bug.
 Classify the failure before changing the proof engine, the specification, or
 the C source. This keeps ordinary proof development separate from language

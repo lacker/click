@@ -572,6 +572,16 @@ impl<'a> Proof<'a> {
         step: ProofStep,
         origin: Option<ProofStepOrigin>,
     ) -> Result<Self, ClickError> {
+        let tactic = proof_step_source_name(&step);
+        self.apply_step_with_origin_inner(step, origin)
+            .map_err(|error| error.with_failed_tactic(tactic))
+    }
+
+    fn apply_step_with_origin_inner(
+        &self,
+        step: ProofStep,
+        origin: Option<ProofStepOrigin>,
+    ) -> Result<Self, ClickError> {
         #[cfg(test)]
         CHECKED_HAVE_OPERATIONS.with(|count| count.set(count.get() + 1));
         // Diagnostics from this step, and from every scope it opens, name the

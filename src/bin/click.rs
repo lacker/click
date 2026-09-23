@@ -91,6 +91,59 @@ mod tests {
             "{error}"
         );
         assert!(!error.contains("outside the owned footprint"), "{error}");
+        assert!(error.contains("error kind: proof error"), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn verify_names_the_failed_simple_tactic() {
+        let directory =
+            std::env::temp_dir().join(format!("click-failed-step-report-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("f.c"), "int32 f() { return 1; }\n").unwrap();
+        let sidecar = directory.join("f.click");
+        fs::write(
+            &sidecar,
+            "verifying \"f.c\";\nint32 f() { ensures result == 1; } by { step(); step(); simp(); }\n",
+        )
+        .unwrap();
+        let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
+        assert!(error.contains("error kind: proof error"), "{error}");
+        assert!(error.contains("tactic: step"), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn verify_reports_syntax_and_type_error_kinds() {
+        let directory =
+            std::env::temp_dir().join(format!("click-error-kinds-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("f.c"),
+            "int32 read(int32 *p) { return p[0]; }\n",
+        )
+        .unwrap();
+        let sidecar = directory.join("f.click");
+        fs::write(&sidecar, "verifying \"f.c\"; int32 read(").unwrap();
+        let syntax = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
+        assert!(syntax.contains("error kind: syntax error"), "{syntax}");
+
+        fs::write(
+            &sidecar,
+            "verifying \"f.c\"; int32 read(const int32 *p) { ensures result == 0; }\n",
+        )
+        .unwrap();
+        let type_error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
+        assert!(
+            type_error.contains("error kind: type error"),
+            "{type_error}"
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 

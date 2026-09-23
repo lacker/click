@@ -4605,6 +4605,7 @@ fn parse_c_source_unit(
             })?;
             syntax::validate_header(header.source(), header.line_map()).map_err(|error| {
                 ClickError::new(format!("failed to parse C header `{header_path}`: {error}"))
+                    .with_kind(ClickErrorKind::Syntax)
             })?;
         }
         syntax::parse_translation_unit_for_source(
@@ -4614,6 +4615,7 @@ fn parse_c_source_unit(
         )
         .map_err(|error| {
             ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
+                .with_kind(ClickErrorKind::Syntax)
         })?
     } else {
         #[cfg(test)]
@@ -4638,6 +4640,7 @@ fn parse_c_source_unit(
             ClickError::new(format!(
                 "failed to parse compiler-prepared C source `{source_path}`: {error}"
             ))
+            .with_kind(ClickErrorKind::Syntax)
         })?
     };
     c_sources
@@ -5946,13 +5949,19 @@ fn validate_modeled_pthread_binding(
         &header_source,
         CTarget::X86_64LinuxUserspace,
     )
-    .map_err(|error| ClickError::new(format!("invalid built-in pthread model: {error}")))?;
+    .map_err(|error| {
+        ClickError::new(format!("invalid built-in pthread model: {error}"))
+            .with_kind(ClickErrorKind::Internal)
+    })?;
     let reference = syntax::parse_translation_unit_for_source(
         reference.source(),
         "__click_modeled_pthread_reference.c",
         reference.line_map(),
     )
-    .map_err(|error| ClickError::new(format!("invalid built-in pthread model: {error}")))?;
+    .map_err(|error| {
+        ClickError::new(format!("invalid built-in pthread model: {error}"))
+            .with_kind(ClickErrorKind::Internal)
+    })?;
 
     let mut found_builtin = BTreeSet::new();
     for (source_path, unit) in units {
@@ -7174,7 +7183,8 @@ pub(in crate::surface) fn check_signature(
             signature.name(),
             signature.return_type(),
             parsed_function.return_type()
-        )));
+        ))
+        .with_kind(ClickErrorKind::Type));
     }
 
     if signature.return_pointee_is_constant() != parsed_function.return_pointee_is_constant() {
@@ -7183,7 +7193,8 @@ pub(in crate::surface) fn check_signature(
             signature.name(),
             signature.return_pointee_is_constant(),
             parsed_function.return_pointee_is_constant()
-        )));
+        ))
+        .with_kind(ClickErrorKind::Type));
     }
 
     if signature.parameters().len() != parsed_function.parameters().len() {
@@ -7192,7 +7203,8 @@ pub(in crate::surface) fn check_signature(
             signature.name(),
             signature.parameters().len(),
             parsed_function.parameters().len()
-        )));
+        ))
+        .with_kind(ClickErrorKind::Type));
     }
 
     for (index, (expected, actual)) in signature
@@ -7215,7 +7227,8 @@ pub(in crate::surface) fn check_signature(
                 expected.name(),
                 describe_parameter_type(actual.c_type(), actual.struct_name()),
                 actual.name()
-            )));
+            ))
+            .with_kind(ClickErrorKind::Type));
         }
     }
 

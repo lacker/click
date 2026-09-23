@@ -2434,3 +2434,27 @@ fn resource_contract_regressions_expand_and_check() {
             .unwrap_or_else(|error| panic!("{error:?}\n{expanded}"));
     }
 }
+#[test]
+fn reports_syntax_and_type_failures_separately() {
+    let syntax = parser::parse("theorem").unwrap_err();
+    assert_eq!(syntax.kind(), ClickErrorKind::Syntax);
+    assert!(syntax.report().contains("error kind: syntax error"));
+
+    let type_error = verify_c0_sources(
+        "verifying \"f.c\"; int32 read(const int32 *p) { ensures result == 0; }",
+        &[("f.c", "int32 read(int32 *p) { return p[0]; }")],
+    )
+    .unwrap_err();
+    assert_eq!(type_error.kind(), ClickErrorKind::Type);
+    assert!(type_error.report().contains("error kind: type error"));
+
+    let internal = ClickError::new("broken verifier invariant")
+        .with_kind(ClickErrorKind::Internal)
+        .with_kind(ClickErrorKind::Type);
+    assert_eq!(internal.kind(), ClickErrorKind::Internal);
+    assert!(internal.report().contains("error kind: internal error"));
+    assert_eq!(
+        ClickError::new("kernel rejected: internal error while checking a rewrite").kind(),
+        ClickErrorKind::Internal
+    );
+}

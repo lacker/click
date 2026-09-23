@@ -965,10 +965,12 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
     let focused_branch = split_proof
         .focus_branch(ids[0])
         .expect("the left sibling is open");
-    assert!(
-        focused_branch.apply_step(ProofStep::Intro).is_err(),
-        "an atomic claim rejects `intro`"
-    );
+    let error = match focused_branch.apply_step(ProofStep::Intro) {
+        Ok(_) => panic!("an atomic claim rejects `intro`"),
+        Err(error) => error,
+    };
+    assert!(error.report().contains("error kind: proof error"));
+    assert!(error.report().contains("tactic: intro()"));
     assert_eq!(split_proof.branches().collect::<Vec<_>>(), ids);
     assert!(
         split_proof
