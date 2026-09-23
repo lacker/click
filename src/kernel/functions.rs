@@ -10971,13 +10971,17 @@ fn materialize_symbolic_aggregate_fields(
     }
     for union in layout.unions() {
         let union_base = base.offset_by_bytes(union.offset_bytes());
-        for field in union.fields() {
-            let pointer = union_base.offset_by_bytes(field.offset_bytes());
-            let symbolic_base = symbolic_memory_base(&memory, &pointer);
-            if let Some(value) = symbolic_load_value(&symbolic_base, &pointer, field.c_type()) {
-                memory = memory.store_union(pointer, field.c_type(), value);
-            }
-        }
+        let views = union
+            .fields()
+            .iter()
+            .filter_map(|field| {
+                let pointer = union_base.offset_by_bytes(field.offset_bytes());
+                let symbolic_base = symbolic_memory_base(&memory, &pointer);
+                symbolic_load_value(&symbolic_base, &pointer, field.c_type())
+                    .map(|value| (pointer, field.c_type(), value))
+            })
+            .collect();
+        memory = memory.store_union_views(union_base, union.size_bytes(), views);
     }
     memory
 }
@@ -11100,15 +11104,20 @@ fn zero_aggregate_fields(
     }
     for union in layout.unions() {
         let union_base = base.offset_by_bytes(union.offset_bytes());
-        for field in union.fields() {
-            if let Some(value) = zero_union_member_value(field.c_type()) {
-                memory = memory.store_union(
-                    union_base.offset_by_bytes(field.offset_bytes()),
-                    field.c_type(),
-                    value,
-                );
-            }
-        }
+        let views = union
+            .fields()
+            .iter()
+            .filter_map(|field| {
+                zero_union_member_value(field.c_type()).map(|value| {
+                    (
+                        union_base.offset_by_bytes(field.offset_bytes()),
+                        field.c_type(),
+                        value,
+                    )
+                })
+            })
+            .collect();
+        memory = memory.store_union_views(union_base, union.size_bytes(), views);
     }
     memory
 }
@@ -11492,18 +11501,21 @@ fn copy_aggregate_fields(
     for union in layout.unions() {
         let source_union = source.offset_by_bytes(union.offset_bytes());
         let destination_union = destination.offset_by_bytes(union.offset_bytes());
-        for field in union.fields() {
-            let source_field = source_union.offset_by_bytes(field.offset_bytes());
-            let Some(value) = copy_aggregate_union_member(&memory, &source_field, field.c_type())
-            else {
-                continue;
-            };
-            memory = memory.store_union(
-                destination_union.offset_by_bytes(field.offset_bytes()),
-                field.c_type(),
-                value,
-            );
-        }
+        let views = union
+            .fields()
+            .iter()
+            .filter_map(|field| {
+                let source_field = source_union.offset_by_bytes(field.offset_bytes());
+                copy_aggregate_union_member(&memory, &source_field, field.c_type()).map(|value| {
+                    (
+                        destination_union.offset_by_bytes(field.offset_bytes()),
+                        field.c_type(),
+                        value,
+                    )
+                })
+            })
+            .collect();
+        memory = memory.store_union_views(destination_union, union.size_bytes(), views);
     }
     memory
 }
@@ -11571,6 +11583,58 @@ fn copy_aggregate_union_member(
         }
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod aggregate_union_copy_tests {
+    use super::*;
+
+    #[test]
+    fn copying_a_union_drops_destination_views_absent_from_source() {
+        let source = Pointer {
+            block: "union-copy-source".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let destination = Pointer {
+            block: "union-copy-destination".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let layout = CAggregateLayout::with_unions(
+            4,
+            4,
+            vec![],
+            vec![CAggregateUnion::new(
+                "u",
+                0,
+                4,
+                vec![
+                    CAggregateUnionField::new("byte", 0, CType::UInt8),
+                    CAggregateUnionField::new("word", 0, CType::Int32),
+                ],
+            )],
+        );
+        let memory = CMemory::new()
+            .with_block(source.block.clone(), 4)
+            .with_block(destination.block.clone(), 4)
+            .store_union(
+                source.clone(),
+                CType::UInt8,
+                CValue::UInt8(Bitvector32Term::Constant(0xAA)),
+            )
+            .store_union(
+                destination.clone(),
+                CType::Int32,
+                CValue::Int32(Bitvector32Term::Constant(0x5151)),
+            );
+
+        let copied = copy_aggregate_fields(memory, &source, &destination, &layout);
+
+        assert_eq!(
+            copied.known_union_value(&destination, CType::UInt8),
+            Some(CValue::UInt8(Bitvector32Term::Constant(0xAA))),
+        );
+        assert_eq!(copied.known_union_value(&destination, CType::Int32), None);
+    }
 }
 
 fn evaluate_resource_population_body_resources(

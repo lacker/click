@@ -10,7 +10,6 @@ fix, regression coverage, and documentation land.
 - [The owned-overlap rule misses cross-block pairs with proven equal bases](owned-overlap-rule-misses-alias-equal-pairs.md) — machine-confirmed
 - [Spec-carrier substitution has no binder handling: capture and silent drops](spec-substitution-captures-and-drops-binders.md) — machine-confirmed
 - [The loadable byte-offset route certifies a wrapped goal extent](wrapped-byte-extent-passes-loadable-bounds.md) — machine-confirmed
-- [A union store leaves the other members' typed overlays stale](union-store-leaves-stale-member-overlays.md) — machine-confirmed
 - [Entry-partition separation facts are never re-checked after equalities](entry-partition-separation-facts-unrechecked.md) — statically confirmed
 - [The annotation quantifier counter is raised into other producers' bands](quantifier-counter-rises-into-other-producers.md) — statically confirmed
 - [A ledger with an active hold is equal to its hold-free predecessor](hold-does-not-change-ledger-identity.md) — machine-confirmed
