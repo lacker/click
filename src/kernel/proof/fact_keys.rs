@@ -5,8 +5,8 @@
 //! validates every selected candidate.
 
 use crate::kernel::{
-    AlgebraicTerm, IntegerComparisonOperator, IntegerTerm, MachineIntegerType, SharedCMemory,
-    SharedIntegerTerm, Sort,
+    AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, CType, CValue, IntegerComparisonOperator,
+    IntegerTerm, MachineIntegerType, PureFunctionArgument, SharedCMemory, SharedIntegerTerm, Sort,
 };
 use crate::kernel::{
     Bitvector32Term, CComparisonOperator, CFloatBinaryOperator, CFloatClassification,
@@ -777,6 +777,10 @@ enum AlphaBitvectorKey {
         name: String,
         arguments: Vec<Self>,
     },
+    ClickFunctionApplication {
+        name: String,
+        arguments: Vec<AlphaPureFunctionArgumentKey>,
+    },
     Load(Box<AlphaPointerKey>),
     RegisteredLoad(AlphaRegisteredLoadId),
     Address(Box<AlphaPointerKey>),
@@ -787,6 +791,47 @@ enum AlphaBitvectorKey {
     Int64FromUInt32(Box<Self>),
     UInt64FromInt32(Box<Self>),
     UInt64FromInt64(Box<Self>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+enum AlphaPureFunctionArgumentKey {
+    Value(AlphaCValueKey),
+    Integer(AlphaIntegerKey),
+    Algebraic(AlphaAlgebraicKey),
+    ArrayRef {
+        memory: AlphaSnapshotKey,
+        pointer: AlphaCValueKey,
+        element_type: CType,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+enum AlphaCValueKey {
+    Void,
+    Scalar(CType, AlphaBitvectorKey),
+    Pointer {
+        c_type: CType,
+        pointee_volatile: bool,
+        pointee_constant: bool,
+        pointer: AlphaPointerKey,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+enum AlphaAlgebraicKey {
+    Variable(crate::kernel::AlgebraicType, AlphaVariableKey),
+    Constructor {
+        algebraic_type: crate::kernel::AlgebraicType,
+        variant: String,
+        fields: Vec<AlphaAlgebraicValueKey>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+enum AlphaAlgebraicValueKey {
+    C(AlphaCValueKey),
+    Integer(AlphaIntegerKey),
+    Algebraic(AlphaAlgebraicKey),
 }
 
 /// O(1) identity for a retained memory snapshot.
@@ -1187,6 +1232,7 @@ fn alpha_integer_key(
         bitvector_scope: 0,
         next_scope_id: 1,
         snapshot_aware: false,
+        raw_snapshot_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         load_interner: None,
@@ -1240,6 +1286,7 @@ pub(crate) fn integer_fold_alpha_key(term: &SharedIntegerTerm) -> Option<Integer
         bitvector_scope: 0,
         next_scope_id: 1,
         snapshot_aware: true,
+        raw_snapshot_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         load_interner: None,
@@ -1296,6 +1343,7 @@ fn bitvector_fold_alpha_key(term: &Bitvector32Term) -> Option<(AlphaBitvectorKey
         bitvector_scope: 0,
         next_scope_id: 1,
         snapshot_aware: true,
+        raw_snapshot_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         load_interner: None,
@@ -1313,6 +1361,7 @@ struct AlphaBindings {
     bitvector_scope: u64,
     next_scope_id: u64,
     snapshot_aware: bool,
+    raw_snapshot_load_seen: bool,
     registered_load_stack: BTreeSet<Variable>,
     registered_load_memo: HashMap<(Variable, u64, u64, usize), (AlphaRegisteredLoadId, usize)>,
     load_interner: Option<Arc<std::sync::Mutex<AlphaRegisteredLoadInterner>>>,
@@ -1684,6 +1733,128 @@ fn alpha_pointer_key_with_bindings<const ALLOW_LOADS: bool>(
     })
 }
 
+fn alpha_c_value_key_with_bindings<const ALLOW_LOADS: bool>(
+    value: &CValue,
+    bindings: &mut AlphaBindings,
+    next_binder: &mut usize,
+) -> Option<AlphaCValueKey> {
+    alpha_work_checkpoint(bindings, 1)?;
+    Some(match value {
+        CValue::Void => AlphaCValueKey::Void,
+        CValue::Pointer(pointer) => AlphaCValueKey::Pointer {
+            c_type: pointer.c_type(),
+            pointee_volatile: pointer.pointee_volatile(),
+            pointee_constant: pointer.pointee_constant(),
+            pointer: alpha_pointer_key_with_bindings::<ALLOW_LOADS>(
+                pointer.pointer(),
+                bindings,
+                next_binder,
+            )?,
+        },
+        other => {
+            let (ty, term) = match other {
+                CValue::Bool(term) => (CType::Bool, term),
+                CValue::Int8(term) => (CType::Int8, term),
+                CValue::Int16(term) => (CType::Int16, term),
+                CValue::Int32(term) => (CType::Int32, term),
+                CValue::UInt8(term) => (CType::UInt8, term),
+                CValue::UInt16(term) => (CType::UInt16, term),
+                CValue::UInt32(term) => (CType::UInt32, term),
+                CValue::Int64(term) => (CType::Int64, term),
+                CValue::UInt64(term) => (CType::UInt64, term),
+                CValue::Float32(term) => (CType::Float32, term),
+                CValue::Float64(term) => (CType::Float64, term),
+                CValue::Void | CValue::Pointer(_) => unreachable!(),
+            };
+            AlphaCValueKey::Scalar(
+                ty,
+                alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(term, bindings, next_binder)?,
+            )
+        }
+    })
+}
+
+fn alpha_algebraic_key_with_bindings<const ALLOW_LOADS: bool>(
+    term: &AlgebraicTerm,
+    bindings: &mut AlphaBindings,
+    next_binder: &mut usize,
+) -> Option<AlphaAlgebraicKey> {
+    alpha_work_checkpoint(bindings, 1)?;
+    Some(match &term.node {
+        AlgebraicTermNode::Variable(variable) => AlphaAlgebraicKey::Variable(
+            term.algebraic_type.clone(),
+            bindings
+                .bitvector
+                .get(variable)
+                .copied()
+                .map_or(AlphaVariableKey::Free(*variable), AlphaVariableKey::Bound),
+        ),
+        AlgebraicTermNode::Constructor { variant, fields } => AlphaAlgebraicKey::Constructor {
+            algebraic_type: term.algebraic_type.clone(),
+            variant: variant.clone(),
+            fields: fields
+                .iter()
+                .map(|field| {
+                    Some(match field {
+                        AlgebraicValue::C(value) => AlphaAlgebraicValueKey::C(
+                            alpha_c_value_key_with_bindings::<ALLOW_LOADS>(
+                                value,
+                                bindings,
+                                next_binder,
+                            )?,
+                        ),
+                        AlgebraicValue::Integer(value) => AlphaAlgebraicValueKey::Integer(
+                            alpha_integer_key_with_bindings(value, bindings, next_binder)?,
+                        ),
+                        AlgebraicValue::Algebraic(value) => {
+                            AlphaAlgebraicValueKey::Algebraic(alpha_algebraic_key_with_bindings::<
+                                ALLOW_LOADS,
+                            >(
+                                value, bindings, next_binder
+                            )?)
+                        }
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?,
+        },
+        AlgebraicTermNode::Match { .. } | AlgebraicTermNode::PureFunctionApplication { .. } => {
+            return None;
+        }
+    })
+}
+
+fn alpha_pure_function_argument_key_with_bindings<const ALLOW_LOADS: bool>(
+    argument: &PureFunctionArgument,
+    bindings: &mut AlphaBindings,
+    next_binder: &mut usize,
+) -> Option<AlphaPureFunctionArgumentKey> {
+    alpha_work_checkpoint(bindings, 1)?;
+    Some(match argument {
+        PureFunctionArgument::Value(value) => AlphaPureFunctionArgumentKey::Value(
+            alpha_c_value_key_with_bindings::<ALLOW_LOADS>(value, bindings, next_binder)?,
+        ),
+        PureFunctionArgument::Integer(value) => AlphaPureFunctionArgumentKey::Integer(
+            alpha_integer_key_with_bindings(value, bindings, next_binder)?,
+        ),
+        PureFunctionArgument::Algebraic(value) => AlphaPureFunctionArgumentKey::Algebraic(
+            alpha_algebraic_key_with_bindings::<ALLOW_LOADS>(value, bindings, next_binder)?,
+        ),
+        PureFunctionArgument::ArrayRef {
+            memory,
+            pointer,
+            element_type,
+        } => AlphaPureFunctionArgumentKey::ArrayRef {
+            memory: AlphaSnapshotKey::new(&crate::kernel::intern_c_memory_ref(memory)),
+            pointer: alpha_c_value_key_with_bindings::<ALLOW_LOADS>(
+                pointer,
+                bindings,
+                next_binder,
+            )?,
+            element_type: *element_type,
+        },
+    })
+}
+
 fn alpha_bitvector_key_with_bindings<const ALLOW_LOADS: bool>(
     term: &Bitvector32Term,
     bindings: &mut AlphaBindings,
@@ -1981,9 +2152,24 @@ fn alpha_bitvector_key_with_bindings<const ALLOW_LOADS: bool>(
                     .collect::<Option<Vec<_>>>()?,
             }
         }
-        Bitvector32Term::ClickFunctionApplication { .. }
-        | Bitvector32Term::AlgebraicMatch { .. } => return None,
+        Bitvector32Term::ClickFunctionApplication { name, arguments } => {
+            AlphaBitvectorKey::ClickFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        alpha_pure_function_argument_key_with_bindings::<ALLOW_LOADS>(
+                            argument,
+                            bindings,
+                            next_binder,
+                        )
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            }
+        }
+        Bitvector32Term::AlgebraicMatch { .. } => return None,
         Bitvector32Term::MemoryLoad(memory, pointer) if bindings.snapshot_aware => {
+            bindings.raw_snapshot_load_seen = true;
             let snapshot = AlphaSnapshotKey::new(memory);
             let pointer =
                 alpha_pointer_key_with_bindings::<ALLOW_LOADS>(pointer, bindings, next_binder)?;
@@ -2000,9 +2186,14 @@ fn alpha_bitvector_key_with_bindings<const ALLOW_LOADS: bool>(
                 &interner, snapshot, pointer,
             )?)
         }
-        Bitvector32Term::MemoryLoad(_, pointer) => AlphaBitvectorKey::Load(Box::new(
-            alpha_pointer_key_with_bindings::<ALLOW_LOADS>(pointer, bindings, next_binder)?,
-        )),
+        Bitvector32Term::MemoryLoad(_, pointer) => {
+            bindings.raw_snapshot_load_seen = true;
+            AlphaBitvectorKey::Load(Box::new(alpha_pointer_key_with_bindings::<ALLOW_LOADS>(
+                pointer,
+                bindings,
+                next_binder,
+            )?))
+        }
         Bitvector32Term::PointerAddress(pointer) => AlphaBitvectorKey::Address(Box::new(
             alpha_pointer_key_with_bindings::<ALLOW_LOADS>(pointer, bindings, next_binder)?,
         )),
@@ -2068,6 +2259,7 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
         bitvector_scope: 0,
         next_scope_id: 1,
         snapshot_aware: false,
+        raw_snapshot_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         load_interner: None,
@@ -2185,6 +2377,7 @@ fn alpha_proposition_key<const ALLOW_LOADS: bool>(
         bitvector_scope: 0,
         next_scope_id: 1,
         snapshot_aware: false,
+        raw_snapshot_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         load_interner: None,
@@ -2200,6 +2393,35 @@ fn alpha_proposition_key<const ALLOW_LOADS: bool>(
 pub(crate) fn proposition_identity_key(
     proposition: &Proposition,
 ) -> Option<PropositionIdentityKey> {
+    proposition_identity_key_with_raw_load_flag(proposition).map(|(key, _)| key)
+}
+
+/// Authority for alpha-renaming a proof-local algebraic binder in a captured
+/// array-dependent fact. Array references carry opaque, exact snapshots;
+/// raw loads do not, because a quantified C variable can occur inside their
+/// snapshot contents. Those cases retain the memory-aware substitution rule.
+pub(crate) fn quantified_algebraic_captured_array_identity_key(
+    proposition: &Proposition,
+) -> Option<PropositionIdentityKey> {
+    if !matches!(
+        proposition,
+        Proposition::ForAll {
+            sort: Sort::Algebraic(_),
+            ..
+        } | Proposition::Exists {
+            sort: Sort::Algebraic(_),
+            ..
+        }
+    ) {
+        return None;
+    }
+    proposition_identity_key_with_raw_load_flag(proposition)
+        .and_then(|(key, raw_load)| (!raw_load).then_some(key))
+}
+
+fn proposition_identity_key_with_raw_load_flag(
+    proposition: &Proposition,
+) -> Option<(PropositionIdentityKey, bool)> {
     if implication_chain_depth(proposition) > 128 {
         // The identity index is an optimization for exact fact lookup. Keep
         // very deep source-shaped chains in the authoritative fact set
@@ -2213,13 +2435,17 @@ pub(crate) fn proposition_identity_key(
         bitvector_scope: 0,
         next_scope_id: 1,
         snapshot_aware: true,
+        raw_snapshot_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         load_interner: None,
         work_units: 0,
     };
-    alpha_proposition_key_with_bindings::<true>(proposition, &mut environment, &mut 0)
-        .map(PropositionIdentityKey)
+    let key = alpha_proposition_key_with_bindings::<true>(proposition, &mut environment, &mut 0)?;
+    Some((
+        PropositionIdentityKey(key),
+        environment.raw_snapshot_load_seen,
+    ))
 }
 
 fn implication_chain_depth(proposition: &Proposition) -> usize {
@@ -2335,12 +2561,11 @@ mod proposition_identity_tests {
         }
     }
 
-    /// A Click function application has no identity key, so two quantified
-    /// propositions over one, equal but for their binders' numbers, used to
-    /// compare unequal: a bundle presented with one binder number and lowered
-    /// again with another could then not be split.
+    /// Pure-function applications are keyed through typed arguments, so a
+    /// separately lowered binder keeps its identity without erasing an array
+    /// snapshot or accidentally treating a free variable as bound.
     #[test]
-    fn unkeyed_propositions_compare_equal_up_to_binder_numbering() {
+    fn pure_function_applications_compare_equal_up_to_binder_numbering() {
         let application = |bound: u64| {
             equal(
                 Bitvector32Term::ClickFunctionApplication {
@@ -2354,10 +2579,72 @@ mod proposition_identity_tests {
         };
         let left = forall(2_000_000, application(2_000_000));
         let right = forall(3_000_000, application(3_000_000));
-        assert!(proposition_identity_key(&left).is_none());
+        assert!(proposition_identity_key(&left).is_some());
         assert!(propositions_are_alpha_equal(&left, &right));
         let other = forall(3_000_000, application(7));
         assert!(!propositions_are_alpha_equal(&left, &other));
+    }
+
+    #[test]
+    fn array_dependent_algebraic_existential_keeps_snapshot_and_binding_identity() {
+        let ty = crate::kernel::AlgebraicType::parameter("Fuel".into());
+        let pointer = Pointer {
+            block: "alpha-array".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = CMemory::new().with_block("alpha-array", 8);
+        let after = before
+            .clone()
+            .store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(1)));
+        let make = |binder: u64, argument: u64, memory: CMemory| Proposition::Exists {
+            name: "fuel".into(),
+            var: Variable(binder),
+            sort: Sort::Algebraic(ty.clone()),
+            body: Box::new(equal(
+                Bitvector32Term::ClickFunctionApplication {
+                    name: "walk".into(),
+                    arguments: vec![
+                        PureFunctionArgument::ArrayRef {
+                            memory,
+                            pointer: CValue::pointer(pointer.clone()),
+                            element_type: CType::Int32,
+                        },
+                        PureFunctionArgument::Algebraic(AlgebraicTerm {
+                            algebraic_type: ty.clone(),
+                            node: AlgebraicTermNode::Variable(Variable(argument)),
+                        }),
+                    ],
+                },
+                Bitvector32Term::Constant(0),
+            )),
+        };
+        let original = make(2_000_000, 2_000_000, before.clone());
+        assert!(quantified_algebraic_captured_array_identity_key(&original).is_some());
+        assert!(propositions_are_alpha_equal(
+            &original,
+            &make(3_000_000, 3_000_000, before.clone())
+        ));
+        assert!(!propositions_are_alpha_equal(
+            &original,
+            &make(3_000_000, 3_000_000, after)
+        ));
+        assert!(!propositions_are_alpha_equal(
+            &original,
+            &make(3_000_000, 2_000_000, before)
+        ));
+        let raw_load = Proposition::Exists {
+            name: "fuel".into(),
+            var: Variable(2_000_000),
+            sort: Sort::Algebraic(ty),
+            body: Box::new(equal(
+                Bitvector32Term::MemoryLoad(
+                    CMemory::new().with_block("alpha-array", 8).into(),
+                    Box::new(pointer),
+                ),
+                Bitvector32Term::Constant(0),
+            )),
+        };
+        assert!(quantified_algebraic_captured_array_identity_key(&raw_load).is_none());
     }
 
     #[test]
@@ -2667,6 +2954,7 @@ fn snapshot_alpha_proposition_key(
         bitvector_scope: 0,
         next_scope_id: 1,
         snapshot_aware: true,
+        raw_snapshot_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         load_interner: None,
@@ -2715,6 +3003,7 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
             if !ALLOW_LOADS {
                 return None;
             }
+            bindings.raw_snapshot_load_seen = true;
             // Loadability is an explicit checked premise, so its memory
             // snapshot is part of the alpha identity.  Raw MemoryLoad terms
             // keep the existing snapshot-blind selection behavior above;

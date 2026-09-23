@@ -5,16 +5,17 @@ found. Kernel soundness review discovered during the same campaign is tracked
 separately in `issues/bughunt.md`. Everything needed for this example is here
 and in `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
-## Handoff checkpoint — 2026-09-22, after the reachability attempt
+## Handoff checkpoint — 2026-09-22, after the reachability proof
 
 The complete unmodified search now verifies termination and memory safety in
 `mdtests/search_terminates_by_unmarked_count.md`. Its `Integer`-valued fold
 measure, quantified `next` invariant, early return, checked store, point-update
 lemma, nonnegativity proof, and strict back-edge decrease all pass together in
-the gate. The same proof now establishes that `result == 1` implies `to` is in
-bounds and `visited[to] == 0`: success can only use the `cur == to` return,
-which precedes the marking store. `unmarked_nonnegative` also lives with the
-other checked counting lemmas in `mdtests/unmarked_count_lemmas.md`.
+the gate. The same proof establishes that `result == 1` implies `to` is in
+bounds, `visited[to] == 0`, and some finite `walk(next, from, fuel)` reaches
+`to`: success can only use the `cur == to` return, which precedes the marking
+store. `unmarked_nonnegative` also lives with the other checked counting lemmas
+in `mdtests/unmarked_count_lemmas.md`.
 
 Graph reachability now has first-class algebraic quantifiers and ghost
 witnesses. `mdtests/algebraic_existential_witness.md` checks algebraic
@@ -23,36 +24,26 @@ witnesses. `mdtests/algebraic_existential_witness.md` checks algebraic
 `invariant N` source and rebuilds a changing `Nat` witness at the back edge.
 No C bookkeeping or produced token is involved.
 
-Applying the same mechanism to `walk(next, from, fuel)` exposed the next
-independent boundary: after the store to the disjoint `visited` array, the
-chosen relation names `next` at the iteration-entry memory snapshot while the
-successor defining equation names it at the current snapshot. Click does not
-yet transport that recursive pure-function equality across the disjoint
-store. The updated reduction is in
-`design/dfs-gaps/reachability_needs_an_algebraic_loop_witness.md`. The
-algebraic witness representation is no longer the blocker; snapshot-stable
-transport of the array-dependent relation is.
-
-The focused `mdtests/recursive_walk_survives_unrelated_store.md` now proves a
-sound alternative to opaque-function transport: an inductive `walk_frame`
-lemma derives equality from pointwise equality over the viewed `next[0..n]`
-range. Its store regression uses an explicit separation requirement between
-`next` and `visited`; mere distinct parameter names are not sufficient.
-Nested `instantiate` and theorem application now accept algebraic bindings
-chosen in proofs (`mdtests/algebraic_induction_binding_in_have.md` and the
-extended `mdtests/algebraic_existential_loop_witness.md`). In the complete
-search attempt, initialization and back-edge construction of the existential
-witness passed, but `close_invariants()` could not re-establish that fact at
-its own back-edge snapshot. Keep the complete proof attempt out of the green
-fixture until that closure transport is reduced and repaired.
+The complete search now carries an existential `walk` witness through the
+loop. It uses the inductive `walk_frame` lemma from
+`mdtests/recursive_walk_survives_unrelated_store.md` to relate iteration-entry
+and post-store `next` snapshots, then constructs `Nat::Succ(previous)` at the
+back edge. `mdtests/algebraic_existential_backedge_snapshot.md` covers the
+previous `close_invariants()` failure: alpha-equivalent quantified facts now
+match through a typed, snapshot-aware key for array-dependent function
+applications, while changed array snapshots do not. Symbolic frame transport
+also needs explicit bounds for both its read index and the store's write
+index; `mdtests/loop_symbolic_disjoint_array_store_frame.md` checks that path.
+The earlier reduction in
+`design/dfs-gaps/reachability_needs_an_algebraic_loop_witness.md` is historical.
 
 The explicit
 quantified-transport, whole-array dependency, shared-lemma, extent-restatement,
 and small diagnostic items below remain proof-language or tooling costs, but
 none blocks the termination, memory-safety, or branch-local correctness claims.
 
-Whole-array dependency refinement, reachability, and recursive DFS remain
-design work rather than small finishing edits. In particular, discuss the
+Whole-array dependency refinement and recursive DFS remain design work rather
+than small finishing edits. In particular, discuss the
 fold-read-range design in item 2 with the user before implementing it.
 
 This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
@@ -152,17 +143,14 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    does not say which constant; a store refusal spells `owns b[0..1]` as
    `owns a[(v100001 - v100000)..]`.
 
-Next stages: make the recursive `walk` relation stable across the disjoint
-`visited` store, use the now-supported algebraic witness to prove reachability
-for this search, then move to the recursive branching DFS. The older
+Next stage: move to recursive branching DFS. The older
 folded-resource route has its own gaps:
 a loop guard cannot read a cell owned by a folded resource, and recursive
 `walk` is not allowed in a resource fact.
 
 ## Acceptance
 
-Termination and memory safety of the unmodified C are checked by
-`mdtests/search_terminates_by_unmarked_count.md`, along with the branch-local
-success claim. For the remaining work, each fixed gap has a minimal regression
-mdtest, reachability is proved or split out at the user's request, and
+Termination, memory safety, and success-path reachability of the unmodified C
+are checked by `mdtests/search_terminates_by_unmarked_count.md`. For the
+remaining work, each fixed gap has a minimal regression mdtest, and
 `design/dfs-gaps/` is deleted with this issue.

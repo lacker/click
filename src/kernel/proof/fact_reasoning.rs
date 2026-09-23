@@ -650,6 +650,12 @@ pub(crate) fn quantified_equivalent_available_fact(
 }
 
 pub(crate) fn quantified_binder_equivalent(left: &Proposition, right: &Proposition) -> bool {
+    if let (Some(left_key), Some(right_key)) = (
+        super::fact_keys::quantified_algebraic_captured_array_identity_key(left),
+        super::fact_keys::quantified_algebraic_captured_array_identity_key(right),
+    ) {
+        return left_key == right_key;
+    }
     // A loadability premise carries an exact memory snapshot. Compare the
     // selected typed alpha keys before falling back to int32 substitution;
     // the latter would clone and rewrite the entire opaque memory snapshot.
