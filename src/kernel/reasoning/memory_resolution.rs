@@ -2463,21 +2463,31 @@ pub(in crate::kernel) fn memory_matches_effect_summary_endpoint(
     expected == actual || memories_match_for_pointer_load(expected, actual, pointer)
 }
 
-pub(in crate::kernel) fn collect_memory_effect_write_pointers(
+pub(in crate::kernel) fn collect_memory_effect_write_accesses(
     facts: &[ExecutionPureFact],
-) -> BTreeSet<Pointer> {
-    // Concrete stores certify exact pointers. Abstract calls and loops certify
-    // ranges separately through CMemoryEffectSummary; comparing endpoint
-    // memories would mistake join abstraction and call havoc for writes.
+) -> BTreeSet<(Pointer, u32)> {
+    // Concrete stores certify exact pointer-width pairs. Abstract calls and
+    // loops certify ranges separately through CMemoryEffectSummary; comparing
+    // endpoint memories would mistake join abstraction and call havoc for
+    // writes.
     let mut writes = BTreeSet::new();
     for fact in facts {
         if let Proposition::CMemoryMutatesOnly {
             writes: accesses, ..
         } = fact.proposition()
         {
-            writes.extend(accesses.iter().map(|(pointer, _)| pointer.clone()));
+            writes.extend(accesses.iter().cloned());
         }
     }
 
     writes
+}
+
+pub(in crate::kernel) fn collect_memory_effect_write_pointers(
+    facts: &[ExecutionPureFact],
+) -> BTreeSet<Pointer> {
+    collect_memory_effect_write_accesses(facts)
+        .into_iter()
+        .map(|(pointer, _)| pointer)
+        .collect()
 }

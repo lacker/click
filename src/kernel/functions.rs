@@ -5291,10 +5291,10 @@ pub(crate) fn storage_writes_outside_owned_footprint(
     let is_storage = |pointer: &Pointer| {
         pointer.block.starts_with("global:") || pointer.block.starts_with("static:")
     };
-    let storage_writes: Vec<Pointer> =
-        crate::kernel::reasoning::memory_effect_write_pointers(facts)
+    let storage_writes: Vec<(Pointer, u32)> =
+        crate::kernel::reasoning::memory_effect_write_accesses(facts)
             .into_iter()
-            .filter(is_storage)
+            .filter(|(pointer, _)| is_storage(pointer))
             .collect();
     let storage_summaries: Vec<&CMemoryRange> = facts
         .iter()
@@ -5326,21 +5326,8 @@ pub(crate) fn storage_writes_outside_owned_footprint(
         }
     };
     let mut outside = Vec::new();
-    for pointer in &storage_writes {
-        let covered = owned.iter().any(|range| {
-            super::assumptions::pointer_in_memory_range_shallow_with_facts(
-                pointer,
-                range,
-                assumptions,
-            ) || assumptions.pointer_in_range_by_shallow_fact_graph_with_width(
-                pointer,
-                range.base(),
-                range.start(),
-                range.end(),
-                range.element_width(),
-            )
-        });
-        if !covered {
+    for (pointer, write_bytes) in &storage_writes {
+        if !storage_write_within_owned_footprint(pointer, *write_bytes, &owned, assumptions) {
             outside.push(format!("{pointer:?}"));
         }
     }
@@ -5356,6 +5343,84 @@ pub(crate) fn storage_writes_outside_owned_footprint(
         }
     }
     Ok(Some(outside))
+}
+
+fn storage_write_within_owned_footprint(
+    pointer: &Pointer,
+    write_bytes: u32,
+    owned: &[CMemoryRange],
+    assumptions: &PureFactContext,
+) -> bool {
+    let write = CMemoryRange::new_with_element_width(
+        pointer.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(write_bytes),
+        1,
+    );
+    owned.iter().any(|range| {
+        let (base, bytes) = range.byte_footprint();
+        let owned_bytes =
+            CMemoryRange::new_with_element_width(base, Bitvector32Term::Constant(0), bytes, 1);
+        super::assumptions::memory_range_shallowly_contained_with_facts(
+            &write,
+            &owned_bytes,
+            assumptions,
+        )
+    })
+}
+
+#[cfg(test)]
+mod storage_write_footprint_tests {
+    use super::*;
+
+    #[test]
+    fn write_extent_must_fit_inside_owned_byte_footprint() {
+        let base = Pointer {
+            block: "global:owned".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let owned = CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+            1,
+        );
+        let assumptions = PureFactContext::new();
+
+        assert!(storage_write_within_owned_footprint(
+            &base.offset_by_bytes(2),
+            2,
+            std::slice::from_ref(&owned),
+            &assumptions,
+        ));
+        assert!(
+            !storage_write_within_owned_footprint(
+                &base.offset_by_bytes(3),
+                2,
+                std::slice::from_ref(&owned),
+                &assumptions,
+            ),
+            "the write starts in the footprint but its second byte is outside"
+        );
+    }
+
+    #[test]
+    fn memory_effect_write_collection_preserves_each_access_width() {
+        let pointer = Pointer {
+            block: "global:owned".into(),
+            offset: PointerOffsetTerm::Constant(3),
+        };
+        let fact = ExecutionPureFact::new(Proposition::CMemoryMutatesOnly {
+            before: CMemory::new(),
+            after: CMemory::new(),
+            writes: vec![(pointer.clone(), 1), (pointer.clone(), 2)],
+        });
+
+        assert_eq!(
+            crate::kernel::reasoning::memory_effect_write_accesses(&[fact]),
+            BTreeSet::from([(pointer.clone(), 1), (pointer, 2)]),
+        );
+    }
 }
 
 /// Project the checked resource transition's memory effects.  This is the
