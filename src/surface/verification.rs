@@ -2149,13 +2149,21 @@ fn verify_c0_sources_with_context(
             match verification_target.as_ref() {
                 Some(VerificationTarget::Function(function_name)) => {
                     verification_required_functions(&file, &parsed_sources, function_name)?;
-                    Some(BTreeSet::from([function_name.clone()]))
+                    Some(with_modeled_pthread_workers(
+                        BTreeSet::from([function_name.clone()]),
+                        &parsed_sources,
+                        file.selected_thread_runtime(),
+                    )?)
                 }
                 Some(VerificationTarget::Functions(function_names)) => {
                     for function_name in function_names {
                         verification_required_functions(&file, &parsed_sources, function_name)?;
                     }
-                    Some(function_names.clone())
+                    Some(with_modeled_pthread_workers(
+                        function_names.clone(),
+                        &parsed_sources,
+                        file.selected_thread_runtime(),
+                    )?)
                 }
                 Some(VerificationTarget::Theorem(theorem_name)) => {
                     for function_name in contract_refinement_targets(&file, theorem_name) {
@@ -2405,7 +2413,29 @@ fn verify_c0_sources_with_context(
         .map(|contract| contract.name().to_string())
         .collect::<BTreeSet<_>>();
 
-    for function_block in file.function_blocks {
+    let mut ordered_function_blocks = file.function_blocks;
+    if selected_thread_runtime
+        == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
+    {
+        let mut create_callers = BTreeSet::new();
+        for function_block in &ordered_function_blocks {
+            if function_block.is_external() {
+                continue;
+            }
+            if let Some((_, _, parsed)) =
+                parsed_function_for_source_name(&parsed_sources, function_block.signature().name())?
+                && c0_statement_calls(parsed)
+                    .iter()
+                    .any(|calls| calls.contains("pthread_create"))
+            {
+                create_callers.insert(function_block.signature().name().to_string());
+            }
+        }
+        ordered_function_blocks
+            .sort_by_key(|block| create_callers.contains(block.signature().name()));
+    }
+    let mut early_thread_termination_published = false;
+    for function_block in ordered_function_blocks {
         check_verification_deadline()?;
         // Load-variable origins are first-seen per verified function: an
         // origin minted while verifying an earlier function belongs to a
@@ -2419,6 +2449,65 @@ fn verify_c0_sources_with_context(
             .is_some_and(|functions| !functions.contains(function_block.signature.name()))
         {
             continue;
+        }
+        if selected_thread_runtime
+            == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
+            && !early_thread_termination_published
+        {
+            let (_, _, parsed) =
+                parsed_function_for_source_name(&parsed_sources, function_block.signature.name())?
+                    .ok_or_else(|| ClickError::new("modeled pthread caller has no C definition"))?;
+            if c0_statement_calls(parsed)
+                .iter()
+                .any(|calls| calls.contains("pthread_create"))
+            {
+                let partial_rules = function_environment.verified_function_rules();
+                let inline_bodies = function_environment.linked_functions();
+                let heights = c_termination_height_plan(&partial_rules, &inline_bodies);
+                let declared_diverging = external_and_user_function_blocks
+                    .iter()
+                    .filter(|function| function.signature().diverges())
+                    .map(|function| {
+                        executing_function_name(
+                            &termination_kernel_names,
+                            function.signature().name(),
+                        )
+                    })
+                    .collect::<BTreeSet<_>>();
+                let mut assumed_terminating = external_and_user_function_blocks
+                    .iter()
+                    .filter(|function| function.is_external())
+                    .map(|function| function.signature().name())
+                    .chain(
+                        unselected_function_names
+                            .iter()
+                            .flatten()
+                            .map(String::as_str),
+                    )
+                    .map(|name| executing_function_name(&termination_kernel_names, name))
+                    .filter(|name| !declared_diverging.contains(name))
+                    .collect::<BTreeSet<_>>();
+                assumed_terminating
+                    .extend(["pthread_create".to_string(), "pthread_join".to_string()]);
+                let preliminary = c_verified_function_termination_rules(
+                    &partial_rules,
+                    &termination_plans,
+                    &termination_loop_rules,
+                    &inline_bodies,
+                    &heights,
+                    &assumed_terminating,
+                    &declared_diverging,
+                    &diverging_contracts,
+                )
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "could not certify C termination before pthread create: {error}"
+                    ))
+                })?;
+                function_environment = function_environment
+                    .with_verified_function_termination_rules(preliminary.rules);
+                early_thread_termination_published = true;
+            }
         }
         // This outer span makes otherwise-unclassified proof orchestration
         // visible at an interrupted project deadline. Nested tactic and
@@ -3256,7 +3345,7 @@ fn verify_c0_sources_with_context(
             executing_function_name(&termination_kernel_names, function.signature().name())
         })
         .collect::<BTreeSet<_>>();
-    let assumed_terminating = external_and_user_function_blocks
+    let mut assumed_terminating = external_and_user_function_blocks
         .iter()
         .filter(|function| function.is_external())
         .map(|function| function.signature().name())
@@ -3264,6 +3353,11 @@ fn verify_c0_sources_with_context(
         .map(|name| executing_function_name(&termination_kernel_names, name))
         .filter(|name| !declared_diverging.contains(name))
         .collect::<BTreeSet<_>>();
+    if selected_thread_runtime
+        == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
+    {
+        assumed_terminating.extend(["pthread_create".to_string(), "pthread_join".to_string()]);
+    }
     let CTerminationVerdicts {
         rules: termination_rules,
         refusals: termination_refusals,
@@ -3469,7 +3563,7 @@ pub(in crate::surface) fn tactic_expansion_required_functions(
             "selected {claim:?} proof for `{function_name}` is not an explicit tactic script"
         ))
     })?;
-    let Some((kernel_name, _, _)) =
+    let Some((kernel_name, _, parsed)) =
         parsed_function_for_source_name(parsed_sources, &function_name)?
     else {
         return Err(ClickError::new(format!(
@@ -3481,6 +3575,11 @@ pub(in crate::surface) fn tactic_expansion_required_functions(
     // contracts are interfaces and do not select their implementations.
     required.insert(kernel_name.clone());
     required.insert(function_name);
+    if file.selected_thread_runtime()
+        == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
+    {
+        required.extend(modeled_pthread_create_workers(parsed));
+    }
     Ok(required)
 }
 
@@ -3549,13 +3648,19 @@ pub(in crate::surface) fn verification_required_functions(
     function_name: &str,
 ) -> Result<BTreeSet<String>, ClickError> {
     let function_blocks = combined_external_function_blocks(file)?;
-    verification_required_functions_with_blocks(parsed_sources, function_name, &function_blocks)
+    verification_required_functions_with_blocks(
+        parsed_sources,
+        function_name,
+        &function_blocks,
+        file.selected_thread_runtime(),
+    )
 }
 
 fn verification_required_functions_with_blocks(
     parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
     function_name: &str,
     function_blocks: &[FunctionBlock],
+    runtime: crate::languages::c::thread_runtime::CThreadRuntime,
 ) -> Result<BTreeSet<String>, ClickError> {
     if !function_blocks
         .iter()
@@ -3582,6 +3687,11 @@ fn verification_required_functions_with_blocks(
     };
     while let Some(name) = pending.pop() {
         if !required.insert(name.clone()) {
+            continue;
+        }
+        if runtime == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
+            && matches!(name.as_str(), "pthread_create" | "pthread_join")
+        {
             continue;
         }
         let Some(parsed) = parsed_sources.get(&name).map(|entry| &entry.1) else {
@@ -3694,6 +3804,7 @@ fn c0_external_dependencies_file(
             &parsed_sources,
             function.signature().name(),
             &function_blocks,
+            file.selected_thread_runtime(),
         )?;
         let external = required
             .intersection(&external_names)
@@ -3708,6 +3819,75 @@ fn c0_external_dependencies_file(
 
 fn is_c0_builtin_function(name: &str) -> bool {
     matches!(name, "malloc" | "calloc" | "realloc" | "free")
+}
+
+fn modeled_pthread_create_workers(function: &syntax::C0Function) -> BTreeSet<String> {
+    use syntax::{C0Expression as E, C0Statement as S};
+    let mut workers = BTreeSet::new();
+    let mut pending = vec![function.body()];
+    while let Some(statement) = pending.pop() {
+        match statement {
+            S::Call {
+                function_name,
+                arguments,
+            }
+            | S::CallAssign {
+                function_name,
+                arguments,
+                ..
+            } if function_name == "pthread_create" => {
+                if let Some(E::FunctionAddress(name)) = arguments.get(2) {
+                    workers.insert(name.clone());
+                }
+            }
+            S::Label { statement, .. } => pending.push(statement),
+            S::Seq(first, second) => {
+                pending.push(second);
+                pending.push(first);
+            }
+            S::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                pending.push(else_branch);
+                pending.push(then_branch);
+            }
+            S::While { body, .. } | S::DoWhile { body, .. } => pending.push(body),
+            S::For {
+                initializer,
+                step,
+                body,
+                ..
+            } => {
+                pending.push(step);
+                pending.push(body);
+                pending.push(initializer);
+            }
+            S::Switch { cases, .. } => {
+                pending.extend(cases.iter().map(|case| case.body()));
+            }
+            _ => {}
+        }
+    }
+    workers
+}
+
+fn with_modeled_pthread_workers(
+    mut selected: BTreeSet<String>,
+    parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
+    runtime: crate::languages::c::thread_runtime::CThreadRuntime,
+) -> Result<BTreeSet<String>, ClickError> {
+    if runtime == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread {
+        let mut workers = BTreeSet::new();
+        for name in &selected {
+            if let Some((_, _, parsed)) = parsed_function_for_source_name(parsed_sources, name)? {
+                workers.extend(modeled_pthread_create_workers(parsed));
+            }
+        }
+        selected.extend(workers);
+    }
+    Ok(selected)
 }
 
 pub(in crate::surface) fn c0_statement_calls(
@@ -7448,6 +7628,47 @@ mod modeled_pthread_binding_tests {
             .unwrap();
         assert_eq!(binding.specification_version, 1);
         assert_eq!(binding.target, CTarget::X86_64LinuxUserspace);
+    }
+
+    #[test]
+    fn source_create_status_then_join_uses_the_modeled_transition() {
+        let c = "#include <pthread.h>\n#include <stddef.h>\nstruct cell { int value; };\nvoid *worker(void *p) { struct cell *q = p; q->value = 77; return NULL; }\nint run(struct cell *p) { pthread_t h; int rc = pthread_create(&h, NULL, worker, p); if (rc != 0) return 0; pthread_join(h, NULL); return 1; }\n";
+        let click = "target \"x86_64-linux-userspace\";\nruntime \"modeled-pthread\";\nverifying \"fork_join.c\";\nvoid *worker(void *p) { owns ((struct cell *)p)->value; } by { execute(); simp(); }\nint32 run(struct cell *p) { owns p->value; ensures result == 0 or result == 1; } by { step(); step(); step(); branch { then { step(); simp(); } else {} } step(); step(); simp(); }\n";
+        verify_c0_sources(click, &[("fork_join.c", c)])
+            .expect("source create and join proof should certify");
+        let expanded =
+            expand_c0_claim_source(click, &[("fork_join.c", c)], "run", CProofClaim::Grouped)
+                .expect("modeled create and join proof should expand");
+        verify_c0_sources(&expanded, &[("fork_join.c", c)])
+            .expect("expanded modeled create and join proof should certify");
+    }
+
+    #[test]
+    fn source_create_status_can_be_copied_and_tested_later() {
+        let c = "#include <pthread.h>\n#include <stddef.h>\nstruct cell { int value; };\nvoid *worker(void *p) { struct cell *q = p; q->value = 77; return NULL; }\nint run(struct cell *p) { pthread_t h; int rc = pthread_create(&h, NULL, worker, p); int saved = rc; int unrelated = 7; if (saved != 0) return 0; pthread_join(h, NULL); return unrelated; }\n";
+        let click = "target \"x86_64-linux-userspace\";\nruntime \"modeled-pthread\";\nverifying \"fork_join.c\";\nvoid *worker(void *p) { owns ((struct cell *)p)->value; } by { execute(); simp(); }\nint32 run(struct cell *p) { owns p->value; ensures result == 0 or result == 7; } by { step(); step(); step(); step(); step(); step(); step(); branch { then { step(); simp(); } else {} } step(); step(); simp(); }\n";
+        verify_c0_sources(click, &[("fork_join.c", c)])
+            .expect("a saved status should choose the checked create outcome");
+        let expanded =
+            expand_c0_claim_source(click, &[("fork_join.c", c)], "run", CProofClaim::Grouped)
+                .expect("delayed create status proof should expand");
+        verify_c0_sources(&expanded, &[("fork_join.c", c)])
+            .expect("expanded delayed status proof should certify");
+    }
+
+    #[test]
+    fn source_cannot_read_transferred_memory_before_status_and_join() {
+        let c = "#include <pthread.h>\n#include <stddef.h>\nstruct cell { int value; };\nvoid *worker(void *p) { struct cell *q = p; q->value = 77; return NULL; }\nint run(struct cell *p) { pthread_t h; int rc = pthread_create(&h, NULL, worker, p); int early = p->value; if (rc != 0) return 0; pthread_join(h, NULL); return early; }\n";
+        let click = "target \"x86_64-linux-userspace\";\nruntime \"modeled-pthread\";\nverifying \"fork_join.c\";\nvoid *worker(void *p) { owns ((struct cell *)p)->value; } by { execute(); simp(); }\nint32 run(struct cell *p) { owns p->value; } by { step(); step(); step(); step(); step(); }\n";
+        let error = verify_c0_sources(click, &[("fork_join.c", c)])
+            .expect_err("the task memory cannot be read while creation is pending");
+        assert!(
+            error
+                .message()
+                .contains("resolve the pending pthread create status"),
+            "{}",
+            error.message()
+        );
     }
 
     #[test]

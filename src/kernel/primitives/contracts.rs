@@ -2470,6 +2470,13 @@ impl CExecutionEnvironment {
         self.verified_function_rules.get(name)
     }
 
+    pub(in crate::kernel) fn get_verified_function_termination_rule(
+        &self,
+        name: &str,
+    ) -> Option<&CVerifiedFunctionTerminationRule> {
+        self.verified_function_termination_rules.get(name)
+    }
+
     pub(crate) fn verified_function_rules(&self) -> Vec<CVerifiedFunctionRule> {
         self.verified_function_rules.values().cloned().collect()
     }

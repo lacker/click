@@ -5678,6 +5678,24 @@ impl ExecutionProofCore {
             reached =
                 crate::kernel::resolve_pending_heap_allocations(&reached, &theorem_assumptions);
         }
+        if let Some(pending) = &reached.pending_thread_create {
+            let no_assumptions = PureFactContext::new();
+            let entry_assumptions = self
+                .function_entry
+                .as_ref()
+                .map_or(&no_assumptions, |entry| entry.assumptions());
+            let theorem_assumptions =
+                crate::kernel::api::proof_evidence_assumptions(theorem, entry_assumptions);
+            let decided_assumptions =
+                crate::kernel::reasoning::path_facts::assumptions_with_path_context(
+                    &theorem_assumptions,
+                    &path_facts,
+                    obligations,
+                );
+            if let Some(resolved) = pending.resolve(&reached, &decided_assumptions) {
+                reached = resolved;
+            }
+        }
         Ok((reached, source_after))
     }
 
@@ -5727,6 +5745,17 @@ impl ExecutionProofCore {
                     &theorem_assumptions,
                 )
             };
+        let states_match = states_match
+            || proved_state
+                .pending_thread_create
+                .as_ref()
+                .is_some_and(|pending| {
+                    let theorem_assumptions =
+                        crate::kernel::api::proof_evidence_assumptions(theorem, entry_assumptions);
+                    pending
+                        .resolve(proved_state, &theorem_assumptions)
+                        .is_some_and(|resolved| resolved == *running_state)
+                });
         if !states_match {
             return Err("evidence does not start from the running state".into());
         }

@@ -87,36 +87,24 @@ panics the C parser; indexing it receives a local diagnostic. The complete
 `scripts/check.sh` passed on this slice: 3,598 unit/documentation tests and
 68 integration tests.
 
-### Immediate next slice: bind actual create/join C steps
+### Current modeled create/join checkpoint
 
-Chunk B has started in the kernel: `prepare_create` now checks the exact
-worker contract, termination evidence, and transfer plan before either the
-success or failure outcome is available. A modeled pthread call is also
-blocked from falling through to an ordinary function rule while its checked C
-transition is unfinished. The remaining work is to retain guarded outcomes
-in C execution state, bind the actual status and handle store, and consume the
-completion at the C join step. No C pthread client proof follows from this
-checkpoint.
+The checked C `pthread_create` call now issues a symbolic status and a
+pending success/failure transition after checking the exact direct worker
+contract, callback ABI, termination rule, task transfer, and handle output.
+A scalar local may copy the status or be assigned before a later C `if`
+chooses the outcome. Failure retains task authority; success holds one live
+completion right and withholds the worker's resources and facts until the
+checked C `pthread_join`. Source-level proofs for immediate and delayed
+status checks verify, expand, and reverify under the modeled runtime on macOS.
 
-The next internal checkpoint puts live completion rights in the ordinary C
-path state. An unrelated C statement now preserves the right, joining one
-child consumes it without changing a forked predecessor, and a function
-cannot return while it holds a live right. The registry uses persistent local
-updates and constant-time state identity. The actual C create call is still
-refused: no unresolved status or handle binding has been issued. Before that
-call is enabled, the guarded transfer must also handle symbolic state
-substitution and memory observations without reviving pre-create facts or
-rewinding unrelated writes on the failure branch.
-
-The modeled `pthread_join` C statement now consumes an existing checked
-completion right, returns zero, and rejects a copied handle after its first
-join or a guessed integer handle. A kernel statement theorem covers the call
-transition. This is not yet a source-level pthread client proof: the actual
-`pthread_create` call is still refused. The create result needs a pending
-status guard that keeps both the success transfer and failure memory facts
-valid through unrelated intervening C statements. The worker termination rule
-must also be available when the parent call is checked, rather than only
-after all function contracts finish certification.
+This is a narrow step toward Chunk B, not its acceptance. One create may be
+unresolved at a time; only scalar local work is supported before its status
+test. The guarded representation still needs to replace the saved outcome
+states with operation-local deltas, support disjoint memory operations,
+multiple pending creates, branch joins, deterministic scaling regressions,
+and a complete proof of the unchanged frozen parent. The real-header and
+native runtime binding remain separate work.
 
 Use the checked modeled binding to give ordinary `step` on the unchanged
 `pthread_create` and `pthread_join` calls guarded create outcomes and one

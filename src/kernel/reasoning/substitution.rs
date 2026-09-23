@@ -4146,6 +4146,14 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
         loan_participant: state.loan_participant,
         loan_view_bindings: state.loan_view_bindings.clone(),
         thread_ledger: state.thread_ledger.clone(),
+        pending_thread_create: state.pending_thread_create.as_ref().map(|pending| {
+            pending.map_terms(
+                |status| substitute_bitvector_variable(status, from, to),
+                |base| substitute_bitvector_variable_in_c_state(base, from, to),
+                |pointer| substitute_bitvector_variable_in_pointer(pointer, from, to),
+                |value| substitute_bitvector_variable_in_c_value(value, from, to),
+            )
+        }),
         next_local_frame: state.next_local_frame,
         next_local_lifetime: state.next_local_lifetime,
         enclosing_frame_holds_locals: state.enclosing_frame_holds_locals,
@@ -6626,6 +6634,14 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
         loan_participant: state.loan_participant,
         loan_view_bindings: state.loan_view_bindings.clone(),
         thread_ledger: state.thread_ledger.clone(),
+        pending_thread_create: state.pending_thread_create.as_ref().map(|pending| {
+            pending.map_terms(
+                Clone::clone,
+                |base| substitute_pointer_variable_in_c_state(base, from, to),
+                |pointer| substitute_pointer_variable_in_pointer(pointer, from, to),
+                |value| substitute_pointer_variable_in_c_value(value, from, to),
+            )
+        }),
         next_local_frame: state.next_local_frame,
         next_local_lifetime: state.next_local_lifetime,
         enclosing_frame_holds_locals: state.enclosing_frame_holds_locals,

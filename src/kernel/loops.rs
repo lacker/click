@@ -393,6 +393,20 @@ pub(super) fn execute_c_call_assign_paths(
     if environment
         .modeled_pthread_binding
         .as_ref()
+        .is_some_and(|binding| function_name == binding.create_name)
+    {
+        return execute_modeled_pthread_create_paths(
+            state,
+            Some(target),
+            arguments,
+            assumptions,
+            environment,
+            budget,
+        );
+    }
+    if environment
+        .modeled_pthread_binding
+        .as_ref()
         .is_some_and(|binding| function_name == binding.join_name)
     {
         return execute_modeled_pthread_join_paths(
@@ -642,6 +656,20 @@ pub(super) fn execute_c_call_paths(
     if environment
         .modeled_pthread_binding
         .as_ref()
+        .is_some_and(|binding| function_name == binding.create_name)
+    {
+        return execute_modeled_pthread_create_paths(
+            state,
+            None,
+            arguments,
+            assumptions,
+            environment,
+            budget,
+        );
+    }
+    if environment
+        .modeled_pthread_binding
+        .as_ref()
         .is_some_and(|binding| function_name == binding.join_name)
     {
         return execute_modeled_pthread_join_paths(
@@ -750,6 +778,298 @@ fn unbound_modeled_pthread_call(
         obligations: Vec::new(),
         loan_evidence: empty_checked_loan_evidence_sequence(),
     })
+}
+
+fn modeled_pthread_handle_store(
+    state: &CState,
+    slot: &CValue,
+    value: CValue,
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Option<(CState, Vec<ProofObligation>)>> {
+    let statement = CStatement::TypedStore {
+        pointer: CExpression::Value(slot.clone()),
+        value: CExpression::Value(value),
+        value_type: CType::UInt64,
+        volatile: false,
+        pointee_constant: false,
+    };
+    let paths = super::eval::execute_c_statement_paths(
+        state,
+        &statement,
+        assumptions,
+        environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        budget,
+    )?;
+    let [path] = paths.as_slice() else {
+        return Ok(None);
+    };
+    match &path.outcome {
+        CStatementOutcome::Normal(next) => Ok(Some((next.clone(), path.obligations.clone()))),
+        _ => Ok(None),
+    }
+}
+
+fn modeled_pthread_indeterminate_handle(
+    mut state: CState,
+    slot: &Pointer,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<CState> {
+    let range = CMemoryRange::new_with_element_width(
+        slot.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+        8,
+    );
+    let marker = budget.allocate_kernel_variable()?;
+    state.set_memory(
+        state
+            .memory
+            .clone()
+            .with_call_memory_havoc(marker, &[range], assumptions),
+    );
+    if let Some(name) = state.locals.slots.get(slot).cloned() {
+        let binding = state.locals.binding(&name).cloned();
+        if let Some(
+            CLocalBinding::Object {
+                c_type,
+                slot,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+                ..
+            }
+            | CLocalBinding::UninitializedObject {
+                c_type,
+                slot,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+            },
+        ) = binding
+        {
+            state.locals.set_uninitialized_with_all_qualifiers(
+                name,
+                c_type,
+                slot,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+            );
+        }
+    }
+    Ok(state)
+}
+
+fn execute_modeled_pthread_create_paths(
+    state: &CState,
+    target: Option<&str>,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let refusal = |message: &str| {
+        CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message.to_string()))
+    };
+    if state.pending_thread_create.is_some()
+        || environment.selected_call_contract.is_some()
+        || arguments.len() != 4
+        || target.is_none()
+    {
+        return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
+            outcome: refusal(
+                "modeled-pthread create requires a direct, assigned four-argument call with no unresolved earlier create",
+            ),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        }]);
+    }
+    let mut paths = Vec::new();
+    for mut path in super::functions::evaluate_c_arguments_paths(
+        state,
+        arguments,
+        assumptions,
+        budget,
+        Some(environment),
+    )? {
+        let outcome = if let Some(outcome) = path.outcome {
+            match outcome {
+                CFunctionOutcome::UndefinedBehavior(error) => {
+                    CStatementOutcome::UndefinedBehavior(error)
+                }
+                CFunctionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+                _ => refusal("modeled-pthread create argument did not evaluate"),
+            }
+        } else if !matches!(&path.values[0], CValue::Pointer(slot) if slot.c_type() == CType::UInt64Pointer)
+            || !matches!(&path.values[1], CValue::Pointer(attr) if attr.is_null())
+            || !matches!(&path.values[3], CValue::Pointer(_))
+        {
+            refusal(
+                "modeled-pthread create requires a writable pthread_t slot, null attributes, and a pointer argument",
+            )
+        } else if let CValue::Pointer(callback) = &path.values[2] {
+            if let PointerBlock::Function(worker_name) = &callback.block {
+                let Some(worker) = environment.get_verified_function_rule(worker_name) else {
+                    paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
+                        outcome: refusal(
+                            "modeled-pthread create requires the direct worker's verified contract",
+                        ),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
+                    });
+                    continue;
+                };
+                let callback_type =
+                    CType::FunctionPointer(CType::qualified_function_pointer_signature(
+                        CType::VoidPointer,
+                        false,
+                        &[(CType::VoidPointer, false)],
+                    ));
+                if callback.c_type() != callback_type
+                    || worker.function.function_pointer_type() != callback_type
+                {
+                    paths.push(CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
+                        outcome: refusal(
+                            "modeled-pthread create requires a void *(*)(void *) worker",
+                        ),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
+                    });
+                    continue;
+                }
+                let termination = environment.get_verified_function_termination_rule(worker_name);
+                let current = super::reasoning::path_facts::assumptions_with_path_context(
+                    assumptions,
+                    &path.facts,
+                    &path.obligations,
+                );
+                match super::threads::ThreadContext::new(state.clone()) {
+                    Ok(context) => match context.prepare_create(
+                        worker,
+                        termination,
+                        path.values[3].clone(),
+                        &current,
+                        environment,
+                        budget,
+                    )? {
+                        Ok(prepared) => {
+                            let failure = prepared.failure();
+                            let (success, handle, _) = prepared.success();
+                            let checked_failure_value =
+                                CValue::UInt64(Bitvector32Term::Constant(0));
+                            let slot = &path.values[0];
+                            let checked_success = modeled_pthread_handle_store(
+                                success.parent(),
+                                slot,
+                                handle.c_value(),
+                                &current,
+                                environment,
+                                budget,
+                            )?;
+                            let checked_failure = modeled_pthread_handle_store(
+                                failure.parent(),
+                                slot,
+                                checked_failure_value,
+                                &current,
+                                environment,
+                                budget,
+                            )?;
+                            if let (
+                                Some((mut success, success_obligations)),
+                                Some((_, failure_obligations)),
+                            ) = (checked_success, checked_failure)
+                            {
+                                path.obligations.extend(success_obligations);
+                                path.obligations.extend(failure_obligations);
+                                let CValue::Pointer(slot_pointer) = slot else {
+                                    unreachable!()
+                                };
+                                let output_slot = slot_pointer.pointer();
+                                let mut failure = modeled_pthread_indeterminate_handle(
+                                    failure.parent().clone(),
+                                    output_slot,
+                                    &current,
+                                    budget,
+                                )?;
+                                let status =
+                                    Bitvector32Term::Variable(budget.allocate_kernel_variable()?);
+                                let result = CValue::Int32(status.clone());
+                                let target = target.expect("checked assigned call");
+                                if assign_call_result(
+                                    &mut success,
+                                    target,
+                                    result.clone(),
+                                    &mut path.obligations,
+                                    &current,
+                                )
+                                .is_none()
+                                    || assign_call_result(
+                                        &mut failure,
+                                        target,
+                                        result,
+                                        &mut path.obligations,
+                                        &current,
+                                    )
+                                    .is_none()
+                                {
+                                    refusal("modeled-pthread create status target is not writable")
+                                } else {
+                                    let mut neutral = success.clone();
+                                    neutral.thread_ledger = failure.thread_ledger.clone();
+                                    neutral = modeled_pthread_indeterminate_handle(
+                                        neutral,
+                                        output_slot,
+                                        &current,
+                                        budget,
+                                    )?;
+                                    neutral.pending_thread_create =
+                                        Some(super::threads::PendingThreadCreate::new(
+                                            status,
+                                            output_slot.clone(),
+                                            success,
+                                            failure,
+                                        ));
+                                    CStatementOutcome::Normal(neutral)
+                                }
+                            } else {
+                                refusal(
+                                    "modeled-pthread handle output is not writable or overlaps the worker task",
+                                )
+                            }
+                        }
+                        Err(message) => refusal(&message),
+                    },
+                    Err(message) => refusal(message),
+                }
+            } else {
+                refusal("modeled-pthread create requires a direct worker address")
+            }
+        } else {
+            refusal("modeled-pthread create requires a direct worker address")
+        };
+        paths.push(CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
+            outcome,
+            facts: path.facts,
+            obligations: path.obligations,
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        });
+    }
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
 }
 
 fn execute_modeled_pthread_join_paths(

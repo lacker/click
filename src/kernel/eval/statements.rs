@@ -2052,10 +2052,11 @@ pub(crate) fn resolve_pending_heap_allocations(
 }
 
 fn has_live_thread_completion(state: &CState) -> bool {
-    state
-        .thread_ledger
-        .as_ref()
-        .is_some_and(|ledger| ledger.has_live_rights())
+    state.pending_thread_create.is_some()
+        || state
+            .thread_ledger
+            .as_ref()
+            .is_some_and(|ledger| ledger.has_live_rights())
 }
 
 fn live_thread_return_refusal() -> CStatementOutcome {
@@ -2388,6 +2389,121 @@ pub(in crate::kernel) fn execute_c_statement_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    if let Some(pending) = &state.pending_thread_create {
+        if let Some(resolved) = pending.resolve(state, assumptions) {
+            return execute_c_statement_paths(
+                &resolved,
+                statement,
+                assumptions,
+                environment,
+                execution_semantics,
+                budget,
+            );
+        }
+        match statement {
+            CStatement::Declare {
+                name,
+                c_type:
+                    CType::Int8
+                    | CType::Int16
+                    | CType::Int32
+                    | CType::Int64
+                    | CType::UInt8
+                    | CType::UInt16
+                    | CType::UInt32
+                    | CType::UInt64,
+                ..
+            } if !pending.protects_local(state, name) => {
+                let mut bare = state.clone();
+                bare.pending_thread_create = None;
+                let mut paths = execute_c_statement_paths(
+                    &bare,
+                    statement,
+                    assumptions,
+                    environment,
+                    execution_semantics,
+                    budget,
+                )?;
+                for path in &mut paths {
+                    if let CStatementOutcome::Normal(next) = &mut path.outcome {
+                        if let Some(slot) = next.locals.slot(name)
+                            && let Some(bytes) = next
+                                .memory
+                                .block_size(&slot.block)
+                                .and_then(Bitvector32Term::as_const)
+                        {
+                            next.pending_thread_create = Some(pending.with_delta(
+                                super::super::threads::PendingThreadMemoryDelta::Declare {
+                                    block: slot.block.clone(),
+                                    bytes,
+                                },
+                            ));
+                        } else {
+                            path.outcome =
+                                CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                                    "pending pthread create cannot retain this local declaration"
+                                        .to_string(),
+                                ));
+                        }
+                    }
+                }
+                return Ok(paths);
+            }
+            CStatement::Assign { name, expression }
+                if matches!(expression, CExpression::Value(_) | CExpression::Variable(_))
+                    && state.locals.slot(name).is_some()
+                    && !pending.protects_local(state, name) =>
+            {
+                let mut bare = state.clone();
+                bare.pending_thread_create = None;
+                let mut paths = execute_c_statement_paths(
+                    &bare,
+                    statement,
+                    assumptions,
+                    environment,
+                    execution_semantics,
+                    budget,
+                )?;
+                for path in &mut paths {
+                    if let CStatementOutcome::Normal(next) = &mut path.outcome {
+                        if let (Some(slot), Some(value)) =
+                            (next.locals.slot(name), next.locals.get(name))
+                        {
+                            next.pending_thread_create = Some(pending.with_delta(
+                                super::super::threads::PendingThreadMemoryDelta::Store {
+                                    pointer: slot.clone(),
+                                    value: value.clone(),
+                                },
+                            ));
+                        } else {
+                            path.outcome =
+                                CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                                    "pending pthread create cannot retain this local assignment"
+                                        .to_string(),
+                                ));
+                        }
+                    }
+                }
+                return Ok(paths);
+            }
+            CStatement::Skip | CStatement::Seq(_, _) => {}
+            CStatement::If { condition, .. }
+                if super::super::functions::c_expression_is_state_independent(condition) => {}
+            _ => {
+                budget.consume_statement_step()?;
+                return Ok(vec![CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                        "resolve the pending pthread create status before this C operation"
+                            .to_string(),
+                    )),
+                    facts: Vec::new(),
+                    obligations: Vec::new(),
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                }]);
+            }
+        }
+    }
     // `Seq` is the tree representation of a source block, not an executed C
     // statement. Charging it made the statement budget depend on tree shape
     // and counted every straight-line source statement twice.
@@ -2803,6 +2919,27 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                             );
                             let branch_state =
                                 resolve_pending_heap_allocations(state, &path_assumptions);
+                            let branch_state = if let Some(pending) =
+                                &branch_state.pending_thread_create
+                            {
+                                match pending.resolve(&branch_state, &path_assumptions) {
+                                    Some(resolved) => resolved,
+                                    None => {
+                                        paths.push(CStatementExecutionPath {
+                                            loop_invariant_correspondence: Default::default(),
+                                            outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                                                "C branch does not decide the pending pthread create status".to_string(),
+                                            )),
+                                            facts: truthiness_path.facts,
+                                            obligations: truthiness_path.obligations,
+                                            loan_evidence: empty_checked_loan_evidence_sequence(),
+                                        });
+                                        continue;
+                                    }
+                                }
+                            } else {
+                                branch_state
+                            };
                             // The arm is a scope: what it declares stops
                             // existing however control leaves it.
                             let declared = scope_declared_names(branch);

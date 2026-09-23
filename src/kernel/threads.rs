@@ -1,6 +1,6 @@
 //! Internal, checked fork/join ownership transitions.
 //!
-//! This module is deliberately not connected to C library declarations yet.
+//! The modeled pthread binding connects these transitions to checked C calls.
 //! A successful creation reserves a verified, terminating worker's task once,
 //! havocs only its checked mutable footprint, and withholds its outputs until
 //! join. The opaque completion right lives in a persistent, linear registry;
@@ -19,13 +19,14 @@ use crate::persistent::PersistentMap;
 use super::functions::suspend_verified_worker;
 use super::loans::{LoanLedger, StableViewTransferPlan};
 use super::{
-    CExecutionEnvironment, CMemory, CMemoryRange, CState, CValue, CVerifiedFunctionRule,
-    CVerifiedFunctionTerminationRule, ExecutionBudget, ExecutionPureFact, ExecutionResult,
-    Proposition, PureFactContext, ResourceContext,
+    Bitvector32Term, CExecutionEnvironment, CMemory, CMemoryRange, CState, CValue,
+    CVerifiedFunctionRule, CVerifiedFunctionTerminationRule, ConditionTerm, ExecutionBudget,
+    ExecutionPureFact, ExecutionResult, Pointer, PointerBlock, Proposition, PureFactContext,
+    ResourceContext,
 };
 
 /// A kernel identity, not the integer representation of `pthread_t`. The C
-/// boundary will need a checked binding to the actual written handle value.
+/// binding writes an opaque value carrying this identity to a checked slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) struct ThreadHandle(u64);
 
@@ -71,6 +72,203 @@ struct CompletionRight {
     worker: Arc<CVerifiedFunctionRule>,
     argument: CValue,
     completion: WorkerCompletion,
+}
+
+/// The only intervening operations supported while a create status is
+/// unresolved are scalar local declarations and assignments. Record their
+/// exact memory deltas so choosing either outcome preserves those writes.
+#[derive(Clone, Debug)]
+pub(super) enum PendingThreadMemoryDelta {
+    Declare { block: PointerBlock, bytes: u32 },
+    Store { pointer: Pointer, value: CValue },
+}
+
+#[derive(Clone)]
+pub(super) struct PendingThreadCreate {
+    storage: Arc<PendingThreadCreateStorage>,
+}
+
+struct PendingThreadCreateStorage {
+    identity: u64,
+    status: Bitvector32Term,
+    handle_slot: Pointer,
+    success: CState,
+    failure: CState,
+    deltas: PersistentMap<u64, PendingThreadMemoryDelta>,
+    next_delta: u64,
+}
+
+impl PendingThreadCreate {
+    fn fresh_identity() -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(super) fn protects_local(&self, state: &CState, name: &str) -> bool {
+        state
+            .locals
+            .slots
+            .get(&self.storage.handle_slot)
+            .is_some_and(|output| output == name)
+    }
+
+    pub(super) fn new(
+        status: Bitvector32Term,
+        handle_slot: Pointer,
+        success: CState,
+        failure: CState,
+    ) -> Self {
+        debug_assert!(success.pending_thread_create.is_none());
+        debug_assert!(failure.pending_thread_create.is_none());
+        Self {
+            storage: Arc::new(PendingThreadCreateStorage {
+                identity: Self::fresh_identity(),
+                status,
+                handle_slot,
+                success,
+                failure,
+                deltas: PersistentMap::default(),
+                next_delta: 0,
+            }),
+        }
+    }
+
+    pub(super) fn with_delta(&self, delta: PendingThreadMemoryDelta) -> Self {
+        let storage = &self.storage;
+        Self {
+            storage: Arc::new(PendingThreadCreateStorage {
+                identity: Self::fresh_identity(),
+                status: storage.status.clone(),
+                handle_slot: storage.handle_slot.clone(),
+                success: storage.success.clone(),
+                failure: storage.failure.clone(),
+                deltas: storage.deltas.with_inserted(storage.next_delta, delta),
+                next_delta: storage.next_delta + 1,
+            }),
+        }
+    }
+
+    pub(super) fn map_terms(
+        &self,
+        status: impl Fn(&Bitvector32Term) -> Bitvector32Term,
+        state: impl Fn(&CState) -> CState,
+        pointer: impl Fn(&Pointer) -> Pointer,
+        value: impl Fn(&CValue) -> CValue,
+    ) -> Self {
+        let storage = &self.storage;
+        let mut deltas = PersistentMap::default();
+        for (index, delta) in &storage.deltas {
+            let mapped = match delta {
+                PendingThreadMemoryDelta::Declare { block, bytes } => {
+                    PendingThreadMemoryDelta::Declare {
+                        block: block.clone(),
+                        bytes: *bytes,
+                    }
+                }
+                PendingThreadMemoryDelta::Store {
+                    pointer: address,
+                    value: stored,
+                } => PendingThreadMemoryDelta::Store {
+                    pointer: pointer(address),
+                    value: value(stored),
+                },
+            };
+            deltas = deltas.with_inserted(*index, mapped);
+        }
+        Self {
+            storage: Arc::new(PendingThreadCreateStorage {
+                identity: Self::fresh_identity(),
+                status: status(&storage.status),
+                handle_slot: pointer(&storage.handle_slot),
+                success: state(&storage.success),
+                failure: state(&storage.failure),
+                deltas,
+                next_delta: storage.next_delta,
+            }),
+        }
+    }
+
+    pub(super) fn resolve(
+        &self,
+        visible: &CState,
+        assumptions: &PureFactContext,
+    ) -> Option<CState> {
+        let zero = ConditionTerm::Bitvector32Equal(
+            Box::new(self.storage.status.clone()),
+            Box::new(Bitvector32Term::Constant(0)),
+        );
+        let success = assumptions.decide(&zero)?;
+        let mut selected = if success {
+            self.storage.success.clone()
+        } else {
+            self.storage.failure.clone()
+        };
+        for (_, delta) in &self.storage.deltas {
+            crate::instrumentation::record_deterministic_work(1);
+            let memory = match delta {
+                PendingThreadMemoryDelta::Declare { block, bytes } => {
+                    selected.memory.clone().with_block(block.clone(), *bytes)
+                }
+                PendingThreadMemoryDelta::Store { pointer, value } => selected
+                    .memory
+                    .clone()
+                    .store_with_context(pointer.clone(), value.clone(), assumptions),
+            };
+            selected.set_memory(memory);
+        }
+        let output_binding = selected
+            .locals
+            .slots
+            .get(&self.storage.handle_slot)
+            .and_then(|name| {
+                selected
+                    .locals
+                    .bindings
+                    .get(name)
+                    .map(|binding| (name.clone(), binding.clone()))
+            });
+        selected.locals = visible.locals.clone();
+        if let Some((name, binding)) = output_binding {
+            std::sync::Arc::make_mut(&mut selected.locals.bindings).insert(name, binding);
+        }
+        selected.next_local_frame = visible.next_local_frame;
+        selected.next_local_lifetime = visible.next_local_lifetime;
+        selected.enclosing_frame_holds_locals = visible.enclosing_frame_holds_locals;
+        Some(selected)
+    }
+}
+
+impl std::fmt::Debug for PendingThreadCreate {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PendingThreadCreate")
+            .field("identity", &self.storage.identity)
+            .field("status", &self.storage.status)
+            .field("local_deltas", &self.storage.next_delta)
+            .finish()
+    }
+}
+
+impl PartialEq for PendingThreadCreate {
+    fn eq(&self, other: &Self) -> bool {
+        self.storage.identity == other.storage.identity
+    }
+}
+impl Eq for PendingThreadCreate {}
+impl Hash for PendingThreadCreate {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.storage.identity.hash(state);
+    }
+}
+impl PartialOrd for PendingThreadCreate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for PendingThreadCreate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.storage.identity.cmp(&other.storage.identity)
+    }
 }
 
 /// Path-local completion authority stored with ordinary C execution state.
@@ -135,24 +333,42 @@ impl ThreadHandle {
             // This name cannot be spelled by C or Click source. The term is
             // copied as an opaque pthread_t value, never derived from its
             // machine integer representation.
-            name: "\0click.pthread.handle".to_string(),
-            arguments: vec![super::Bitvector32Term::Variable(super::Variable(self.0))],
+            name: format!("\0click.pthread.handle:{}", self.0),
+            arguments: vec![],
         })
     }
 
     pub(super) fn from_c_value(value: &CValue) -> Option<Self> {
         match value {
             CValue::UInt64(super::Bitvector32Term::PureFunctionApplication { name, arguments })
-                if name == "\0click.pthread.handle"
-                    && matches!(arguments.as_slice(), [super::Bitvector32Term::Variable(_)]) =>
+                if arguments.is_empty() =>
             {
-                let super::Bitvector32Term::Variable(variable) = &arguments[0] else {
-                    unreachable!()
-                };
-                Some(Self(variable.0))
+                name.strip_prefix("\0click.pthread.handle:")?
+                    .parse()
+                    .ok()
+                    .map(Self)
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+
+    #[test]
+    fn handle_identity_survives_symbolic_variable_substitution() {
+        let handle = ThreadHandle(42);
+        let value = handle.c_value();
+        let substituted = super::super::reasoning::substitute_bitvector_variable_in_c_value(
+            &value,
+            super::super::Variable(42),
+            &super::super::Bitvector32Term::Variable(super::super::Variable(43)),
+        );
+        assert_eq!(substituted, value);
+        assert_eq!(ThreadHandle::from_c_value(&substituted), Some(handle));
+        assert_ne!(substituted, ThreadHandle(43).c_value());
     }
 }
 

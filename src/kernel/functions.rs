@@ -7448,7 +7448,7 @@ pub(super) fn spec_algebraic_expression_is_state_independent(
     }
 }
 
-fn c_expression_is_state_independent(expression: &CExpression) -> bool {
+pub(super) fn c_expression_is_state_independent(expression: &CExpression) -> bool {
     match expression {
         CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => true,
         CExpression::Cast { expression, .. }

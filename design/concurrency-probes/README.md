@@ -13,10 +13,11 @@ bytes, not reshape the C to expose a friendlier proof state.
 
 The [pthread binding design](pthread-binding-design.md) describes how ordinary
 C create/join calls use the existing worker contracts, `step`, and `branch`.
-The immediate implementation slice establishes an explicit modeled-runtime
-identity that can be tested on macOS; checked C transitions and native runtime
-bindings follow. The design covers delayed status tests and completion
-authority. None of those C call rules is implemented yet.
+The modeled-runtime identity and a first checked C create/join path now run on
+macOS. One pending creation may survive scalar local declarations and copies
+of its status before a C branch chooses success or failure. The frozen parent
+still needs its complete sidecar proof, broader guarded operations, and the
+separate native runtime binding described below.
 
 ## Selected profile
 
@@ -25,16 +26,17 @@ authority. None of those C call rules is implemented yet.
 | Language and target | C11, x86-64 Linux user space, LP64, eight-bit bytes and `-funsigned-char`. Normal Click verification selects this target when a sidecar declares `target "x86_64-linux-userspace";`, which chooses the include model without `__KERNEL__` and a distinct proof-artifact identity; the kernel target remains the default. Selecting it adds no pthread contract and no concurrency semantics. |
 | Compiler and C library | Debian Bookworm GCC 12.2.0, glibc 2.36 headers and pthread runtime. The eventual locked import must record the exact driver, headers, flags, and ABI observations; the current modeled declarations are not that lock. |
 | Compile options | `-std=c11 -pthread -funsigned-char -D_POSIX_C_SOURCE=200809L`. No optimizer- or scheduler-specific ordering assumption belongs in a proof. |
-| Thread API | The selected `pthread.h` declarations for `pthread_create` and `pthread_join`, with joinable threads only. The declaration projection spells `pthread_t` as its x86-64 ABI `unsigned long`; future proof rules must treat its value as a handle, not derive thread behavior from integer arithmetic. Spawn success creates exactly one child and a completion handle; failure creates none. A successful join consumes that handle exactly once. |
+| Thread API | The selected `pthread.h` declarations for `pthread_create` and `pthread_join`, with joinable threads only. The declaration projection spells `pthread_t` as its x86-64 ABI `unsigned long`; checked modeled rules treat its value as a handle rather than deriving thread behavior from integer arithmetic. Spawn success creates exactly one child and a completion handle; failure creates none. A successful join consumes that handle exactly once. |
 | Later mutex API | `pthread_mutex_init`, `pthread_mutex_lock`, `pthread_mutex_unlock`, and `pthread_mutex_destroy` on one ordinary POSIX mutex, with checked guard/resource transfer. No recursive mutex, condition variable, cancellation, detach, or signal operation. |
 | Later atomic subset | C11 `_Atomic int` with `atomic_init`, `atomic_store_explicit(..., memory_order_release)`, and `atomic_load_explicit(..., memory_order_acquire)` for one-shot publication. No read-modify-write, fence, relaxed protocol, or implicit strengthening to sequential consistency. |
 
 The first Click import is a declaration-only projection of `<pthread.h>` and
-`<stddef.h>` sufficient to parse the frozen source unchanged. It includes the
-exact callback shape and `void **` join-result parameter, but no pthread
-external contracts, call execution, scheduling semantics, or proof claims.
-Only null attributes and null join-result arguments are in the selected first
-probe. The parser regression is not a verified concurrency example.
+`<stddef.h>` sufficient to parse the frozen source unchanged. The separate
+modeled runtime supplies checked create/join transitions under an explicit
+assumption; the declarations themselves supply no pthread external contracts
+or scheduler semantics. Only null attributes and null join-result arguments
+are in the selected first probe. The frozen parser regression is not yet a
+verified concurrency example.
 
 The pthread implementation is a trusted runtime boundary, not a verified C
 body. Its future specification must identify these exact declarations and

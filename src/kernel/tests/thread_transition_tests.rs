@@ -1,5 +1,8 @@
 use super::*;
-use crate::kernel::threads::{JoinRuntimeAssumption, ThreadContext, ThreadHandle};
+use crate::kernel::threads::{
+    JoinRuntimeAssumption, PendingThreadCreate, PendingThreadMemoryDelta, ThreadContext,
+    ThreadHandle,
+};
 use crate::kernel::{CVerifiedFunctionTerminationRule, c_verified_function_termination_rules};
 use crate::surface::planning::proposition_search::PropositionSearch;
 
@@ -26,6 +29,23 @@ fn parent(size: usize) -> CState {
     CState::new()
         .with_memory(memory)
         .with_resource_context(resources)
+}
+
+fn byte_parent() -> CState {
+    CState::new()
+        .with_memory(
+            CMemory::new()
+                .with_block(pointer(0).block, 4)
+                .store(pointer(0), CValue::UInt8(0.into())),
+        )
+        .with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+                pointer(0),
+                0.into(),
+                4.into(),
+                1,
+            )),
+        ))
 }
 
 fn worker() -> (CVerifiedFunctionRule, CVerifiedFunctionTerminationRule) {
@@ -75,17 +95,41 @@ fn worker() -> (CVerifiedFunctionRule, CVerifiedFunctionTerminationRule) {
 fn certify_worker(
     function: CFunction,
 ) -> (CVerifiedFunctionRule, CVerifiedFunctionTerminationRule) {
+    let argument = if matches!(
+        function.parameters()[0].c_type(),
+        CType::UInt8Pointer | CType::VoidPointer
+    ) {
+        CExpression::Value(CValue::typed_pointer(
+            pointer(0),
+            function.parameters()[0].c_type(),
+        ))
+    } else {
+        c_pointer_value(pointer(0))
+    };
+    let certification_parent = if matches!(
+        function.parameters()[0].c_type(),
+        CType::UInt8Pointer | CType::VoidPointer
+    ) {
+        byte_parent()
+    } else {
+        parent(1)
+    };
     let execution = certify_contract_with_kernel_artifacts(
-        parent(1),
+        certification_parent,
         function.clone(),
-        vec![c_pointer_value(pointer(0))],
+        vec![argument],
         vec![],
         CExecutionEnvironment::new(),
         CExecutionSemantics::EXECUTE_BODIES,
         CFunctionContractExecutionMode::VerifyLoops,
     );
-    let claims = c_verified_function_contract_claims(&function, &execution)
-        .expect("worker body and returned ownership certify");
+    let claims = c_verified_function_contract_claims(&function, &execution).unwrap_or_else(|| {
+        panic!(
+            "worker body and returned ownership certify: {:?}; diagnostic: {:?}",
+            c_unverified_function_contract_claims(&function, &execution),
+            execution.reuse_diagnostic(),
+        )
+    });
     let rule = c_verified_function_rule(function.clone(), &claims).expect("checked worker rule");
     let verdicts = c_verified_function_termination_rules(
         std::slice::from_ref(&rule),
@@ -134,7 +178,7 @@ fn modeled_pthread_calls_cannot_fall_back_to_ordinary_function_rules() {
         assert!(matches!(
             &paths[0].outcome,
             CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message))
-                if message.contains("no checked C transition")
+                if message.contains("assigned four-argument call")
         ));
     }
 }
@@ -365,6 +409,313 @@ fn modeled_pthread_join_call_consumes_only_the_named_completion() {
         &remaining[0].outcome,
         CStatementOutcome::Normal(_)
     ));
+}
+
+#[test]
+fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
+    let owned = CResourceSpec::owned_memory(
+        CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(4))
+            .with_element_width(1),
+    );
+    let function = c_function(
+        CType::VoidPointer,
+        "byte_worker",
+        vec![c_parameter("p", CType::VoidPointer)],
+        c_seq(
+            c_store(
+                c_cast(c_variable("p"), CType::UInt8Pointer),
+                c_uint8_literal(77),
+            ),
+            c_return(CExpression::Value(CValue::typed_pointer(
+                Pointer::null(),
+                CType::VoidPointer,
+            ))),
+        ),
+    )
+    .with_resource_summary(vec![owned.clone()], vec![owned])
+    .with_contract(
+        vec![],
+        vec![],
+        vec![],
+        vec![
+            CFunctionContractClaim::body_safety(),
+            CFunctionContractClaim::ensure_resource(1, 0),
+        ],
+        true,
+    )
+    .with_resource_derived_mutable_frame();
+    let (worker, termination) = certify_worker(function.clone());
+    let environment = CExecutionEnvironment::new()
+        .with_modeled_pthread_binding(Some(
+            crate::languages::c::thread_runtime::ModeledPthreadBinding::builtin(),
+        ))
+        .with_function(function)
+        .with_verified_function_rule(worker)
+        .with_verified_function_termination_rules([termination]);
+    let mut state = byte_parent();
+    for declaration in [
+        c_declare("thread", CType::UInt64),
+        c_declare("rc", CType::Int32),
+    ] {
+        let paths = execute_c_statement_paths(
+            &state,
+            &declaration,
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .unwrap();
+        let CStatementOutcome::Normal(next) = &paths[0].outcome else {
+            panic!("local declaration failed: {:?}", paths[0].outcome);
+        };
+        state = next.clone();
+    }
+    let initialized = execute_c_statement_paths(
+        &state,
+        &c_assign("thread", c_uint64_literal(999)),
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    let CStatementOutcome::Normal(initialized) = &initialized[0].outcome else {
+        panic!("prior handle value should initialize");
+    };
+    state = initialized.clone();
+    let create = c_call_assign(
+        "rc",
+        "pthread_create",
+        vec![
+            c_addr_of("thread"),
+            c_pointer_value(Pointer::null()),
+            c_function_address("byte_worker"),
+            CExpression::Value(CValue::typed_pointer(pointer(0), CType::VoidPointer)),
+        ],
+    );
+    let paths = execute_c_statement_paths(
+        &state,
+        &create,
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    let CStatementOutcome::Normal(pending) = &paths[0].outcome else {
+        panic!(
+            "create should return a pending status: {:?}",
+            paths[0].outcome
+        );
+    };
+    assert!(pending.pending_thread_create.is_some());
+    assert!(pending.locals.is_uninitialized_object("thread"));
+    let mut delayed = pending.clone();
+    for statement in [
+        c_declare("saved", CType::Int32),
+        c_assign("saved", c_variable("rc")),
+        c_declare("unrelated", CType::Int32),
+        c_assign("unrelated", c_int32_literal(7)),
+    ] {
+        let paths = execute_c_statement_paths(
+            &delayed,
+            &statement,
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .unwrap();
+        let CStatementOutcome::Normal(next) = &paths[0].outcome else {
+            panic!("delayed local step failed: {:?}", paths[0].outcome);
+        };
+        delayed = next.clone();
+    }
+    let branches = execute_c_statement_paths(
+        &delayed,
+        &c_if(
+            c_not_equal(c_variable("saved"), c_int32_literal(0)),
+            c_skip(),
+            c_skip(),
+        ),
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    assert_eq!(branches.len(), 2, "{branches:?}");
+    let mut success = None;
+    let mut failure = None;
+    for branch in branches {
+        let CStatementOutcome::Normal(state) = branch.outcome else {
+            panic!("status branch did not resolve: {:?}", branch.outcome);
+        };
+        assert!(state.pending_thread_create.is_none());
+        assert_eq!(state.locals.get("unrelated"), Some(&int32(7)));
+        if state
+            .thread_ledger
+            .as_ref()
+            .is_some_and(|ledger| ledger.has_live_rights())
+        {
+            success = Some(state);
+        } else {
+            failure = Some(state);
+        }
+    }
+    let success = success.expect("zero status should create a child");
+    let failure = failure.expect("nonzero status should retain the parent");
+    assert!(failure.locals.is_uninitialized_object("thread"));
+    assert!(success.locals.get("thread").is_some());
+    let premature_read = execute_c_statement_paths(
+        &failure,
+        &c_assign("rc", c_variable("thread")),
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    assert!(!matches!(
+        premature_read[0].outcome,
+        CStatementOutcome::Normal(_)
+    ));
+    assert_eq!(failure.resources(), state.resources());
+    assert_eq!(
+        failure.memory().load(&pointer(0)),
+        state.memory().load(&pointer(0))
+    );
+    assert_ne!(success.resources(), state.resources());
+    assert_ne!(
+        success.memory().load(&pointer(0)),
+        state.memory().load(&pointer(0))
+    );
+    let join = c_call_assign(
+        "rc",
+        "pthread_join",
+        vec![c_variable("thread"), c_pointer_value(Pointer::null())],
+    );
+    let joined = execute_c_statement_paths(
+        &success,
+        &join,
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    assert!(matches!(joined[0].outcome, CStatementOutcome::Normal(_)));
+    let CStatementOutcome::Normal(after_join) = &joined[0].outcome else {
+        unreachable!()
+    };
+    assert_eq!(after_join.resources(), failure.resources());
+    let refused = execute_c_statement_paths(
+        &failure,
+        &join,
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    assert!(
+        !matches!(refused[0].outcome, CStatementOutcome::Normal(_)),
+        "failed creation must not grant a join: {:?}",
+        refused[0].outcome
+    );
+}
+
+#[test]
+fn modeled_pthread_create_refuses_a_wrong_worker_abi() {
+    let (worker, termination) = worker();
+    let environment = CExecutionEnvironment::new()
+        .with_modeled_pthread_binding(Some(
+            crate::languages::c::thread_runtime::ModeledPthreadBinding::builtin(),
+        ))
+        .with_function(worker.function.clone())
+        .with_verified_function_rule(worker)
+        .with_verified_function_termination_rules([termination]);
+    let mut state = parent(1);
+    for declaration in [
+        c_declare("thread", CType::UInt64),
+        c_declare("rc", CType::Int32),
+    ] {
+        let paths = execute_c_statement_paths(
+            &state,
+            &declaration,
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .unwrap();
+        let CStatementOutcome::Normal(next) = &paths[0].outcome else {
+            panic!("local declaration should succeed");
+        };
+        state = next.clone();
+    }
+    let paths = execute_c_statement_paths(
+        &state,
+        &c_call_assign(
+            "rc",
+            "pthread_create",
+            vec![
+                c_addr_of("thread"),
+                c_pointer_value(Pointer::null()),
+                c_function_address("thread_worker"),
+                c_pointer_value(pointer(0)),
+            ],
+        ),
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    assert!(matches!(
+        &paths[0].outcome,
+        CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message))
+            if message.contains("void *(*)(void *)")
+    ));
+}
+
+#[test]
+fn pending_status_resolution_tracks_explicit_local_work_linearly() {
+    let status = Bitvector32Term::Variable(Variable(890_000));
+    let zero = ConditionTerm::Bitvector32Equal(
+        Box::new(status.clone()),
+        Box::new(Bitvector32Term::Constant(0)),
+    );
+    let assumptions =
+        PureFactContext::new().assume_proposition(Proposition::ConditionIs(zero, true));
+    let base = parent(1);
+    let mut samples = Vec::new();
+    for size in [8usize, 16, 32, 64] {
+        let mut pending =
+            PendingThreadCreate::new(status.clone(), Pointer::null(), base.clone(), base.clone());
+        for index in 0..size {
+            pending = pending.with_delta(PendingThreadMemoryDelta::Store {
+                pointer: pointer(0),
+                value: int32(index as u32),
+            });
+        }
+        let (resolved, work) = crate::instrumentation::measure_deterministic_work(|| {
+            pending.resolve(&base, &assumptions).unwrap()
+        });
+        assert_eq!(
+            resolved.memory().load(&pointer(0)),
+            CExpressionOutcome::Value(int32((size - 1) as u32))
+        );
+        assert!(work >= size);
+        samples.push((size, work));
+    }
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1 * 3,
+            "pending resolution grew faster than explicit work: {samples:?}"
+        );
+    }
 }
 
 #[test]
