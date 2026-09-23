@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "target": "x86_64-linux-userspace",
+  "compiler": "/usr/bin/gcc",
+  "working_directory": ".",
+  "environment": {
+    "allow": {
+      "PATH": "/usr/bin:/bin",
+      "LC_ALL": "C",
+      "SOURCE_DATE_EPOCH": "0"
+    }
+  },
+  "sources": [
+    {
+      "logical_source": "main.c",
+      "path": "main.c",
+      "args": [
+        "-isystem",
+        "/usr/lib/gcc/x86_64-linux-gnu/13/include",
+        "-isystem",
+        "/usr/include/x86_64-linux-gnu",
+        "-isystem",
+        "/usr/include"
+      ],
+      "artifact": "main.i"
+    }
+  ]
+}

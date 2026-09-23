@@ -84,7 +84,9 @@ creates artifacts and locks in an isolated temporary directory, then checks
 offline loading, verification, and expansion. On macOS, compiler-independent
 unit regressions load and verify a relocated C artifact with no GCC or target
 headers installed, and reject changed source, artifact, local header, and lock
-identity bytes.
+identity bytes. A committed artifact prepared on Ubuntu with GCC additionally
+verifies and expands through the ordinary C import path after relocation; its
+opened Linux system headers and compiler backend are absent on macOS.
 
 The Linux fixtures cover compiler conditional selection, token pasting and
 macro rescanning, contextual headers, configured dependencies, refresh after

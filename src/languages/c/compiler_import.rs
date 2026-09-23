@@ -1900,6 +1900,92 @@ mod tests {
     }
 
     #[test]
+    fn linux_gcc_import_verifies_offline_after_relocation() {
+        struct CopiedFixture(PathBuf);
+        impl Drop for CopiedFixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let original =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cross-host-c-import");
+        let root = fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!(
+                "click-c-real-offline-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+        fs::create_dir(&root).unwrap();
+        let fixture = CopiedFixture(root);
+        for name in [
+            "main.c",
+            "local.h",
+            "main.click",
+            "main.click.import.json",
+            "main.click.import.lock.json",
+            "main.i",
+        ] {
+            fs::copy(original.join(name), fixture.0.join(name)).unwrap();
+        }
+        let config = fixture.0.join("main.click.import.json");
+        let lock: Lock = serde_json::from_slice(&fs::read(lock_path(&config)).unwrap()).unwrap();
+        assert_ne!(lock.config_directory, fixture.0.to_string_lossy());
+        #[cfg(target_os = "macos")]
+        {
+            assert!(
+                !Path::new(&lock.toolchain.cc1_path).exists(),
+                "the Linux compiler backend must be absent on the Mac verification host"
+            );
+            assert!(
+                lock.sources[0]
+                    .dependencies
+                    .keys()
+                    .any(|path| path.starts_with("/usr/") && !Path::new(path).exists())
+            );
+        }
+
+        let sidecar = fixture.0.join("main.click");
+        let proof = fs::read_to_string(&sidecar).unwrap();
+        let crate::cli::CInput::Prepared(imports) =
+            crate::cli::read_c_inputs(&sidecar, &proof).unwrap()
+        else {
+            panic!("ordinary loading must select the locked GCC artifact");
+        };
+        let original_imports = load_imports(&original.join("main.click.import.json")).unwrap();
+        assert_eq!(imports[0].identity(), original_imports[0].identity());
+        assert!(imports[0].source().contains("return 8"));
+        assert!(imports[0].source().contains("+ 34;"));
+        let verified = crate::surface::verify_c0_prepared_sources(&proof, &imports).unwrap();
+        assert_eq!(
+            verified[0].import_identity.as_deref(),
+            Some(imports[0].identity())
+        );
+        let offset = proof.find("execute();").unwrap();
+        let line = proof[..offset]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1;
+        let column = offset - proof[..offset].rfind('\n').unwrap();
+        let expanded =
+            crate::surface::expand_c0_prepared_tactic_source_at(&proof, &imports, line, column)
+                .unwrap();
+        assert_ne!(expanded, proof);
+        crate::surface::verify_c0_prepared_sources(&expanded, &imports).unwrap();
+
+        let header = fixture.0.join("local.h");
+        fs::write(&header, "#define LOCAL_OFFSET 35\n").unwrap();
+        assert!(load_imports(&config).is_err());
+        fs::copy(original.join("local.h"), &header).unwrap();
+        let artifact = fixture.0.join("main.i");
+        fs::write(&artifact, "int answer(void) { return 43; }\n").unwrap();
+        assert!(load_imports(&config).is_err());
+    }
+
+    #[test]
     fn rejects_ambient_or_executable_compiler_options() {
         assert!(validate_args(&["-fplugin=evil.so".into()], CTarget::SUPPORTED).is_err());
         assert!(validate_args(&["-c".into()], CTarget::SUPPORTED).is_err());
