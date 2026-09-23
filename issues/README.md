@@ -61,7 +61,6 @@ concurrency, and graph coverage remain P2.
 
 Soundness and kernel shape:
 
-- [Complete the kernel soundness bug hunt](bughunt.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 - [Verify byte representation copying and pointer preservation](byte-representation-demo.md)
 - [Verify independently owned parents sharing a heap child](shared-heap-graph-demo.md)
