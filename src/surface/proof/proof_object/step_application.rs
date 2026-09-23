@@ -586,7 +586,10 @@ impl<'a> Proof<'a> {
         let tactic = proof_step_source_name(&step);
         let result = self
             .apply_step_with_origin_inner(step, origin)
-            .map_err(|error| error.with_failed_tactic(tactic));
+            .map_err(|error| {
+                self.attach_step_diagnostic(error)
+                    .with_failed_tactic(tactic)
+            });
         if let Ok(next) = &result
             && crate::surface::proof_trace::enabled_for(self.claim_label())
             && !Arc::ptr_eq(&self.node, &next.node)

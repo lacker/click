@@ -7008,6 +7008,17 @@ impl ClickError {
         }
     }
 
+    pub(crate) fn with_diagnostic_if_missing(
+        mut self,
+        diagnostic: proof_diagnostics::ProofFailureDiagnostic,
+    ) -> Self {
+        if self.diagnostic.is_none() {
+            self.diagnostic = Some(std::sync::Arc::new(diagnostic));
+            self.rendered = std::sync::OnceLock::new();
+        }
+        self
+    }
+
     pub fn message(&self) -> &str {
         if let Some(diagnostic) = &self.diagnostic {
             self.rendered

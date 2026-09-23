@@ -2207,11 +2207,11 @@ fn advance_focused_execution_arm<'a>(
         let next = if matches!(indexed.tactic, ProofTactic::CloseInvariants) {
             proof.apply_close_invariants_body(&[ProofTactic::Simp])?
         } else if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
-            proof.apply_step(step)?
+            proof.apply_step_at(step, indexed.source_index)?
         } else if let ProofTactic::CloseInvariantsBy(body) = &indexed.tactic {
             proof.apply_close_invariants_body(body)?
         } else if let ProofTactic::Choose(choice) = &indexed.tactic {
-            proof.apply_step(ProofStep::Choose(choice.clone()))?
+            proof.apply_step_at(ProofStep::Choose(choice.clone()), indexed.source_index)?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             if proof.is_at_function_exit() {
                 // Exit applications need one fixed-state proof per concrete

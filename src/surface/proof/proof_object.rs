@@ -1827,6 +1827,34 @@ impl<'a> Proof<'a> {
         ClickError::with_diagnostic(summary, diagnostic)
     }
 
+    pub(in crate::surface::proof) fn attach_step_diagnostic(
+        &self,
+        error: ClickError,
+    ) -> ClickError {
+        if error.kind() != crate::surface::ClickErrorKind::Proof
+            || error.proof_claim_label().is_some()
+        {
+            return error;
+        }
+        let location = self
+            .site
+            .path()
+            .unwrap_or_else(|| format!("checked step {}", self.node.depth + 1));
+        let diagnostic = crate::surface::proof_diagnostics::ProofFailureDiagnostic {
+            origin: crate::surface::proof_diagnostics::ProofDiagnosticOrigin {
+                stage: "proof step".to_owned(),
+                location,
+            },
+            claim_label: self.context.claim_label().to_owned(),
+            reason: error.message().to_owned(),
+            state: Some(Arc::new(ProofDiagnosticProofState(
+                self.state.clone(),
+                self.node.clone(),
+            ))),
+        };
+        error.with_diagnostic_if_missing(diagnostic)
+    }
+
     /// The step position this proof's diagnostics report.
     pub(in crate::surface::proof) fn site(&self) -> &ProofStepSite {
         &self.site

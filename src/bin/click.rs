@@ -144,6 +144,46 @@ mod tests {
     }
 
     #[test]
+    fn trace_includes_checked_prefix_before_a_statement_runtime_error() {
+        let directory = std::env::temp_dir().join(format!(
+            "click-trace-statement-runtime-error-{}",
+            std::process::id()
+        ));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("f.c"), "int32 f() { int32 x; return x; }\n").unwrap();
+        let sidecar = directory.join("f.click");
+        fs::write(
+            &sidecar,
+            "verifying \"f.c\";\nint32 f() { ensures result == 0; } by { step(); step(); simp(); }\n",
+        )
+        .unwrap();
+        let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
+        assert!(error.contains("error kind: proof error"), "{error}");
+        assert!(
+            error.contains("trace: click verify --trace-proof f "),
+            "{error}"
+        );
+        let traced = entry([
+            "verify".to_string(),
+            "--trace-proof".to_string(),
+            "f".to_string(),
+            sidecar.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(traced.contains("read of uninitialized storage"), "{traced}");
+        assert!(traced.contains("location: source tactic 1"), "{traced}");
+        assert!(traced.contains("source tactic 0: step"), "{traced}");
+        assert!(
+            traced.contains("C frontier: function entry -> C statement 2"),
+            "{traced}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn trace_verifies_only_the_named_function() {
         let directory = std::env::temp_dir().join(format!(
             "click-trace-selects-one-function-{}",
