@@ -27,5 +27,5 @@ contract void NestedLoadableBranch(struct node* node, int32 n) {
 ```
 
 ```expect
-fail: could not evaluate the contract entry resources: FunctionContract("could not evaluate resource `cell` argument 0
+fail: could not evaluate the contract entry resources: FunctionContract("could not evaluate `node->left` while checking `owns cell(node->left)`
 ```

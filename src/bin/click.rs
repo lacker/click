@@ -184,6 +184,31 @@ mod tests {
     }
 
     #[test]
+    fn failed_call_names_the_c_operation_and_parameter_bindings() {
+        let directory =
+            std::env::temp_dir().join(format!("click-call-error-context-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("calls.c"),
+            "void read(int32* p) { }\nvoid caller(int32* second) { read(second); }\n",
+        )
+        .unwrap();
+        let sidecar = directory.join("calls.click");
+        fs::write(
+            &sidecar,
+            "verifying \"calls.c\";\nvoid read(int32* p) { owns p[0..1]; } by { execute(); simp(); }\nvoid caller(int32* second) { ensures second == second; } by { step(); simp(); }\n",
+        )
+        .unwrap();
+        let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
+        assert!(error.contains("C operation: read(second)"), "{error}");
+        assert!(error.contains("call bindings: p = second"), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn trace_verifies_only_the_named_function() {
         let directory = std::env::temp_dir().join(format!(
             "click-trace-selects-one-function-{}",

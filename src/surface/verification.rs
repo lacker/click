@@ -7037,13 +7037,30 @@ fn resource_clause_to_resource_specs_with_metadata(
             })
             .collect();
     }
-    Ok(vec![resource_clause_to_resource_spec_with_metadata(
+    let mut spec = resource_clause_to_resource_spec_with_metadata(
         resource,
         parameters,
         result_type,
         role,
         snapshot,
-    )?])
+    )?;
+    fn declared_arguments(resource: &ResourceClause) -> Option<&[ContractExpression]> {
+        match resource {
+            ResourceClause::Named { resource, .. }
+            | ResourceClause::Quantified { resource, .. } => declared_arguments(resource),
+            ResourceClause::Declared { arguments, .. } => Some(arguments),
+            _ => None,
+        }
+    }
+    if let Some(arguments) = declared_arguments(resource) {
+        spec = spec.with_source_arguments(
+            arguments
+                .iter()
+                .map(crate::surface::diagnostics::describe_contract_expression)
+                .collect(),
+        );
+    }
+    Ok(vec![spec])
 }
 
 fn resource_clause_to_resource_spec_with_parameters(

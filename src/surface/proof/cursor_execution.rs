@@ -2775,8 +2775,10 @@ fn execute_step_from_frontier_position_selecting_path(
             })
         {
             return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced runtime error: {}\n{}",
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced runtime error: {}\n  C operation: {}{}\n{}",
                 describe_runtime_error(error, parameters, arguments),
+                describe_statement_head(&step_statement),
+                describe_call_bindings(&step_statement, function_environment),
                 describe_proof_context(
                     available_pure_facts,
                     &current_resources,
@@ -3372,8 +3374,10 @@ fn execute_step_from_frontier_position_selecting_path(
         }
         CStatementOutcome::RuntimeError(error) => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced runtime error: {}\n{}",
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced runtime error: {}\n  C operation: {}{}\n{}",
                 describe_runtime_error(&error, parameters, arguments),
+                describe_statement_head(&step_statement),
+                describe_call_bindings(&step_statement, function_environment),
                 describe_proof_context(
                     available_pure_facts,
                     &current_resources,
@@ -4436,6 +4440,46 @@ pub(super) fn describe_evidence_refusal(
         ));
     }
     text
+}
+
+/// Present the callee's parameter names alongside the written call arguments
+/// when a call fails; no symbolic heap value is guessed for this diagnostic.
+fn describe_call_bindings(statement: &CStatement, environment: &CExecutionEnvironment) -> String {
+    let (name, arguments) = match statement {
+        CStatement::Call {
+            function_name,
+            arguments,
+        }
+        | CStatement::CallAssign {
+            function_name,
+            arguments,
+            ..
+        } => (function_name.as_str(), arguments.as_slice()),
+        _ => return String::new(),
+    };
+    let parameters = environment
+        .get_function_contract(name)
+        .map(|contract| contract.interface().parameters())
+        .or_else(|| {
+            environment
+                .get_function(name)
+                .map(|function| function.parameters())
+        });
+    let Some(parameters) = parameters else {
+        return String::new();
+    };
+    let bindings = parameters
+        .iter()
+        .zip(arguments)
+        .map(|(parameter, argument)| {
+            format!("{} = {}", parameter.name(), describe_c_expression(argument))
+        })
+        .collect::<Vec<_>>();
+    if bindings.is_empty() {
+        String::new()
+    } else {
+        format!("\n  call bindings: {}", bindings.join(", "))
+    }
 }
 
 /// A one-line C spelling of a statement's head, enough to recognize it in

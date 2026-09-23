@@ -19472,6 +19472,7 @@ fn resource_clause_failure_awaits_supply(error: &CRuntimeError) -> bool {
     };
     message.starts_with("could not evaluate an owned memory resource segment")
         || message.starts_with("could not evaluate a viewed memory resource segment")
+        || message.starts_with("could not evaluate `")
         || message.starts_with("could not evaluate resource `")
 }
 
@@ -19698,7 +19699,10 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                 resource.role(),
                 resource.snapshot(),
             ) {
-                Ok(inner) => inner,
+                Ok(inner) => match resource.source_arguments() {
+                    Some(arguments) => inner.with_source_arguments(arguments.to_vec()),
+                    None => inner,
+                },
                 Err(error) => {
                     return Ok(Err(CRuntimeError::FunctionContract(format!(
                         "invalid named resource body: {error}"
@@ -19805,6 +19809,7 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                 arguments,
                 argument_snapshots,
                 parameter_types,
+                resource.source_arguments(),
                 selected_load_values,
                 assumptions,
                 budget,
@@ -19922,6 +19927,7 @@ fn evaluate_function_declared_resource_spec(
     arguments: &[CExpression],
     argument_snapshots: &[CResourceSnapshot],
     parameter_types: &[CType],
+    source_arguments: Option<&[String]>,
     selected_load_values: &BTreeMap<(Pointer, CType), CValue>,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
@@ -20028,6 +20034,16 @@ fn evaluate_function_declared_resource_spec(
             )? {
                 Ok(value) => value,
                 Err(error) => {
+                    if let Some(spelling) = source_arguments.and_then(|items| items.get(index)) {
+                        let action = match access {
+                            CResourceAccessMode::Own => "owns",
+                            CResourceAccessMode::View => "views",
+                        };
+                        return Ok(Err(CRuntimeError::FunctionContract(format!(
+                            "could not evaluate `{spelling}` while checking `{action} {name}({})`: {error}",
+                            source_arguments.unwrap_or_default().join(", ")
+                        ))));
+                    }
                     return Ok(Err(CRuntimeError::FunctionContract(format!(
                         "could not evaluate resource `{name}` argument {index}: {error}"
                     ))));

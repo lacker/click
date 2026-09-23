@@ -27,5 +27,5 @@ contract void Bootstrap(struct node* node) {
 ```
 
 ```expect
-fail: could not evaluate the contract entry resources: FunctionContract("could not evaluate resource `cell` argument 0
+fail: could not evaluate the contract entry resources: FunctionContract("could not evaluate `node->left` while checking `owns cell(node->left)`
 ```

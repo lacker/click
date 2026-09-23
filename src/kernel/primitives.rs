@@ -5345,6 +5345,9 @@ pub struct CResourceSpec {
     /// the spec lets kernel diagnostics retain the surface clause numbering
     /// without making the evaluator know about surface syntax.
     clause_position: Option<(usize, usize)>,
+    /// Source spellings for declared-resource arguments, used only when an
+    /// argument cannot be evaluated. They do not affect contract identity.
+    source_arguments: Option<Arc<[String]>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -5483,6 +5486,7 @@ impl CResourceSpec {
             snapshot,
             guard: None,
             clause_position: None,
+            source_arguments: None,
         };
         spec.validate()?;
         Ok(spec)
@@ -5716,6 +5720,15 @@ impl CResourceSpec {
 
     pub(crate) fn clause_position(&self) -> Option<(usize, usize)> {
         self.clause_position
+    }
+
+    pub fn with_source_arguments(mut self, arguments: Vec<String>) -> Self {
+        self.source_arguments = Some(arguments.into());
+        self
+    }
+
+    pub(crate) fn source_arguments(&self) -> Option<&[String]> {
+        self.source_arguments.as_deref()
     }
 
     pub fn family(&self) -> ResourceFamily {

@@ -28,5 +28,5 @@ contract void DependentPair(struct node* node) {
 ```
 
 ```expect
-fail: could not evaluate the contract entry resources: FunctionContract("could not evaluate resource `pair` argument 0
+fail: could not evaluate the contract entry resources: FunctionContract("could not evaluate `node->left->left` while checking `owns pair(node->left->left)`
 ```
