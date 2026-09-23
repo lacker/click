@@ -3824,11 +3824,22 @@ fn prepare_verified_function_call<'a>(
         assumptions_with_propositions(&call_entry_assumptions, &established_requirements)
             .transport_memory_load_condition_facts();
 
+    let selected_call_load_values = application.evidence.map(|_| {
+        selected_instance_resource_load_values(
+            &entry_contract_state,
+            contract_interface.composite_resource_definitions(),
+            &call_entry_assumptions,
+        )
+    });
+
     if let Some(function) = application.evidence
         && let Some(undefined_behavior) = verified_call_uninitialized_read(
             &entry_contract_state,
             function,
             &call_entry_assumptions.transport_memory_load_condition_facts(),
+            selected_call_load_values
+                .as_ref()
+                .expect("direct call has witnesses"),
             budget,
         )?
     {
@@ -9895,6 +9906,7 @@ fn verified_call_uninitialized_read(
     entry_state: &CState,
     function: &CFunction,
     assumptions: &PureFactContext,
+    selected_load_values: &BTreeMap<(Pointer, CType), CValue>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Option<CUndefinedBehavior>> {
     // Aggregate copies have their own field-by-field initialization checks at
@@ -9923,6 +9935,23 @@ fn verified_call_uninitialized_read(
             if let CExpressionOutcome::UndefinedBehavior(undefined_behavior) = path.outcome
                 && undefined_behavior == CUndefinedBehavior::UninitializedRead
             {
+                if let CExpression::TypedLoad {
+                    pointer,
+                    value_type,
+                    volatile: false,
+                    ..
+                } = &read
+                    && let Ok(CValue::Pointer(address)) = evaluate_loop_effect_segment_value(
+                        entry_state,
+                        pointer,
+                        assumptions,
+                        "selected call field address",
+                        budget,
+                    )?
+                    && selected_load_values.contains_key(&(address.pointer().clone(), *value_type))
+                {
+                    continue;
+                }
                 return Ok(Some(undefined_behavior));
             }
         }
@@ -15259,11 +15288,169 @@ fn selected_resource_instance_case_facts(
                     assumptions,
                 )
                 .into_iter()
-                .map(|clause| clause.proposition),
+                // A post-call heap cell may have no materialized value yet.
+                // Lowering its arm equality against that incomplete snapshot
+                // can simplify it to `false`; publishing that as a premise
+                // would make every subsequent obligation vacuous.
+                .filter_map(|clause| {
+                    (!matches!(
+                        clause.proposition,
+                        Proposition::ConditionIs(ConditionTerm::Constant(false), true)
+                    ))
+                    .then_some(clause.proposition)
+                }),
             )
         })
         .flatten()
         .collect()
+}
+
+/// Values of field loads stated by the selected arm of an exactly bound,
+/// owned resource instance. This is a call-local interpretation of the
+/// resource invariant, not a change to C memory. Only an equality between a
+/// load and a constructor C binding qualifies, and the arm must own the loaded
+/// bytes. The ordinary resource transfer still has to find the requested
+/// resource unit after the argument is resolved.
+fn selected_instance_resource_load_values(
+    state: &CState,
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+) -> BTreeMap<(Pointer, CType), CValue> {
+    let Some(bindings) = state.resource_bindings.as_ref() else {
+        return BTreeMap::new();
+    };
+    let mut values = BTreeMap::new();
+    let mut conflicting = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    for identity in bindings.values().copied().filter(|id| seen.insert(*id)) {
+        let Some(instance) = state.resources().owned_instance(identity) else {
+            continue;
+        };
+        let Some(definition) = definitions.iter().find(|def| def.name() == instance.name()) else {
+            continue;
+        };
+        let Ok((arm, constructor)) =
+            selected_instance_match_arm(instance, definition, definitions, assumptions)
+        else {
+            continue;
+        };
+        let AlgebraicTermNode::Constructor { fields, .. } = &constructor.node else {
+            continue;
+        };
+        // Only the selected arm's parameter and constructor bindings are
+        // needed. A whole caller-state clone here would charge every call
+        // for unrelated live resources.
+        let Some(mut evaluation) = (|| {
+            if definition.parameters.len() != instance.arguments().len() {
+                return None;
+            }
+            let mut evaluation = CState::new().with_memory(state.memory().clone());
+            for (parameter, argument) in definition.parameters.iter().zip(instance.arguments()) {
+                let value = argument.as_c_value()?;
+                if value.c_type() != parameter.c_type() {
+                    return None;
+                }
+                evaluation.locals.set_typed(
+                    parameter.name().to_owned(),
+                    value.clone(),
+                    parameter.c_type(),
+                );
+            }
+            Some(evaluation)
+        })() else {
+            continue;
+        };
+        if fields.len() != arm.bindings.len() {
+            continue;
+        }
+        for (name, field) in arm.bindings.iter().zip(fields) {
+            if let AlgebraicValue::C(value) = field {
+                evaluation
+                    .locals
+                    .set_typed(name.clone(), value.clone(), value.c_type());
+            }
+        }
+        let mut budget = ExecutionBudget::beside_live_state();
+        let mut owned_memory = ResourceContext::new();
+        for resource in &arm.contains {
+            let Ok(Ok(fact @ CResourceFact::Own(CResource::Memory(_), _))) =
+                evaluate_function_resource_spec(&evaluation, resource, assumptions, &mut budget)
+            else {
+                continue;
+            };
+            owned_memory = owned_memory.unchecked_with_fact(fact);
+        }
+        for fact in &arm.facts {
+            let SpecProposition::Comparison {
+                left,
+                operator: CComparisonOperator::Equal,
+                right,
+            } = fact
+            else {
+                continue;
+            };
+            let candidate = [(left, right), (right, left)]
+                .into_iter()
+                .find_map(|(load, value)| {
+                    let SpecExpression::MemoryLoad {
+                        memory: SpecMemory::Current,
+                        pointer,
+                        value_type,
+                    } = load
+                    else {
+                        return None;
+                    };
+                    let SpecExpression::CExpression(CExpression::Variable(name)) = value else {
+                        return None;
+                    };
+                    if !arm.bindings.contains(name) {
+                        return None;
+                    }
+                    let value = evaluation.locals.get(name)?.clone();
+                    if !value_type.accepts(&value) {
+                        return None;
+                    }
+                    let paths =
+                        crate::kernel::spec::evaluate_spec_expression_paths_with_loop_entry(
+                            &evaluation,
+                            pointer,
+                            None,
+                            assumptions,
+                            &mut budget,
+                        )
+                        .ok()?;
+                    let [path] = paths.as_slice() else {
+                        return None;
+                    };
+                    if !path.obligations.is_empty() {
+                        return None;
+                    }
+                    let CValue::Pointer(address) = &path.value else {
+                        return None;
+                    };
+                    resource_context_has_read(
+                        &owned_memory,
+                        address.pointer(),
+                        value_type.byte_width(),
+                        assumptions,
+                    )
+                    .then(|| ((address.pointer().clone(), *value_type), value))
+                });
+            let Some((key, value)) = candidate else {
+                continue;
+            };
+            if conflicting.contains(&key) {
+                continue;
+            }
+            if values.get(&key).is_some_and(|previous| previous != &value) {
+                values.remove(&key);
+                conflicting.insert(key);
+            } else {
+                values.insert(key, value);
+            }
+        }
+    }
+    values
 }
 
 pub(in crate::kernel) fn selected_instance_match_arm<'a>(
@@ -17460,6 +17647,8 @@ fn evaluate_resource_clauses_against_whole_section(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<Vec<CCheckedResourceFact>, CRuntimeError>> {
+    let selected_load_values =
+        selected_instance_resource_load_values(state, definitions, assumptions);
     let mut evaluated: Vec<Option<CResourceFact>> = vec![None; resources.len()];
     let mut active = vec![true; resources.len()];
     let mut supplied: Vec<CResourceFact> = Vec::new();
@@ -17485,6 +17674,7 @@ fn evaluate_resource_clauses_against_whole_section(
             entry_state,
             &evaluation_state,
             resource,
+            &selected_load_values,
             assumptions,
             budget,
         )?;
@@ -17524,6 +17714,7 @@ fn evaluate_resource_clauses_against_whole_section(
             entry_state,
             &evaluation_state,
             &resources[index],
+            &selected_load_values,
             assumptions,
             budget,
         )?;
@@ -18284,16 +18475,18 @@ fn evaluate_resource_clause_with_dependencies(
     entry_state: &CState,
     state: &CState,
     resource: &CResourceSpec,
+    selected_load_values: &BTreeMap<(Pointer, CType), CValue>,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<(Result<CResourceFact, CRuntimeError>, Vec<CResourceFact>)> {
     #[cfg(test)]
     record_resource_clause_attempt();
     let (result, dependencies) = capture_resource_dependencies(|| {
-        evaluate_function_resource_spec_with_entry(
+        evaluate_function_resource_spec_with_entry_and_selected_loads(
             entry_state,
             state,
             resource,
+            selected_load_values,
             assumptions,
             budget,
         )
@@ -19461,6 +19654,24 @@ pub(super) fn evaluate_function_resource_spec_with_entry(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
+    evaluate_function_resource_spec_with_entry_and_selected_loads(
+        entry_state,
+        state,
+        resource,
+        &BTreeMap::new(),
+        assumptions,
+        budget,
+    )
+}
+
+fn evaluate_function_resource_spec_with_entry_and_selected_loads(
+    entry_state: &CState,
+    state: &CState,
+    resource: &CResourceSpec,
+    selected_load_values: &BTreeMap<(Pointer, CType), CValue>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
     match resource.term() {
         CResourceTerm::Instance {
             identity,
@@ -19482,10 +19693,11 @@ pub(super) fn evaluate_function_resource_spec_with_entry(
                     ))));
                 }
             };
-            let required = match evaluate_function_resource_spec_with_entry(
+            let required = match evaluate_function_resource_spec_with_entry_and_selected_loads(
                 entry_state,
                 state,
                 &inner,
+                selected_load_values,
                 assumptions,
                 budget,
             )? {
@@ -19581,6 +19793,7 @@ pub(super) fn evaluate_function_resource_spec_with_entry(
                 arguments,
                 argument_snapshots,
                 parameter_types,
+                selected_load_values,
                 assumptions,
                 budget,
             )? {
@@ -19697,6 +19910,7 @@ fn evaluate_function_declared_resource_spec(
     arguments: &[CExpression],
     argument_snapshots: &[CResourceSnapshot],
     parameter_types: &[CType],
+    selected_load_values: &BTreeMap<(Pointer, CType), CValue>,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
@@ -19742,7 +19956,38 @@ fn evaluate_function_declared_resource_spec(
                 _ => None,
             })
             .flatten();
-        let value = if let Some(element_count) = allocation_element_count {
+        let selected_value = if let CExpression::TypedLoad {
+            pointer,
+            value_type,
+            volatile: false,
+            ..
+        } = argument
+        {
+            match evaluate_loop_effect_segment_value(
+                argument_state,
+                pointer,
+                assumptions,
+                "selected resource field address",
+                budget,
+            )? {
+                Ok(CValue::Pointer(address))
+                    if !argument_state.memory().has_known_cell_at(address.pointer()) =>
+                {
+                    selected_load_values
+                        .get(&(address.pointer().clone(), *value_type))
+                        .cloned()
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        // A symbolic load can evaluate to a symbolic value even though no
+        // heap cell was materialized after the modular call. A cached cell,
+        // when present, follows the ordinary evaluator instead.
+        let value = if let Some(value) = selected_value {
+            value
+        } else if let Some(element_count) = allocation_element_count {
             let count = match evaluate_loop_effect_segment_value(
                 argument_state,
                 element_count,

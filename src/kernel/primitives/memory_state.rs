@@ -2202,13 +2202,18 @@ impl CMemory {
             }
         }
 
-        let mut deallocated_allocations = first.heap.deallocated_allocations.clone();
-        deallocated_allocations.retain(|base, bytes| {
-            !live_allocations.contains_key(base)
-                && sibling_memories
-                    .iter()
-                    .all(|memory| memory.heap.deallocated_allocations.get(base) == Some(bytes))
-        });
+        let mut deallocated_allocations = BTreeMap::new();
+        for memory in sibling_memories {
+            for (base, bytes) in &memory.heap.deallocated_allocations {
+                if let Some(existing) = deallocated_allocations.insert(base.clone(), bytes.clone())
+                    && existing != *bytes
+                {
+                    return Err(format!(
+                        "interface arms disagree on the size of freed heap allocation {base:?}"
+                    ));
+                }
+            }
+        }
 
         let pending_allocations = first.heap.pending_allocations.clone();
         if sibling_memories
@@ -3918,13 +3923,10 @@ mod hunt_investigation_tests {
 mod hunt_investigation_join_tests {
     use super::*;
 
-    /// Investigation repro (bug hunt phase 2b): the interface join unions
-    /// `live_allocations` but intersects `deallocated_allocations`
-    /// (`!live_allocations.contains_key(base)` plus all-arms-agree), so an
-    /// allocation that one arm freed joins as live with its deallocation
-    /// record erased. The state doc at this file claims the tombstones are
-    /// "unioned" and that any ended arm must make the continuation reject an
-    /// alias of the object.
+    /// A join retains a tombstone if any incoming arm freed the allocation,
+    /// even when another arm still lists it as potentially live. A later
+    /// dereference through the alias must be rejected until the paths are
+    /// distinguished.
     #[test]
     fn hunt_investigation_interface_join_erases_one_arm_deallocation() {
         let base = Pointer {
@@ -3956,12 +3958,12 @@ mod hunt_investigation_join_tests {
             "the join unions the live arm's record"
         );
         assert!(
-            !joined.heap.deallocated_allocations.contains_key(&base),
-            "BUG: the deallocating arm's tombstone is erased by the intersection"
+            joined.heap.deallocated_allocations.contains_key(&base),
+            "the deallocating arm's tombstone must survive the join"
         );
         assert!(
             joined.is_deallocated_heap_address(&base, &PureFactContext::new()),
-            "BUG: an alias of the possibly-freed allocation reads as live at the join"
+            "an alias of the possibly-freed allocation must be rejected at the join"
         );
     }
 }

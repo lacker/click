@@ -14,6 +14,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use serde::Deserialize;
+
 /// Environment variables that are part of Click's documented command and
 /// repository-tooling surface. Debug-only probes are intentionally excluded.
 pub const PUBLIC_ENVIRONMENT_VARIABLES: &[&str] = &[
@@ -90,7 +92,7 @@ use crate::languages::c::compiler_import::PreparedCImport;
 use crate::languages::c::source as c_source;
 use crate::languages::cpp::PreparedCppImport;
 use crate::surface::verifying_source_paths;
-use crate::surface::{ClickModuleSource, ClickProject, click_import_sites};
+use crate::surface::{CProjectProfile, ClickModuleSource, ClickProject, click_import_sites};
 
 /// Parses a one-based `PATH:LINE:COLUMN` source location.
 ///
@@ -355,11 +357,19 @@ pub fn read_verifying_sources(
     click_path: &Path,
     click_source: &str,
 ) -> Result<Vec<(String, String)>, String> {
-    let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
     // Header discovery preprocesses the sources, so it needs the sidecar's
     // selected C implementation target before any proof runs.
     let target = crate::surface::selected_c_target(click_source)
         .map_err(|error| error.message().to_string())?;
+    read_verifying_sources_for_target(click_path, click_source, target)
+}
+
+pub fn read_verifying_sources_for_target(
+    click_path: &Path,
+    click_source: &str,
+    target: crate::languages::c::target::CTarget,
+) -> Result<Vec<(String, String)>, String> {
+    let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
     let declared = read_declared_sources(click_path, click_source)?;
     let mut pending: Vec<String> = declared.iter().map(|(name, _)| name.clone()).collect();
     let mut loaded = Vec::new();
@@ -405,6 +415,32 @@ impl CInput {
 }
 
 pub fn read_c_inputs(sidecar: &Path, click_source: &str) -> Result<CInput, String> {
+    let directory = fs::canonicalize(sidecar.parent().unwrap_or_else(|| Path::new(".")))
+        .map_err(|error| format!("failed to resolve sidecar directory: {error}"))?;
+    let target =
+        match read_c_project_profile(&directory, &directory)?.and_then(|profile| profile.target) {
+            Some(target) => target,
+            None => crate::surface::selected_c_target(click_source)
+                .map_err(|error| error.message().to_string())?,
+        };
+    read_c_inputs_for_target(sidecar, click_source, target)
+}
+
+pub fn read_c_inputs_for_project(
+    sidecar: &Path,
+    click_source: &str,
+    project: &ClickProject,
+) -> Result<CInput, String> {
+    let target = crate::surface::selected_project_c_target(project)
+        .map_err(|error| error.message().to_string())?;
+    read_c_inputs_for_target(sidecar, click_source, target)
+}
+
+fn read_c_inputs_for_target(
+    sidecar: &Path,
+    click_source: &str,
+    target: crate::languages::c::target::CTarget,
+) -> Result<CInput, String> {
     let name = sidecar
         .file_name()
         .and_then(|name| name.to_str())
@@ -434,10 +470,58 @@ pub fn read_c_inputs(sidecar: &Path, click_source: &str) -> Result<CInput, Strin
             return Err(format!("failed to inspect `{}`: {error}", config.display()));
         }
     }
-    Ok(CInput::Bundle(read_verifying_sources(
+    Ok(CInput::Bundle(read_verifying_sources_for_target(
         sidecar,
         click_source,
+        target,
     )?))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectConfigJson {
+    target: Option<String>,
+    runtime: Option<String>,
+}
+
+fn read_c_project_profile(
+    directory: &Path,
+    boundary_root: &Path,
+) -> Result<Option<CProjectProfile>, String> {
+    let path = directory.join("click.project.json");
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("failed to inspect `{}`: {error}", path.display())),
+    }
+    let resolved = fs::canonicalize(&path)
+        .map_err(|error| format!("failed to resolve `{}`: {error}", path.display()))?;
+    if !resolved.starts_with(boundary_root) {
+        return Err(format!(
+            "Click project config `{}` escapes project root `{}`",
+            path.display(),
+            boundary_root.display()
+        ));
+    }
+    let source = fs::read_to_string(&resolved)
+        .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
+    let config: ProjectConfigJson = serde_json::from_str(&source)
+        .map_err(|error| format!("invalid Click project config `{}`: {error}", path.display()))?;
+    let target = config
+        .target
+        .map(|name| {
+            crate::languages::c::target::CTarget::from_name(&name)
+                .ok_or_else(|| format!("unknown C target `{name}` in `{}`", path.display()))
+        })
+        .transpose()?;
+    let runtime = config
+        .runtime
+        .map(|name| {
+            crate::languages::c::thread_runtime::CThreadRuntime::from_name(&name)
+                .ok_or_else(|| format!("unknown C runtime `{name}` in `{}`", path.display()))
+        })
+        .transpose()?;
+    Ok(Some(CProjectProfile { target, runtime }))
 }
 
 /// Loads the entry sidecar and its transitive local Click imports once, using
@@ -515,7 +599,29 @@ pub fn read_click_project_at_root(
         ));
     }
     modules.sort_by(|left, right| left.identity().cmp(right.identity()));
-    Ok(ClickProject::new(identity(&entry)?, modules))
+    let project = ClickProject::new(identity(&entry)?, modules);
+    let directory = entry.parent().expect("a canonical sidecar has a parent");
+    let local_profile = read_c_project_profile(directory, &root)?;
+    let root_profile = if directory != root {
+        read_c_project_profile(&root, &root)?
+    } else {
+        None
+    };
+    let profile = match (local_profile, root_profile) {
+        (Some(_), Some(_)) => {
+            return Err(format!(
+                "Click project has `click.project.json` in both `{}` and `{}`; select one project-level config",
+                directory.display(),
+                root.display()
+            ));
+        }
+        (Some(profile), None) | (None, Some(profile)) => Some(profile),
+        (None, None) => None,
+    };
+    Ok(match profile {
+        Some(profile) => project.with_c_profile(profile),
+        None => project,
+    })
 }
 
 fn load_click_module(
@@ -1215,6 +1321,121 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_config_selects_pthread_without_sidecar_profile_directives() {
+        let root = std::env::temp_dir().join(format!(
+            "click-project-profile-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let click = "verifying \"answer.c\";\nint32 answer() { ensures result == 1; } by { execute(); simp(); }\n";
+        let path = root.join("answer.click");
+        fs::write(&path, click).unwrap();
+        fs::write(
+            root.join("answer.c"),
+            "#include <pthread.h>\nint answer(void) { return 1; }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("click.project.json"),
+            r#"{"target":"x86_64-linux-userspace","runtime":"modeled-pthread"}"#,
+        )
+        .unwrap();
+        let project = read_click_project(&path, click).unwrap();
+        let CInput::Bundle(sources) = read_c_inputs_for_project(&path, click, &project).unwrap()
+        else {
+            panic!("a project without an import manifest loads its C source bundle");
+        };
+        let verified = crate::surface::verify_c0_project(&project, &source_refs(&sources)).unwrap();
+        assert_eq!(verified.len(), 1);
+        assert!(
+            verified[0]
+                .selection
+                .as_ref()
+                .unwrap()
+                .modeled_pthread_binding
+                .is_some()
+        );
+        assert_eq!(
+            crate::surface::selected_project_c_target(&project)
+                .unwrap()
+                .name(),
+            "x86_64-linux-userspace"
+        );
+
+        fs::write(
+            root.join("click.project.json"),
+            r#"{"target":"x86_64-linux-userspace"}"#,
+        )
+        .unwrap();
+        let without_runtime = read_click_project(&path, click).unwrap();
+        let ordinary =
+            crate::surface::verify_c0_project(&without_runtime, &source_refs(&sources)).unwrap();
+        assert_ne!(verified[0].artifact_identity, ordinary[0].artifact_identity);
+        assert!(
+            ordinary[0]
+                .selection
+                .as_ref()
+                .unwrap()
+                .modeled_pthread_binding
+                .is_none()
+        );
+
+        let conflicting =
+            click.replacen("verifying", "target \"x86_64-linux-kernel\";\nverifying", 1);
+        fs::write(&path, &conflicting).unwrap();
+        let project = read_click_project(&path, &conflicting).unwrap();
+        assert!(
+            crate::surface::selected_project_c_target(&project)
+                .unwrap_err()
+                .message()
+                .contains("project config")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn explicit_project_root_supplies_one_profile_to_nested_sidecars() {
+        let root = std::env::temp_dir().join(format!(
+            "click-project-root-profile-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            root.join("click.project.json"),
+            r#"{"target":"x86_64-linux-userspace","runtime":"modeled-pthread"}"#,
+        )
+        .unwrap();
+        let click = "verifying \"answer.c\";\nint32 answer() { ensures result == 1; } by { execute(); simp(); }\n";
+        let path = nested.join("answer.click");
+        fs::write(&path, click).unwrap();
+        fs::write(
+            nested.join("answer.c"),
+            "#include <pthread.h>\nint answer(void) { return 1; }\n",
+        )
+        .unwrap();
+        let project = read_click_project_at_root(&path, click, &root).unwrap();
+        let CInput::Bundle(sources) = read_c_inputs_for_project(&path, click, &project).unwrap()
+        else {
+            panic!("nested sidecar should use the root-configured bundle");
+        };
+        crate::surface::verify_c0_project(&project, &source_refs(&sources)).unwrap();
+        fs::write(
+            nested.join("click.project.json"),
+            r#"{"target":"x86_64-linux-userspace","runtime":"modeled-pthread"}"#,
+        )
+        .unwrap();
+        assert!(
+            read_click_project_at_root(&path, click, &root)
+                .unwrap_err()
+                .contains("both")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn tactic(index: usize, name: &str, class: &str) -> TacticEvent {
         TacticEvent {

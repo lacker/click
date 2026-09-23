@@ -21,3 +21,4 @@ fix, regression coverage, and documentation land.
 - [The ordinary lend path binds a substitute occurrence](lend-binds-equal-looking-occurrence.md) — statically confirmed
 - [The byte-offset helper folds an Int64Scaled offset into a 32-bit residue](formation-guard-reads-int64-scaled-offset-as-residue.md) — statically confirmed
 - [The interface join erases a deallocation one arm performed](interface-join-erases-one-arm-deallocation.md) — machine-confirmed
+- [An uncaught cpp throw skips every enclosing destructor](cpp-throw-skips-enclosing-destructors.md) — statically confirmed

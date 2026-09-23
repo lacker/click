@@ -514,6 +514,15 @@ impl ClickModuleSource {
 pub struct ClickProject {
     entry: String,
     modules: Vec<ClickModuleSource>,
+    c_profile: Option<CProjectProfile>,
+}
+
+/// One project-wide C implementation selection. Files loaded without a
+/// project config retain the historical sidecar directives and defaults.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CProjectProfile {
+    pub target: Option<crate::languages::c::target::CTarget>,
+    pub runtime: Option<crate::languages::c::thread_runtime::CThreadRuntime>,
 }
 
 impl ClickProject {
@@ -524,7 +533,17 @@ impl ClickProject {
         Self {
             entry: entry.into(),
             modules: modules.into_iter().collect(),
+            c_profile: None,
         }
+    }
+
+    pub fn with_c_profile(mut self, profile: CProjectProfile) -> Self {
+        self.c_profile = Some(profile);
+        self
+    }
+
+    pub fn c_profile(&self) -> Option<&CProjectProfile> {
+        self.c_profile.as_ref()
     }
 
     pub fn entry(&self) -> &str {

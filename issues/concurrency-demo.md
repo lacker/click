@@ -65,7 +65,7 @@ updates; the C unit tests also expand and reverify the new proofs.
 
 ### Completed next slice: portable modeled pthread binding identity
 
-The explicit `runtime "modeled-pthread";` selector now binds conditional
+The explicit modeled-pthread runtime selection now binds conditional
 client verification to Click's exact built-in `<pthread.h>`, canonical
 create/join declarations, x86-64 Linux user-space target, trusted v1
 specification and digest, and the initial null-argument and direct-worker
@@ -74,6 +74,10 @@ its digest participates in proof-artifact and incremental-session identities.
 Verify, profile, and audit report the runtime assumption. This work runs on
 macOS without GCC or glibc. The frozen `fork_join.c` is unchanged, and its
 ordinary worker proof verifies under the selector.
+Projects can now place `{"target":"x86_64-linux-userspace","runtime":"modeled-pthread"}`
+in a directory-level `click.project.json`, so the profile is selected once
+for neighboring sidecars. Existing inline directives remain compatible and
+conflicts are refused.
 
 The binding refuses same-named declarations without built-in provenance,
 local definitions, shadowing, incompatible redeclarations, nonnull attribute

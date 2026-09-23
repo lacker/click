@@ -1,57 +1,36 @@
-# Two parents compose through one branch-on-count child release
+# A parent cannot claim a different linked child
 
-The creator starts with one reference, each attach retains one, and each
-subsequent release consumes exactly one. The first parent detaches, the second
-still reads the payload, and the final detach frees the child. The detach
-contract returns the parent link and relies on the checked counted-resource
-transition; it does not need a redundant pure count postcondition through the
-field after that field is cleared.
+The parent resource constructor claims a null child after C stored `kid`.
+A mismatched link must fail to fold; a pointer field cannot certify an
+arbitrary child reference.
 
-```c filename=shared_heap_two_parent_branch_release.c
-struct child {
-    int32 refs;
-    int32 payload;
-};
-
-struct parent {
-    struct child* kid;
-};
-
-void child_retain(struct child* obj) {
-    obj->refs = obj->refs + 1;
-}
-
+```c filename=shared_heap_wrong_child.c
+struct child { int32 refs; int32 payload; };
+struct parent { struct child* kid; };
+void child_retain(struct child* obj) { obj->refs = obj->refs + 1; }
 void child_release(struct child* obj) {
-    if (obj->refs == 1) {
-        free(obj);
-    } else {
-        obj->refs = obj->refs - 1;
-    }
+    if (obj->refs == 1) { free(obj); }
+    else { obj->refs = obj->refs - 1; }
 }
-
 void parent_attach(struct parent* p, struct child* kid) {
     p->kid = kid;
     child_retain(kid);
 }
-
-int32 parent_read_payload(struct parent* p) {
-    struct child* kid = p->kid;
-    return kid->payload;
-}
-
 void parent_detach(struct parent* p) {
     struct child* kid = p->kid;
     child_release(kid);
-    p->kid = 0;
+    free(p);
 }
-
-void caller(struct parent* first, struct parent* second, struct child* kid) {
-    parent_attach(first, kid);
-    parent_attach(second, kid);
+int32 caller(struct child* kid) {
+    struct parent* p = malloc(sizeof(struct parent));
+    if (p == 0) {
+        child_release(kid);
+        return -1;
+    }
+    parent_attach(p, kid);
     child_release(kid);
-    parent_detach(first);
-    int32 observed = parent_read_payload(second);
-    parent_detach(second);
+    parent_detach(p);
+    return 0;
 }
 ```
 
@@ -64,7 +43,10 @@ spec enum ParentLink {
 resource parent(p: struct parent*) {
     field link: ParentLink;
     match link {
-        ParentLink::Empty => {},
+        ParentLink::Empty => {
+            owns &p->kid;
+            fact p->kid == 0;
+        },
         ParentLink::Linked(kid) => {
             owns &p->kid;
             fact p->kid == kid;
@@ -79,7 +61,7 @@ resource child_ref(obj: struct child*) {
     fact obj->refs == count(child_ref(obj));
 }
 
-verifying "shared_heap_two_parent_branch_release.c";
+verifying "shared_heap_wrong_child.c";
 
 void child_retain(struct child* obj) {
     requires count(child_ref(obj)) < 2147483647;
@@ -140,37 +122,15 @@ void parent_attach(struct parent* p, struct child* kid) {
     ensures link.link == ParentLink::Linked(kid);
 } by {
     execute();
-    let link = fold(parent(p), { link: ParentLink::Linked(kid) });
+    let link = fold(parent(p), { link: ParentLink::Linked(0) });
     simp();
-}
-
-int32 parent_read_payload(struct parent* p) {
-    owns link: parent(p);
-    requires link.link != ParentLink::Empty;
-    owns child_ref(p->kid);
-    ensures result == p->kid->payload;
-    ensures result == old(p->kid->payload);
-    ensures p->kid == old(p->kid);
-    ensures link.link == ParentLink::Linked(old(p->kid));
-} by {
-    match link.link {
-        ParentLink::Empty => {
-            contradiction(link.link == ParentLink::Empty);
-        },
-        ParentLink::Linked(kid) => {
-            unfold(link);
-            open(child_ref(p->kid)) { execute(); }
-            let link = fold(parent(p), { link: ParentLink::Linked(p->kid) });
-            simp();
-        },
-    }
 }
 
 void parent_detach(struct parent* p) {
     consumes link: parent(p);
     requires link.link != ParentLink::Empty;
     consumes child_ref(p->kid);
-    produces out: parent(old(p));
+    consumes allocation(p, sizeof(struct parent));
 } by {
     match link.link {
         ParentLink::Empty => {
@@ -180,36 +140,36 @@ void parent_detach(struct parent* p) {
             unfold(link);
             have old(p->kid) == kid by simp;
             execute();
-            let out = fold(parent(p), { link: ParentLink::Empty });
             simp();
         },
     }
 }
 
-void caller(struct parent* first, struct parent* second, struct child* kid) {
-    consumes &first->kid;
-    consumes &second->kid;
+int32 caller(struct child* kid) {
     requires kid != 0;
     requires count(child_ref(kid)) == 1;
-    requires kid->refs == 1;
     consumes child_ref(kid);
+    ensures result == -1 or result == 0;
 } by {
-    let { link: first_link } = step(parent_attach(first, kid), {});
-    have count(child_ref(kid)) == 2 by simp;
-    let { link: second_link } = step(parent_attach(second, kid), {});
-    have count(child_ref(kid)) == 3 by simp;
-    step(child_release(kid), {});
-    have count(child_ref(kid)) == 2 by simp;
-    let first_out = step(parent_detach(first), { link: first_link });
     step();
-    have count(child_ref(kid)) == 1 by simp;
-    step(parent_read_payload(second), { link: second_link });
-    let second_out = step(parent_detach(second), { link: second_link });
+    step();
+    branch {
+        then {
+            step(child_release(kid), {});
+            step();
+            simp();
+        }
+        else {}
+    }
+    let { link: link } = step(parent_attach(p, kid), {});
+    step(child_release(kid), {});
+    step(parent_detach(p), { link: link });
     step();
     simp();
 }
+
 ```
 
 ```expect
-pass
+fail: fold requires the instance body facts for the proposed fields
 ```

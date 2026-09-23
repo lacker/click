@@ -155,6 +155,14 @@ pub(in crate::surface) fn resolve_click_project_with_layouts(
         .cloned()
         .collect::<Vec<_>>();
     let mut combined = merge_modules(&imported, project.entry(), &locals)?;
+    if let Some(profile) = project.c_profile() {
+        if let Some(target) = profile.target {
+            combined.c_target = Some(target);
+        }
+        if let Some(runtime) = profile.runtime {
+            combined.thread_runtime = runtime;
+        }
+    }
     combined = validation::expand_declared_resource_clauses(combined)?;
     validation::validate_click_definitions(&combined)?;
     lowering::check_resource_field_schemas(&mut combined)?;

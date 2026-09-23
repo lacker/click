@@ -122,6 +122,14 @@ pub fn selected_project_thread_runtime(
             selected = runtime;
         }
     }
+    if let Some(configured) = project.c_profile().and_then(|profile| profile.runtime) {
+        if selected != CThreadRuntime::None && selected != configured {
+            return Err(ClickError::new(
+                "Click project config conflicts with a module `runtime` directive",
+            ));
+        }
+        return Ok(configured);
+    }
     Ok(selected)
 }
 
@@ -147,6 +155,18 @@ pub fn selected_project_c_target(project: &ClickProject) -> Result<CTarget, Clic
             }
             _ => selected = Some((module.identity(), declared)),
         }
+    }
+    if let Some(configured) = project.c_profile().and_then(|profile| profile.target) {
+        if let Some((identity, declared)) = selected
+            && declared != configured
+        {
+            return Err(ClickError::new(format!(
+                "Click project config selects C target `{}`, but module `{identity}` selects `{}`",
+                configured.name(),
+                declared.name()
+            )));
+        }
+        return Ok(configured);
     }
     Ok(selected.map_or(CTarget::SUPPORTED, |(_, target)| target))
 }
