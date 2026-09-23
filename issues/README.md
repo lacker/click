@@ -85,11 +85,12 @@ The first [cross-call exception mdtest](../mdtests/cpp_one_guard_unwind.md)
 also verifies one `noexcept` guard constructed inside a `try`: its destructor
 restores caller memory before either normal continuation or the matching
 `catch` observes it. The selected control-flow demo is now complete through
-its two-guard and conditional-lifetime acceptance cases, hostile cleanup
-proofs, and deterministic scaling regression. General backward/irreducible
-`goto`, multi-compiler support, and broad C++ coverage remain outside the
-delivered slices. The byte-representation and sequential shared-heap-graph
-demos do not depend on goto, C++, or concurrency.
+its two-guard and conditional-lifetime acceptance cases, including a
+conditional guard whose normal call outcome continues while the caught outcome
+returns, plus hostile cleanup proofs and a deterministic scaling regression.
+General backward/irreducible `goto`, multi-compiler support, and broad C++
+coverage remain outside the delivered slices. The byte-representation and
+sequential shared-heap-graph demos do not depend on goto, C++, or concurrency.
 
 Specification and proof:
 
