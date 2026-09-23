@@ -316,7 +316,7 @@ fn verify_changed(
                     "incremental sidecar `{}` failed under its {} limit: {}",
                     sidecar.display(),
                     format_duration(time_limit),
-                    error.message()
+                    error.report()
                 )
             })
         })?;
@@ -358,7 +358,7 @@ fn imported_project_rebuild_reason(project: &ClickProject) -> Option<&'static st
 }
 
 fn click_message(error: click::surface::ClickError) -> String {
-    error.message().to_string()
+    error.report()
 }
 
 fn print_incremental_selection(
@@ -756,7 +756,7 @@ fn verify_file(
                 "sidecar `{}` failed under its {} limit: {}",
                 click_path.display(),
                 format_duration(time_limit),
-                error.message()
+                error.report()
             )
         })
     })?;
@@ -835,7 +835,7 @@ fn verify_location(
                 "proof unit `{}:{line}:{column}` failed under its {} limit: {}",
                 click_path.display(),
                 format_duration(time_limit),
-                error.message()
+                error.report()
             )
         })
     })?;

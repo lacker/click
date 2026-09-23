@@ -1851,8 +1851,11 @@ impl<'a> Proof<'a> {
 /// line the user wrote.
 fn proof_step_source_name(step: &ProofStep) -> &'static str {
     match step {
+        ProofStep::Match { .. } => "match",
+        ProofStep::Both { .. } => "both",
         ProofStep::Assumption => "assumption()",
-        ProofStep::Normalize => "normalize()",
+        ProofStep::Normalize | ProofStep::NormalizeUsing(_) => "normalize()",
+        ProofStep::ArithmeticUsing(_) | ProofStep::ArithmeticCertificate(_) => "arithmetic()",
         ProofStep::Intro => "intro()",
         ProofStep::Split => "split()",
         ProofStep::Left => "left()",
@@ -1860,9 +1863,18 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::Enumerate => "enumerate()",
         ProofStep::Step | ProofStep::StepContract(_) | ProofStep::StepCall(_) => "step",
         ProofStep::ApplyTheoremUsing { .. } => "apply",
+        ProofStep::ApplyInduction { .. } => "apply",
+        ProofStep::Induct { .. } => "induct",
+        ProofStep::StructuralInduct { .. } => "induct",
         ProofStep::TransportUsing { .. } => "transport",
         ProofStep::InstantiateUsing { .. } => "instantiate",
         ProofStep::Have { .. } => "have",
+        ProofStep::Open { .. } => "open",
+        ProofStep::If { .. } => "if",
+        ProofStep::Cases { .. } => "cases",
+        ProofStep::Branch { .. } => "branch",
+        ProofStep::CallOutcomes { .. } => "outcomes",
+        ProofStep::Loop(_) => "loop",
         ProofStep::Rewrite(_) => "rewrite",
         ProofStep::Extract(_) => "extract",
         ProofStep::Contradiction(_) => "contradiction",
@@ -1877,7 +1889,6 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::ObserveResource(_) => "observe",
         ProofStep::CloseInvariantsBy(_) => "close_invariants by",
         ProofStep::Mark(_) => "mark",
-        _ => "tactic",
     }
 }
 

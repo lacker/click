@@ -98,6 +98,16 @@ in C execution state, bind the actual status and handle store, and consume the
 completion at the C join step. No C pthread client proof follows from this
 checkpoint.
 
+The next internal checkpoint puts live completion rights in the ordinary C
+path state. An unrelated C statement now preserves the right, joining one
+child consumes it without changing a forked predecessor, and a function
+cannot return while it holds a live right. The registry uses persistent local
+updates and constant-time state identity. The actual C create call is still
+refused: no unresolved status or handle binding has been issued. Before that
+call is enabled, the guarded transfer must also handle symbolic state
+substitution and memory observations without reviving pre-create facts or
+rewinding unrelated writes on the failure branch.
+
 Use the checked modeled binding to give ordinary `step` on the unchanged
 `pthread_create` and `pthread_join` calls guarded create outcomes and one
 completion right tied to the actual handle and child identity. The selected

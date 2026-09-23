@@ -75,7 +75,9 @@ enum CallOutputPattern {
 }
 
 pub(super) fn parse(source: &str) -> Result<ClickFile, ClickError> {
-    Parser::new(source)?.parse_file()
+    Parser::new(source)
+        .map_err(|error| error.with_kind(ClickErrorKind::Syntax))?
+        .parse_file()
 }
 
 pub(super) fn parse_with_layouts_and_aggregate_objects(
@@ -95,14 +97,16 @@ pub(super) fn parse_with_layouts_and_aggregate_objects(
         aggregate_objects_by_function,
         aggregate_array_objects_by_function,
         global_array_shapes_by_function,
-    )?;
+    )
+    .map_err(|error| error.with_kind(ClickErrorKind::Syntax))?;
     parser.qualified_objects = Some(qualified_objects);
     parser.local_struct_pointers_by_function = local_struct_pointers_by_function;
     parser.parse_file()
 }
 
 pub(super) fn parse_file_items(source: &str) -> Result<ClickFile, ClickError> {
-    let mut parser = Parser::new(source)?;
+    let mut parser =
+        Parser::new(source).map_err(|error| error.with_kind(ClickErrorKind::Syntax))?;
     parser.parse_file_items()
 }
 
@@ -126,7 +130,8 @@ pub(super) fn parse_file_items_for_module(
         aggregate_objects_by_function,
         aggregate_array_objects_by_function,
         global_array_shapes_by_function,
-    )?;
+    )
+    .map_err(|error| error.with_kind(ClickErrorKind::Syntax))?;
     let filename: std::sync::Arc<str> = std::sync::Arc::from(identity);
     for position in &mut parser.positions {
         *position = crate::source::SourcePosition::with_origin(
@@ -668,9 +673,12 @@ impl Parser {
 
     fn parse_file(mut self) -> Result<ClickFile, ClickError> {
         let file = self.parse_file_items()?;
-        let mut file = super::validation::expand_declared_resource_clauses(file)?;
-        super::validation::validate_click_definitions(&file)?;
-        super::lowering::check_resource_field_schemas(&mut file)?;
+        let mut file = super::validation::expand_declared_resource_clauses(file)
+            .map_err(|error| error.with_kind(ClickErrorKind::Type))?;
+        super::validation::validate_click_definitions(&file)
+            .map_err(|error| error.with_kind(ClickErrorKind::Type))?;
+        super::lowering::check_resource_field_schemas(&mut file)
+            .map_err(|error| error.with_kind(ClickErrorKind::Type))?;
         Ok(file)
     }
 
@@ -9176,8 +9184,9 @@ impl Parser {
 
     fn error_at(&self, at: Option<SourcePosition>, message: impl Into<String>) -> ClickError {
         match at {
-            Some(position) => ClickError::new(format!("{position}: {}", message.into())),
-            None => ClickError::new(message),
+            Some(position) => ClickError::new(format!("{position}: {}", message.into()))
+                .with_kind(ClickErrorKind::Syntax),
+            None => ClickError::new(message).with_kind(ClickErrorKind::Syntax),
         }
     }
 
@@ -9452,7 +9461,8 @@ fn validate_parenthesis_nesting(
                     return Err(match positions.get(index) {
                         Some(position) => ClickError::new(format!("{position}: {message}")),
                         None => ClickError::new(message),
-                    });
+                    }
+                    .with_kind(ClickErrorKind::Syntax));
                 }
                 if structural_depth > DELIMITER_NESTING_LIMIT {
                     return Err(delimiter_nesting_error(index, positions));
@@ -9561,6 +9571,7 @@ fn source_nesting_error_message(
         Some(position) => ClickError::new(format!("{position}: {message}")),
         None => ClickError::new(message),
     }
+    .with_kind(ClickErrorKind::Syntax)
 }
 
 /// `aligned(p, n)` is sugar for `address(p) & (n - 1) == 0`; the kernel

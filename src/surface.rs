@@ -5877,10 +5877,33 @@ pub enum ProofKind {
 pub struct ClickError {
     message: String,
     rendered: std::sync::OnceLock<String>,
+    kind: ClickErrorKind,
+    failed_tactic: Option<&'static str>,
     diagnostic: Option<std::sync::Arc<proof_diagnostics::ProofFailureDiagnostic>>,
     search_failures: Option<std::sync::Arc<Vec<proof_diagnostics::ProofSearchFailure>>>,
     unresolved_requirement: Option<std::sync::Arc<UnresolvedRequirement>>,
     timing_tactic: Option<Box<TimingTacticContext>>,
+}
+
+/// The phase that rejected input or a checked proof operation. `Proof` means
+/// evidence was unavailable to this check; it is not a claim that C is unsafe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClickErrorKind {
+    Syntax,
+    Type,
+    Proof,
+    Internal,
+}
+
+impl ClickErrorKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Syntax => "syntax error",
+            Self::Type => "type error",
+            Self::Proof => "proof error",
+            Self::Internal => "internal error",
+        }
+    }
 }
 
 /// A required kernel verification condition that a checked execution step
@@ -6923,6 +6946,17 @@ impl VerifiedPureTheorem {
 }
 
 impl ClickError {
+    fn reported_kind(message: &str) -> ClickErrorKind {
+        // A few kernel checker interfaces still return strings. They already
+        // mark their own invariant failures explicitly; retain that signal
+        // until those interfaces return a typed internal error.
+        if message.starts_with("internal error") || message.contains(": internal error") {
+            ClickErrorKind::Internal
+        } else {
+            ClickErrorKind::Proof
+        }
+    }
+
     fn new(message: impl Into<String>) -> Self {
         let message = message.into();
         let message = match crate::instrumentation::exceeded_verification_limit_context() {
@@ -6935,9 +6969,12 @@ impl ClickError {
             }
             _ => message,
         };
+        let kind = Self::reported_kind(&message);
         Self {
             message: diagnostics::bound_error_message(message),
             rendered: std::sync::OnceLock::new(),
+            kind,
+            failed_tactic: None,
             diagnostic: None,
             search_failures: None,
             unresolved_requirement: None,
@@ -6956,9 +6993,12 @@ impl ClickError {
             }
             _ => summary,
         };
+        let kind = Self::reported_kind(&summary);
         Self {
             message: diagnostics::bound_error_message(summary),
             rendered: std::sync::OnceLock::new(),
+            kind,
+            failed_tactic: None,
             diagnostic: Some(std::sync::Arc::new(diagnostic)),
             search_failures: None,
             unresolved_requirement: None,
@@ -6986,6 +7026,54 @@ impl ClickError {
         } else {
             &self.message
         }
+    }
+
+    /// Terminal-facing classification and the checked simple tactic, when one
+    /// was attempted. `message()` stays the stable cause text used by tools
+    /// that compare or aggregate diagnostics.
+    pub fn report(&self) -> String {
+        let message = self.message();
+        let (summary, context) = message.split_once('\n').unwrap_or((message, ""));
+        let mut report = format!("{summary}\n  error kind: {}", self.kind.label());
+        if let Some(tactic) = self.failed_tactic {
+            report.push_str("\n  tactic: ");
+            report.push_str(tactic);
+        }
+        if let Some(requirement) = &self.unresolved_requirement {
+            report.push_str("\n  needed: ");
+            report.push_str(&proof_diagnostics::render::render_proposition(
+                &requirement.proposition,
+            ));
+            if let Some(context) = &requirement.context {
+                report.push_str("\n  check: ");
+                report.push_str(context);
+            }
+        }
+        if !context.is_empty() {
+            report.push('\n');
+            report.push_str(context);
+        }
+        report
+    }
+
+    pub fn kind(&self) -> ClickErrorKind {
+        self.kind
+    }
+
+    pub(crate) fn with_kind(mut self, kind: ClickErrorKind) -> Self {
+        if self.kind != ClickErrorKind::Internal {
+            self.kind = kind;
+        }
+        self.rendered = std::sync::OnceLock::new();
+        self
+    }
+
+    pub(crate) fn with_failed_tactic(mut self, tactic: &'static str) -> Self {
+        if self.failed_tactic.is_none() {
+            self.failed_tactic = Some(tactic);
+            self.rendered = std::sync::OnceLock::new();
+        }
+        self
     }
 
     /// The bounded cause text, without rendering proof state or premises.
@@ -7035,6 +7123,8 @@ impl ClickError {
         Self {
             message: diagnostics::bound_error_message(summary),
             rendered: std::sync::OnceLock::new(),
+            kind: self.kind,
+            failed_tactic: self.failed_tactic,
             diagnostic: self.diagnostic,
             search_failures: self.search_failures,
             unresolved_requirement: self.unresolved_requirement,
@@ -7064,6 +7154,8 @@ impl Clone for ClickError {
         Self {
             message: self.message.clone(),
             rendered: std::sync::OnceLock::new(),
+            kind: self.kind,
+            failed_tactic: self.failed_tactic,
             diagnostic: self.diagnostic.clone(),
             search_failures: self.search_failures.clone(),
             unresolved_requirement: self.unresolved_requirement.clone(),
@@ -7075,6 +7167,8 @@ impl Clone for ClickError {
 impl PartialEq for ClickError {
     fn eq(&self, other: &Self) -> bool {
         self.message == other.message
+            && self.kind == other.kind
+            && self.failed_tactic == other.failed_tactic
             && self.diagnostic == other.diagnostic
             && self.search_failures == other.search_failures
             && self.unresolved_requirement == other.unresolved_requirement

@@ -2051,6 +2051,19 @@ pub(crate) fn resolve_pending_heap_allocations(
     state
 }
 
+fn has_live_thread_completion(state: &CState) -> bool {
+    state
+        .thread_ledger
+        .as_ref()
+        .is_some_and(|ledger| ledger.has_live_rights())
+}
+
+fn live_thread_return_refusal() -> CStatementOutcome {
+    CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+        "a function cannot return with a live pthread completion right".to_string(),
+    ))
+}
+
 fn execute_c_return_expression_paths(
     state: &CState,
     expression: &CExpression,
@@ -2091,7 +2104,9 @@ fn execute_c_return_expression_paths(
                     } else {
                         Pointer::null()
                     };
-                    let outcome = if resolved_state.memory.has_pending_heap_allocation() {
+                    let outcome = if has_live_thread_completion(&resolved_state) {
+                        live_thread_return_refusal()
+                    } else if resolved_state.memory.has_pending_heap_allocation() {
                         CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
                     } else {
                         CStatementOutcome::Return {
@@ -2110,7 +2125,9 @@ fn execute_c_return_expression_paths(
                 }
             }
             CExpressionOutcome::Value(value) => {
-                let outcome = if state.memory.has_pending_heap_allocation() {
+                let outcome = if has_live_thread_completion(state) {
+                    live_thread_return_refusal()
+                } else if state.memory.has_pending_heap_allocation() {
                     CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
                 } else {
                     CStatementOutcome::Return {
@@ -2610,7 +2627,9 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             paths
         }
         CStatement::Return(CExpression::Value(CValue::Void)) => {
-            let outcome = if state.memory.has_pending_heap_allocation() {
+            let outcome = if has_live_thread_completion(state) {
+                live_thread_return_refusal()
+            } else if state.memory.has_pending_heap_allocation() {
                 CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
             } else {
                 CStatementOutcome::Return {
@@ -2635,9 +2654,13 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
                 let outcome = match path.outcome {
                     CExpressionOutcome::Value(value @ CValue::Int32(_)) => {
-                        CStatementOutcome::Throw {
-                            value,
-                            state: state.clone(),
+                        if has_live_thread_completion(state) {
+                            live_thread_return_refusal()
+                        } else {
+                            CStatementOutcome::Throw {
+                                value,
+                                state: state.clone(),
+                            }
                         }
                     }
                     CExpressionOutcome::Value(_) => {

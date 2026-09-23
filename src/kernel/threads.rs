@@ -10,6 +10,8 @@
 //! no escaping borrows, allocation, exceptions, cancellation, or detachment.
 //! Join assumes success only for this context's live, unique, terminating child.
 
+use std::cmp::Ordering;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::persistent::PersistentMap;
@@ -71,6 +73,98 @@ struct CompletionRight {
     completion: WorkerCompletion,
 }
 
+/// Path-local completion authority stored with ordinary C execution state.
+/// Clones share the root; an insertion or removal touches only one map path.
+/// Like the loan ledger, equality uses a fresh state identity so ordinary
+/// state comparisons never walk unrelated live children.
+#[derive(Clone)]
+pub(super) struct ThreadLedger {
+    storage: Arc<ThreadLedgerStorage>,
+}
+
+struct ThreadLedgerStorage {
+    state: u64,
+    rights: PersistentMap<ThreadHandle, Arc<CompletionRight>>,
+}
+
+impl ThreadLedger {
+    fn fresh_state() -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(super) fn new() -> Self {
+        Self {
+            storage: Arc::new(ThreadLedgerStorage {
+                state: Self::fresh_state(),
+                rights: PersistentMap::default(),
+            }),
+        }
+    }
+
+    fn right(&self, handle: ThreadHandle) -> Option<&Arc<CompletionRight>> {
+        self.storage.rights.get(&handle)
+    }
+
+    pub(super) fn has_live_rights(&self) -> bool {
+        !self.storage.rights.is_empty()
+    }
+
+    fn with_right(&self, handle: ThreadHandle, right: CompletionRight) -> Self {
+        Self {
+            storage: Arc::new(ThreadLedgerStorage {
+                state: Self::fresh_state(),
+                rights: self.storage.rights.with_inserted(handle, Arc::new(right)),
+            }),
+        }
+    }
+
+    fn without_right(&self, handle: ThreadHandle) -> Self {
+        Self {
+            storage: Arc::new(ThreadLedgerStorage {
+                state: Self::fresh_state(),
+                rights: self.storage.rights.without_key(&handle),
+            }),
+        }
+    }
+}
+
+impl std::fmt::Debug for ThreadLedger {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ThreadLedger")
+            .field("state", &self.storage.state)
+            .field("live_rights", &self.storage.rights.len())
+            .finish()
+    }
+}
+
+impl PartialEq for ThreadLedger {
+    fn eq(&self, other: &Self) -> bool {
+        self.storage.state == other.storage.state
+    }
+}
+
+impl Eq for ThreadLedger {}
+
+impl Hash for ThreadLedger {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.storage.state.hash(state);
+    }
+}
+
+impl PartialOrd for ThreadLedger {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ThreadLedger {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.storage.state.cmp(&other.storage.state)
+    }
+}
+
 /// A checked task application before the runtime chooses whether creation
 /// succeeded. Both outcomes are available only after the worker contract and
 /// exact termination evidence have been validated against this parent.
@@ -106,14 +200,15 @@ impl PreparedThreadCreate<'_> {
             )
             .with_loan_ledger(Some(self.completion.plan.ledger.clone()))
             .with_memory(self.completion.memory.clone());
-        next.rights.insert(
+        let ledger = next.parent.thread_ledger.as_ref().expect("thread ledger");
+        next.parent.thread_ledger = Some(ledger.with_right(
             handle,
-            Arc::new(CompletionRight {
+            CompletionRight {
                 worker: Arc::new(self.worker.clone()),
                 argument: self.argument,
                 completion: self.completion,
-            }),
-        );
+            },
+        ));
         (next, handle, effect)
     }
 }
@@ -123,7 +218,6 @@ impl PreparedThreadCreate<'_> {
 #[derive(Clone)]
 pub(super) struct ThreadContext {
     parent: CState,
-    rights: PersistentMap<ThreadHandle, Arc<CompletionRight>>,
 }
 
 impl ThreadContext {
@@ -141,10 +235,10 @@ impl ThreadContext {
             (Some(ledger), Some(participant)) if ledger.contains_participant(participant) => {}
             _ => return Err("inconsistent parent loan context"),
         }
-        Ok(Self {
-            parent,
-            rights: PersistentMap::default(),
-        })
+        if parent.thread_ledger.is_none() {
+            parent.thread_ledger = Some(ThreadLedger::new());
+        }
+        Ok(Self { parent })
     }
 
     pub(super) fn parent(&self) -> &CState {
@@ -226,8 +320,10 @@ impl ThreadContext {
         assumptions: &PureFactContext,
     ) -> Result<(Self, Vec<ExecutionPureFact>), &'static str> {
         let right = self
-            .rights
-            .get(&handle)
+            .parent
+            .thread_ledger
+            .as_ref()
+            .and_then(|ledger| ledger.right(handle))
             .ok_or("no live completion right for this handle")?;
         let completion = &right.completion;
         let ledger = self.parent.loan_ledger().expect("parent ledger");
@@ -261,7 +357,13 @@ impl ThreadContext {
             .with_resource_context(recovery.resources)
             .with_loan_ledger(Some(recovery.ledger))
             .with_loan_view_bindings(recovery.view_bindings);
-        next.rights.remove(&handle);
+        next.parent.thread_ledger = Some(
+            next.parent
+                .thread_ledger
+                .as_ref()
+                .expect("thread ledger")
+                .without_right(handle),
+        );
         Ok((next, completion.facts.clone()))
     }
 }

@@ -145,7 +145,7 @@ impl AuditSessionWorker {
                 None => C0VerificationSession::new_cpp_prepared(&source.click_source, import),
             },
         })
-        .map_err(|error| error.message().to_string())?;
+        .map_err(|error| error.report())?;
         ensure_phase_limit(
             started.elapsed(),
             limit,
@@ -182,7 +182,7 @@ impl AuditSessionWorker {
                 }
             },
         })
-        .map_err(|error| error.message().to_string())?;
+        .map_err(|error| error.report())?;
         let elapsed = start.elapsed();
         ensure_phase_limit(elapsed, limit, "rewritten-sidecar verification")?;
         Ok(elapsed)
@@ -337,7 +337,7 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             Some(project) => click::surface::selected_project_thread_runtime(project),
             None => click::surface::selected_thread_runtime(&source.click_source),
         }
-        .map_err(|error| error.message().to_string())?;
+        .map_err(|error| error.report())?;
         if let Some(assumption) = runtime.assumption() {
             println!("  {} runtime assumption: {assumption}", path.display());
         }
@@ -728,7 +728,7 @@ fn load_audit_source_from_text(
                 format!(
                     "could not read imports in mdtest `{}`: {}",
                     path.display(),
-                    error.message()
+                    error.report()
                 )
             })?
             .is_empty();
@@ -807,7 +807,7 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
             format!(
                 "could not inventory smart tactics in `{}`: {}",
                 canonical_path.display(),
-                error.message()
+                error.report()
             )
         })?;
         for syntactic in syntactic_sites {
@@ -861,7 +861,7 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
                     syntactic.claim_label,
                     syntactic.source_index,
                     canonical_path.display(),
-                    error.message()
+                    error.report()
                 )
             })?;
             let container_position = SourcePosition {
@@ -981,7 +981,7 @@ fn select_changed_sites(
                 println!(
                     "  full sidecar: `{}` could not be compared semantically: {}",
                     source_path.display(),
-                    error.message()
+                    error.report()
                 );
                 selected.extend(source_sites);
                 continue;
@@ -1125,7 +1125,7 @@ fn load_baseline_audit_source(
         return load_audit_source_from_text(path, container_source).map(Some);
     }
     if !click_import_sites(&container_source)
-        .map_err(|error| error.message().to_string())?
+        .map_err(|error| error.report())?
         .is_empty()
     {
         // Historical graph loading needs every imported file at the selected
@@ -1138,7 +1138,7 @@ fn load_baseline_audit_source(
         format!(
             "could not read baseline sidecar `{}`: {}",
             path.display(),
-            error.message()
+            error.report()
         )
     })? {
         let source_path = parent.join(&name);
@@ -1532,7 +1532,7 @@ fn expand_location_with_source_parts(
             ),
         },
     }
-    .map_err(|error| error.message().to_string())?;
+    .map_err(|error| error.report())?;
     if looks_like_mdtest(click_path) {
         source
             .mdtest
@@ -1600,7 +1600,7 @@ fn verify_rewritten_with_inputs(
         },
     }
     .map(|_| ())
-    .map_err(|error| error.message().to_string())
+    .map_err(|error| error.report())
 }
 
 #[cfg(test)]
@@ -1642,7 +1642,7 @@ fn claim_source_position_for_source(
     position.map_err(|error| {
         format!(
             "could not locate `{claim_label}` in the rewritten sidecar: {}",
-            error.message()
+            error.report()
         )
     })
 }
@@ -1666,7 +1666,7 @@ fn claim_source_position_for_inputs(
     position.map_err(|error| {
         format!(
             "could not locate `{claim_label}` in the rewritten sidecar: {}",
-            error.message()
+            error.report()
         )
     })
 }
@@ -1744,7 +1744,7 @@ fn reexpand_source_with_inputs(
             .map_err(|error| {
                 format!(
                     "could not inventory smart tactics for `{claim_label}`: {}",
-                    error.message()
+                    error.report()
                 )
             })
     };

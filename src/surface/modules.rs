@@ -121,14 +121,15 @@ pub(in crate::surface) fn resolve_click_project_with_layouts(
         // closure, and the standard library, but never an importer-only name.
         let closure_ids = transitive_imports(identity, &modules)?;
         let mut combined = merge_modules(&closure_ids, identity, &locals)?;
-        combined = validation::expand_declared_resource_clauses(combined)?;
+        combined = validation::expand_declared_resource_clauses(combined)
+            .map_err(|error| error.with_kind(ClickErrorKind::Type))?;
         validation::validate_click_definitions(&combined).map_err(|error| {
-            ClickError::new(format!(
-                "while checking module `{identity}`: {}",
-                error.message()
-            ))
+            error
+                .with_kind(ClickErrorKind::Type)
+                .with_context(format!("while checking module `{identity}`"))
         })?;
-        lowering::check_resource_field_schemas(&mut combined)?;
+        lowering::check_resource_field_schemas(&mut combined)
+            .map_err(|error| error.with_kind(ClickErrorKind::Type))?;
     }
 
     for identity in order
@@ -163,9 +164,12 @@ pub(in crate::surface) fn resolve_click_project_with_layouts(
             combined.thread_runtime = runtime;
         }
     }
-    combined = validation::expand_declared_resource_clauses(combined)?;
-    validation::validate_click_definitions(&combined)?;
-    lowering::check_resource_field_schemas(&mut combined)?;
+    combined = validation::expand_declared_resource_clauses(combined)
+        .map_err(|error| error.with_kind(ClickErrorKind::Type))?;
+    validation::validate_click_definitions(&combined)
+        .map_err(|error| error.with_kind(ClickErrorKind::Type))?;
+    lowering::check_resource_field_schemas(&mut combined)
+        .map_err(|error| error.with_kind(ClickErrorKind::Type))?;
     reject_theorem_justification_cycles(&combined)?;
     Ok(combined)
 }

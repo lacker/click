@@ -237,7 +237,7 @@ fn write_context_preserved(
     let rebased = map_verifying_source_paths(&artifact.source, |declared| {
         rebase_verifying_declaration(&source_dir, output_dir, declared)
     })
-    .map_err(|error| error.message().to_string())?;
+    .map_err(|error| error.report())?;
     // The rebased artifact is verified through the rules the requested path
     // will actually use, including a manifest hijacking the destination name,
     // before the final bytes are promoted. The staged entry shares the output
@@ -437,7 +437,7 @@ fn expand_selection(
                     }
                 },
             }
-            .map_err(|error| error.message().to_string())?;
+            .map_err(|error| error.report())?;
             Ok((claim, expanded))
         }
         Selection::Claim(claim) => {
@@ -465,7 +465,7 @@ fn expand_selection(
                     None => expand_cpp_prepared_claim_source_by_label(click_source, import, claim),
                 },
             }
-            .map_err(|error| error.message().to_string())?;
+            .map_err(|error| error.report())?;
             Ok((claim.clone(), expanded))
         }
     }
@@ -554,7 +554,7 @@ fn selected_claim(
             None => cpp_prepared_smart_tactic_source_sites(click_source, import),
         },
     }
-    .map_err(|error| error.message().to_string())?;
+    .map_err(|error| error.report())?;
     sites
         .into_iter()
         .find_map(|site| {
@@ -656,7 +656,7 @@ fn verify_expansion(
                         None => cpp_prepared_tactic_source_position(expanded, import, claim, 0),
                     },
                 }
-                .map_err(|error| error.message().to_string())?;
+                .map_err(|error| error.report())?;
                 let result = match inputs {
                     CInput::Bundle(sources) => match project {
                         Some(project) => verify_c0_project_at(
@@ -703,7 +703,7 @@ fn verify_expansion(
                 };
                 result
                     .map(|_| ())
-                    .map_err(|error| format!("expanded proof did not verify: {}", error.message()))
+                    .map_err(|error| format!("expanded proof did not verify: {}", error.report()))
             },
         )
     });

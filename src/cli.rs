@@ -340,7 +340,7 @@ pub fn read_declared_sources(
 ) -> Result<Vec<(String, String)>, String> {
     let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
     verifying_source_paths(click_source)
-        .map_err(|error| error.message().to_string())?
+        .map_err(|error| error.report())?
         .into_iter()
         .map(|name| {
             let source = fs::read_to_string(parent.join(&name))
@@ -359,8 +359,7 @@ pub fn read_verifying_sources(
 ) -> Result<Vec<(String, String)>, String> {
     // Header discovery preprocesses the sources, so it needs the sidecar's
     // selected C implementation target before any proof runs.
-    let target = crate::surface::selected_c_target(click_source)
-        .map_err(|error| error.message().to_string())?;
+    let target = crate::surface::selected_c_target(click_source).map_err(|error| error.report())?;
     read_verifying_sources_for_target(click_path, click_source, target)
 }
 
@@ -417,12 +416,12 @@ impl CInput {
 pub fn read_c_inputs(sidecar: &Path, click_source: &str) -> Result<CInput, String> {
     let directory = fs::canonicalize(sidecar.parent().unwrap_or_else(|| Path::new(".")))
         .map_err(|error| format!("failed to resolve sidecar directory: {error}"))?;
-    let target =
-        match read_c_project_profile(&directory, &directory)?.and_then(|profile| profile.target) {
-            Some(target) => target,
-            None => crate::surface::selected_c_target(click_source)
-                .map_err(|error| error.message().to_string())?,
-        };
+    let target = match read_c_project_profile(&directory, &directory)?
+        .and_then(|profile| profile.target)
+    {
+        Some(target) => target,
+        None => crate::surface::selected_c_target(click_source).map_err(|error| error.report())?,
+    };
     read_c_inputs_for_target(sidecar, click_source, target)
 }
 
@@ -431,8 +430,8 @@ pub fn read_c_inputs_for_project(
     click_source: &str,
     project: &ClickProject,
 ) -> Result<CInput, String> {
-    let target = crate::surface::selected_project_c_target(project)
-        .map_err(|error| error.message().to_string())?;
+    let target =
+        crate::surface::selected_project_c_target(project).map_err(|error| error.report())?;
     read_c_inputs_for_target(sidecar, click_source, target)
 }
 
@@ -675,7 +674,7 @@ fn load_click_module(
         format!(
             "failed to scan imports in `{}`: {}",
             path.display(),
-            error.message()
+            error.report()
         )
     })?;
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
