@@ -567,6 +567,10 @@ struct LoanLedgerData {
     shares: PersistentMap<LoanShareId, LoanShareRecord>,
     active_memory_index: PersistentMap<ResourceMemoryIntervalNode, PersistentSet<LoanId>>,
     active_memory_subtree: PersistentMap<ResourceMemoryIntervalNode, PersistentSet<LoanId>>,
+    /// Counted from the same live ranges as the interval index. A symbolic
+    /// external argument can only skip that index when every indexed loan
+    /// protects fresh function-local storage.
+    active_nonlocal_indexed_ranges: usize,
     active_memory_loans: usize,
     /// Protected ranges whose bounds are not concrete, keyed by the block
     /// they lie in. Contract input views over parameter memory live here: a
@@ -582,6 +586,34 @@ struct LoanLedgerData {
 struct LoanLedgerStorage {
     state: LoanLedgerStateId,
     data: LoanLedgerData,
+}
+
+fn update_indexed_memory_range(
+    data: &mut LoanLedgerData,
+    range: &CMemoryRange,
+    loan: LoanId,
+    insert: bool,
+) -> Result<(), LoanRefusal> {
+    if memory_interval_nodes(range).is_none() {
+        return Ok(());
+    }
+    let index = update_active_memory_index(&data.active_memory_index, range, loan, insert)?;
+    let subtree = update_active_memory_subtree(&data.active_memory_subtree, range, loan, insert)?;
+    let nonlocal = if range.base().block.starts_with("local:") {
+        data.active_nonlocal_indexed_ranges
+    } else if insert {
+        data.active_nonlocal_indexed_ranges
+            .checked_add(1)
+            .ok_or(LoanRefusal::IdentitySpaceExhausted)?
+    } else {
+        data.active_nonlocal_indexed_ranges
+            .checked_sub(1)
+            .ok_or(LoanRefusal::InvalidEvidence)?
+    };
+    data.active_memory_index = index;
+    data.active_memory_subtree = subtree;
+    data.active_nonlocal_indexed_ranges = nonlocal;
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -3307,6 +3339,7 @@ impl LoanLedger {
                     shares: PersistentMap::default(),
                     active_memory_index: PersistentMap::default(),
                     active_memory_subtree: PersistentMap::default(),
+                    active_nonlocal_indexed_ranges: 0,
                     active_memory_loans: 0,
                     unindexed_memory: PersistentMap::default(),
                 },
@@ -4182,9 +4215,11 @@ impl LoanLedger {
 
     /// Whether a write, free, or havoc of `range` is compatible with every
     /// active loan. Concrete ranges use the dyadic index. A symbolic query
-    /// cannot be looked up there, so it is refused outright while any
-    /// indexed loan is active; otherwise it is compared against the
-    /// symbolic entries of its own block with
+    /// cannot be looked up there, so it is refused while an indexed loan
+    /// might alias it. An external input cannot alias a fresh function-local
+    /// block; that exact case is allowed when all indexed loans are local.
+    /// Remaining symbolic loans are compared against the
+    /// entries of the query's own block with
     /// [`protected_range_proven_overlapping`], whose polarity is documented
     /// there.
     pub(crate) fn permits_memory_access_with_assumptions(
@@ -4206,7 +4241,17 @@ impl LoanLedger {
             if indexed_ranges_exist && !self.active_memory_overlaps(range)?.is_empty() {
                 return Err(LoanRefusal::ActiveDependency);
             }
-        } else if !self.storage.data.active_memory_index.is_empty() {
+        } else if !self.storage.data.active_memory_index.is_empty()
+            && !(matches!(
+                range.base().block,
+                PointerBlock::ExternalArgument | PointerBlock::ExternalObject(_)
+            ) && self.storage.data.active_nonlocal_indexed_ranges == 0
+                && self.storage.data.unindexed_memory.is_empty())
+        {
+            // Every indexed loan is then on a fresh `local:` block. Pointer
+            // block distinctness already establishes that an external input
+            // cannot reach any of them. A symbolic loan outside the index
+            // retains the conservative refusal unless the index is empty.
             return Err(LoanRefusal::UnsupportedPartition);
         }
         let Some(protected) = self.storage.data.unindexed_memory.get(&range.base().block) else {
@@ -4436,17 +4481,7 @@ impl LoanLedger {
                     },
                 );
                 for range in &memory_backing {
-                    if memory_interval_nodes(range).is_none() {
-                        continue;
-                    }
-                    data.active_memory_index =
-                        update_active_memory_index(&data.active_memory_index, range, *loan, true)?;
-                    data.active_memory_subtree = update_active_memory_subtree(
-                        &data.active_memory_subtree,
-                        range,
-                        *loan,
-                        true,
-                    )?;
+                    update_indexed_memory_range(&mut data, range, *loan, true)?;
                 }
                 data.unindexed_memory = with_unindexed_memory(
                     &data.unindexed_memory,
@@ -4570,17 +4605,7 @@ impl LoanLedger {
                     },
                 );
                 for range in &memory_backing {
-                    if memory_interval_nodes(range).is_none() {
-                        continue;
-                    }
-                    data.active_memory_index =
-                        update_active_memory_index(&data.active_memory_index, range, *loan, true)?;
-                    data.active_memory_subtree = update_active_memory_subtree(
-                        &data.active_memory_subtree,
-                        range,
-                        *loan,
-                        true,
-                    )?;
+                    update_indexed_memory_range(&mut data, range, *loan, true)?;
                 }
                 data.unindexed_memory = with_unindexed_memory(
                     &data.unindexed_memory,
@@ -4693,17 +4718,7 @@ impl LoanLedger {
                     },
                 );
                 for range in &memory_backing {
-                    if memory_interval_nodes(range).is_none() {
-                        continue;
-                    }
-                    data.active_memory_index =
-                        update_active_memory_index(&data.active_memory_index, range, *loan, true)?;
-                    data.active_memory_subtree = update_active_memory_subtree(
-                        &data.active_memory_subtree,
-                        range,
-                        *loan,
-                        true,
-                    )?;
+                    update_indexed_memory_range(&mut data, range, *loan, true)?;
                 }
                 data.unindexed_memory = with_unindexed_memory(
                     &data.unindexed_memory,
@@ -4834,17 +4849,7 @@ impl LoanLedger {
                 for range in &memory_backing {
                     // A symbolic parent range stays protected by the parent
                     // entry, which remains active while its share is pinned.
-                    if memory_interval_nodes(range).is_none() {
-                        continue;
-                    }
-                    data.active_memory_index =
-                        update_active_memory_index(&data.active_memory_index, range, *loan, true)?;
-                    data.active_memory_subtree = update_active_memory_subtree(
-                        &data.active_memory_subtree,
-                        range,
-                        *loan,
-                        true,
-                    )?;
+                    update_indexed_memory_range(&mut data, range, *loan, true)?;
                 }
                 // Counted by the same predicate `End` decrements with, over
                 // the narrowed authority this child actually holds, so a
@@ -5027,21 +5032,7 @@ impl LoanLedger {
                         &symbolic_memory_ranges(&record.memory_backing),
                     );
                     for range in &record.memory_backing {
-                        if memory_interval_nodes(range).is_none() {
-                            continue;
-                        }
-                        data.active_memory_index = update_active_memory_index(
-                            &data.active_memory_index,
-                            range,
-                            scope_record.loan,
-                            false,
-                        )?;
-                        data.active_memory_subtree = update_active_memory_subtree(
-                            &data.active_memory_subtree,
-                            range,
-                            scope_record.loan,
-                            false,
-                        )?;
+                        update_indexed_memory_range(&mut data, range, scope_record.loan, false)?;
                     }
                     if loan_protects_memory(&record.memory_backing, &record.permitted) {
                         data.active_memory_loans = data
@@ -5215,6 +5206,22 @@ impl LoanLedger {
             })
             .count();
         if data.active_memory_loans != expected_active_memory_loans {
+            return false;
+        }
+        let expected_nonlocal_indexed_ranges = data
+            .loans
+            .iter()
+            .filter(|(_, loan)| {
+                data.scopes
+                    .get(&loan.scope)
+                    .is_some_and(|scope| scope.active)
+            })
+            .flat_map(|(_, loan)| &loan.memory_backing)
+            .filter(|range| {
+                !range.base().block.starts_with("local:") && memory_interval_nodes(range).is_some()
+            })
+            .count();
+        if data.active_nonlocal_indexed_ranges != expected_nonlocal_indexed_ranges {
             return false;
         }
         for (loan_id, loan) in data.loans.iter() {
@@ -5421,6 +5428,94 @@ mod tests {
             Bitvector32Term::Constant(end),
             width,
         )
+    }
+
+    fn local_job_range() -> CMemoryRange {
+        CMemoryRange::new_with_element_width(
+            crate::kernel::Pointer {
+                block: "local:job".into(),
+                offset: crate::kernel::PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+            4,
+        )
+    }
+
+    #[test]
+    fn symbolic_external_write_is_distinct_from_a_fresh_local_loan() {
+        let assumptions = PureFactContext::new();
+        let (ledger, owner, reader) = participants();
+        let job = CResourceFact::own_memory(local_job_range());
+        let opening = lend_test(&ledger, owner, reader, job);
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        assert!(ledger.invariant_holds());
+        assert!(
+            local_job_range()
+                .base()
+                .blocks_proven_distinct(parameter_range(7, 0, 1, 4).base())
+        );
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(
+                &parameter_range(7, 0, 1, 4),
+                &assumptions,
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(&local_job_range(), &assumptions),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        let returned = ledger.transfer(opening.root_share, reader, owner).unwrap();
+        let ledger = ledger.apply(&returned).unwrap();
+        let ended = ledger.end(opening.scope, owner).unwrap();
+        let ledger = ledger.apply(&ended).unwrap();
+        assert!(ledger.invariant_holds());
+    }
+
+    #[test]
+    fn symbolic_external_write_still_refuses_a_nonlocal_indexed_loan() {
+        let assumptions = PureFactContext::new();
+        let (ledger, owner, reader) = participants();
+        let job = lend_test(
+            &ledger,
+            owner,
+            reader,
+            CResourceFact::own_memory(local_job_range()),
+        );
+        let ledger = ledger.apply(&job.transition).unwrap();
+        let global = lend_test(&ledger, owner, reader, memory(0, 4, true));
+        let ledger = ledger.apply(&global.transition).unwrap();
+        assert!(ledger.invariant_holds());
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(
+                &parameter_range(7, 0, 1, 4),
+                &assumptions,
+            ),
+            Err(LoanRefusal::UnsupportedPartition)
+        );
+    }
+
+    #[test]
+    fn symbolic_external_write_still_refuses_a_second_symbolic_loan() {
+        let assumptions = PureFactContext::new();
+        let (ledger, owner, _, _) = rooted_parameter_view(41);
+        let reader = ledger.fresh_participant().unwrap();
+        let job = lend_test(
+            &ledger,
+            owner,
+            reader,
+            CResourceFact::own_memory(local_job_range()),
+        );
+        let ledger = ledger.apply(&job.transition).unwrap();
+        assert!(ledger.invariant_holds());
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(
+                &parameter_range(42, 0, 1, 4),
+                &assumptions,
+            ),
+            Err(LoanRefusal::UnsupportedPartition)
+        );
     }
 
     fn rooted_parameter_view(
