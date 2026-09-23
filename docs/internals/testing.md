@@ -76,17 +76,21 @@ cargo test --test examples
 
 ## Compiler import fixtures
 
-The gate also runs `tests/compiler_import.rs` against the installed GCC at
-`/usr/bin/gcc`. Provision GCC before running `scripts/check.sh` (the Linux CI
-runner includes it). Missing GCC fails the fixture; the gate never downloads a
-compiler or silently skips these checks. The small fixture creates its own
-artifacts and locks in an isolated temporary directory and calls the shared
-verification and expansion engine directly.
+On Linux, the gate runs `tests/compiler_import.rs` against GCC at
+`/usr/bin/gcc`. Provision GCC before running `scripts/check.sh` there (the
+Linux CI runner includes it). Missing GCC fails the preparation fixture; the
+gate never downloads a compiler or silently skips these checks. The fixture
+creates artifacts and locks in an isolated temporary directory, then checks
+offline loading, verification, and expansion. On macOS, compiler-independent
+unit regressions load and verify a relocated C artifact with no GCC or target
+headers installed, and reject changed source, artifact, local header, and lock
+identity bytes.
 
-These fixtures cover compiler conditional selection, token pasting and macro
-rescanning, contextual headers, configured system dependencies, stale locks,
-artifact tampering, import identity, and original-source diagnostics. They do
-not claim that the complete captured Linux translation unit verifies.
+The Linux fixtures cover compiler conditional selection, token pasting and
+macro rescanning, contextual headers, configured dependencies, refresh after
+an optional header appears, stale configs, artifact tampering, import identity,
+and original-source diagnostics. They do not claim that the complete captured
+Linux translation unit verifies.
 
 The gate also builds `tools/cpp-exporter/main.cpp` against exactly Clang and
 LLVM 19.1.7, then runs `tests/cpp_import.rs`. Set `LLVM_CONFIG` when the pinned
