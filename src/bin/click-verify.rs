@@ -10,7 +10,7 @@ use std::time::Duration;
 use click::cli::{
     CInput, DEFAULT_VERIFY_TIME_LIMIT, contains_click_file, files_with_extension, find_projects,
     format_duration, looks_like_source_location, parse_duration, parse_source_location,
-    read_c_inputs, read_click_project_at_root, source_refs,
+    read_click_project_at_root, source_refs,
 };
 use click::languages::c::source as c_source;
 use click::languages::c::target::CTarget;
@@ -248,7 +248,7 @@ fn verify_changed(
             &repo,
             &baseline_commit,
             &sidecar,
-            selected_c_target(&click_source).map_err(click_message)?,
+            click::surface::selected_project_c_target(&project).map_err(click_message)?,
         )?;
         let mut full_rebuild = !baseline_attested;
         let mut reasons = if !baseline_attested {
@@ -323,6 +323,7 @@ fn verify_changed(
         print_external_dependencies(&dependencies, &verified_theorems);
         if full_rebuild
             && project.modules().len() == 1
+            && project.c_profile().is_none()
             && let Err(message) = record_full_verification(
                 &sidecar,
                 &click_source,
@@ -346,6 +347,11 @@ fn verify_changed(
 }
 
 fn imported_project_rebuild_reason(project: &ClickProject) -> Option<&'static str> {
+    if project.c_profile().is_some() {
+        return Some(
+            "the sidecar uses project C configuration; conservative full rebuild prevents reuse across configuration changes",
+        );
+    }
     (project.modules().len() > 1).then_some(
         "the sidecar has Click imports; conservative import-aware rebuild of the selected entry scope",
     )
@@ -770,6 +776,7 @@ fn verify_file(
     if admissions.is_empty() {
         if let CInput::Bundle(sources) = &inputs
             && project.modules().len() == 1
+            && project.c_profile().is_none()
             && let Err(message) = record_full_verification(click_path, &click_source, sources, &[])
         {
             eprintln!("click-verify: warning: could not record incremental baseline: {message}");
@@ -869,12 +876,12 @@ fn load_sidecar_inputs(
 ) -> Result<(String, ClickProject, CInput), String> {
     let click_source = fs::read_to_string(click_path)
         .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-    let inputs = read_c_inputs(click_path, &click_source)?;
     let project = read_click_project_at_root(
         click_path,
         &click_source,
         project_root.unwrap_or_else(|| click_path.parent().unwrap_or_else(|| Path::new("."))),
     )?;
+    let inputs = click::cli::read_c_inputs_for_project(click_path, &click_source, &project)?;
     Ok((click_source, project, inputs))
 }
 

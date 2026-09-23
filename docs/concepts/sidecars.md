@@ -47,6 +47,14 @@ verifying "file.c";
 This tells Click which C source files are part of the verification unit. Larger
 sidecars can name multiple C files when a proof depends on helper functions.
 
+A directory can set the C target and modeled runtime once for its sidecars in
+`click.project.json`, with optional `target` and `runtime` string fields. For
+example, `{"target":"x86_64-linux-userspace","runtime":"modeled-pthread"}`
+selects the conditional pthread model. Existing `target` and `runtime`
+directives in `.click` files remain valid when they agree with the project
+config. The selected profile is bound to proof artifacts and incremental
+sessions; configuration changes require a fresh verification.
+
 ## Local specification imports
 
 A sidecar can reuse logical declarations from another local Click file:

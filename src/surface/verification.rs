@@ -318,6 +318,24 @@ impl<'a> CSourceContext<'a> {
                 hasher.update(imported.as_bytes());
             }
         }
+        if let Some(profile) = project.c_profile() {
+            for part in [
+                b"click-c-project-profile-v1".as_slice(),
+                profile
+                    .target
+                    .map(|target| target.name())
+                    .unwrap_or("")
+                    .as_bytes(),
+                profile
+                    .runtime
+                    .and_then(|runtime| runtime.name())
+                    .unwrap_or("")
+                    .as_bytes(),
+            ] {
+                hasher.update((part.len() as u64).to_be_bytes());
+                hasher.update(part);
+            }
+        }
         self.specification_digest = Some(hasher.finalize().into());
         self
     }

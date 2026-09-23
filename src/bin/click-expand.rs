@@ -261,6 +261,10 @@ fn write_context_preserved(
     let verification = (|| -> Result<(), String> {
         let verified_inputs = read_c_inputs(&staged, &rebased)?;
         let verified_project = read_click_project(&staged, &rebased)?;
+        let original_project = read_click_project(&arguments.click_path, &artifact.source)?;
+        if original_project.c_profile() != verified_project.c_profile() {
+            return Err("`--output` would change the Click project C configuration; place the output in the same project directory".to_string());
+        }
         verify_expansion(
             Some(&verified_project),
             &rebased,
