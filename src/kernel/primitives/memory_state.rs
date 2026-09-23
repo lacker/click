@@ -3913,3 +3913,55 @@ mod hunt_investigation_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod hunt_investigation_join_tests {
+    use super::*;
+
+    /// Investigation repro (bug hunt phase 2b): the interface join unions
+    /// `live_allocations` but intersects `deallocated_allocations`
+    /// (`!live_allocations.contains_key(base)` plus all-arms-agree), so an
+    /// allocation that one arm freed joins as live with its deallocation
+    /// record erased. The state doc at this file claims the tombstones are
+    /// "unioned" and that any ended arm must make the continuation reject an
+    /// alias of the object.
+    #[test]
+    fn hunt_investigation_interface_join_erases_one_arm_deallocation() {
+        let base = Pointer {
+            block: PointerBlock::Heap(923_001),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        // Arm B kept it live.
+        let alive = CMemory::new()
+            .with_block(base.block.clone(), 8)
+            .with_heap_allocation_claim(base.clone(), 8)
+            .expect("fresh allocation on arm B");
+        // Arm A freed it.
+        let freed = alive
+            .clone()
+            .free_heap_block(&base, &PureFactContext::new())
+            .expect("the allocation frees on arm A");
+        let arms = [ &alive, &freed ];
+        let joined = alive
+            .clone()
+            .with_interface_memory_havoc_preserving_loans(
+                Variable(923_100),
+                &BTreeSet::new(),
+                &arms,
+                None,
+            )
+            .expect("the interface join should run");
+        assert!(
+            joined.heap.live_allocations.contains_key(&base),
+            "the join unions the live arm's record"
+        );
+        assert!(
+            !joined.heap.deallocated_allocations.contains_key(&base),
+            "BUG: the deallocating arm's tombstone is erased by the intersection"
+        );
+        assert!(
+            joined.is_deallocated_heap_address(&base, &PureFactContext::new()),
+            "BUG: an alias of the possibly-freed allocation reads as live at the join"
+        );
+    }
+}
