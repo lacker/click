@@ -5722,8 +5722,14 @@ fn evaluate_loop_effect_segment_value_with_facts(
     }
     match path.outcome {
         CExpressionOutcome::Value(value) => Ok(Ok((value, path.facts))),
+        CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead) => {
+            Ok(Err(format!(
+                "{label} could not establish that the memory location contains an initialized value"
+            )))
+        }
         CExpressionOutcome::UndefinedBehavior(undefined_behavior) => Ok(Err(format!(
-            "{label} produced undefined behavior: {undefined_behavior:?}"
+            "{label} produced undefined behavior: {}",
+            undefined_behavior.description()
         ))),
         CExpressionOutcome::RuntimeError(error) => {
             if let CRuntimeError::MissingResource { resource } = &error {

@@ -681,26 +681,9 @@ pub(super) fn describe_function_outcome(
             format!("threw {}", describe_c_value(value, parameters, arguments))
         }
         CFunctionOutcome::VerificationDiverges => "has no verified return frontier".to_string(),
-        CFunctionOutcome::UndefinedBehavior(kind) => match kind {
-            crate::kernel::CUndefinedBehavior::SignedOverflow => {
-                "undefined behavior: signed overflow".to_string()
-            }
-            crate::kernel::CUndefinedBehavior::PointerArithmetic => {
-                "undefined behavior: pointer arithmetic left the pointed-to object".to_string()
-            }
-            crate::kernel::CUndefinedBehavior::DivisionByZero => {
-                "undefined behavior: division by zero".to_string()
-            }
-            crate::kernel::CUndefinedBehavior::InvalidShift => {
-                "undefined behavior: invalid shift".to_string()
-            }
-            crate::kernel::CUndefinedBehavior::InvalidMemory => {
-                "undefined behavior: invalid memory access".to_string()
-            }
-            crate::kernel::CUndefinedBehavior::UninitializedRead => {
-                "undefined behavior: read of uninitialized storage".to_string()
-            }
-        },
+        CFunctionOutcome::UndefinedBehavior(kind) => {
+            format!("undefined behavior: {}", kind.description())
+        }
         CFunctionOutcome::RuntimeError(error) => {
             format!(
                 "runtime error: {}",

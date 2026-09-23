@@ -3186,6 +3186,19 @@ pub enum CUndefinedBehavior {
     UninitializedRead,
 }
 
+impl CUndefinedBehavior {
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::SignedOverflow => "signed overflow",
+            Self::PointerArithmetic => "pointer arithmetic left the pointed-to object",
+            Self::DivisionByZero => "division by zero",
+            Self::InvalidShift => "invalid shift",
+            Self::InvalidMemory => "invalid memory access",
+            Self::UninitializedRead => "read of uninitialized storage",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CInvalidFree {
     InteriorPointer,
