@@ -1,0 +1,71 @@
+name: Generate cross-host C import fixture
+
+on:
+  push:
+    branches: [codex/cross-host-c-import]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - name: Write the selected GCC profile
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          root = Path('tests/fixtures/cross-host-c-import')
+          gcc_include = subprocess.check_output(
+              ['/usr/bin/gcc', '-print-file-name=include'], text=True
+          ).strip()
+          config = {
+              'schema': 1,
+              'target': 'x86_64-linux-userspace',
+              'compiler': '/usr/bin/gcc',
+              'working_directory': '.',
+              'environment': {
+                  'allow': {
+                      'PATH': '/usr/bin:/bin',
+                      'LC_ALL': 'C',
+                      'SOURCE_DATE_EPOCH': '0',
+                  }
+              },
+              'sources': [{
+                  'logical_source': 'main.c',
+                  'path': 'main.c',
+                  'args': [
+                      '-isystem', gcc_include,
+                      '-isystem', '/usr/include/x86_64-linux-gnu',
+                      '-isystem', '/usr/include',
+                  ],
+                  'artifact': 'main.i',
+              }],
+          }
+          (root / 'main.click.import.json').write_text(
+              json.dumps(config, indent=2) + '\n'
+          )
+          PY
+      - name: Prepare and verify with GCC
+        run: |
+          cargo run --quiet --bin click -- import lock tests/fixtures/cross-host-c-import/main.click
+          cargo run --quiet --bin click -- verify tests/fixtures/cross-host-c-import/main.click
+      - name: Save the prepared fixture on the task branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tests/fixtures/cross-host-c-import/main.click.import.json
+          git add tests/fixtures/cross-host-c-import/main.click.import.lock.json
+          git add tests/fixtures/cross-host-c-import/main.i
+          git commit -m 'Record Linux GCC cross-host C import fixture'
+          git push origin HEAD:codex/cross-host-c-import
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cross-host-c-import
+          path: tests/fixtures/cross-host-c-import/
