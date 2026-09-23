@@ -1,5 +1,16 @@
 //! Simple-step dispatch (`apply_step`) and checked frame application.
 
+fn trace_text(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &value[..end])
+}
+
 use super::*;
 use crate::kernel::LoweringIntroduction;
 use num_traits::ToPrimitive;
@@ -573,8 +584,78 @@ impl<'a> Proof<'a> {
         origin: Option<ProofStepOrigin>,
     ) -> Result<Self, ClickError> {
         let tactic = proof_step_source_name(&step);
-        self.apply_step_with_origin_inner(step, origin)
-            .map_err(|error| error.with_failed_tactic(tactic))
+        let result = self
+            .apply_step_with_origin_inner(step, origin)
+            .map_err(|error| error.with_failed_tactic(tactic));
+        if let Ok(next) = &result
+            && crate::surface::proof_trace::enabled_for(self.claim_label())
+            && !Arc::ptr_eq(&self.node, &next.node)
+        {
+            self.record_checked_trace_step(next, tactic);
+        }
+        result
+    }
+
+    /// Read only the changed fact/resource keys, and only under an explicit
+    /// trace request. The checked successor and its certificate are untouched.
+    fn record_checked_trace_step(&self, next: &Self, tactic: &str) {
+        let location = self
+            .site()
+            .path()
+            .unwrap_or_else(|| format!("checked step {}", next.node.depth));
+        let mut detail = format!("\n    {location}: {tactic}");
+        let added = self
+            .focused_branch()
+            .zip(next.focused_branch())
+            .and_then(|(before, after)| after.state.facts.introduced_since(&before.state.facts));
+        let added = added
+            .as_deref()
+            .unwrap_or_else(|| next.state().added_facts());
+        for fact in added.iter().take(8) {
+            let rendered = crate::surface::proof_diagnostics::render::render_proposition(fact);
+            detail.push_str("\n      fact + ");
+            detail.push_str(&trace_text(&rendered, 240));
+        }
+        if added.len() > 8 {
+            detail.push_str(&format!("\n      … {} more facts", added.len() - 8));
+        }
+        if let (Some(before), Some(after)) = (self.branch_execution(), next.branch_execution()) {
+            let before_frontier = &before.core.frontier;
+            let after_frontier = &after.core.frontier;
+            let before_position = trace_frontier(before_frontier);
+            let after_position = trace_frontier(after_frontier);
+            if before_position != after_position {
+                detail.push_str(&format!(
+                    "\n      C frontier: {before_position} -> {after_position}"
+                ));
+            }
+            let before = before.core.reached_state().resources();
+            let after = after.core.reached_state().resources();
+            if let Some(changed) = after.changed_facts_since(before) {
+                for fact in changed.iter().take(8) {
+                    let old = before.exact_count(fact);
+                    let new = after.exact_count(fact);
+                    if old != new {
+                        detail.push_str(&format!(
+                            "\n      resource {old} -> {new}: {}",
+                            trace_text(
+                                &crate::surface::proof_diagnostics::render::render_resource_fact(
+                                    fact
+                                ),
+                                240,
+                            )
+                        ));
+                    }
+                }
+                if changed.len() > 8 {
+                    detail.push_str(&format!(
+                        "\n      … {} more resource keys",
+                        changed.len() - 8
+                    ));
+                }
+            }
+        }
+        crate::surface::proof_trace::record(Arc::as_ptr(&next.node) as usize, detail);
     }
 
     fn apply_step_with_origin_inner(
@@ -2444,6 +2525,18 @@ impl<'a> Proof<'a> {
             ),
             _ => unreachable!("kernel returned an unrelated enumerate error"),
         })
+    }
+}
+
+fn trace_frontier(frontier: &ExecutionFrontier) -> String {
+    if frontier.is_at_function_entry() {
+        "function entry".into()
+    } else if frontier.is_at_function_exit() {
+        "function exit".into()
+    } else if frontier.is_at_region_boundary() {
+        "region boundary".into()
+    } else {
+        format!("C statement {}", frontier.next_statement_index + 1)
     }
 }
 

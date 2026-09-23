@@ -7,7 +7,7 @@
 
 use crate::kernel::{
     AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, Bitvector32Term, CExpressionOutcome, CMemory,
-    CResource, CState, ConditionTerm, IntegerRangeFoldIndex, IntegerTerm, Pointer,
+    CResource, CResourceFact, CState, ConditionTerm, IntegerRangeFoldIndex, IntegerTerm, Pointer,
     PointerOffsetTerm, Proposition, PureFunctionArgument, SpecCaptureRefusal, Term,
 };
 use std::fmt::Write;
@@ -56,6 +56,34 @@ impl SnapshotLabels {
 /// determine the size of the error message.
 pub(crate) fn render_proposition(proposition: &Proposition) -> String {
     render_proposition_labeled(proposition, &mut SnapshotLabels::default())
+}
+
+/// A bounded view of one exact resource representation for a proof trace.
+pub(crate) fn render_resource_fact(fact: &CResourceFact) -> String {
+    let mut labels = SnapshotLabels::default();
+    let mut renderer = Renderer {
+        output: String::with_capacity(128),
+        nodes: 0,
+        depth: 0,
+        truncated: false,
+        labels: &mut labels,
+    };
+    match fact {
+        CResourceFact::Own(resource, quantity) => {
+            renderer.push("owns ");
+            renderer.trace_resource(resource);
+            renderer.push(" x ");
+            renderer.bitvector(quantity);
+        }
+        CResourceFact::View(resource) => {
+            renderer.push("views ");
+            renderer.trace_resource(resource);
+        }
+    }
+    if renderer.truncated {
+        renderer.output.push('…');
+    }
+    renderer.output
 }
 
 /// [`render_proposition`] sharing one report's snapshot labels, so the same
@@ -956,6 +984,26 @@ impl Renderer<'_> {
             }
         }
     }
+
+    fn trace_resource(&mut self, resource: &CResource) {
+        match resource {
+            CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
+                self.push(name);
+                self.push("(");
+                for (index, argument) in arguments.iter().take(4).enumerate() {
+                    if index > 0 {
+                        self.push(", ");
+                    }
+                    self.algebraic_value(argument);
+                }
+                if arguments.len() > 4 {
+                    self.push(", …");
+                }
+                self.push(")");
+            }
+            _ => self.resource(resource),
+        }
+    }
     fn memory(&mut self, memory: &CMemory) {
         let label = self.labels.label(memory);
         self.fmt(format_args!("snapshot#{label}"));
@@ -1260,5 +1308,16 @@ mod tests {
         ));
         assert!(int32.contains("int32(1)"));
         assert!(int32.contains("uint32(1)"));
+    }
+
+    #[test]
+    fn trace_resource_names_its_arguments_without_debug_state() {
+        let resource = CResourceFact::View(CResource::Token {
+            name: "child_ref".into(),
+            arguments: std::sync::Arc::from([AlgebraicValue::C(crate::kernel::CValue::Int32(
+                Bitvector32Term::Constant(7),
+            ))]),
+        });
+        assert_eq!(render_resource_fact(&resource), "views child_ref(int32(7))");
     }
 }

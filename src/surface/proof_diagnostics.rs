@@ -16,6 +16,9 @@ pub(crate) trait ProofDiagnosticState: Send + Sync {
     fn kernel_goal(&self) -> Option<&Proposition>;
     fn premises(&self, limit: usize) -> Vec<&Proposition>;
     fn premise_count(&self) -> usize;
+    fn proof_trace(&self, _claim: &str) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

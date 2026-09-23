@@ -113,6 +113,65 @@ mod tests {
         let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(error.contains("error kind: proof error"), "{error}");
         assert!(error.contains("tactic: step"), "{error}");
+        assert!(
+            error.contains("trace: click verify --trace-proof f "),
+            "{error}"
+        );
+
+        let traced = entry([
+            "verify".to_string(),
+            "--trace-proof".to_string(),
+            "f".to_string(),
+            sidecar.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(
+            traced.contains("proof trace (checked steps on the failing path)"),
+            "{traced}"
+        );
+        assert!(traced.contains("source tactic 0: step"), "{traced}");
+        assert!(!traced.contains("trace: click verify"), "{traced}");
+
+        let wrong = entry([
+            "verify".to_string(),
+            "--trace-proof".to_string(),
+            "missing".to_string(),
+            sidecar.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(wrong.contains("is not a selected proof"), "{wrong}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn trace_verifies_only_the_named_function() {
+        let directory = std::env::temp_dir().join(format!(
+            "click-trace-selects-one-function-{}",
+            std::process::id()
+        ));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("f.c"),
+            "int32 f() { return 1; } int32 g() { return 2; }\n",
+        )
+        .unwrap();
+        let sidecar = directory.join("f.click");
+        fs::write(
+            &sidecar,
+            "verifying \"f.c\";\nint32 f() { ensures result == 1; } by { step(); simp(); }\nint32 g() { ensures result == 2; } by { step(); step(); simp(); }\n",
+        )
+        .unwrap();
+        assert!(entry(["verify".to_string(), sidecar.display().to_string()]).is_err());
+        entry([
+            "verify".to_string(),
+            "--trace-proof".to_string(),
+            "f".to_string(),
+            sidecar.display().to_string(),
+        ])
+        .expect("the selected function should verify independently");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -133,6 +192,7 @@ mod tests {
         fs::write(&sidecar, "verifying \"f.c\"; int32 read(").unwrap();
         let syntax = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(syntax.contains("error kind: syntax error"), "{syntax}");
+        assert!(!syntax.contains("trace: click verify"), "{syntax}");
 
         fs::write(
             &sidecar,
@@ -144,6 +204,7 @@ mod tests {
             type_error.contains("error kind: type error"),
             "{type_error}"
         );
+        assert!(!type_error.contains("trace: click verify"), "{type_error}");
         fs::remove_dir_all(directory).unwrap();
     }
 

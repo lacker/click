@@ -846,7 +846,7 @@ type OutcomeObligation = FunctionOutcomeObligation<Arc<OutcomeProofData>>;
 
 /// Opaque diagnostic view over the same persistent kernel handle used by the
 /// checker. Formatting happens only when the terminal error message is read.
-struct ProofDiagnosticProofState(KernelProofHandle);
+struct ProofDiagnosticProofState(KernelProofHandle, Arc<ProofNode>);
 
 impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnosticProofState {
     fn kernel_goal(&self) -> Option<&Proposition> {
@@ -874,6 +874,20 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
             .open_branches()
             .get(self.0.focused_branch())
             .map_or(0, |branch| branch.state.facts.fact_count())
+    }
+
+    fn proof_trace(&self, claim: &str) -> Option<String> {
+        if !crate::surface::proof_trace::enabled_for(claim) {
+            return None;
+        }
+        let mut lineage = Vec::new();
+        let mut node = Some(self.1.as_ref());
+        while let Some(current) = node {
+            lineage.push(current as *const ProofNode as usize);
+            node = current.parent.as_deref();
+        }
+        lineage.reverse();
+        crate::surface::proof_trace::render(claim, &lineage)
     }
 }
 
@@ -1805,7 +1819,10 @@ impl<'a> Proof<'a> {
             },
             claim_label: self.context.claim_label().to_owned(),
             reason: summary.clone(),
-            state: Some(Arc::new(ProofDiagnosticProofState(self.state.clone()))),
+            state: Some(Arc::new(ProofDiagnosticProofState(
+                self.state.clone(),
+                self.node.clone(),
+            ))),
         };
         ClickError::with_diagnostic(summary, diagnostic)
     }

@@ -161,6 +161,8 @@ pub use verification::{
     verify_cpp_prepared_project_at, verify_cpp_prepared_sources_at, verify_standard_library,
     with_allow_sorry,
 };
+mod proof_trace;
+pub use proof_trace::with_proof_trace;
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
 const COUNTED_POPULATION_VARIABLE_BASE: u64 = 200_000;
@@ -7053,11 +7055,29 @@ impl ClickError {
             report.push('\n');
             report.push_str(context);
         }
+        if self.kind == ClickErrorKind::Proof
+            && let Some(trace) = self.diagnostic.as_ref().and_then(|diagnostic| {
+                diagnostic
+                    .state
+                    .as_ref()?
+                    .proof_trace(&diagnostic.claim_label)
+            })
+        {
+            report.push('\n');
+            report.push_str(&trace);
+        }
         report
     }
 
     pub fn kind(&self) -> ClickErrorKind {
         self.kind
+    }
+
+    /// The claim that supplied this proof failure's checked state, if any.
+    pub fn proof_claim_label(&self) -> Option<&str> {
+        self.diagnostic
+            .as_ref()
+            .map(|diagnostic| diagnostic.claim_label.as_str())
     }
 
     pub(crate) fn with_kind(mut self, kind: ClickErrorKind) -> Self {

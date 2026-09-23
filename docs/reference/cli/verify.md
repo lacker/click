@@ -7,6 +7,7 @@ sidecar in a project collection. Use it before profiling or expansion.
 
 ```text
 usage: click verify [--time-limit <DURATION>] <sidecar.click>[:<line>:<column>]
+       click verify --trace-proof <FUNCTION> <sidecar.click>
        click verify [--time-limit <DURATION>] <project-directory|examples-directory>
        click verify --changed-since <REVISION> [--explain] <sidecar.click|directory>
 ```
@@ -39,6 +40,7 @@ sidecar and project count.
 | Option | Meaning |
 | --- | --- |
 | `--time-limit DURATION` | Set the outer deadline independently for each selected sidecar or proof unit. The default is `30s`. |
+| `--trace-proof FUNCTION` | Verify only this C function in one sidecar and, on a proof error, show checked steps on its failing path with added facts and changed resource counts. Trace output is bounded. |
 | `--changed-since REVISION` | Select claims affected since a Git revision. Reuse requires a valid full-verification marker for the baseline and verifier binary. |
 | `--explain` | With `--changed-since`, print the incremental selection without verifying it. |
 | `--allow-sorry` | Dev-only debugging switch: admit proof units whose body is exactly `sorry();` without checking them. Admissions are reported loudly, never recorded in incremental baselines, and `click audit`, `click expand`, and `scripts/check.sh` never enable the flag. Cannot be combined with `--changed-since`. |
@@ -92,6 +94,16 @@ The command exits with status 1 when parsing, source loading, target discovery,
 verification, or the outer deadline fails. A proof failure is a correctness
 result; repair it before using `click profile` unless unexpected slowness is
 itself the failure being investigated.
+
+When a proof error identifies a C function, the CLI suggests a rerun with
+`--trace-proof` and fills in the function and sidecar path. The trace includes
+successful simple steps before the failed attempt; the ordinary error names
+the failed tactic and its unmet requirement when available. A trace reports
+facts introduced into the focused proof context and changes to exact resource
+representations. It does not print whole memory snapshots. It records up to
+2,048 checked steps and renders at most 64 KiB. The trace option requires one
+C sidecar file and cannot be combined with location or incremental selection,
+or `--allow-sorry`. A trace run does not record a full verification baseline.
 
 ## Examples
 

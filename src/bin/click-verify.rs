@@ -17,18 +17,20 @@ use click::languages::c::target::CTarget;
 #[cfg(test)]
 use click::surface::verify_c0_sources;
 use click::surface::{
-    ClickProject, VerifiedCTheorem, c0_incremental_selection,
+    ClickError, ClickErrorKind, ClickProject, VerifiedCTheorem, c0_incremental_selection,
     c0_prepared_project_external_dependencies, c0_prepared_project_selected_proof_count,
-    c0_project_external_dependencies, c0_project_selected_proof_count,
-    c0_project_selected_proof_names, cpp_prepared_project_external_dependencies,
-    cpp_prepared_project_selected_proof_count, selected_c_target, verify_c0_prepared_project,
-    verify_c0_prepared_project_at, verify_c0_project, verify_c0_project_at,
+    c0_prepared_project_selected_proof_names, c0_project_external_dependencies,
+    c0_project_selected_proof_count, c0_project_selected_proof_names,
+    cpp_prepared_project_external_dependencies, cpp_prepared_project_selected_proof_count,
+    selected_c_target, verify_c0_prepared_project, verify_c0_prepared_project_at,
+    verify_c0_prepared_project_functions, verify_c0_project, verify_c0_project_at,
     verify_c0_project_functions, verify_cpp_prepared_project, verify_cpp_prepared_project_at,
-    verifying_source_paths,
+    verifying_source_paths, with_proof_trace,
 };
 
 const USAGE: &str = "\
 usage: click verify [--time-limit <DURATION>] <sidecar.click>[:<line>:<column>]
+       click verify --trace-proof <FUNCTION> <sidecar.click>
        click verify [--time-limit <DURATION>] <project-directory|examples-directory>
        click verify --changed-since <REVISION> [--explain] <sidecar.click|directory>
 
@@ -41,6 +43,10 @@ Given a directory, verifies every sidecar in it: either the project directory
 itself when it holds sidecars, or each immediate subdirectory that does. This
 is the command to run after applying an expansion emitted by `click expand`.
 Each sidecar has a 30-second limit by default.
+
+`--trace-proof FUNCTION` verifies one C function and shows checked fact and
+resource changes on the failing path. Ordinary proof errors suggest this
+command with the failing function filled in.
 
 `--allow-sorry` enables the dev-only `sorry` proof hole: a proof unit whose
 body is exactly `sorry();` is admitted without checking. This is purely a
@@ -59,6 +65,7 @@ struct Arguments {
     changed_since: Option<String>,
     explain: bool,
     allow_sorry: bool,
+    trace_proof: Option<String>,
 }
 
 fn main() {
@@ -79,6 +86,18 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         return Ok(());
     }
     let arguments = parse_arguments(raw)?;
+    if arguments.trace_proof.is_some()
+        && (arguments.changed_since.is_some()
+            || arguments.explain
+            || arguments.allow_sorry
+            || looks_like_source_location(&arguments.target)
+            || Path::new(&arguments.target).is_dir())
+    {
+        return Err(
+            "`--trace-proof` requires one sidecar file without a location, incremental options, or `--allow-sorry`"
+                .to_string(),
+        );
+    }
     if arguments.allow_sorry {
         // An admission records what an ordinary run did not check, so it
         // cannot say which proofs a baseline still has to check, and it must
@@ -115,7 +134,12 @@ fn run(arguments: Arguments) -> Result<(), String> {
     if path.is_dir() {
         verify_directory(path, arguments.time_limit)
     } else {
-        verify_file(path, arguments.time_limit, path.parent())
+        verify_file(
+            path,
+            arguments.time_limit,
+            path.parent(),
+            arguments.trace_proof.as_deref(),
+        )
     }
 }
 
@@ -125,6 +149,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut changed_since = None;
     let mut explain = false;
     let mut allow_sorry = false;
+    let mut trace_proof = None;
     let mut parse_options = true;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -148,6 +173,15 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
             explain = true;
         } else if parse_options && argument == "--allow-sorry" {
             allow_sorry = true;
+        } else if parse_options && argument == "--trace-proof" {
+            if trace_proof.is_some() {
+                return Err("`--trace-proof` may only be supplied once".to_string());
+            }
+            trace_proof = Some(
+                arguments
+                    .next()
+                    .ok_or_else(|| format!("missing function after `--trace-proof`\n{USAGE}"))?,
+            );
         } else if parse_options && argument.starts_with('-') {
             return Err(format!("unknown option `{argument}`\n{USAGE}"));
         } else if target.replace(argument).is_some() {
@@ -160,6 +194,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         changed_since,
         explain,
         allow_sorry,
+        trace_proof,
     })
 }
 
@@ -185,7 +220,7 @@ fn verify_directory(path: &Path, time_limit: Duration) -> Result<(), String> {
         ));
     }
     for sidecar in &sidecars {
-        verify_file(sidecar, time_limit, Some(project_root))?;
+        verify_file(sidecar, time_limit, Some(project_root), None)?;
         println!("verified {}", display_path(sidecar, path));
     }
     println!(
@@ -316,7 +351,7 @@ fn verify_changed(
                     "incremental sidecar `{}` failed under its {} limit: {}",
                     sidecar.display(),
                     format_duration(time_limit),
-                    error.report()
+                    proof_error_report(&error, &sidecar, true)
                 )
             })
         })?;
@@ -359,6 +394,34 @@ fn imported_project_rebuild_reason(project: &ClickProject) -> Option<&'static st
 
 fn click_message(error: click::surface::ClickError) -> String {
     error.report()
+}
+
+fn shell_word(value: &str) -> String {
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b"/._-".contains(&byte))
+    {
+        value.to_owned()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+fn proof_error_report(error: &ClickError, sidecar: &Path, suggest_trace: bool) -> String {
+    let mut report = error.report();
+    if suggest_trace
+        && error.kind() == ClickErrorKind::Proof
+        && let Some(function) = error
+            .proof_claim_label()
+            .and_then(|claim| claim.split_once('.'))
+    {
+        report.push_str(&format!(
+            "\n  trace: click verify --trace-proof {} {}",
+            shell_word(function.0),
+            shell_word(&sidecar.display().to_string())
+        ));
+    }
+    report
 }
 
 fn print_incremental_selection(
@@ -728,11 +791,38 @@ fn verify_file(
     click_path: &Path,
     time_limit: Duration,
     project_root: Option<&Path>,
+    trace_proof: Option<&str>,
 ) -> Result<(), String> {
     // A previous failed sidecar may have left admissions behind; each file
     // reports only its own.
     let _ = click::surface::take_sorry_admissions();
     let (click_source, project, inputs) = load_sidecar_inputs(click_path, project_root)?;
+    if let Some(function) = trace_proof {
+        let names = match &inputs {
+            CInput::Bundle(sources) => {
+                c0_project_selected_proof_names(&project, &source_refs(sources))
+                    .map_err(click_message)?
+            }
+            CInput::Prepared(imports) => {
+                c0_prepared_project_selected_proof_names(&project, imports)
+                    .map_err(click_message)?
+            }
+            CInput::PreparedCpp(_) => {
+                return Err(
+                    "`--trace-proof` currently supports C sidecars, not prepared C++ inputs".into(),
+                );
+            }
+        };
+        if !names
+            .iter()
+            .any(|name| name == &format!("function:{function}"))
+        {
+            return Err(format!(
+                "`{function}` is not a selected proof in `{}`",
+                click_path.display()
+            ));
+        }
+    }
     let dependencies = match &inputs {
         CInput::Bundle(sources) => {
             c0_project_external_dependencies(&project, &source_refs(sources))
@@ -746,35 +836,55 @@ fn verify_file(
         }
     };
     let verified = click::instrumentation::with_deadline(time_limit, || {
-        let result = match &inputs {
-            CInput::Bundle(sources) => verify_c0_project(&project, &source_refs(sources)),
-            CInput::Prepared(imports) => verify_c0_prepared_project(&project, imports),
-            CInput::PreparedCpp(import) => verify_cpp_prepared_project(&project, import),
+        let run_selected = || match (&inputs, trace_proof) {
+            (CInput::Bundle(sources), Some(function)) => {
+                verify_c0_project_functions(&project, &source_refs(sources), [function.to_owned()])
+            }
+            (CInput::Prepared(imports), Some(function)) => {
+                verify_c0_prepared_project_functions(&project, imports, [function.to_owned()])
+            }
+            (CInput::PreparedCpp(_), Some(_)) => unreachable!(),
+            (CInput::Bundle(sources), None) => verify_c0_project(&project, &source_refs(sources)),
+            (CInput::Prepared(imports), None) => verify_c0_prepared_project(&project, imports),
+            (CInput::PreparedCpp(import), None) => verify_cpp_prepared_project(&project, import),
         };
-        result.map_err(|error| {
+        let report = |error: ClickError| {
             format!(
                 "sidecar `{}` failed under its {} limit: {}",
                 click_path.display(),
                 format_duration(time_limit),
-                error.report()
+                proof_error_report(&error, click_path, trace_proof.is_none())
             )
-        })
+        };
+        match trace_proof {
+            Some(function) => with_proof_trace(function, || run_selected().map_err(report)),
+            None => run_selected().map_err(report),
+        }
     })?;
     print_external_dependencies(&dependencies, &verified);
-    let selected = match &inputs {
-        CInput::Bundle(sources) => c0_project_selected_proof_count(&project, &source_refs(sources))
-            .map_err(click_message)?,
-        CInput::Prepared(imports) => {
-            c0_prepared_project_selected_proof_count(&project, imports).map_err(click_message)?
-        }
-        CInput::PreparedCpp(import) => {
-            cpp_prepared_project_selected_proof_count(&project, import).map_err(click_message)?
+    let selected = if trace_proof.is_some() {
+        1
+    } else {
+        match &inputs {
+            CInput::Bundle(sources) => {
+                c0_project_selected_proof_count(&project, &source_refs(sources))
+                    .map_err(click_message)?
+            }
+            CInput::Prepared(imports) => {
+                c0_prepared_project_selected_proof_count(&project, imports)
+                    .map_err(click_message)?
+            }
+            CInput::PreparedCpp(import) => {
+                cpp_prepared_project_selected_proof_count(&project, import)
+                    .map_err(click_message)?
+            }
         }
     };
     println!("{selected} selected proof{} verified", plural(selected));
     let admissions = click::surface::take_sorry_admissions();
     if admissions.is_empty() {
         if let CInput::Bundle(sources) = &inputs
+            && trace_proof.is_none()
             && project.modules().len() == 1
             && project.c_profile().is_none()
             && let Err(message) = record_full_verification(click_path, &click_source, sources, &[])
@@ -835,7 +945,7 @@ fn verify_location(
                 "proof unit `{}:{line}:{column}` failed under its {} limit: {}",
                 click_path.display(),
                 format_duration(time_limit),
-                error.report()
+                proof_error_report(&error, click_path, true)
             )
         })
     })?;
@@ -910,6 +1020,7 @@ mod tests {
                 changed_since: None,
                 explain: false,
                 allow_sorry: true,
+                trace_proof: None,
             })
         );
         assert_eq!(
@@ -933,6 +1044,7 @@ mod tests {
                 changed_since: None,
                 explain: false,
                 allow_sorry: false,
+                trace_proof: None,
             })
         );
         assert_eq!(
@@ -947,6 +1059,7 @@ mod tests {
                 changed_since: None,
                 explain: false,
                 allow_sorry: false,
+                trace_proof: None,
             })
         );
         assert_eq!(
@@ -962,6 +1075,7 @@ mod tests {
                 changed_since: Some("HEAD~1".to_string()),
                 explain: true,
                 allow_sorry: false,
+                trace_proof: None,
             })
         );
     }

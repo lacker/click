@@ -820,7 +820,7 @@ impl ResourceContext {
         }
     }
 
-    fn changed_facts_since(&self, ancestor: &Self) -> Option<BTreeSet<CResourceFact>> {
+    pub(crate) fn changed_facts_since(&self, ancestor: &Self) -> Option<BTreeSet<CResourceFact>> {
         if !std::sync::Arc::ptr_eq(&self.storage.origin, &ancestor.storage.origin) {
             return None;
         }
@@ -833,6 +833,15 @@ impl ResourceContext {
             current = change.parent.as_ref();
         }
         Some(changed)
+    }
+
+    /// Exact multiplicity of one representation, for an opt-in proof trace.
+    pub(crate) fn exact_count(&self, fact: &CResourceFact) -> usize {
+        self.storage
+            .index
+            .exact
+            .get(fact)
+            .map_or(0, PersistentSet::len)
     }
 
     /// Whether this snapshot was obtained by persistent resource mutations
