@@ -2213,8 +2213,13 @@ impl ConditionTerm {
         right: Bitvector32Term,
     ) -> Self {
         match (left.as_const(), right.as_const()) {
-            (Some(left), Some(right)) => {
-                Self::Constant(signed_shift_left_overflows_const(left, right).unwrap_or(false))
+            (Some(left_value), Some(right_value)) => {
+                match signed_shift_left_overflows_const(left_value, right_value) {
+                    Some(overflows) => Self::Constant(overflows),
+                    None => {
+                        Self::Bitvector32SignedShiftLeftOverflows(Box::new(left), Box::new(right))
+                    }
+                }
             }
             _ => Self::Bitvector32SignedShiftLeftOverflows(Box::new(left), Box::new(right)),
         }
@@ -3468,27 +3473,23 @@ mod float_evaluator_differential_tests {
 }
 
 #[cfg(test)]
-mod hunt_investigation_tests {
+mod shift_overflow_refusal_tests {
     use super::*;
 
-    /// Investigation evidence (bug hunt phase 2b): the deciding helper
-    /// refuses an out-of-range concrete shift count (`None`), while the
-    /// wrapper at this file (`signed_shift_left_overflows`, the
-    /// `(Some, Some) => Constant(... .unwrap_or(false))` arm) turns that
-    /// `None` into a constant `false` ("the shift is safe"). The interval
-    /// decider answers `None` for the same shape, so any proof-time consumer
-    /// reading the folded condition decides a safety the C evaluation
-    /// refuses: a shift by 40 is undefined, not overflow-free.
     #[test]
-    fn hunt_investigation_out_of_range_shift_count_is_undecided_by_the_helper() {
+    fn out_of_range_shift_count_does_not_fold_to_no_overflow() {
+        let left = Bitvector32Term::Constant(1);
+        let right = Bitvector32Term::Constant(40);
+
         assert_eq!(
             signed_shift_left_overflows_const(1, 40),
             None,
-            "the out-of-range count must not decide 'no overflow'"
+            "the helper must refuse to decide an out-of-range count"
         );
-        assert!(
-            !signed_shift_left_overflows_const(1, 40).unwrap_or(false),
-            "BUG: the wrapper arm's unwrap_or(false) turns the refusal into 'the shift is safe'"
+        assert_eq!(
+            ConditionTerm::signed_shift_left_overflows(left.clone(), right.clone()),
+            ConditionTerm::Bitvector32SignedShiftLeftOverflows(Box::new(left), Box::new(right),),
+            "an out-of-range shift must not become the safe constant false"
         );
     }
 }

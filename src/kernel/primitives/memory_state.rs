@@ -2576,33 +2576,55 @@ impl CMemory {
             .cloned()
     }
 
+    #[cfg(test)]
     pub(in crate::kernel) fn store_union(
         self,
         pointer: Pointer,
         value_type: CType,
         value: CValue,
     ) -> Self {
-        // Each union member materialization adds another typed view at this
-        // address, so keep those views while invalidating raw cells and views
-        // cached under other spellings that may overlap the new one.
-        let same_address_views = self
-            .union_cells
-            .iter()
-            .filter(|((cell_pointer, _), _)| cell_pointer == &pointer)
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect::<Vec<_>>();
-        let mut memory = self.without_possible_aliasing_cells(
-            &pointer,
+        self.store_union_views(
+            pointer.clone(),
             value_type.byte_width(),
+            vec![(pointer, value_type, value)],
+        )
+    }
+
+    /// Replaces the bytes in a union region, then records typed views that
+    /// were all derived from that same byte image.
+    ///
+    /// A direct member write uses a one-view batch, invalidating old overlays
+    /// that overlap its bytes. Aggregate initialization and copy use this
+    /// batch form because their member views are read from one unchanged
+    /// image rather than from sequential writes.
+    pub(in crate::kernel) fn store_union_views(
+        self,
+        written_pointer: Pointer,
+        written_bytes: u32,
+        views: Vec<(Pointer, CType, CValue)>,
+    ) -> Self {
+        let mut memory = self.without_possible_aliasing_cells(
+            &written_pointer,
+            written_bytes,
             &PureFactContext::new(),
         );
-        let union_cells = std::sync::Arc::make_mut(&mut memory.union_cells);
-        union_cells.extend(same_address_views);
-        union_cells.insert((pointer.clone(), value_type), value);
-        if memory.is_live_heap_address(&pointer, &PureFactContext::new()) {
+        let mut initialized_widths = BTreeMap::<Pointer, u32>::new();
+        for (pointer, value_type, value) in views {
+            std::sync::Arc::make_mut(&mut memory.union_cells)
+                .insert((pointer.clone(), value_type), value);
+            if memory.is_live_heap_address(&pointer, &PureFactContext::new()) {
+                initialized_widths
+                    .entry(pointer)
+                    .and_modify(|width| *width = (*width).max(value_type.byte_width()))
+                    .or_insert(value_type.byte_width());
+            }
+        }
+        for (pointer, width) in initialized_widths {
             std::sync::Arc::make_mut(&mut memory.heap)
                 .initialized_cells
-                .insert(pointer, value_type.byte_width());
+                .entry(pointer)
+                .and_modify(|existing| *existing = (*existing).max(width))
+                .or_insert(width);
         }
         memory
     }
@@ -3884,18 +3906,12 @@ mod contract_retirement_tests {
 }
 
 #[cfg(test)]
-mod hunt_investigation_tests {
+mod union_store_tests {
     use super::*;
 
-    /// Investigation repro (bug hunt phase 2b): `store_union` replaces only
-    /// the (pointer, value_type) overlay it is handed. A different member's
-    /// typed overlay at the same pointer survives the store, so a later read
-    /// of that member answers the pre-store typed value where every concrete
-    /// C execution reads the last store's bytes. (C union punning keeps
-    /// every member view legal after a store; the overwritten member's
-    /// previous *typed* value is gone.)
+    /// A direct member store invalidates every overlapping old member view.
     #[test]
-    fn hunt_investigation_union_store_of_one_member_leaves_the_other_stale() {
+    fn union_store_invalidates_the_other_members_stale_overlay() {
         let base = Pointer {
             block: PointerBlock::Concrete("local:u".to_string()),
             offset: PointerOffsetTerm::Constant(0),
@@ -3913,8 +3929,12 @@ mod hunt_investigation_tests {
             );
         assert_eq!(
             memory.known_union_value(&base, CType::UInt8),
-            Some(CValue::UInt8(Bitvector32Term::Constant(0xAA))),
-            "BUG: the pre-store typed overlay survives a store of another member"
+            None,
+            "the old byte view must not survive the wider member write"
+        );
+        assert_eq!(
+            memory.known_union_value(&base, CType::Int32),
+            Some(CValue::Int32(Bitvector32Term::Constant(0x51))),
         );
     }
 }

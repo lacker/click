@@ -2951,6 +2951,7 @@ fn execute_verified_function_applications_with_suspension(
             &transfer.callee_resources,
             &caller_resources_after_requirements,
             &return_resources,
+            &population_transition.retained_body_allocations,
             interface,
             &allocation_assumptions,
             post_state.loan_ledger(),
@@ -5291,10 +5292,10 @@ pub(crate) fn storage_writes_outside_owned_footprint(
     let is_storage = |pointer: &Pointer| {
         pointer.block.starts_with("global:") || pointer.block.starts_with("static:")
     };
-    let storage_writes: Vec<Pointer> =
-        crate::kernel::reasoning::memory_effect_write_pointers(facts)
+    let storage_writes: Vec<(Pointer, u32)> =
+        crate::kernel::reasoning::memory_effect_write_accesses(facts)
             .into_iter()
-            .filter(is_storage)
+            .filter(|(pointer, _)| is_storage(pointer))
             .collect();
     let storage_summaries: Vec<&CMemoryRange> = facts
         .iter()
@@ -5326,21 +5327,8 @@ pub(crate) fn storage_writes_outside_owned_footprint(
         }
     };
     let mut outside = Vec::new();
-    for pointer in &storage_writes {
-        let covered = owned.iter().any(|range| {
-            super::assumptions::pointer_in_memory_range_shallow_with_facts(
-                pointer,
-                range,
-                assumptions,
-            ) || assumptions.pointer_in_range_by_shallow_fact_graph_with_width(
-                pointer,
-                range.base(),
-                range.start(),
-                range.end(),
-                range.element_width(),
-            )
-        });
-        if !covered {
+    for (pointer, write_bytes) in &storage_writes {
+        if !storage_write_within_owned_footprint(pointer, *write_bytes, &owned, assumptions) {
             outside.push(format!("{pointer:?}"));
         }
     }
@@ -5356,6 +5344,84 @@ pub(crate) fn storage_writes_outside_owned_footprint(
         }
     }
     Ok(Some(outside))
+}
+
+fn storage_write_within_owned_footprint(
+    pointer: &Pointer,
+    write_bytes: u32,
+    owned: &[CMemoryRange],
+    assumptions: &PureFactContext,
+) -> bool {
+    let write = CMemoryRange::new_with_element_width(
+        pointer.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(write_bytes),
+        1,
+    );
+    owned.iter().any(|range| {
+        let (base, bytes) = range.byte_footprint();
+        let owned_bytes =
+            CMemoryRange::new_with_element_width(base, Bitvector32Term::Constant(0), bytes, 1);
+        super::assumptions::memory_range_shallowly_contained_with_facts(
+            &write,
+            &owned_bytes,
+            assumptions,
+        )
+    })
+}
+
+#[cfg(test)]
+mod storage_write_footprint_tests {
+    use super::*;
+
+    #[test]
+    fn write_extent_must_fit_inside_owned_byte_footprint() {
+        let base = Pointer {
+            block: "global:owned".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let owned = CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+            1,
+        );
+        let assumptions = PureFactContext::new();
+
+        assert!(storage_write_within_owned_footprint(
+            &base.offset_by_bytes(2),
+            2,
+            std::slice::from_ref(&owned),
+            &assumptions,
+        ));
+        assert!(
+            !storage_write_within_owned_footprint(
+                &base.offset_by_bytes(3),
+                2,
+                std::slice::from_ref(&owned),
+                &assumptions,
+            ),
+            "the write starts in the footprint but its second byte is outside"
+        );
+    }
+
+    #[test]
+    fn memory_effect_write_collection_preserves_each_access_width() {
+        let pointer = Pointer {
+            block: "global:owned".into(),
+            offset: PointerOffsetTerm::Constant(3),
+        };
+        let fact = ExecutionPureFact::new(Proposition::CMemoryMutatesOnly {
+            before: CMemory::new(),
+            after: CMemory::new(),
+            writes: vec![(pointer.clone(), 1), (pointer.clone(), 2)],
+        });
+
+        assert_eq!(
+            crate::kernel::reasoning::memory_effect_write_accesses(&[fact]),
+            BTreeSet::from([(pointer.clone(), 1), (pointer, 2)]),
+        );
+    }
 }
 
 /// Project the checked resource transition's memory effects.  This is the
@@ -9052,6 +9118,7 @@ fn apply_verified_heap_allocation_delta(
     input_resources: &ResourceContext,
     preserved_caller_resources: &ResourceContext,
     output_resources: &ResourceContext,
+    retained_population_allocations: &[(Pointer, Bitvector32Term)],
     interface: &CFunctionContractInterface,
     assumptions: &PureFactContext,
     ledger: Option<&LoanLedger>,
@@ -9103,6 +9170,16 @@ fn apply_verified_heap_allocation_delta(
     let mut output_allocations_by_block =
         BTreeMap::<PointerBlock, Vec<(Pointer, Bitvector32Term)>>::new();
     for (base, bytes) in output.facts().iter().filter_map(CResourceFact::allocation) {
+        output_allocations_by_block
+            .entry(base.block.clone())
+            .or_default()
+            .push((base.clone(), bytes.clone()));
+    }
+    // A consumed counted unit need not be returned to this caller. Other
+    // units can still keep the population-wide allocation alive, even when
+    // the caller owns none of them. Its checked post-count witnesses that
+    // allocation independently of the returned resource clauses.
+    for (base, bytes) in retained_population_allocations {
         output_allocations_by_block
             .entry(base.block.clone())
             .or_default()
@@ -10971,13 +11048,17 @@ fn materialize_symbolic_aggregate_fields(
     }
     for union in layout.unions() {
         let union_base = base.offset_by_bytes(union.offset_bytes());
-        for field in union.fields() {
-            let pointer = union_base.offset_by_bytes(field.offset_bytes());
-            let symbolic_base = symbolic_memory_base(&memory, &pointer);
-            if let Some(value) = symbolic_load_value(&symbolic_base, &pointer, field.c_type()) {
-                memory = memory.store_union(pointer, field.c_type(), value);
-            }
-        }
+        let views = union
+            .fields()
+            .iter()
+            .filter_map(|field| {
+                let pointer = union_base.offset_by_bytes(field.offset_bytes());
+                let symbolic_base = symbolic_memory_base(&memory, &pointer);
+                symbolic_load_value(&symbolic_base, &pointer, field.c_type())
+                    .map(|value| (pointer, field.c_type(), value))
+            })
+            .collect();
+        memory = memory.store_union_views(union_base, union.size_bytes(), views);
     }
     memory
 }
@@ -11100,15 +11181,20 @@ fn zero_aggregate_fields(
     }
     for union in layout.unions() {
         let union_base = base.offset_by_bytes(union.offset_bytes());
-        for field in union.fields() {
-            if let Some(value) = zero_union_member_value(field.c_type()) {
-                memory = memory.store_union(
-                    union_base.offset_by_bytes(field.offset_bytes()),
-                    field.c_type(),
-                    value,
-                );
-            }
-        }
+        let views = union
+            .fields()
+            .iter()
+            .filter_map(|field| {
+                zero_union_member_value(field.c_type()).map(|value| {
+                    (
+                        union_base.offset_by_bytes(field.offset_bytes()),
+                        field.c_type(),
+                        value,
+                    )
+                })
+            })
+            .collect();
+        memory = memory.store_union_views(union_base, union.size_bytes(), views);
     }
     memory
 }
@@ -11492,18 +11578,21 @@ fn copy_aggregate_fields(
     for union in layout.unions() {
         let source_union = source.offset_by_bytes(union.offset_bytes());
         let destination_union = destination.offset_by_bytes(union.offset_bytes());
-        for field in union.fields() {
-            let source_field = source_union.offset_by_bytes(field.offset_bytes());
-            let Some(value) = copy_aggregate_union_member(&memory, &source_field, field.c_type())
-            else {
-                continue;
-            };
-            memory = memory.store_union(
-                destination_union.offset_by_bytes(field.offset_bytes()),
-                field.c_type(),
-                value,
-            );
-        }
+        let views = union
+            .fields()
+            .iter()
+            .filter_map(|field| {
+                let source_field = source_union.offset_by_bytes(field.offset_bytes());
+                copy_aggregate_union_member(&memory, &source_field, field.c_type()).map(|value| {
+                    (
+                        destination_union.offset_by_bytes(field.offset_bytes()),
+                        field.c_type(),
+                        value,
+                    )
+                })
+            })
+            .collect();
+        memory = memory.store_union_views(destination_union, union.size_bytes(), views);
     }
     memory
 }
@@ -11571,6 +11660,58 @@ fn copy_aggregate_union_member(
         }
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod aggregate_union_copy_tests {
+    use super::*;
+
+    #[test]
+    fn copying_a_union_drops_destination_views_absent_from_source() {
+        let source = Pointer {
+            block: "union-copy-source".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let destination = Pointer {
+            block: "union-copy-destination".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let layout = CAggregateLayout::with_unions(
+            4,
+            4,
+            vec![],
+            vec![CAggregateUnion::new(
+                "u",
+                0,
+                4,
+                vec![
+                    CAggregateUnionField::new("byte", 0, CType::UInt8),
+                    CAggregateUnionField::new("word", 0, CType::Int32),
+                ],
+            )],
+        );
+        let memory = CMemory::new()
+            .with_block(source.block.clone(), 4)
+            .with_block(destination.block.clone(), 4)
+            .store_union(
+                source.clone(),
+                CType::UInt8,
+                CValue::UInt8(Bitvector32Term::Constant(0xAA)),
+            )
+            .store_union(
+                destination.clone(),
+                CType::Int32,
+                CValue::Int32(Bitvector32Term::Constant(0x5151)),
+            );
+
+        let copied = copy_aggregate_fields(memory, &source, &destination, &layout);
+
+        assert_eq!(
+            copied.known_union_value(&destination, CType::UInt8),
+            Some(CValue::UInt8(Bitvector32Term::Constant(0xAA))),
+        );
+        assert_eq!(copied.known_union_value(&destination, CType::Int32), None);
+    }
 }
 
 fn evaluate_resource_population_body_resources(
@@ -13773,6 +13914,7 @@ fn population_body_requires_positive_witness(definition: &CCompositeResourceDefi
 #[derive(Default)]
 struct CCountedPopulationTransition {
     finalized_body_resources: Vec<CResourceFact>,
+    retained_body_allocations: Vec<(Pointer, Bitvector32Term)>,
     population_facts: Vec<Proposition>,
     postcondition_obligations: Vec<ProofObligation>,
 }
@@ -14049,6 +14191,32 @@ fn apply_counted_population_transitions_with_interface(
                 arguments.clone(),
                 new_count.clone(),
             );
+            if population_body_definition.is_some() {
+                let singleton = ResourceContext::new().unchecked_with_fact(CResourceFact::own(
+                    CResource::Composite {
+                        name: name.clone(),
+                        arguments: arguments.clone(),
+                    },
+                ));
+                let retained = match evaluate_resource_population_body_resources(
+                    &singleton,
+                    &entry_state,
+                    interface.composite_resource_definitions(),
+                    assumptions,
+                    budget,
+                    true,
+                )? {
+                    Ok(resources) => resources,
+                    Err(error) => return Ok(Err(error)),
+                };
+                transition.retained_body_allocations.extend(
+                    retained
+                        .facts()
+                        .iter()
+                        .filter_map(CResourceFact::allocation)
+                        .map(|(base, bytes)| (base.clone(), bytes.clone())),
+                );
+            }
             // A visible ensured unit witnesses nonemptiness. The transition
             // preserves the population cardinality invariant algebraically:
             // entry count >= required units, then both sides change by the

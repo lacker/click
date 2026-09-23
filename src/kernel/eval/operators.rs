@@ -2781,29 +2781,29 @@ fn promote_c_shift_count(
     value: CValue,
     facts: &mut Vec<ExecutionPureFact>,
     assumptions: &PureFactContext,
-) -> Option<(Bitvector32Term, bool)> {
+) -> Option<(Bitvector32Term, bool, bool)> {
     match value {
-        CValue::Bool(value) => Some((value, false)),
-        CValue::UInt32(value) => Some((value, true)),
-        CValue::Int32(value) => Some((value, false)),
+        CValue::Bool(value) => Some((value, false, false)),
+        CValue::UInt32(value) => Some((value, true, false)),
+        CValue::Int32(value) => Some((value, false, false)),
         CValue::UInt8(value) => {
             add_uint8_range_execution_pure_facts(facts, assumptions, &value)?;
-            Some((value, false))
+            Some((value, false, false))
         }
         CValue::Int8(value) => {
             add_int8_range_execution_pure_facts(facts, assumptions, &value)?;
-            Some((value, false))
+            Some((value, false, false))
         }
         CValue::Int16(value) => {
             add_int16_range_execution_pure_facts(facts, assumptions, &value)?;
-            Some((value, false))
+            Some((value, false, false))
         }
         CValue::UInt16(value) => {
             add_uint16_range_execution_pure_facts(facts, assumptions, &value)?;
-            Some((value, false))
+            Some((value, false, false))
         }
-        CValue::Int64(value) => Some((value, false)),
-        CValue::UInt64(value) => Some((value, true)),
+        CValue::Int64(value) => Some((value, false, true)),
+        CValue::UInt64(value) => Some((value, true, true)),
         CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
     }
 }
@@ -2816,7 +2816,8 @@ pub(in crate::kernel) fn apply_c_shift_left(
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let mut facts = facts;
-    let Some((right, unsigned_count)) = promote_c_shift_count(right, &mut facts, assumptions)
+    let Some((right, unsigned_count, right_is_64_bit)) =
+        promote_c_shift_count(right, &mut facts, assumptions)
     else {
         return vec![c_type_mismatch_expression_path(facts, obligations)];
     };
@@ -2828,6 +2829,7 @@ pub(in crate::kernel) fn apply_c_shift_left(
             obligations,
             assumptions,
             unsigned_count,
+            right_is_64_bit,
             apply_c_int64_shift_left_valid_count,
         ),
         CValue::UInt64(left) => apply_c_int64_with_valid_shift_count(
@@ -2837,6 +2839,7 @@ pub(in crate::kernel) fn apply_c_shift_left(
             obligations,
             assumptions,
             unsigned_count,
+            right_is_64_bit,
             apply_c_uint64_shift_left_valid_count,
         ),
         CValue::UInt32(left) => apply_c_int32_with_valid_shift_count(
@@ -2846,6 +2849,7 @@ pub(in crate::kernel) fn apply_c_shift_left(
             obligations,
             assumptions,
             unsigned_count,
+            right_is_64_bit,
             |left, right, facts, obligations, _| {
                 vec![CExpressionPath {
                     outcome: CExpressionOutcome::Value(uint32(
@@ -2863,6 +2867,7 @@ pub(in crate::kernel) fn apply_c_shift_left(
             obligations,
             assumptions,
             unsigned_count,
+            right_is_64_bit,
             apply_c_int32_shift_left_valid_count,
         ),
         CValue::Int8(left) => {
@@ -2876,6 +2881,7 @@ pub(in crate::kernel) fn apply_c_shift_left(
                 obligations,
                 assumptions,
                 unsigned_count,
+                right_is_64_bit,
                 apply_c_int32_shift_left_valid_count,
             )
         }
@@ -2890,6 +2896,7 @@ pub(in crate::kernel) fn apply_c_shift_left(
                 obligations,
                 assumptions,
                 unsigned_count,
+                right_is_64_bit,
                 apply_c_int32_shift_left_valid_count,
             )
         }
@@ -2904,6 +2911,7 @@ pub(in crate::kernel) fn apply_c_shift_left(
                 obligations,
                 assumptions,
                 unsigned_count,
+                right_is_64_bit,
                 apply_c_int32_shift_left_valid_count,
             )
         }
@@ -2918,6 +2926,7 @@ pub(in crate::kernel) fn apply_c_shift_left(
                 obligations,
                 assumptions,
                 unsigned_count,
+                right_is_64_bit,
                 apply_c_int32_shift_left_valid_count,
             )
         }
@@ -2935,7 +2944,8 @@ pub(in crate::kernel) fn apply_c_shift_right(
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
     let mut facts = facts;
-    let Some((right, unsigned_count)) = promote_c_shift_count(right, &mut facts, assumptions)
+    let Some((right, unsigned_count, right_is_64_bit)) =
+        promote_c_shift_count(right, &mut facts, assumptions)
     else {
         return vec![c_type_mismatch_expression_path(facts, obligations)];
     };
@@ -2947,6 +2957,7 @@ pub(in crate::kernel) fn apply_c_shift_right(
             obligations,
             assumptions,
             unsigned_count,
+            right_is_64_bit,
             apply_c_int64_shift_right_valid_count,
         ),
         CValue::UInt64(left) => apply_c_int64_with_valid_shift_count(
@@ -2956,6 +2967,7 @@ pub(in crate::kernel) fn apply_c_shift_right(
             obligations,
             assumptions,
             unsigned_count,
+            right_is_64_bit,
             apply_c_uint64_shift_right_valid_count,
         ),
         CValue::UInt32(left) => apply_c_int32_with_valid_shift_count(
@@ -2965,6 +2977,7 @@ pub(in crate::kernel) fn apply_c_shift_right(
             obligations,
             assumptions,
             unsigned_count,
+            right_is_64_bit,
             |left, right, facts, obligations, _| {
                 vec![CExpressionPath {
                     outcome: CExpressionOutcome::Value(uint32(
@@ -2982,6 +2995,7 @@ pub(in crate::kernel) fn apply_c_shift_right(
             obligations,
             assumptions,
             unsigned_count,
+            right_is_64_bit,
             |left, right, facts, obligations, _| {
                 vec![CExpressionPath {
                     outcome: CExpressionOutcome::Value(int32(
@@ -3003,6 +3017,7 @@ pub(in crate::kernel) fn apply_c_shift_right(
                 obligations,
                 assumptions,
                 unsigned_count,
+                right_is_64_bit,
                 |left, right, facts, obligations, _| {
                     vec![CExpressionPath {
                         outcome: CExpressionOutcome::Value(int32(
@@ -3025,6 +3040,7 @@ pub(in crate::kernel) fn apply_c_shift_right(
                 obligations,
                 assumptions,
                 unsigned_count,
+                right_is_64_bit,
                 |left, right, facts, obligations, _| {
                     vec![CExpressionPath {
                         outcome: CExpressionOutcome::Value(int32(
@@ -3047,6 +3063,7 @@ pub(in crate::kernel) fn apply_c_shift_right(
                 obligations,
                 assumptions,
                 unsigned_count,
+                right_is_64_bit,
                 |left, right, facts, obligations, _| {
                     vec![CExpressionPath {
                         outcome: CExpressionOutcome::Value(int32(
@@ -3069,6 +3086,7 @@ pub(in crate::kernel) fn apply_c_shift_right(
                 obligations,
                 assumptions,
                 unsigned_count,
+                right_is_64_bit,
                 |left, right, facts, obligations, _| {
                     vec![CExpressionPath {
                         outcome: CExpressionOutcome::Value(int32(
@@ -3093,18 +3111,20 @@ fn apply_c_int64_with_valid_shift_count(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
     unsigned_count: bool,
+    right_is_64_bit: bool,
     apply_valid_count: ValidInt64ShiftCountEvaluator,
 ) -> Vec<CExpressionPath> {
-    let (count, invalid_count) = if unsigned_count {
-        let count = Bitvector32Term::uint64_from_32(right);
-        let invalid =
-            ConditionTerm::uint64_greater_equal(count.clone(), Bitvector32Term::UInt64Constant(64));
-        (count, invalid)
+    let count = if right_is_64_bit {
+        right
+    } else if unsigned_count {
+        Bitvector32Term::uint64_from_32(right)
     } else {
-        let count = Bitvector32Term::int64_from_32(right);
-        let invalid =
-            ConditionTerm::int64_signed_less_than(count.clone(), Bitvector32Term::Int64Constant(0));
-        (count, invalid)
+        Bitvector32Term::int64_from_32(right)
+    };
+    let invalid_count = if unsigned_count {
+        ConditionTerm::uint64_greater_equal(count.clone(), Bitvector32Term::UInt64Constant(64))
+    } else {
+        ConditionTerm::int64_signed_less_than(count.clone(), Bitvector32Term::Int64Constant(0))
     };
     match decide_with_facts(assumptions, &facts, &invalid_count) {
         Some(true) => vec![CExpressionPath {
@@ -3358,8 +3378,20 @@ fn apply_c_int32_with_valid_shift_count(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
     unsigned_count: bool,
+    right_is_64_bit: bool,
     apply_valid_count: ValidShiftCountEvaluator,
 ) -> Vec<CExpressionPath> {
+    if right_is_64_bit {
+        return apply_c_int32_with_valid_wide_shift_count(
+            left,
+            right,
+            facts,
+            obligations,
+            assumptions,
+            unsigned_count,
+            apply_valid_count,
+        );
+    }
     if unsigned_count {
         return apply_c_int32_with_nonnegative_shift_count(
             left,
@@ -3423,6 +3455,135 @@ fn apply_c_int32_with_valid_shift_count(
         obligations,
     });
     paths
+}
+
+fn apply_c_int32_with_valid_wide_shift_count(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    unsigned_count: bool,
+    apply_valid_count: ValidShiftCountEvaluator,
+) -> Vec<CExpressionPath> {
+    if unsigned_count {
+        return apply_c_int32_with_nonnegative_wide_shift_count(
+            left,
+            right,
+            facts,
+            obligations,
+            assumptions,
+            true,
+            apply_valid_count,
+        );
+    }
+
+    let negative_count =
+        ConditionTerm::int64_signed_less_than(right.clone(), Bitvector32Term::Int64Constant(0));
+    match decide_with_facts(assumptions, &facts, &negative_count) {
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidShift),
+            facts,
+            obligations,
+        }],
+        Some(false) => apply_c_int32_with_nonnegative_wide_shift_count(
+            left,
+            right,
+            facts,
+            obligations,
+            assumptions,
+            false,
+            apply_valid_count,
+        ),
+        None => {
+            let mut normal_facts = facts.clone();
+            add_condition_path_fact(
+                &mut normal_facts,
+                assumptions,
+                negative_count.clone(),
+                false,
+            )
+            .expect("unknown wide negative shift-count fact should be consistent");
+
+            let mut invalid_facts = facts;
+            add_condition_path_fact(&mut invalid_facts, assumptions, negative_count, true)
+                .expect("unknown wide negative shift-count fact should be consistent");
+
+            let mut paths = apply_c_int32_with_nonnegative_wide_shift_count(
+                left,
+                right,
+                normal_facts,
+                obligations.clone(),
+                assumptions,
+                false,
+                apply_valid_count,
+            );
+            paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidShift),
+                facts: invalid_facts,
+                obligations,
+            });
+            paths
+        }
+    }
+}
+
+fn apply_c_int32_with_nonnegative_wide_shift_count(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    unsigned_count: bool,
+    apply_valid_count: ValidShiftCountEvaluator,
+) -> Vec<CExpressionPath> {
+    let too_large_count = if unsigned_count {
+        ConditionTerm::uint64_greater_equal(right.clone(), Bitvector32Term::UInt64Constant(32))
+    } else {
+        ConditionTerm::int64_signed_greater_equal(right.clone(), Bitvector32Term::Int64Constant(32))
+    };
+    match decide_with_facts(assumptions, &facts, &too_large_count) {
+        Some(true) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidShift),
+            facts,
+            obligations,
+        }],
+        Some(false) => apply_valid_count(
+            left,
+            Bitvector32Term::uint32_from_64(right),
+            facts,
+            obligations,
+            assumptions,
+        ),
+        None => {
+            let mut normal_facts = facts.clone();
+            add_condition_path_fact(
+                &mut normal_facts,
+                assumptions,
+                too_large_count.clone(),
+                false,
+            )
+            .expect("unknown wide shift-count fact should be consistent");
+
+            let mut invalid_facts = facts;
+            add_condition_path_fact(&mut invalid_facts, assumptions, too_large_count, true)
+                .expect("unknown wide shift-count fact should be consistent");
+
+            let mut paths = apply_valid_count(
+                left,
+                Bitvector32Term::uint32_from_64(right),
+                normal_facts,
+                obligations.clone(),
+                assumptions,
+            );
+            paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidShift),
+                facts: invalid_facts,
+                obligations,
+            });
+            paths
+        }
+    }
 }
 
 fn apply_c_int32_with_nonnegative_shift_count(

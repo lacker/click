@@ -38,6 +38,12 @@ pub(crate) use substitution::*;
 pub(crate) use variable_collection::resource_context_has_read;
 pub(crate) use variable_collection::*;
 
+pub(crate) fn memory_effect_write_accesses(
+    facts: &[ExecutionPureFact],
+) -> BTreeSet<(Pointer, u32)> {
+    collect_memory_effect_write_accesses(facts)
+}
+
 pub(crate) fn memory_effect_write_pointers(facts: &[ExecutionPureFact]) -> BTreeSet<Pointer> {
     collect_memory_effect_write_pointers(facts)
 }

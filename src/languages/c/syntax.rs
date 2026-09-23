@@ -173,6 +173,9 @@ pub struct C0Function {
     /// spelling declared twice in one function with two struct types is
     /// dropped rather than guessed.
     local_struct_pointers: BTreeMap<String, String>,
+    /// Struct type of each unambiguous automatic struct value, indexed by
+    /// the spelling a Click sidecar uses.
+    local_struct_values: BTreeMap<String, String>,
     string_literals: Vec<C0StringLiteral>,
 }
 
@@ -2411,6 +2414,7 @@ impl C0Function {
             static_aggregates: BTreeMap::new(),
             static_aggregate_arrays: BTreeMap::new(),
             local_struct_pointers: BTreeMap::new(),
+            local_struct_values: BTreeMap::new(),
             string_literals: Vec::new(),
         }
     }
@@ -2491,6 +2495,10 @@ impl C0Function {
     /// C spelling.
     pub fn local_struct_pointers(&self) -> &BTreeMap<String, String> {
         &self.local_struct_pointers
+    }
+
+    pub fn local_struct_values(&self) -> &BTreeMap<String, String> {
+        &self.local_struct_values
     }
 
     pub fn static_arrays(&self) -> &BTreeMap<String, C0StaticArray> {
@@ -6136,6 +6144,7 @@ struct Parser {
     /// a spelling declared twice with different struct types, which is
     /// dropped rather than guessed.
     local_struct_pointers: BTreeMap<String, Option<String>>,
+    local_struct_values: BTreeMap<String, Option<String>>,
     variable_struct_values: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
     incomplete_array_names: BTreeSet<String>,
@@ -6358,6 +6367,7 @@ impl Parser {
             typedefs: BTreeMap::new(),
             variable_structs: BTreeMap::new(),
             local_struct_pointers: BTreeMap::new(),
+            local_struct_values: BTreeMap::new(),
             variable_struct_values: BTreeMap::new(),
             variable_array_shapes: BTreeMap::new(),
             incomplete_array_names: BTreeSet::new(),
@@ -7464,6 +7474,10 @@ impl Parser {
             .into_iter()
             .filter_map(|(name, struct_name)| Some((name, struct_name?)))
             .collect();
+        let local_struct_values = std::mem::take(&mut self.local_struct_values)
+            .into_iter()
+            .filter_map(|(name, struct_name)| Some((name, struct_name?)))
+            .collect();
         let string_literals = std::mem::take(&mut self.string_literals);
         let inline_body = header.name != header.source_name;
         Ok(C0Function {
@@ -7491,6 +7505,7 @@ impl Parser {
             static_aggregates: std::mem::take(&mut self.static_aggregates),
             static_aggregate_arrays: std::mem::take(&mut self.static_aggregate_arrays),
             local_struct_pointers,
+            local_struct_values,
             string_literals,
         })
     }
@@ -11935,6 +11950,14 @@ impl Parser {
                     .insert(name.clone(), struct_name.clone());
                 self.variable_struct_values
                     .insert(name.clone(), struct_name.clone());
+                self.local_struct_values
+                    .entry(source_name.clone())
+                    .and_modify(|existing| {
+                        if existing.as_deref() != Some(struct_name.as_str()) {
+                            *existing = None;
+                        }
+                    })
+                    .or_insert_with(|| Some(struct_name.clone()));
                 let declaration = C0Statement::DeclareStructValue {
                     name: name.clone(),
                     layout: layout.clone(),

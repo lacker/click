@@ -1906,9 +1906,12 @@ pub fn c_function_ensure_goals(
     // An ensure that reads memory the outcome shows freed is not stated at
     // this outcome: no goal, so the claim's own lowering reports the load.
     if paths.iter().any(|path| {
-        path.obligations
-            .iter()
-            .any(|obligation| super::c_loadability_obligation_impossible(obligation.proposition()))
+        path.obligations.iter().any(|obligation| {
+            super::c_loadability_obligation_impossible_with_assumptions(
+                obligation.proposition(),
+                assumptions,
+            )
+        })
     }) {
         return None;
     }
@@ -1983,9 +1986,12 @@ pub(crate) fn c_function_exceptional_ensure_goals(
     )
     .ok()?;
     if paths.iter().any(|path| {
-        path.obligations
-            .iter()
-            .any(|obligation| super::c_loadability_obligation_impossible(obligation.proposition()))
+        path.obligations.iter().any(|obligation| {
+            super::c_loadability_obligation_impossible_with_assumptions(
+                obligation.proposition(),
+                assumptions,
+            )
+        })
     }) {
         return None;
     }

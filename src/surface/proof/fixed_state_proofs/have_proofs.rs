@@ -484,6 +484,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_recording
             .iter()
             .map(|obligation| obligation.proposition().clone())
             .collect::<Vec<_>>(),
+        obligation_assumptions,
     )?;
     refuse_unproved_conversion_bounds(
         &obligations,
@@ -679,7 +680,7 @@ pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel_with_al
         .iter()
         .map(|obligation| obligation.proposition().clone())
         .collect::<Vec<_>>();
-    refuse_impossible_loads(&obligations)?;
+    refuse_impossible_loads(&obligations, assumptions)?;
     Ok(value)
 }
 
@@ -1022,7 +1023,7 @@ fn evaluate_c_fragment_with_binding_policy(
         .iter()
         .map(|obligation| obligation.proposition().clone())
         .collect::<Vec<_>>();
-    refuse_impossible_loads(&obligations)?;
+    refuse_impossible_loads(&obligations, assumptions)?;
     if !assumptions.should_allow_symbolic_contract_loads()
         && let Some(obligation) = obligations.iter().find(|obligation| {
             !crate::kernel::c_state_justifies_loadability_obligation(
@@ -1108,11 +1109,13 @@ pub(in crate::surface) fn evaluate_fixed_state_array_ref_through_kernel(
 /// A proposition or expression that reads memory the state shows freed is
 /// not stated at this state; every other load obligation is certification's
 /// to discharge from the path's facts.
-fn refuse_impossible_loads(obligations: &[Proposition]) -> Result<(), String> {
-    if let Some(obligation) = obligations
-        .iter()
-        .find(|obligation| crate::kernel::c_loadability_obligation_impossible(obligation))
-    {
+fn refuse_impossible_loads(
+    obligations: &[Proposition],
+    assumptions: &PureFactContext,
+) -> Result<(), String> {
+    if let Some(obligation) = obligations.iter().find(|obligation| {
+        crate::kernel::c_loadability_obligation_impossible_with_assumptions(obligation, assumptions)
+    }) {
         // `Debug` on a loadability obligation prints the whole memory
         // snapshot it is indexed by; the bounded sentence names the base and
         // width, which is what the reader has to fix.

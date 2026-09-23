@@ -3152,17 +3152,39 @@ fn store_and_union_cells_never_coexist_at_one_pointer() {
     );
     assert_eq!(overlay_over_store.known_value(&cell), None);
     assert!(overlay_over_store.has_union_overlay_at(&cell));
-    let two_views = overlay_over_store.store_union(
+    let replacement = overlay_over_store.store_union(
         cell.clone(),
         CType::Int16,
-        CValue::Int16(Bitvector32Term::Constant(7)),
+        CValue::Int16(Bitvector32Term::Constant(9)),
+    );
+    assert_eq!(replacement.known_union_value(&cell, CType::UInt8), None);
+    assert_eq!(
+        replacement.known_union_value(&cell, CType::Int16),
+        Some(CValue::Int16(Bitvector32Term::Constant(9))),
+    );
+
+    let same_image_views = base.clone().store_union_views(
+        cell.clone(),
+        4,
+        vec![
+            (
+                cell.clone(),
+                CType::UInt8,
+                CValue::UInt8(Bitvector32Term::Constant(7)),
+            ),
+            (
+                cell.clone(),
+                CType::Int16,
+                CValue::Int16(Bitvector32Term::Constant(7)),
+            ),
+        ],
     );
     assert_eq!(
-        two_views.known_union_value(&cell, CType::UInt8),
+        same_image_views.known_union_value(&cell, CType::UInt8),
         Some(CValue::UInt8(Bitvector32Term::Constant(7))),
     );
     assert_eq!(
-        two_views.known_union_value(&cell, CType::Int16),
+        same_image_views.known_union_value(&cell, CType::Int16),
         Some(CValue::Int16(Bitvector32Term::Constant(7))),
     );
 

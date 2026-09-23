@@ -5,6 +5,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use click::languages::c::compiler_import::{create_lock, load_imports};
@@ -371,6 +372,87 @@ fn configure_userspace(project: &Project) {
     .unwrap();
 }
 
+fn stage_real_gcc_headers(project: &Project, gcc_include: &Path) -> [PathBuf; 3] {
+    let system_include = fs::canonicalize("/usr/include").unwrap();
+    let multiarch_include = fs::canonicalize("/usr/include/x86_64-linux-gnu").unwrap();
+    let roots = [
+        fs::canonicalize(gcc_include).unwrap(),
+        multiarch_include.clone(),
+        system_include.clone(),
+    ];
+    let staging = project.0.join("staged-system-headers");
+    let staged = [
+        staging.join("gcc"),
+        staging.join("multiarch"),
+        staging.join("usr"),
+    ];
+    for root in &staged {
+        fs::create_dir_all(root).unwrap();
+    }
+
+    // First ask the real compiler for this probe's header closure. The
+    // staged roots below contain those same host headers, but not the rest of
+    // /usr/include. That keeps the importer regression about the parser
+    // boundary instead of making every CI run hash the whole system SDK.
+    let dependency_path = staging.with_extension("d");
+    let output = Command::new("/usr/bin/gcc")
+        .current_dir(&project.0)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("LC_ALL", "C")
+        .args([
+            "-std=c11",
+            "-m64",
+            "-funsigned-char",
+            "-nostdinc",
+            "-pthread",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-isystem",
+        ])
+        .arg(gcc_include)
+        .args([
+            "-isystem",
+            "/usr/include/x86_64-linux-gnu",
+            "-isystem",
+            "/usr/include",
+        ])
+        .args(["-M", "-MF"])
+        .arg(&dependency_path)
+        .arg("main.c")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "failed to enumerate real GCC headers: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dependencies = String::from_utf8(fs::read(&dependency_path).unwrap()).unwrap();
+    let mut copied = 0;
+    for token in dependencies.split_whitespace() {
+        let token = token.trim_end_matches('\\');
+        let path = Path::new(token);
+        if !path.is_absolute() {
+            continue;
+        }
+        let path = fs::canonicalize(path).unwrap();
+        let (root, destination) = roots
+            .iter()
+            .zip(staged.iter())
+            .find(|(root, _)| path.starts_with(root))
+            .unwrap_or_else(|| {
+                panic!("dependency escaped staged header roots: {}", path.display())
+            });
+        let relative = path.strip_prefix(root).unwrap();
+        let destination = destination.join(relative);
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::copy(&path, destination).unwrap();
+        copied += 1;
+    }
+    assert!(copied > 0, "real GCC dependency closure was empty");
+    fs::remove_file(dependency_path).unwrap();
+    staged
+}
+
 #[test]
 fn userspace_compiler_import_verifies_profile_and_expansion() {
     let project = Project::new();
@@ -477,7 +559,7 @@ fn userspace_frozen_pthread_probe_records_real_header_boundary() {
     let project = Project::new();
     // Follow the same driver as the import config instead of hard-coding a
     // GCC version. The importer locks the actual selected files.
-    let query = std::process::Command::new("/usr/bin/gcc")
+    let query = Command::new("/usr/bin/gcc")
         .arg("-print-file-name=include")
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
@@ -485,23 +567,19 @@ fn userspace_frozen_pthread_probe_records_real_header_boundary() {
         .unwrap();
     assert!(query.status.success());
     let gcc_include = String::from_utf8(query.stdout).unwrap();
-    project.configure(
-        1,
-        &[
-            "-isystem",
-            gcc_include.trim(),
-            "-isystem",
-            "/usr/include/x86_64-linux-gnu",
-            "-isystem",
-            "/usr/include",
-        ],
-    );
-    configure_userspace(&project);
     fs::write(
         project.0.join("main.c"),
         include_str!("../design/concurrency-probes/fork_join.c"),
     )
     .unwrap();
+    let staged = stage_real_gcc_headers(&project, Path::new(gcc_include.trim()));
+    let include_args = staged
+        .iter()
+        .flat_map(|path| ["-isystem".to_string(), path.to_string_lossy().into_owned()])
+        .collect::<Vec<_>>();
+    let include_args = include_args.iter().map(String::as_str).collect::<Vec<_>>();
+    project.configure(1, &include_args);
+    configure_userspace(&project);
     create_lock(&project.config()).expect("prepare unchanged probe with real GCC/glibc headers");
     let imports = load_imports(&project.config()).unwrap();
     let lock: serde_json::Value =
