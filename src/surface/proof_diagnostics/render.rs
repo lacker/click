@@ -17,7 +17,8 @@ const MAX_NODES: usize = 4096;
 const MAX_DEPTH: usize = 96;
 /// How many distinct snapshots one report labels before it stops comparing.
 /// A message names a handful of states; the cap keeps the comparison below
-/// bounded, and a snapshot past it simply gets its own label.
+/// bounded; a snapshot past it is explicitly untracked rather than falsely
+/// sharing a label with a different memory.
 const MAX_SNAPSHOT_LABELS: usize = 32;
 
 /// The snapshot labels of one report.
@@ -36,19 +37,19 @@ pub(crate) struct SnapshotLabels {
 impl SnapshotLabels {
     /// The label of this memory: an existing ordinal when an equal memory has
     /// already been labeled, otherwise the next one.
-    fn label(&mut self, memory: &CMemory) -> usize {
+    fn label(&mut self, memory: &CMemory) -> Option<usize> {
         if let Some(index) = self
             .memories
             .iter()
             .position(|labeled| labeled.same_storage_roots(memory) || labeled == memory)
         {
-            return index + 1;
+            return Some(index + 1);
         }
         if self.memories.len() >= MAX_SNAPSHOT_LABELS {
-            return self.memories.len() + 1;
+            return None;
         }
         self.memories.push(memory.clone());
-        self.memories.len()
+        Some(self.memories.len())
     }
 }
 
@@ -59,14 +60,22 @@ pub(crate) fn render_proposition(proposition: &Proposition) -> String {
 }
 
 /// A bounded view of one exact resource representation for a proof trace.
+#[cfg(test)]
 pub(crate) fn render_resource_fact(fact: &CResourceFact) -> String {
     let mut labels = SnapshotLabels::default();
+    render_resource_fact_labeled(fact, &mut labels)
+}
+
+pub(crate) fn render_resource_fact_labeled(
+    fact: &CResourceFact,
+    labels: &mut SnapshotLabels,
+) -> String {
     let mut renderer = Renderer {
         output: String::with_capacity(128),
         nodes: 0,
         depth: 0,
         truncated: false,
-        labels: &mut labels,
+        labels,
     };
     match fact {
         CResourceFact::Own(resource, quantity) => {
@@ -1005,8 +1014,10 @@ impl Renderer<'_> {
         }
     }
     fn memory(&mut self, memory: &CMemory) {
-        let label = self.labels.label(memory);
-        self.fmt(format_args!("snapshot#{label}"));
+        match self.labels.label(memory) {
+            Some(label) => self.fmt(format_args!("snapshot#{label}")),
+            None => self.push("snapshot<untracked>"),
+        }
     }
     fn state(&mut self, state: &CState) {
         self.push("state(");
@@ -1223,13 +1234,18 @@ mod tests {
         let mut labels = SnapshotLabels::default();
         for size in 0..MAX_SNAPSHOT_LABELS as u32 {
             let memory = CMemory::new().with_block(format!("block{size}"), 16);
-            assert_eq!(labels.label(&memory), size as usize + 1);
+            assert_eq!(labels.label(&memory), Some(size as usize + 1));
         }
         let overflowing = CMemory::new().with_block("block0", 16);
-        assert_eq!(labels.label(&overflowing), 1, "an earlier label still wins");
+        assert_eq!(
+            labels.label(&overflowing),
+            Some(1),
+            "an earlier label still wins"
+        );
         let beyond = CMemory::new().with_block("beyond", 16);
-        assert_eq!(labels.label(&beyond), MAX_SNAPSHOT_LABELS + 1);
-        assert_eq!(labels.label(&beyond), MAX_SNAPSHOT_LABELS + 1);
+        assert_eq!(labels.label(&beyond), None);
+        let rendered = render_proposition_labeled(&loadable_at(beyond), &mut labels);
+        assert!(rendered.contains("snapshot<untracked>"), "{rendered}");
     }
 
     #[test]

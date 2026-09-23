@@ -1,16 +1,5 @@
 //! Simple-step dispatch (`apply_step`) and checked frame application.
 
-fn trace_text(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_owned();
-    }
-    let mut end = max_bytes;
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &value[..end])
-}
-
 use super::*;
 use crate::kernel::LoweringIntroduction;
 use num_traits::ToPrimitive;
@@ -606,7 +595,14 @@ impl<'a> Proof<'a> {
             .site()
             .path()
             .unwrap_or_else(|| format!("checked step {}", next.node.depth));
-        let mut detail = format!("\n    {location}: {tactic}");
+        let mut detail = crate::surface::proof_trace::TraceStep {
+            header: format!("\n    {location}: {tactic}"),
+            facts: Vec::new(),
+            more_facts: 0,
+            frontier: None,
+            resources: Vec::new(),
+            more_resources: 0,
+        };
         let added = self
             .focused_branch()
             .zip(next.focused_branch())
@@ -615,12 +611,10 @@ impl<'a> Proof<'a> {
             .as_deref()
             .unwrap_or_else(|| next.state().added_facts());
         for fact in added.iter().take(8) {
-            let rendered = crate::surface::proof_diagnostics::render::render_proposition(fact);
-            detail.push_str("\n      fact + ");
-            detail.push_str(&trace_text(&rendered, 240));
+            detail.facts.push(fact.clone());
         }
         if added.len() > 8 {
-            detail.push_str(&format!("\n      … {} more facts", added.len() - 8));
+            detail.more_facts = added.len() - 8;
         }
         if let (Some(before), Some(after)) = (self.branch_execution(), next.branch_execution()) {
             let before_frontier = &before.core.frontier;
@@ -628,9 +622,7 @@ impl<'a> Proof<'a> {
             let before_position = trace_frontier(before_frontier);
             let after_position = trace_frontier(after_frontier);
             if before_position != after_position {
-                detail.push_str(&format!(
-                    "\n      C frontier: {before_position} -> {after_position}"
-                ));
+                detail.frontier = Some(format!("{before_position} -> {after_position}"));
             }
             let before = before.core.reached_state().resources();
             let after = after.core.reached_state().resources();
@@ -639,22 +631,11 @@ impl<'a> Proof<'a> {
                     let old = before.exact_count(fact);
                     let new = after.exact_count(fact);
                     if old != new {
-                        detail.push_str(&format!(
-                            "\n      resource {old} -> {new}: {}",
-                            trace_text(
-                                &crate::surface::proof_diagnostics::render::render_resource_fact(
-                                    fact
-                                ),
-                                240,
-                            )
-                        ));
+                        detail.resources.push((old, new, fact.clone()));
                     }
                 }
                 if changed.len() > 8 {
-                    detail.push_str(&format!(
-                        "\n      … {} more resource keys",
-                        changed.len() - 8
-                    ));
+                    detail.more_resources = changed.len() - 8;
                 }
             }
         }

@@ -876,7 +876,11 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
             .map_or(0, |branch| branch.state.facts.fact_count())
     }
 
-    fn proof_trace(&self, claim: &str) -> Option<String> {
+    fn proof_trace(
+        &self,
+        claim: &str,
+        labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+    ) -> Option<String> {
         if !crate::surface::proof_trace::enabled_for(claim) {
             return None;
         }
@@ -887,7 +891,7 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
             node = current.parent.as_deref();
         }
         lineage.reverse();
-        crate::surface::proof_trace::render(claim, &lineage)
+        crate::surface::proof_trace::render(claim, &lineage, labels)
     }
 }
 

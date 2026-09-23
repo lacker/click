@@ -132,6 +132,26 @@ mod tests {
         assert!(traced.contains("source tactic 0: step"), "{traced}");
         assert!(!traced.contains("trace: click verify"), "{traced}");
 
+        fs::write(
+            directory.join("f.c"),
+            "int32 f() { int32 x; x = 1; return x; }\n",
+        )
+        .unwrap();
+        fs::write(
+            &sidecar,
+            "verifying \"f.c\";\nint32 f() { ensures result == 1; } by { step(); have 0 == 1 by { normalize(); } step(); simp(); }\n",
+        )
+        .unwrap();
+        let nested = entry([
+            "verify".to_string(),
+            "--trace-proof".to_string(),
+            "f".to_string(),
+            sidecar.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(nested.contains("have body tactic"), "{nested}");
+        assert!(nested.contains("source tactic 0: step"), "{nested}");
+
         let wrong = entry([
             "verify".to_string(),
             "--trace-proof".to_string(),

@@ -7045,7 +7045,22 @@ impl ClickError {
     /// was attempted. `message()` stays the stable cause text used by tools
     /// that compare or aggregate diagnostics.
     pub fn report(&self) -> String {
-        let message = self.message();
+        let mut snapshot_labels = proof_diagnostics::render::SnapshotLabels::default();
+        let traced_message = self.diagnostic.as_ref().and_then(|diagnostic| {
+            (self.kind == ClickErrorKind::Proof
+                && proof_trace::enabled_for(&diagnostic.claim_label))
+            .then(|| {
+                proof_diagnostics::render_terminal_message_labeled(
+                    &self.message,
+                    diagnostic,
+                    self.search_failures
+                        .as_deref()
+                        .map_or(&[][..], Vec::as_slice),
+                    &mut snapshot_labels,
+                )
+            })
+        });
+        let message = traced_message.as_deref().unwrap_or_else(|| self.message());
         let (summary, context) = message.split_once('\n').unwrap_or((message, ""));
         let mut report = format!("{summary}\n  error kind: {}", self.kind.label());
         if let Some(tactic) = self.failed_tactic {
@@ -7054,9 +7069,14 @@ impl ClickError {
         }
         if let Some(requirement) = &self.unresolved_requirement {
             report.push_str("\n  needed: ");
-            report.push_str(&proof_diagnostics::render::render_proposition(
-                &requirement.proposition,
-            ));
+            report.push_str(&if traced_message.is_some() {
+                proof_diagnostics::render::render_proposition_labeled(
+                    &requirement.proposition,
+                    &mut snapshot_labels,
+                )
+            } else {
+                proof_diagnostics::render::render_proposition(&requirement.proposition)
+            });
             if let Some(context) = &requirement.context {
                 report.push_str("\n  check: ");
                 report.push_str(context);
@@ -7071,7 +7091,7 @@ impl ClickError {
                 diagnostic
                     .state
                     .as_ref()?
-                    .proof_trace(&diagnostic.claim_label)
+                    .proof_trace(&diagnostic.claim_label, &mut snapshot_labels)
             })
         {
             report.push('\n');

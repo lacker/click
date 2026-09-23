@@ -16,7 +16,7 @@ pub(crate) trait ProofDiagnosticState: Send + Sync {
     fn kernel_goal(&self) -> Option<&Proposition>;
     fn premises(&self, limit: usize) -> Vec<&Proposition>;
     fn premise_count(&self) -> usize;
-    fn proof_trace(&self, _claim: &str) -> Option<String> {
+    fn proof_trace(&self, _claim: &str, _labels: &mut render::SnapshotLabels) -> Option<String> {
         None
     }
 }
@@ -90,6 +90,20 @@ pub(crate) fn render_terminal_message(
     diagnostic: &ProofFailureDiagnostic,
     search_failures: &[ProofSearchFailure],
 ) -> String {
+    render_terminal_message_labeled(
+        summary,
+        diagnostic,
+        search_failures,
+        &mut render::SnapshotLabels::default(),
+    )
+}
+
+pub(crate) fn render_terminal_message_labeled(
+    summary: &str,
+    diagnostic: &ProofFailureDiagnostic,
+    search_failures: &[ProofSearchFailure],
+    labels: &mut render::SnapshotLabels,
+) -> String {
     // Keep the established summary as the first line. The richer context is
     // deliberately bounded and rendered only at this terminal boundary.
     let mut rendered = summary.to_owned();
@@ -102,10 +116,9 @@ pub(crate) fn render_terminal_message(
     // line, so a premise that reads exactly like the goal could be about
     // another state entirely — which is the one thing a reader compares these
     // lines to decide.
-    let mut labels = render::SnapshotLabels::default();
     if let Some(goal) = diagnostic.kernel_goal() {
         rendered.push_str("\n  kernel goal: ");
-        rendered.push_str(&render::render_proposition_labeled(goal, &mut labels));
+        rendered.push_str(&render::render_proposition_labeled(goal, labels));
     }
     {
         let premises = diagnostic.premises(8);
@@ -117,7 +130,7 @@ pub(crate) fn render_terminal_message(
             ));
             for premise in &premises {
                 rendered.push_str("\n    ");
-                let text = render::render_proposition_labeled(premise, &mut labels);
+                let text = render::render_proposition_labeled(premise, labels);
                 let mut end = text.len().min(2048);
                 while end > 0 && !text.is_char_boundary(end) {
                     end -= 1;
@@ -148,7 +161,7 @@ pub(crate) fn render_terminal_message(
                     .and_then(|diagnostic| diagnostic.kernel_goal())
             {
                 rendered.push_str("; goal: ");
-                rendered.push_str(&render::render_proposition(goal));
+                rendered.push_str(&render::render_proposition_labeled(goal, labels));
             }
         }
         if search_failures.len() > 8 {
@@ -271,6 +284,71 @@ mod tests {
         let wrapped = error.clone().with_context("outer");
         assert!(wrapped.diagnostic().is_some());
         assert!(wrapped.message().contains("outer"));
+    }
+
+    #[test]
+    fn reported_trace_uses_the_goals_snapshot_labels() {
+        use crate::kernel::{Bitvector32Term, CMemory, Pointer, PointerBlock, PointerOffsetTerm};
+
+        struct TracedState(Proposition);
+        impl ProofDiagnosticState for TracedState {
+            fn kernel_goal(&self) -> Option<&Proposition> {
+                Some(&self.0)
+            }
+            fn premises(&self, _limit: usize) -> Vec<&Proposition> {
+                Vec::new()
+            }
+            fn premise_count(&self) -> usize {
+                0
+            }
+            fn proof_trace(
+                &self,
+                claim: &str,
+                labels: &mut render::SnapshotLabels,
+            ) -> Option<String> {
+                crate::surface::proof_trace::render(claim, &[1], labels)
+            }
+        }
+        let at = |memory| Proposition::CMemoryLoadable {
+            memory,
+            base: Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            bytes: Bitvector32Term::Constant(1),
+        };
+        crate::surface::with_proof_trace("f", || {
+            let memory = CMemory::new().with_block("shared", 1);
+            crate::surface::proof_trace::record(
+                1,
+                crate::surface::proof_trace::TraceStep {
+                    header: "\n    source tactic 0: step".into(),
+                    facts: vec![at(memory.clone())],
+                    more_facts: 0,
+                    frontier: None,
+                    resources: Vec::new(),
+                    more_resources: 0,
+                },
+            );
+            let diagnostic = ProofFailureDiagnostic {
+                origin: ProofDiagnosticOrigin {
+                    stage: "proof step".into(),
+                    location: "source tactic 1".into(),
+                },
+                claim_label: "f.contract".into(),
+                reason: "failed".into(),
+                state: Some(Arc::new(TracedState(at(memory)))),
+            };
+            let report = crate::surface::ClickError::with_diagnostic("failed", diagnostic).report();
+            assert!(
+                report.contains("kernel goal: viewable(memory=snapshot#1"),
+                "{report}"
+            );
+            assert!(
+                report.contains("fact + viewable(memory=snapshot#1"),
+                "{report}"
+            );
+        });
     }
 
     #[test]

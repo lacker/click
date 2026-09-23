@@ -1220,6 +1220,22 @@ impl<'a> Proof<'a> {
                 split_branches: Vec::new(),
             }),
         };
+        if crate::surface::proof_trace::enabled_for(self.claim_label()) {
+            let mut parent_lineage = Vec::new();
+            let mut node = Some(self.node.as_ref());
+            while let Some(current) = node {
+                parent_lineage.push(current as *const ProofNode as usize);
+                if parent_lineage.len() == crate::surface::proof_trace::MAX_STEPS {
+                    break;
+                }
+                node = current.parent.as_deref();
+            }
+            parent_lineage.reverse();
+            crate::surface::proof_trace::register_scope(
+                Arc::as_ptr(&body.node) as usize,
+                parent_lineage,
+            );
+        }
         let scope = ProofScope {
             root: self.clone(),
             structure: Box::new(ProofScopeStructure::Have {
