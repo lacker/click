@@ -846,7 +846,7 @@ type OutcomeObligation = FunctionOutcomeObligation<Arc<OutcomeProofData>>;
 
 /// Opaque diagnostic view over the same persistent kernel handle used by the
 /// checker. Formatting happens only when the terminal error message is read.
-struct ProofDiagnosticProofState(KernelProofHandle, Arc<ProofNode>);
+struct ProofDiagnosticProofState(KernelProofHandle, Arc<ProofNode>, Vec<(Variable, String)>);
 
 fn diagnostic_value_variable(value: &CValue) -> Option<Variable> {
     match value {
@@ -885,6 +885,9 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
         &self,
         labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
     ) {
+        for (variable, name) in &self.2 {
+            labels.source_name(*variable, name.clone());
+        }
         // A proof `let r = step(...)` holds the exact scalar result, so its
         // user-chosen name wins over the synthesized C assignment target.
         for (name, expression) in self.0.state().locals().values.iter() {
@@ -903,6 +906,19 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
                 }
             }
         }
+    }
+
+    fn source_goal(&self) -> Option<String> {
+        let branch = self
+            .0
+            .state()
+            .open_branches()
+            .get(self.0.focused_branch())?;
+        let Obligation::Proposition(goal) = &branch.obligation else {
+            return None;
+        };
+        let source = crate::surface::printing::source_click_proposition(goal.surface.as_deref()?);
+        (!source.contains("__click_")).then_some(source)
     }
 
     fn kernel_goal(&self) -> Option<&Proposition> {
@@ -948,6 +964,23 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
         }
         lineage.reverse();
         crate::surface::proof_trace::render(claim, &lineage, labels)
+    }
+}
+
+impl Proof<'_> {
+    fn diagnostic_state(&self) -> ProofDiagnosticProofState {
+        let source_names = match self.context.as_ref() {
+            ProofContext::Pure(context) => context
+                .theorem_context
+                .values
+                .iter()
+                .filter_map(|(name, value)| {
+                    diagnostic_value_variable(value).map(|variable| (variable, name.clone()))
+                })
+                .collect(),
+            ProofContext::FixedState(_) | ProofContext::Execution(_) => Vec::new(),
+        };
+        ProofDiagnosticProofState(self.state.clone(), self.node.clone(), source_names)
     }
 }
 
@@ -1879,10 +1912,7 @@ impl<'a> Proof<'a> {
             },
             claim_label: self.context.claim_label().to_owned(),
             reason: summary.clone(),
-            state: Some(Arc::new(ProofDiagnosticProofState(
-                self.state.clone(),
-                self.node.clone(),
-            ))),
+            state: Some(Arc::new(self.diagnostic_state())),
         };
         ClickError::with_diagnostic(summary, diagnostic)
     }
@@ -1907,10 +1937,7 @@ impl<'a> Proof<'a> {
             },
             claim_label: self.context.claim_label().to_owned(),
             reason: error.message().to_owned(),
-            state: Some(Arc::new(ProofDiagnosticProofState(
-                self.state.clone(),
-                self.node.clone(),
-            ))),
+            state: Some(Arc::new(self.diagnostic_state())),
         };
         error.with_diagnostic_if_missing(diagnostic)
     }

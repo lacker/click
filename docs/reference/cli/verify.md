@@ -100,7 +100,12 @@ When a proof error identifies a C function, the CLI suggests a rerun with
 successful simple steps before the failed attempt; the ordinary error names
 the failed tactic and its unmet requirement when available. A trace reports
 facts introduced into the focused proof context and changes to exact resource
-representations. It does not print whole memory snapshots. It records up to
+representations. Retained Click goals and facts print in Click syntax. Generated
+facts without an exact Click spelling are labeled internal and carry bounded
+kernel detail, rather than being presented as source expressions. A surface
+goal that reads memory also shows a separate internal snapshot identity, so
+its read can be compared with an internal fact's read. The trace does not print
+whole memory snapshots. It records up to
 2,048 checked steps and renders at most 64 KiB. The trace option requires one
 C sidecar file and cannot be combined with location or incremental selection,
 or `--allow-sorry`. A trace run does not record a full verification baseline.

@@ -14,6 +14,9 @@ pub(crate) mod render;
 /// handle rather than cloning the goal, environment, or derivation history.
 pub(crate) trait ProofDiagnosticState: Send + Sync {
     fn register_names(&self, _labels: &mut render::SnapshotLabels) {}
+    fn source_goal(&self) -> Option<String> {
+        None
+    }
     fn kernel_goal(&self) -> Option<&Proposition>;
     fn premises(&self, limit: usize) -> Vec<&Proposition>;
     fn premise_count(&self) -> usize;
@@ -121,8 +124,27 @@ pub(crate) fn render_terminal_message_labeled(
     // another state entirely — which is the one thing a reader compares these
     // lines to decide.
     if let Some(goal) = diagnostic.kernel_goal() {
-        rendered.push_str("\n  kernel goal: ");
-        rendered.push_str(&render::render_proposition_labeled(goal, labels));
+        if let Some(source) = diagnostic
+            .state
+            .as_ref()
+            .and_then(|state| state.source_goal())
+        {
+            rendered.push_str("\n  goal: ");
+            rendered.push_str(&source);
+            if crate::surface::proof_trace::enabled_for(&diagnostic.claim_label) {
+                let internal = render::render_proposition_labeled(goal, labels);
+                if internal.contains("snapshot#") || internal.contains("snapshot<untracked>") {
+                    rendered.push_str("\n  snapshot identity (internal): ");
+                    rendered.push_str(&internal);
+                }
+            }
+        } else if let Some(source) = render::render_simple_click_fact_labeled(goal, labels) {
+            rendered.push_str("\n  goal: ");
+            rendered.push_str(&source);
+        } else {
+            rendered.push_str("\n  internal goal (no exact Click spelling): ");
+            rendered.push_str(&render::render_proposition_labeled(goal, labels));
+        }
     }
     {
         let premises = diagnostic.premises(8);
@@ -134,7 +156,13 @@ pub(crate) fn render_terminal_message_labeled(
             ));
             for premise in &premises {
                 rendered.push_str("\n    ");
-                let text = render::render_proposition_labeled(premise, labels);
+                let text = render::render_simple_click_fact_labeled(premise, labels)
+                    .unwrap_or_else(|| {
+                        format!(
+                            "internal (no exact Click spelling): {}",
+                            render::render_proposition_labeled(premise, labels)
+                        )
+                    });
                 let mut end = text.len().min(2048);
                 while end > 0 && !text.is_char_boundary(end) {
                     end -= 1;
@@ -164,7 +192,7 @@ pub(crate) fn render_terminal_message_labeled(
                     .as_ref()
                     .and_then(|diagnostic| diagnostic.kernel_goal())
             {
-                rendered.push_str("; goal: ");
+                rendered.push_str("; internal goal: ");
                 rendered.push_str(&render::render_proposition_labeled(goal, labels));
             }
         }
@@ -327,7 +355,10 @@ mod tests {
                 1,
                 crate::surface::proof_trace::TraceStep {
                     header: "\n    source tactic 0: step".into(),
-                    facts: vec![at(memory.clone())],
+                    facts: vec![crate::surface::proof_trace::TraceFact {
+                        kernel: at(memory.clone()),
+                        source: None,
+                    }],
                     more_facts: 0,
                     frontier: None,
                     resources: Vec::new(),
@@ -345,11 +376,13 @@ mod tests {
             };
             let report = crate::surface::ClickError::with_diagnostic("failed", diagnostic).report();
             assert!(
-                report.contains("kernel goal: viewable(memory=snapshot#1"),
+                report.contains(
+                    "internal goal (no exact Click spelling): viewable(memory=snapshot#1"
+                ),
                 "{report}"
             );
             assert!(
-                report.contains("fact + viewable(memory=snapshot#1"),
+                report.contains("kernel detail: viewable(memory=snapshot#1"),
                 "{report}"
             );
         });

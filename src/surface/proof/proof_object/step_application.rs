@@ -611,7 +611,17 @@ impl<'a> Proof<'a> {
             .as_deref()
             .unwrap_or_else(|| next.state().added_facts());
         for fact in added.iter().take(8) {
-            detail.facts.push(fact.clone());
+            let source = next.branch_execution().and_then(|execution| {
+                let forms = &execution.presentation.surface_propositions;
+                forms.surfaces(fact).next()?;
+                next.available_surface_fact(forms, None, fact)
+                    .map(|surface| crate::surface::printing::source_click_proposition(&surface))
+                    .filter(|source| !source.contains("__click_"))
+            });
+            detail.facts.push(crate::surface::proof_trace::TraceFact {
+                kernel: fact.clone(),
+                source,
+            });
         }
         if added.len() > 8 {
             detail.more_facts = added.len() - 8;

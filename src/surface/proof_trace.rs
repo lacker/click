@@ -19,11 +19,18 @@ struct Capture {
 
 pub(super) struct TraceStep {
     pub header: String,
-    pub facts: Vec<Proposition>,
+    pub facts: Vec<TraceFact>,
     pub more_facts: usize,
     pub frontier: Option<String>,
     pub resources: Vec<(usize, usize, CResourceFact)>,
     pub more_resources: usize,
+}
+
+pub(super) struct TraceFact {
+    pub kernel: Proposition,
+    /// A form re-lowered to this exact fact at the checked step. A generated
+    /// fact without such a form remains explicitly internal in the report.
+    pub source: Option<String>,
 }
 
 thread_local! {
@@ -120,9 +127,22 @@ pub(super) fn render(
             };
             let mut detail = step.header.clone();
             for fact in &step.facts {
-                let rendered = render::render_proposition_labeled(fact, labels);
-                detail.push_str("\n      fact + ");
-                detail.push_str(&trace_text(&rendered, 240));
+                if let Some(source) = fact.source.as_ref() {
+                    detail.push_str("\n      fact + ");
+                    detail.push_str(&trace_text(source, 240));
+                } else if let Some(source) =
+                    render::render_simple_click_fact_labeled(&fact.kernel, labels)
+                {
+                    detail.push_str("\n      fact + ");
+                    detail.push_str(&trace_text(&source, 240));
+                } else {
+                    detail.push_str("\n      internal fact + (no exact Click spelling)");
+                    detail.push_str("\n        kernel detail: ");
+                    detail.push_str(&trace_text(
+                        &render::render_proposition_labeled(&fact.kernel, labels),
+                        240,
+                    ));
+                }
             }
             if step.more_facts > 0 {
                 detail.push_str(&format!("\n      … {} more facts", step.more_facts));
@@ -133,7 +153,7 @@ pub(super) fn render(
             }
             for (old, new, fact) in &step.resources {
                 detail.push_str(&format!(
-                    "\n      resource {old} -> {new}: {}",
+                    "\n      internal resource count {old} -> {new}: {}",
                     trace_text(&render::render_resource_fact_labeled(fact, labels), 240)
                 ));
             }
@@ -196,7 +216,16 @@ mod tests {
                 1,
                 TraceStep {
                     header: "\n    source tactic 0: step".into(),
-                    facts: vec![loadable_at(first.clone()), loadable_at(second.clone())],
+                    facts: vec![
+                        TraceFact {
+                            kernel: loadable_at(first.clone()),
+                            source: None,
+                        },
+                        TraceFact {
+                            kernel: loadable_at(second.clone()),
+                            source: None,
+                        },
+                    ],
                     more_facts: 0,
                     frontier: None,
                     resources: Vec::new(),
@@ -208,11 +237,11 @@ mod tests {
             let trace = render("f", &[1], &mut labels).unwrap();
             assert!(goal.contains("snapshot#1"), "{goal}");
             assert!(
-                trace.contains("fact + viewable(memory=snapshot#1"),
+                trace.contains("kernel detail: viewable(memory=snapshot#1"),
                 "{trace}"
             );
             assert!(
-                trace.contains("fact + viewable(memory=snapshot#2"),
+                trace.contains("kernel detail: viewable(memory=snapshot#2"),
                 "{trace}"
             );
         });
@@ -235,6 +264,32 @@ mod tests {
             let trace = render("f", &[2, 3], &mut SnapshotLabels::default()).unwrap();
             assert!(trace.contains("source tactic 0: step"), "{trace}");
             assert!(trace.contains("have body tactic 0: normalize"), "{trace}");
+        });
+    }
+
+    #[test]
+    fn exact_click_fact_takes_precedence_over_internal_rendering() {
+        with_proof_trace("f", || {
+            record(
+                1,
+                TraceStep {
+                    header: "\n    source tactic 0: have".into(),
+                    facts: vec![TraceFact {
+                        kernel: Proposition::ConditionIs(
+                            crate::kernel::ConditionTerm::Constant(true),
+                            true,
+                        ),
+                        source: Some("x == x".into()),
+                    }],
+                    more_facts: 0,
+                    frontier: None,
+                    resources: Vec::new(),
+                    more_resources: 0,
+                },
+            );
+            let report = render("f", &[1], &mut SnapshotLabels::default()).unwrap();
+            assert!(report.contains("fact + x == x"), "{report}");
+            assert!(!report.contains("kernel detail"), "{report}");
         });
     }
 }

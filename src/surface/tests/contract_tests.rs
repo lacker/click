@@ -2614,7 +2614,7 @@ fn quantified_old_memory_rejects_overwritten_cell() {
         .expect_err("overwritten segment should not match old memory");
 
     assert!(
-        error.message().contains("kernel goal") && error.message().contains("recent premises"),
+        error.message().contains("goal:") && error.message().contains("recent premises"),
         "{}",
         error.message()
     );

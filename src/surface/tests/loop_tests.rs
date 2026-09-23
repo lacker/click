@@ -440,7 +440,7 @@ fn migrated_negative_loop_fixtures_reach_the_decrease_check() {
         );
         assert!(!error.message().contains("CMemory {"));
         assert!(!error.message().contains("CState {"));
-        if error.message().contains("kernel goal") {
+        if error.message().contains("goal:") {
             assert!(error.message().contains("recent premises"));
         }
     }

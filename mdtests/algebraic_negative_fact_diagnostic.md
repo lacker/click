@@ -9,5 +9,5 @@ theorem impossible(xs: List<List<int32>>, ys: List<List<int32>>) {
 
 ```expect
 fail: recent premises (showing 1 of 1):
-    ¬(value A:List = value B:List)
+    internal (no exact Click spelling): ¬(value A:List = value B:List)
 ```

@@ -513,7 +513,7 @@ fn failed_algebraic_simp_reports_claim_without_internal_schema_dump() {
     assert!(message.contains("algebraic value equality"), "{message}");
     assert!(!message.contains("AlgebraicSchemas"), "{message}");
     assert!(!message.contains("AlgebraicTerm"), "{message}");
-    assert!(message.contains("kernel goal:"), "{message}");
+    assert!(message.contains("goal:"), "{message}");
     assert!(message.contains("search candidates:"), "{message}");
     assert!(message.len() < 4000, "{message}");
 }
@@ -554,7 +554,7 @@ fn failed_compound_algebraic_simp_renders_the_goal_once_without_a_debug_dump() {
     assert!(message.contains("color_bit_is_two.ensures_0"), "{message}");
     assert!(message.contains("root_color("), "{message}");
     assert!(message.contains("Color::Red"), "{message}");
-    assert!(message.contains("kernel goal:"), "{message}");
+    assert!(message.contains("goal:"), "{message}");
     assert!(message.contains("search candidates:"), "{message}");
     for marker in [
         "AlgebraicSchemas",
@@ -580,7 +580,7 @@ fn failed_compound_algebraic_simp_renders_the_goal_once_without_a_debug_dump() {
 }
 
 #[test]
-fn negative_mdtest_failures_include_structured_kernel_context() {
+fn negative_mdtest_failures_include_structured_proof_context() {
     for name in [
         "max_bad_ensure",
         "write_second_old_rejects_overwritten_cell",
@@ -610,7 +610,7 @@ fn negative_mdtest_failures_include_structured_kernel_context() {
                 "{name}: {message}"
             );
         } else {
-            assert!(message.contains("kernel goal"), "{name}: {message}");
+            assert!(message.contains("goal:"), "{name}: {message}");
             assert!(message.contains("recent premises"), "{name}: {message}");
         }
         assert!(!message.contains("CMemory {"), "{name}: {message}");

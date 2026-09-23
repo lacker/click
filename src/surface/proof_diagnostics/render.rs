@@ -44,6 +44,10 @@ impl SnapshotLabels {
         self.source_names.entry(variable).or_insert(name);
     }
 
+    fn source_name_for(&self, variable: Variable) -> Option<&str> {
+        self.source_names.get(&variable).map(String::as_str)
+    }
+
     fn variable_name(&mut self, variable: Variable, kind: &str) -> String {
         if let Some(name) = self.source_names.get(&variable) {
             return name.clone();
@@ -72,6 +76,42 @@ impl SnapshotLabels {
         self.memories.push(memory.clone());
         Some(self.memories.len())
     }
+}
+
+/// A deliberately small, exact Click spelling for facts whose operands are
+/// named source values. Historical loads and generated values do not qualify:
+/// printing those as a current source read would erase the snapshot distinction
+/// the diagnostic is meant to explain.
+pub(crate) fn render_simple_click_fact_labeled(
+    proposition: &Proposition,
+    labels: &SnapshotLabels,
+) -> Option<String> {
+    let Proposition::ConditionIs(condition, polarity) = proposition else {
+        return None;
+    };
+    fn operand(term: &Bitvector32Term, labels: &SnapshotLabels) -> Option<String> {
+        match term {
+            Bitvector32Term::Variable(variable) if !crate::kernel::is_load_variable(variable) => {
+                Some(labels.source_name_for(*variable)?.to_owned())
+            }
+            Bitvector32Term::Constant(value) => Some(value.to_string()),
+            _ => None,
+        }
+    }
+    let (left, right, positive, negative) = match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => (left, right, "==", "!="),
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, right, "<", ">="),
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => (left, right, "<=", ">"),
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => (left, right, ">", "<="),
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => (left, right, ">=", "<"),
+        _ => return None,
+    };
+    let left = operand(left, labels)?;
+    let right = operand(right, labels)?;
+    Some(format!(
+        "{left} {} {right}",
+        if *polarity { positive } else { negative }
+    ))
 }
 
 fn alphabetic_label(mut index: usize) -> String {
@@ -1240,6 +1280,29 @@ mod tests {
         assert!(first.contains("cur"), "{first}");
         assert!(first.contains("value A"), "{first}");
         assert!(!first.contains("v7") && !first.contains("v8"), "{first}");
+    }
+
+    #[test]
+    fn click_fact_spelling_requires_named_non_load_operands() {
+        let mut labels = SnapshotLabels::default();
+        labels.source_name(Variable(7), "r".into());
+        let equality = |variable| {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(variable)),
+                    Box::new(Bitvector32Term::Constant(0)),
+                ),
+                false,
+            )
+        };
+        assert_eq!(
+            render_simple_click_fact_labeled(&equality(Variable(7)), &labels),
+            Some("r != 0".into())
+        );
+        assert_eq!(
+            render_simple_click_fact_labeled(&equality(Variable(8)), &labels),
+            None
+        );
     }
 
     #[test]

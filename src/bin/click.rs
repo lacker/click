@@ -256,7 +256,17 @@ int32 parent(int32 *a, int32 *visited, int32 cur) {
             sidecar.display().to_string(),
         ])
         .unwrap_err();
-        assert!(report.contains("int32 =(r, 0) is false"), "{report}");
+        assert!(
+            report.contains("goal: exists (z: int32) { z == a[cur] }"),
+            "{report}"
+        );
+        assert!(report.contains("    r != 0"), "{report}");
+        assert!(report.contains("fact + r == 1"), "{report}");
+        assert!(
+            report.contains("internal fact + (no exact Click spelling)"),
+            "{report}"
+        );
+        assert!(report.contains("snapshot identity (internal):"), "{report}");
         assert!(report.contains("(a*4+cur*4)"), "{report}");
         assert!(report.contains("load A=load("), "{report}");
         assert!(report.contains("load B=load("), "{report}");

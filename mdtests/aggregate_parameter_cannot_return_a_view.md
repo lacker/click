@@ -15,5 +15,5 @@ void leak(struct packet input, int32** out) {
 ```
 
 ```expect
-fail: kernel goal: viewable(
+fail: goal: viewable(
 ```
