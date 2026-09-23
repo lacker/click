@@ -63,8 +63,8 @@ pub(crate) struct LoanShareId {
 /// A restriction a folded borrowing composite places on the scope of the
 /// loan it packages: while the hold exists the scope cannot end, so the
 /// owner behind the loan cannot be recovered and written while the composite
-/// still describes it. A hold mints no share, scope, or recovery right and
-/// keeps the ledger identity (see `LoanLedger::hold`).
+/// still describes it. A hold mints no share, scope, or recovery right, but
+/// changes whether the scope may end and therefore changes the ledger identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(crate) struct LoanHoldId {
     arena: u64,
@@ -1118,6 +1118,16 @@ enum LoanTransitionEvidence {
         right: LoanShareId,
         holder: LoanParticipantId,
     },
+    Hold {
+        binding: LoanViewBinding,
+        holder: LoanParticipantId,
+        hold: LoanHoldId,
+    },
+    Release {
+        hold: LoanHoldId,
+        scope: LoanScopeId,
+        holder: LoanParticipantId,
+    },
     End {
         scope: LoanScopeId,
         holder: LoanParticipantId,
@@ -1440,15 +1450,16 @@ pub(crate) struct EscapedHold {
 pub(crate) struct StableViewRecovery {
     pub(crate) ledger: LoanLedger,
     pub(crate) terminal_ledger: LoanLedger,
+    /// The canonical predecessor on which escaped composite holds are added.
+    pub(crate) hold_base_ledger: LoanLedger,
+    /// Exact hold transitions after the terminal recovery path is selected.
+    pub(crate) hold_transitions: Vec<CheckedLoanTransition>,
     pub(crate) resources: ResourceContext,
     /// The escrowed owners recovery handed back, in recovery order, each
     /// with the hold binding its occurrence carried before the call.
     pub(crate) recovered_escrows: Vec<(CResourceFact, Option<LoanViewBinding>)>,
     /// The holds this call's produced borrowing composites now carry.
     pub(crate) escaped_holds: Vec<EscapedHold>,
-    /// The holds a consumed borrowing composite released, before
-    /// `transitions`.
-    pub(crate) released_holds: Vec<LoanHoldId>,
     pub(crate) view_bindings: LoanViewBindings,
     /// A completed local reader either advances its parent's share or closes
     /// the implicit root after the final sibling returns.
@@ -1502,6 +1513,14 @@ impl StableViewRecovery {
                 LoanTransitionEvidence::Join { left, .. } => {
                     LoanRefusalSubject::with_share_id(*left)
                 }
+                LoanTransitionEvidence::Hold { binding, .. } => LoanRefusalSubject {
+                    loan: Some((binding.loan.arena, binding.loan.ordinal)),
+                    scope: Some((binding.scope.arena, binding.scope.ordinal)),
+                    ..LoanRefusalSubject::none()
+                },
+                LoanTransitionEvidence::Release { scope, .. } => {
+                    LoanRefusalSubject::with_scope_id(*scope)
+                }
                 LoanTransitionEvidence::Reborrow {
                     scope, loan, root, ..
                 } => LoanRefusalSubject {
@@ -1526,12 +1545,11 @@ pub(crate) struct CheckedLoanCallEvidence {
     pub(crate) entry: StableViewTransferPlan,
     pub(crate) recovered_ledger: LoanLedger,
     pub(crate) recovery_terminal_ledger: LoanLedger,
-    /// Holds the recovery released before its transitions: a consumed
-    /// borrowing composite gives its borrow back (step 7). A release keeps
-    /// the ledger identity but changes what `End` accepts, so a recheck
-    /// applies them first.
-    pub(crate) recovery_releases: Vec<LoanHoldId>,
     pub(crate) recovery_transitions: Vec<CheckedLoanTransition>,
+    /// Holds are applied to either the exact caller predecessor or the
+    /// terminal recovery successor, and retain their own checked identities.
+    pub(crate) recovery_hold_base: LoanLedger,
+    pub(crate) recovery_hold_transitions: Vec<CheckedLoanTransition>,
 }
 
 /// The part of a call-evidence trace that is needed by the artifact boundary.
@@ -1546,6 +1564,8 @@ struct CheckedLoanCallEvidenceSummary {
     valid: bool,
     recovered_by_caller: PersistentMap<(u64, LoanParticipantId), LoanLedger>,
     last_pristine_recovered: Option<(LoanParticipantId, LoanLedger)>,
+    chain_origin: Option<(u64, LoanParticipantId)>,
+    last_recovered: Option<(LoanParticipantId, LoanLedger)>,
 }
 
 impl Default for CheckedLoanCallEvidenceSummary {
@@ -1554,6 +1574,8 @@ impl Default for CheckedLoanCallEvidenceSummary {
             valid: true,
             recovered_by_caller: PersistentMap::default(),
             last_pristine_recovered: None,
+            chain_origin: None,
+            last_recovered: None,
         }
     }
 }
@@ -1572,10 +1594,28 @@ impl CheckedLoanCallEvidenceSummary {
                 )
                 .is_ok();
         let key = (caller_ledger.state_identity(), caller_participant);
+        let continues_chain = self
+            .last_recovered
+            .as_ref()
+            .is_some_and(|(participant, ledger)| {
+                *participant == caller_participant && ledger == caller_ledger
+            });
+        let chain_origin = if continues_chain {
+            self.chain_origin.unwrap_or(key)
+        } else {
+            key
+        };
         let recovered_by_caller = self
             .recovered_by_caller
-            .with_inserted(key, evidence.recovered_ledger.clone());
-        let last_pristine_recovered = if caller_ledger.is_pristine() {
+            .with_inserted(key, evidence.recovered_ledger.clone())
+            .with_inserted(chain_origin, evidence.recovered_ledger.clone());
+        let continues_pristine_chain =
+            self.last_pristine_recovered
+                .as_ref()
+                .is_some_and(|(participant, ledger)| {
+                    *participant == caller_participant && ledger == caller_ledger
+                });
+        let last_pristine_recovered = if caller_ledger.is_pristine() || continues_pristine_chain {
             Some((caller_participant, evidence.recovered_ledger.clone()))
         } else {
             self.last_pristine_recovered.clone()
@@ -1584,6 +1624,8 @@ impl CheckedLoanCallEvidenceSummary {
             valid,
             recovered_by_caller,
             last_pristine_recovered,
+            chain_origin: Some(chain_origin),
+            last_recovered: Some((caller_participant, evidence.recovered_ledger.clone())),
         }
     }
 }
@@ -1836,15 +1878,17 @@ impl CheckedLoanCallEvidence {
         entry: StableViewTransferPlan,
         recovered_ledger: LoanLedger,
         recovery_terminal_ledger: LoanLedger,
-        recovery_releases: Vec<LoanHoldId>,
         recovery_transitions: Vec<CheckedLoanTransition>,
+        recovery_hold_base: LoanLedger,
+        recovery_hold_transitions: Vec<CheckedLoanTransition>,
     ) -> Self {
         Self {
             entry,
             recovered_ledger,
             recovery_terminal_ledger,
-            recovery_releases,
             recovery_transitions,
+            recovery_hold_base,
+            recovery_hold_transitions,
         }
     }
 
@@ -1868,24 +1912,42 @@ impl CheckedLoanCallEvidence {
             return Err(LoanRefusal::InvalidEvidence);
         }
         let mut recovery_successor = callee_ledger.clone();
-        for hold in &self.recovery_releases {
-            crate::instrumentation::record_deterministic_work(1);
-            recovery_successor = recovery_successor.release(*hold, self.entry.caller)?;
-        }
         for transition in &self.recovery_transitions {
+            match &transition.evidence {
+                LoanTransitionEvidence::Hold { .. } => {
+                    return Err(LoanRefusal::InvalidEvidence);
+                }
+                LoanTransitionEvidence::Release { holder, .. } if *holder != self.entry.caller => {
+                    return Err(LoanRefusal::InvalidEvidence);
+                }
+                _ => {}
+            }
             crate::instrumentation::record_deterministic_work(1);
             recovery_successor = recovery_successor.apply(transition)?;
         }
         if recovery_successor != self.recovery_terminal_ledger {
             return Err(LoanRefusal::InvalidEvidence);
         }
-        // The caller resumes either at the exact predecessor root (every
-        // loan of the call ended and recovered) or at the rechecked terminal
-        // successor (a loan survived the call under an escaping borrow, or a
-        // consumed composite released a hold). Nothing else is a valid
-        // continuation.
+        if self.recovery_hold_base != *caller_ledger
+            && self.recovery_hold_base != self.recovery_terminal_ledger
+        {
+            return Err(LoanRefusal::InvalidEvidence);
+        }
+        let mut hold_successor = self.recovery_hold_base.clone();
+        for transition in &self.recovery_hold_transitions {
+            match &transition.evidence {
+                LoanTransitionEvidence::Hold { holder, .. } if *holder == self.entry.caller => {}
+                _ => return Err(LoanRefusal::InvalidEvidence),
+            }
+            crate::instrumentation::record_deterministic_work(1);
+            hold_successor = hold_successor.apply(transition)?;
+        }
+        // The caller resumes at the exact predecessor, at the checked terminal
+        // successor, or at that predecessor/terminal with the recorded escaped
+        // holds applied. Nothing else is a valid continuation.
         if self.recovered_ledger != *caller_ledger
             && self.recovered_ledger != self.recovery_terminal_ledger
+            && self.recovered_ledger != hold_successor
         {
             return Err(LoanRefusal::InvalidEvidence);
         }
@@ -1904,11 +1966,16 @@ impl StableViewRecovery {
         caller: LoanParticipantId,
     ) -> Result<LoanLedger, LoanRefusal> {
         let mut current = predecessor.clone();
-        for hold in &self.released_holds {
-            crate::instrumentation::record_deterministic_work(1);
-            current = current.release(*hold, caller)?;
-        }
         for transition in &self.transitions {
+            match &transition.evidence {
+                LoanTransitionEvidence::Hold { .. } => {
+                    return Err(LoanRefusal::InvalidEvidence);
+                }
+                LoanTransitionEvidence::Release { holder, .. } if *holder != caller => {
+                    return Err(LoanRefusal::InvalidEvidence);
+                }
+                _ => {}
+            }
             crate::instrumentation::record_deterministic_work(1);
             current = current.apply(transition)?;
         }
@@ -3065,7 +3132,6 @@ impl StableViewTransferPlan {
         let mut transitions = Vec::new();
         let mut recovered_escrows = Vec::new();
         let mut pending_holds: Vec<(Vec<CResourceFact>, LoanViewBinding)> = Vec::new();
-        let mut released_holds = Vec::new();
         for (scope, loan, root, support, recoverable) in loan_roots.into_iter().rev() {
             let transfer = ledger.transfer(root, self.callee, self.caller)?;
             ledger = ledger.apply(&transfer)?;
@@ -3223,8 +3289,9 @@ impl StableViewTransferPlan {
             let Some(hold) = binding.hold else {
                 continue;
             };
-            ledger = ledger.release(hold, self.caller)?;
-            released_holds.push(hold);
+            let (released, transition) = ledger.release_with_transition(hold, self.caller)?;
+            ledger = released;
+            transitions.push(transition);
             keep_terminal = true;
             if !ledger.scope_can_end(binding.scope, self.caller) {
                 continue;
@@ -3251,10 +3318,13 @@ impl StableViewTransferPlan {
         // changed authority.
         let terminal_ledger = ledger.clone();
         ledger = if keep_terminal { ledger } else { parent_ledger };
+        let hold_base_ledger = ledger.clone();
+        let mut hold_transitions = Vec::new();
         let mut escaped_holds = Vec::new();
         for (heads, binding) in pending_holds {
-            let (held, hold) = ledger.hold(&binding, self.caller)?;
+            let (held, hold, transition) = ledger.hold_with_transition(&binding, self.caller)?;
             ledger = held;
+            hold_transitions.push(transition);
             let binding = LoanViewBinding {
                 hold: Some(hold),
                 ..binding
@@ -3269,10 +3339,11 @@ impl StableViewTransferPlan {
         Ok(StableViewRecovery {
             ledger,
             terminal_ledger,
+            hold_base_ledger,
+            hold_transitions,
             resources,
             recovered_escrows,
             escaped_holds,
-            released_holds,
             view_bindings,
             local_view_updates,
             transitions,
@@ -3664,70 +3735,70 @@ impl LoanLedger {
         })
     }
 
-    /// Places a hold on the scope of `binding`'s loan for a folded borrowing
-    /// composite: a composite whose body packages the description `binding`
-    /// authorizes. While the hold exists `End` refuses, so the owner behind
-    /// the loan cannot be recovered and written while the folded composite
+    /// Places a hold on the scope of the binding's loan for a folded
+    /// borrowing composite. While the hold exists, End refuses, so the owner
+    /// behind the loan cannot be recovered and written while the composite
     /// still describes it and carries its body facts.
     ///
-    /// A hold only adds a restriction. It mints no share, scope, or recovery
-    /// right, and nothing can be derived from it that the binding did not
-    /// already authorize, so the ledger identity is kept (the same rule as
-    /// `project`). What carries the hold is the binding of the composite's
-    /// occurrence, which every join and recovery compares; the hold is
-    /// released when that occurrence is consumed by a call that does not
-    /// return it.
+    /// A hold changes the scope's ability to end. The kernel records it as a
+    /// checked transition with its own successor identity, and recovery keeps
+    /// that transition so later checks use the same endpoint.
+    /// The composite occurrence carries the hold binding, which is released
+    /// when that occurrence is consumed by a call that does not return it.
     pub(crate) fn hold(
         &self,
         binding: &LoanViewBinding,
         holder: LoanParticipantId,
     ) -> Result<(Self, LoanHoldId), LoanRefusal> {
+        let (ledger, hold, _) = self.hold_with_transition(binding, holder)?;
+        Ok((ledger, hold))
+    }
+
+    fn hold_with_transition(
+        &self,
+        binding: &LoanViewBinding,
+        holder: LoanParticipantId,
+    ) -> Result<(Self, LoanHoldId, CheckedLoanTransition), LoanRefusal> {
         self.validate_view_binding(binding.clone(), holder)?;
-        let data = &self.storage.data;
-        let scope_record = data
-            .scopes
-            .get(&binding.scope)
-            .cloned()
-            .ok_or(LoanRefusal::MissingScope)?;
         let hold = LoanHoldId {
-            arena: data.arena,
-            ordinal: data.next_hold,
+            arena: self.storage.data.arena,
+            ordinal: self.storage.data.next_hold,
         };
-        let mut data = data.clone();
-        data.next_hold = data
+        self.storage
+            .data
             .next_hold
             .checked_add(1)
             .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
-        data.holds = data.holds.with_inserted(hold, (binding.scope, holder));
-        data.scopes = data.scopes.with_inserted(
-            binding.scope,
-            LoanScopeRecord {
-                holds: scope_record.holds.with_value(hold),
-                ..scope_record
-            },
-        );
-        Ok((
-            Self {
-                storage: Arc::new(LoanLedgerStorage {
-                    state: self.storage.state,
-                    data,
-                }),
-            },
+        let transition = self.issue(LoanTransitionEvidence::Hold {
+            binding: binding.clone(),
+            holder,
             hold,
-        ))
+        })?;
+        let ledger = self.apply(&transition)?;
+        Ok((ledger, hold, transition))
     }
 
-    /// Removes a hold placed by `holder`. Releasing restores the scope's
-    /// ability to end; it grants nothing, so the identity is kept as well.
+    /// Removes a hold placed by its holder. Releasing restores the scope's
+    /// ability to end, so it also receives a checked successor identity.
     pub(crate) fn release(
         &self,
         hold: LoanHoldId,
         holder: LoanParticipantId,
     ) -> Result<Self, LoanRefusal> {
+        let (ledger, _) = self.release_with_transition(hold, holder)?;
+        Ok(ledger)
+    }
+
+    fn release_with_transition(
+        &self,
+        hold: LoanHoldId,
+        holder: LoanParticipantId,
+    ) -> Result<(Self, CheckedLoanTransition), LoanRefusal> {
         self.require_arena(hold.arena)?;
         self.require_participant(holder)?;
-        let data = &self.storage.data;
-        let (scope, placed_by) = data
+        let (scope, placed_by) = self
+            .storage
+            .data
             .holds
             .get(&hold)
             .copied()
@@ -3735,26 +3806,13 @@ impl LoanLedger {
         if placed_by != holder {
             return Err(LoanRefusal::WrongHolder);
         }
-        let scope_record = data
-            .scopes
-            .get(&scope)
-            .cloned()
-            .ok_or(LoanRefusal::MissingScope)?;
-        let mut data = data.clone();
-        data.holds = data.holds.without_key(&hold);
-        data.scopes = data.scopes.with_inserted(
+        let transition = self.issue(LoanTransitionEvidence::Release {
+            hold,
             scope,
-            LoanScopeRecord {
-                holds: scope_record.holds.without_value(&hold),
-                ..scope_record
-            },
-        );
-        Ok(Self {
-            storage: Arc::new(LoanLedgerStorage {
-                state: self.storage.state,
-                data,
-            }),
-        })
+            holder,
+        })?;
+        let ledger = self.apply(&transition)?;
+        Ok((ledger, transition))
     }
 
     /// The descriptions a live loan authorizes, or none for an ended or
@@ -4988,6 +5046,66 @@ impl LoanLedger {
                     },
                 );
             }
+            LoanTransitionEvidence::Hold {
+                binding,
+                holder,
+                hold,
+            } => {
+                self.validate_view_binding(binding.clone(), *holder)?;
+                let scope_record = data
+                    .scopes
+                    .get(&binding.scope)
+                    .cloned()
+                    .ok_or(LoanRefusal::MissingScope)?;
+                if hold.arena != data.arena || hold.ordinal != data.next_hold {
+                    return Err(LoanRefusal::InvalidEvidence);
+                }
+                data.next_hold = data
+                    .next_hold
+                    .checked_add(1)
+                    .ok_or(LoanRefusal::IdentitySpaceExhausted)?;
+                data.holds = data.holds.with_inserted(*hold, (binding.scope, *holder));
+                data.scopes = data.scopes.with_inserted(
+                    binding.scope,
+                    LoanScopeRecord {
+                        holds: scope_record.holds.with_value(*hold),
+                        ..scope_record
+                    },
+                );
+            }
+            LoanTransitionEvidence::Release {
+                hold,
+                scope,
+                holder,
+            } => {
+                if hold.arena != data.arena || holder.arena != data.arena {
+                    return Err(LoanRefusal::WrongArena);
+                }
+                let (actual_scope, placed_by) = data
+                    .holds
+                    .get(hold)
+                    .copied()
+                    .ok_or(LoanRefusal::MissingScope)?;
+                if actual_scope != *scope {
+                    return Err(LoanRefusal::InvalidEvidence);
+                }
+                if placed_by != *holder {
+                    return Err(LoanRefusal::WrongHolder);
+                }
+                let scope_record = data
+                    .scopes
+                    .get(scope)
+                    .cloned()
+                    .ok_or(LoanRefusal::MissingScope)?;
+                data.holds = data.holds.without_key(hold);
+                data.scopes = data.scopes.with_inserted(
+                    *scope,
+                    LoanScopeRecord {
+                        holds: scope_record.holds.without_value(hold),
+                        ..scope_record
+                    },
+                );
+            }
             LoanTransitionEvidence::End { scope, holder } => {
                 let scope_record = data
                     .scopes
@@ -6189,10 +6307,11 @@ mod tests {
 
     /// A hold placed by a folded borrowing composite keeps the loan's scope
     /// from ending, and therefore the owner from being recovered, until it is
-    /// released by the participant that placed it. It keeps the ledger
-    /// identity and mints nothing (escaping borrows in docs/internals/stable-views.md).
+    /// released by the participant that placed it. The hold changes ledger
+    /// identity but mints no share or recovery right (escaping borrows in
+    /// docs/internals/stable-views.md).
     #[test]
-    fn a_hold_blocks_ending_the_scope_until_released_and_keeps_identity() {
+    fn a_hold_blocks_ending_the_scope_and_changes_identity() {
         let (ledger, owner, reader) = participants();
         let assumptions = PureFactContext::new();
         let escrow = CResourceFact::own_memory(parameter_range(31, 0, 1, 4));
@@ -6207,14 +6326,19 @@ mod tests {
             viewed: escrow.core().unwrap(),
             hold: None,
         };
-        let (held, hold) = ledger
-            .hold(&binding, reader)
+        let (held, hold, hold_transition) = ledger
+            .hold_with_transition(&binding, reader)
             .expect("the borrower may hold");
+        assert_eq!(
+            ledger.apply(&hold_transition).expect("hold recheck"),
+            held,
+            "reapplying the checked hold must reproduce its exact identity"
+        );
         assert!(held.invariant_holds());
-        assert_eq!(held, ledger, "a hold keeps the ledger identity");
+        assert_ne!(held, ledger, "placing a hold changes the ledger identity");
         assert_eq!(held.held_scope(hold), Some(opening.scope));
-        // Nothing is minted: the held binding still authorizes exactly the
-        // same description, and no share can be derived from the hold.
+        // No share or recovery right is minted: the held binding still
+        // authorizes exactly the same description.
         assert!(held.permits_view(
             reader,
             &StableViewDescription {
@@ -6237,7 +6361,17 @@ mod tests {
             Err(LoanRefusal::WrongHolder),
             "only the participant that placed the hold releases it"
         );
-        let released = held.release(hold, reader).expect("release");
+        let (released, release_transition) =
+            held.release_with_transition(hold, reader).expect("release");
+        assert_eq!(
+            held.apply(&release_transition).expect("release recheck"),
+            released,
+            "reapplying the checked release must reproduce its exact identity"
+        );
+        assert_ne!(
+            released, held,
+            "releasing a hold changes the ledger identity"
+        );
         assert!(released.invariant_holds());
         assert_eq!(released.held_scope(hold), None);
         assert_eq!(
@@ -6284,7 +6418,7 @@ mod tests {
         let (held, hold) = ledger.hold(&binding, holder).unwrap();
         assert!(held.invariant_holds());
         assert_eq!(held.held_scope(hold), Some(opening.scope));
-        assert_eq!(held, ledger);
+        assert_ne!(held, ledger, "contract-input holds also change identity");
     }
 
     /// A composite loan is a memory loan whether or not its one-level
@@ -6679,8 +6813,9 @@ mod tests {
             plan,
             recovery.ledger.clone(),
             recovery.terminal_ledger.clone(),
-            recovery.released_holds.clone(),
             recovery.transitions.clone(),
+            recovery.hold_base_ledger.clone(),
+            recovery.hold_transitions.clone(),
         );
         assert!(
             evidence
@@ -6747,8 +6882,9 @@ mod tests {
             plan,
             recovery.ledger,
             recovery.terminal_ledger,
-            recovery.released_holds,
             recovery.transitions,
+            recovery.hold_base_ledger,
+            recovery.hold_transitions,
         ));
         let mut sequence = empty_checked_loan_evidence_sequence();
         let mut midpoint = None;
@@ -6800,8 +6936,9 @@ mod tests {
             alternate_plan,
             alternate_recovery.ledger,
             alternate_recovery.terminal_ledger,
-            alternate_recovery.released_holds,
             alternate_recovery.transitions,
+            alternate_recovery.hold_base_ledger,
+            alternate_recovery.hold_transitions,
         ));
         let mut separately_built_different = empty_checked_loan_evidence_sequence();
         for _ in 0..2048 {
@@ -6836,8 +6973,9 @@ mod tests {
             plan,
             recovery.ledger,
             recovery.terminal_ledger,
-            recovery.released_holds,
             recovery.transitions,
+            recovery.hold_base_ledger,
+            recovery.hold_transitions,
         ));
         let mut samples = Vec::new();
         for size in [16_usize, 32, 64, 128] {
@@ -6886,8 +7024,9 @@ mod tests {
             plan,
             recovery.ledger,
             recovery.terminal_ledger,
-            recovery.released_holds,
             recovery.transitions,
+            recovery.hold_base_ledger,
+            recovery.hold_transitions,
         );
         tampered.recovery_transitions.reverse();
         let sequence = append_checked_loan_evidence(
@@ -7257,8 +7396,9 @@ mod tests {
                 plan,
                 recovery.ledger,
                 recovery.terminal_ledger,
-                recovery.released_holds,
                 recovery.transitions,
+                recovery.hold_base_ledger,
+                recovery.hold_transitions,
             );
             let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
                 evidence
@@ -7798,10 +7938,24 @@ mod tests {
         let head = composite("cursor", true);
         let mut escaping = BTreeMap::new();
         escaping.insert(loan, vec![head.clone()]);
+        let planned_ledger = plan.ledger.clone();
         let recovery = plan
             .clone()
             .recover_stable_views(&assumptions, &escaping, &[])
             .expect("an escaping loan recovers open");
+        let evidence = CheckedLoanCallEvidence::new(
+            plan.clone(),
+            recovery.ledger.clone(),
+            recovery.terminal_ledger.clone(),
+            recovery.transitions.clone(),
+            recovery.hold_base_ledger.clone(),
+            recovery.hold_transitions.clone(),
+        );
+        assert!(
+            evidence
+                .recheck(&ledger, Some(caller), &planned_ledger, Some(callee))
+                .is_ok()
+        );
         assert!(
             recovery.recovered_escrows.is_empty(),
             "the owner stays escrowed"
@@ -7830,9 +7984,13 @@ mod tests {
             Err(LoanRefusal::ActiveDependency),
             "the held scope cannot be ended behind the composite's back"
         );
-        assert_eq!(
+        assert_ne!(
             recovery.terminal_ledger, open,
-            "the surviving loan keeps the terminal ledger"
+            "adding an escaped hold changes the ledger identity"
+        );
+        assert_eq!(
+            recovery.terminal_ledger, recovery.hold_base_ledger,
+            "the escaped hold is rechecked from the checked terminal ledger"
         );
 
         // A later call consumes the composite: its hold is released, the
@@ -7846,13 +8004,50 @@ mod tests {
             open.fresh_participant().unwrap(),
         )
         .expect("an empty plan on the open ledger");
+        let next_callee_ledger = next.ledger.clone();
+        let next_callee_participant = next.callee_participant();
         let recovered = next
+            .clone()
             .recover_stable_views(
                 &assumptions,
                 &BTreeMap::new(),
                 std::slice::from_ref(&escaped.binding),
             )
             .expect("consuming the composite recovers the owner");
+        let recovered_ledger = recovered.ledger.clone();
+        let next_evidence = Arc::new(CheckedLoanCallEvidence::new(
+            next,
+            recovered.ledger.clone(),
+            recovered.terminal_ledger.clone(),
+            recovered.transitions.clone(),
+            recovered.hold_base_ledger.clone(),
+            recovered.hold_transitions.clone(),
+        ));
+        assert!(
+            next_evidence
+                .recheck(
+                    &open,
+                    Some(caller),
+                    &next_callee_ledger,
+                    Some(next_callee_participant)
+                )
+                .is_ok()
+        );
+        let sequence = append_checked_loan_evidence(
+            &empty_checked_loan_evidence_sequence(),
+            Some(Arc::new(evidence)),
+        );
+        let sequence = append_checked_loan_evidence(&sequence, Some(next_evidence));
+        assert_eq!(
+            sequence.recovered_ledger_for(&ledger, caller, false),
+            Some(recovered_ledger.clone()),
+            "the path summary follows state-changing holds to the final recovery"
+        );
+        assert_eq!(
+            sequence.pristine_recovery(),
+            (Some(caller), Some(recovered_ledger.clone())),
+            "pristine-root summaries follow the same recovery chain"
+        );
         assert_eq!(
             recovered.recovered_escrows,
             vec![(owner_fact.clone(), None)]
@@ -8816,18 +9011,13 @@ mod local_storage_tests {
 }
 
 #[cfg(test)]
-mod hunt_investigation_tests {
+mod hold_identity_tests {
     use super::*;
     use crate::kernel::{Pointer, PointerBlock, PointerOffsetTerm};
 
-    /// Investigation repro (bug hunt phase 2b): `hold` inserts a hold into
-    /// the ledger data while returning the *predecessor's*
-    /// `LoanLedgerStateId` (`state: self.storage.state`), and
-    /// `LoanLedger`'s own equality is pure state-identity equality, so a
-    /// ledger with an active hold compares equal to the hold-free clone it
-    /// came from.
+    /// A hold must not compare equal to the state it restricts.
     #[test]
-    fn hunt_investigation_hold_does_not_change_the_ledger_identity() {
+    fn holding_a_scope_mints_a_distinct_ledger_identity() {
         let base = Pointer {
             block: PointerBlock::Concrete("global:g".to_string()),
             offset: PointerOffsetTerm::Constant(0),
@@ -8858,9 +9048,9 @@ mod hunt_investigation_tests {
         };
         let (with_hold, _) = ledger.hold(&binding, reader).expect("the hold opens");
         let without_hold = ledger.clone();
-        assert!(
-            with_hold == without_hold,
-            "BUG: a ledger with an active hold is equal to the hold-free predecessor"
+        assert_ne!(
+            with_hold, without_hold,
+            "a ledger with an active hold must differ from its hold-free predecessor"
         );
     }
 }

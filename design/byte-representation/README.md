@@ -46,7 +46,12 @@ standard-library `memcpy` declaration (not to the spelling): after the external
 contract's havoc, each source cell whose complete byte representation lies in
 the copied range is planted at the mapped destination offset. A partial cell, a
 symbolic range, or an unaligned destination is left alone, and an untyped source
-has no cells, so a raw byte copy still establishes nothing typed.
+has no cells, so a raw byte copy still establishes nothing typed. The source
+cells are found with one bounded range query over the copied block and extent,
+never a scan of memory; `src/kernel/tests/representation_copy_tests.rs` pins
+that lookup's deterministic work as linear in the copied extent and constant
+under unrelated memory, while each planted cell still pays the ordinary
+`CMemory::store` cost, which grows with the whole memory.
 
 `mdtests/byte_representation_scalar_copy.md` verifies a complete direct copy of
 an initialized `unsigned int`; `byte_representation_partial_copy_frontier.md`
@@ -83,3 +88,20 @@ the durable kernel design record all remain in
 [byte-representation-demo.md](../../issues/byte-representation-demo.md).
 This checkpoint adds no byte rule, no contract, and no claim that any
 representation property is already modeled.
+
+## Byte view of integer cells landed
+
+The kernel now gives one-byte C accesses a little-endian view of the integer
+cells the representation copy plants. The byte order is a kernel value
+(`ByteOrder`) installed from the selected target (`CTarget::byte_order`, little
+for both targets). A one-byte load inside a wider integer cell reads
+`(v >> 8k) & 0xFF`; a one-byte store updates that cell in place.
+`mdtests/byte_representation_buffer_byte_read.md` reads `buf[0] == 11` and
+`buf[1] == 0` after the first copy of the frozen source, and
+`mdtests/byte_representation_byte_mutation.md` proves that `buf[0] = 1;`
+between the copies changes the observation to `8`. Pointer bytes stay opaque:
+`mdtests/byte_representation_pointer_bytes_refused.md` refuses `buf[8]` and
+`mdtests/byte_representation_pointer_byte_write_refused.md` shows that
+`buf[8] = 0;` loses the copied pointer instead of editing it. Assembling
+several byte cells into a wider load, and any non-little-endian target, remain
+out of scope.

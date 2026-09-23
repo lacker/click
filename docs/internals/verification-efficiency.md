@@ -152,6 +152,9 @@ The complexity contract implies several design constraints:
 - Large immutable environments and proof states need persistent structural
   sharing. A clone used to create one modified view should be constant or
   logarithmic in the shared structure.
+  Kernel memory snapshots follow this: their maps are persistent B-trees
+  with cached content hashes, so a store and the interning of its result are
+  logarithmic in unrelated memory (see [Memory derivation DAG](memory-dag.md)).
 - Propositions, terms, memories, functions, and environments used as cache
   keys need stable interned identities or cached content fingerprints. Cache
   lookup must not traverse the object whose computation it is intended to

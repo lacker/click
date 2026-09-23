@@ -1032,12 +1032,12 @@ fn symbolic_memory_block_sizes_are_free_and_substitutable() {
     let size_variable = Variable(12_345);
     let block = PointerBlock::Concrete("symbolic-size".to_string());
     let memory = CMemory {
-        blocks: std::sync::Arc::new(BTreeMap::from([(
+        blocks: std::sync::Arc::new(SnapshotMap::from_iter([(
             block.clone(),
             CBlock::with_symbolic_size(Bitvector32Term::Variable(size_variable)),
         )])),
-        cells: std::sync::Arc::new(BTreeMap::new()),
-        union_cells: std::sync::Arc::new(BTreeMap::new()),
+        cells: std::sync::Arc::default(),
+        union_cells: std::sync::Arc::default(),
         forgotten: std::sync::Arc::default(),
         heap: std::sync::Arc::new(CHeapMemory::default()),
     };
@@ -1069,26 +1069,26 @@ fn nested_snapshot_load(depth: usize) -> Bitvector32Term {
         block: block.clone(),
         offset: PointerOffsetTerm::Constant(offset),
     };
-    let blocks = std::sync::Arc::new(BTreeMap::from([(
+    let blocks = std::sync::Arc::new(SnapshotMap::from_iter([(
         block.clone(),
         CBlock::with_symbolic_size(Bitvector32Term::Constant(8 * depth as u32 + 16)),
     )]));
     let level_memory = |cells| CMemory {
         blocks: blocks.clone(),
         cells: std::sync::Arc::new(cells),
-        union_cells: std::sync::Arc::new(BTreeMap::new()),
+        union_cells: std::sync::Arc::default(),
         forgotten: std::sync::Arc::default(),
         heap: std::sync::Arc::new(CHeapMemory::default()),
     };
 
-    let mut memory = level_memory(BTreeMap::new());
+    let mut memory = level_memory(SnapshotMap::new());
     for level in 0..depth {
         let offset = 8 * level as i64;
         let load = Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(memory),
             Box::new(at(offset)),
         );
-        memory = level_memory(BTreeMap::from([
+        memory = level_memory(SnapshotMap::from_iter([
             (at(offset), CValue::Int32(load.clone())),
             (at(offset + 4), CValue::Int32(load)),
         ]));

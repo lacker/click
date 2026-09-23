@@ -53,6 +53,29 @@ if [[ -z "$clang_cpp" ]]; then
     exit 1
 fi
 
+# Clang ships no C++ standard library on Linux: it borrows the headers of the
+# newest GCC installation it finds. A distribution update that moves the
+# libstdc++ runtime forward creates a newer GCC directory without its headers
+# unless the matching libstdc++-N-dev package is installed, and the exporter
+# build then fails deep inside a compile on `<algorithm>`. Check for that here
+# and name the missing package.
+if ! printf '#include <algorithm>\nint main() { return 0; }\n' \
+    | "$clangxx" -std=c++20 -x c++ -fsyntax-only - >/dev/null 2>&1; then
+    selected_gcc="$("$clangxx" -v -x c++ -E /dev/null 2>&1 \
+        | sed -n 's/^Selected GCC installation: //p')"
+    echo "error: $clangxx cannot compile a C++ program that includes <algorithm>" >&2
+    if [[ -n "$selected_gcc" ]]; then
+        gcc_version="${selected_gcc##*/}"
+        echo "It selected the GCC installation at $selected_gcc, which has no C++ standard library headers." >&2
+        echo "Install the matching headers (on Debian/Ubuntu: libstdc++-${gcc_version}-dev)," >&2
+        echo "or point it at an installation that has them, for example:" >&2
+        echo "  CCC_OVERRIDE_OPTIONS='+--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/<version>'" >&2
+    else
+        echo "Install the C++ standard library development headers for the pinned toolchain." >&2
+    fi
+    exit 1
+fi
+
 read -r -a llvm_cxxflags <<<"$("$llvm_config" --cxxflags)"
 read -r -a llvm_ldflags <<<"$("$llvm_config" --ldflags)"
 read -r -a llvm_system_libs <<<"$("$llvm_config" --system-libs)"

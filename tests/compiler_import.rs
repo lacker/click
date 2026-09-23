@@ -89,7 +89,7 @@ impl Drop for Project {
 fn compiler_import_fixture_verifies_targets_and_checked_expansion() {
     let project = Project::new();
     create_lock(&project.config()).expect("lock real compiler input");
-    let imports = load_imports(&project.config()).expect("fresh locked reproduction");
+    let imports = load_imports(&project.config()).expect("offline locked import");
     let proof = project.proof();
     let verified = verify_c0_prepared_sources(&proof, &imports).expect("compiler-backed proof");
     assert!(!verified.is_empty());
@@ -113,7 +113,7 @@ fn compiler_import_fixture_verifies_targets_and_checked_expansion() {
     verify_c0_prepared_sources(&expanded, &imports).expect("expanded certificate verifies");
     fs::write(project.0.join("main.click"), &expanded).unwrap();
     let reloaded = load_imports(&project.config()).expect("proof edits do not invalidate C input");
-    verify_c0_prepared_sources(&expanded, &reloaded).expect("fresh imported expanded proof");
+    verify_c0_prepared_sources(&expanded, &reloaded).expect("offline imported expanded proof");
 }
 
 #[test]
@@ -194,13 +194,16 @@ fn compiler_import_reproduces_header_existence_and_preserves_unsupported_bodies(
     create_lock(&project.config()).unwrap();
     let imports = load_imports(&project.config()).unwrap();
     verify_c0_prepared_sources(&project.proof(), &imports).unwrap();
+    let original_identity = imports[0].identity().to_string();
     fs::write(project.0.join("optional.h"), "#define OPTIONAL_VALUE 16\n").unwrap();
-    assert!(
-        load_imports(&project.config()).is_err(),
-        "newly selected header must invalidate the old lock"
-    );
+    // A locked import means the prepared snapshot, including the absence of
+    // this header. Only an explicit refresh selects the newly added header.
+    let still_locked = load_imports(&project.config()).unwrap();
+    assert_eq!(still_locked[0].identity(), original_identity);
+    verify_c0_prepared_sources(&project.proof(), &still_locked).unwrap();
     create_lock(&project.config()).unwrap();
     let imports = load_imports(&project.config()).unwrap();
+    assert_ne!(imports[0].identity(), original_identity);
     verify_c0_prepared_sources(&project.proof().replace("15", "16"), &imports).unwrap();
 
     // The sidecar does not mention this function. Its effects still must reach

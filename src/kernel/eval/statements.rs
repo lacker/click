@@ -638,23 +638,43 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 };
                 obligations
             };
+            // A one-byte store inside a wider integer cell updates that cell's
+            // little-endian representation in place. The transition is then
+            // exactly a store of the updated wider value at the cell's own
+            // address: that is what the memory, its derivation edge, the
+            // certified store record, and the local refresh below describe.
+            // With no byte view the store writes its own cell and forgets the
+            // wider one, as before.
+            let (written_pointer, written_value) = if value.byte_width() == 1
+                && let Some(cell) =
+                    containing_integer_cell(&state.memory, &pointer, budget.c_byte_order())
+                && let Some(updated) = integer_cell_with_byte(&cell, &value)
+            {
+                (cell.pointer, updated)
+            } else {
+                (pointer.clone(), value.clone())
+            };
             let before_memory = state.memory.clone();
             let mut state = state.clone();
             let next_memory = state
                 .memory
                 .clone()
                 .without_possible_aliasing_cells(
-                    &pointer,
-                    value.byte_width(),
+                    &written_pointer,
+                    written_value.byte_width(),
                     &effective_assumptions,
                 )
-                .store_with_context(pointer.clone(), value.clone(), &effective_assumptions);
+                .store_with_context(
+                    written_pointer.clone(),
+                    written_value.clone(),
+                    &effective_assumptions,
+                );
             state.set_memory(next_memory);
             if let Some(pending) = &state.pending_thread_create {
                 state.pending_thread_create = Some(pending.with_delta(
                     super::super::threads::PendingThreadMemoryDelta::Store {
-                        pointer: pointer.clone(),
-                        value: value.clone(),
+                        pointer: written_pointer.clone(),
+                        value: written_value.clone(),
                     },
                 ));
             }
@@ -662,14 +682,14 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             facts.push(ExecutionPureFact::certified_store(
                 before_memory,
                 state.memory.clone(),
-                pointer.clone(),
-                value.clone(),
+                written_pointer.clone(),
+                written_value.clone(),
                 authorized_range,
             ));
             refresh_scalar_local_after_memory_store(
                 &mut state,
-                &pointer,
-                &value,
+                &written_pointer,
+                &written_value,
                 &effective_assumptions,
             );
             if is_volatile {
@@ -2423,6 +2443,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    budget.install_c_byte_order(environment.byte_order());
     if let Some(pending) = &state.pending_thread_create {
         if let Some(resolved) = pending.resolve(state, assumptions) {
             return execute_c_statement_paths(

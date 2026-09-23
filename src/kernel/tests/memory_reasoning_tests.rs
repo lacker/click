@@ -5213,6 +5213,76 @@ mod wrapped_assumed_extent_is_refused {
         (memory, assumptions)
     }
 
+    #[test]
+    fn wrapped_goal_extent_cannot_pass_by_a_signed_residue() {
+        let memory = CMemory::new();
+        let range_base = array_base(0);
+        let range_bytes = Bitvector32Term::Constant(16);
+        let assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: range_base.clone(),
+            bytes: range_bytes.clone(),
+        });
+        let wrapped_base = array_base(0x2000_0000);
+        let wrapped_bytes = Bitvector32Term::Constant(0x6000_0000);
+        assert!(
+            !assumptions.proves_loadable_region_from_range(
+                &range_base,
+                &range_bytes,
+                &wrapped_base,
+                &wrapped_bytes,
+            ),
+            "a signed residue must not make an overflowing goal extent fit"
+        );
+        assert!(
+            !assumptions.proves_loadable_cell_from_region(
+                &range_base,
+                &range_bytes,
+                &wrapped_base,
+                0x6000_0000,
+            ),
+            "the constant-width cell route must also reject signed wrap"
+        );
+
+        let symbolic_bytes = Bitvector32Term::Variable(Variable(9_100_005));
+        let symbolic_end = Bitvector32Term::add(
+            Bitvector32Term::Constant(0x2000_0000),
+            symbolic_bytes.clone(),
+        );
+        let symbolic_assumptions = assumptions
+            .clone()
+            .assume_condition(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(symbolic_bytes.clone()),
+                    Box::new(Bitvector32Term::Constant(0x6000_0000)),
+                ),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(symbolic_end, Bitvector32Term::Constant(16)),
+                true,
+            );
+        assert!(
+            !symbolic_assumptions.proves_loadable_region_from_range(
+                &range_base,
+                &range_bytes,
+                &wrapped_base,
+                &symbolic_bytes,
+            ),
+            "symbolic extents must carry evidence that their sum did not wrap"
+        );
+
+        assert!(
+            assumptions.proves_loadable_region_from_range(
+                &range_base,
+                &range_bytes,
+                &array_base(8),
+                &Bitvector32Term::Constant(8),
+            ),
+            "an exact in-bounds byte window remains covered"
+        );
+    }
+
     /// The cell rules: `proves_memory_loadable` for a cell inside the range,
     /// which routes through `proves_loadable_region_from_structural_range` and
     /// `proves_loadable_cell_from_region`.

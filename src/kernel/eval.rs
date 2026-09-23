@@ -1,5 +1,6 @@
 use super::prelude::*;
 
+mod byte_view;
 mod expression;
 mod memory_loads;
 mod operators;
@@ -38,6 +39,11 @@ fn volatile_access_fact(
     }))
 }
 
+#[cfg(test)]
+pub(in crate::kernel) use byte_view::{ContainingIntegerCell, integer_cell_byte};
+pub(in crate::kernel) use byte_view::{
+    byte_view_load_value, containing_integer_cell, integer_cell_with_byte,
+};
 pub(super) use expression::*;
 pub(crate) use memory_loads::canonical_condition_fact;
 pub(crate) use memory_loads::canonical_form_of_load;

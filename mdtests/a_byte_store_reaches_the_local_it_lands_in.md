@@ -25,6 +25,12 @@ The note on the C in `a_byte_store_inside_a_wide_cell_is_not_framed.md`
 applies here too: what is pinned is the rule this store runs into, not an
 endorsement of the byte view.
 
+Since the little-endian byte view of integer cells landed (see
+`docs/concepts/memory-model.md`), the store no longer drops the slot's cell:
+it updates the `int64` cell at `&v` in place, so the refreshed binding reads
+the exact value `0x0705 == 1797` rather than an unknown load of the slot. The
+false claim `result == 5` is refuted by that value.
+
 `write_through_the_whole_object` is the other polarity, and the reason the
 rule is about bytes rather than about pointers at all: a store that covers the
 object, at its own address and in its own type, still installs its value, so
@@ -69,5 +75,5 @@ int64 write_through_the_whole_object() {
 ```
 
 ```expect
-fail: unclosed goal: result == 5; left side evaluated to load(local:v@0)i64, right side evaluated to 5; `v` changed since earlier in this function: the store to `v+1` wrote it.
+fail: unclosed goal: result == 5; left side evaluated to 1797i64, right side evaluated to 5
 ```

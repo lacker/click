@@ -3,6 +3,7 @@
 // calls it, so the tests import the planner explicitly.
 use super::prelude::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
+mod byte_view_tests;
 mod callback_signature_tests;
 
 fn checked_memory_load_equality(
@@ -232,6 +233,7 @@ fn arc_pointer(offset: i64) -> Pointer {
 }
 
 mod memory_dag_tests;
+mod memory_scaling_tests;
 
 mod heap_tests;
 mod loan_model_tests;

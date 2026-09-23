@@ -2350,6 +2350,17 @@ impl CExecutionEnvironment {
         self
     }
 
+    /// Installs the selected target's byte order. The default is
+    /// [`ByteOrder::Little`], the order of every selectable target.
+    pub fn with_byte_order(mut self, byte_order: ByteOrder) -> Self {
+        self.byte_order = byte_order;
+        self
+    }
+
+    pub fn byte_order(&self) -> ByteOrder {
+        self.byte_order
+    }
+
     /// Selects a call rule for one proof-local statement transition. All
     /// project tables and their variable index remain shared.
     pub(crate) fn with_selected_call_contract(mut self, name: &str) -> Self {

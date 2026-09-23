@@ -1450,6 +1450,7 @@ fn retirements_agree_for_load(left: &CMemory, right: &CMemory, pointer: &Pointer
     left.forgotten
         .ended_local_blocks
         .symmetric_difference(&right.forgotten.ended_local_blocks)
+        .into_iter()
         .all(|block| {
             !block.observable_by_load(&pointer.block) || local_block_no_pointer_can_reach(block)
         })
@@ -1679,13 +1680,13 @@ fn observable_heap_metadata_matches_for_load(
     pointer: &Pointer,
 ) -> bool {
     let observable = |candidate: &Pointer| candidate.block.observable_by_load(&pointer.block);
-    let map_matches = |left: &BTreeMap<Pointer, Bitvector32Term>,
-                       right: &BTreeMap<Pointer, Bitvector32Term>| {
+    let map_matches = |left: &SnapshotMap<Pointer, Bitvector32Term>,
+                       right: &SnapshotMap<Pointer, Bitvector32Term>| {
         left.iter()
             .filter(|(base, _)| observable(base))
             .eq(right.iter().filter(|(base, _)| observable(base)))
     };
-    let set_matches = |left: &BTreeSet<Pointer>, right: &BTreeSet<Pointer>| {
+    let set_matches = |left: &SnapshotSet<Pointer>, right: &SnapshotSet<Pointer>| {
         left.iter()
             .filter(|base| observable(base))
             .eq(right.iter().filter(|base| observable(base)))
@@ -1937,7 +1938,7 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
             .collect::<Vec<_>>();
         let blocks = std::sync::Arc::make_mut(&mut canonical.blocks);
         for (block, size) in markers {
-            blocks.entry(block).or_insert(size);
+            blocks.get_or_insert(block, size);
         }
         // A forget mark survives the jump for the same reason a havoc marker
         // does, and it is the source's mark that must not be inherited: the

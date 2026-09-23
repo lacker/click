@@ -52,6 +52,22 @@ The configuration's presence selects compiler mode for verification and its
 associated proof tools. An invalid configuration or missing lock is an error;
 it does not fall back to source-bundle mode.
 
+Verification loads the recorded C artifact without executing or locating the
+configured compiler. The artifact and version-2 lock can move to another host
+with the same config bytes, C source, and project-local included headers. Loading
+checks their hashes, the artifact bytes and size, the target, the recorded
+toolchain/invocation identity, and the source projection identity. System
+headers used during preparation are identified in the lock but need not be
+installed on the verification host. A version-1 C lock must be refreshed.
+
+This verifies the **prepared snapshot**. A change to the C source or an opened
+project-local header is rejected during loading. A change to external headers,
+or the appearance of a previously absent header selected by `__has_include`,
+does not silently change that snapshot; run `click import lock` in the selected
+toolchain environment to prepare a new one. The lock is a consistency record,
+so publication and provenance of a native platform artifact still need a
+trusted preparation process.
+
 Lock creation is source preparation, not proof verification. The C parser can
 still reject an unsupported construct when a proof tool loads the prepared
 translation unit. No C declarations, function bodies, storage, attributes, or
@@ -403,11 +419,15 @@ end-to-end subset.
 
 ## Validation and supported profile
 
-Each load runs fresh preprocessing with controlled arguments and environment,
-then compares the result and input identities with the existing lock. Changed
-sources, used headers, toolchain inputs, configuration, or artifact bytes cannot
-reuse an incompatible lock. Refreshing a lock is always a separate explicit
-operation. A supplied digest alone never establishes a validated import.
+Explicit refresh runs preprocessing with controlled arguments and environment,
+records the selected toolchain, dependencies, source and artifact, and refuses
+inputs that change during preparation. Ordinary loading does not invoke the
+compiler. It checks the lock's internal identities and the available project
+inputs against the recorded snapshot. Changed C sources, opened project-local
+headers, configuration, or artifact bytes cannot reuse that lock. External
+toolchain and header changes require a new explicit refresh to produce a proof
+about that new environment. A supplied digest alone does not authenticate who
+prepared a native-platform artifact.
 
 Compiler-backed C imports accept two explicit targets. The config target must
 match the sidecar's `target` directive; an omitted directive selects the kernel
@@ -427,8 +447,8 @@ Selecting this profile grants no pthread contract or concurrency semantics.
 Both profiles require explicit include directories: `-nostdinc` disables
 ambient system include search. Supply the selected toolchain and libc header
 roots with ordered `-isystem` or `-I` arguments; those roots and opened headers
-participate in the existing inventory and lock checks. For the selected Debian
-GCC 12 environment, these roots are `/usr/lib/gcc/x86_64-linux-gnu/12/include`,
+participate in the preparation inventory and lock identity. For the selected
+Debian GCC 12 environment, these roots are `/usr/lib/gcc/x86_64-linux-gnu/12/include`,
 `/usr/include/x86_64-linux-gnu`, and `/usr/include`. Other installations must
 supply their actual selected roots. Lock preparation may succeed while Click's
 C parser still refuses an unsupported declaration in a real system header.
@@ -447,11 +467,12 @@ substitute for that inventory.
 
 The initial implementation snapshots the working directory, source directories,
 and configured include roots before and after preprocessing. Keep them quiescent
-during a load. Root/configuration/output paths with symlink components are
-rejected; dependencies resolving outside the declared roots are also rejected.
-Output parent directories must already exist. A project is limited to 512 MiB
-and 200,000 entries in its input-root inventory, 64 MiB per artifact, 128 MiB of
-combined artifacts, and 1 MiB each for its configuration and lock. Compiler
+during lock refresh. Root/configuration/output paths with symlink components are
+rejected during preparation; dependencies resolving outside the declared roots
+are also rejected. Output parent directories must already exist. A project is
+limited to 512 MiB and 200,000 entries in its input-root inventory, 64 MiB per
+artifact, 128 MiB of combined artifacts, and 1 MiB each for its configuration
+and lock. Compiler
 processes have a 30-second limit. Exceeding a limit is a diagnostic, never a
 partial successful import.
 

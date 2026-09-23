@@ -104,7 +104,9 @@ A narrower viewability claim can also be covered by a wider one. The
 displacement from the wider base plus the narrower claim's byte count must fit
 inside the wider byte extent as an exact count. A 32-bit sum that wraps to a
 small residue does not establish coverage. For symbolic byte sums, Click
-requires bounds that keep the arithmetic nonnegative and unwrapped; a
+requires bounds that keep the arithmetic nonnegative and unwrapped. The
+kernel checks the addends and proves the computed end is no smaller than the
+displacement before comparing that end with the covering span; a
 constant-size element read can instead use the range's guarded element count.
 
 ## In a pure theorem

@@ -76,24 +76,34 @@ cargo test --test examples
 
 ## Compiler import fixtures
 
-The gate also runs `tests/compiler_import.rs` against the installed GCC at
-`/usr/bin/gcc`. Provision GCC before running `scripts/check.sh` (the Linux CI
-runner includes it). Missing GCC fails the fixture; the gate never downloads a
-compiler or silently skips these checks. The small fixture creates its own
-artifacts and locks in an isolated temporary directory and calls the shared
-verification and expansion engine directly.
+On Linux, the gate runs `tests/compiler_import.rs` against GCC at
+`/usr/bin/gcc`. Provision GCC before running `scripts/check.sh` there (the
+Linux CI runner includes it). Missing GCC fails the preparation fixture; the
+gate never downloads a compiler or silently skips these checks. The fixture
+creates artifacts and locks in an isolated temporary directory, then checks
+offline loading, verification, and expansion. On macOS, compiler-independent
+unit regressions load and verify a relocated C artifact with no GCC or target
+headers installed, and reject changed source, artifact, local header, and lock
+identity bytes.
 
-These fixtures cover compiler conditional selection, token pasting and macro
-rescanning, contextual headers, configured system dependencies, stale locks,
-artifact tampering, import identity, and original-source diagnostics. They do
-not claim that the complete captured Linux translation unit verifies.
+The Linux fixtures cover compiler conditional selection, token pasting and
+macro rescanning, contextual headers, configured dependencies, refresh after
+an optional header appears, stale configs, artifact tampering, import identity,
+and original-source diagnostics. They do not claim that the complete captured
+Linux translation unit verifies.
 
 The gate also builds `tools/cpp-exporter/main.cpp` against exactly Clang and
 LLVM 19.1.7, then runs `tests/cpp_import.rs`. Set `LLVM_CONFIG` when the pinned
 `llvm-config` is not installed in a standard versioned location. On macOS,
-Homebrew's `llvm@19` package provides the expected toolchain. The Linux CI job
-installs the pinned development packages before entering the network-free
-gate.
+Homebrew's `llvm@19` package provides the expected toolchain. On Linux, Clang
+borrows the C++ standard library headers of the newest GCC installation it
+finds, so that installation's headers must be present too (on Debian and
+Ubuntu, `libstdc++-N-dev` for the newest `/usr/lib/gcc/x86_64-linux-gnu/N`);
+a distribution update that moves the libstdc++ runtime forward without its
+headers is the usual cause of a sudden `<algorithm>` not found. The build
+script checks this first and names the missing package. The Linux CI job
+installs the pinned development packages, including those headers, before
+entering the network-free gate.
 
 The C++ fixtures refresh typed artifacts for C++20 functions in a translation
 unit or one selected included project header through one exact JSON
@@ -297,6 +307,12 @@ better. A benchmark that merely stays below the production deadline can still
 hide quadratic growth and is not sufficient. Conversely, explicitly emitted
 paths, quantified instances, premises, and definition members count as input
 or output and may be charged accordingly.
+
+Kernel memory snapshots have such regressions in
+`src/kernel/tests/memory_scaling_tests.rs`: sequential stores into one block,
+one store beside a growing number of unrelated cells, interning a one-store
+derivative of an interned snapshot, and deduplication of equal content reached
+by different routes.
 
 Rust library tests and both fixture gates enforce deterministic tactic-work
 budgets but do not inherit production time limits. Tests specifically about
