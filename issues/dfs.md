@@ -5,7 +5,7 @@ found. Kernel soundness review discovered during the same campaign is tracked
 separately in `issues/bughunt.md`. Everything needed for this example is here
 and in `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
-## Handoff checkpoint — 2026-09-22, after the reachability proof
+## Handoff checkpoint — 2026-09-22, after reachability and branching reduction
 
 The complete unmodified search now verifies termination and memory safety in
 `mdtests/search_terminates_by_unmarked_count.md`. Its `Integer`-valued fold
@@ -42,8 +42,12 @@ quantified-transport, whole-array dependency, shared-lemma, extent-restatement,
 and small diagnostic items below remain proof-language or tooling costs, but
 none blocks the termination, memory-safety, or branch-local correctness claims.
 
-Whole-array dependency refinement and recursive DFS remain design work rather
-than small finishing edits. In particular, discuss the
+Whole-array dependency refinement and cyclic branching DFS remain design work
+rather than small finishing edits. The bounded branching-graph C reduction and
+its staged proof obligations are in
+`design/dfs-gaps/branching_graph_dfs.md`; the count-monotonicity lemma needed
+after its first recursive call is checked in `mdtests/unmarked_count_lemmas.md`.
+In particular, discuss the
 fold-read-range design in item 2 with the user before implementing it.
 
 This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
@@ -143,10 +147,16 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    does not say which constant; a store refusal spells `owns b[0..1]` as
    `owns a[(v100001 - v100000)..]`.
 
-Next stage: move to recursive branching DFS. The older
-folded-resource route has its own gaps:
-a loop guard cannot read a cell owned by a folded resource, and recursive
-`walk` is not allowed in a resource fact.
+Next stage: verify termination and memory safety of the unchanged
+two-successor graph search in `design/dfs-gaps/branching_graph_dfs.md`. Its
+distinctive obligation is preserving a strictly smaller unmarked count for
+the second recursive call after the first has changed `visited`. A binary-tree
+recursive search is already verified in `examples/modeled-binary-tree/`, but
+that resource-ranked acyclic case does not cover cycles or sharing. The older
+folded-resource loop-guard claim is not a general current limitation;
+`mdtests/composite_resource_vector_fill_loop_snapshot.md` already checks a
+guard reading a folded owned composite. Re-reduce any particular recursive
+resource refusal before treating it as a verifier defect.
 
 ## Acceptance
 

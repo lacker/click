@@ -15,6 +15,9 @@ behavior lives in `mdtests/`. The checked examples include
 `mdtests/sweep_maintains_a_zero_unmarked_count.md` (the counting invariant
 across the store that changes it), and
 `mdtests/search_terminates_by_unmarked_count.md` (the complete search proof).
+`branching_graph_dfs.md` records the next fixed C reduction; it is not yet a
+verified mdtest. `mdtests/unmarked_count_lemmas.md` now also checks the
+count-monotonicity lemma required between its two recursive calls.
 
 The `decreases unmarked(visited, 0, n)` measure itself is **not** a gap any
 more: an `Integer`-valued fold is accepted as a loop measure, and the ranking
@@ -35,11 +38,14 @@ decrease there. Neither is the fold law after a store, which
   paths now terminate loop preservation without owing the back-edge bundle;
   `mdtests/return_inside_ranked_loop_body.md` covers explicit and automatic
   preservation.
-- `reachability_needs_an_algebraic_loop_witness.md` — **algebraic witness layer
-  fixed; snapshot transport remains.** Algebraic `forall`, `exists`,
-  `witness`, and `choose` now carry changing `Nat` witnesses, including from
-  an explicit loop invariant. The full recursive array walk still needs its
-  defining relation transported across a store to a disjoint array.
+- `reachability_needs_an_algebraic_loop_witness.md` — **fixed historical
+  reduction.** Algebraic `forall`, `exists`, `witness`, and `choose` now carry
+  changing `Nat` witnesses, including from an explicit loop invariant. The
+  full `search` proof transports `walk` across the visited-array store in
+  `mdtests/search_terminates_by_unmarked_count.md`.
+- `branching_graph_dfs.md` — the two-successor cyclic-graph reduction and its
+  next proof obligations; unlike the verified binary-tree DFS, its left call
+  can change `visited` before the right call.
 - `small_refusals_and_spellings.md` — seven one-to-six-line costs: extent
   halves restated at every `apply`, `arithmetic() using` not weakening a
   derived strict bound, a constant-true requirement needing its own `have`,
