@@ -6,9 +6,10 @@
 //! the useful part of a diagnostic.
 
 use crate::kernel::{
-    AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, Bitvector32Term, CExpressionOutcome, CMemory,
-    CResource, CResourceFact, CState, ConditionTerm, IntegerRangeFoldIndex, IntegerTerm, Pointer,
-    PointerOffsetTerm, Proposition, PureFunctionArgument, SpecCaptureRefusal, Term, Variable,
+    AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, AlgebraicValueType, Bitvector32Term,
+    CExpressionOutcome, CMemory, CResource, CResourceFact, CState, ConditionTerm,
+    IntegerRangeFoldIndex, IntegerTerm, Pointer, PointerOffsetTerm, Proposition,
+    PureFunctionArgument, Sort, SpecCaptureRefusal, Term, Variable,
 };
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -220,6 +221,26 @@ pub(crate) fn render_integer_term(term: &IntegerTerm) -> String {
     renderer.output
 }
 
+/// Compact binder sort spelling shared by traces and ordinary diagnostics.
+/// The kernel's `Debug` for an algebraic sort embeds its entire constructor
+/// schema, which obscures the proposition that follows the binder.
+pub(crate) fn render_sort(sort: &Sort) -> String {
+    let mut labels = SnapshotLabels::default();
+    let mut renderer = Renderer {
+        output: String::with_capacity(64),
+        nodes: 0,
+        depth: 0,
+        truncated: false,
+        labels: &mut labels,
+        bound_names: Vec::new(),
+    };
+    renderer.sort(sort);
+    if renderer.truncated {
+        renderer.output.push('…');
+    }
+    renderer.output
+}
+
 /// Describe a refused Integer capture: which written subterm carries an
 /// evaluation condition, and which condition the proof context is missing.
 pub(crate) fn describe_spec_capture_refusal(refusal: &SpecCaptureRefusal) -> String {
@@ -327,7 +348,9 @@ impl Renderer<'_> {
             }
             Proposition::ForAll { var, sort, body } => {
                 let name = self.variable_name(*var, "bound");
-                self.fmt(format_args!("∀{name}:{sort:?}. "));
+                self.fmt(format_args!("∀{name}:"));
+                self.sort(sort);
+                self.push(". ");
                 self.bound_names.push((*var, name));
                 self.proposition(body);
                 self.bound_names.pop();
@@ -343,7 +366,9 @@ impl Renderer<'_> {
                 } else {
                     name.clone()
                 };
-                self.fmt(format_args!("∃{binder}:{sort:?}. "));
+                self.fmt(format_args!("∃{binder}:"));
+                self.sort(sort);
+                self.push(". ");
                 self.bound_names.push((*var, binder));
                 self.proposition(body);
                 self.bound_names.pop();
@@ -519,6 +544,50 @@ impl Renderer<'_> {
             }
             Proposition::CFunctionPartiallySatisfiesSpecification { .. } => {
                 self.push("function-partially-satisfies(<C function specification>)")
+            }
+        }
+        self.depth -= 1;
+    }
+
+    fn sort(&mut self, sort: &Sort) {
+        match sort {
+            Sort::Algebraic(ty) => {
+                self.push(&ty.name);
+                self.algebraic_type_arguments(&ty.arguments);
+            }
+            _ => self.fmt(format_args!("{sort:?}")),
+        }
+    }
+
+    fn algebraic_type_arguments(&mut self, arguments: &[AlgebraicValueType]) {
+        if arguments.is_empty() {
+            return;
+        }
+        self.push("<");
+        for (index, argument) in arguments.iter().enumerate() {
+            if self.truncated {
+                break;
+            }
+            if index > 0 {
+                self.push(", ");
+            }
+            self.algebraic_value_type(argument);
+        }
+        self.push(">");
+    }
+
+    fn algebraic_value_type(&mut self, ty: &AlgebraicValueType) {
+        if !self.visit() {
+            return;
+        }
+        self.depth += 1;
+        match ty {
+            AlgebraicValueType::Parameter(name) => self.push(name),
+            AlgebraicValueType::C(ty) => self.fmt(format_args!("{ty:?}")),
+            AlgebraicValueType::Integer => self.push("Integer"),
+            AlgebraicValueType::Algebraic { name, arguments } => {
+                self.push(name);
+                self.algebraic_type_arguments(arguments);
             }
         }
         self.depth -= 1;
@@ -1280,6 +1349,29 @@ mod tests {
         assert!(first.contains("cur"), "{first}");
         assert!(first.contains("value A"), "{first}");
         assert!(!first.contains("v7") && !first.contains("v8"), "{first}");
+    }
+
+    #[test]
+    fn existential_algebraic_sort_omits_constructor_schema() {
+        let mut path = crate::kernel::AlgebraicType::parameter("Path".into());
+        path.rigid = false;
+        path.arguments = vec![AlgebraicValueType::Integer];
+        let proposition = Proposition::Exists {
+            name: "path".into(),
+            var: Variable(7),
+            sort: Sort::Algebraic(path),
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Constant(true),
+                true,
+            )),
+        };
+        let rendered = render_proposition(&proposition);
+        assert!(rendered.starts_with("∃path:Path<Integer>. "), "{rendered}");
+        assert!(!rendered.contains("AlgebraicSchemas"), "{rendered}");
+        assert_eq!(
+            crate::surface::diagnostics::describe_pure_fact(&proposition, &[], &[]),
+            "existential proposition over Path<Integer>"
+        );
     }
 
     #[test]

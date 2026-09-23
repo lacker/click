@@ -336,10 +336,16 @@ pub(super) fn describe_pure_fact(
             describe_bitvector_with_context(bytes, parameters, arguments)
         ),
         Proposition::ForAll { sort, .. } => {
-            format!("universal proposition over {sort:?}")
+            format!(
+                "universal proposition over {}",
+                crate::surface::proof_diagnostics::render::render_sort(sort)
+            )
         }
         Proposition::Exists { sort, .. } => {
-            format!("existential proposition over {sort:?}")
+            format!(
+                "existential proposition over {}",
+                crate::surface::proof_diagnostics::render::render_sort(sort)
+            )
         }
         Proposition::ConditionIs(condition, value) => {
             let kind = match condition {
