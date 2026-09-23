@@ -76,6 +76,10 @@ pub(crate) struct ProofFacts {
     predicate_unfolded_universal_facts: PersistentSequence<Proposition>,
     implications_by_consequent:
         PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
+    /// Alpha-invariant selection for quantified implication consequents.
+    /// Checked equivalence still guards snapshot and free-variable identity.
+    implications_by_quantified_consequent:
+        PersistentMap<QuantifiedEquivalenceKey, PersistentSequence<ImplicationCandidate>>,
     assumptions: PureFactContext,
     implicit_transport_assumptions: PureFactContext,
     by_predicate: PersistentMap<String, PersistentSequence<Proposition>>,
@@ -91,7 +95,7 @@ struct PrioritizedProofFacts {
 
 /// One indexed prefix of an available implication chain. The consequent key
 /// selects this small candidate; checking still validates every antecedent
-/// and the exact/snapshot-equivalent consequent against the current facts.
+/// and the exact or alpha-equivalent quantified consequent.
 #[derive(Clone)]
 struct ImplicationCandidate {
     antecedents: PersistentSequence<Proposition>,
@@ -317,6 +321,7 @@ impl ProofFacts {
         let mut algebraic_equalities_by_term = PersistentMap::default();
         let mut by_quantified_equivalence = PersistentMap::default();
         let mut implications_by_consequent = PersistentMap::default();
+        let mut implications_by_quantified_consequent = PersistentMap::default();
         let mut assumptions = PureFactContext::new();
         let mut implicit_transport_assumptions = PureFactContext::new();
         let mut by_predicate = PersistentMap::default();
@@ -333,8 +338,14 @@ impl ProofFacts {
             top_level_exact =
                 top_level_exact.with_value(crate::kernel::clone_proposition_iteratively(fact));
             by_quantified_equivalence = index_quantified_fact(by_quantified_equivalence, fact);
-            implications_by_consequent =
-                index_implication_consequents(implications_by_consequent, fact);
+            (
+                implications_by_consequent,
+                implications_by_quantified_consequent,
+            ) = index_implication_consequents(
+                implications_by_consequent,
+                implications_by_quantified_consequent,
+                fact,
+            );
             by_predicate = index_predicate_fact(by_predicate, fact);
             if matches!(fact, Proposition::And(_, _)) {
                 proper_conjuncts = index_proper_conjuncts(proper_conjuncts, fact);
@@ -388,6 +399,7 @@ impl ProofFacts {
             predicate_unfolded_universal_facts: PersistentSequence::default(),
             rewritten_load_evidence: PersistentSequence::default(),
             implications_by_consequent,
+            implications_by_quantified_consequent,
             assumptions,
             implicit_transport_assumptions,
             by_predicate,
@@ -436,8 +448,12 @@ impl ProofFacts {
         let mut algebraic_equalities_by_term = self.algebraic_equalities_by_term.clone();
         let by_quantified_equivalence =
             index_quantified_fact(self.by_quantified_equivalence.clone(), &fact);
-        let implications_by_consequent =
-            index_implication_consequents(self.implications_by_consequent.clone(), &fact);
+        let (implications_by_consequent, implications_by_quantified_consequent) =
+            index_implication_consequents(
+                self.implications_by_consequent.clone(),
+                self.implications_by_quantified_consequent.clone(),
+                &fact,
+            );
         if matches!(fact, Proposition::And(_, _)) {
             proper_conjuncts = index_proper_conjuncts(proper_conjuncts, &fact);
             let mut conjuncts = Vec::new();
@@ -493,6 +509,7 @@ impl ProofFacts {
             predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
             rewritten_load_evidence: self.rewritten_load_evidence.clone(),
             implications_by_consequent,
+            implications_by_quantified_consequent,
             assumptions: self
                 .assumptions
                 .clone()
@@ -964,16 +981,30 @@ impl ProofFacts {
         &self,
         required: &Proposition,
     ) -> bool {
-        let keys = vec![snapshot_blind_proposition_key(required)];
-        keys.into_iter()
-            .filter_map(|key| self.implications_by_consequent.get(&key))
-            .flat_map(PersistentSequence::iter)
-            .any(|candidate| {
-                &candidate.consequent == required
-                    && candidate
-                        .antecedents
-                        .iter()
-                        .all(|antecedent| self.available_across_effects(antecedent, &[]))
+        let antecedents_available = |candidate: &ImplicationCandidate| {
+            candidate
+                .antecedents
+                .iter()
+                .all(|antecedent| self.available_across_effects(antecedent, &[]))
+        };
+        if self
+            .implications_by_consequent
+            .get(&snapshot_blind_proposition_key(required))
+            .is_some_and(|bucket| {
+                bucket.iter().any(|candidate| {
+                    &candidate.consequent == required && antecedents_available(candidate)
+                })
+            })
+        {
+            return true;
+        }
+        quantified_equivalence_index_key(required)
+            .and_then(|key| self.implications_by_quantified_consequent.get(&key))
+            .is_some_and(|bucket| {
+                bucket.iter().any(|candidate| {
+                    quantified_binder_equivalent(required, &candidate.consequent)
+                        && antecedents_available(candidate)
+                })
             })
     }
 
@@ -1897,8 +1928,15 @@ fn index_quantified_fact(
 
 fn index_implication_consequents(
     mut index: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
+    mut quantified_index: PersistentMap<
+        QuantifiedEquivalenceKey,
+        PersistentSequence<ImplicationCandidate>,
+    >,
     fact: &Proposition,
-) -> PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>> {
+) -> (
+    PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
+    PersistentMap<QuantifiedEquivalenceKey, PersistentSequence<ImplicationCandidate>>,
+) {
     let mut depth = 0;
     let mut depth_cursor = fact;
     while let Proposition::Implies(_, consequent) = depth_cursor {
@@ -1909,7 +1947,7 @@ fn index_implication_consequents(
         // This index is an optional search accelerator. Keep a very deep
         // implication in the authoritative fact stores without materializing
         // one candidate per suffix.
-        return index;
+        return (index, quantified_index);
     }
     let mut antecedents = PersistentSequence::default();
     let mut current = fact;
@@ -1930,9 +1968,14 @@ fn index_implication_consequents(
             bucket.push(candidate.clone());
             index = index.with_inserted(key, bucket);
         }
+        if let Some(key) = quantified_equivalence_index_key(consequent) {
+            let mut bucket = quantified_index.get(&key).cloned().unwrap_or_default();
+            bucket.push(candidate);
+            quantified_index = quantified_index.with_inserted(key, bucket);
+        }
         current = consequent;
     }
-    index
+    (index, quantified_index)
 }
 
 fn index_proper_conjuncts(
@@ -2573,6 +2616,109 @@ mod integer_equality_fact_index_tests {
 
         let context = PureFactContext::new().assume_proposition(source);
         assert!(context.states_required_goal(&renamed));
+    }
+
+    #[test]
+    fn implication_extract_renames_existential_but_keeps_snapshot_and_antecedent() {
+        let block = "implication-existential-viewable";
+        let memory = CMemory::new().with_block(block, 32);
+        let changed_memory = memory.clone().store(
+            Pointer {
+                block: block.into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            CValue::Int32(Bitvector32Term::Constant(1)),
+        );
+        let consequent = loadable_exists(&memory, "callee", Variable(207_700), block, None, 4);
+        let renamed = loadable_exists(&memory, "caller", Variable(207_800), block, None, 4);
+        let changed_snapshot =
+            loadable_exists(&changed_memory, "caller", Variable(207_800), block, None, 4);
+        let antecedent = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+        let implication = Proposition::Implies(Box::new(antecedent.clone()), Box::new(consequent));
+        let without_antecedent = ProofFacts::from_ordered(std::slice::from_ref(&implication));
+        assert!(!without_antecedent.contains_discharged_implication_consequent(&renamed));
+
+        let facts = ProofFacts::from_ordered(&[implication, antecedent]);
+        assert!(facts.contains_discharged_implication_consequent(&renamed));
+        assert!(!facts.contains_discharged_implication_consequent(&changed_snapshot));
+    }
+
+    #[test]
+    fn implication_extract_renames_path_inside_function_equality() {
+        let path_type = crate::kernel::AlgebraicType::parameter("Path".into());
+        let path_reaches = |name: &str, binder: Variable| Proposition::Exists {
+            name: name.into(),
+            var: binder,
+            sort: Sort::Algebraic(path_type.clone()),
+            body: Box::new(Proposition::Equal(
+                Term::Bitvector32(Bitvector32Term::ClickFunctionApplication {
+                    name: "walk".into(),
+                    arguments: vec![PureFunctionArgument::Algebraic(AlgebraicTerm {
+                        algebraic_type: path_type.clone(),
+                        node: AlgebraicTermNode::Variable(binder),
+                    })],
+                }),
+                Term::Bitvector32(Bitvector32Term::Constant(1)),
+            )),
+        };
+        let source = path_reaches("callee_path", Variable(207_750));
+        let required = path_reaches("caller_path", Variable(207_751));
+        let antecedent = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+        let facts = ProofFacts::from_ordered(&[
+            Proposition::Implies(Box::new(antecedent.clone()), Box::new(source)),
+            antecedent,
+        ]);
+        assert!(facts.contains_discharged_implication_consequent(&required));
+    }
+
+    #[test]
+    fn quantified_implication_extract_does_not_scan_unrelated_consequents() {
+        let memory = CMemory::new().with_block("selected-implication", 32);
+        let antecedent = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+        let selected = loadable_exists(
+            &memory,
+            "callee",
+            Variable(207_900),
+            "selected-implication",
+            None,
+            4,
+        );
+        let required = loadable_exists(
+            &memory,
+            "caller",
+            Variable(207_901),
+            "selected-implication",
+            None,
+            4,
+        );
+        let mut visits = Vec::new();
+        for count in [8_u64, 16, 32, 64] {
+            let mut ordered = vec![
+                Proposition::Implies(Box::new(antecedent.clone()), Box::new(selected.clone())),
+                antecedent.clone(),
+            ];
+            ordered.extend((0..count).map(|index| {
+                Proposition::Implies(
+                    Box::new(antecedent.clone()),
+                    Box::new(loadable_exists(
+                        &memory,
+                        "unrelated",
+                        Variable(208_000 + index),
+                        &format!("unrelated-implication-{index}"),
+                        None,
+                        4,
+                    )),
+                )
+            }));
+            let facts = ProofFacts::from_ordered(&ordered);
+            crate::kernel::proof::reset_alpha_proposition_key_visits();
+            assert!(facts.contains_discharged_implication_consequent(&required));
+            visits.push(crate::kernel::proof::alpha_proposition_key_visits());
+        }
+        assert!(
+            visits.windows(2).all(|pair| pair[0] == pair[1]),
+            "{visits:?}"
+        );
     }
 
     #[test]

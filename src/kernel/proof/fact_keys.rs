@@ -7,6 +7,7 @@
 use crate::kernel::{
     AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, CType, CValue, IntegerComparisonOperator,
     IntegerTerm, MachineIntegerType, PureFunctionArgument, SharedCMemory, SharedIntegerTerm, Sort,
+    Term,
 };
 use crate::kernel::{
     Bitvector32Term, CComparisonOperator, CFloatBinaryOperator, CFloatClassification,
@@ -574,6 +575,8 @@ pub(crate) struct PropositionIdentityKey(AlphaPropositionKey);
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaPropositionKey {
+    EqualBitvector(AlphaBitvectorKey, AlphaBitvectorKey),
+    EqualAlgebraic(AlphaAlgebraicKey, AlphaAlgebraicKey),
     Condition(AlphaConditionKey, bool),
     CMemoryLoadable {
         memory: AlphaSnapshotKey,
@@ -2991,6 +2994,18 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
         Some((left, right))
     };
     Some(match proposition {
+        Proposition::Equal(Term::Bitvector32(left), Term::Bitvector32(right)) => {
+            AlphaPropositionKey::EqualBitvector(
+                alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(left, bindings, next_binder)?,
+                alpha_bitvector_key_with_bindings::<ALLOW_LOADS>(right, bindings, next_binder)?,
+            )
+        }
+        Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => {
+            AlphaPropositionKey::EqualAlgebraic(
+                alpha_algebraic_key_with_bindings::<ALLOW_LOADS>(left, bindings, next_binder)?,
+                alpha_algebraic_key_with_bindings::<ALLOW_LOADS>(right, bindings, next_binder)?,
+            )
+        }
         Proposition::ConditionIs(condition, value) => AlphaPropositionKey::Condition(
             alpha_condition_key_with_bindings::<ALLOW_LOADS>(condition, bindings, next_binder)?,
             *value,

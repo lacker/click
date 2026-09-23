@@ -1,4 +1,4 @@
-# An alpha-renamed existential is not extracted from a discharged implication
+# Extract an alpha-renamed existential from a discharged implication
 
 This differs from `extract_algebraic_existential_implication.md` only in the
 bound variable's name. Both propositions mean the same thing. The antecedent
@@ -22,5 +22,5 @@ theorem extract_algebraic_existential_alpha(flag: int32) {
 ```
 
 ```expect
-fail: `extract` proposition is not a proper conjunct
+pass
 ```
