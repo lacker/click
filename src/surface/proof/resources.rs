@@ -4620,7 +4620,7 @@ fn materialize_composite_resource_cells_from_snapshot(
                                 load,
                             )
                         };
-                        memory = memory.store(pointer, value);
+                        memory = memory.materialize_named_cell(pointer, value);
                     }
                     memory
                 },
@@ -4653,7 +4653,7 @@ fn materialize_composite_resource_cells_from_snapshot(
                 _ => CValue::Int32(load),
             },
         };
-        memory = memory.store(pointer, value);
+        memory = memory.materialize_named_cell(pointer, value);
     }
     memory
 }

@@ -1,11 +1,12 @@
 # P2: Extend bounded control flow
 
 The selected P1 control-flow milestone is complete: structured C loops and
-loop exits, constant-expression-label `switch`, checked forward `goto` cleanup, and the
-bounded C++ cleanup/unwind profile all have checked execution and regression
-coverage. This issue records the smaller, independently motivated extensions
-that can improve ordinary control-flow coverage without taking on general
-backward or irreducible `goto`.
+loop exits, constant-expression-label `switch`, checked forward `goto` cleanup,
+and the bounded C++ cleanup/unwind profile all have checked execution and
+regression coverage, including a conditionally constructed guard around a call
+that can return or throw into a returning handler. This issue records
+independently motivated extensions that can improve ordinary control-flow
+coverage without taking on general backward or irreducible `goto`.
 
 This is deliberately not the home for verifier-wide control-flow soundness
 audits. Put those findings in [`bughunt.md`](bughunt.md). General backward,
@@ -66,11 +67,21 @@ with ordinary verification.
 
 ## Slice C: broader cleanup and unwind edges
 
-The selected C++ profile already checks a bounded scalar exception, matching
-handler, and up to two non-throwing destructible guards. Broader support is a
-larger architectural slice, not a routine follow-up test. Candidate shapes
-include more constructed objects, richer handler selection, and additional
-normal or exceptional scope exits.
+The selected C++ profile checks a bounded scalar exception, matching handler,
+and up to two non-throwing destructible guards. It also accepts one guard
+constructed conditionally inside a `try` when the selected `int32` handler
+returns: the skipped branch constructs no guard, the normal call outcome runs
+the guard's cleanup and reaches the enclosing continuation, and the caught
+outcome runs cleanup and returns. The [C++ import regression](../tests/cpp_import.rs)
+verifies the unchanged source, expands and reverifies its proof, and audits the
+expanded result. A kernel regression checks the distinct terminal paths; a
+proof-object regression checks the enclosing continuation and per-path call
+edge selection. This does not claim arbitrary nested `try`/`catch`, an outer
+cleanup lifetime, or multiple conditional guards.
+
+Broader support remains a larger architectural slice. Candidate shapes include
+more constructed objects, richer handler selection, and additional normal or
+exceptional scope exits.
 
 The hard requirements are to preserve the constructed-object stack, emit
 destruction in the language-defined order, keep returned and thrown states
@@ -80,8 +91,8 @@ landing pads and runtime behavior are not proof evidence. General backward or
 irreducible edges, rethrow, `setjmp`/`longjmp`, and throwing destructors remain
 out of scope here.
 
-Do not start this slice without a small source example that identifies the
-newly supported edge shape and its hostile negative. A regression must cover
+For each further edge shape, start with a small source example that identifies
+the new behavior and a hostile negative. A regression must cover
 both the normal and exceptional outcomes, expansion/reverification, and the
 relevant deterministic scaling boundary.
 

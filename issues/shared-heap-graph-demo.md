@@ -97,12 +97,12 @@ payload protocols, and arbitrary cyclic-graph proofs remain deferred. The
 small diamond establishes sharing, not cycle reclamation. Follow `AGENTS.md`
 when proof tooling exposes a blocker.
 
-## Current status, 2026-09-21
+## Current status, 2026-09-22
 
-This issue remains open, but the work is now split into verified pieces and a
-specific composition gap. The frozen C source is unchanged. The helper-level
-proofs and the reduced two-parent caller pass through the normal gate; the
-exact frozen lifecycle still does not.
+This issue remains open. The frozen C source is unchanged and the normal gate
+passes, but there is still no passing sidecar for the full lifecycle. The
+current blocker is the lookup of a child reference through a folded parent
+resource at a modular call boundary.
 
 Verified and landed:
 
@@ -123,33 +123,52 @@ Verified and landed:
 - `mdtests/shared_heap_two_parent_caller.md` now composes two attaches, the
   first detach, a read through the surviving parent, and the final detach.
   This clears the earlier caller-side named-resource transport blocker.
+- `mdtests/shared_heap_two_parent_branch_release_positive.md` composes the
+  same two-parent sequence with the exact branch-on-count release. The caller
+  starts with one creator reference, both attaches retain, the creator and
+  first parent release, the second parent reads, and final detach releases.
+  The checked counted-resource transition already carries the count change;
+  `parent_detach` does not need a pure postcondition that reloads `p->kid`
+  after the C body clears it.
+- A proof-only unfold after a modular call no longer mutates heap-cell
+  initialization metadata as if it were a C store. The new kernel regression
+  ensures naming a fresh uninitialized heap cell cannot make it readable.
 
 Still failing to compose:
 
 - The exact frozen `design/shared-heap-probes/shared_parent.c` diamond has
   two allocation-failure paths and two destruction orders, but no passing
-  sidecar yet. The attempted proof now explicitly handles all three null
-  checks and reaches both `parent_attach` calls.
-- The first exact failure is the creator-reference release immediately after
-  the second attach:
+  sidecar yet. The latest scratch proof certifies all six helper bodies,
+  handles all three null checks in `run_first_destroyed`, composes both
+  `parent_attach` calls, and releases the creator reference. Its first failure
+  is the subsequent `parent_detach(first)`:
 
   ```click
   let { link: first_link } = step(parent_attach(first, kid), {});
   let { link: second_link } = step(parent_attach(second, kid), {});
   step(child_release(kid), {});
+  let first_out = step(parent_detach(first), { link: first_link });
   ```
 
-  Click reports that it cannot evaluate `child_ref(kid)` because its field
-  facts require an `UninitializedRead`, even though the two produced parent
-  links each record the same initialized child. Re-expressing the link using
-  `first->kid` makes the resource argument a different symbolic expression and
-  then fails with a missing `child_ref` resource. The remaining gap is
-  therefore preservation/normalization of the local child-pointer identity
-  across the composed parent resources, not the child release proof or the
-  old-pointer handoff itself.
-- The full positive caller, allocation-failure regressions, negative caller
-  regressions, and deterministic scaling fixtures therefore remain to be
-  composed before this issue can be closed.
+  Click cannot evaluate the `child_ref(p->kid)` contract argument because the
+  folded parent's field load reports `UninitializedRead`. Unfolding the parent
+  in the caller exposes enough checked evidence to prove `first->kid == kid`,
+  but refolding and calling detach still gives a different symbolic resource
+  argument rather than the held `child_ref(kid)`. A generic next step is to
+  let a contract bind a child pointer from a checked parent model field and
+  use that binder as the counted-resource argument, or to normalize the field
+  load from the resource's checked equality at call entry. Neither route may
+  create a logical reference from a bare pointer.
+- The separate minimal reducer
+  `mdtests/shared_heap_two_parent_branch_release.md` fails while certifying
+  `parent_detach` because it asks for a redundant pure count postcondition
+  through the field the C body clears. The positive counterpart shows this
+  postcondition is unnecessary for the reduced lifecycle. Do not add guarded
+  postconditions or a new population-lifetime rule on the strength of that
+  failing reducer alone.
+- The frozen caller's second destruction order, allocation-failure proof
+  fixtures, negative caller regressions, and deterministic scaling fixtures
+  remain before this issue can close.
 
 ## Completed chunk, 2026-09-21: retain initialization through call havoc
 

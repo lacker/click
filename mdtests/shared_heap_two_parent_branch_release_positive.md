@@ -1,14 +1,11 @@
-# `parent_detach` loses the child reference invariant across `child_release`
+# Two parents compose through one branch-on-count child release
 
-The creator owns one counted child reference, each attached parent adds one,
-and the creator releases its reference before either parent detaches.  The
-first detach should consume one `child_ref` while leaving the child's counted
-population nonempty; the second should consume the final reference and free
-the child. Before the allocation-lifetime check can decide that, contract
-certification fails while re-establishing `child_ref`'s invariant
-`obj->refs == count(child_ref(obj))` after the modular `child_release` call.
-The call contract states the count delta, but does not expose the matching
-refcount update on the branch where the allocation survives.
+The creator starts with one reference, each attach retains one, and each
+subsequent release consumes exactly one. The first parent detaches, the second
+still reads the payload, and the final detach frees the child. The detach
+contract returns the parent link and relies on the checked counted-resource
+transition; it does not need a redundant pure count postcondition through the
+field after that field is cleared.
 
 ```c filename=shared_heap_two_parent_branch_release.c
 struct child {
@@ -174,7 +171,6 @@ void parent_detach(struct parent* p) {
     requires link.link != ParentLink::Empty;
     consumes child_ref(p->kid);
     produces out: parent(old(p));
-    ensures count(child_ref(old(p->kid))) == old(count(child_ref(p->kid))) - 1;
 } by {
     match link.link {
         ParentLink::Empty => {
@@ -194,7 +190,9 @@ void caller(struct parent* first, struct parent* second, struct child* kid) {
     consumes &first->kid;
     consumes &second->kid;
     requires kid != 0;
-    owns child_ref(kid);
+    requires count(child_ref(kid)) == 1;
+    requires kid->refs == 1;
+    consumes child_ref(kid);
 } by {
     let { link: first_link } = step(parent_attach(first, kid), {});
     have count(child_ref(kid)) == 2 by simp;
@@ -213,5 +211,5 @@ void caller(struct parent* first, struct parent* second, struct child* kid) {
 ```
 
 ```expect
-fail: resource population invariant
+pass
 ```
