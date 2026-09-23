@@ -510,8 +510,8 @@ fn memory_range_lists_definitionally_equal(
         })
 }
 
-/// Whether two memory snapshots are the same state, up to definitional
-/// equality of the terms in their cells.
+/// Whether two memory snapshots have the same heap status and are the same
+/// program state, up to definitional equality of the terms in their cells.
 ///
 /// The `local:` blocks this skips are the ones
 /// [`local_block_no_pointer_can_reach`] allows a pointerless comparison to
@@ -523,6 +523,9 @@ pub(in crate::kernel) fn c_memories_definitionally_equal(
     right: &CMemory,
     assumptions: &PureFactContext,
 ) -> bool {
+    if left.heap != right.heap {
+        return false;
+    }
     if memories_proven_equal_for_memory_resolution(left, right, assumptions) {
         return true;
     }
@@ -1737,7 +1740,7 @@ pub(in crate::kernel) fn c_effect_memories_definitionally_equal(
     };
     let left = without_locals(left);
     let right = without_locals(right);
-    left.heap == right.heap && c_memories_definitionally_equal(&left, &right, assumptions)
+    c_memories_definitionally_equal(&left, &right, assumptions)
 }
 
 /// Accepts internal heap bookkeeping between externally visible effects:
@@ -2955,16 +2958,13 @@ int32 array_fold_append_at_zero(int32 a[]) {
 }
 
 #[cfg(test)]
-mod hunt_investigation_tests {
+mod heap_status_equality_tests {
     use super::*;
 
-    /// Investigation repro (bug hunt phase 2b): the outcome-equality
-    /// comparator never compares the `heap` statuses, unlike the effect-side
-    /// wrapper (`c_effect_memories_definitionally_equal`), so a zeroed
-    /// allocation beside an uninitialized spelling of the same allocation
-    /// same-size state pair is declared definitionally equal.
+    /// Outcome and effect equality share the same heap-status check, because
+    /// initialization state changes what a later load can return.
     #[test]
-    fn hunt_investigation_outcome_equality_ignores_heap_statuses() {
+    fn outcome_equality_distinguishes_heap_statuses() {
         let block = Pointer {
             block: PointerBlock::Heap(424_242),
             offset: PointerOffsetTerm::Constant(0),
@@ -2984,9 +2984,30 @@ mod hunt_investigation_tests {
             .uninitialized_allocations
             .insert(block.clone());
         assert_ne!(base.heap, other.heap, "setup: the heap statuses differ");
-        assert!(
-            c_memories_definitionally_equal(&base, &other, &PureFactContext::new()),
-            "BUG: two states with different heap statuses are declared definitionally equal"
-        );
+        let assumptions = PureFactContext::new();
+        assert!(!c_memories_definitionally_equal(
+            &base,
+            &other,
+            &assumptions
+        ));
+        assert!(!c_effect_memories_definitionally_equal(
+            &base,
+            &other,
+            &assumptions,
+        ));
+
+        let left = CFunctionOutcome::Return {
+            value: CValue::Int32(Bitvector32Term::Constant(0)),
+            state: CState::new().with_memory(base),
+        };
+        let right = CFunctionOutcome::Return {
+            value: CValue::Int32(Bitvector32Term::Constant(0)),
+            state: CState::new().with_memory(other),
+        };
+        assert!(!c_function_outcomes_program_state_definitionally_equal(
+            &left,
+            &right,
+            &assumptions,
+        ));
     }
 }
