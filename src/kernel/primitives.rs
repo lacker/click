@@ -32,12 +32,14 @@ pub use integer::{
 pub use integer::{MachineIntegerType, SharedMachineIntegerTerm};
 mod derivations;
 mod memory_state;
+mod persistent_map;
 pub(crate) use memory_state::{
     block_is_never_address_taken_local, clear_block_alignment_registry,
     clear_never_address_taken_locals, register_block_alignment, registered_block_alignment,
     registered_block_alignment_charged, set_never_address_taken_locals,
     withdraw_never_address_taken_locals,
 };
+pub(crate) use persistent_map::{SnapshotMap, SnapshotSet};
 mod resource_algebra;
 mod term_operations;
 pub(super) use derivations::*;
@@ -2658,6 +2660,20 @@ pub struct CCallBinderTransport {
     pub(crate) bindings: std::sync::Arc<BTreeMap<Variable, Variable>>,
 }
 
+/// The order in which a target lays out the bytes of a multi-byte integer
+/// object. The kernel owns what a byte view of an integer cell means, so the
+/// order is a kernel value that the surface installs from the selected C
+/// target. Only [`ByteOrder::Little`] has a byte view; `Big` exists so a
+/// byte access under any other order is a refusal rather than a guess.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum ByteOrder {
+    /// Byte `k` of an integer object holds bits `8k .. 8k + 8` of its value.
+    #[default]
+    Little,
+    /// No selectable target uses it; every byte view is refused under it.
+    Big,
+}
+
 #[derive(Clone, Default)]
 pub struct CExecutionEnvironment {
     // A proof-local rule choice. This is not installed in the project environment.
@@ -2678,6 +2694,10 @@ pub struct CExecutionEnvironment {
     /// ordinary external function contract is never a substitute.
     pub(super) modeled_pthread_binding:
         Option<crate::languages::c::thread_runtime::ModeledPthreadBinding>,
+    /// The selected target's byte order. It decides whether a one-byte C
+    /// access inside a wider integer cell reads or updates that cell's
+    /// representation; see `crate::kernel::eval::byte_view`.
+    pub(super) byte_order: ByteOrder,
     pub(super) verified_loop_rules: std::sync::Arc<Vec<CVerifiedLoopRule>>,
     /// The function currently being certified, when it declares an expression
     /// `decreases` measure. It is part of this environment's identity below,
@@ -2713,6 +2733,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
                 &self.verified_function_termination_rules,
             )
             .field("modeled_pthread_binding", &self.modeled_pthread_binding)
+            .field("byte_order", &self.byte_order)
             .field("verified_loop_rules", &self.verified_loop_rules)
             .field("recursion_anchor", &self.recursion_anchor)
             .field(
@@ -2734,6 +2755,7 @@ impl PartialEq for CExecutionEnvironment {
             && self.verified_function_rules == other.verified_function_rules
             && self.verified_function_termination_rules == other.verified_function_termination_rules
             && self.modeled_pthread_binding == other.modeled_pthread_binding
+            && self.byte_order == other.byte_order
             && self.verified_loop_rules == other.verified_loop_rules
             && self.recursion_anchor == other.recursion_anchor
             && self.allow_conditional_resource_cases == other.allow_conditional_resource_cases
@@ -3421,6 +3443,11 @@ pub struct ExecutionBudget {
     /// element count to report, only the reason. Diagnostic only: no
     /// evaluation reads it back.
     pub(super) dropped_relation_range_extent: bool,
+    /// The byte order of the environment whose statements this budget is
+    /// executing, installed from `CExecutionEnvironment` at each statement.
+    /// `None` until a statement installs it: an expression evaluated with no
+    /// environment in hand has no byte view of integer cells at all.
+    pub(super) c_byte_order: Option<ByteOrder>,
 }
 
 /// A constant element range a lowering refused as a byte extent, for the
@@ -3632,7 +3659,7 @@ pub struct CForgottenKnowledge {
     /// Automatic-storage blocks whose lifetimes have ended. Unlike removing
     /// the block alone, retaining this tombstone makes stale aliases invalid
     /// even when a later proof step forgets or rejoins ordinary cells.
-    pub(super) ended_local_blocks: BTreeSet<PointerBlock>,
+    pub(super) ended_local_blocks: SnapshotSet<PointerBlock>,
     /// Set where cached values were dropped without the memory itself being
     /// known unchanged; see [`ForgottenFrom`]. Carried by later stores and by
     /// the projections used for load naming, so a state that has forgotten
@@ -3640,15 +3667,15 @@ pub struct CForgottenKnowledge {
     pub(super) forgotten_from: Option<ForgottenFrom>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct CMemory {
-    pub(super) blocks: std::sync::Arc<BTreeMap<PointerBlock, CBlock>>,
-    pub(super) cells: std::sync::Arc<BTreeMap<Pointer, CValue>>,
+    pub(super) blocks: std::sync::Arc<SnapshotMap<PointerBlock, CBlock>>,
+    pub(super) cells: std::sync::Arc<SnapshotMap<Pointer, CValue>>,
     /// Typed views of address-overlapping union storage. A union member is
     /// keyed by its address and type rather than placed in `cells`, because
     /// two members at one address must remain independently readable after a
     /// by-value aggregate copy.
-    pub(super) union_cells: std::sync::Arc<BTreeMap<(Pointer, CType), CValue>>,
+    pub(super) union_cells: std::sync::Arc<SnapshotMap<(Pointer, CType), CValue>>,
     pub(super) forgotten: std::sync::Arc<CForgottenKnowledge>,
     pub(super) heap: std::sync::Arc<CHeapMemory>,
 }
@@ -3730,26 +3757,36 @@ impl Ord for ReadRegionIdentity {
     }
 }
 
+impl PartialEq for CMemory {
+    /// Rejects on the O(1) content hash before any elementwise comparison.
+    /// Without that, a candidate that differs only in a later component
+    /// would pay for comparing the equal earlier ones, and which candidates a
+    /// randomly seeded hash table happens to probe would change the charged
+    /// work from run to run.
+    fn eq(&self, other: &Self) -> bool {
+        if c_memory_content_hash(self) != c_memory_content_hash(other) {
+            return false;
+        }
+        self.blocks == other.blocks
+            && self.cells == other.cells
+            && self.union_cells == other.union_cells
+            && self.forgotten == other.forgotten
+            && self.heap == other.heap
+    }
+}
+
+impl Eq for CMemory {}
+
 impl std::hash::Hash for CMemory {
+    /// O(1): every map and set carries its own cached content hash, and the
+    /// forget mark hashes by its base's content hash.
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Keep the hash of memories without union overlays identical to the
-        // pre-overlay representation. Memory-load identities are used inside
-        // proof terms, so adding an empty auxiliary map must not perturb all
-        // existing symbolic memory identities.
         self.blocks.hash(state);
         self.cells.hash(state);
-        if !self.union_cells.is_empty() {
-            self.union_cells.hash(state);
-        }
-        if !self.forgotten.ended_local_blocks.is_empty() {
-            std::hash::Hash::hash(&self.forgotten.ended_local_blocks, state);
-        }
+        self.union_cells.hash(state);
+        self.forgotten.ended_local_blocks.hash(state);
         self.heap.hash(state);
-        // Likewise skipped when absent, so every snapshot that never forgot
-        // anything keeps the load identities it had before marks existed.
-        if let Some(forgotten_from) = &self.forgotten.forgotten_from {
-            forgotten_from.hash(state);
-        }
+        self.forgotten.forgotten_from.hash(state);
     }
 }
 
@@ -3790,40 +3827,41 @@ pub(super) struct CPendingReallocation {
     pub(super) copied_cells: Vec<(PointerOffsetTerm, CValue)>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
+/// Every field is a snapshot collection, so the derived `Hash` is O(1).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(super) struct CHeapMemory {
     /// Live heap blocks are also present in `blocks`; this set distinguishes
     /// them from automatic storage and memory-havoc markers.
-    pub(super) live_allocations: BTreeMap<Pointer, Bitvector32Term>,
+    pub(super) live_allocations: SnapshotMap<Pointer, Bitvector32Term>,
     /// Heap identities are never reused within a proof. These are semantic
     /// tombstones for double-free and stale-pointer diagnostics, not
     /// resources or surviving allocation authority.
-    pub(super) deallocated_allocations: BTreeMap<Pointer, Bitvector32Term>,
+    pub(super) deallocated_allocations: SnapshotMap<Pointer, Bitvector32Term>,
     /// A malloc result whose null/success outcome has not yet been refined by
     /// control flow or direct return. Pending allocations carry no authority
     /// until resolved.
-    pub(super) pending_allocations: BTreeMap<Pointer, Bitvector32Term>,
+    pub(super) pending_allocations: SnapshotMap<Pointer, Bitvector32Term>,
     /// Successful malloc storage remains uninitialized until individual
     /// cells are written. Contract-imported allocations are not placed here.
-    pub(super) uninitialized_allocations: BTreeSet<Pointer>,
+    pub(super) uninitialized_allocations: SnapshotSet<Pointer>,
     /// Typed scalar cells that were initialized before a call or loop havoc
     /// dropped their cached values.  The value is gone, but a later typed
     /// load must not mistake the cell for never-written fresh storage.
-    pub(super) initialized_cells: BTreeMap<Pointer, u32>,
+    pub(super) initialized_cells: SnapshotMap<Pointer, u32>,
     /// Successful calloc storage reads as zero until individual cells are
     /// written. The set is separate from `uninitialized_allocations` so the
     /// same heap-lifetime machinery can represent both APIs.
-    pub(super) zeroed_allocations: BTreeSet<Pointer>,
+    pub(super) zeroed_allocations: SnapshotSet<Pointer>,
     /// Successful reallocations of zeroed storage may preserve only a prefix
     /// of the old block. The remainder of a grown block is uninitialized.
-    pub(super) zeroed_prefix_allocations: BTreeMap<Pointer, Bitvector32Term>,
+    pub(super) zeroed_prefix_allocations: SnapshotMap<Pointer, Bitvector32Term>,
     /// Pending calloc results whose null/success outcome has not yet been
     /// refined.
-    pub(super) zeroed_pending_allocations: BTreeSet<Pointer>,
+    pub(super) zeroed_pending_allocations: SnapshotSet<Pointer>,
     /// Pending reallocations retain the old live block until their result is
     /// refined. Success then retires it and installs the copied prefix;
     /// failure simply resolves the new result to null.
-    pub(super) pending_reallocations: BTreeMap<Pointer, CPendingReallocation>,
+    pub(super) pending_reallocations: SnapshotMap<Pointer, CPendingReallocation>,
 }
 
 impl CHeapMemory {
@@ -3843,34 +3881,6 @@ impl CHeapMemory {
             && self.zeroed_prefix_allocations == other.zeroed_prefix_allocations
             && self.zeroed_pending_allocations == other.zeroed_pending_allocations
             && self.pending_reallocations == other.pending_reallocations
-    }
-}
-
-impl std::hash::Hash for CHeapMemory {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Keep the hash of states without new heap-shape bookkeeping identical
-        // to the pre-realloc heap shape. CMemory is used as a cache key by
-        // proof search, and empty bookkeeping fields must not perturb the
-        // search order for unrelated programs. Nonempty new state remains
-        // part of the key and is tagged so it cannot alias the legacy shape.
-        std::hash::Hash::hash(&self.live_allocations, state);
-        std::hash::Hash::hash(&self.deallocated_allocations, state);
-        std::hash::Hash::hash(&self.pending_allocations, state);
-        std::hash::Hash::hash(&self.uninitialized_allocations, state);
-        if !self.initialized_cells.is_empty() {
-            std::hash::Hash::hash(&3u8, state);
-            std::hash::Hash::hash(&self.initialized_cells, state);
-        }
-        std::hash::Hash::hash(&self.zeroed_allocations, state);
-        std::hash::Hash::hash(&self.zeroed_pending_allocations, state);
-        if !self.pending_reallocations.is_empty() {
-            std::hash::Hash::hash(&1u8, state);
-            std::hash::Hash::hash(&self.pending_reallocations, state);
-        }
-        if !self.zeroed_prefix_allocations.is_empty() {
-            std::hash::Hash::hash(&2u8, state);
-            std::hash::Hash::hash(&self.zeroed_prefix_allocations, state);
-        }
     }
 }
 
@@ -4273,6 +4283,11 @@ static NEXT_MEMORY_ARENA_TOKEN: std::sync::atomic::AtomicU32 = std::sync::atomic
 struct CMemoryArena {
     identities: std::collections::HashMap<std::sync::Arc<CMemory>, (u32, u64)>,
     shallow_identities: std::collections::HashMap<CMemoryShallowIdentity, (u32, u64)>,
+    /// Snapshots whose storage roots were registered in `shallow_identities`
+    /// on a structural hit. Holding them keeps those roots allocated, so a
+    /// registered address cannot be reused by a different map. Each pin is
+    /// an O(1) handle clone.
+    shallow_pins: Vec<CMemory>,
     memories: Vec<std::sync::Arc<CMemory>>,
     /// Indexed by arena id; `None` for entry states and for any snapshot
     /// whose first interning did not come from a recorded edge.
@@ -4385,21 +4400,16 @@ fn c_memory_content_hash(memory: &CMemory) -> u64 {
     hasher.finish()
 }
 
-fn record_c_memory_structural_lookup_work(memory: &CMemory) {
-    crate::instrumentation::record_deterministic_work(
-        memory.blocks.len()
-            + memory.cells.len()
-            + memory.union_cells.len()
-            + memory.forgotten.ended_local_blocks.len()
-            + memory.heap.live_allocations.len()
-            + memory.heap.deallocated_allocations.len()
-            + memory.heap.pending_allocations.len()
-            + memory.heap.uninitialized_allocations.len()
-            + memory.heap.zeroed_allocations.len()
-            + memory.heap.zeroed_prefix_allocations.len()
-            + memory.heap.zeroed_pending_allocations.len()
-            + memory.heap.pending_reallocations.len(),
-    );
+/// The component collections a snapshot hashes: three memory maps, the
+/// ended-lifetime set, the nine heap collections, and the forget mark.
+const C_MEMORY_HASHED_COMPONENTS: usize = 14;
+
+/// Charges a structural arena lookup. Hashing is O(1) per component because
+/// each collection caches its content hash; the comparison a bucket hit
+/// performs is charged by the collections' own `eq`, per element actually
+/// compared, and is O(1) for snapshots sharing their persistent roots.
+fn record_c_memory_structural_lookup_work() {
+    crate::instrumentation::record_deterministic_work(C_MEMORY_HASHED_COMPONENTS);
 }
 
 /// Interns a memory snapshot in the thread-local arena. Structurally equal
@@ -4419,13 +4429,22 @@ pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
                 memory: arena.memories[id as usize].clone(),
             };
         }
-        record_c_memory_structural_lookup_work(&memory);
+        record_c_memory_structural_lookup_work();
         if let Some((stored, (id, content_hash))) = arena.identities.get_key_value(&memory) {
+            let (id, content_hash, stored) = (*id, *content_hash, stored.clone());
+            // Remember the caller's storage roots, so the next lookup of this
+            // same snapshot is an O(1) shallow hit instead of another
+            // comparison. The pin keeps those roots alive: a registered
+            // address must never be freed and reused by different content.
+            arena
+                .shallow_identities
+                .insert(shallow_identity, (id, content_hash));
+            arena.shallow_pins.push(memory);
             return SharedCMemory {
                 arena: *token,
-                id: *id,
-                content_hash: *content_hash,
-                memory: stored.clone(),
+                id,
+                content_hash,
+                memory: stored,
             };
         }
         let id = u32::try_from(arena.identities.len()).expect("memory arena exhausted");
@@ -4462,13 +4481,22 @@ pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
                 memory: arena.memories[id as usize].clone(),
             };
         }
-        record_c_memory_structural_lookup_work(memory);
+        record_c_memory_structural_lookup_work();
         if let Some((stored, (id, content_hash))) = arena.identities.get_key_value(memory) {
+            let (id, content_hash, stored) = (*id, *content_hash, stored.clone());
+            // Remember the caller's storage roots, so the next lookup of this
+            // same snapshot is an O(1) shallow hit instead of another
+            // comparison. The pin keeps those roots alive: a registered
+            // address must never be freed and reused by different content.
+            arena
+                .shallow_identities
+                .insert(shallow_identity, (id, content_hash));
+            arena.shallow_pins.push(memory.clone());
             return SharedCMemory {
                 arena: *token,
-                id: *id,
-                content_hash: *content_hash,
-                memory: stored.clone(),
+                id,
+                content_hash,
+                memory: stored,
             };
         }
         let id = u32::try_from(arena.identities.len()).expect("memory arena exhausted");

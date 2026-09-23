@@ -419,9 +419,12 @@ pub fn loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Propositio
         // while every operand and the sum retain their nonnegative integer
         // meaning. The sum of two nonnegative signed words cannot wrap the
         // 32-bit word; end >= delta rules out signed overflow.
-        let nonwrapping_sum = certification_proves_signed_le(assumptions, &start, &delta)
-            && certification_proves_signed_le(assumptions, &start, &width)
-            && certification_proves_signed_le(assumptions, &delta, &end);
+        let nonwrapping_sum = crate::kernel::assumptions::signed_byte_sum_is_nonwrapping(
+            &delta,
+            &width,
+            &end,
+            |left, right| certification_proves_signed_le(assumptions, left, right),
+        );
         let ends_in_bounds = nonwrapping_sum
             && ((certification_proves_signed_le(assumptions, &start, &span)
                 && certification_proves_signed_le(assumptions, &end, &span))

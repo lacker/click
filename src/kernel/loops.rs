@@ -1234,6 +1234,7 @@ fn execute_c_indirect_call_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    budget.install_c_byte_order(environment.byte_order());
     if function_type == CType::FunctionPointer(CallbackSignature::UNSPECIFIED) {
         return Ok(vec![CFunctionPath {
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
@@ -1499,6 +1500,7 @@ pub(super) fn execute_c_statement_verification_paths(
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    budget.install_c_byte_order(environment.byte_order());
     // `Seq` only groups source statements; it is not another statement step.
     if !matches!(statement, CStatement::Seq(_, _)) {
         budget.consume_statement_step()?;

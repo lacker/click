@@ -170,6 +170,22 @@ fn constant_element_count(element_count: &Bitvector32Term) -> Option<i64> {
     (end_base == start_base).then_some(end_shift - start_shift)
 }
 
+/// Checks the ordering facts needed to interpret a 32-bit byte sum with
+/// signed comparisons. The caller supplies the modular sum term; these bounds
+/// require both addends to be nonnegative and the sum to stay no smaller than
+/// the left addend, which rules out signed wrap.
+pub(in crate::kernel) fn signed_byte_sum_is_nonwrapping(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    sum: &Bitvector32Term,
+    mut proves_signed_less_equal: impl FnMut(&Bitvector32Term, &Bitvector32Term) -> bool,
+) -> bool {
+    let zero = Bitvector32Term::Constant(0);
+    proves_signed_less_equal(&zero, left)
+        && proves_signed_less_equal(&zero, right)
+        && proves_signed_less_equal(left, sum)
+}
+
 impl PureFactContext {
     #[cfg(test)]
     pub(crate) fn reset_proof_aware_pointer_index_queries() {
@@ -535,6 +551,26 @@ impl PureFactContext {
             })
     }
 
+    fn nonwrapping_signed_byte_sum_end(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<Bitvector32Term> {
+        let left = self.simplify_bitvector_under_assumptions(left);
+        let right = self.simplify_bitvector_under_assumptions(right);
+        let sum = self.simplify_bitvector_under_assumptions(&Bitvector32Term::add(
+            left.clone(),
+            right.clone(),
+        ));
+        signed_byte_sum_is_nonwrapping(&left, &right, &sum, |lower, upper| {
+            self.decide(&ConditionTerm::signed_less_equal(
+                lower.clone(),
+                upper.clone(),
+            )) == Some(true)
+        })
+        .then_some(sum)
+    }
+
     fn proves_loadable_region_from_structural_range(
         &self,
         range_base: &Pointer,
@@ -589,14 +625,13 @@ impl PureFactContext {
         let Some(byte_offset) = pointer_byte_offset_from_base(base, range_base) else {
             return false;
         };
-        let (Some(byte_offset), Some(bytes), Some(range_bytes)) = (
-            signed_bitvector_constant(&byte_offset),
-            signed_bitvector_constant(bytes),
-            signed_bitvector_constant(range_bytes),
-        ) else {
+        let Some(access_end) = self.nonwrapping_signed_byte_sum_end(&byte_offset, bytes) else {
             return false;
         };
-        0 <= byte_offset && byte_offset + bytes <= range_bytes
+        self.decide(&ConditionTerm::signed_less_equal(
+            access_end,
+            range_bytes.clone(),
+        )) == Some(true)
     }
 
     /// Range narrowing: a goal range the stated order facts place inside an
@@ -931,15 +966,13 @@ impl PureFactContext {
         }
 
         if let Some(byte_offset) = pointer_byte_offset_from_base(base, range_base) {
-            let access_end = Bitvector32Term::add(byte_offset.clone(), bytes.clone());
-            return self.decide(&ConditionTerm::signed_greater_equal(
-                byte_offset,
-                Bitvector32Term::Constant(0),
-            )) == Some(true)
-                && self.decide(&ConditionTerm::signed_less_equal(
-                    access_end,
-                    range_bytes.clone(),
-                )) == Some(true);
+            let Some(access_end) = self.nonwrapping_signed_byte_sum_end(&byte_offset, bytes) else {
+                return false;
+            };
+            return self.decide(&ConditionTerm::signed_less_equal(
+                access_end,
+                range_bytes.clone(),
+            )) == Some(true);
         }
 
         false
@@ -1015,14 +1048,13 @@ impl PureFactContext {
         }
 
         if let Some(byte_offset) = pointer_byte_offset_from_base(pointer, base) {
-            let access_end =
-                Bitvector32Term::add(byte_offset.clone(), Bitvector32Term::Constant(byte_width));
-            return self.decide(&ConditionTerm::signed_greater_equal(
-                byte_offset,
-                Bitvector32Term::Constant(0),
-            )) == Some(true)
-                && self.decide(&ConditionTerm::signed_less_equal(access_end, bytes.clone()))
-                    == Some(true);
+            let byte_width = Bitvector32Term::Constant(byte_width);
+            let Some(access_end) = self.nonwrapping_signed_byte_sum_end(&byte_offset, &byte_width)
+            else {
+                return false;
+            };
+            return self.decide(&ConditionTerm::signed_less_equal(access_end, bytes.clone()))
+                == Some(true);
         }
 
         false

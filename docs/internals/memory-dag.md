@@ -16,6 +16,24 @@ describes the edge from an already-interned parent to a child snapshot.
 Keeping provenance outside `CMemory` means that equality, hashing, and ordering
 continue to describe memory values rather than the route used to produce them.
 
+Each map and set inside a snapshot (`blocks`, `cells`, `union_cells`, the
+ended-lifetime set, and every heap collection) is a `SnapshotMap` or
+`SnapshotSet` from `src/kernel/primitives/persistent_map.rs`: a persistent
+B-tree (`imbl::OrdMap` / `imbl::OrdSet`) that also carries a cached content
+hash, the wrapping sum of one fixed-key hash per entry. A snapshot therefore
+shares structure with the snapshot it came from: cloning a map is O(1), a
+store copies only the O(log n) path it changes, and hashing a snapshot reads
+the cached sums instead of visiting its cells. The sum is independent of
+insertion order, so equal contents hash equally however they were built.
+Equality rejects on the snapshot's O(1) content hash, accepts maps that share
+a root, and otherwise compares elementwise, charging each compared entry to
+the deterministic work counters. Ordering stays lexicographic over entries.
+
+Interning looks up the caller's storage roots first, then the content. A
+structural hit registers the caller's roots too, and the arena pins them so
+the addresses cannot be reused by other content; asking again for the same
+snapshot is then a pointer-identity hit with no comparison.
+
 The arena is per thread and per verification. Interning dedups by content and
 keeps the first derivation recorded for an id, so two verifications sharing
 one arena would let the second inherit the first's edges for any snapshot

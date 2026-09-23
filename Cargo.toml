@@ -5,6 +5,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
+imbl = "7"
 libc = "0.2"
 num-bigint = "0.4"
 num-traits = "0.2"

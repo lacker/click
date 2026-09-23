@@ -13,6 +13,7 @@ mod condition_reasoning;
 mod memory_reasoning;
 pub(crate) use memory_reasoning::arm_frame_composite_definitions;
 pub(crate) use memory_reasoning::clear_frame_expansion_memo;
+pub(in crate::kernel) use memory_reasoning::signed_byte_sum_is_nonwrapping;
 pub(crate) mod proposition_reasoning;
 
 pub(crate) use proposition_reasoning::clear_context_inconsistency_memos;

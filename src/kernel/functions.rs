@@ -645,8 +645,9 @@ fn recover_candidate_stable_view_resources(
         plan.clone(),
         recovery.ledger.clone(),
         recovery.terminal_ledger.clone(),
-        recovery.released_holds.clone(),
         recovery.transitions.clone(),
+        recovery.hold_base_ledger.clone(),
+        recovery.hold_transitions.clone(),
     ));
     // Recheck the kernel-issued discharge evidence from the exact callee root
     // before installing the canonical predecessor root in the caller state.
@@ -2205,48 +2206,75 @@ struct CFunctionContractApplication<'a> {
 pub(in crate::kernel) fn transfer_representation_copy_cells(
     entry_memory: &CMemory,
     argument_values: &[CValue],
-    mut memory: CMemory,
+    memory: CMemory,
     effect: RepresentationCopyEffect,
 ) -> CMemory {
+    representation_copy_cell_moves(entry_memory, argument_values, effect)
+        .into_iter()
+        .fold(memory, |memory, (pointer, value)| {
+            memory.store(pointer, value)
+        })
+}
+
+/// The destination cells a recognized byte copy plants, in source order.
+///
+/// The source cells are found with one bounded range query, so this work is
+/// the copied extent's cell count plus one, independent of every other cell
+/// in memory.
+pub(in crate::kernel) fn representation_copy_cell_moves(
+    entry_memory: &CMemory,
+    argument_values: &[CValue],
+    effect: RepresentationCopyEffect,
+) -> Vec<(Pointer, CValue)> {
     let (Some(destination), Some(source), Some(bytes)) = (
         argument_values.get(effect.destination_argument),
         argument_values.get(effect.source_argument),
         argument_values.get(effect.bytes_argument),
     ) else {
-        return memory;
+        return Vec::new();
     };
     let (CValue::Pointer(destination), CValue::Pointer(source)) = (destination, source) else {
-        return memory;
+        return Vec::new();
     };
     let CValue::Int32(bytes) = bytes else {
-        return memory;
+        return Vec::new();
     };
     let (Some(source_offset), Some(destination_offset), Some(bytes)) = (
         source.pointer().offset.as_const(),
         destination.pointer().offset.as_const(),
         bytes.as_const(),
     ) else {
-        return memory;
+        return Vec::new();
     };
     let bytes = i64::from(bytes);
     if bytes <= 0 {
-        return memory;
+        return Vec::new();
     }
     let source_block = source.pointer().block.clone();
     let destination_block = destination.pointer().block.clone();
     // A checked byte copy requires the ranges be separate, so a self-copy in
     // one block is not the recognized effect.
     if source_block == destination_block {
-        return memory;
+        return Vec::new();
     }
-    let source_cells = entry_memory
-        .cells
-        .iter()
-        .filter(|(cell, _)| cell.block == source_block)
-        .map(|(cell, value)| (cell.offset.clone(), value.clone()))
-        .collect::<Vec<_>>();
-    for (cell_offset, value) in source_cells {
-        let Some(cell_offset) = cell_offset.as_const() else {
+    // Constant offsets order before every other offset form and among
+    // themselves by value, and a copied cell of positive width starts in
+    // `source_offset .. source_offset + bytes`. This range is therefore
+    // exactly the candidate cells. A cell at `i64::MAX` cannot fit its
+    // positive width, so saturating the end loses no candidate.
+    let start = Pointer {
+        block: source_block.clone(),
+        offset: PointerOffsetTerm::Constant(source_offset),
+    };
+    let end = Pointer {
+        block: source_block,
+        offset: PointerOffsetTerm::Constant(source_offset.saturating_add(bytes)),
+    };
+    crate::instrumentation::record_deterministic_work(1);
+    let mut moves = Vec::new();
+    for (cell, value) in entry_memory.cells.range(start..end) {
+        crate::instrumentation::record_deterministic_work(1);
+        let Some(cell_offset) = cell.offset.as_const() else {
             continue;
         };
         let width = i64::from(value.byte_width());
@@ -2263,15 +2291,15 @@ pub(in crate::kernel) fn transfer_representation_copy_cells(
         if destination_cell_offset % width != 0 {
             continue;
         }
-        memory = memory.store(
+        moves.push((
             Pointer {
                 block: destination_block.clone(),
                 offset: PointerOffsetTerm::Constant(destination_cell_offset),
             },
-            value,
-        );
+            value.clone(),
+        ));
     }
-    memory
+    moves
 }
 
 fn execute_verified_function_applications(

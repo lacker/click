@@ -6,6 +6,7 @@
 //! option, extension, or execution behavior.
 
 use super::syntax::CAbi;
+use crate::kernel::ByteOrder;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum CTarget {
@@ -54,6 +55,15 @@ impl CTarget {
     pub const fn char_bits(self) -> u32 {
         match self {
             Self::X86_64LinuxKernel | Self::X86_64LinuxUserspace => 8,
+        }
+    }
+
+    /// The order the kernel's byte view of integer cells follows. Both
+    /// selectable targets are x86-64, which is little-endian, matching the
+    /// `__BYTE_ORDER__` predefine below.
+    pub const fn byte_order(self) -> ByteOrder {
+        match self {
+            Self::X86_64LinuxKernel | Self::X86_64LinuxUserspace => ByteOrder::Little,
         }
     }
 
@@ -131,6 +141,22 @@ mod tests {
         assert_eq!(target.abi(), CAbi::SUPPORTED);
         assert_eq!(target.char_bits(), 8);
         assert!(!target.plain_char_is_signed());
+    }
+
+    #[test]
+    fn every_target_byte_order_matches_its_byte_order_predefine() {
+        for target in CTarget::ALL {
+            let predefined = target
+                .predefined_macros()
+                .iter()
+                .find(|(name, _)| *name == "__BYTE_ORDER__")
+                .map(|(_, value)| *value);
+            let expected = match target.byte_order() {
+                ByteOrder::Little => "1234",
+                ByteOrder::Big => "4321",
+            };
+            assert_eq!(predefined, Some(expected), "{}", target.name());
+        }
     }
 
     #[test]
