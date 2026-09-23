@@ -49,14 +49,33 @@ against these unchanged C bytes: `child_init`, `child_retain`, `child_release`,
 This is a helper checkpoint; neither `run_first_destroyed` nor
 `run_second_destroyed` is selected by that sidecar yet.
 
-A scratch proof of `run_first_destroyed` advances through all three allocation
-checks, both attaches, creator release, first detach, and
-`parent_read_payload(second)`. The call borrows `child_ref(second->kid)`; its
-entry evaluation uses the selected `parent(second)` arm to identify the held
-`child_ref(kid)`. Click now returns that checked entry resource without reading
-`second->kid` a second time. The scratch proof's next failure is
-`parent_detach(second)`, whose consumed `child_ref(second->kid)` currently
-resolves to a symbolic load instead of the held `child_ref(kid)`.
+A scratch proof of `run_first_destroyed` advances through both detaches and
+both parent frees, discharging all resources. The read helper now promises its
+`link.link` model is unchanged. At the caller, an explicit `rewrite` combines
+that promise with the pre-read `Linked(kid)` fact, so the second detach selects
+the held `child_ref(kid)`. Detach returns ownership of `&p->kid` after setting
+it to zero, allowing the parent allocation to be freed. These are helper
+contract improvements; the full caller proof is not in the sidecar yet.
+
+The remaining success-path goal is `out == payload`. The value established by
+`child_init` is lost from the caller's facts at `parent_attach(first)`. Adding
+`ensures kid->payload == old(kid->payload)` to attach and the analogous
+promise to retain requires a separation precondition between `&p->kid` and
+`kid->payload`; the two parent allocations in the caller satisfy it. A guarded
+payload-preservation promise on `child_release` also certifies and carries the
+fact through creator release. The fact is then lost at
+`parent_detach(first)`, which calls release but does not promise preservation
+when the child survives.
+
+A matching guarded postcondition on detach is currently rejected on its
+final-release path: the guard should be false there, but Click rejects the
+post-state payload read as a read of freed memory before proving the guard.
+This needs a small regression for guarded loadability across a wrapper call.
+An indexed `child_ref(obj, payload)` resource was also tested; its contract
+cannot choose `payload` by reading `obj->payload` before ownership is granted,
+and contract witness lets are not supported in `owns` clauses. Neither probe
+changes the frozen C. The next step is to settle the guarded postcondition or
+find a different sound contract that carries the payload fact through detach.
 
 ## Reduction findings, 2026-09-17
 

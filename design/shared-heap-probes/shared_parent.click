@@ -107,6 +107,7 @@ int32 parent_read_payload(struct parent* p) {
     ensures result == p->kid->payload;
     ensures result == old(p->kid->payload);
     ensures p->kid == old(p->kid);
+    ensures link.link == old(link.link);
     ensures link.link == ParentLink::Linked(old(p->kid));
 } by {
     match link.link {
@@ -115,8 +116,9 @@ int32 parent_read_payload(struct parent* p) {
         },
         ParentLink::Linked(kid) => {
             unfold(link);
+            have old(p->kid) == kid by { simp(); }
             open(child_ref(p->kid)) { execute(); }
-            let link = fold(parent(p), { link: ParentLink::Linked(p->kid) });
+            let link = fold(parent(p), { link: ParentLink::Linked(kid) });
             simp();
         },
     }
@@ -126,7 +128,7 @@ void parent_detach(struct parent* p) {
     consumes link: parent(p);
     requires link.link != ParentLink::Empty;
     consumes child_ref(p->kid);
-    produces out: parent(old(p));
+    produces &p->kid;
 } by {
     match link.link {
         ParentLink::Empty => {
@@ -136,7 +138,6 @@ void parent_detach(struct parent* p) {
             unfold(link);
             have old(p->kid) == kid by simp;
             execute();
-            let out = fold(parent(p), { link: ParentLink::Empty });
             simp();
         },
     }
