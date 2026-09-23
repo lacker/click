@@ -30,6 +30,8 @@ pub use integer::{
     SharedIntegerApplication, SharedIntegerRangeEndpoint, SharedIntegerTerm,
 };
 pub use integer::{MachineIntegerType, SharedMachineIntegerTerm};
+mod alias_candidates;
+pub(crate) use alias_candidates::{AliasCandidates, BlockKeyed};
 mod derivations;
 mod memory_state;
 mod persistent_map;
@@ -39,7 +41,7 @@ pub(crate) use memory_state::{
     registered_block_alignment_charged, set_never_address_taken_locals,
     withdraw_never_address_taken_locals,
 };
-pub(crate) use persistent_map::{SnapshotMap, SnapshotSet};
+pub(crate) use persistent_map::{SnapshotMap, SnapshotMapChange, SnapshotSet};
 mod resource_algebra;
 mod term_operations;
 pub(super) use derivations::*;

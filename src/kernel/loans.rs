@@ -17,7 +17,7 @@ use super::{
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -329,6 +329,22 @@ fn memory_range_is_empty(range: &CMemoryRange) -> bool {
     )
 }
 
+fn memory_range_aliases(range: &CMemoryRange, assumptions: &PureFactContext) -> Vec<CMemoryRange> {
+    // Rebase through the indexed, directly stated equalities before scaling
+    // element offsets. An equality such as w == p + 1 relates different pointer
+    // spellings, which syntactic pointer subtraction alone cannot see.
+    let mut bases = vec![range.base().clone()];
+    bases.extend(assumptions.exact_pointer_aliases(range.base()).cloned());
+    bases.extend(assumptions.exact_pointer_offset_aliases(range.base()));
+    for _ in bases.iter().skip(1) {
+        crate::instrumentation::record_deterministic_work(1);
+    }
+    bases
+        .into_iter()
+        .map(|base| range.with_bounds(base, range.start().clone(), range.end().clone()))
+        .collect()
+}
+
 /// Whether a query range provably touches a protected range, compared
 /// bytewise so that differing element widths cannot hide an overlap.
 ///
@@ -347,18 +363,8 @@ pub(crate) fn protected_range_proven_overlapping(
     protected: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> bool {
-    // Rebase through the indexed, directly stated equalities before scaling
-    // element offsets. An equality such as w == p + 1 relates different pointer
-    // spellings, which syntactic pointer subtraction alone cannot see.
-    let aliases = |range: &CMemoryRange| {
-        std::iter::once(range.base().clone())
-            .chain(assumptions.exact_pointer_aliases(range.base()).cloned())
-            .chain(assumptions.exact_pointer_offset_aliases(range.base()))
-            .map(|base| range.with_bounds(base, range.start().clone(), range.end().clone()))
-            .collect::<Vec<_>>()
-    };
-    let queries = aliases(query);
-    let protected_ranges = aliases(protected);
+    let queries = memory_range_aliases(query, assumptions);
+    let protected_ranges = memory_range_aliases(protected, assumptions);
     // Exact aliases can settle the whole comparison without initializing any
     // arithmetic search over unrelated facts, including when they are adjacent.
     let mut separated = false;
@@ -4271,13 +4277,29 @@ impl LoanLedger {
         Ok(loans.iter().copied().collect())
     }
 
+    fn active_memory_overlaps_with_assumptions(
+        &self,
+        range: &CMemoryRange,
+        assumptions: &PureFactContext,
+    ) -> Result<Vec<LoanId>, LoanRefusal> {
+        let mut loans = PersistentSet::default();
+        for alias in memory_range_aliases(range, assumptions) {
+            if memory_interval_nodes(&alias).is_some() {
+                for loan in self.active_memory_overlaps(&alias)? {
+                    loans = loans.with_value(loan);
+                }
+            }
+        }
+        Ok(loans.iter().copied().collect())
+    }
+
     /// Whether a write, free, or havoc of `range` is compatible with every
-    /// active loan. Concrete ranges use the dyadic index. A symbolic query
-    /// cannot be looked up there, so it is refused while an indexed loan
-    /// might alias it. An external input cannot alias a fresh function-local
-    /// block; that exact case is allowed when all indexed loans are local.
-    /// Remaining symbolic loans are compared against the
-    /// entries of the query's own block with
+    /// active loan. Concrete ranges and concrete aliases use the dyadic
+    /// index. A symbolic query cannot be looked up there, so it is refused
+    /// while an indexed loan might alias it. An external input cannot alias a
+    /// fresh function-local block; that exact case is allowed when all
+    /// indexed loans are local. Remaining symbolic loans are compared in the
+    /// buckets for the query and its exact pointer aliases with
     /// [`protected_range_proven_overlapping`], whose polarity is documented
     /// there.
     pub(crate) fn permits_memory_access_with_assumptions(
@@ -4288,38 +4310,53 @@ impl LoanLedger {
         if memory_range_is_empty(range) {
             return Ok(());
         }
-        if memory_interval_nodes(range).is_some() {
-            // The dyadic walk is logarithmic, but a loop or branch havoc pays
-            // it once per surviving cell. With no concrete range registered
-            // the walk can only return the empty set, and both index maps are
-            // written and erased together for the same ranges, so an empty
-            // node index means an empty subtree index too (docs/internals/stable-views.md).
-            let indexed_ranges_exist = !self.storage.data.active_memory_index.is_empty()
-                || !self.storage.data.active_memory_subtree.is_empty();
-            if indexed_ranges_exist && !self.active_memory_overlaps(range)?.is_empty() {
-                return Err(LoanRefusal::ActiveDependency);
+        let aliases = memory_range_aliases(range, assumptions);
+        let indexed_ranges_exist = !self.storage.data.active_memory_index.is_empty()
+            || !self.storage.data.active_memory_subtree.is_empty();
+        if indexed_ranges_exist {
+            // Any exact spelling of the same concrete address can drive the
+            // dyadic lookup. The alias facts are indexed, so this visits only
+            // the query's stated aliases and their interval buckets.
+            let mut indexed_alias_exists = false;
+            for alias in &aliases {
+                if memory_interval_nodes(alias).is_some() {
+                    indexed_alias_exists = true;
+                    if !self.active_memory_overlaps(alias)?.is_empty() {
+                        return Err(LoanRefusal::ActiveDependency);
+                    }
+                }
             }
-        } else if !self.storage.data.active_memory_index.is_empty()
-            && !(matches!(
-                range.base().block,
-                PointerBlock::ExternalArgument | PointerBlock::ExternalObject(_)
-            ) && self.storage.data.active_nonlocal_indexed_ranges == 0
-                && self.storage.data.unindexed_memory.is_empty())
-        {
-            // Every indexed loan is then on a fresh `local:` block. Pointer
-            // block distinctness already establishes that an external input
-            // cannot reach any of them. A symbolic loan outside the index
-            // retains the conservative refusal unless the index is empty.
-            return Err(LoanRefusal::UnsupportedPartition);
+            if !indexed_alias_exists
+                && !(aliases.iter().all(|alias| {
+                    matches!(
+                        alias.base().block,
+                        PointerBlock::ExternalArgument | PointerBlock::ExternalObject(_)
+                    )
+                }) && self.storage.data.active_nonlocal_indexed_ranges == 0
+                    && self.storage.data.unindexed_memory.is_empty())
+            {
+                // Every indexed loan is then on a fresh `local:` block. An
+                // external input cannot reach those blocks unless an exact
+                // alias says otherwise; in that case the test above refuses
+                // the non-indexable query conservatively.
+                return Err(LoanRefusal::UnsupportedPartition);
+            }
         }
-        let Some(protected) = self.storage.data.unindexed_memory.get(&range.base().block) else {
-            return Ok(());
-        };
-        for (_, ranges) in protected.iter() {
-            for protected in ranges {
-                crate::instrumentation::record_deterministic_work(1);
-                if protected_range_proven_overlapping(range, protected, assumptions) {
-                    return Err(LoanRefusal::ActiveDependency);
+        let mut checked_blocks = BTreeSet::new();
+        for alias in aliases {
+            if !checked_blocks.insert(alias.base().block.clone()) {
+                continue;
+            }
+            let Some(protected) = self.storage.data.unindexed_memory.get(&alias.base().block)
+            else {
+                continue;
+            };
+            for (_, ranges) in protected.iter() {
+                for protected in ranges {
+                    crate::instrumentation::record_deterministic_work(1);
+                    if protected_range_proven_overlapping(range, protected, assumptions) {
+                        return Err(LoanRefusal::ActiveDependency);
+                    }
                 }
             }
         }
@@ -4364,7 +4401,7 @@ impl LoanLedger {
             let record = self.storage.data.loans.get(&loan)?;
             Some((loan, protected.clone(), origin_kind(&record.origin)))
         };
-        if let Ok(loans) = self.active_memory_overlaps(range) {
+        if let Ok(loans) = self.active_memory_overlaps_with_assumptions(range, assumptions) {
             for loan in loans {
                 let Some(record) = self.storage.data.loans.get(&loan) else {
                     continue;
@@ -4381,15 +4418,19 @@ impl LoanLedger {
                 }
             }
         }
-        let block = self
-            .storage
-            .data
-            .unindexed_memory
-            .get(&range.base().block)?;
-        for (loan, protected_ranges) in block.iter() {
-            for protected in protected_ranges {
-                if protected_range_proven_overlapping(range, protected, assumptions) {
-                    return described(*loan, protected);
+        let mut checked_blocks = BTreeSet::new();
+        for alias in memory_range_aliases(range, assumptions) {
+            if !checked_blocks.insert(alias.base().block.clone()) {
+                continue;
+            }
+            let Some(block) = self.storage.data.unindexed_memory.get(&alias.base().block) else {
+                continue;
+            };
+            for (loan, protected_ranges) in block.iter() {
+                for protected in protected_ranges {
+                    if protected_range_proven_overlapping(range, protected, assumptions) {
+                        return described(*loan, protected);
+                    }
                 }
             }
         }
@@ -5468,7 +5509,9 @@ impl LoanLedger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::{CResource, CResourceFact, Variable};
+    use crate::kernel::{
+        CResource, CResourceFact, ConditionTerm, Pointer, PointerOffsetTerm, Variable,
+    };
 
     fn owned(name: &str) -> CResourceFact {
         CResourceFact::own(CResource::Token {
@@ -8771,6 +8814,95 @@ mod tests {
                 .is_ok()
         );
         let _ = ledger.recover(opening.loan, owner).unwrap();
+    }
+
+    #[test]
+    fn indexed_loan_blocks_write_through_exact_pointer_alias() {
+        let (ledger, owner, reader) = participants();
+        let protected_base = Pointer {
+            block: PointerBlock::Symbolic(Variable(702)),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let protected = CResourceFact::own_memory(CMemoryRange::new(
+            protected_base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+        ));
+        let opening = lend_test(&ledger, owner, reader, protected);
+        let ledger = ledger.apply(&opening.transition).unwrap();
+
+        let query_base = Pointer {
+            block: PointerBlock::Symbolic(Variable(703)),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let assumptions = PureFactContext::new().assume_condition(
+            ConditionTerm::pointer_equal(query_base.clone(), protected_base.clone()),
+            true,
+        );
+        assert!(
+            assumptions
+                .exact_pointer_aliases(&query_base)
+                .any(|alias| alias == &protected_base)
+        );
+        let query = CMemoryRange::new(
+            query_base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(&query, &assumptions),
+            Err(LoanRefusal::ActiveDependency)
+        );
+        assert_eq!(
+            ledger
+                .memory_access_refusal(&query, &assumptions, LoanRefusalOperation::MemoryAccess,)
+                .unwrap()
+                .category(),
+            LoanRefusalCategory::ActiveDependency
+        );
+    }
+
+    #[test]
+    fn symbolic_loan_fallback_checks_equal_pointer_alias_buckets() {
+        let (ledger, owner, reader) = participants();
+        let protected_base = Pointer {
+            block: PointerBlock::Symbolic(Variable(704)),
+            offset: PointerOffsetTerm::Variable(Variable(700)),
+        };
+        let protected = CMemoryRange::new_with_element_width(
+            protected_base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+            4,
+        );
+        let opening = lend_test(&ledger, owner, reader, CResourceFact::own_memory(protected));
+        let ledger = ledger.apply(&opening.transition).unwrap();
+
+        let query_base = Pointer {
+            block: PointerBlock::Symbolic(Variable(705)),
+            offset: PointerOffsetTerm::Variable(Variable(701)),
+        };
+        let assumptions = PureFactContext::new().assume_condition(
+            ConditionTerm::pointer_equal(query_base.clone(), protected_base.clone()),
+            true,
+        );
+        assert!(
+            assumptions
+                .exact_pointer_aliases(&query_base)
+                .any(|alias| alias == &protected_base)
+        );
+        let query = CMemoryRange::new_with_element_width(
+            query_base,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+            4,
+        );
+
+        assert_eq!(
+            ledger.permits_memory_access_with_assumptions(&query, &assumptions),
+            Err(LoanRefusal::ActiveDependency)
+        );
     }
 
     #[test]
