@@ -1,13 +1,13 @@
-# Concurrency profile and first source probe
+# Concurrency profile and verified fork/join probe
 
-This is the source-selection checkpoint for the P1
-[concurrency demo](../../issues/concurrency-demo.md), not a Click verification
-example yet. The synthetic [`fork_join.c`](fork_join.c) is ordinary C11/POSIX
-source fixed before its contracts and thread rules are written. It stays here
-until Click can verify it; adding an unproved directory under `examples/` would
-make the normal example gate fail. The source-integrity test in
-`tests/examples.rs` pins its exact bytes. Later example work must use those
-bytes, not reshape the C to expose a friendlier proof state.
+This records the source selection and runtime boundary for the P1
+[concurrency demo](../../issues/concurrency-demo.md). The synthetic
+[`fork_join.c`](../../examples/concurrency-fork-join/fork_join.c) is ordinary
+C11/POSIX source fixed before its contracts and thread rules were written.
+Its [Click sidecar](../../examples/concurrency-fork-join/fork_join.click) now
+verifies both the worker and parent under the explicit modeled pthread runtime.
+The normal example gate verifies that project, and the source-integrity test
+in `tests/examples.rs` pins the C bytes.
 
 ## Binding direction
 
@@ -26,14 +26,14 @@ create. The same sharing now works for a parent stack cell without an
 ownership annotation, and rejects writes or scope exit while a reader lives.
 An explicitly owned cell can likewise back both readers; the owner returns
 only after the final join, including when joins occur in reverse order.
-The frozen parent still needs its complete sidecar proof, broader
-guarded operations, and the separate native runtime binding described below.
+The frozen parent has a complete sidecar proof. Broader guarded operations and
+the separate native runtime binding described below remain future work.
 
 ## Selected profile
 
 | Boundary | Selection |
 | --- | --- |
-| Language and target | C11, x86-64 Linux user space, LP64, eight-bit bytes and `-funsigned-char`. Normal Click verification selects this target when a sidecar declares `target "x86_64-linux-userspace";`, which chooses the include model without `__KERNEL__` and a distinct proof-artifact identity; the kernel target remains the default. Selecting it adds no pthread contract and no concurrency semantics. |
+| Language and target | C11, x86-64 Linux user space, LP64, eight-bit bytes and `-funsigned-char`. The example project selects `x86_64-linux-userspace` in `click.project.json`, which chooses the include model without `__KERNEL__` and a distinct proof-artifact identity. The same config explicitly selects `modeled-pthread`; target selection alone supplies no thread semantics. |
 | Compiler and C library | Debian Bookworm GCC 12.2.0, glibc 2.36 headers and pthread runtime. The eventual locked import must record the exact driver, headers, flags, and ABI observations; the current modeled declarations are not that lock. |
 | Compile options | `-std=c11 -pthread -funsigned-char -D_POSIX_C_SOURCE=200809L`. No optimizer- or scheduler-specific ordering assumption belongs in a proof. |
 | Thread API | The selected `pthread.h` declarations for `pthread_create` and `pthread_join`, with joinable threads only. The declaration projection spells `pthread_t` as its x86-64 ABI `unsigned long`; checked modeled rules treat its value as a handle rather than deriving thread behavior from integer arithmetic. Spawn success creates exactly one child and a completion handle; failure creates none. A successful join consumes that handle exactly once. |
@@ -45,8 +45,8 @@ The first Click import is a declaration-only projection of `<pthread.h>` and
 modeled runtime supplies checked create/join transitions under an explicit
 assumption; the declarations themselves supply no pthread external contracts
 or scheduler semantics. Only null attributes and null join-result arguments
-are in the selected first probe. The frozen parser regression is not yet a
-verified concurrency example.
+are in the selected first probe. The frozen source is now a verified modeled
+concurrency example; the native pthread binding remains unverified.
 
 The pthread implementation is a trusted runtime boundary, not a verified C
 body. Its future specification must identify these exact declarations and
@@ -138,13 +138,12 @@ No header declarations or probe statements are removed.
 
 ## Sequential worker checkpoint
 
-`mdtests/fork_join_worker_sequential.md` verifies `fill_range` from this file,
-unchanged, with the contract a spawn will transfer as the worker's task. It is
-the worker half of the eventual proof, not evidence about threads; the parent
-is not yet verified in any form. `mdtests/fork_join_worker_direct_contract.md`
-also verifies that same worker with direct `views`/`owns` clauses, so a future
-spawn can lend the job record at the call boundary. Its generated certificates
-expand and reverify against the unchanged worker.
+`mdtests/fork_join_worker_sequential.md` verifies `fill_range` from the frozen
+source with the contract a spawn transfers as the worker's task. That earlier
+sequential proof alone made no concurrency claim.
+`mdtests/fork_join_worker_direct_contract.md` verifies the same worker with
+direct `views`/`owns` clauses; its generated certificates expand and reverify.
+The complete example sidecar uses that direct contract for its checked spawns.
 
 ## Frozen fork/join program
 
@@ -158,18 +157,20 @@ returns 0 with all zeros; if the second fails it joins the first before
 returning 0 with `[11, 11, 0, 0]`. There is no parent read after spawn or
 free/return of a child-borrowed object before its join.
 
-The future Click proof must show the exact contents and ownership for each
-outcome, reject overlapping worker write transfers and parent access before
-join, and recover each child's result and borrowed job lifetime once. A
-companion shared-read-only worker probe belongs in the next implementation
-phase. This first checkpoint adds no sequential stand-in, trusted Click
-contract, thread rule, or claim that C11 data-race freedom is already modeled.
+The [example](../../examples/concurrency-fork-join/) proves the exact output
+contents for all three outcomes and ownership of the output buffer at return.
+The modeled create/join rules transfer disjoint output slices, borrow each
+stack job until join, and reject overlapping writes or premature parent access.
+Shared-reader companions and hostile source regressions exercise both join
+orders, cleanup, and refusals. These are conditional client claims under the
+trusted modeled pthread runtime specification, not a native Linux or macOS
+runtime validation.
 
 On the selected Linux toolchain, the source-only syntax check is:
 
 ```sh
 gcc -std=c11 -pthread -funsigned-char -D_POSIX_C_SOURCE=200809L \
-  -Wall -Wextra -Werror -fsyntax-only design/concurrency-probes/fork_join.c
+  -Wall -Wextra -Werror -fsyntax-only examples/concurrency-fork-join/fork_join.c
 ```
 
 The local macOS syntax smoke used Homebrew Clang 19.1.7 with the same source

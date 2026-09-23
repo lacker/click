@@ -3,9 +3,11 @@
 Status: design direction accepted, 2026-09-22; implementation order amended to
 allow modeled-runtime client verification on macOS before native binding.
 
-This is the binding design for
-[Chunk A](../../issues/concurrency-demo.md#chunk-a-explicit-modeled-pthread-binding-identity),
-not implemented concurrency support or a verified parent proof.
+This is the original binding design for
+[Chunk A](../../issues/concurrency-demo.md#chunk-a-explicit-modeled-pthread-binding-identity).
+The modeled binding and [frozen parent proof](../../examples/concurrency-fork-join/)
+are now implemented; the code fragments below retain the original design
+context. Native runtime validation remains separate work.
 
 Implementation checkpoint: the [probe record](README.md#compiler-import-checkpoint)
 records completion of the user-space compiler-import foundation and successive

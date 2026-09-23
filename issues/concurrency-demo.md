@@ -20,7 +20,18 @@ program exercises a different boundary in the same production proof engine.
 Small passing examples are necessary but insufficient evidence of scalability:
 this milestone also requires modular rules and deterministic scaling tests.
 
-## Resume here: 2026-09-22 handoff
+## Current checkpoint: 2026-09-23
+
+The frozen [fork/join example](../examples/concurrency-fork-join/) now verifies
+under the explicit modeled pthread runtime. Its unchanged C source, worker
+proof, and parent proof are in the normal example gate. The parent contract
+gives the exact successful output and both permitted failure outputs, with
+output ownership returned on every path. Shared-reader companions and hostile
+C regressions remain in the gate. The modeled runtime is an explicit trusted
+assumption; native Linux/macOS binding validation, the mutex counter, and
+release/acquire publication remain open parts of this issue.
+
+## Historical handoff: 2026-09-22
 
 The session's implementation is merged into `master` through `d3aa4cd8`
 (`Preserve pointee const qualification on struct fields`). The complete
@@ -215,13 +226,12 @@ A historical unfinished fork/join implementation remains on
 is failure history only; resume from current `master` and the accepted binding
 design, not from that branch.
 
-The source-selection checkpoint is
-[`design/concurrency-probes/fork_join.c`](../design/concurrency-probes/fork_join.c)
-with its [profile record](../design/concurrency-probes/README.md). It fixes an
+The source-selection checkpoint is now the
+[`fork_join.c` example source](../examples/concurrency-fork-join/fork_join.c),
+with its [profile record](../design/concurrency-probes/README.md). It fixed an
 ordinary C11/POSIX program, compiler/target/API choices, and creation-failure
-paths before any thread rule or sidecar is written. The fixture is deliberately
-not yet listed as a verifying example; its source bytes are pinned by the
-examples gate.
+paths before any thread rule or sidecar was written. Its source bytes are
+pinned by the examples gate.
 
 The declaration-only import checkpoint is complete. `CTarget` now distinguishes
 `x86_64-linux-userspace` from `x86_64-linux-kernel`, retaining this probe's
@@ -355,7 +365,7 @@ or serial execution wrappers to make their proofs work.
 Read this section together with `docs/internals/stable-views.md` and `AGENTS.md`.
 Implement one green chunk at a time. Do not merge the parked branch; its
 `PARKED.md` is historical evidence, and its saved-state join is not the design.
-The frozen C remains `design/concurrency-probes/fork_join.c`. Do not edit it,
+The frozen C remains `examples/concurrency-fork-join/fork_join.c`. Do not edit it,
 insert immediate status checks, or introduce proof-only locals or helper calls.
 
 ### What is already decided

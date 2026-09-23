@@ -1,33 +1,4 @@
-# The frozen worker verifies with direct borrowed and owned clauses
-
-The C worker is unchanged from `examples/concurrency-fork-join/fork_join.c`.
-Direct `views` clauses allow a future caller to lend its job record while
-transferring the output slice. Certificate synthesis must spell the output
-pointer through the cast `void *` parameter or the struct-pointer local,
-including when checking an expanded quantified readability proof.
-
-```c filename=fill_range.c
-#include <stddef.h>
-
-struct range_job {
-    int *output;
-    int begin;
-    int end;
-    int value;
-};
-
-void *fill_range(void *argument) {
-    struct range_job *job = argument;
-    for (int index = job->begin; index < job->end; ++index) {
-        job->output[index] = job->value;
-    }
-    return NULL;
-}
-```
-
-```click
-target "x86_64-linux-userspace";
-verifying "fill_range.c";
+verifying "fork_join.c";
 
 predicate range_filled(job: struct range_job*) {
     forall (k: int32) {
@@ -78,6 +49,29 @@ void *fill_range(void *argument) {
         preserve by {
             mark iteration;
             step();
+            have forall (k: int32) {
+                job->begin <= k and k <= index implies job->output[k] == job->value
+            } by {
+                intro();
+                intro();
+                if k < index {
+                    extract(job->begin <= k);
+                    instantiate(at(statement(5).entry, forall (k: int32) {
+                        job->begin <= k and k < index implies job->output[k] == job->value
+                    }), k) using { job->begin <= k; k < index; }
+                    simp();
+                } else {
+                    extract(k <= index);
+                    have k == index by {
+                        apply(int32_le_and_not_lt_implies_eq(k, index)) using {
+                            k <= index;
+                            not (k < index);
+                        }
+                    }
+                    rewrite(k == index);
+                    simp();
+                }
+            }
             step();
             have 0 <= at(iteration, index) by {
                 simp() using {
@@ -108,14 +102,42 @@ void *fill_range(void *argument) {
                     job->begin <= job->end;
                 }
             }
+            have forall (k: int32) {
+                job->begin <= k and k < index implies job->output[k] == job->value
+            } by {
+                intro();
+                intro();
+                extract(job->begin <= k);
+                extract(k < index);
+                have k <= at(iteration, index) by {
+                    apply(int32_lt_successor_implies_le(k, at(iteration, index))) using {
+                        k < index;
+                    }
+                }
+                instantiate(at(statement(6).entry, forall (k: int32) {
+                    job->begin <= k and k <= index implies job->output[k] == job->value
+                }), k) using { job->begin <= k; k <= at(iteration, index); }
+                simp();
+            }
             simp();
         }
     }
     step();
     simp();
 }
-```
 
-```expect
-pass
-```
+int fill_parallel(int output[4]) {
+    owns output[0..4];
+    ensures result == 0 or result == 1;
+    ensures result == 1 implies
+        output[0] == 11 and output[1] == 11 and
+        output[2] == 22 and output[3] == 22;
+    ensures result == 0 implies
+        (output[0] == 0 and output[1] == 0 and
+         output[2] == 0 and output[3] == 0) or
+        (output[0] == 11 and output[1] == 11 and
+         output[2] == 0 and output[3] == 0);
+} by {
+    execute();
+    simp();
+}

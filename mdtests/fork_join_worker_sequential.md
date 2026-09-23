@@ -1,7 +1,7 @@
 # The fork/join worker verifies once, sequentially, with its task contract
 
 `fill_range` is the worker of the frozen concurrency probe
-`design/concurrency-probes/fork_join.c`, byte for byte. Its contract is the
+`examples/concurrency-fork-join/fork_join.c`, byte for byte. Its contract is the
 task a future spawn transfers: a stable view of the stack job record, reached
 through the opaque `void *` argument by a contract cast, and exclusive
 ownership of exactly the job's output slice. This sequential proof establishes

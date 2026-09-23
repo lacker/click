@@ -7591,7 +7591,7 @@ mod modeled_pthread_binding_tests {
     use super::*;
 
     const CLICK: &str = "target \"x86_64-linux-userspace\";\nruntime \"modeled-pthread\";\nverifying \"fork_join.c\";\n";
-    const FROZEN: &str = include_str!("../../design/concurrency-probes/fork_join.c");
+    const FROZEN: &str = include_str!("../../examples/concurrency-fork-join/fork_join.c");
 
     fn parse_binding(click: &str, source: &str) -> Result<(), ClickError> {
         let sources = [("fork_join.c", source)];

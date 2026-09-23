@@ -4,12 +4,14 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use click::cli::{
-    CInput, files_with_extension, read_c_inputs, read_click_project_at_root,
+    CInput, files_with_extension, read_c_inputs_for_project, read_click_project_at_root,
     read_verifying_sources, run_parallel, source_refs,
 };
 use click::instrumentation::{self, ArtifactReuseRejection};
 use click::languages::refresh_compiler_import;
-use click::surface::{verify_c0_prepared_project, verify_c0_sources, verify_cpp_prepared_project};
+use click::surface::{
+    verify_c0_prepared_project, verify_c0_project, verify_c0_sources, verify_cpp_prepared_project,
+};
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const SOURCE_MANIFEST: &str = "SOURCE.sha256";
@@ -168,9 +170,9 @@ fn rbtree_insert_frontier_remains_explicit_and_uses_the_shared_model() {
 }
 
 #[test]
-fn concurrency_fork_join_source_is_fixed_before_thread_rules() {
-    let source =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("design/concurrency-probes/fork_join.c");
+fn concurrency_fork_join_source_is_frozen() {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples/concurrency-fork-join/fork_join.c");
     let bytes = fs::read(&source).expect("the frozen fork/join C source exists");
     assert_eq!(
         hex_digest(sha256(&bytes)),
@@ -256,12 +258,12 @@ fn run_example_project(project: &Path) -> Result<(), String> {
                 )
             })?;
         }
-        let inputs = read_c_inputs(&click_path, &click_source)?;
         let click_project = read_click_project_at_root(
             &click_path,
             &click_source,
             project.parent().unwrap_or(project),
         )?;
+        let inputs = read_c_inputs_for_project(&click_path, &click_source, &click_project)?;
         match source_status {
             Some(SourceFixtureStatus::ParserOnly) => {
                 let CInput::Bundle(c_sources) = inputs else {
@@ -270,10 +272,10 @@ fn run_example_project(project: &Path) -> Result<(), String> {
                         click_path.display()
                     ));
                 };
-                match if click_project.modules().len() == 1 {
+                match if click_project.modules().len() == 1 && click_project.c_profile().is_none() {
                     verify_c0_sources(&click_source, &source_refs(&c_sources))
                 } else {
-                    click::surface::verify_c0_project(&click_project, &source_refs(&c_sources))
+                    verify_c0_project(&click_project, &source_refs(&c_sources))
                 } {
                     Err(error)
                         if error.message().starts_with("failed to parse C source")
@@ -304,13 +306,15 @@ fn run_example_project(project: &Path) -> Result<(), String> {
             Some(SourceFixtureStatus::Verified) | None => {
                 let verify = || {
                     match &inputs {
-                        CInput::Bundle(c_sources) if click_project.modules().len() == 1 => {
+                        CInput::Bundle(c_sources)
+                            if click_project.modules().len() == 1
+                                && click_project.c_profile().is_none() =>
+                        {
                             verify_c0_sources(&click_source, &source_refs(c_sources))
                         }
-                        CInput::Bundle(c_sources) => click::surface::verify_c0_project(
-                            &click_project,
-                            &source_refs(c_sources),
-                        ),
+                        CInput::Bundle(c_sources) => {
+                            verify_c0_project(&click_project, &source_refs(c_sources))
+                        }
                         CInput::Prepared(imports) => {
                             verify_c0_prepared_project(&click_project, imports)
                         }

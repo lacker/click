@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn modeled_userspace_pthread_declarations_parse_the_frozen_probe() {
-    let frozen = include_str!("../../../design/concurrency-probes/fork_join.c");
+    let frozen = include_str!("../../../examples/concurrency-fork-join/fork_join.c");
     let sources = std::collections::BTreeMap::from([("fork_join.c", frozen)]);
     let expanded = source::expand_includes_for_target(
         "fork_join.c",

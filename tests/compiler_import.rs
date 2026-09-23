@@ -569,7 +569,7 @@ fn userspace_frozen_pthread_probe_records_real_header_boundary() {
     let gcc_include = String::from_utf8(query.stdout).unwrap();
     fs::write(
         project.0.join("main.c"),
-        include_str!("../design/concurrency-probes/fork_join.c"),
+        include_str!("../examples/concurrency-fork-join/fork_join.c"),
     )
     .unwrap();
     let staged = stage_real_gcc_headers(&project, Path::new(gcc_include.trim()));
