@@ -97,12 +97,15 @@ payload protocols, and arbitrary cyclic-graph proofs remain deferred. The
 small diamond establishes sharing, not cycle reclamation. Follow `AGENTS.md`
 when proof tooling exposes a blocker.
 
-## Current status, 2026-09-21
+## Current status, 2026-09-22
 
-This issue remains open, but the work is now split into verified pieces and a
-specific composition gap. The frozen C source is unchanged. The helper-level
-proofs and the reduced two-parent caller pass through the normal gate; the
-exact frozen lifecycle still does not.
+This issue remains open. The frozen C source is unchanged, and the current
+`scripts/check.sh` gate passes, but there is still no passing sidecar for the
+full lifecycle. Keep two distinct failures separate: the latest attempt on the
+frozen source fails while preserving child-pointer identity across composed
+parent resources; a smaller modular detach reducer reaches `parent_detach` and
+fails earlier than allocation-lifetime closeout while restoring the counted
+resource invariant.
 
 Verified and landed:
 
@@ -128,10 +131,9 @@ Still failing to compose:
 
 - The exact frozen `design/shared-heap-probes/shared_parent.c` diamond has
   two allocation-failure paths and two destruction orders, but no passing
-  sidecar yet. The attempted proof now explicitly handles all three null
-  checks and reaches both `parent_attach` calls.
-- The first exact failure is the creator-reference release immediately after
-  the second attach:
+  sidecar yet. The latest attempted proof explicitly handles all three null
+  checks and reaches both `parent_attach` calls. Its first failure is the
+  creator-reference release immediately after the second attach:
 
   ```click
   let { link: first_link } = step(parent_attach(first, kid), {});
@@ -147,6 +149,24 @@ Still failing to compose:
   therefore preservation/normalization of the local child-pointer identity
   across the composed parent resources, not the child release proof or the
   old-pointer handoff itself.
+- The separate minimal reducer
+  `mdtests/shared_heap_two_parent_branch_release.md` fails while certifying
+  `parent_detach`: the generated `resource population invariant` goal is
+  `obj->refs == count(child_ref(obj))` after the modular `child_release` call.
+  The callee contract states the counted-resource decrement, but does not
+  expose the matching refcount update on the branch where the allocation
+  survives. An ordinary implication is not enough: the final branch frees the
+  allocation, so even lowering its current-field consequent requires memory
+  that is no longer viewable. Conditional function-contract blocks currently
+  accept only `produces`, not guarded pure `ensures` clauses. The reducer fails
+  before the allocation-lifetime closer; do not add another generic counted
+  population lifetime rule based on this failure.
+- Existing `mdtests/child_release_branch_on_count.md` and
+  `mdtests/counted_resource_population_lifetime.md` pass, so the generic
+  nonempty counted-population/lifetime path is already covered. The next
+  design question is whether to add guarded postconditions or transport the
+  invariant path-sensitively through checked calls; verify which is sound and
+  sufficient against both the reducer and frozen C before implementation.
 - The full positive caller, allocation-failure regressions, negative caller
   regressions, and deterministic scaling fixtures therefore remain to be
   composed before this issue can be closed.

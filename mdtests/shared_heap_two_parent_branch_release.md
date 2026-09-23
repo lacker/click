@@ -1,12 +1,14 @@
-# Conditional parent detach cannot yet return a surviving counted resource
+# `parent_detach` loses the child reference invariant across `child_release`
 
 The creator owns one counted child reference, each attached parent adds one,
 and the creator releases its reference before either parent detaches.  The
-first detach must preserve the child through the non-final release branch;
-the second detach must free it through the final branch.  The current
-unconditional `parent_detach` interface cannot express those two resource
-outcomes, so this is the minimal expected failure for the next implementation
-chunk.
+first detach should consume one `child_ref` while leaving the child's counted
+population nonempty; the second should consume the final reference and free
+the child. Before the allocation-lifetime check can decide that, contract
+certification fails while re-establishing `child_ref`'s invariant
+`obj->refs == count(child_ref(obj))` after the modular `child_release` call.
+The call contract states the count delta, but does not expose the matching
+refcount update on the branch where the allocation survives.
 
 ```c filename=shared_heap_two_parent_branch_release.c
 struct child {
@@ -211,5 +213,5 @@ void caller(struct parent* first, struct parent* second, struct child* kid) {
 ```
 
 ```expect
-fail: could not certify contract for `parent_detach`
+fail: resource population invariant
 ```
