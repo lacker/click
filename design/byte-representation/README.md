@@ -46,7 +46,12 @@ standard-library `memcpy` declaration (not to the spelling): after the external
 contract's havoc, each source cell whose complete byte representation lies in
 the copied range is planted at the mapped destination offset. A partial cell, a
 symbolic range, or an unaligned destination is left alone, and an untyped source
-has no cells, so a raw byte copy still establishes nothing typed.
+has no cells, so a raw byte copy still establishes nothing typed. The source
+cells are found with one bounded range query over the copied block and extent,
+never a scan of memory; `src/kernel/tests/representation_copy_tests.rs` pins
+that lookup's deterministic work as linear in the copied extent and constant
+under unrelated memory, while each planted cell still pays the ordinary
+`CMemory::store` cost, which grows with the whole memory.
 
 `mdtests/byte_representation_scalar_copy.md` verifies a complete direct copy of
 an initialized `unsigned int`; `byte_representation_partial_copy_frontier.md`
