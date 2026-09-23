@@ -130,6 +130,16 @@ impl ProofStepSite {
         self.segments(&mut segments);
         (!segments.is_empty()).then(|| segments.join(" > "))
     }
+
+    pub(super) fn outer_source_tactic_index(&self) -> Option<usize> {
+        self.enclosing
+            .as_ref()
+            .and_then(|site| site.outer_source_tactic_index())
+            .or(match self.position {
+                Some(ProofStepPosition::SourceTactic(index)) => Some(index),
+                _ => None,
+            })
+    }
 }
 
 /// Private persistent surface-provenance node.

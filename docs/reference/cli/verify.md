@@ -73,12 +73,10 @@ verification.
 
 ## Output and exit behavior
 
-The command first prints its default C implementation target:
-`default C target: x86_64-linux-kernel (LP64, 8-bit unsigned plain char); a
-sidecar may select another with ...`. Successful verification is relative to
-the target the sidecar actually selected, not a portability claim. There is no
-target-selection flag: a sidecar selects its target with the `target`
-directive described in
+The command does not print the default C implementation target on every run.
+Successful verification is relative to the target the sidecar selected, not a
+portability claim. There is no target-selection flag: a sidecar selects its
+target with the `target` directive described in
 [Supported C0](../language/c0.md#selecting-a-target), and that selection also
 separates incremental verification markers.
 
@@ -97,8 +95,9 @@ itself the failure being investigated.
 
 When a proof error identifies a C function, the CLI suggests a rerun with
 `--trace-proof` and fills in the function and sidecar path. The trace includes
-successful simple steps before the failed attempt; the ordinary error names
-the failed tactic and its unmet requirement when available. A trace reports
+successful simple steps before the failed attempt; the ordinary error starts
+with the failed check, shows the Click goal and a source excerpt when its
+written tactic can be located, and omits the internal premise dump. A trace reports
 facts introduced into the focused proof context and changes to exact resource
 representations. Retained Click goals and facts print in Click syntax. Generated
 facts without an exact Click spelling are labeled internal and carry bounded

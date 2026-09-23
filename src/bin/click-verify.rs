@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use click::cli::{
     CInput, DEFAULT_VERIFY_TIME_LIMIT, contains_click_file, files_with_extension, find_projects,
-    format_duration, looks_like_source_location, parse_duration, parse_source_location,
-    read_click_project_at_root, source_refs,
+    looks_like_source_location, parse_duration, parse_source_location, read_click_project_at_root,
+    source_refs,
 };
 use click::languages::c::source as c_source;
 use click::languages::c::target::CTarget;
@@ -19,13 +19,14 @@ use click::surface::verify_c0_sources;
 use click::surface::{
     ClickError, ClickErrorKind, ClickProject, VerifiedCTheorem, c0_incremental_selection,
     c0_prepared_project_external_dependencies, c0_prepared_project_selected_proof_count,
-    c0_prepared_project_selected_proof_names, c0_project_external_dependencies,
-    c0_project_selected_proof_count, c0_project_selected_proof_names,
+    c0_prepared_project_selected_proof_names, c0_prepared_project_tactic_source_position,
+    c0_project_external_dependencies, c0_project_selected_proof_count,
+    c0_project_selected_proof_names, c0_project_tactic_source_position,
     cpp_prepared_project_external_dependencies, cpp_prepared_project_selected_proof_count,
-    selected_c_target, verify_c0_prepared_project, verify_c0_prepared_project_at,
-    verify_c0_prepared_project_functions, verify_c0_project, verify_c0_project_at,
-    verify_c0_project_functions, verify_cpp_prepared_project, verify_cpp_prepared_project_at,
-    verifying_source_paths, with_proof_trace,
+    cpp_prepared_project_tactic_source_position, selected_c_target, verify_c0_prepared_project,
+    verify_c0_prepared_project_at, verify_c0_prepared_project_functions, verify_c0_project,
+    verify_c0_project_at, verify_c0_project_functions, verify_cpp_prepared_project,
+    verify_cpp_prepared_project_at, verifying_source_paths, with_proof_trace,
 };
 
 const USAGE: &str = "\
@@ -70,7 +71,15 @@ struct Arguments {
 
 fn main() {
     if let Err(message) = entry() {
-        eprintln!("click-verify: {message}");
+        if message.starts_with("proof error:")
+            || message.starts_with("syntax error:")
+            || message.starts_with("type error:")
+            || message.starts_with("internal error:")
+        {
+            eprintln!("{message}");
+        } else {
+            eprintln!("click-verify: {message}");
+        }
         std::process::exit(1);
     }
 }
@@ -115,10 +124,6 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
 }
 
 fn run(arguments: Arguments) -> Result<(), String> {
-    println!(
-        "default C target: {} (LP64, 8-bit unsigned plain char); a sidecar may select another with `target \"...\";`",
-        CTarget::SUPPORTED.name()
-    );
     if let Some(revision) = &arguments.changed_since {
         let path = Path::new(&arguments.target);
         return verify_changed(path, revision, arguments.time_limit, arguments.explain);
@@ -346,14 +351,7 @@ fn verify_changed(
             } else {
                 verify_c0_project_functions(&project, &refs, selected.clone())
             }
-            .map_err(|error| {
-                format!(
-                    "incremental sidecar `{}` failed under its {} limit: {}",
-                    sidecar.display(),
-                    format_duration(time_limit),
-                    proof_error_report(&error, &sidecar, true)
-                )
-            })
+            .map_err(|error| proof_error_report(&error, &sidecar, true, &project, &inputs))
         })?;
         print_external_dependencies(&dependencies, &verified_theorems);
         if full_rebuild
@@ -393,7 +391,7 @@ fn imported_project_rebuild_reason(project: &ClickProject) -> Option<&'static st
 }
 
 fn click_message(error: click::surface::ClickError) -> String {
-    error.report()
+    error.concise_report()
 }
 
 fn shell_word(value: &str) -> String {
@@ -407,8 +405,32 @@ fn shell_word(value: &str) -> String {
     }
 }
 
-fn proof_error_report(error: &ClickError, sidecar: &Path, suggest_trace: bool) -> String {
-    let mut report = error.report();
+fn proof_error_report(
+    error: &ClickError,
+    sidecar: &Path,
+    suggest_trace: bool,
+    project: &ClickProject,
+    inputs: &CInput,
+) -> String {
+    let mut report = if suggest_trace {
+        error.concise_report()
+    } else {
+        error.report()
+    };
+    if suggest_trace {
+        if let (Some(source), Some(position)) = (
+            project.entry_source(),
+            proof_source_position(error, project, inputs),
+        ) && let Some(excerpt) = source_excerpt(sidecar, source, &position)
+        {
+            report.push('\n');
+            report.push_str(&excerpt);
+        }
+        if let Some(location) = error.proof_step_location() {
+            report.push_str("\n  step: ");
+            report.push_str(location);
+        }
+    }
     if suggest_trace
         && error.kind() == ClickErrorKind::Proof
         && let Some(function) = error
@@ -422,6 +444,71 @@ fn proof_error_report(error: &ClickError, sidecar: &Path, suggest_trace: bool) -
         ));
     }
     report
+}
+
+fn proof_source_position(
+    error: &ClickError,
+    project: &ClickProject,
+    inputs: &CInput,
+) -> Option<click::surface::SourcePosition> {
+    let claim = error.proof_claim_label()?;
+    let source_index = error.proof_source_tactic_index()?;
+    match inputs {
+        CInput::Bundle(sources) => {
+            c0_project_tactic_source_position(project, &source_refs(sources), claim, source_index)
+        }
+        CInput::Prepared(imports) => {
+            c0_prepared_project_tactic_source_position(project, imports, claim, source_index)
+        }
+        CInput::PreparedCpp(import) => {
+            cpp_prepared_project_tactic_source_position(project, import, claim, source_index)
+        }
+    }
+    .ok()
+}
+
+fn source_excerpt(
+    sidecar: &Path,
+    source: &str,
+    position: &click::surface::SourcePosition,
+) -> Option<String> {
+    let line = source.lines().nth(position.line.checked_sub(1)?)?;
+    let chars = line.chars().collect::<Vec<_>>();
+    let column = position.column.checked_sub(1)?;
+    if column > chars.len() {
+        return None;
+    }
+    let start = column.saturating_sub(48);
+    let end = chars.len().min(start + 160);
+    let snippet = chars[start..end].iter().collect::<String>();
+    let left = if start == 0 { "" } else { "…" };
+    let right = if end == chars.len() { "" } else { "…" };
+    let marker = chars[column..]
+        .iter()
+        .take_while(|character| character.is_alphanumeric() || **character == '_')
+        .take(12)
+        .count()
+        .max(1);
+    let caret_offset = chars[start..column]
+        .iter()
+        .map(|character| if *character == '\t' { 4 } else { 1 })
+        .sum::<usize>()
+        + usize::from(start > 0);
+    let width = position.line.to_string().len();
+    Some(format!(
+        "  --> {}:{}:{}\n  {:width$} | {}{}{}\n  {:width$} | {}{}",
+        sidecar.display(),
+        position.line,
+        position.column,
+        position.line,
+        left,
+        snippet,
+        right,
+        "",
+        " ".repeat(caret_offset),
+        "^".repeat(marker),
+        width = width,
+    ))
 }
 
 fn print_incremental_selection(
@@ -849,12 +936,7 @@ fn verify_file(
             (CInput::PreparedCpp(import), None) => verify_cpp_prepared_project(&project, import),
         };
         let report = |error: ClickError| {
-            format!(
-                "sidecar `{}` failed under its {} limit: {}",
-                click_path.display(),
-                format_duration(time_limit),
-                proof_error_report(&error, click_path, trace_proof.is_none())
-            )
+            proof_error_report(&error, click_path, trace_proof.is_none(), &project, &inputs)
         };
         match trace_proof {
             Some(function) => with_proof_trace(function, || run_selected().map_err(report)),
@@ -940,14 +1022,7 @@ fn verify_location(
                 verify_cpp_prepared_project_at(&project, import, line, column)
             }
         };
-        result.map_err(|error| {
-            format!(
-                "proof unit `{}:{line}:{column}` failed under its {} limit: {}",
-                click_path.display(),
-                format_duration(time_limit),
-                proof_error_report(&error, click_path, true)
-            )
-        })
+        result.map_err(|error| proof_error_report(&error, click_path, true, &project, &inputs))
     })?;
     print_external_dependencies(&dependencies, &verified);
     println!("1 selected proof verified");

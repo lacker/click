@@ -1909,9 +1909,10 @@ impl<'a> Proof<'a> {
             origin: crate::surface::proof_diagnostics::ProofDiagnosticOrigin {
                 stage: "proof step".to_owned(),
                 location,
+                source_tactic_index: self.site.outer_source_tactic_index(),
             },
             claim_label: self.context.claim_label().to_owned(),
-            reason: summary.clone(),
+            reason,
             state: Some(Arc::new(self.diagnostic_state())),
         };
         ClickError::with_diagnostic(summary, diagnostic)
@@ -1934,9 +1935,10 @@ impl<'a> Proof<'a> {
             origin: crate::surface::proof_diagnostics::ProofDiagnosticOrigin {
                 stage: "proof step".to_owned(),
                 location,
+                source_tactic_index: self.site.outer_source_tactic_index(),
             },
             claim_label: self.context.claim_label().to_owned(),
-            reason: error.message().to_owned(),
+            reason: error.raw_summary().to_owned(),
             state: Some(Arc::new(self.diagnostic_state())),
         };
         error.with_diagnostic_if_missing(diagnostic)

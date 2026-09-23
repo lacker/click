@@ -27,7 +27,15 @@ commands:\n  \
 
 fn main() {
     if let Err(message) = entry(env::args().skip(1)) {
-        eprintln!("click: {message}");
+        if message.starts_with("proof error:")
+            || message.starts_with("syntax error:")
+            || message.starts_with("type error:")
+            || message.starts_with("internal error:")
+        {
+            eprintln!("{message}");
+        } else {
+            eprintln!("click: {message}");
+        }
         std::process::exit(1);
     }
 }
@@ -91,7 +99,7 @@ mod tests {
             "{error}"
         );
         assert!(!error.contains("outside the owned footprint"), "{error}");
-        assert!(error.contains("error kind: proof error"), "{error}");
+        assert!(error.starts_with("proof error:"), "{error}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -111,7 +119,7 @@ mod tests {
         )
         .unwrap();
         let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
-        assert!(error.contains("error kind: proof error"), "{error}");
+        assert!(error.starts_with("proof error:"), "{error}");
         assert!(error.contains("tactic: step"), "{error}");
         assert!(
             error.contains("trace: click verify --trace-proof f "),
@@ -181,7 +189,7 @@ mod tests {
         )
         .unwrap();
         let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
-        assert!(error.contains("error kind: proof error"), "{error}");
+        assert!(error.starts_with("proof error:"), "{error}");
         assert!(
             error.contains("trace: click verify --trace-proof f "),
             "{error}"
@@ -350,6 +358,27 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
             "{report}"
         );
         assert!(!report.contains("kernel detail: ∃path"), "{report}");
+        let plain = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
+        assert!(
+            plain.starts_with("proof error: `assumption` requires"),
+            "{plain}"
+        );
+        assert!(plain.contains("goal: exists (path: Path)"), "{plain}");
+        assert!(
+            plain.contains(&format!("--> {}:23:5", sidecar.display())),
+            "{plain}"
+        );
+        assert!(
+            plain.contains("23 |     have exists (path: Path)"),
+            "{plain}"
+        );
+        assert!(plain.contains("|     ^^^^"), "{plain}");
+        assert!(!plain.contains("recent premises"), "{plain}");
+        assert!(
+            !plain.contains("internal (no exact Click spelling)"),
+            "{plain}"
+        );
+        assert!(!plain.contains("failed under its"), "{plain}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -426,7 +455,7 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
         let sidecar = directory.join("f.click");
         fs::write(&sidecar, "verifying \"f.c\"; int32 read(").unwrap();
         let syntax = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
-        assert!(syntax.contains("error kind: syntax error"), "{syntax}");
+        assert!(syntax.starts_with("syntax error:"), "{syntax}");
         assert!(!syntax.contains("trace: click verify"), "{syntax}");
 
         fs::write(
@@ -435,10 +464,7 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
         )
         .unwrap();
         let type_error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
-        assert!(
-            type_error.contains("error kind: type error"),
-            "{type_error}"
-        );
+        assert!(type_error.starts_with("type error:"), "{type_error}");
         assert!(!type_error.contains("trace: click verify"), "{type_error}");
         fs::remove_dir_all(directory).unwrap();
     }

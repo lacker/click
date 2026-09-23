@@ -7100,6 +7100,41 @@ impl ClickError {
         report
     }
 
+    /// A source-facing verification failure. The full `report()` retains
+    /// bounded kernel premises and search context for `--trace-proof`; the
+    /// ordinary CLI starts with the failed check and its Click goal.
+    pub fn concise_report(&self) -> String {
+        let reason = self
+            .diagnostic
+            .as_ref()
+            .map_or(self.message.as_str(), |diagnostic| {
+                diagnostic.reason.as_str()
+            });
+        let mut report = format!("{}: {reason}", self.kind.label());
+        if let Some(tactic) = self.failed_tactic {
+            report.push_str("\n  tactic: ");
+            report.push_str(tactic);
+        }
+        if let Some(diagnostic) = &self.diagnostic
+            && let Some(goal) = diagnostic
+                .state
+                .as_ref()
+                .and_then(|state| state.source_goal())
+        {
+            report.push_str("\n  goal: ");
+            report.push_str(&goal);
+        }
+        report
+    }
+
+    pub fn proof_source_tactic_index(&self) -> Option<usize> {
+        self.diagnostic.as_ref()?.origin.source_tactic_index
+    }
+
+    pub fn proof_step_location(&self) -> Option<&str> {
+        Some(&self.diagnostic.as_ref()?.origin.location)
+    }
+
     pub fn kind(&self) -> ClickErrorKind {
         self.kind
     }
