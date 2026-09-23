@@ -5,7 +5,7 @@ found. Kernel soundness review discovered during the same campaign is tracked
 separately in `issues/bughunt.md`. Everything needed for this example is here
 and in `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
-## Handoff checkpoint — 2026-09-22, after reachability and branching reduction
+## Handoff checkpoint — 2026-09-22, after branching termination proof
 
 The complete unmodified search now verifies termination and memory safety in
 `mdtests/search_terminates_by_unmarked_count.md`. Its `Integer`-valued fold
@@ -42,12 +42,15 @@ quantified-transport, whole-array dependency, shared-lemma, extent-restatement,
 and small diagnostic items below remain proof-language or tooling costs, but
 none blocks the termination, memory-safety, or branch-local correctness claims.
 
-Whole-array dependency refinement and cyclic branching DFS remain design work
-rather than small finishing edits. The bounded branching-graph C reduction and
-its staged proof obligations are in
-`design/dfs-gaps/branching_graph_dfs.md`; the count-monotonicity lemma needed
-after its first recursive call is checked in `mdtests/unmarked_count_lemmas.md`.
-In particular, discuss the
+Whole-array dependency refinement remains design work rather than a small
+finishing edit. The unchanged cyclic, two-successor C search now verifies
+termination and memory safety in `mdtests/branching_graph_dfs.md`. Its recursive
+contract establishes that `unmarked` cannot increase; the local marking store
+decreases it by one, so the second call still descends after the first call may
+mark more nodes. The successor bounds live in a viewed resource and are
+re-observed after the mutating call. Success-path reachability for this graph
+search remains the next proof claim; see
+`design/dfs-gaps/branching_graph_dfs.md`. In particular, discuss the
 fold-read-range design in item 2 with the user before implementing it.
 
 This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
@@ -147,13 +150,14 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    does not say which constant; a store refusal spells `owns b[0..1]` as
    `owns a[(v100001 - v100000)..]`.
 
-Next stage: verify termination and memory safety of the unchanged
-two-successor graph search in `design/dfs-gaps/branching_graph_dfs.md`. Its
-distinctive obligation is preserving a strictly smaller unmarked count for
-the second recursive call after the first has changed `visited`. A binary-tree
-recursive search is already verified in `examples/modeled-binary-tree/`, but
-that resource-ranked acyclic case does not cover cycles or sharing. The older
-folded-resource loop-guard claim is not a general current limitation;
+Next stage: prove success-path reachability for the unchanged two-successor
+graph search in `design/dfs-gaps/branching_graph_dfs.md`, with a finite
+left/right path in the entry graph. Termination and memory safety, including
+the second recursive call after the first has changed `visited`, are checked
+by `mdtests/branching_graph_dfs.md`. A binary-tree recursive search is also
+verified in `examples/modeled-binary-tree/`, but that resource-ranked acyclic
+case does not cover cycles or sharing. The older folded-resource loop-guard
+claim is not a general current limitation;
 `mdtests/composite_resource_vector_fill_loop_snapshot.md` already checks a
 guard reading a folded owned composite. Re-reduce any particular recursive
 resource refusal before treating it as a verifier defect.

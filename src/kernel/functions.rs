@@ -3800,6 +3800,13 @@ fn prepare_verified_function_call<'a>(
                     )),
             );
         } else {
+            // Stable-view recovery cannot use pending obligations as return
+            // authority. Drop a ranking obligation only when the caller's
+            // already-established facts discharge its exact proposition;
+            // neither other pending requirements nor the ranking obligations
+            // themselves may be treated as premises for that decision.
+            let established_descent_assumptions =
+                assumptions_with_path_context(assumptions, &facts, &[]);
             let descent_assumptions =
                 assumptions_with_path_context(&path_assumptions, &facts, &obligations);
             match crate::kernel::termination::collect_recursion_descent_obligations(
@@ -3808,7 +3815,12 @@ fn prepare_verified_function_call<'a>(
                 &descent_assumptions,
                 budget,
             ) {
-                Ok(descent) => obligations.extend(descent),
+                Ok(descent) => obligations.extend(descent.into_iter().filter(|obligation| {
+                    !required_obligation_is_exactly_discharged(
+                        &established_descent_assumptions,
+                        obligation.proposition(),
+                    )
+                })),
                 // A measure with no value at the call state is a proof failure
                 // at the call, never a silently skipped descent.
                 Err(message) => obligations.push(

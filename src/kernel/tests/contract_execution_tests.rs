@@ -4953,12 +4953,11 @@ fn call_path(
     )
 }
 
-/// The descent is owed at the call step, not by an analysis of the body. The
-/// anchor is derived by the kernel from the function's own interface at its
-/// own entry, so applying that function's contract under it emits the two
-/// ranking members a loop's back edge also owes.
+/// The descent is checked at the call step, not by an analysis of the body.
+/// This call's argument arithmetic already establishes the strict decrease,
+/// so only the nonnegative member remains as an unresolved obligation.
 #[test]
-fn a_self_call_under_a_recursion_anchor_owes_the_two_ranking_members() {
+fn a_self_call_under_a_recursion_anchor_keeps_only_unresolved_ranking_members() {
     let drain = drain_with_expression_measure();
     let environment = c_execution_environment_with_recursion_anchor(
         opaque_rule_environment(drain.clone()),
@@ -4977,7 +4976,6 @@ fn a_self_call_under_a_recursion_anchor_owes_the_two_ranking_members() {
         recursion_measure_contexts(path),
         vec![
             "drain recursion measure: `level(n)` is nonnegative at the recursive call".to_string(),
-            "drain recursion measure: `level(n)` decreases at the recursive call".to_string(),
         ],
         "{:#?}",
         path.obligations()
