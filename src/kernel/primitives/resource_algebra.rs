@@ -236,6 +236,8 @@ impl ResourceContextIndex {
             let mode = fact.is_own();
             result.memory_by_block =
                 insert_resource_index_entry(&result.memory_by_block, block.clone(), entry);
+            result.memory_by_base =
+                insert_resource_index_entry(&result.memory_by_base, range.base().clone(), entry);
             if mode {
                 result.owned_memory_by_block = insert_resource_index_entry(
                     &result.owned_memory_by_block,
@@ -300,6 +302,8 @@ impl ResourceContextIndex {
             let mode = fact.is_own();
             result.memory_by_block =
                 remove_resource_index_entry(&result.memory_by_block, &block, entry);
+            result.memory_by_base =
+                remove_resource_index_entry(&result.memory_by_base, range.base(), entry);
             if mode {
                 result.owned_memory_by_block =
                     remove_resource_index_entry(&result.owned_memory_by_block, &block, entry);
@@ -2374,6 +2378,9 @@ impl ResourceContext {
         left: &CMemoryRange,
         right: &CMemoryRange,
     ) -> bool {
+        if string_literal_blocks_may_alias(&left.base().block, &right.base().block) {
+            return false;
+        }
         let Some((left_position, _)) = self.owned_memory_member_containing(left) else {
             return false;
         };
@@ -3125,6 +3132,25 @@ impl ResourceContext {
             let Some(right_range) = right.memory_own_range() else {
                 continue;
             };
+            // Same-block ranges are selected below. Exact pointer equalities
+            // also connect bases across blocks, so check only the entries at
+            // each directly stated alias using the exact-base index.
+            for alias in assumptions.exact_pointer_aliases(right_range.base()) {
+                if alias.block == right_range.base().block {
+                    continue;
+                }
+                if let Some(entries) = self.storage.index.memory_by_base.get(alias) {
+                    for left_entry in entries.iter().copied().filter(|entry| *entry < right_entry) {
+                        crate::instrumentation::record_deterministic_work(1);
+                        let left = self.fact(left_entry);
+                        if let Some(error) = resource_family_algebra(left.family())
+                            .pair_validity_error(left, right, assumptions)
+                        {
+                            return Err(error);
+                        }
+                    }
+                }
+            }
             let (start, end) = signed_range_endpoints(right_range);
             let same_base_concrete = start.zip(end).and_then(|(start, end)| {
                 let owned_in_block = self
@@ -3328,6 +3354,43 @@ impl ResourceContext {
                         assumptions,
                     ) {
                         return Some(error);
+                    }
+                }
+            }
+        }
+
+        // The block sweep above covers every same-block pair. Visit the
+        // output-sized set of exact-base matches for direct cross-block
+        // pointer equalities separately.
+        for (_, entries) in self.storage.index.memory_by_base.iter() {
+            for entry in entries.iter().copied() {
+                let Some(range) = self.fact(entry).memory_own_range() else {
+                    continue;
+                };
+                for alias in assumptions.exact_pointer_aliases(range.base()) {
+                    if alias.block == range.base().block {
+                        continue;
+                    }
+                    let Some(alias_entries) = self.storage.index.memory_by_base.get(alias) else {
+                        continue;
+                    };
+                    for alias_entry in alias_entries.iter().copied() {
+                        // Exact aliases are indexed symmetrically, so the
+                        // lower entry id owns this pair's one comparison.
+                        if entry >= alias_entry {
+                            continue;
+                        }
+                        let left = self.fact(entry);
+                        let right = self.fact(alias_entry);
+                        if left.memory_own_range().is_none() || right.memory_own_range().is_none() {
+                            continue;
+                        }
+                        crate::instrumentation::record_deterministic_work(1);
+                        if let Some(error) = resource_family_algebra(left.family())
+                            .pair_validity_error(left, right, assumptions)
+                        {
+                            return Some(error);
+                        }
                     }
                 }
             }
@@ -4739,6 +4802,22 @@ pub(in crate::kernel) fn resources_structurally_separate(
     }
 }
 
+/// Equal-content string literal blocks may be merged by the C implementation.
+/// They provide shared, read-only access, so two such literal facts do not
+/// compete for mutable ownership and cannot establish separation by spelling.
+fn string_literal_blocks_may_alias(left: &PointerBlock, right: &PointerBlock) -> bool {
+    if left == right {
+        return false;
+    }
+    matches!(
+        (left, right),
+        (
+            PointerBlock::StringLiteral { bytes: left, .. },
+            PointerBlock::StringLiteral { bytes: right, .. }
+        ) if left == right
+    )
+}
+
 impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
     fn family(&self) -> ResourceFamily {
         ResourceFamily::Memory
@@ -4776,6 +4855,9 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
         let (Some(left), Some(right)) = (left.memory_own_range(), right.memory_own_range()) else {
             return None;
         };
+        if string_literal_blocks_may_alias(&left.base().block, &right.base().block) {
+            return None;
+        }
         memory_ranges_proven_overlapping(left, right, assumptions).then(|| {
             ResourceContextValidityError::OverlappingOwnedMemoryResources {
                 left: left.clone(),
@@ -5599,6 +5681,42 @@ pub(crate) fn memory_ranges_proven_overlapping(
     right: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> bool {
+    // Rebase through the indexed, directly stated equalities before asking
+    // the same-block range relation. This catches equal addresses whose
+    // pointer spellings live in different blocks.
+    let aliases = |range: &CMemoryRange| {
+        std::iter::once(range.base().clone())
+            .chain(assumptions.exact_pointer_aliases(range.base()).cloned())
+            .chain(assumptions.exact_pointer_offset_aliases(range.base()))
+            .collect::<Vec<_>>()
+    };
+    let left_aliases = aliases(left);
+    let right_aliases = aliases(right);
+    for (left_index, left_base) in left_aliases.iter().cloned().enumerate() {
+        let left_alias = left.with_bounds(left_base, left.start().clone(), left.end().clone());
+        for (right_index, right_base) in right_aliases.iter().cloned().enumerate() {
+            if left_index != 0 || right_index != 0 {
+                crate::instrumentation::record_deterministic_work(1);
+            }
+            let right_alias =
+                right.with_bounds(right_base, right.start().clone(), right.end().clone());
+            if memory_ranges_proven_overlapping_without_aliases(
+                &left_alias,
+                &right_alias,
+                assumptions,
+            ) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn memory_ranges_proven_overlapping_without_aliases(
+    left: &CMemoryRange,
+    right: &CMemoryRange,
+    assumptions: &PureFactContext,
+) -> bool {
     if left.base().blocks_proven_distinct(right.base()) {
         return false;
     }
@@ -5610,7 +5728,7 @@ pub(crate) fn memory_ranges_proven_overlapping(
     if left.element_width() != right.element_width() {
         let left = byte_normalized_memory_range(left);
         let right = byte_normalized_memory_range(right);
-        return memory_ranges_proven_overlapping(&left, &right, assumptions);
+        return memory_ranges_proven_overlapping_without_aliases(&left, &right, assumptions);
     }
     if assumptions
         .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(left, right)
