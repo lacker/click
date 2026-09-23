@@ -16,9 +16,12 @@ C create/join calls use the existing worker contracts, `step`, and `branch`.
 The modeled-runtime identity and a first checked C create/join path now run on
 macOS. One pending creation may survive scalar local work and an
 owner-authorized store to disjoint external memory before a C branch chooses
-success or failure. The frozen parent still needs its complete sidecar proof,
-broader guarded operations, and the separate native runtime binding described
-below.
+success or failure. Two sequential creates over disjoint task cells now verify
+all three parent outcomes, including the second failure's cleanup join and
+both successful join orders. Source regressions reject abandoning the first
+completion on second failure and reading a child's cell before its join. The
+frozen parent still needs its complete sidecar proof, broader guarded
+operations, and the separate native runtime binding described below.
 
 ## Selected profile
 

@@ -101,11 +101,20 @@ checked C `pthread_join`. Source-level proofs for immediate and delayed
 status checks and a disjoint intervening store verify, expand, and reverify
 under the modeled runtime on macOS.
 
+Two sequential creates over disjoint task cells now have source-level proofs
+for all three parent outcomes: first failure, second failure with cleanup join,
+and two successful creates with both joins. A companion joins the successful
+children in reverse order. Hostile source regressions reject returning after
+the second create fails without joining the first child, and reading a
+successful child's cell before its join. These use the modeled binding and
+separate task cells; they do not establish the frozen parent's shared-reader
+proof.
+
 This is a narrow step toward Chunk B, not its acceptance. One create may be
 unresolved at a time. Its guard retains changed authority and the checked
 worker memory projection, then applies only intervening local or external
 store operations on success; failure keeps the current parent memory. Broader
-disjoint operations, external handle slots, multiple pending creates, branch
+disjoint operations, external handle slots, multiple unresolved creates, branch
 joins, scaling across unrelated children, and a complete proof of the
 unchanged frozen parent remain. The real-header and native runtime binding
 remain separate work.
