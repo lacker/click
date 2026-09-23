@@ -1836,6 +1836,50 @@ fn pointer_addition_rejects_an_int32_index_beyond_the_object() {
 }
 
 #[test]
+fn uint64_pointer_index_bounds_use_the_full_value() {
+    let index = Bitvector32Term::Variable(Variable(93_815));
+    let offset = PointerOffsetTerm::Int64Scaled {
+        value: Box::new(index.clone()),
+        byte_width: 1,
+        unsigned: true,
+    };
+    assert_eq!(byte_offset_from_pointer_offset(&offset), None);
+
+    let base = Pointer {
+        block: "bytes".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let mut state = CState::new()
+        .with_local("array", CValue::pointer(base.clone()))
+        .with_local("index", CValue::UInt64(index.clone()))
+        .with_memory(CMemory::new().with_block("bytes", 8));
+    state
+        .locals
+        .set_typed("array", CValue::pointer(base), CType::UInt8Pointer);
+    state
+        .locals
+        .set_typed("index", CValue::UInt64(index.clone()), CType::UInt64);
+    let expression = c_add(c_variable("array"), c_variable("index"));
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::uint64_equal(index, Bitvector32Term::UInt64Constant(0x1_0000_0003)),
+        true,
+    );
+    let mut budget = ExecutionBudget::for_c_expression(&expression);
+    let paths = evaluate_c_expression_paths(&state, &expression, &assumptions, &mut budget)
+        .expect("wide pointer arithmetic should stay within its execution budget");
+
+    assert!(paths.iter().any(|path| matches!(
+        path.outcome,
+        CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic)
+    )));
+    assert!(
+        !paths
+            .iter()
+            .any(|path| matches!(path.outcome, CExpressionOutcome::Value(_)))
+    );
+}
+
+#[test]
 fn pointer_index_sum_overflow_is_pointer_undefined_behavior() {
     let base = Pointer {
         block: PointerBlock::ExternalArgument,

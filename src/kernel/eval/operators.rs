@@ -1717,7 +1717,10 @@ fn pointer_offset_by_elements_paths(
     let resource_backed =
         pointer_is_in_memory_resource(state.resources(), assumptions, &facts, &result, byte_width);
     if !resource_backed {
-        guards.extend(pointer_block_bounds(state, &result, byte_width));
+        let Some(bounds) = pointer_block_bounds(state, &result, byte_width) else {
+            return Vec::new();
+        };
+        guards.extend(bounds);
     }
 
     apply_pointer_formation_guards(
@@ -1750,7 +1753,9 @@ pub(in crate::kernel) fn pointer_offset_by_bytes_paths(
         }];
     }
     let result = pointer.offset_by_bytes(bytes);
-    let guards = pointer_block_bounds(state, &result, 1);
+    let Some(guards) = pointer_block_bounds(state, &result, 1) else {
+        return Vec::new();
+    };
     apply_pointer_formation_guards(
         result,
         pointer_type,
@@ -1819,13 +1824,102 @@ fn pointer_arithmetic_index(
     Some(Bitvector32Term::add(left, right))
 }
 
+fn pointer_offset_contains_int64_scaled(offset: &PointerOffsetTerm) -> bool {
+    match offset {
+        PointerOffsetTerm::Int64Scaled { .. } => true,
+        PointerOffsetTerm::Add(left, right) => {
+            pointer_offset_contains_int64_scaled(left)
+                || pointer_offset_contains_int64_scaled(right)
+        }
+        PointerOffsetTerm::Constant(_)
+        | PointerOffsetTerm::Variable(_)
+        | PointerOffsetTerm::Int32Scaled { .. } => false,
+    }
+}
+
+fn exact_pointer_offset_i64_with_guards(
+    offset: &PointerOffsetTerm,
+    guards: &mut Vec<PointerFormationGuard>,
+) -> Option<Bitvector32Term> {
+    match offset {
+        PointerOffsetTerm::Constant(value) => Some(Bitvector32Term::Int64Constant(*value)),
+        PointerOffsetTerm::Variable(_) => None,
+        PointerOffsetTerm::Add(left, right) => {
+            let left = exact_pointer_offset_i64_with_guards(left, guards)?;
+            let right = exact_pointer_offset_i64_with_guards(right, guards)?;
+            guards.push(PointerFormationGuard {
+                condition: ConditionTerm::int64_signed_add_overflows(left.clone(), right.clone()),
+                value: false,
+            });
+            Some(Bitvector32Term::int64_add(left, right))
+        }
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            let left = Bitvector32Term::int64_from_32(value.as_ref().clone());
+            let right = Bitvector32Term::Int64Constant(*byte_width);
+            guards.push(PointerFormationGuard {
+                condition: ConditionTerm::int64_signed_multiply_overflows(
+                    left.clone(),
+                    right.clone(),
+                ),
+                value: false,
+            });
+            Some(Bitvector32Term::int64_multiply(left, right))
+        }
+        PointerOffsetTerm::Int64Scaled { byte_width: 0, .. } => {
+            Some(Bitvector32Term::Int64Constant(0))
+        }
+        PointerOffsetTerm::Int64Scaled {
+            value,
+            byte_width,
+            unsigned: false,
+        } => {
+            let left = value.as_ref().clone();
+            let right = Bitvector32Term::Int64Constant(*byte_width);
+            guards.push(PointerFormationGuard {
+                condition: ConditionTerm::int64_signed_multiply_overflows(
+                    left.clone(),
+                    right.clone(),
+                ),
+                value: false,
+            });
+            Some(Bitvector32Term::int64_multiply(left, right))
+        }
+        PointerOffsetTerm::Int64Scaled {
+            value,
+            byte_width,
+            unsigned: true,
+        } if *byte_width > 0 => {
+            let width = u64::try_from(*byte_width).ok()?;
+            let maximum_index = (i64::MAX as u64) / width;
+            guards.push(PointerFormationGuard {
+                condition: ConditionTerm::uint64_less_equal(
+                    value.as_ref().clone(),
+                    Bitvector32Term::UInt64Constant(maximum_index),
+                ),
+                value: true,
+            });
+            let left = value.as_ref().clone();
+            let right = Bitvector32Term::Int64Constant(*byte_width);
+            guards.push(PointerFormationGuard {
+                condition: ConditionTerm::int64_signed_multiply_overflows(
+                    left.clone(),
+                    right.clone(),
+                ),
+                value: false,
+            });
+            Some(Bitvector32Term::int64_multiply(left, right))
+        }
+        PointerOffsetTerm::Int64Scaled { .. } => None,
+    }
+}
+
 fn pointer_block_bounds(
     state: &CState,
     pointer: &Pointer,
     byte_width: u32,
-) -> Vec<PointerFormationGuard> {
+) -> Option<Vec<PointerFormationGuard>> {
     let Some(block_size) = state.memory().block_size(&pointer.block).cloned() else {
-        return Vec::new();
+        return Some(Vec::new());
     };
 
     // Concrete offsets can exceed the signed bitvector representation. Check
@@ -1833,33 +1927,109 @@ fn pointer_block_bounds(
     // rebuilding them through a wrapping int32 term.
     if let (Some(offset), Some(size)) = (pointer.offset.as_const(), block_size.as_const()) {
         if offset < 0 || offset > i64::from(size) {
-            return vec![PointerFormationGuard {
+            return Some(vec![PointerFormationGuard {
                 condition: ConditionTerm::signed_less_equal(
                     Bitvector32Term::Constant(1),
                     Bitvector32Term::Constant(0),
                 ),
                 value: true,
-            }];
+            }]);
         }
-        return Vec::new();
+        return Some(Vec::new());
+    }
+
+    if let PointerOffsetTerm::Int64Scaled {
+        value,
+        byte_width: scale,
+        unsigned,
+    } = &pointer.offset
+        && *scale > 0
+    {
+        // Compare the original 64-bit element count to the number of elements
+        // the block can hold. Rebuilding it as a 32-bit residue can certify an
+        // index several GiB past the block as a small in-bounds number.
+        let limit = if *unsigned {
+            let bytes = Bitvector32Term::uint64_from_32(block_size.clone());
+            if *scale == 1 {
+                bytes
+            } else {
+                Bitvector32Term::uint64_divide(
+                    bytes,
+                    Bitvector32Term::UInt64Constant(*scale as u64),
+                )
+            }
+        } else {
+            let bytes = Bitvector32Term::int64_from_uint32(block_size.clone());
+            if *scale == 1 {
+                bytes
+            } else {
+                Bitvector32Term::int64_divide(bytes, Bitvector32Term::Int64Constant(*scale))
+            }
+        };
+        let mut guards = Vec::new();
+        if !*unsigned {
+            guards.push(PointerFormationGuard {
+                condition: ConditionTerm::int64_signed_greater_equal(
+                    value.as_ref().clone(),
+                    Bitvector32Term::Int64Constant(0),
+                ),
+                value: true,
+            });
+        }
+        guards.push(PointerFormationGuard {
+            condition: if *unsigned {
+                ConditionTerm::uint64_less_equal(value.as_ref().clone(), limit)
+            } else {
+                ConditionTerm::int64_signed_less_equal(value.as_ref().clone(), limit)
+            },
+            value: true,
+        });
+        return Some(guards);
+    }
+
+    if pointer_offset_contains_int64_scaled(&pointer.offset) {
+        let mut guards = Vec::new();
+        let Some(offset) = exact_pointer_offset_i64_with_guards(&pointer.offset, &mut guards)
+        else {
+            // An opaque pointer-offset variable cannot be reinterpreted as a
+            // 32-bit residue. Refuse to construct an unchecked normal path.
+            return None;
+        };
+        guards.extend([
+            PointerFormationGuard {
+                condition: ConditionTerm::int64_signed_greater_equal(
+                    offset.clone(),
+                    Bitvector32Term::Int64Constant(0),
+                ),
+                value: true,
+            },
+            PointerFormationGuard {
+                condition: ConditionTerm::int64_signed_less_equal(
+                    offset,
+                    Bitvector32Term::int64_from_uint32(block_size),
+                ),
+                value: true,
+            },
+        ]);
+        return Some(guards);
     }
 
     let (offset, size) = if byte_width == 1 {
         let Some(offset) = byte_offset_from_pointer_offset(&pointer.offset) else {
-            return Vec::new();
+            return Some(Vec::new());
         };
         (offset, block_size)
     } else {
         let Some(offset) = element_index_from_offset(&pointer.offset, byte_width) else {
-            return Vec::new();
+            return Some(Vec::new());
         };
         let Some(size) = element_count_from_bytes(&block_size, byte_width) else {
-            return Vec::new();
+            return Some(Vec::new());
         };
         (offset, size)
     };
 
-    vec![
+    Some(vec![
         PointerFormationGuard {
             condition: ConditionTerm::signed_greater_equal(
                 offset.clone(),
@@ -1871,7 +2041,7 @@ fn pointer_block_bounds(
             condition: ConditionTerm::signed_less_equal(offset, size),
             value: true,
         },
-    ]
+    ])
 }
 
 fn pointer_is_in_memory_resource(

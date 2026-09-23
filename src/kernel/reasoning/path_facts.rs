@@ -805,10 +805,7 @@ pub(in crate::kernel) fn byte_offset_from_pointer_offset(
             byte_offset_from_pointer_offset(left)?,
             byte_offset_from_pointer_offset(right)?,
         )),
-        PointerOffsetTerm::Int32Scaled { value, byte_width }
-        | PointerOffsetTerm::Int64Scaled {
-            value, byte_width, ..
-        } => {
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
             let width = u32::try_from(*byte_width).ok()?;
             match width {
                 0 => Some(Bitvector32Term::Constant(0)),
@@ -819,7 +816,10 @@ pub(in crate::kernel) fn byte_offset_from_pointer_offset(
                 )),
             }
         }
-        PointerOffsetTerm::Variable(_) => None,
+        PointerOffsetTerm::Int64Scaled { byte_width: 0, .. } => Some(Bitvector32Term::Constant(0)),
+        // A 64-bit index is not a 32-bit byte residue, even when its stride
+        // is one. Callers that need its numeric value must use a 64-bit bound.
+        PointerOffsetTerm::Int64Scaled { .. } | PointerOffsetTerm::Variable(_) => None,
     }
 }
 
