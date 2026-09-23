@@ -154,11 +154,15 @@ Still failing to compose:
   folded parent's field load reports `UninitializedRead`. Unfolding the parent
   in the caller exposes enough checked evidence to prove `first->kid == kid`,
   but refolding and calling detach still gives a different symbolic resource
-  argument rather than the held `child_ref(kid)`. A generic next step is to
-  let a contract bind a child pointer from a checked parent model field and
-  use that binder as the counted-resource argument, or to normalize the field
-  load from the resource's checked equality at call entry. Neither route may
-  create a logical reference from a bare pointer.
+  argument rather than the held `child_ref(kid)`. The existing contract syntax
+  already expresses the required handoff: it consumes the named `parent(p)`
+  instance and `child_ref(p->kid)`. Repair entry-state resource-argument
+  evaluation so it can use that selected parent's checked, framed
+  `p->kid == kid` fact to read and normalize the field to `kid`. The rule must
+  depend on the exact owned parent instance and its memory frame; a bare
+  pointer or an unrelated equality cannot create a child reference. Regress
+  the frozen heap-parent call plus missing-retain and wrong-child cases before
+  considering any new contract syntax.
 - The separate minimal reducer
   `mdtests/shared_heap_two_parent_branch_release.md` fails while certifying
   `parent_detach` because it asks for a redundant pure count postcondition
