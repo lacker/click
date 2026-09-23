@@ -420,7 +420,18 @@ fn memory_only_adds_named_cells(
     let mut rebased = after.clone();
     rebased.cells = before.cells.clone();
     if rebased != *before {
-        return Err("changed non-cell memory state".to_string());
+        let changed = if rebased.blocks != before.blocks {
+            "blocks"
+        } else if rebased.union_cells != before.union_cells {
+            "union cells"
+        } else if rebased.forgotten != before.forgotten {
+            "forgotten-cell provenance"
+        } else if rebased.heap.initialized_cells != before.heap.initialized_cells {
+            "heap initialized cells"
+        } else {
+            "heap allocation state"
+        };
+        return Err(format!("changed non-cell memory state ({changed})"));
     }
     let base = crate::kernel::intern_c_memory(before.clone());
     for (pointer, value) in after.cells.iter() {

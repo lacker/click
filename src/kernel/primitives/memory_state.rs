@@ -2419,6 +2419,43 @@ impl CMemory {
         self.store_with_context(pointer, value, &PureFactContext::new())
     }
 
+    /// Cache the canonical value of an already existing cell for a resource
+    /// projection. This is not a C write and cannot establish initialization.
+    /// The conservative store edge keeps memory-DAG lookup connected without
+    /// granting any new initialized-cell or allocation authority.
+    pub(crate) fn materialize_named_cell(mut self, pointer: Pointer, value: CValue) -> Self {
+        if self.cells.contains_key(&pointer) {
+            return self;
+        }
+        // A named load must not turn fresh malloc storage into a value.  The
+        // exact typed-cell mark is the authority that a prior C store
+        // initialized this address; the lookup is local to its heap block.
+        if matches!(pointer.block, PointerBlock::Heap(_)) {
+            let base = Pointer {
+                block: pointer.block.clone(),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            if (self.heap.uninitialized_allocations.contains(&base)
+                || self.heap.zeroed_allocations.contains(&base)
+                || self.heap.zeroed_prefix_allocations.contains_key(&base))
+                && !self.has_initialized_cell_at(&pointer, value.byte_width())
+            {
+                return self;
+            }
+        }
+        let base = intern_c_memory_ref(&self);
+        std::sync::Arc::make_mut(&mut self.cells).insert(pointer.clone(), value.clone());
+        record_c_memory_derivation(
+            &self,
+            CMemoryDerivation::Store {
+                base,
+                pointer,
+                value,
+            },
+        );
+        self
+    }
+
     /// Writes one cell. The transition's fact context is not recorded on the
     /// store edge: a later load of another cell of the same base crosses the
     /// edge only with distinctness evidence checked in the querying context.

@@ -10816,7 +10816,7 @@ fn initialize_c_function_globals_owned(
     state
 }
 
-fn materialize_symbolic_cell(mut memory: CMemory, pointer: &Pointer, c_type: CType) -> CMemory {
+fn materialize_symbolic_cell(memory: CMemory, pointer: &Pointer, c_type: CType) -> CMemory {
     let symbolic_base = symbolic_memory_base(&memory, pointer);
     let value = if c_type.is_object_pointer() {
         Some(symbolic_pointer_cell_load(&symbolic_base, pointer, c_type))
@@ -10824,9 +10824,10 @@ fn materialize_symbolic_cell(mut memory: CMemory, pointer: &Pointer, c_type: CTy
         symbolic_load_value(&symbolic_base, pointer, c_type)
     };
     if let Some(value) = value {
-        memory = memory.store(pointer.clone(), value);
+        memory.materialize_named_cell(pointer.clone(), value)
+    } else {
+        memory
     }
-    memory
 }
 
 fn symbolic_pointer_placeholder(value: &CValue, storage: &Pointer) -> bool {

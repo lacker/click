@@ -212,6 +212,56 @@ fn call_havoc_preserves_initialization_of_a_heap_scalar() {
 }
 
 #[test]
+fn naming_an_uninitialized_heap_cell_does_not_initialize_it() {
+    let allocated = successful_heap_allocation_state();
+    let Some(CValue::Pointer(pointer)) = allocated.locals().get("p") else {
+        panic!("allocation should assign a pointer");
+    };
+    let address = pointer.pointer().clone();
+    let memory = allocated.memory().clone();
+    let name = canonical_form_of_load(intern_c_memory(memory.clone()), address.clone());
+    let named = allocated.with_memory(memory.materialize_named_cell(address, CValue::Int32(name)));
+    let read = evaluate_c_expression_paths(
+        &named,
+        &c_index(c_variable("p"), c_int32_literal(0)),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .expect("heap read should execute");
+    assert!(matches!(
+        read.as_slice(),
+        [CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn naming_an_initialized_heap_cell_preserves_its_initialization() {
+    let allocated = successful_heap_allocation_state();
+    let Some(CValue::Pointer(pointer)) = allocated.locals().get("p") else {
+        panic!("allocation should assign a pointer");
+    };
+    let address = pointer.pointer().clone();
+    let stored = allocated.memory().clone().store(address.clone(), int32(7));
+    let range = CMemoryRange::new_with_element_width(
+        address.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+        4,
+    );
+    let havoc = stored.with_call_memory_havoc(Variable(902), &[range], &PureFactContext::new());
+    assert!(!havoc.has_known_cell_at(&address));
+    let name = canonical_form_of_load(intern_c_memory(havoc.clone()), address.clone());
+    let named = havoc
+        .clone()
+        .materialize_named_cell(address.clone(), CValue::Int32(name));
+    assert!(named.has_known_cell_at(&address));
+    assert_eq!(named.heap.initialized_cells, havoc.heap.initialized_cells);
+}
+
+#[test]
 fn zeroed_heap_allocation_reads_zero_until_a_store() {
     let state = CState::new().with_local("p", CValue::pointer(Pointer::null()));
     let paths = execute_c_statement_paths(
