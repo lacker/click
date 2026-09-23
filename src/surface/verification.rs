@@ -5273,6 +5273,10 @@ pub(in crate::surface) fn parse_c_layouts_for_target(
                 );
                 function_aggregate_array_objects.insert(aggregate.name().to_string());
             }
+            // Automatic struct values are address-backed too. Their C
+            // spellings must carry a layout into sidecar field expressions;
+            // otherwise `.field` silently falls back to offset zero.
+            function_aggregate_objects.extend(function.local_struct_values().clone());
             aggregate_objects.insert(function.name().to_string(), function_aggregate_objects);
             aggregate_array_objects.insert(
                 function.name().to_string(),
