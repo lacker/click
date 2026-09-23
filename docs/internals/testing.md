@@ -304,6 +304,12 @@ hide quadratic growth and is not sufficient. Conversely, explicitly emitted
 paths, quantified instances, premises, and definition members count as input
 or output and may be charged accordingly.
 
+Kernel memory snapshots have such regressions in
+`src/kernel/tests/memory_scaling_tests.rs`: sequential stores into one block,
+one store beside a growing number of unrelated cells, interning a one-store
+derivative of an interned snapshot, and deduplication of equal content reached
+by different routes.
+
 Rust library tests and both fixture gates enforce deterministic tactic-work
 budgets but do not inherit production time limits. Tests specifically about
 real-time interruption install explicit time limits. Fixture traversal runs on

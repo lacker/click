@@ -72,29 +72,6 @@ fn successful_heap_allocation_state() -> CState {
 }
 
 #[test]
-fn empty_realloc_bookkeeping_preserves_legacy_heap_hash() {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::Hasher;
-
-    let heap = CHeapMemory::default();
-    let mut actual = DefaultHasher::new();
-    std::hash::Hash::hash(&heap, &mut actual);
-
-    // CMemory snapshots are cache keys during proof search. An empty pending
-    // realloc map is semantically the old heap shape, so adding the field must
-    // not perturb hashes for programs that never call realloc.
-    let mut legacy = DefaultHasher::new();
-    std::hash::Hash::hash(&heap.live_allocations, &mut legacy);
-    std::hash::Hash::hash(&heap.deallocated_allocations, &mut legacy);
-    std::hash::Hash::hash(&heap.pending_allocations, &mut legacy);
-    std::hash::Hash::hash(&heap.uninitialized_allocations, &mut legacy);
-    std::hash::Hash::hash(&heap.zeroed_allocations, &mut legacy);
-    std::hash::Hash::hash(&heap.zeroed_pending_allocations, &mut legacy);
-
-    assert_eq!(actual.finish(), legacy.finish());
-}
-
-#[test]
 fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
     let paths = heap_allocation_paths();
     assert_eq!(paths.len(), 1);

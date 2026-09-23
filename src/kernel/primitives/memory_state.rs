@@ -2174,8 +2174,8 @@ impl CMemory {
             return Err("an interface memory join has no sibling states".to_string());
         };
 
-        let mut blocks = BTreeMap::new();
-        let mut ended_local_blocks = BTreeSet::new();
+        let mut blocks = SnapshotMap::new();
+        let mut ended_local_blocks = SnapshotSet::new();
         for memory in sibling_memories {
             for (block, contents) in memory.blocks.iter() {
                 if let Some(existing) = blocks.insert(block.clone(), contents.clone())
@@ -2189,7 +2189,7 @@ impl CMemory {
             ended_local_blocks.extend(memory.forgotten.ended_local_blocks.iter().cloned());
         }
 
-        let mut live_allocations = BTreeMap::new();
+        let mut live_allocations = SnapshotMap::new();
         for memory in sibling_memories {
             for (base, bytes) in &memory.heap.live_allocations {
                 if let Some(existing) = live_allocations.insert(base.clone(), bytes.clone())
@@ -2202,7 +2202,7 @@ impl CMemory {
             }
         }
 
-        let mut deallocated_allocations = BTreeMap::new();
+        let mut deallocated_allocations = SnapshotMap::new();
         for memory in sibling_memories {
             for (base, bytes) in &memory.heap.deallocated_allocations {
                 if let Some(existing) = deallocated_allocations.insert(base.clone(), bytes.clone())
@@ -2255,7 +2255,7 @@ impl CMemory {
                 .iter()
                 .all(|memory| memory.heap.zeroed_allocations.contains(base))
         });
-        let mut zeroed_prefix_allocations = BTreeMap::new();
+        let mut zeroed_prefix_allocations = SnapshotMap::new();
         for base in live_allocations.keys() {
             let prefixes = sibling_memories
                 .iter()
@@ -2483,8 +2483,12 @@ impl CMemory {
                 .initialized_cells
                 .insert(pointer.clone(), value.byte_width());
         }
-        std::sync::Arc::make_mut(&mut self.union_cells)
-            .retain(|(cell_pointer, _), _| cell_pointer != &pointer);
+        // Skipped when empty so an ordinary store neither visits nor
+        // reallocates the shared overlay map.
+        if !self.union_cells.is_empty() {
+            std::sync::Arc::make_mut(&mut self.union_cells)
+                .retain(|(cell_pointer, _), _| cell_pointer != &pointer);
+        }
         record_c_memory_derivation(
             &self,
             CMemoryDerivation::Store {
@@ -2620,11 +2624,12 @@ impl CMemory {
             }
         }
         for (pointer, width) in initialized_widths {
-            std::sync::Arc::make_mut(&mut memory.heap)
-                .initialized_cells
-                .entry(pointer)
-                .and_modify(|existing| *existing = (*existing).max(width))
-                .or_insert(width);
+            let initialized_cells =
+                &mut std::sync::Arc::make_mut(&mut memory.heap).initialized_cells;
+            let width = initialized_cells
+                .get(&pointer)
+                .map_or(width, |existing| (*existing).max(width));
+            initialized_cells.insert(pointer, width);
         }
         memory
     }

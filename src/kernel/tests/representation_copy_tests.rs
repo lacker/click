@@ -97,9 +97,9 @@ fn source_with_cells(memory: CMemory, block: &str, cells: u32) -> CMemory {
 /// checks that the complete transfer plants every copied cell.
 ///
 /// The lookup is the transfer's own work. Planting each result is an ordinary
-/// `CMemory::store`, whose snapshot interning is charged the size of the
-/// whole memory; that cost belongs to the store primitive, so it is reported
-/// in the failure message but not asserted here.
+/// `CMemory::store`, whose cost belongs to the store primitive and has its
+/// own regressions in `memory_scaling_tests`; the whole transfer's work is
+/// reported in the failure messages.
 fn copy_lookup_work(
     entry: &CMemory,
     memory: &CMemory,
@@ -171,5 +171,9 @@ fn fixed_representation_copy_lookup_work_is_independent_of_unrelated_memory() {
     assert!(
         lookups.iter().all(|work| *work == 5),
         "fixed-copy lookup work grew with unrelated memory: {lookups:?}; whole transfer: {transfers:?}"
+    );
+    assert!(
+        transfers.iter().all(|work| *work == transfers[0]),
+        "fixed-copy transfer work grew with unrelated memory: {transfers:?}; lookups: {lookups:?}"
     );
 }

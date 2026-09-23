@@ -233,6 +233,7 @@ fn arc_pointer(offset: i64) -> Pointer {
 }
 
 mod memory_dag_tests;
+mod memory_scaling_tests;
 
 mod heap_tests;
 mod loan_model_tests;
