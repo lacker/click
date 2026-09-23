@@ -59,6 +59,25 @@ fn modeled_userspace_pthread_declarations_parse_the_frozen_probe() {
 }
 
 #[test]
+fn incomplete_pthread_attribute_pointer_is_a_local_but_cannot_be_indexed() {
+    let sources = std::collections::BTreeMap::from([(
+        "attr.c",
+        "#include <pthread.h>\nint probe(void) { const pthread_attr_t *attr = 0; return attr[0].field; }\n",
+    )]);
+    let expanded = source::expand_includes_for_target(
+        "attr.c",
+        &sources,
+        target::CTarget::X86_64LinuxUserspace,
+    )
+    .unwrap();
+    let error =
+        syntax::parse_translation_unit_for_source(expanded.source(), "attr.c", expanded.line_map())
+            .err()
+            .expect("incomplete struct indexing must be refused");
+    assert!(error.to_string().contains("incomplete struct"));
+}
+
+#[test]
 fn pthread_projection_is_not_a_kernel_header() {
     let sources = std::collections::BTreeMap::from([("probe.c", "#include <pthread.h>\n")]);
     let error =

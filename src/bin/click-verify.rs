@@ -841,6 +841,14 @@ fn print_external_dependencies(
     dependencies: &BTreeMap<String, Vec<String>>,
     verified: &[VerifiedCTheorem],
 ) {
+    if let Some(selection) = verified
+        .first()
+        .and_then(|theorem| theorem.selection.as_ref())
+    {
+        for assumption in &selection.runtime_assumptions {
+            println!("runtime assumption: {assumption}");
+        }
+    }
     let verified_functions = verified
         .iter()
         .map(|theorem| theorem.function_block.signature().name())

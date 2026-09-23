@@ -153,6 +153,7 @@ struct SlowStep {
 #[derive(Clone, Debug)]
 struct ProjectProfile {
     project: String,
+    runtime_assumptions: Vec<String>,
     slow_steps: Vec<SlowStep>,
     active: Vec<StepKey>,
     interrupted: Option<InterruptedWork>,
@@ -544,6 +545,17 @@ fn profile_target(
             }),
     )
     .map_err(|message| format!("while profiling `{}`: {message}", project.display()))?;
+    let source = load_profiled_source(project)?;
+    let runtime = match &source.project {
+        Some(project) => click::surface::selected_project_thread_runtime(project),
+        None => click::surface::selected_thread_runtime(&source.click_source),
+    }
+    .map_err(|error| error.message().to_string())?;
+    profile.runtime_assumptions = runtime
+        .assumption()
+        .map(str::to_string)
+        .into_iter()
+        .collect();
     finish_time_accounting(&mut profile, wall_elapsed);
     profile.verification_failure = verification.err();
     profile.work.smart_source_sites = count_smart_source_sites(&events)?;
@@ -1053,6 +1065,7 @@ fn build_profile(
     }
     Ok(ProjectProfile {
         project: project.to_string(),
+        runtime_assumptions: Vec::new(),
         slow_steps,
         active,
         interrupted,
@@ -1192,6 +1205,7 @@ fn parse_profile(
     }
     Ok(ProjectProfile {
         project: project.to_string(),
+        runtime_assumptions: Vec::new(),
         slow_steps,
         active,
         interrupted,

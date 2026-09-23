@@ -122,7 +122,7 @@ pub use expansion::{
     expand_cpp_prepared_project_claim_source_by_label,
     expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
     map_verifying_source_paths, selected_c_target, selected_project_c_target,
-    verifying_source_paths,
+    selected_project_thread_runtime, selected_thread_runtime, verifying_source_paths,
 };
 use expansion::{
     ExpansionCapture, ProofSite, VerificationTarget, verification_target_at,
@@ -438,6 +438,9 @@ pub struct ClickFile {
     /// The C implementation target this file selects with a `target`
     /// directive. `None` selects the default target.
     c_target: Option<crate::languages::c::target::CTarget>,
+    /// Explicit trusted thread-runtime profile. Absent means ordinary C
+    /// verification grants no create/join semantics.
+    thread_runtime: crate::languages::c::thread_runtime::CThreadRuntime,
     algebraic_type_definitions: Vec<AlgebraicTypeDefinition>,
     predicate_definitions: Vec<PredicateDefinition>,
     click_function_definitions: Vec<ClickFunctionDefinition>,
@@ -5773,6 +5776,11 @@ pub struct CProofSelection {
     pub selected_proofs: Vec<String>,
     pub assumed_theorems: Vec<String>,
     pub assumed_functions: Vec<String>,
+    /// Explicit runtime specifications on which this conditional artifact depends.
+    pub runtime_assumptions: Vec<String>,
+    /// Checked provenance, canonical types, and specification identity for
+    /// the selected modeled pthread projection, when present.
+    pub modeled_pthread_binding: Option<crate::languages::c::thread_runtime::ModeledPthreadBinding>,
 }
 
 #[derive(Clone, Debug)]
@@ -5936,6 +5944,10 @@ impl ClickFile {
     pub fn selected_c_target(&self) -> crate::languages::c::target::CTarget {
         self.c_target
             .unwrap_or(crate::languages::c::target::CTarget::SUPPORTED)
+    }
+
+    pub fn selected_thread_runtime(&self) -> crate::languages::c::thread_runtime::CThreadRuntime {
+        self.thread_runtime
     }
 
     pub fn algebraic_type_definitions(&self) -> &[AlgebraicTypeDefinition] {

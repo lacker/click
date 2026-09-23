@@ -4179,6 +4179,9 @@ pub fn parse_functions(source: &str) -> Result<Vec<C0Function>, C0SyntaxError> {
 pub(crate) struct C0TranslationUnit {
     pub functions: Vec<C0Function>,
     pub function_declarations: BTreeMap<String, C0FunctionHeader>,
+    pub function_declaration_lines: BTreeMap<String, Vec<usize>>,
+    pub builtin_pthread_declarations: BTreeSet<String>,
+    pub shadowed_pthread_names: BTreeSet<String>,
     pub structs: BTreeMap<String, C0StructLayout>,
     pub unions: BTreeMap<String, C0UnionLayout>,
     pub globals: BTreeMap<String, C0Global>,
@@ -4192,13 +4195,24 @@ pub(crate) fn parse_translation_unit_for_source(
     source_identity: &str,
     line_map: &ExpandedLineMap,
 ) -> Result<C0TranslationUnit, C0SyntaxError> {
-    Parser::new_with_source_identity_and_line_map(
+    let mut unit = Parser::new_with_source_identity_and_line_map(
         source,
         CAbi::SUPPORTED,
         Some(source_identity),
         line_map,
     )?
-    .parse_translation_unit()
+    .parse_translation_unit()?;
+    unit.builtin_pthread_declarations = unit
+        .function_declaration_lines
+        .iter()
+        .filter(|(_, lines)| {
+            lines
+                .iter()
+                .any(|line| line_map.is_builtin_pthread_line(*line))
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    Ok(unit)
 }
 
 /// Parses compiler-preprocessed C while retaining original file/line
@@ -6154,6 +6168,8 @@ struct Parser {
     string_literal_names: BTreeSet<String>,
     loop_contexts: Vec<CLoopContext>,
     function_declarations: BTreeMap<String, C0FunctionHeader>,
+    function_declaration_lines: BTreeMap<String, Vec<usize>>,
+    shadowed_pthread_names: BTreeSet<String>,
     function_source_names: BTreeMap<String, String>,
     defined_functions: BTreeSet<String>,
     globals: BTreeMap<String, C0Global>,
@@ -6203,6 +6219,7 @@ struct VariableMetadata {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct C0FunctionHeader {
+    declaration_line: usize,
     return_type: C0Type,
     return_pointee_constant: bool,
     return_struct_name: Option<String>,
@@ -6360,6 +6377,8 @@ impl Parser {
             string_literal_names: BTreeSet::new(),
             loop_contexts: Vec::new(),
             function_declarations: BTreeMap::new(),
+            function_declaration_lines: BTreeMap::new(),
+            shadowed_pthread_names: BTreeSet::new(),
             function_source_names: BTreeMap::new(),
             defined_functions: BTreeSet::new(),
             globals: BTreeMap::new(),
@@ -6931,6 +6950,9 @@ impl Parser {
     /// continue to resolve by their ordinary C spelling. Call right after
     /// consuming the name token so a duplicate diagnostic points at it.
     fn declare_name(&mut self, name: &str) -> Result<String, C0SyntaxError> {
+        if matches!(name, "pthread_create" | "pthread_join") {
+            self.shadowed_pthread_names.insert(name.to_string());
+        }
         if self.enum_constants.contains_key(name) {
             return Err(
                 self.error_at_previous(format!("`{name}` is already declared as an enum constant"))
@@ -6991,6 +7013,9 @@ impl Parser {
     /// two sibling blocks reuse the same C spelling. The source spelling is
     /// retained in the scope table so later expressions resolve normally.
     fn declare_static_name(&mut self, name: &str) -> Result<String, C0SyntaxError> {
+        if matches!(name, "pthread_create" | "pthread_join") {
+            self.shadowed_pthread_names.insert(name.to_string());
+        }
         if self.enum_constants.contains_key(name) {
             return Err(
                 self.error_at_previous(format!("`{name}` is already declared as an enum constant"))
@@ -7280,6 +7305,9 @@ impl Parser {
         Ok(C0TranslationUnit {
             functions,
             function_declarations: self.function_declarations,
+            function_declaration_lines: self.function_declaration_lines,
+            builtin_pthread_declarations: BTreeSet::new(),
+            shadowed_pthread_names: self.shadowed_pthread_names,
             structs: self.structs,
             unions: self.unions,
             globals: self.globals,
@@ -7471,6 +7499,7 @@ impl Parser {
         &mut self,
         internal_linkage: bool,
     ) -> Result<C0FunctionHeader, C0SyntaxError> {
+        let declaration_line = self.positions[self.position].line;
         let parsed_return_type = self.parse_type()?;
         if parsed_return_type.is_constant {
             return Err(self.error_here(
@@ -7533,6 +7562,7 @@ impl Parser {
             source_name.clone()
         };
         Ok(C0FunctionHeader {
+            declaration_line,
             return_type,
             return_pointee_constant: parsed_return_type.pointee_constant,
             return_struct_name,
@@ -7609,6 +7639,10 @@ impl Parser {
         header: &C0FunctionHeader,
         definition: bool,
     ) -> Result<(), C0SyntaxError> {
+        self.function_declaration_lines
+            .entry(header.source_name.clone())
+            .or_default()
+            .push(header.declaration_line);
         if self.globals.contains_key(&header.source_name)
             || self.global_arrays.contains_key(&header.source_name)
             || self.global_aggregates.contains_key(&header.source_name)
@@ -11960,7 +11994,7 @@ impl Parser {
             if parsed_type.struct_name.is_some()
                 && parsed_type.c_type == C0Type::Int32Pointer
                 && array_shape.is_none()
-                && !self
+                && self
                     .structs
                     .get(
                         parsed_type
@@ -11968,9 +12002,7 @@ impl Parser {
                             .as_ref()
                             .expect("struct pointer has a struct name"),
                     )
-                    .expect("struct pointer has a declaration")
-                    .size_bytes
-                    .is_multiple_of(4)
+                    .is_some_and(|layout| !layout.size_bytes.is_multiple_of(4))
             {
                 // Unaligned struct sizes cannot use the kernel's int32
                 // pointer allocation width. Use a byte-addressed local for
@@ -16151,7 +16183,11 @@ impl Parser {
                             let element_width = self
                                 .structs
                                 .get(&struct_name)
-                                .expect("heap struct pointer has a declaration")
+                                .ok_or_else(|| {
+                                    self.error_here(format!(
+                                        "cannot index incomplete struct `{struct_name}`"
+                                    ))
+                                })?
                                 .size_bytes;
                             let byte_pointer = C0Expression::Cast {
                                 expression: Box::new(expression),

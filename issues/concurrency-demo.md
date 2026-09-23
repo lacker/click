@@ -63,32 +63,38 @@ The regression names and original header shapes are in the probe record.
 `mdtests/const_pointer_fields.md` checks assignment, copies, and mutable-alias
 updates; the C unit tests also expand and reverify the new proofs.
 
-### Immediate next slice: portable modeled pthread binding identity
+### Completed next slice: portable modeled pthread binding identity
 
-Make the two-call `pthread_create`/`pthread_join` binding selectable for
-conditional client verification with Click's existing modeled `<pthread.h>`.
-This work must run on macOS without GCC or glibc. Keep the frozen
-`design/concurrency-probes/fork_join.c` byte for byte; its existing source
-expansion and sequential worker proof are the starting fixtures.
+The explicit `runtime "modeled-pthread";` selector now binds conditional
+client verification to Click's exact built-in `<pthread.h>`, canonical
+create/join declarations, x86-64 Linux user-space target, trusted v1
+specification and digest, and the initial null-argument and direct-worker
+restrictions. The checked binding record is retained in verified selections;
+its digest participates in proof-artifact and incremental-session identities.
+Verify, profile, and audit report the runtime assumption. This work runs on
+macOS without GCC or glibc. The frozen `fork_join.c` is unchanged, and its
+ordinary worker proof verifies under the selector.
 
-First, define an explicit modeled-runtime selection and a checked binding
-record for the exact built-in header, resolved external declarations and
-canonical types, x86-64 Linux user-space target, trusted create/join
-specification version and digest, and the initial null-argument restrictions.
-The selector must not infer authority from a target name, an arbitrary
-same-named declaration, or an ordinary external contract. Record the modeled
-runtime assumption in verification, certificates, caches, profile, and audit;
-the result is a conditional client proof, not a claim about a native pthread
-library. Reject local definitions, shadowing, incompatible redeclarations,
-changed model headers, stale artifacts, and the kernel target.
+The binding refuses same-named declarations without built-in provenance,
+local definitions, shadowing, incompatible redeclarations, nonnull attribute
+or join-result arguments, stale session selection, prepared imports, and the
+kernel target. An incomplete pthread attribute pointer declaration no longer
+panics the C parser; indexing it receives a local diagnostic. The complete
+`scripts/check.sh` passed on this slice: 3,598 unit/documentation tests and
+68 integration tests.
 
-Exercise this record in Mac-runnable focused tests through the unchanged C
-call shapes and ordinary worker contracts. A successful identity check must
-select exactly the intended call for the checked create/join transition;
-hostile identities must refuse before thread authority changes. The following
-slice wires guarded outcomes and completion to the actual C steps. Use
-`scripts/check.sh` as the gate. This portable binding must not become a
-proof-only spawn or sequential execution of the worker in the parent.
+### Immediate next slice: bind actual create/join C steps
+
+Use the checked modeled binding to give ordinary `step` on the unchanged
+`pthread_create` and `pthread_join` calls guarded create outcomes and one
+completion right tied to the actual handle and child identity. The selected
+direct worker needs its unique verified contract and exact termination
+evidence. Transfer and recover resources only through checked C transitions;
+do not introduce a proof-only spawn or run the worker sequentially in the
+parent. Keep creation failure's resources with the parent and keep the
+nonzero status guard until the C branch selects it. Add Mac-runnable positive
+and hostile regressions, expand and reverify a successful proof fragment,
+and use `scripts/check.sh` as the gate.
 
 Real-header import remains an independent production-binding task. The bounded
 Linux regression still stops at `/usr/include/time.h:49`, `struct sigevent;`,

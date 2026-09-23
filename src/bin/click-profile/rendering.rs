@@ -77,6 +77,16 @@ pub(super) fn render_profiles_with_top(
         "Classification is emitted by the verifier; do not infer it from a tactic's name."
     )
     .expect("writing a String cannot fail");
+    for profile in profiles {
+        for assumption in &profile.runtime_assumptions {
+            writeln!(
+                output,
+                "{} runtime assumption: {assumption}",
+                profile.project
+            )
+            .expect("writing a String cannot fail");
+        }
+    }
     if has_correctness_failure {
         writeln!(
             output,

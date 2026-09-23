@@ -332,6 +332,7 @@ fn merge_modules(
         imports: Vec::new(),
         verifying_sources: Vec::new(),
         c_target: None,
+        thread_runtime: Default::default(),
         algebraic_type_definitions: Vec::new(),
         predicate_definitions: Vec::new(),
         click_function_definitions: Vec::new(),
@@ -372,6 +373,16 @@ fn merge_modules(
                 )));
             }
             merged.c_target = Some(declared);
+        }
+        if local.thread_runtime != Default::default() {
+            if merged.thread_runtime != Default::default()
+                && merged.thread_runtime != local.thread_runtime
+            {
+                return Err(ClickError::new(format!(
+                    "module `{identity}` selects a conflicting C thread runtime"
+                )));
+            }
+            merged.thread_runtime = local.thread_runtime;
         }
         if identity == entry {
             merged.imports = local.imports.clone();

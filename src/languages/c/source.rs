@@ -67,17 +67,23 @@ impl ExpandedCSource {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ExpandedLineMap {
     origins: Vec<Option<Arc<SourceOrigin>>>,
+    builtin_pthread_lines: BTreeSet<usize>,
 }
 
 impl ExpandedLineMap {
     pub fn empty() -> Self {
         Self {
             origins: Vec::new(),
+            builtin_pthread_lines: BTreeSet::new(),
         }
     }
 
     fn push(&mut self, origin: Option<Arc<SourceOrigin>>) {
         self.origins.push(origin);
+    }
+
+    pub(crate) fn is_builtin_pthread_line(&self, line: usize) -> bool {
+        self.builtin_pthread_lines.contains(&line)
     }
 
     /// Maps an expanded-TU position to its bundle origin. Lines with no
@@ -271,6 +277,7 @@ pub fn expand_includes_for_target<'a>(
         &mut macros,
         &mut defined_macros,
         None,
+        false,
         &mut expanded,
         &mut line_map,
         &mut origin_names,
@@ -334,6 +341,7 @@ fn expand_source<'a>(
     macros: &mut BTreeMap<String, MacroDefinition>,
     defined_macros: &mut BTreeSet<String>,
     include_site: Option<(&str, usize)>,
+    builtin_pthread: bool,
     expanded: &mut String,
     line_map: &mut ExpandedLineMap,
     origin_names: &mut BTreeMap<String, Arc<str>>,
@@ -370,6 +378,11 @@ fn expand_source<'a>(
                 );
                 expanded.push_str(&expanded_line);
                 line_map.push(Some(origin_for(origin_names, source_path, line_number)));
+                if builtin_pthread {
+                    line_map
+                        .builtin_pthread_lines
+                        .insert(line_map.origins.len());
+                }
             } else {
                 line_map.push(None);
             }
@@ -465,6 +478,7 @@ fn expand_source<'a>(
                     macros,
                     defined_macros,
                     Some((source_path, line_number)),
+                    false,
                     expanded,
                     line_map,
                     origin_names,
@@ -493,6 +507,7 @@ fn expand_source<'a>(
                             macros,
                             defined_macros,
                             Some((source_path, line_number)),
+                            true,
                             expanded,
                             line_map,
                             origin_names,

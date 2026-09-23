@@ -243,21 +243,44 @@ impl<'a> CSourceContext<'a> {
     /// Identity of this context's immutable inputs under `target`. Two runs
     /// over the same sources for different C targets are different proof
     /// environments and must never share a session or an incremental result.
+    #[cfg(test)]
     pub(in crate::surface) fn environment_identity(
         &self,
         target: CTarget,
     ) -> CProofArtifactIdentity {
+        self.environment_identity_with_runtime(target, Default::default())
+    }
+
+    pub(in crate::surface) fn environment_identity_with_runtime(
+        &self,
+        target: CTarget,
+        runtime: crate::languages::c::thread_runtime::CThreadRuntime,
+    ) -> CProofArtifactIdentity {
+        let profile = runtime
+            .identity_suffix()
+            .map(|suffix| format!("{}:{suffix}", target.name()))
+            .unwrap_or_else(|| target.name().to_string());
         CProofArtifactIdentity::for_components(
             self.input_digest,
             self.specification_digest.unwrap_or([0; 32]),
-            target.name(),
+            &profile,
         )
     }
 
+    #[cfg(test)]
     pub(in crate::surface) fn artifact_identity(
         &self,
         click_source: &str,
         target: CTarget,
+    ) -> CProofArtifactIdentity {
+        self.artifact_identity_with_runtime(click_source, target, Default::default())
+    }
+
+    pub(in crate::surface) fn artifact_identity_with_runtime(
+        &self,
+        click_source: &str,
+        target: CTarget,
+        runtime: crate::languages::c::thread_runtime::CThreadRuntime,
     ) -> CProofArtifactIdentity {
         let click_digest = self.specification_digest.unwrap_or_else(|| {
             digest_framed_parts([
@@ -265,7 +288,11 @@ impl<'a> CSourceContext<'a> {
                 click_source.as_bytes(),
             ])
         });
-        CProofArtifactIdentity::for_components(self.input_digest, click_digest, target.name())
+        let profile = runtime
+            .identity_suffix()
+            .map(|suffix| format!("{}:{suffix}", target.name()))
+            .unwrap_or_else(|| target.name().to_string());
+        CProofArtifactIdentity::for_components(self.input_digest, click_digest, &profile)
     }
 
     pub(in crate::surface) fn with_click_project(mut self, project: &ClickProject) -> Self {
@@ -794,6 +821,14 @@ fn parse_c0_click_file_context(
     click_source: &str,
     sources: &CSourceContext<'_>,
 ) -> Result<ClickFile, ClickError> {
+    if super::selected_thread_runtime(click_source)?
+        == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
+        && super::selected_c_target(click_source)? != CTarget::X86_64LinuxUserspace
+    {
+        return Err(ClickError::new(
+            "modeled-pthread runtime requires target `x86_64-linux-userspace`",
+        ));
+    }
     let (
         struct_layouts,
         union_layouts,
@@ -1492,8 +1527,9 @@ fn ensure_environment_identity(
     expected: &CProofArtifactIdentity,
     sources: &CSourceContext<'_>,
     target: CTarget,
+    runtime: crate::languages::c::thread_runtime::CThreadRuntime,
 ) -> Result<(), ClickError> {
-    let actual = sources.environment_identity(target);
+    let actual = sources.environment_identity_with_runtime(target, runtime);
     if expected == &actual {
         return Ok(());
     }
@@ -1524,8 +1560,10 @@ impl C0VerificationSession {
             let (verified, verified_function_environment) =
                 verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
             let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
-            let environment_identity =
-                sources.environment_identity(baseline_file.selected_c_target());
+            let environment_identity = sources.environment_identity_with_runtime(
+                baseline_file.selected_c_target(),
+                baseline_file.selected_thread_runtime(),
+            );
             Ok((
                 Self {
                     c_sources: Vec::new(),
@@ -1550,8 +1588,10 @@ impl C0VerificationSession {
             let (verified, verified_function_environment) =
                 verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
             let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
-            let environment_identity =
-                sources.environment_identity(baseline_file.selected_c_target());
+            let environment_identity = sources.environment_identity_with_runtime(
+                baseline_file.selected_c_target(),
+                baseline_file.selected_thread_runtime(),
+            );
             Ok((
                 Self {
                     c_sources: Vec::new(),
@@ -1575,7 +1615,10 @@ impl C0VerificationSession {
         let (verified, verified_function_environment) =
             verify_c0_sources_with_context(click_source, &sources, None, None, None, None)?;
         let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
-        let environment_identity = sources.environment_identity(baseline_file.selected_c_target());
+        let environment_identity = sources.environment_identity_with_runtime(
+            baseline_file.selected_c_target(),
+            baseline_file.selected_thread_runtime(),
+        );
         Ok((
             Self {
                 c_sources: c_sources
@@ -1609,8 +1652,10 @@ impl C0VerificationSession {
                 None,
                 Some(baseline_file.clone()),
             )?;
-            let environment_identity =
-                sources.environment_identity(baseline_file.selected_c_target());
+            let environment_identity = sources.environment_identity_with_runtime(
+                baseline_file.selected_c_target(),
+                baseline_file.selected_thread_runtime(),
+            );
             Ok((
                 Self {
                     c_sources: c_sources
@@ -1644,8 +1689,10 @@ impl C0VerificationSession {
                 None,
                 Some(baseline_file.clone()),
             )?;
-            let environment_identity =
-                sources.environment_identity(baseline_file.selected_c_target());
+            let environment_identity = sources.environment_identity_with_runtime(
+                baseline_file.selected_c_target(),
+                baseline_file.selected_thread_runtime(),
+            );
             Ok((
                 Self {
                     c_sources: Vec::new(),
@@ -1676,8 +1723,10 @@ impl C0VerificationSession {
                 None,
                 Some(baseline_file.clone()),
             )?;
-            let environment_identity =
-                sources.environment_identity(baseline_file.selected_c_target());
+            let environment_identity = sources.environment_identity_with_runtime(
+                baseline_file.selected_c_target(),
+                baseline_file.selected_thread_runtime(),
+            );
             Ok((
                 Self {
                     c_sources: Vec::new(),
@@ -1812,6 +1861,7 @@ impl C0VerificationSession {
                 &self.environment_identity,
                 &sources,
                 super::selected_c_target(click_source)?,
+                super::selected_thread_runtime(click_source)?,
             )?;
             let target = verification_target_at_context(click_source, &sources, line, column)?;
             let target_exists_in_baseline = match &target {
@@ -1877,6 +1927,7 @@ impl C0VerificationSession {
             &self.environment_identity,
             &sources,
             super::selected_c_target(click_source)?,
+            super::selected_thread_runtime(click_source)?,
         )?;
         let target = verification_target_at_context(click_source, &sources, line, column)?;
         let target_exists_in_baseline = match &target {
@@ -2004,6 +2055,21 @@ fn verify_c0_sources_with_context(
     resolved_file: Option<ClickFile>,
 ) -> Result<(Vec<VerifiedCTheorem>, CExecutionEnvironment), ClickError> {
     check_verification_deadline()?;
+    let preselected_runtime = resolved_file
+        .as_ref()
+        .map(ClickFile::selected_thread_runtime)
+        .unwrap_or(super::selected_thread_runtime(click_source)?);
+    let preselected_target = resolved_file
+        .as_ref()
+        .map(ClickFile::selected_c_target)
+        .unwrap_or(super::selected_c_target(click_source)?);
+    if preselected_runtime == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
+        && preselected_target != CTarget::X86_64LinuxUserspace
+    {
+        return Err(ClickError::new(
+            "modeled-pthread runtime requires target `x86_64-linux-userspace`",
+        ));
+    }
     // A verification that continues from an earlier one's environment shares
     // that environment's snapshots and keeps its kernel session; every other
     // verification starts its own, so thread-local kernel state cannot carry
@@ -2092,6 +2158,7 @@ fn verify_c0_sources_with_context(
     };
     check_verification_deadline()?;
     let selected_target = file.selected_c_target();
+    let selected_thread_runtime = file.selected_thread_runtime();
     let external_and_user_function_blocks = combined_external_function_blocks(&file)?;
     let function_source_registry = Arc::new(FunctionSourceRegistry::from_function_blocks(
         &external_and_user_function_blocks,
@@ -3268,7 +3335,11 @@ fn verify_c0_sources_with_context(
             theorem.import_identity = c_sources.prepared_project_identity.clone();
         }
     }
-    let artifact_identity = c_sources.artifact_identity(click_source, selected_target);
+    let artifact_identity = c_sources.artifact_identity_with_runtime(
+        click_source,
+        selected_target,
+        selected_thread_runtime,
+    );
     let selected_proofs = match verification_target.as_ref() {
         Some(VerificationTarget::Theorem(name)) => vec![format!("theorem:{name}")],
         Some(VerificationTarget::Function(name)) => vec![format!("function:{name}")],
@@ -3313,6 +3384,15 @@ fn verify_c0_sources_with_context(
             .filter(|name| !selected_function_names.contains(*name))
             .cloned()
             .collect(),
+        runtime_assumptions: selected_thread_runtime
+            .assumption()
+            .map(|assumption| vec![assumption.to_string()])
+            .unwrap_or_default(),
+        // `parse_verified_sources_context` has already validated the exact
+        // built-in declarations, their types, and every selected call shape.
+        modeled_pthread_binding: (selected_thread_runtime
+            == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread)
+            .then(crate::languages::c::thread_runtime::ModeledPthreadBinding::builtin),
     };
     for theorem in &mut verified {
         theorem.artifact_identity = Some(artifact_identity);
@@ -5115,6 +5195,25 @@ pub(in crate::surface) fn parse_verified_sources_context(
     file: &ClickFile,
     c_sources: &CSourceContext<'_>,
 ) -> Result<BTreeMap<String, (String, syntax::C0Function)>, ClickError> {
+    if file.selected_thread_runtime()
+        == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
+    {
+        if file.selected_c_target() != CTarget::X86_64LinuxUserspace {
+            return Err(ClickError::new(
+                "modeled-pthread runtime requires target `x86_64-linux-userspace`",
+            ));
+        }
+        if c_sources.bundle.is_none() {
+            return Err(ClickError::new(
+                "modeled-pthread runtime requires Click's built-in `<pthread.h>` source expansion",
+            ));
+        }
+        if file.verifying_sources.is_empty() {
+            return Err(ClickError::new(
+                "modeled-pthread runtime requires a verifying C source that includes Click's built-in `<pthread.h>`",
+            ));
+        }
+    }
     if file.verifying_sources.is_empty() {
         if file
             .function_blocks()
@@ -5177,7 +5276,17 @@ pub(in crate::surface) fn parse_verified_sources_context(
     let mut parsed = BTreeMap::new();
     let mut units = BTreeMap::new();
     for source_path in &file.verifying_sources {
-        let mut unit = parse_c_source_unit(source_path, c_sources, file.selected_c_target())?;
+        let unit = parse_c_source_unit(source_path, c_sources, file.selected_c_target())?;
+        units.insert(source_path.clone(), unit);
+    }
+
+    if file.selected_thread_runtime()
+        == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
+    {
+        validate_modeled_pthread_binding(&units)?;
+    }
+
+    for (source_path, unit) in &mut units {
         for function in std::mem::take(&mut unit.functions) {
             let function_name = function.name().to_string();
             let previous = parsed.insert(function_name.clone(), (source_path.clone(), function));
@@ -5187,7 +5296,6 @@ pub(in crate::surface) fn parse_verified_sources_context(
                 )));
             }
         }
-        units.insert(source_path.clone(), unit);
     }
 
     // Check C source compatibility before kernel lowering erases distinctions
@@ -5801,6 +5909,146 @@ pub(in crate::surface) fn parse_verified_sources_context(
         ));
     }
     Ok(parsed)
+}
+
+fn validate_modeled_pthread_binding(
+    units: &BTreeMap<String, syntax::C0TranslationUnit>,
+) -> Result<(), ClickError> {
+    let header_source = BTreeMap::from([(
+        "__click_modeled_pthread_reference.c",
+        "#include <pthread.h>\n",
+    )]);
+    let reference = crate::languages::c::source::expand_includes_for_target(
+        "__click_modeled_pthread_reference.c",
+        &header_source,
+        CTarget::X86_64LinuxUserspace,
+    )
+    .map_err(|error| ClickError::new(format!("invalid built-in pthread model: {error}")))?;
+    let reference = syntax::parse_translation_unit_for_source(
+        reference.source(),
+        "__click_modeled_pthread_reference.c",
+        reference.line_map(),
+    )
+    .map_err(|error| ClickError::new(format!("invalid built-in pthread model: {error}")))?;
+
+    let mut found_builtin = BTreeSet::new();
+    for (source_path, unit) in units {
+        for name in ["pthread_create", "pthread_join"] {
+            if unit.shadowed_pthread_names.contains(name) {
+                return Err(ClickError::new(format!(
+                    "modeled-pthread binding refuses local shadowing of `{name}` in `{source_path}`"
+                )));
+            }
+            if unit
+                .functions
+                .iter()
+                .any(|function| function.name() == name)
+            {
+                return Err(ClickError::new(format!(
+                    "modeled-pthread binding refuses local definition of `{name}` in `{source_path}`"
+                )));
+            }
+            let Some(declaration) = unit.function_declarations.get(name) else {
+                continue;
+            };
+            if !unit.builtin_pthread_declarations.contains(name) {
+                return Err(ClickError::new(format!(
+                    "modeled-pthread binding requires `{name}` from Click's built-in `<pthread.h>` in `{source_path}`"
+                )));
+            }
+            let expected = &reference.function_declarations[name];
+            if !declaration.compatible_with(expected) {
+                return Err(ClickError::new(format!(
+                    "modeled-pthread binding found noncanonical `{name}` declaration in `{source_path}`"
+                )));
+            }
+            found_builtin.insert(name);
+        }
+        for function in &unit.functions {
+            validate_modeled_pthread_calls(function.body(), source_path)?;
+        }
+    }
+    if found_builtin.len() != 2 {
+        return Err(ClickError::new(
+            "modeled-pthread binding requires Click's built-in `<pthread.h>` declarations",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_modeled_pthread_calls(
+    statement: &syntax::C0Statement,
+    source_path: &str,
+) -> Result<(), ClickError> {
+    use syntax::{C0Expression as E, C0Statement as S};
+    fn is_null(expression: &E) -> bool {
+        match expression {
+            E::Int32Literal(0) => true,
+            E::Cast { expression, .. } => is_null(expression),
+            _ => false,
+        }
+    }
+    match statement {
+        S::Call {
+            function_name,
+            arguments,
+        }
+        | S::CallAssign {
+            function_name,
+            arguments,
+            ..
+        } => match function_name.as_str() {
+            "pthread_create" => {
+                if arguments.len() != 4
+                    || !is_null(&arguments[1])
+                    || !matches!(&arguments[2], E::FunctionAddress(_))
+                {
+                    return Err(ClickError::new(format!(
+                        "modeled-pthread `pthread_create` in `{source_path}` requires null attributes and a direct worker"
+                    )));
+                }
+            }
+            "pthread_join" if arguments.len() != 2 || !is_null(&arguments[1]) => {
+                return Err(ClickError::new(format!(
+                    "modeled-pthread `pthread_join` in `{source_path}` requires a null result slot"
+                )));
+            }
+            _ => {}
+        },
+        S::Label { statement, .. } => validate_modeled_pthread_calls(statement, source_path)?,
+        S::Seq(first, second) => {
+            validate_modeled_pthread_calls(first, source_path)?;
+            validate_modeled_pthread_calls(second, source_path)?;
+        }
+        S::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            validate_modeled_pthread_calls(then_branch, source_path)?;
+            validate_modeled_pthread_calls(else_branch, source_path)?;
+        }
+        S::While { body, .. } | S::DoWhile { body, .. } => {
+            validate_modeled_pthread_calls(body, source_path)?;
+        }
+        S::For {
+            initializer,
+            step,
+            body,
+            ..
+        } => {
+            validate_modeled_pthread_calls(initializer, source_path)?;
+            validate_modeled_pthread_calls(step, source_path)?;
+            validate_modeled_pthread_calls(body, source_path)?;
+        }
+        S::Switch { cases, .. } => {
+            for case in cases {
+                validate_modeled_pthread_calls(case.body(), source_path)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 pub(in crate::surface) fn external_c0_function(
@@ -7101,6 +7349,163 @@ mod prepared_scaling_tests {
 }
 
 #[cfg(test)]
+mod modeled_pthread_binding_tests {
+    use super::*;
+
+    const CLICK: &str = "target \"x86_64-linux-userspace\";\nruntime \"modeled-pthread\";\nverifying \"fork_join.c\";\n";
+    const FROZEN: &str = include_str!("../../design/concurrency-probes/fork_join.c");
+
+    fn parse_binding(click: &str, source: &str) -> Result<(), ClickError> {
+        let sources = [("fork_join.c", source)];
+        let context = CSourceContext::bundle(&sources);
+        let file = parse_c0_click_file_context(click, &context)?;
+        parse_verified_sources_context(&file, &context).map(|_| ())
+    }
+
+    #[test]
+    fn frozen_calls_select_the_builtin_binding_on_mac() {
+        parse_binding(CLICK, FROZEN).expect("frozen call shapes bind to the built-in projection");
+        let context = CSourceContext::bundle(&[("fork_join.c", FROZEN)]);
+        assert_ne!(
+            context.environment_identity(CTarget::X86_64LinuxUserspace),
+            context.environment_identity_with_runtime(
+                CTarget::X86_64LinuxUserspace,
+                crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread,
+            )
+        );
+    }
+
+    #[test]
+    fn frozen_worker_proof_retains_the_runtime_assumption() {
+        let fixture = include_str!("../../mdtests/fork_join_worker_direct_contract.md");
+        let click = fixture
+            .split_once("```click\n")
+            .unwrap()
+            .1
+            .split_once("\n```")
+            .unwrap()
+            .0
+            .replace(
+                "verifying \"fill_range.c\";",
+                "runtime \"modeled-pthread\";\nverifying \"fork_join.c\";",
+            );
+        let verified = verify_c0_sources(&click, &[("fork_join.c", FROZEN)])
+            .expect("the original worker proof verifies against the unchanged C source");
+        assert!(!verified.is_empty());
+        assert_eq!(verified[0].function_block.signature().name(), "fill_range");
+        assert_eq!(
+            verified[0]
+                .selection
+                .as_ref()
+                .unwrap()
+                .runtime_assumptions
+                .len(),
+            1
+        );
+        let binding = verified[0]
+            .selection
+            .as_ref()
+            .unwrap()
+            .modeled_pthread_binding
+            .as_ref()
+            .unwrap();
+        assert_eq!(binding.specification_version, 1);
+        assert_eq!(binding.target, CTarget::X86_64LinuxUserspace);
+    }
+
+    #[test]
+    fn a_session_cannot_drop_the_modeled_runtime() {
+        let c = "#include <pthread.h>\nint answer(void) { return 1; }\n";
+        let click = "target \"x86_64-linux-userspace\";\nruntime \"modeled-pthread\";\nverifying \"fork_join.c\";\nint32 answer() { ensures result == 1; } by { execute(); simp(); }\n";
+        let (session, _) = C0VerificationSession::new(click, &[("fork_join.c", c)])
+            .expect("baseline modeled proof");
+        let changed = click.replace("runtime \"modeled-pthread\";\n", "");
+        let error = session.verify_at(&changed, 3, 47).unwrap_err();
+        assert!(error.message().contains("identity mismatch"));
+    }
+
+    #[test]
+    fn same_named_declaration_without_builtin_header_is_refused() {
+        let source = "typedef unsigned long pthread_t;\nint pthread_join(pthread_t thread, void **result);\nint f(void) { return 0; }\n";
+        assert!(
+            parse_binding(CLICK, source)
+                .unwrap_err()
+                .message()
+                .contains("built-in `<pthread.h>")
+        );
+    }
+
+    #[test]
+    fn local_definition_and_shadowing_are_refused() {
+        let defined = format!(
+            "{FROZEN}\nint pthread_join(pthread_t handle, void **result) {{ return 0; }}\n"
+        );
+        assert!(
+            parse_binding(CLICK, &defined)
+                .unwrap_err()
+                .message()
+                .contains("local definition")
+        );
+        let shadowed =
+            "#include <pthread.h>\nint f(void) { int pthread_join = 0; return pthread_join; }\n";
+        assert!(
+            parse_binding(CLICK, shadowed)
+                .unwrap_err()
+                .message()
+                .contains("shadowing")
+        );
+    }
+
+    #[test]
+    fn changed_declaration_and_wrong_target_are_refused() {
+        let source = "#include <pthread.h>\nint pthread_join(int handle, void **result);\n";
+        assert!(parse_binding(CLICK, source).is_err());
+        let kernel = CLICK.replace("x86_64-linux-userspace", "x86_64-linux-kernel");
+        assert!(
+            parse_binding(&kernel, FROZEN)
+                .unwrap_err()
+                .message()
+                .contains("requires target")
+        );
+    }
+
+    #[test]
+    fn nonnull_result_slot_is_refused() {
+        let source = FROZEN
+            .replace("pthread_join(first, NULL)", "pthread_join(first, &result)")
+            .replace(
+                "    pthread_t first;",
+                "    void *result;\n    pthread_t first;",
+            );
+        assert!(
+            parse_binding(CLICK, &source)
+                .unwrap_err()
+                .message()
+                .contains("null result slot")
+        );
+    }
+
+    #[test]
+    fn nonnull_attributes_are_refused() {
+        let source = FROZEN
+            .replace(
+                "pthread_create(&first, NULL,",
+                "pthread_create(&first, attr,",
+            )
+            .replace(
+                "    pthread_t first;",
+                "    const pthread_attr_t *attr = NULL;\n    pthread_t first;",
+            );
+        assert!(
+            parse_binding(CLICK, &source)
+                .unwrap_err()
+                .message()
+                .contains("null attributes")
+        );
+    }
+}
+
+#[cfg(test)]
 mod artifact_identity_tests {
     use super::*;
 
@@ -7112,6 +7517,8 @@ int32 answer() {
     execute();
     simp();
 }
+
+
 "#;
 
     const C_SOURCE: &str = "int answer(void) { return 1; }";

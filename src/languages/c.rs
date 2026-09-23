@@ -7,6 +7,7 @@ pub(crate) mod provenance;
 pub mod source;
 pub mod syntax;
 pub mod target;
+pub mod thread_runtime;
 
 #[cfg(test)]
 mod tests;

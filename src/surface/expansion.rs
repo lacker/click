@@ -3,6 +3,7 @@ use std::ops::Range;
 use super::validation::tactic_name;
 use super::*;
 use crate::languages::c::target::CTarget;
+use crate::languages::c::thread_runtime::CThreadRuntime;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CProofClaim {
@@ -71,6 +72,57 @@ pub fn map_verifying_source_paths(
 /// Absent directive selects the default target.
 pub fn selected_c_target(click_source: &str) -> Result<CTarget, ClickError> {
     Ok(declared_c_target(click_source)?.unwrap_or(CTarget::SUPPORTED))
+}
+
+/// Scans the explicit runtime selector before the full sidecar is parsed.
+/// Incremental sessions use it to refuse a changed runtime identity.
+pub fn selected_thread_runtime(click_source: &str) -> Result<CThreadRuntime, ClickError> {
+    let tokens = scan_source_tokens(click_source)?;
+    let mut selected = None;
+    let mut depth = 0usize;
+    for window in tokens.windows(3) {
+        match window[0].text.as_str() {
+            "{" => depth += 1,
+            "}" => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth > 0
+            || window[0].text != "runtime"
+            || !window[1].text.starts_with('"')
+            || !window[1].text.ends_with('"')
+            || window[1].text.len() < 2
+            || window[2].text != ";"
+        {
+            continue;
+        }
+        let name = &window[1].text[1..window[1].text.len() - 1];
+        let runtime = CThreadRuntime::from_name(name)
+            .ok_or_else(|| ClickError::new(format!("unknown C runtime `{name}`")))?;
+        if selected.replace(runtime).is_some() {
+            return Err(ClickError::new(
+                "a Click file declares more than one `runtime`",
+            ));
+        }
+    }
+    Ok(selected.unwrap_or_default())
+}
+
+pub fn selected_project_thread_runtime(
+    project: &ClickProject,
+) -> Result<CThreadRuntime, ClickError> {
+    let mut selected = CThreadRuntime::None;
+    for module in project.modules() {
+        let runtime = selected_thread_runtime(module.source())?;
+        if runtime != CThreadRuntime::None {
+            if selected != CThreadRuntime::None && selected != runtime {
+                return Err(ClickError::new(
+                    "project modules select different C runtimes",
+                ));
+            }
+            selected = runtime;
+        }
+    }
+    Ok(selected)
 }
 
 /// The C implementation target one project selects. Modules may restate the

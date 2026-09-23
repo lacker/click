@@ -738,6 +738,7 @@ impl Parser {
         let mut imports = Vec::new();
         let mut verifying_sources = Vec::new();
         let mut c_target = None;
+        let mut thread_runtime = None;
         let mut algebraic_type_definitions = Vec::new();
         let mut predicate_definitions = Vec::new();
         let mut click_function_definitions = Vec::new();
@@ -760,6 +761,14 @@ impl Parser {
                     return Err(self.error("a Click file declares more than one `target`"));
                 }
                 c_target = Some(target);
+            } else if self.peek_ident() == Some("runtime")
+                && matches!(self.peek_next(), Some(Token::String(_)))
+            {
+                let runtime = self.parse_thread_runtime()?;
+                if thread_runtime.is_some() {
+                    return Err(self.error("a Click file declares more than one `runtime`"));
+                }
+                thread_runtime = Some(runtime);
             } else if self.peek_ident() == Some("spec") {
                 algebraic_type_definitions.push(self.parse_algebraic_type_definition()?);
             } else if self.peek_ident() == Some("predicate") {
@@ -824,6 +833,7 @@ impl Parser {
             imports,
             verifying_sources,
             c_target,
+            thread_runtime: thread_runtime.unwrap_or_default(),
             algebraic_type_definitions,
             predicate_definitions,
             click_function_definitions,
@@ -1140,6 +1150,21 @@ impl Parser {
                     "unknown C target `{name}`; accepted targets are {}",
                     crate::languages::c::target::CTarget::accepted_names()
                 ),
+            )
+        })
+    }
+
+    fn parse_thread_runtime(
+        &mut self,
+    ) -> Result<crate::languages::c::thread_runtime::CThreadRuntime, ClickError> {
+        self.expect_ident_spelling("runtime")?;
+        let at = self.error_context();
+        let name = self.expect_string("C thread runtime name")?;
+        self.expect(Token::Semicolon)?;
+        crate::languages::c::thread_runtime::CThreadRuntime::from_name(&name).ok_or_else(|| {
+            self.error_at(
+                at,
+                format!("unknown C thread runtime `{name}`; accepted runtime is `modeled-pthread`"),
             )
         })
     }

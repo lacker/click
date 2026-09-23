@@ -331,6 +331,17 @@ fn parse_next_duration(
 fn run_audit(arguments: Arguments) -> Result<(), String> {
     let sources = audit_targets(&arguments.path)?;
     println!("INVENTORY");
+    for path in &sources {
+        let source = load_audit_source(path)?;
+        let runtime = match &source.project {
+            Some(project) => click::surface::selected_project_thread_runtime(project),
+            None => click::surface::selected_thread_runtime(&source.click_source),
+        }
+        .map_err(|error| error.message().to_string())?;
+        if let Some(assumption) = runtime.assumption() {
+            println!("  {} runtime assumption: {assumption}", path.display());
+        }
+    }
     let sites = inventory_sites(&sources)?;
     let inventory_claims = sites
         .iter()
