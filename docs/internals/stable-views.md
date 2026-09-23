@@ -194,8 +194,12 @@ proven: the partition invariant makes owners in a valid context disjoint
 from views by contract meaning, so an unproved separation between an owner
 and a symbolic view is not a conflict, while a declared effect against a
 view fails closed. Concrete active loans live in a dyadic interval index;
-symbolic protected ranges live in a per-block bucket, and a symbolic query
-beside concrete loans is refused as unsupported.
+queries check every directly stated exact pointer alias before treating an
+empty interval lookup as permission. Symbolic protected ranges live in
+per-block buckets for their recorded spelling, and queries inspect the
+buckets for their exact aliases too. A symbolic query beside concrete loans
+is refused as unsupported unless its external block is proven distinct from
+the local loan blocks.
 
 A nonempty subrange loan prevents freeing or reallocating its allocation.
 Locals, heap, and globals use the same access checks; a `static const`

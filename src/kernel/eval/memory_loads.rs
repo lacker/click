@@ -368,18 +368,28 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         "memory load",
         "memory load: equal-cell scan",
         || {
-            crate::instrumentation::record_deterministic_work(memory.cells.len());
-            memory.cells.iter().find_map(|(stored_pointer, value)| {
-                let equal = alias_cache.resolution_equal(&pointer, stored_pointer, assumptions);
-                // A bounded equality query can retain an alias guard before its
-                // nested separation search reaches a compact resource composition.
-                // Recheck separation at the top-level query before treating that
-                // materialized cell as authoritative. If both hold, the alias guard
-                // describes an unreachable branch and must not manufacture a typed
-                // load from the disjoint cell.
-                (equal && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions))
+            // A cell in a block proven distinct from the load's is never
+            // resolution-equal to it, so only the candidates can match, and
+            // they are visited in the whole map's order.
+            let candidates = AliasCandidates::of_block(&pointer.block);
+            let mut visited = 0usize;
+            let found = candidates
+                .entries(&memory.cells)
+                .find_map(|(stored_pointer, value)| {
+                    visited += 1;
+                    let equal = alias_cache.resolution_equal(&pointer, stored_pointer, assumptions);
+                    // A bounded equality query can retain an alias guard before its
+                    // nested separation search reaches a compact resource composition.
+                    // Recheck separation at the top-level query before treating that
+                    // materialized cell as authoritative. If both hold, the alias guard
+                    // describes an unreachable branch and must not manufacture a typed
+                    // load from the disjoint cell.
+                    (equal
+                        && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions))
                     .then(|| value.clone())
-            })
+                });
+            crate::instrumentation::record_deterministic_work(visited);
+            found
         },
     ) {
         if let Some(value) = canonicalized_pointer_value_from_int_cell(
@@ -479,24 +489,40 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         "memory load",
         "memory load: distinct-cell reduction",
         || {
-            crate::instrumentation::record_deterministic_work(cells_before_reduction);
-            std::sync::Arc::make_mut(&mut memory.cells).retain(|stored_pointer, stored_value| {
-                // Dropping a cell names this load at a snapshot that no longer
-                // records it, so the question is the same byte question
-                // `1a3b2701` put in front of the three snapshot comparisons:
-                // `p + 1` is a different address from `p` under every test the
-                // kernel has while holding the second byte a four-byte read
-                // there returns. The address ladder decides it only where the
-                // bytes it establishes clear both accesses.
-                !(alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
-                    && access_byte_overlap(
-                        stored_pointer,
-                        cell_access_byte_width(stored_value),
-                        &pointer,
-                        load_bytes,
-                        assumptions,
-                    ) == AccessByteOverlap::Separate)
-            });
+            // Every cell in a block proven distinct from the load's is dropped
+            // by this rule (its address is distinct on the first rung and its
+            // bytes are `Separate`), so the reduced map is exactly the
+            // candidates the rule keeps, built without visiting the rest.
+            let candidates = AliasCandidates::of_block(&pointer.block);
+            let mut visited = 0usize;
+            let kept = candidates
+                .entries(&memory.cells)
+                .filter(|(stored_pointer, stored_value)| {
+                    visited += 1;
+                    // Dropping a cell names this load at a snapshot that no longer
+                    // records it, so the question is the same byte question
+                    // `1a3b2701` put in front of the three snapshot comparisons:
+                    // `p + 1` is a different address from `p` under every test the
+                    // kernel has while holding the second byte a four-byte read
+                    // there returns. The address ladder decides it only where the
+                    // bytes it establishes clear both accesses.
+                    !(alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
+                        && access_byte_overlap(
+                            stored_pointer,
+                            cell_access_byte_width(stored_value),
+                            &pointer,
+                            load_bytes,
+                            assumptions,
+                        ) == AccessByteOverlap::Separate)
+                })
+                .map(|(stored_pointer, stored_value)| {
+                    (stored_pointer.clone(), stored_value.clone())
+                })
+                .collect::<Vec<_>>();
+            crate::instrumentation::record_deterministic_work(visited);
+            if kept.len() != cells_before_reduction {
+                memory.cells = std::sync::Arc::new(kept.into_iter().collect());
+            }
         },
     );
     // The returned symbolic load carries the reduced memory snapshot, so
@@ -561,6 +587,8 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 "memory load",
                 "memory load: unresolved-cell scan",
                 || {
+                    // The reduction above left only candidate cells (see
+                    // `AliasCandidates`), so this scan is already local.
                     crate::instrumentation::record_deterministic_work(memory.cells.len());
                     memory
                         .cells

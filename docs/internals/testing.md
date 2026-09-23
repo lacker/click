@@ -312,7 +312,9 @@ Kernel memory snapshots have such regressions in
 `src/kernel/tests/memory_scaling_tests.rs`: sequential stores into one block,
 one store beside a growing number of unrelated cells, interning a one-store
 derivative of an interned snapshot, and deduplication of equal content reached
-by different routes.
+by different routes. The same file bounds by a constant plus a logarithm the
+work of one C store, one call havoc and its checker, one free, and one typed
+load into a heap block beside a growing number of unrelated live allocations.
 
 Rust library tests and both fixture gates enforce deterministic tactic-work
 budgets but do not inherit production time limits. Tests specifically about

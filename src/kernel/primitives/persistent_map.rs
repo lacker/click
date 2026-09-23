@@ -56,7 +56,6 @@ impl<K, V> SnapshotMap<K, V> {
         self.map.is_empty()
     }
 
-    #[cfg(test)]
     /// Whether the two maps share one persistent root. `true` implies equal
     /// content; `false` says nothing.
     pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
@@ -117,6 +116,66 @@ impl<K: Ord, V> SnapshotMap<K, V> {
     }
 }
 
+/// One entry on which two snapshot maps differ; see [`SnapshotMap::diff`].
+pub(crate) enum SnapshotMapChange<'a, K> {
+    /// Present only in the first map.
+    Removed(&'a K),
+    /// Present only in the second map.
+    Added(&'a K),
+    /// Present in both maps with different values.
+    Changed(&'a K),
+}
+
+impl<'a, K> SnapshotMapChange<'a, K> {
+    pub(crate) fn key(&self) -> &'a K {
+        match self {
+            Self::Removed(key) | Self::Added(key) | Self::Changed(key) => key,
+        }
+    }
+}
+
+impl<K: Ord, V: PartialEq> SnapshotMap<K, V> {
+    /// The entries on which `self` and `other` differ, in ascending key
+    /// order.
+    ///
+    /// Subtrees the two maps share are skipped by node identity, so for a
+    /// map derived from the other by `k` inserts or removals the walk is
+    /// proportional to the `k` changed paths, not to the map. Charges one
+    /// work unit per difference reported.
+    pub(crate) fn diff<'a>(
+        &'a self,
+        other: &'a Self,
+    ) -> impl Iterator<Item = SnapshotMapChange<'a, K>> + 'a {
+        self.map.diff(&other.map).map(|change| {
+            crate::instrumentation::record_deterministic_work(1);
+            match change {
+                imbl::ordmap::DiffItem::Remove(key, _) => SnapshotMapChange::Removed(key),
+                imbl::ordmap::DiffItem::Add(key, _) => SnapshotMapChange::Added(key),
+                imbl::ordmap::DiffItem::Update { old: (key, _), .. } => {
+                    SnapshotMapChange::Changed(key)
+                }
+            }
+        })
+    }
+
+    /// Whether `self` is exactly `before` with the entries at `removed` taken
+    /// out. `removed` must be ascending keys of `before`. Walks only the
+    /// paths the two maps do not share (see [`Self::diff`]).
+    pub(crate) fn is_without(&self, before: &Self, removed: &[&K]) -> bool {
+        if self.map.len() + removed.len() != before.map.len() {
+            return false;
+        }
+        let mut expected = removed.iter();
+        for change in before.diff(self) {
+            match change {
+                SnapshotMapChange::Removed(key) if expected.next() == Some(&key) => {}
+                _ => return false,
+            }
+        }
+        expected.next().is_none()
+    }
+}
+
 impl<K: Ord + Clone + Hash, V: Clone + Hash> SnapshotMap<K, V> {
     /// Inserts or replaces one entry. O(log n) plus hashing the entry.
     pub(crate) fn insert(&mut self, key: K, value: V) -> Option<V> {
@@ -150,9 +209,12 @@ impl<K: Ord + Clone + Hash, V: Clone + Hash> SnapshotMap<K, V> {
 
     /// Keeps only the entries `keep` accepts.
     ///
-    /// O(n): it visits every entry. Reserved for operations that are
-    /// legitimately whole-map; a per-operation hot path must not call it.
+    /// O(n): it visits every entry, and charges one work unit per entry.
+    /// Reserved for operations that are legitimately whole-map; a
+    /// per-operation hot path restricts itself to the entries that can alias
+    /// the access instead (`AliasCandidates::retain_map`).
     pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, &V) -> bool) {
+        crate::instrumentation::record_deterministic_work(self.map.len());
         let dropped = self
             .map
             .iter()
@@ -164,6 +226,7 @@ impl<K: Ord + Clone + Hash, V: Clone + Hash> SnapshotMap<K, V> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn clear(&mut self) {
         *self = Self::new();
     }
@@ -314,7 +377,8 @@ impl<K: Ord> SnapshotSet<K> {
         self.set.iter()
     }
 
-    #[cfg(test)]
+    /// Elements in `range`, ascending; double-ended. O(log n) to position
+    /// plus the elements visited.
     pub(crate) fn range<R, Q>(
         &self,
         range: R,
@@ -380,9 +444,10 @@ impl<K: Ord + Clone + Hash> SnapshotSet<K> {
 
     /// Keeps only the elements `keep` accepts.
     ///
-    /// O(n): it visits every element. Reserved for operations that are
-    /// legitimately whole-set.
+    /// O(n): it visits every element, and charges one work unit per
+    /// element. Reserved for operations that are legitimately whole-set.
     pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K) -> bool) {
+        crate::instrumentation::record_deterministic_work(self.set.len());
         let dropped = self
             .set
             .iter()
