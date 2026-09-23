@@ -49,18 +49,14 @@ against these unchanged C bytes: `child_init`, `child_retain`, `child_release`,
 This is a helper checkpoint; neither `run_first_destroyed` nor
 `run_second_destroyed` is selected by that sidecar yet.
 
-A scratch proof of `run_first_destroyed` advanced through all three allocation
-checks, both attaches, creator release, and first detach. Its next C source
-statement, `int32 out = parent_read_payload(second)`, lowers to `Declare out`
-followed by `CallAssign`. A plain `step()` reaches the call without the named
-parent binder and reports `UninitializedRead` for `child_ref(p->kid)`.
-`step(parent_read_payload(second), { link: second_link })` rejects the
-declaration frontier. A proposed one-step combination of the declaration and
-call was rejected by proof-object statement evidence, so no verifier change
-from that prototype was retained. The next focused regression should use the
-frozen source and require checked binder transport across this initializer
-boundary, with a certificate accepted by `click verify`, `expand`, and
-`audit`. No new contract syntax is indicated by this failure.
+A scratch proof of `run_first_destroyed` advances through all three allocation
+checks, both attaches, creator release, first detach, and
+`parent_read_payload(second)`. The call borrows `child_ref(second->kid)`; its
+entry evaluation uses the selected `parent(second)` arm to identify the held
+`child_ref(kid)`. Click now returns that checked entry resource without reading
+`second->kid` a second time. The scratch proof's next failure is
+`parent_detach(second)`, whose consumed `child_ref(second->kid)` currently
+resolves to a symbolic load instead of the held `child_ref(kid)`.
 
 ## Reduction findings, 2026-09-17
 

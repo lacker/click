@@ -1019,6 +1019,7 @@ fn authoritative_memory_projection_scales_with_used_members_not_unrelated_frames
         role: CResourceTransferRole::Consume,
         snapshot: CResourceSnapshot::Entry,
         clause_position: None,
+        section_index: None,
     }];
     let projection = project_contract_memory_effects(
         &state,

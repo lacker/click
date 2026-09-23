@@ -1248,6 +1248,7 @@ fn production_checked(fact: CResourceFact) -> CCheckedResourceFact {
         role: CResourceTransferRole::Borrow,
         snapshot: CResourceSnapshot::Entry,
         clause_position: None,
+        section_index: None,
     }
 }
 

@@ -10067,6 +10067,7 @@ mod automatic_lifetime_tests {
                 role: CResourceTransferRole::Borrow,
                 snapshot: CResourceSnapshot::Entry,
                 clause_position: None,
+                section_index: None,
             }],
             &assumptions,
         )

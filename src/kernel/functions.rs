@@ -809,6 +809,9 @@ pub(crate) struct CCheckedResourceFact {
     pub(crate) role: CResourceTransferRole,
     pub(crate) snapshot: CResourceSnapshot,
     pub(crate) clause_position: Option<(usize, usize)>,
+    /// Index of this leaf in the normalized resource section, when it was
+    /// evaluated from a contract. Distinct leaves may share a source clause.
+    pub(crate) section_index: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2875,6 +2878,7 @@ fn execute_verified_function_applications_with_suspension(
             &caller_resources_after_requirements,
             escrowed_owners(&transfer),
             &transfer.canonical_borrowed_owners,
+            &transfer.borrowed_inputs,
             &entry_resource_state,
             &output_resource_state,
             name,
@@ -6035,6 +6039,7 @@ fn checked_access_mode_refinement_adapter(
         &transfer.caller_resources_after_requirements,
         escrowed_owners(&transfer),
         &transfer.canonical_borrowed_owners,
+        &transfer.borrowed_inputs,
         &caller,
         &post,
         "refinement",
@@ -12847,6 +12852,7 @@ pub(super) fn evaluate_function_return_resource_context(
     evaluate_contract_return_resource_context(
         function.contract_interface(),
         &[],
+        &[],
         entry_state,
         post_state,
         count,
@@ -12855,9 +12861,103 @@ pub(super) fn evaluate_function_return_resource_context(
     )
 }
 
+type BorrowedResourceKey = (
+    CResourceTerm,
+    CResourceAccessMode,
+    CResourceQuantity,
+    CResourceSnapshot,
+);
+
+fn borrowed_resource_key(resource: &CResourceSpec) -> BorrowedResourceKey {
+    (
+        resource.term().clone(),
+        resource.access(),
+        resource.quantity().clone(),
+        resource.quantity_snapshot(),
+    )
+}
+
+#[cfg(test)]
+mod entry_borrow_return_tests {
+    use super::*;
+
+    #[test]
+    fn returned_borrows_keep_checked_entry_arguments_when_clauses_are_reordered() {
+        let field = |name: &str| {
+            let address = Pointer {
+                block: format!("parent:{name}").into(),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            CExpression::TypedLoad {
+                pointer: Box::new(CExpression::Value(CValue::pointer(address))),
+                value_type: CType::Int32Pointer,
+                volatile: false,
+                pointee_constant: false,
+                source: Default::default(),
+            }
+        };
+        let clause = |name: &str| {
+            CResourceSpec::declared(
+                ResourceFamily::Composite,
+                CResourceAccessMode::Own,
+                "child_ref".into(),
+                vec![field(name)],
+                vec![CType::Int32Pointer],
+                CResourceTransferRole::Borrow,
+                CResourceSnapshot::Entry,
+            )
+            .unwrap()
+        };
+        let left = clause("left");
+        let right = clause("right");
+        let function = c_function(CType::Void, "borrow", Vec::new(), c_skip())
+            .with_resource_summary(vec![left.clone(), right.clone()], vec![right, left]);
+        let children = ["child:left", "child:right"].map(|name| {
+            CResourceFact::own_composite(
+                "child_ref".into(),
+                vec![CValue::pointer(Pointer {
+                    block: name.into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                })],
+            )
+        });
+        let checked = children
+            .iter()
+            .enumerate()
+            .map(|(index, fact)| CCheckedResourceFact {
+                fact: fact.clone(),
+                role: CResourceTransferRole::Borrow,
+                snapshot: CResourceSnapshot::Entry,
+                clause_position: None,
+                section_index: Some(index),
+            })
+            .collect::<Vec<_>>();
+        // Neither field has a materialized cell. Re-evaluating either return
+        // clause would fail, even though its exact borrowed owner was checked.
+        let state = CState::new();
+        let returned = evaluate_contract_return_resource_context(
+            function.contract_interface(),
+            &[],
+            &checked,
+            &state,
+            &state,
+            2,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::beside_live_state(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            returned.facts(),
+            &[children[1].clone(), children[0].clone()]
+        );
+    }
+}
+
 fn evaluate_contract_return_resource_context(
     interface: &CFunctionContractInterface,
     canonical_borrowed_owners: &[(CResourceFact, CResourceFact)],
+    borrowed_inputs: &[CCheckedResourceFact],
     entry_state: &CState,
     post_state: &CState,
     count: usize,
@@ -12880,6 +12980,37 @@ fn evaluate_contract_return_resource_context(
             .entry(checked.clone())
             .or_default()
             .push_back(canonical.clone());
+    }
+    let mut canonical_for_entry_borrows = canonical_by_checked.clone();
+    // An entry-snapshot owned borrow denotes the resource checked and lent at
+    // entry. Keep that evaluated fact by normalized term, in occurrence order,
+    // rather than re-reading an unmaterialized field on return. The transfer
+    // has already checked every fact placed here against caller ownership.
+    let mut entry_borrows = BTreeMap::<BorrowedResourceKey, VecDeque<CResourceFact>>::new();
+    for checked in borrowed_inputs {
+        if checked.role != CResourceTransferRole::Borrow
+            || checked.snapshot != CResourceSnapshot::Entry
+            || !checked.fact.is_own()
+        {
+            continue;
+        }
+        let Some(requirement) = checked
+            .section_index
+            .and_then(|index| interface.resource_requires().get(index))
+        else {
+            continue;
+        };
+        if requirement.is_instance() {
+            continue;
+        }
+        let canonical = canonical_for_entry_borrows
+            .get_mut(&checked.fact)
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_else(|| checked.fact.clone());
+        entry_borrows
+            .entry(borrowed_resource_key(requirement))
+            .or_default()
+            .push_back(canonical);
     }
     // An entry-snapshot borrow whose address depends on a cell the contract's
     // own composites hold (`owns pair(node)` supplying the link
@@ -12943,54 +13074,60 @@ fn evaluate_contract_return_resource_context(
                 }
             }
         }
-        // Snapshot selection is carried by the normalized specification. A
-        // named instance is always post-evaluated by lowering, so its
-        // identity remains stable while its fields can be fresh.
-        let state = match resource.snapshot() {
-            CResourceSnapshot::Entry => entry_state,
-            CResourceSnapshot::Current | CResourceSnapshot::Post => post_state,
-        };
-        // A returned borrow is addressed through the cells the contract
-        // already holds, including those a folded matched instance publishes
-        // for its selected arm (D7). Without that read authority
-        // `owns node->right->augmented` could be required at entry and then
-        // fail to be evaluated at the very same state on return.
-        let supply = state
-            .resources()
-            .clone()
-            .unchecked_with_facts(context.facts().iter().cloned());
-        let mut views = instance_arm_views(
-            &supply,
-            interface.composite_resource_definitions(),
-            state,
-            assumptions,
-        );
-        if resource.snapshot() == CResourceSnapshot::Entry {
-            views.extend(entry_opened_views.iter().cloned());
-        }
-        let evaluation_state = state
-            .clone()
-            .with_resource_context(supply.unchecked_with_facts(views));
-        let evaluated = match evaluate_function_resource_spec_with_entry(
-            &entry_state_for_argument_reads,
-            &evaluation_state,
-            resource,
-            assumptions,
-            budget,
-        )? {
-            Ok(resource) => resource,
-            Err(error) => return Ok(Err(error)),
-        };
-        let resource = if resource.role() == CResourceTransferRole::Borrow
+        let entry_borrow = (resource.role() == CResourceTransferRole::Borrow
             && resource.snapshot() == CResourceSnapshot::Entry
-            && !resource.is_view()
-        {
-            canonical_by_checked
-                .get_mut(&evaluated)
-                .and_then(VecDeque::pop_front)
-                .unwrap_or(evaluated)
+            && !resource.is_view())
+        .then(|| borrowed_resource_key(resource))
+        .and_then(|key| entry_borrows.get_mut(&key))
+        .and_then(VecDeque::pop_front);
+        let resource = if let Some(entry_borrow) = entry_borrow {
+            entry_borrow
         } else {
-            evaluated
+            // Snapshot selection is carried by the normalized specification.
+            // A named instance uses post fields while retaining entry identity.
+            let state = match resource.snapshot() {
+                CResourceSnapshot::Entry => entry_state,
+                CResourceSnapshot::Current | CResourceSnapshot::Post => post_state,
+            };
+            // A returned view or a clause with no checked entry borrow still
+            // evaluates against the cells the contract makes readable.
+            let supply = state
+                .resources()
+                .clone()
+                .unchecked_with_facts(context.facts().iter().cloned());
+            let mut views = instance_arm_views(
+                &supply,
+                interface.composite_resource_definitions(),
+                state,
+                assumptions,
+            );
+            if resource.snapshot() == CResourceSnapshot::Entry {
+                views.extend(entry_opened_views.iter().cloned());
+            }
+            let evaluation_state = state
+                .clone()
+                .with_resource_context(supply.unchecked_with_facts(views));
+            let evaluated = match evaluate_function_resource_spec_with_entry(
+                &entry_state_for_argument_reads,
+                &evaluation_state,
+                resource,
+                assumptions,
+                budget,
+            )? {
+                Ok(resource) => resource,
+                Err(error) => return Ok(Err(error)),
+            };
+            if resource.role() == CResourceTransferRole::Borrow
+                && resource.snapshot() == CResourceSnapshot::Entry
+                && !resource.is_view()
+            {
+                canonical_by_checked
+                    .get_mut(&evaluated)
+                    .and_then(VecDeque::pop_front)
+                    .unwrap_or(evaluated)
+            } else {
+                evaluated
+            }
         };
         context = match context.try_compose_with_fact(resource, assumptions) {
             Ok(context) => context,
@@ -13052,6 +13189,7 @@ fn escrowed_owners(transfer: &CFunctionResourceTransfer) -> &[CResourceFact] {
 fn evaluate_function_return_resources(
     caller_resources_after_requirements: &ResourceContext,
     escrowed_owners: &[CResourceFact],
+    borrowed_inputs: &[CCheckedResourceFact],
     entry_state: &CState,
     post_state: &CState,
     function: &CFunction,
@@ -13062,6 +13200,7 @@ fn evaluate_function_return_resources(
         caller_resources_after_requirements,
         escrowed_owners,
         &[],
+        borrowed_inputs,
         entry_state,
         post_state,
         function.name(),
@@ -13076,6 +13215,7 @@ fn evaluate_contract_return_resources(
     caller_resources_after_requirements: &ResourceContext,
     escrowed_owners: &[CResourceFact],
     canonical_borrowed_owners: &[(CResourceFact, CResourceFact)],
+    borrowed_inputs: &[CCheckedResourceFact],
     entry_state: &CState,
     post_state: &CState,
     interface_name: &str,
@@ -13091,6 +13231,7 @@ fn evaluate_contract_return_resources(
             evaluate_contract_return_resource_context(
                 interface,
                 canonical_borrowed_owners,
+                borrowed_inputs,
                 entry_state,
                 post_state,
                 interface.resource_ensures().len(),
@@ -17853,6 +17994,7 @@ fn evaluate_resource_clauses_against_whole_section(
                 role: resources[index].role(),
                 snapshot: resources[index].snapshot(),
                 clause_position: resources[index].clause_position(),
+                section_index: Some(index),
             })
         })
         .collect()))
@@ -20775,6 +20917,7 @@ fn function_outcome_from_body_with_resource_transfer(
             evaluate_function_return_resources(
                 &caller_resources_after_requirements,
                 escrowed_owners(&transfer),
+                &transfer.borrowed_inputs,
                 &entry_resource_state,
                 &output_resource_state,
                 function,

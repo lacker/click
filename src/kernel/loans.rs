@@ -7101,6 +7101,7 @@ mod tests {
             role: CResourceTransferRole::Borrow,
             snapshot: CResourceSnapshot::Entry,
             clause_position: None,
+            section_index: None,
         }
     }
 
@@ -7470,6 +7471,7 @@ mod tests {
                         role: CResourceTransferRole::Consume,
                         snapshot: CResourceSnapshot::Entry,
                         clause_position: None,
+                        section_index: None,
                     },
                     checked(view.clone()),
                 ],
@@ -8102,6 +8104,7 @@ mod tests {
                 role: CResourceTransferRole::Consume,
                 snapshot: CResourceSnapshot::Entry,
                 clause_position: None,
+                section_index: None,
             },
         ];
         assert!(matches!(
@@ -8127,6 +8130,7 @@ mod tests {
             role: CResourceTransferRole::Consume,
             snapshot: CResourceSnapshot::Entry,
             clause_position: None,
+            section_index: None,
         };
         let read = checked(memory(0, 4, false));
         let left = plan_stable_view_transfer(
@@ -8198,6 +8202,7 @@ mod tests {
                 role: CResourceTransferRole::Consume,
                 snapshot: CResourceSnapshot::Entry,
                 clause_position: None,
+                section_index: None,
             },
         ];
         assert_eq!(
@@ -8527,6 +8532,7 @@ mod local_storage_tests {
             role: CResourceTransferRole::Borrow,
             snapshot: CResourceSnapshot::Entry,
             clause_position: None,
+            section_index: None,
         }
     }
 
