@@ -97,12 +97,12 @@ payload protocols, and arbitrary cyclic-graph proofs remain deferred. The
 small diamond establishes sharing, not cycle reclamation. Follow `AGENTS.md`
 when proof tooling exposes a blocker.
 
-## Current status, 2026-09-22
+## Current status, 2026-09-23
 
 This issue remains open. The frozen C source is unchanged and the normal gate
 passes, but there is still no passing sidecar for the full lifecycle. The
-current blocker is the lookup of a child reference through a folded parent
-resource at a modular call boundary.
+folded-parent child-reference lookup now passes in a focused heap-parent
+regression; the frozen two-parent program still needs its complete sidecar.
 
 Verified and landed:
 
@@ -133,15 +133,22 @@ Verified and landed:
 - A proof-only unfold after a modular call no longer mutates heap-cell
   initialization metadata as if it were a C store. The new kernel regression
   ensures naming a fresh uninitialized heap cell cannot make it readable.
+- `mdtests/shared_heap_one_heap_parent.md` now verifies the focused heap-parent
+  boundary: attach returns a folded `Linked(kid)` parent, the creator releases
+  its reference, and detach consumes `child_ref(p->kid)` and frees both heap
+  objects. The evaluator resolves that argument only from the exact bound,
+  owned parent arm's equality and memory ownership. The ordinary resource
+  transfer still requires the actual `child_ref(kid)` unit. Missing-retain,
+  wrong-child, and missing-child-reference fixtures reject those claims.
 
 Still failing to compose:
 
 - The exact frozen `design/shared-heap-probes/shared_parent.c` diamond has
   two allocation-failure paths and two destruction orders, but no passing
-  sidecar yet. The latest scratch proof certifies all six helper bodies,
-  handles all three null checks in `run_first_destroyed`, composes both
-  `parent_attach` calls, and releases the creator reference. Its first failure
-  is the subsequent `parent_detach(first)`:
+  sidecar yet. A previous scratch proof certified all six helper bodies,
+  handled all three null checks in `run_first_destroyed`, composed both
+  `parent_attach` calls, and released the creator reference. It previously
+  failed at the subsequent `parent_detach(first)`:
 
   ```click
   let { link: first_link } = step(parent_attach(first, kid), {});
@@ -150,19 +157,12 @@ Still failing to compose:
   let first_out = step(parent_detach(first), { link: first_link });
   ```
 
-  Click cannot evaluate the `child_ref(p->kid)` contract argument because the
-  folded parent's field load reports `UninitializedRead`. Unfolding the parent
-  in the caller exposes enough checked evidence to prove `first->kid == kid`,
-  but refolding and calling detach still gives a different symbolic resource
-  argument rather than the held `child_ref(kid)`. The existing contract syntax
-  already expresses the required handoff: it consumes the named `parent(p)`
-  instance and `child_ref(p->kid)`. Repair entry-state resource-argument
-  evaluation so it can use that selected parent's checked, framed
-  `p->kid == kid` fact to read and normalize the field to `kid`. The rule must
-  depend on the exact owned parent instance and its memory frame; a bare
-  pointer or an unrelated equality cannot create a child reference. Regress
-  the frozen heap-parent call plus missing-retain and wrong-child cases before
-  considering any new contract syntax.
+  The focused heap-parent regression now clears this `UninitializedRead` and
+  proves exact final release. The full frozen sidecar still needs to be
+  completed and rerun; the focused result alone does not establish both
+  destruction orders or the surviving-parent payload read. The existing
+  contract syntax expresses the handoff, so there is no evidence yet for new
+  syntax.
 - The separate minimal reducer
   `mdtests/shared_heap_two_parent_branch_release.md` fails while certifying
   `parent_detach` because it asks for a redundant pure count postcondition
