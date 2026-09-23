@@ -98,15 +98,15 @@ and the state mirrors it.
 | Reborrow | A live parent binding | A child scope pinning the parent share; the child carries only the description that authorized it and the backing under it |
 | Split, join, transfer | Exact siblings and holders | Conserved shares |
 | Project | The kernel's one-level expansion of a permitted composite view | A derived description on the same loan, identity unchanged |
-| Hold, release | A live binding | A restriction on the scope that `End` refuses while it exists, identity unchanged |
+| Hold, release | A live binding | A restriction on the scope that End refuses while it exists; each change mints a fresh ledger identity |
 | End | Close entitlement, full root share, no dependents, no holds | The scope ended, the parent share unpinned |
 | Recover | An ended scope and the unique entitlement | The escrow restored exactly once |
 
-Projections and holds keep the ledger identity because they are derived or
-restrictive: a projection is re-derivable from its parent by a checked
-expansion, and a hold mints no share, scope, or recovery right. The
-composite's binding carries the hold, and every join and recovery compares
-bindings.
+Projections keep the ledger identity because each description is
+re-derivable from its parent by a checked expansion. Holds and releases mint
+fresh identities because they change whether a scope may end, which joins and
+evidence checks must distinguish. The composite's binding also carries the
+hold, and every join and recovery compares bindings.
 
 ## The call boundary
 
@@ -312,7 +312,7 @@ exclusive production reborrows and C thread APIs remain outside this checkpoint.
 | Composites | `composite_loan_protects_primitive_frontier_and_restores_head_once`, `projection_extends_permitted_descriptions_without_a_transition`, `candidate_composite_with_unstable_facts_is_refused`, `candidate_composite_view_is_backed_by_a_covering_owned_composite`, `mdtests/produced_composite_body_overlapping_a_held_owner.md` |
 | Frame check at the frontier | `frame_check_opens_owned_composites_one_level_and_charges_per_head`, `mdtests/call_havoc_keeps_names_by_ownership.md` |
 | Open and close | `mdtests/rb_augment_callbacks_helper_mutates_body_stepwise.md` (a viewed open closes the same way from a step as from `execute()`), `execution_open_scope_owns_entry_body_and_close_transactionally` |
-| Escaping borrows | `a_hold_blocks_ending_the_scope_until_released_and_keeps_identity`, `escaping_borrow_keeps_the_loan_open_until_the_composite_is_consumed`, `consuming_the_composite_recovers_the_owner`, `mdtests/borrowing_composite_survives_an_owning_call.md`, `examples/input-cursor` |
+| Escaping borrows | `a_hold_blocks_ending_the_scope_and_changes_identity`, `escaping_borrow_keeps_the_loan_open_until_the_composite_is_consumed`, `consuming_the_composite_recovers_the_owner`, `mdtests/borrowing_composite_survives_an_owning_call.md`, `examples/input-cursor` |
 | Effects | `candidate_rejects_mutable_effect_overlapping_a_composite_view_piece`, `candidate_allows_a_mutable_effect_reserved_from_another_owned_occurrence` |
 | Callbacks and refinement | `stable_view_refinement_uses_checked_variance_for_subranges`, `mdtests/rb_augment_callbacks_helper_owns_rejects_unseparated.md`, `mdtests/rb_augment_callbacks_helper_calls_after_close_through_view.md` (a viewed suite's callback stays callable after an open closes), `mdtests/rb_augment_callbacks_helper_rejects_call_after_close.md` (an owned suite's does not) |
 | Loops and branches | `loop_havoc_requires_a_checked_set_disjoint_from_active_loans`, `loop_back_edge_refuses_a_dropped_share_or_a_regenerated_root`, `abstract_join_rejects_a_loan_ended_on_only_one_arm` |

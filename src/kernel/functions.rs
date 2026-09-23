@@ -645,8 +645,9 @@ fn recover_candidate_stable_view_resources(
         plan.clone(),
         recovery.ledger.clone(),
         recovery.terminal_ledger.clone(),
-        recovery.released_holds.clone(),
         recovery.transitions.clone(),
+        recovery.hold_base_ledger.clone(),
+        recovery.hold_transitions.clone(),
     ));
     // Recheck the kernel-issued discharge evidence from the exact callee root
     // before installing the canonical predecessor root in the caller state.
