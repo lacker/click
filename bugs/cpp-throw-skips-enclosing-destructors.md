@@ -46,6 +46,18 @@ caught paths are sound: handler bodies execute as real kernel statements
 recorded, and the try-frame evidence walk pops only the top frame
 (`src/kernel/proof/execution.rs:5361`).
 
+Same root, promotion shape from a follow-up audit (weak-observation pass):
+`statement_may_throw` (`src/languages/cpp/lowering.rs:917`) reports every
+`Declare` as non-throwing, including `CppInitializer::Constructor` ones.
+Constructor initializers reach a throwing callee in the exception-enabled
+profile (Free functions may call/throw; the no-throw rule
+`schema.rs:925-936` applies only to non-Free object operations), so a
+*constructing* Declare inside a body with live destructibles is never
+edge-wrapped and an initializer throw escapes without the unwind walk too.
+Both shapes belong to the same invariant; the fixer should punish both at
+one lowering point (every declare-with-throwable-initializer and every
+throw inside a cleanup-living body carries the active prefix).
+
 ## Intended regression
 
 Two mdtests on the shape above: the *true* C++ outcome

@@ -105,6 +105,40 @@ fn certify_worker(
     )
 }
 
+#[test]
+fn modeled_pthread_calls_cannot_fall_back_to_ordinary_function_rules() {
+    let environment = CExecutionEnvironment::new()
+        .with_modeled_pthread_binding(Some(
+            crate::languages::c::thread_runtime::ModeledPthreadBinding::builtin(),
+        ))
+        .with_function(c_function(
+            CType::Int32,
+            "pthread_create",
+            vec![],
+            c_return(c_int32_literal(0)),
+        ));
+    for statement in [
+        c_call_assign("result", "pthread_create", vec![]),
+        c_call("pthread_create", vec![]),
+    ] {
+        let paths = execute_c_statement_paths(
+            &CState::new(),
+            &statement,
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::new(),
+        )
+        .unwrap();
+        assert_eq!(paths.len(), 1);
+        assert!(matches!(
+            &paths[0].outcome,
+            CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message))
+                if message.contains("no checked C transition")
+        ));
+    }
+}
+
 fn spawn(
     context: &ThreadContext,
     index: usize,
@@ -214,15 +248,37 @@ fn thread_join_preserves_other_child_loans_in_both_orders() {
 fn thread_failed_creation_and_rejected_spawn_preserve_parent() {
     let (worker, termination) = worker();
     let original = ThreadContext::new(parent(2)).unwrap();
-    assert_eq!(original.creation_failed().parent(), original.parent());
     let mut budget = ExecutionBudget::new();
+    let prepared = original
+        .prepare_create(
+            &worker,
+            Some(&termination),
+            CValue::pointer(pointer(0)),
+            &PureFactContext::new(),
+            &CExecutionEnvironment::new(),
+            &mut budget,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(prepared.failure().parent(), original.parent());
     let (first, handle) = spawn(&original, 0, &worker, &termination, &mut budget);
-    let failed = first.creation_failed();
+    let failed = first
+        .prepare_create(
+            &worker,
+            Some(&termination),
+            CValue::pointer(pointer(1)),
+            &PureFactContext::new(),
+            &CExecutionEnvironment::new(),
+            &mut budget,
+        )
+        .unwrap()
+        .unwrap()
+        .failure();
     assert_eq!(failed.parent(), first.parent());
     // The task is already transferred: a second writer cannot receive it.
     assert!(
         failed
-            .spawn(
+            .prepare_create(
                 &worker,
                 Some(&termination),
                 CValue::pointer(pointer(0)),
@@ -311,7 +367,20 @@ fn thread_empty_or_ambiguous_worker_frontier_is_a_refusal() {
     .unwrap();
     assert!(unique_worker_completion(true, vec![completion.clone(), completion.clone()]).is_err());
     assert!(unique_worker_completion(false, vec![completion]).is_err());
-    assert_eq!(parent.creation_failed().parent(), parent.parent());
+    assert!(
+        parent
+            .prepare_create(
+                &worker,
+                None,
+                CValue::pointer(pointer(0)),
+                &PureFactContext::new(),
+                &CExecutionEnvironment::new(),
+                &mut ExecutionBudget::new(),
+            )
+            .unwrap()
+            .is_err(),
+        "failure cannot hide an invalid worker task"
+    );
 }
 
 #[test]

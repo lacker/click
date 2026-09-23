@@ -2342,6 +2342,14 @@ fn statement_contains_internal_throw(statement: &CStatement) -> bool {
 }
 
 impl CExecutionEnvironment {
+    pub(crate) fn with_modeled_pthread_binding(
+        mut self,
+        binding: Option<crate::languages::c::thread_runtime::ModeledPthreadBinding>,
+    ) -> Self {
+        self.modeled_pthread_binding = binding;
+        self
+    }
+
     /// Selects a call rule for one proof-local statement transition. All
     /// project tables and their variable index remain shared.
     pub(crate) fn with_selected_call_contract(mut self, name: &str) -> Self {

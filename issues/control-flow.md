@@ -9,9 +9,9 @@ independently motivated extensions that can improve ordinary control-flow
 coverage without taking on general backward or irreducible `goto`.
 
 This is deliberately not the home for verifier-wide control-flow soundness
-audits. Put those findings in [`bughunt.md`](bughunt.md). General backward,
-multi-entry, and irreducible jump graphs remain deferred in
-[`goto.md`](goto.md).
+audits; file those findings as their own P1 issues or `bugs/` entries when
+they are found. General backward, multi-entry, and irreducible jump graphs
+remain deferred in [`goto.md`](goto.md).
 
 ## Relative difficulty
 

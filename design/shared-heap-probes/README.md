@@ -40,6 +40,28 @@ allocation obligations, and the negative regressions in the issue fail for
 their intended local reasons. A native compiler run checks C syntax only; it
 does not establish any ownership property.
 
+## Frozen-source helper checkpoint, 2026-09-23
+
+[`shared_parent.click`](shared_parent.click) now verifies all six helper bodies
+against these unchanged C bytes: `child_init`, `child_retain`, `child_release`,
+`parent_attach`, `parent_read_payload`, and `parent_detach`. Run
+`click verify design/shared-heap-probes/shared_parent.click` to check them.
+This is a helper checkpoint; neither `run_first_destroyed` nor
+`run_second_destroyed` is selected by that sidecar yet.
+
+A scratch proof of `run_first_destroyed` advanced through all three allocation
+checks, both attaches, creator release, and first detach. Its next C source
+statement, `int32 out = parent_read_payload(second)`, lowers to `Declare out`
+followed by `CallAssign`. A plain `step()` reaches the call without the named
+parent binder and reports `UninitializedRead` for `child_ref(p->kid)`.
+`step(parent_read_payload(second), { link: second_link })` rejects the
+declaration frontier. A proposed one-step combination of the declaration and
+call was rejected by proof-object statement evidence, so no verifier change
+from that prototype was retained. The next focused regression should use the
+frozen source and require checked binder transport across this initializer
+boundary, with a certificate accepted by `click verify`, `expand`, and
+`audit`. No new contract syntax is indicated by this failure.
+
 ## Reduction findings, 2026-09-17
 
 Reduced against the frozen machinery with scratch sidecars (kept in

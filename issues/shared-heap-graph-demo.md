@@ -140,6 +140,8 @@ Verified and landed:
   owned parent arm's equality and memory ownership. The ordinary resource
   transfer still requires the actual `child_ref(kid)` unit. Missing-retain,
   wrong-child, and missing-child-reference fixtures reject those claims.
+- `design/shared-heap-probes/shared_parent.click` verifies all six modular
+  helper bodies directly against the unchanged frozen C source.
 
 Still failing to compose:
 
@@ -157,12 +159,16 @@ Still failing to compose:
   let first_out = step(parent_detach(first), { link: first_link });
   ```
 
-  The focused heap-parent regression now clears this `UninitializedRead` and
-  proves exact final release. The full frozen sidecar still needs to be
-  completed and rerun; the focused result alone does not establish both
-  destruction orders or the surviving-parent payload read. The existing
-  contract syntax expresses the handoff, so there is no evidence yet for new
-  syntax.
+  The focused heap-parent regression clears this `UninitializedRead` and
+  proves exact final release. A new scratch proof of the frozen caller passed
+  its first detach, then stopped at the surviving parent's payload read:
+  `int32 out = parent_read_payload(second)` lowers to a declaration followed
+  by a call assignment. The plain declaration step reaches the call without
+  named binder transport, while `step(parent_read_payload(second),
+  { link: second_link })` is rejected before the declaration. The full frozen
+  sidecar still needs both destruction orders and the surviving read. The
+  existing contract syntax expresses the handoff; this is a source-step and
+  certificate boundary, not evidence for new contract syntax.
 - The separate minimal reducer
   `mdtests/shared_heap_two_parent_branch_release.md` fails while certifying
   `parent_detach` because it asks for a redundant pure count postcondition

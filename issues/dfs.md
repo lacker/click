@@ -1,9 +1,9 @@
 # Verify a pointer-chasing search over an index array (the "DFS" example)
 
 P1. This issue tracks the DFS forcing-function example and the language gaps it
-found. Kernel soundness review discovered during the same campaign is tracked
-separately in `issues/bughunt.md`. Everything needed for this example is here
-and in `design/dfs-gaps/`; nothing depends on anyone's scratch files.
+found. Kernel soundness findings discovered during the same campaign are
+tracked in `bugs/`. Everything needed for this example is here and in
+`design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
 ## Handoff checkpoint — 2026-09-22, after branching termination proof
 

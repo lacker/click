@@ -2262,8 +2262,13 @@ fn verify_c0_sources_with_context(
             &click_function_environment,
             &resource_environment,
         )?;
-        let mut function_environment =
-            initial_function_environment.unwrap_or(built_function_environment);
+        let mut function_environment = initial_function_environment
+            .unwrap_or(built_function_environment)
+            .with_modeled_pthread_binding(
+                (selected_thread_runtime
+                    == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread)
+                    .then(crate::languages::c::thread_runtime::ModeledPthreadBinding::builtin),
+            );
         // Contracts are declaration interfaces. A selected function receives
         // every well-formed callee contract as a scoped assumption, while its
         // own contract hypothesis supports the existing checked-recursion

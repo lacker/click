@@ -89,6 +89,15 @@ panics the C parser; indexing it receives a local diagnostic. The complete
 
 ### Immediate next slice: bind actual create/join C steps
 
+Chunk B has started in the kernel: `prepare_create` now checks the exact
+worker contract, termination evidence, and transfer plan before either the
+success or failure outcome is available. A modeled pthread call is also
+blocked from falling through to an ordinary function rule while its checked C
+transition is unfinished. The remaining work is to retain guarded outcomes
+in C execution state, bind the actual status and handle store, and consume the
+completion at the C join step. No C pthread client proof follows from this
+checkpoint.
+
 Use the checked modeled binding to give ordinary `step` on the unchanged
 `pthread_create` and `pthread_join` calls guarded create outcomes and one
 completion right tied to the actual handle and child identity. The selected
