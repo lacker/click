@@ -41,6 +41,7 @@ void child_retain(struct child* obj) {
     requires count(child_ref(obj)) < 2147483647;
     owns child_ref(obj);
     produces child_ref(obj);
+    ensures obj->payload == old(obj->payload);
 } by {
     open(child_ref(obj)) {
         execute();
@@ -52,6 +53,7 @@ void child_release(struct child* obj) {
     requires 1 <= obj->refs;
     consumes child_ref(obj);
     ensures count(child_ref(obj)) == old(count(child_ref(obj))) - 1;
+    ensures old(count(child_ref(obj))) > 1 implies obj->payload == old(obj->payload);
 } by {
     if obj->refs == 1 {
         unfold(child_ref(obj));
@@ -89,11 +91,13 @@ void child_release(struct child* obj) {
 void parent_attach(struct parent* p, struct child* kid) {
     requires count(child_ref(kid)) < 2147483647;
     requires kid != 0;
+    requires separate(memory(&p->kid), memory(kid->payload));
     consumes &p->kid;
     owns child_ref(kid);
     produces child_ref(kid);
     produces link: parent(p);
     ensures link.link == ParentLink::Linked(kid);
+    ensures kid->payload == old(kid->payload);
 } by {
     execute();
     let link = fold(parent(p), { link: ParentLink::Linked(kid) });

@@ -57,27 +57,30 @@ the held `child_ref(kid)`. Detach returns ownership of `&p->kid` after setting
 it to zero, allowing the parent allocation to be freed. These are helper
 contract improvements; the full caller proof is not in the sidecar yet.
 
-The remaining success-path goal is `out == payload`. The value established by
-`child_init` is lost from the caller's facts at `parent_attach(first)`. Adding
-`ensures kid->payload == old(kid->payload)` to attach and the analogous
-promise to retain requires a separation precondition between `&p->kid` and
-`kid->payload`; the two parent allocations in the caller satisfy it. A guarded
-payload-preservation promise on `child_release` also certifies and carries the
-fact through creator release. The fact is then lost at
-`parent_detach(first)`, which calls release but does not promise preservation
-when the child survives.
+The remaining success-path goal is `out == payload`. The verified helper
+contracts now promise payload preservation through `child_retain`, the
+nonfinal branch of `child_release`, and `parent_attach`. Attach requires
+`separate(memory(&p->kid), memory(kid->payload))`, since it stores the link.
+`parent_detach` still has no payload-preservation promise, so the full caller
+cannot carry the initialized value through its first detach.
 
-A matching guarded postcondition on detach now passes loadability checking
-on its final-release path: Click proves the guard false before considering
-the post-state payload read. A focused nonfinal-release regression also shows
-that the counted population keeps the child allocation live even after the
-caller gives up its last owned unit. The detach proof still stops after its
-`child_release(kid)` call: it can prove that the call preserved the payload
-relative to the call entry, but cannot establish that the payload at the call
-entry equals the payload at `parent_detach` entry. The intervening C operation
-is `kid = p->kid`, which does not write the payload. The next step is to
-explain and repair that missing snapshot fact, then check the `p->kid = 0`
-store and the caller's `out == payload` goal.
+The new pointer-base `rewrite` closes the precise snapshot gap inside detach.
+After stepping across `kid = p->kid` and the `child_release(kid)` call, an
+explicit rewrite with `kid == at(statement(2).entry, p->kid)` proves
+`at(statement(2).entry, kid->payload) == old(kid->payload)`. With a stated
+separation condition between the parent link cell and child payload, the
+proof also carries the guarded payload equality across `p->kid = 0`.
+
+The next blocker is contract certification, independent of that equality:
+adding `requires separate(memory(&p->kid), memory(p->kid->payload))` and even
+the tautological `ensures old(p->kid) == old(p->kid)` to the frozen
+`parent_detach` makes exact symbolic execution report an unproved
+`resource population invariant` at the nested `child_release` transition.
+With the separation requirement but no pure `ensures`, the same helper body
+verifies. A focused regression should add that trivial postcondition to a
+branch-on-count release caller, require the disjoint parent link and child
+payload, and expect certification to pass. Repair this certification boundary
+before adding the guarded detach guarantee and proving `out == payload`.
 
 An indexed `child_ref(obj, payload)` resource was also tested; its contract
 cannot choose `payload` by reading `obj->payload` before ownership is granted,
