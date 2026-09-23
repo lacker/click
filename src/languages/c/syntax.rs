@@ -18452,3 +18452,22 @@ mod scope_metadata_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod hunt_investigation_tests {
+    use super::*;
+
+    /// Investigation repro (bug hunt phase 2b): array sizes fold through
+    /// `saturating_mul`, so an `int` array of 2^30 elements parses as a
+    /// block one byte short of its true layout (2^32 saturates to u32::MAX)
+    /// — while the struct path refuses past the u32 limit with a "layout is
+    /// too large" error.
+    #[test]
+    fn hunt_investigation_array_element_count_saturates_instead_of_refusing() {
+        let (size, _) = CAbi::SUPPORTED.size_and_alignment(C0Type::Int32Array(0x4000_0000));
+        assert_eq!(
+            size, u32::MAX,
+            "BUG: the 2^32-byte layout saturates to u32::MAX instead of being refused"
+        );
+    }
+}

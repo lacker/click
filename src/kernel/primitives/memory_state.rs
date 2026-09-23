@@ -3967,3 +3967,59 @@ mod hunt_investigation_join_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod hunt_investigation_join_dspelling_tests {
+    use super::*;
+
+    /// Investigation repro (bug hunt phase 2b): `with_interface_memory_havoc_preserving_loans`
+    /// unions `live_allocations` keyed by pointer spelling, so one
+    /// allocation recorded live by arm A under spelling P and by arm B
+    /// through its proven-equal spelling Q joins as TWO live entries with
+    /// no record of their equality. A free through each spelling then both
+    /// succeed without any structure about their equal bases.
+    #[test]
+    fn hunt_investigation_join_carries_two_live_spellings_of_one_allocation() {
+        let p = Pointer {
+            block: PointerBlock::Heap(924_001),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let q = Pointer {
+            block: PointerBlock::Heap(924_005),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(p.clone(), q.clone()),
+            true,
+        ));
+        // Arm A holds the allocation live under spelling p; arm B under q.
+        let arm_a = CMemory::new()
+            .with_block(p.block.clone(), 8)
+            .with_heap_allocation_claim(p.clone(), 8)
+            .expect("arm A claim");
+        let arm_b = CMemory::new()
+            .with_block(q.block.clone(), 8)
+            .with_heap_allocation_claim(q.clone(), 8)
+            .expect("arm B claim");
+        let arms = [&arm_a, &arm_b];
+        let joined = arm_a
+            .clone()
+            .with_interface_memory_havoc_preserving_loans(
+                Variable(924_100),
+                &BTreeSet::new(),
+                &arms,
+                None,
+            )
+            .expect("the join runs");
+        assert!(joined.heap.live_allocations.contains_key(&p));
+        assert!(joined.heap.live_allocations.contains_key(&q));
+        // A free through each equal spelling is accepted as a plain C free.
+        let once = joined
+            .free_heap_block(&p, &assumptions)
+            .expect("the first free is a real free");
+        assert!(
+            once.free_heap_block(&q, &assumptions).is_ok(),
+            "BUG: freeing the same allocation through its second joined spelling succeeds"
+        );
+    }
+}
