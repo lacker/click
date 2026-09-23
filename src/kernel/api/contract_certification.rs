@@ -310,21 +310,30 @@ pub fn c_state_justifies_loadability_obligation(
 }
 
 pub fn c_loadability_obligation_impossible(obligation: &Proposition) -> bool {
+    c_loadability_obligation_impossible_with_assumptions(obligation, &PureFactContext::new())
+}
+
+/// Reject a read of freed memory unless a checked path fact proves that the
+/// guard containing the read is false. The guarded obligation itself remains
+/// subject to ordinary certification.
+pub fn c_loadability_obligation_impossible_with_assumptions(
+    obligation: &Proposition,
+    assumptions: &PureFactContext,
+) -> bool {
     match obligation {
-        Proposition::Implies(premise, body) => match premise.as_ref() {
-            // A load under a premise that is false is never performed.
-            Proposition::ConditionIs(ConditionTerm::Constant(constant), value)
-                if constant != value =>
-            {
-                false
-            }
-            _ => c_loadability_obligation_impossible(body),
-        },
+        Proposition::Implies(premise, body) => {
+            c_loadability_obligation_impossible_with_assumptions(body, assumptions)
+                && !certification_proves_proposition(
+                    assumptions,
+                    &negate_contract_case_proposition(premise),
+                )
+        }
         Proposition::ForAll { body, .. } | Proposition::Exists { body, .. } => {
-            c_loadability_obligation_impossible(body)
+            c_loadability_obligation_impossible_with_assumptions(body, assumptions)
         }
         Proposition::And(left, right) => {
-            c_loadability_obligation_impossible(left) || c_loadability_obligation_impossible(right)
+            c_loadability_obligation_impossible_with_assumptions(left, assumptions)
+                || c_loadability_obligation_impossible_with_assumptions(right, assumptions)
         }
         Proposition::CMemoryLoadable { memory, base, .. } => {
             memory.is_ended_local_address(base)

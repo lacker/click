@@ -67,15 +67,22 @@ fact through creator release. The fact is then lost at
 `parent_detach(first)`, which calls release but does not promise preservation
 when the child survives.
 
-A matching guarded postcondition on detach is currently rejected on its
-final-release path: the guard should be false there, but Click rejects the
-post-state payload read as a read of freed memory before proving the guard.
-This needs a small regression for guarded loadability across a wrapper call.
+A matching guarded postcondition on detach now passes loadability checking
+on its final-release path: Click proves the guard false before considering
+the post-state payload read. A focused nonfinal-release regression also shows
+that the counted population keeps the child allocation live even after the
+caller gives up its last owned unit. The detach proof still stops after its
+`child_release(kid)` call: it can prove that the call preserved the payload
+relative to the call entry, but cannot establish that the payload at the call
+entry equals the payload at `parent_detach` entry. The intervening C operation
+is `kid = p->kid`, which does not write the payload. The next step is to
+explain and repair that missing snapshot fact, then check the `p->kid = 0`
+store and the caller's `out == payload` goal.
+
 An indexed `child_ref(obj, payload)` resource was also tested; its contract
 cannot choose `payload` by reading `obj->payload` before ownership is granted,
 and contract witness lets are not supported in `owns` clauses. Neither probe
-changes the frozen C. The next step is to settle the guarded postcondition or
-find a different sound contract that carries the payload fact through detach.
+changes the frozen C.
 
 ## Reduction findings, 2026-09-17
 

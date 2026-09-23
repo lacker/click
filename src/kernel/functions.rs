@@ -2951,6 +2951,7 @@ fn execute_verified_function_applications_with_suspension(
             &transfer.callee_resources,
             &caller_resources_after_requirements,
             &return_resources,
+            &population_transition.retained_body_allocations,
             interface,
             &allocation_assumptions,
             post_state.loan_ledger(),
@@ -9117,6 +9118,7 @@ fn apply_verified_heap_allocation_delta(
     input_resources: &ResourceContext,
     preserved_caller_resources: &ResourceContext,
     output_resources: &ResourceContext,
+    retained_population_allocations: &[(Pointer, Bitvector32Term)],
     interface: &CFunctionContractInterface,
     assumptions: &PureFactContext,
     ledger: Option<&LoanLedger>,
@@ -9168,6 +9170,16 @@ fn apply_verified_heap_allocation_delta(
     let mut output_allocations_by_block =
         BTreeMap::<PointerBlock, Vec<(Pointer, Bitvector32Term)>>::new();
     for (base, bytes) in output.facts().iter().filter_map(CResourceFact::allocation) {
+        output_allocations_by_block
+            .entry(base.block.clone())
+            .or_default()
+            .push((base.clone(), bytes.clone()));
+    }
+    // A consumed counted unit need not be returned to this caller. Other
+    // units can still keep the population-wide allocation alive, even when
+    // the caller owns none of them. Its checked post-count witnesses that
+    // allocation independently of the returned resource clauses.
+    for (base, bytes) in retained_population_allocations {
         output_allocations_by_block
             .entry(base.block.clone())
             .or_default()
@@ -13902,6 +13914,7 @@ fn population_body_requires_positive_witness(definition: &CCompositeResourceDefi
 #[derive(Default)]
 struct CCountedPopulationTransition {
     finalized_body_resources: Vec<CResourceFact>,
+    retained_body_allocations: Vec<(Pointer, Bitvector32Term)>,
     population_facts: Vec<Proposition>,
     postcondition_obligations: Vec<ProofObligation>,
 }
@@ -14178,6 +14191,32 @@ fn apply_counted_population_transitions_with_interface(
                 arguments.clone(),
                 new_count.clone(),
             );
+            if population_body_definition.is_some() {
+                let singleton = ResourceContext::new().unchecked_with_fact(CResourceFact::own(
+                    CResource::Composite {
+                        name: name.clone(),
+                        arguments: arguments.clone(),
+                    },
+                ));
+                let retained = match evaluate_resource_population_body_resources(
+                    &singleton,
+                    &entry_state,
+                    interface.composite_resource_definitions(),
+                    assumptions,
+                    budget,
+                    true,
+                )? {
+                    Ok(resources) => resources,
+                    Err(error) => return Ok(Err(error)),
+                };
+                transition.retained_body_allocations.extend(
+                    retained
+                        .facts()
+                        .iter()
+                        .filter_map(CResourceFact::allocation)
+                        .map(|(base, bytes)| (base.clone(), bytes.clone())),
+                );
+            }
             // A visible ensured unit witnesses nonemptiness. The transition
             // preserves the population cardinality invariant algebraically:
             // entry count >= required units, then both sides change by the
