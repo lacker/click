@@ -22,6 +22,7 @@ client proof. It does not certify an operating system's pthread implementation.
 The C client still owes its worker proof, creation failure paths, ownership
 separation, parent access checks, and every source-level continuation. The
 current checked C transition supports one unresolved creation at a time,
-scalar local work before its status test, and a checked join after the status
-selects success. Other intervening operations and additional pending creates
-are refused until their guarded authority can be represented and checked.
+scalar local work and an owner-authorized store to disjoint external memory
+before its status test, and a checked join after the status selects success.
+Other intervening operations and additional pending creates are refused until
+their guarded authority can be represented and checked.

@@ -93,18 +93,22 @@ The checked C `pthread_create` call now issues a symbolic status and a
 pending success/failure transition after checking the exact direct worker
 contract, callback ABI, termination rule, task transfer, and handle output.
 A scalar local may copy the status or be assigned before a later C `if`
-chooses the outcome. Failure retains task authority; success holds one live
+chooses the outcome. An unrelated, owner-authorized external memory store may
+also occur while the status is pending; its value survives either outcome.
+Failure retains task authority; success holds one live
 completion right and withholds the worker's resources and facts until the
 checked C `pthread_join`. Source-level proofs for immediate and delayed
-status checks verify, expand, and reverify under the modeled runtime on macOS.
+status checks and a disjoint intervening store verify, expand, and reverify
+under the modeled runtime on macOS.
 
 This is a narrow step toward Chunk B, not its acceptance. One create may be
-unresolved at a time; only scalar local work is supported before its status
-test. The guarded representation still needs to replace the saved outcome
-states with operation-local deltas, support disjoint memory operations,
-multiple pending creates, branch joins, deterministic scaling regressions,
-and a complete proof of the unchanged frozen parent. The real-header and
-native runtime binding remain separate work.
+unresolved at a time. Its guard retains changed authority and the checked
+worker memory projection, then applies only intervening local or external
+store operations on success; failure keeps the current parent memory. Broader
+disjoint operations, external handle slots, multiple pending creates, branch
+joins, scaling across unrelated children, and a complete proof of the
+unchanged frozen parent remain. The real-header and native runtime binding
+remain separate work.
 
 Use the checked modeled binding to give ordinary `step` on the unchanged
 `pthread_create` and `pthread_join` calls guarded create outcomes and one

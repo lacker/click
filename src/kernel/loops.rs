@@ -1027,8 +1027,10 @@ fn execute_modeled_pthread_create_paths(
                                 {
                                     refusal("modeled-pthread create status target is not writable")
                                 } else {
-                                    let mut neutral = success.clone();
-                                    neutral.thread_ledger = failure.thread_ledger.clone();
+                                    let mut neutral = failure.clone();
+                                    neutral.resources = success.resources.clone();
+                                    neutral.loan_ledger = success.loan_ledger.clone();
+                                    neutral.loan_view_bindings = success.loan_view_bindings.clone();
                                     neutral = modeled_pthread_indeterminate_handle(
                                         neutral,
                                         output_slot,
@@ -1039,8 +1041,9 @@ fn execute_modeled_pthread_create_paths(
                                         Some(super::threads::PendingThreadCreate::new(
                                             status,
                                             output_slot.clone(),
-                                            success,
-                                            failure,
+                                            handle.c_value(),
+                                            &success,
+                                            &failure,
                                         ));
                                     CStatementOutcome::Normal(neutral)
                                 }

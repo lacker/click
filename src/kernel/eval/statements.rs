@@ -449,6 +449,21 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
 
     match lvalue.storage {
         CLValueStorage::Local { name } => {
+            if state
+                .pending_thread_create
+                .as_ref()
+                .is_some_and(|pending| pending.protects_local(state, &name))
+            {
+                return Ok(vec![CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                        "pending pthread create permits only external disjoint stores".to_string(),
+                    )),
+                    facts,
+                    obligations,
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                }]);
+            }
             if let Some(pointer) = state.locals.slot(&name).cloned()
                 && let Some(outcome) = stable_loan_memory_write_outcome(
                     state,
@@ -496,6 +511,17 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
         }
         CLValueStorage::Memory { pointer } => {
             let pointer = resolve_local_pointer_alias(state, &pointer, &effective_assumptions);
+            if state.pending_thread_create.is_some() && !is_external_memory_pointer(&pointer) {
+                return Ok(vec![CStatementExecutionPath {
+                    loop_invariant_correspondence: Default::default(),
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                        "pending pthread create permits only external disjoint stores".to_string(),
+                    )),
+                    facts,
+                    obligations,
+                    loan_evidence: empty_checked_loan_evidence_sequence(),
+                }]);
+            }
             if state
                 .memory
                 .heap
@@ -624,6 +650,14 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 )
                 .store_with_context(pointer.clone(), value.clone(), &effective_assumptions);
             state.set_memory(next_memory);
+            if let Some(pending) = &state.pending_thread_create {
+                state.pending_thread_create = Some(pending.with_delta(
+                    super::super::threads::PendingThreadMemoryDelta::Store {
+                        pointer: pointer.clone(),
+                        value: value.clone(),
+                    },
+                ));
+            }
             let mut facts = facts;
             facts.push(ExecutionPureFact::certified_store(
                 before_memory,
@@ -2486,6 +2520,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 }
                 return Ok(paths);
             }
+            CStatement::TypedStore { .. } if pending.has_local_handle_slot(state) => {}
             CStatement::Skip | CStatement::Seq(_, _) => {}
             CStatement::If { condition, .. }
                 if super::super::functions::c_expression_is_state_independent(condition) => {}

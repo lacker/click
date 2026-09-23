@@ -4149,9 +4149,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
         pending_thread_create: state.pending_thread_create.as_ref().map(|pending| {
             pending.map_terms(
                 |status| substitute_bitvector_variable(status, from, to),
-                |base| substitute_bitvector_variable_in_c_state(base, from, to),
+                |resources| substitute_bitvector_variable_in_resource_context(resources, from, to),
                 |pointer| substitute_bitvector_variable_in_pointer(pointer, from, to),
                 |value| substitute_bitvector_variable_in_c_value(value, from, to),
+                |memory| substitute_bitvector_variable_in_memory(memory, from, to),
             )
         }),
         next_local_frame: state.next_local_frame,
@@ -6637,9 +6638,10 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
         pending_thread_create: state.pending_thread_create.as_ref().map(|pending| {
             pending.map_terms(
                 Clone::clone,
-                |base| substitute_pointer_variable_in_c_state(base, from, to),
+                |resources| substitute_pointer_variable_in_resource_context(resources, from, to),
                 |pointer| substitute_pointer_variable_in_pointer(pointer, from, to),
                 |value| substitute_pointer_variable_in_c_value(value, from, to),
+                |memory| substitute_pointer_variable_in_memory(memory, from, to),
             )
         }),
         next_local_frame: state.next_local_frame,

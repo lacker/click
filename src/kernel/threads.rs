@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::persistent::PersistentMap;
 
 use super::functions::suspend_verified_worker;
-use super::loans::{LoanLedger, StableViewTransferPlan};
+use super::loans::{LoanLedger, LoanViewBindings, StableViewTransferPlan};
 use super::{
     Bitvector32Term, CExecutionEnvironment, CMemory, CMemoryRange, CState, CValue,
     CVerifiedFunctionRule, CVerifiedFunctionTerminationRule, ConditionTerm, ExecutionBudget,
@@ -74,26 +74,56 @@ struct CompletionRight {
     completion: WorkerCompletion,
 }
 
-/// The only intervening operations supported while a create status is
-/// unresolved are scalar local declarations and assignments. Record their
-/// exact memory deltas so choosing either outcome preserves those writes.
+#[derive(Clone)]
+pub(super) struct PendingThreadCreate {
+    storage: Arc<PendingThreadCreateStorage>,
+}
+
+/// Checked operations on the authority common to both create outcomes.
+/// Failure already contains these operations in the visible C state; success
+/// applies them to the worker's checked post-create memory in source order.
 #[derive(Clone, Debug)]
 pub(super) enum PendingThreadMemoryDelta {
     Declare { block: PointerBlock, bytes: u32 },
     Store { pointer: Pointer, value: CValue },
 }
 
-#[derive(Clone)]
-pub(super) struct PendingThreadCreate {
-    storage: Arc<PendingThreadCreateStorage>,
+/// Only the authority changed by create is guarded. The visible C state keeps
+/// the caller's current locals and memory, including disjoint intervening
+/// stores; selecting an outcome never restores a captured parent state.
+struct PendingCreateAuthority {
+    resources: ResourceContext,
+    loan_ledger: Option<LoanLedger>,
+    loan_view_bindings: LoanViewBindings,
+    thread_ledger: Option<ThreadLedger>,
+}
+
+impl PendingCreateAuthority {
+    fn from_state(state: &CState) -> Self {
+        Self {
+            resources: state.resources.clone(),
+            loan_ledger: state.loan_ledger.clone(),
+            loan_view_bindings: state.loan_view_bindings.clone(),
+            thread_ledger: state.thread_ledger.clone(),
+        }
+    }
+
+    fn install(&self, state: &mut CState) {
+        state.resources = self.resources.clone();
+        state.loan_ledger = self.loan_ledger.clone();
+        state.loan_view_bindings = self.loan_view_bindings.clone();
+        state.thread_ledger = self.thread_ledger.clone();
+    }
 }
 
 struct PendingThreadCreateStorage {
     identity: u64,
     status: Bitvector32Term,
     handle_slot: Pointer,
-    success: CState,
-    failure: CState,
+    handle_value: CValue,
+    success_memory: CMemory,
+    success: PendingCreateAuthority,
+    failure: PendingCreateAuthority,
     deltas: PersistentMap<u64, PendingThreadMemoryDelta>,
     next_delta: u64,
 }
@@ -112,11 +142,16 @@ impl PendingThreadCreate {
             .is_some_and(|output| output == name)
     }
 
+    pub(super) fn has_local_handle_slot(&self, state: &CState) -> bool {
+        state.locals.slots.contains_key(&self.storage.handle_slot)
+    }
+
     pub(super) fn new(
         status: Bitvector32Term,
         handle_slot: Pointer,
-        success: CState,
-        failure: CState,
+        handle_value: CValue,
+        success: &CState,
+        failure: &CState,
     ) -> Self {
         debug_assert!(success.pending_thread_create.is_none());
         debug_assert!(failure.pending_thread_create.is_none());
@@ -125,8 +160,10 @@ impl PendingThreadCreate {
                 identity: Self::fresh_identity(),
                 status,
                 handle_slot,
-                success,
-                failure,
+                handle_value,
+                success_memory: success.memory.clone(),
+                success: PendingCreateAuthority::from_state(success),
+                failure: PendingCreateAuthority::from_state(failure),
                 deltas: PersistentMap::default(),
                 next_delta: 0,
             }),
@@ -140,8 +177,20 @@ impl PendingThreadCreate {
                 identity: Self::fresh_identity(),
                 status: storage.status.clone(),
                 handle_slot: storage.handle_slot.clone(),
-                success: storage.success.clone(),
-                failure: storage.failure.clone(),
+                handle_value: storage.handle_value.clone(),
+                success_memory: storage.success_memory.clone(),
+                success: PendingCreateAuthority {
+                    resources: storage.success.resources.clone(),
+                    loan_ledger: storage.success.loan_ledger.clone(),
+                    loan_view_bindings: storage.success.loan_view_bindings.clone(),
+                    thread_ledger: storage.success.thread_ledger.clone(),
+                },
+                failure: PendingCreateAuthority {
+                    resources: storage.failure.resources.clone(),
+                    loan_ledger: storage.failure.loan_ledger.clone(),
+                    loan_view_bindings: storage.failure.loan_view_bindings.clone(),
+                    thread_ledger: storage.failure.thread_ledger.clone(),
+                },
                 deltas: storage.deltas.with_inserted(storage.next_delta, delta),
                 next_delta: storage.next_delta + 1,
             }),
@@ -151,11 +200,18 @@ impl PendingThreadCreate {
     pub(super) fn map_terms(
         &self,
         status: impl Fn(&Bitvector32Term) -> Bitvector32Term,
-        state: impl Fn(&CState) -> CState,
+        resources: impl Fn(&ResourceContext) -> ResourceContext,
         pointer: impl Fn(&Pointer) -> Pointer,
         value: impl Fn(&CValue) -> CValue,
+        memory: impl Fn(&CMemory) -> CMemory,
     ) -> Self {
         let storage = &self.storage;
+        let map_authority = |authority: &PendingCreateAuthority| PendingCreateAuthority {
+            resources: resources(&authority.resources),
+            loan_ledger: authority.loan_ledger.clone(),
+            loan_view_bindings: authority.loan_view_bindings.clone(),
+            thread_ledger: authority.thread_ledger.clone(),
+        };
         let mut deltas = PersistentMap::default();
         for (index, delta) in &storage.deltas {
             let mapped = match delta {
@@ -180,8 +236,10 @@ impl PendingThreadCreate {
                 identity: Self::fresh_identity(),
                 status: status(&storage.status),
                 handle_slot: pointer(&storage.handle_slot),
-                success: state(&storage.success),
-                failure: state(&storage.failure),
+                handle_value: value(&storage.handle_value),
+                success_memory: memory(&storage.success_memory),
+                success: map_authority(&storage.success),
+                failure: map_authority(&storage.failure),
                 deltas,
                 next_delta: storage.next_delta,
             }),
@@ -198,42 +256,63 @@ impl PendingThreadCreate {
             Box::new(Bitvector32Term::Constant(0)),
         );
         let success = assumptions.decide(&zero)?;
-        let mut selected = if success {
-            self.storage.success.clone()
-        } else {
-            self.storage.failure.clone()
-        };
-        for (_, delta) in &self.storage.deltas {
-            crate::instrumentation::record_deterministic_work(1);
-            let memory = match delta {
-                PendingThreadMemoryDelta::Declare { block, bytes } => {
-                    selected.memory.clone().with_block(block.clone(), *bytes)
-                }
-                PendingThreadMemoryDelta::Store { pointer, value } => selected
-                    .memory
-                    .clone()
-                    .store_with_context(pointer.clone(), value.clone(), assumptions),
-            };
+        let mut selected = visible.clone();
+        selected.pending_thread_create = None;
+        if success {
+            self.storage.success.install(&mut selected);
+            let mut memory = self.storage.success_memory.clone();
+            for (_, delta) in &self.storage.deltas {
+                crate::instrumentation::record_deterministic_work(1);
+                memory = match delta {
+                    PendingThreadMemoryDelta::Declare { block, bytes } => {
+                        memory.with_block(block.clone(), *bytes)
+                    }
+                    PendingThreadMemoryDelta::Store { pointer, value } => memory
+                        .without_possible_aliasing_cells(pointer, value.byte_width(), assumptions)
+                        .store_with_context(pointer.clone(), value.clone(), assumptions),
+                };
+            }
             selected.set_memory(memory);
+            if let Some(name) = selected
+                .locals
+                .slots
+                .get(&self.storage.handle_slot)
+                .cloned()
+            {
+                let binding = selected.locals.binding(&name).cloned();
+                if let Some(
+                    super::CLocalBinding::Object {
+                        c_type,
+                        volatile,
+                        pointee_volatile,
+                        constant,
+                        pointee_constant,
+                        ..
+                    }
+                    | super::CLocalBinding::UninitializedObject {
+                        c_type,
+                        volatile,
+                        pointee_volatile,
+                        constant,
+                        pointee_constant,
+                        ..
+                    },
+                ) = binding
+                {
+                    selected.locals.set_typed_with_all_qualifiers(
+                        name,
+                        self.storage.handle_value.clone(),
+                        c_type,
+                        volatile,
+                        pointee_volatile,
+                        constant,
+                        pointee_constant,
+                    );
+                }
+            }
+        } else {
+            self.storage.failure.install(&mut selected);
         }
-        let output_binding = selected
-            .locals
-            .slots
-            .get(&self.storage.handle_slot)
-            .and_then(|name| {
-                selected
-                    .locals
-                    .bindings
-                    .get(name)
-                    .map(|binding| (name.clone(), binding.clone()))
-            });
-        selected.locals = visible.locals.clone();
-        if let Some((name, binding)) = output_binding {
-            std::sync::Arc::make_mut(&mut selected.locals.bindings).insert(name, binding);
-        }
-        selected.next_local_frame = visible.next_local_frame;
-        selected.next_local_lifetime = visible.next_local_lifetime;
-        selected.enclosing_frame_holds_locals = visible.enclosing_frame_holds_locals;
         Some(selected)
     }
 }
@@ -244,7 +323,7 @@ impl std::fmt::Debug for PendingThreadCreate {
             .debug_struct("PendingThreadCreate")
             .field("identity", &self.storage.identity)
             .field("status", &self.storage.status)
-            .field("local_deltas", &self.storage.next_delta)
+            .field("intervening_steps", &self.storage.next_delta)
             .finish()
     }
 }

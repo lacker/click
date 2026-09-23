@@ -1,7 +1,6 @@
 use super::*;
 use crate::kernel::threads::{
-    JoinRuntimeAssumption, PendingThreadCreate, PendingThreadMemoryDelta, ThreadContext,
-    ThreadHandle,
+    JoinRuntimeAssumption, PendingThreadCreate, ThreadContext, ThreadHandle,
 };
 use crate::kernel::{CVerifiedFunctionTerminationRule, c_verified_function_termination_rules};
 use crate::surface::planning::proposition_search::PropositionSearch;
@@ -452,7 +451,19 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
         .with_function(function)
         .with_verified_function_rule(worker)
         .with_verified_function_termination_rules([termination]);
-    let mut state = byte_parent();
+    let mut state = byte_parent().with_resource_context(
+        byte_parent()
+            .resources()
+            .clone()
+            .unchecked_with_fact(CResourceFact::own_memory(range(1, 0, 1))),
+    );
+    state.set_memory(
+        state
+            .memory()
+            .clone()
+            .with_block(pointer(1).block, 4)
+            .store(pointer(1), int32(0)),
+    );
     for declaration in [
         c_declare("thread", CType::UInt64),
         c_declare("rc", CType::Int32),
@@ -511,7 +522,52 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
     };
     assert!(pending.pending_thread_create.is_some());
     assert!(pending.locals.is_uninitialized_object("thread"));
-    let mut delayed = pending.clone();
+    let external_store = |index, value, value_type, pointer_type| CStatement::TypedStore {
+        pointer: CExpression::Value(CValue::typed_pointer(pointer(index), pointer_type)),
+        value: CExpression::Value(value),
+        value_type,
+        volatile: false,
+        pointee_constant: false,
+    };
+    for hostile in [
+        external_store(
+            0,
+            CValue::UInt8(5.into()),
+            CType::UInt8,
+            CType::UInt8Pointer,
+        ),
+        CStatement::TypedStore {
+            pointer: c_addr_of("thread"),
+            value: c_uint64_literal(123),
+            value_type: CType::UInt64,
+            volatile: false,
+            pointee_constant: false,
+        },
+    ] {
+        let paths = execute_c_statement_paths(
+            pending,
+            &hostile,
+            &PureFactContext::new(),
+            &environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut ExecutionBudget::new(),
+        )
+        .unwrap();
+        assert!(!matches!(paths[0].outcome, CStatementOutcome::Normal(_)));
+    }
+    let stored = execute_c_statement_paths(
+        pending,
+        &external_store(1, int32(7), CType::Int32, CType::Int32Pointer),
+        &PureFactContext::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::new(),
+    )
+    .unwrap();
+    let CStatementOutcome::Normal(mut delayed) = stored[0].outcome.clone() else {
+        panic!("disjoint store failed: {:?}", stored[0].outcome);
+    };
+    assert!(delayed.pending_thread_create.is_some());
     for statement in [
         c_declare("saved", CType::Int32),
         c_assign("saved", c_variable("rc")),
@@ -554,6 +610,15 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
         };
         assert!(state.pending_thread_create.is_none());
         assert_eq!(state.locals.get("unrelated"), Some(&int32(7)));
+        assert_eq!(
+            state.memory().load(state.locals.slot("unrelated").unwrap()),
+            CExpressionOutcome::Value(int32(7)),
+            "a permitted local assignment must remain in C memory after either status"
+        );
+        assert_eq!(
+            state.memory().load(&pointer(1)),
+            CExpressionOutcome::Value(int32(7))
+        );
         if state
             .thread_ledger
             .as_ref()
@@ -609,7 +674,22 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
     let CStatementOutcome::Normal(after_join) = &joined[0].outcome else {
         unreachable!()
     };
-    assert_eq!(after_join.resources(), failure.resources());
+    assert_eq!(after_join.resources().facts().len(), 2);
+    for fact in [
+        CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+            pointer(0),
+            0.into(),
+            4.into(),
+            1,
+        )),
+        CResourceFact::own_memory(range(1, 0, 1)),
+    ] {
+        assert!(
+            after_join
+                .resources()
+                .satisfies_fact(&fact, &PureFactContext::new())
+        );
+    }
     let refused = execute_c_statement_paths(
         &failure,
         &join,
@@ -681,27 +761,39 @@ fn modeled_pthread_create_refuses_a_wrong_worker_abi() {
 }
 
 #[test]
-fn pending_status_resolution_tracks_explicit_local_work_linearly() {
+fn pending_status_resolution_scales_with_explicit_intervening_work() {
     let status = Bitvector32Term::Variable(Variable(890_000));
     let zero = ConditionTerm::Bitvector32Equal(
         Box::new(status.clone()),
         Box::new(Bitvector32Term::Constant(0)),
     );
-    let assumptions =
-        PureFactContext::new().assume_proposition(Proposition::ConditionIs(zero, true));
+    let success_assumptions =
+        PureFactContext::new().assume_proposition(Proposition::ConditionIs(zero.clone(), true));
+    let failure_assumptions =
+        PureFactContext::new().assume_proposition(Proposition::ConditionIs(zero, false));
     let base = parent(1);
     let mut samples = Vec::new();
     for size in [8usize, 16, 32, 64] {
-        let mut pending =
-            PendingThreadCreate::new(status.clone(), Pointer::null(), base.clone(), base.clone());
+        let mut pending = PendingThreadCreate::new(
+            status.clone(),
+            Pointer::null(),
+            CValue::UInt64(0.into()),
+            &base,
+            &base,
+        );
+        let mut visible = base.clone();
         for index in 0..size {
-            pending = pending.with_delta(PendingThreadMemoryDelta::Store {
+            let value = int32(index as u32);
+            visible.set_memory(visible.memory().clone().store(pointer(0), value.clone()));
+            pending = pending.with_delta(crate::kernel::threads::PendingThreadMemoryDelta::Store {
                 pointer: pointer(0),
-                value: int32(index as u32),
+                value,
             });
         }
+        let failed = pending.resolve(&visible, &failure_assumptions).unwrap();
+        assert_eq!(failed.memory(), visible.memory());
         let (resolved, work) = crate::instrumentation::measure_deterministic_work(|| {
-            pending.resolve(&base, &assumptions).unwrap()
+            pending.resolve(&visible, &success_assumptions).unwrap()
         });
         assert_eq!(
             resolved.memory().load(&pointer(0)),

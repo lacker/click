@@ -14,10 +14,11 @@ bytes, not reshape the C to expose a friendlier proof state.
 The [pthread binding design](pthread-binding-design.md) describes how ordinary
 C create/join calls use the existing worker contracts, `step`, and `branch`.
 The modeled-runtime identity and a first checked C create/join path now run on
-macOS. One pending creation may survive scalar local declarations and copies
-of its status before a C branch chooses success or failure. The frozen parent
-still needs its complete sidecar proof, broader guarded operations, and the
-separate native runtime binding described below.
+macOS. One pending creation may survive scalar local work and an
+owner-authorized store to disjoint external memory before a C branch chooses
+success or failure. The frozen parent still needs its complete sidecar proof,
+broader guarded operations, and the separate native runtime binding described
+below.
 
 ## Selected profile
 
