@@ -631,7 +631,7 @@ pub(in crate::surface) fn lower_composite_resource_facts(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
-) -> Result<Vec<SpecProposition>, ClickError> {
+) -> Result<(Vec<SpecProposition>, Vec<usize>), ClickError> {
     lower_composite_resource_facts_with_bindings(
         definition,
         predicate_environment,
@@ -649,7 +649,7 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
     bindings: &[(String, ClickType)],
     integer_binding_variables: &BTreeMap<String, crate::kernel::Variable>,
     struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
-) -> Result<Vec<SpecProposition>, ClickError> {
+) -> Result<(Vec<SpecProposition>, Vec<usize>), ClickError> {
     let body = definition
         .composite_body()
         .expect("only composite definitions have logical facts");
@@ -695,6 +695,7 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
         .cloned()
         .collect::<Vec<_>>();
     let mut facts = Vec::new();
+    let mut fact_source_indices = Vec::new();
     let mut environment = SpecElaborationContext::default();
     for (name, variable) in integer_binding_variables {
         environment.integer_values.insert(
@@ -714,7 +715,7 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
             );
         }
     }
-    for fact in body.facts() {
+    for (source_index, fact) in body.facts().iter().enumerate() {
         let unfolded = unfold_click_predicates_in_proposition_with_active(
             predicate_environment,
             &all_predicates,
@@ -733,14 +734,16 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
                     .click_proposition_to_spec_proposition(fact, &environment)
                     .map_err(ClickError::new)?,
             );
+            fact_source_indices.push(source_index);
         }
         facts.push(
             lowerer
                 .click_proposition_to_spec_proposition(&unfolded, &environment)
                 .map_err(ClickError::new)?,
         );
+        fact_source_indices.push(source_index);
     }
-    Ok(facts)
+    Ok((facts, fact_source_indices))
 }
 
 pub(in crate::surface) fn annotated_function(

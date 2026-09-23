@@ -6597,7 +6597,7 @@ pub(in crate::surface) fn composite_resource_definitions(
             click_function_environment,
             resource_environment.struct_layouts(),
         )?;
-        let facts = lower_composite_resource_facts(
+        let (facts, fact_source_indices) = lower_composite_resource_facts(
             definition,
             predicate_environment,
             click_function_environment,
@@ -6690,7 +6690,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                         resource_clause_to_resource_spec_for_body(resource, &parameters, None)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let facts = lower_composite_resource_facts_with_bindings(
+                let (facts, _) = lower_composite_resource_facts_with_bindings(
                     &arm,
                     predicate_environment,
                     click_function_environment,
@@ -6774,6 +6774,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                 )
             }
             .with_witnesses(witnesses)
+            .with_fact_source_indices(fact_source_indices)
             .with_liveness_facts(facts_claim_liveness)
             .with_resource_match_body(matched)
             .with_matched_recursion(matched_recursive)

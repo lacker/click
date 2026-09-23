@@ -1381,6 +1381,7 @@ impl CCompositeResourceDefinition {
         contains: Vec<CResourceSpec>,
         facts: Vec<SpecProposition>,
     ) -> Self {
+        let fact_source_indices = (0..facts.len()).collect();
         Self {
             instance_schema: None,
             matched: None,
@@ -1394,12 +1395,22 @@ impl CCompositeResourceDefinition {
             facts_claim_liveness: false,
             contains,
             facts,
+            fact_source_indices,
         }
     }
 
     pub fn with_witnesses(mut self, witnesses: Vec<CParameter>) -> Self {
         self.witnesses = witnesses;
         self
+    }
+
+    pub(crate) fn with_fact_source_indices(mut self, indices: Vec<usize>) -> Self {
+        self.fact_source_indices = indices;
+        self
+    }
+
+    pub(crate) fn fact_source_index(&self, compiled_index: usize) -> Option<usize> {
+        self.fact_source_indices.get(compiled_index).copied()
     }
 
     pub fn with_liveness_facts(mut self, facts_claim_liveness: bool) -> Self {
@@ -1428,6 +1439,7 @@ impl CCompositeResourceDefinition {
         contains: Vec<CResourceSpec>,
         facts: Vec<SpecProposition>,
     ) -> Self {
+        let fact_source_indices = (0..facts.len()).collect();
         Self {
             instance_schema: None,
             matched: None,
@@ -1441,6 +1453,7 @@ impl CCompositeResourceDefinition {
             facts_claim_liveness: false,
             contains,
             facts,
+            fact_source_indices,
         }
     }
 

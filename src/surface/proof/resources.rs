@@ -134,9 +134,7 @@ fn project_children_into_ledger(
     children: impl IntoIterator<Item = CResourceFact>,
     memory: &CMemory,
     assumptions: &PureFactContext,
-    resource_environment: &ResourceEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    definitions: &[CCompositeResourceDefinition],
     context_label: &str,
 ) -> Result<CState, ClickError> {
     let (Some(ledger), Some(holder)) = (state.loan_ledger().cloned(), state.loan_participant())
@@ -147,16 +145,9 @@ fn project_children_into_ledger(
     if children.peek().is_none() {
         return Ok(state);
     }
-    // Only a viewed composite rewrite reaches this, so the definitions are
-    // lowered once per projecting tactic rather than once per proof step.
-    let definitions = crate::surface::verification::composite_resource_definitions(
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-    )?;
     let evidence = crate::kernel::checked_composite_projection_evidence(
         &binding.viewed,
-        &definitions,
+        definitions,
         memory,
         assumptions,
     )
@@ -554,6 +545,7 @@ fn materialize_folded_composite_resource_memory(
             resource_environment,
             predicate_environment,
             click_function_environment,
+            None,
         )
         .map_err(|message| {
             format!("could not instantiate composite resource `{name}` body: {message}")
@@ -972,6 +964,7 @@ pub(super) fn project_initial_composite_resource_cores(
             resource_environment,
             predicate_environment,
             click_function_environment,
+            None,
         )
         .map_err(|message| {
             ClickError::new(format!(
@@ -1293,6 +1286,7 @@ pub(super) struct CheckedResourceObservation {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn observe_composite_resource_for_proof(
+    function: &CFunction,
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -1308,6 +1302,7 @@ pub(super) fn observe_composite_resource_for_proof(
 ) -> Result<CheckedResourceObservation, ClickError> {
     let mut facts = ProofResourcePureFacts::new(facts);
     let (state, observed_resource) = observe_composite_resource_with_facts(
+        function,
         resource_environment,
         resource,
         parameters,
@@ -1331,6 +1326,7 @@ pub(super) fn observe_composite_resource_for_proof(
 
 #[allow(clippy::too_many_arguments)]
 fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
+    function: &CFunction,
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -1584,6 +1580,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         resource_environment,
         predicate_environment,
         click_function_environment,
+        Some(function.composite_resource_definitions()),
     )?;
     let observation_pre_state = state.clone();
     // A viewed composite is itself a checked loan projection.  Its children
@@ -1595,7 +1592,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 "`{claim_label}` tactic {tactic_index}: `observe` refused ambiguous loan dependency: {message}"
             ))
         })?;
-    let (memory, contained_resources) = apply_composite_observation_law_with_facts(
+    let (memory, contained_resources, body_projected) = apply_composite_observation_law_with_facts(
         resource_environment,
         definition,
         resource_arguments,
@@ -1607,6 +1604,8 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         available_pure_facts,
         predicate_environment,
         click_function_environment,
+        false,
+        Some(function.composite_resource_definitions()),
     )
     .map_err(|message| {
         ClickError::new(format!(
@@ -1615,25 +1614,48 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         ))
     })?;
     let fact_state = observation_pre_state.clone().with_memory(memory.clone());
-    record_observed_composite_surface_facts(
-        definition,
-        resource,
-        &surface_substitutions,
-        parameters,
-        arguments,
-        &observation_pre_state,
-        &fact_state,
-        available_pure_facts,
-        surface_propositions,
-        predicate_environment,
-        click_function_environment,
-    )
-    .map_err(|message| {
-        ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: could not record observed `{}` facts: {message}",
-            describe_resource_clause(resource)
-        ))
-    })?;
+    let instantiated = if body_projected {
+        Some(crate::kernel::instantiate_composite_resource_facts(
+            &abstract_resource,
+            function.composite_resource_definitions(),
+            &memory,
+            &contained_resources,
+            &assumptions,
+        )
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: could not instantiate the registered facts of observed `{}`",
+                describe_resource_clause(resource)
+            ))
+        })?)
+    } else {
+        None
+    };
+    if let Some(instantiated) = &instantiated {
+        for fact in &instantiated.propositions {
+            available_pure_facts.insert(fact.clone());
+        }
+        record_observed_composite_surface_facts(
+            definition,
+            resource,
+            &surface_substitutions,
+            parameters,
+            arguments,
+            &observation_pre_state,
+            &fact_state,
+            instantiated,
+            available_pure_facts,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: could not record observed `{}` facts: {message}",
+                describe_resource_clause(resource)
+            ))
+        })?;
+    }
     let temporary_views = borrowed_parent_binding
         .as_ref()
         .map(|binding| {
@@ -1647,44 +1669,10 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         .unwrap_or_default();
     let mut dynamic_dependency = None;
     let temporary_view_index = DynamicViewDependencyIndex::new(&temporary_views, &[]);
-    if let Some(composite_body) = definition.composite_body() {
-        for body_fact in composite_body.facts() {
-            let body_fact = substitute_click_proposition(body_fact, &surface_substitutions)
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not instantiate observed body fact: {message}"
-                    ))
-                })?;
-            let lowered = lower_outcome_proposition_with_assumptions(
-                parameters,
-                arguments,
-                &observation_pre_state,
-                &fact_state,
-                &CValue::Int32(Bitvector32Term::Constant(0)),
-                available_pure_facts.assumptions(),
-                &body_fact,
-                predicate_environment,
-                click_function_environment,
-            )
-            .map_err(|message| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: could not lower observed body fact: {message}"
-                ))
-            })?;
-            let lowered = unfold_predicates_in_proposition(
-                predicate_environment,
-                click_function_environment,
-                &[],
-                &lowered,
-                available_pure_facts.assumptions(),
-            )
-            .map_err(|message| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: could not unfold observed body fact: {message}"
-                ))
-            })?;
+    if let Some(instantiated) = &instantiated {
+        for (_, lowered) in &instantiated.declared {
             if let Some(binding) = dynamic_body_fact_dependency(
-                &lowered,
+                lowered,
                 &fact_state,
                 available_pure_facts.assumptions(),
                 &temporary_view_index,
@@ -1790,9 +1778,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 .map(|(_, child)| child.viewed.clone()),
             &memory,
             available_pure_facts.assumptions(),
-            resource_environment,
-            predicate_environment,
-            click_function_environment,
+            function.composite_resource_definitions(),
             &format!("`{claim_label}` tactic {tactic_index}: `observe`"),
         )?;
     }
@@ -1813,6 +1799,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
     arguments: &[CExpression],
     pre_state: &CState,
     fact_state: &CState,
+    instantiated: &crate::kernel::InstantiatedCompositeResourceFacts,
     available_pure_facts: &F,
     surface_propositions: &mut SurfacePropositionMap,
     predicate_environment: &PredicateEnvironment,
@@ -1904,33 +1891,21 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
                 .map_err(|error| error.message().to_string())?;
         }
     }
-    for fact in composite_body.facts() {
+    for (index, kernel) in &instantiated.declared {
+        let fact = composite_body.facts().get(*index).ok_or_else(|| {
+            format!(
+                "registered resource `{}` fact index {index} has no source",
+                definition.name()
+            )
+        })?;
         let surface = substitute_click_proposition(fact, substitutions).map_err(|message| {
             format!(
                 "could not instantiate resource `{}` fact: {message}",
                 definition.name()
             )
         })?;
-        let kernel = lower_outcome_proposition_with_assumptions(
-            parameters,
-            arguments,
-            pre_state,
-            fact_state,
-            &CValue::Int32(Bitvector32Term::Constant(0)),
-            available_pure_facts.assumptions(),
-            &surface,
-            predicate_environment,
-            click_function_environment,
-        )
-        .map_err(|message| {
-            format!(
-                "could not lower resource `{}` fact `{}`: {message}",
-                definition.name(),
-                describe_click_proposition(&surface)
-            )
-        })?;
         surface_propositions
-            .record_lowering(&surface, &kernel)
+            .record_lowering(&surface, kernel)
             .map_err(|error| error.message().to_string())?;
     }
     Ok(())
@@ -2006,6 +1981,7 @@ pub(super) fn record_initial_composite_surface_facts(
             resource_environment,
             predicate_environment,
             click_function_environment,
+            None,
         )
         .map_err(|error| error.message().to_string())?;
         let Some(true) = try_select_composite_resource_body(
@@ -2084,8 +2060,10 @@ fn project_held_resource_observable_facts(
         available_pure_facts,
         predicate_environment,
         click_function_environment,
+        true,
+        None,
     )
-    .map(|(memory, _)| memory)
+    .map(|(memory, _, _)| memory)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2226,9 +2204,11 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
     available_pure_facts: &mut F,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> Result<(CMemory, ResourceContext), String> {
+    lower_declared_source_facts: bool,
+    compiled_definitions: Option<&[CCompositeResourceDefinition]>,
+) -> Result<(CMemory, ResourceContext, bool), String> {
     let Some(composite_body) = definition.composite_body() else {
-        return Ok((state.memory().clone(), ResourceContext::new()));
+        return Ok((state.memory().clone(), ResourceContext::new(), false));
     };
 
     let substitutions = resource_value_substitutions_with_witnesses(
@@ -2240,6 +2220,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         resource_environment,
         predicate_environment,
         click_function_environment,
+        compiled_definitions,
     )
     .map_err(|message| {
         format!(
@@ -2260,10 +2241,10 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         click_function_environment,
     )?
     else {
-        return Ok((state.memory().clone(), ResourceContext::new()));
+        return Ok((state.memory().clone(), ResourceContext::new(), false));
     };
     if !body_active {
-        return Ok((state.memory().clone(), ResourceContext::new()));
+        return Ok((state.memory().clone(), ResourceContext::new(), false));
     }
     let (memory, contained_resources) = instantiate_composite_resource_body_resources(
         definition.name(),
@@ -2289,7 +2270,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         // `open` retains the folded head for contract accounting while
         // exposing the unique owned body. Until that body is closed, do
         // not re-project its invariant at a newer memory/count snapshot.
-        return Ok((memory, ResourceContext::new()));
+        return Ok((memory, ResourceContext::new(), false));
     }
     let fact_state = state.clone().with_memory(memory.clone());
 
@@ -2310,8 +2291,9 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         available_pure_facts,
         predicate_environment,
         click_function_environment,
+        lower_declared_source_facts,
     )?;
-    Ok((memory, contained_resources))
+    Ok((memory, contained_resources, true))
 }
 
 fn append_composite_definition_observable_facts<F: ResourcePureFacts>(
@@ -2328,6 +2310,7 @@ fn append_composite_definition_observable_facts<F: ResourcePureFacts>(
     propositions: &mut F,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    lower_declared_source_facts: bool,
 ) -> Result<(), String> {
     append_resource_context_observable_facts_with_store(contained_resources, propositions);
 
@@ -2347,20 +2330,23 @@ fn append_composite_definition_observable_facts<F: ResourcePureFacts>(
         propositions,
     )?;
 
-    append_composite_resource_declared_facts(
-        definition,
-        composite_body,
-        substitutions,
-        contained_resources,
-        parameters,
-        arguments,
-        pre_state,
-        fact_state,
-        result,
-        propositions,
-        predicate_environment,
-        click_function_environment,
-    )
+    if lower_declared_source_facts {
+        append_composite_resource_declared_facts(
+            definition,
+            composite_body,
+            substitutions,
+            contained_resources,
+            parameters,
+            arguments,
+            pre_state,
+            fact_state,
+            result,
+            propositions,
+            predicate_environment,
+            click_function_environment,
+        )?;
+    }
+    Ok(())
 }
 
 fn append_composite_resource_relation_facts_with_store<F: ResourcePureFacts>(
@@ -2682,6 +2668,7 @@ fn resource_value_substitutions_with_witnesses(
     resource_environment: &ResourceEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    compiled_definitions: Option<&[CCompositeResourceDefinition]>,
 ) -> Result<BTreeMap<String, ContractExpression>, String> {
     let mut substitutions = resource_value_substitutions(definition, arguments)?;
     let Some(body) = definition.composite_body() else {
@@ -2690,19 +2677,25 @@ fn resource_value_substitutions_with_witnesses(
     if body.witnesses().is_empty() {
         return Ok(substitutions);
     }
-    let definitions = crate::surface::verification::composite_resource_definitions(
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-    )
-    .map_err(|error| error.message().to_string())?;
+    let owned_definitions;
+    let definitions = if let Some(definitions) = compiled_definitions {
+        definitions
+    } else {
+        owned_definitions = crate::surface::verification::composite_resource_definitions(
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|error| error.message().to_string())?;
+        &owned_definitions
+    };
     let fact = CResourceFact::own(CResource::Composite {
         name: definition.name().to_string(),
         arguments: arguments.to_vec().into(),
     });
     let values = crate::kernel::composite_resource_witness_values(
         &fact,
-        &definitions,
+        definitions,
         memory,
         resources,
         assumptions,
@@ -2874,6 +2867,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         resource_environment,
         predicate_environment,
         click_function_environment,
+        None,
     )?;
     let body_active = composite_resource_body_is_active_with_assumptions(
         definition,
@@ -3391,15 +3385,18 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
             }
         }
         let projection_memory = state.memory().clone();
+        let definitions = crate::surface::verification::composite_resource_definitions(
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+        )?;
         state = project_children_into_ledger(
             state,
             &binding,
             dependencies.iter().map(|(_, child)| child.viewed.clone()),
             &projection_memory,
             available_pure_facts.assumptions(),
-            resource_environment,
-            predicate_environment,
-            click_function_environment,
+            &definitions,
             &format!("`{claim_label}` tactic {tactic_index}: `unfold`"),
         )?;
         let resources = state.resources().clone();
@@ -3489,6 +3486,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             resource_environment,
             predicate_environment,
             click_function_environment,
+            None,
         )?;
         let mut body_active = composite_resource_body_is_active_with_assumptions(
             definition,
@@ -4373,6 +4371,7 @@ fn extend_substitutions_with_witnesses(
     resource_environment: &ResourceEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    compiled_definitions: Option<&[CCompositeResourceDefinition]>,
 ) -> Result<(), ClickError> {
     let Some(body) = definition.composite_body() else {
         return Ok(());
@@ -4390,14 +4389,20 @@ fn extend_substitutions_with_witnesses(
         )?,
         None => lower_resource_clause_at_state(resource, parameters, arguments, state)?,
     };
-    let definitions = crate::surface::verification::composite_resource_definitions(
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-    )?;
+    let owned_definitions;
+    let definitions = if let Some(definitions) = compiled_definitions {
+        definitions
+    } else {
+        owned_definitions = crate::surface::verification::composite_resource_definitions(
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        &owned_definitions
+    };
     let values = crate::kernel::composite_resource_witness_values(
         &fact,
-        &definitions,
+        definitions,
         state.memory(),
         state.resources(),
         assumptions,

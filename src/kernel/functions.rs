@@ -16789,6 +16789,25 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
     resources: &ResourceContext,
     assumptions: &PureFactContext,
 ) -> Option<Vec<Proposition>> {
+    instantiate_composite_resource_facts(composite, definitions, memory, resources, assumptions)
+        .map(|instantiated| instantiated.propositions)
+}
+
+/// One state-specific instantiation of the resource's already-lowered
+/// definition. The indexed declared facts retain source correspondence for
+/// presentation, without lowering the Click source a second time.
+pub(crate) struct InstantiatedCompositeResourceFacts {
+    pub(crate) propositions: Vec<Proposition>,
+    pub(crate) declared: Vec<(usize, Proposition)>,
+}
+
+pub(crate) fn instantiate_composite_resource_facts(
+    composite: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    resources: &ResourceContext,
+    assumptions: &PureFactContext,
+) -> Option<InstantiatedCompositeResourceFacts> {
     let CResource::Composite { name, arguments } = composite.resource() else {
         return None;
     };
@@ -16814,6 +16833,7 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
     }
     bind_composite_witnesses(definition, arguments, &mut state, assumptions)?;
     let mut result = Vec::new();
+    let mut declared = Vec::new();
     let mut budget = ExecutionBudget::beside_live_state();
     let mut fact_assumptions = assumptions.clone();
     let evaluation_assumptions = assumptions
@@ -16826,13 +16846,16 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
         &evaluation_assumptions,
         &mut budget,
     )? {
-        return Some(result);
+        return Some(InstantiatedCompositeResourceFacts {
+            propositions: result,
+            declared,
+        });
     }
-    let mut pending = definition.facts().iter().collect::<Vec<_>>();
+    let mut pending = definition.facts().iter().enumerate().collect::<Vec<_>>();
     while !pending.is_empty() {
         let mut next_pending = Vec::new();
         let mut made_progress = false;
-        for fact in pending {
+        for (index, fact) in pending {
             let evaluation_assumptions = fact_assumptions
                 .clone()
                 .allow_symbolic_contract_loads()
@@ -16851,7 +16874,7 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
                 return None;
             };
             let [path] = paths.as_slice() else {
-                next_pending.push(fact);
+                next_pending.push((index, fact));
                 continue;
             };
             if !path.obligations.iter().all(|obligation| {
@@ -16878,7 +16901,7 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
                     resource_context_has_read(resources, base, bytes, &fact_assumptions)
                 })
             }) {
-                next_pending.push(fact);
+                next_pending.push((index, fact));
                 continue;
             }
             for obligation in &path.obligations {
@@ -16895,6 +16918,10 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
             if !result.contains(&path.proposition) {
                 result.push(path.proposition.clone());
             }
+            declared.push((
+                definition.fact_source_index(index)?,
+                path.proposition.clone(),
+            ));
             fact_assumptions = fact_assumptions.assume_proposition(path.proposition.clone());
             made_progress = true;
         }
@@ -16903,7 +16930,10 @@ pub(super) fn evaluate_composite_resource_fact_propositions(
         }
         pending = next_pending;
     }
-    Some(result)
+    Some(InstantiatedCompositeResourceFacts {
+        propositions: result,
+        declared,
+    })
 }
 
 /// Whether a body outcome establishes every resource the contract returns,

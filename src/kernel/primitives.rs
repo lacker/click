@@ -2568,6 +2568,9 @@ pub struct CCompositeResourceDefinition {
     pub(super) facts_claim_liveness: bool,
     pub(super) contains: Vec<CResourceSpec>,
     pub(super) facts: Vec<SpecProposition>,
+    /// Compiled fact index to original resource-body fact index. Predicate
+    /// unfolding can produce two compiled facts for one source fact.
+    pub(super) fact_source_indices: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

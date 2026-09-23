@@ -3941,7 +3941,7 @@ mod hunt_investigation_join_tests {
             .clone()
             .free_heap_block(&base, &PureFactContext::new())
             .expect("the allocation frees on arm A");
-        let arms = [ &alive, &freed ];
+        let arms = [&alive, &freed];
         let joined = alive
             .clone()
             .with_interface_memory_havoc_preserving_loans(
