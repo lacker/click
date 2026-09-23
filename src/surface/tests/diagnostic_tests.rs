@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn concise_error_context_preserves_click_binder_colons() {
+    assert_eq!(
+        concise_error_segments("foo: exists (path: Path) { x: y }: qux"),
+        ["foo", "exists (path: Path) { x: y }", "qux"]
+    );
+    assert_eq!(
+        concise_error_segments("foo: `witness(path = value)`: bar"),
+        ["foo", "`witness(path = value)`", "bar"]
+    );
+    assert_eq!(
+        concise_error_segments("can't close: current goal is exists (path: Path)"),
+        ["can't close", "current goal is exists (path: Path)"]
+    );
+}
+
+#[test]
 fn click_addition_cancels_a_negated_pointer_base() {
     let base = Bitvector32Term::Variable(Variable(90));
     let index = Bitvector32Term::Variable(Variable(91));

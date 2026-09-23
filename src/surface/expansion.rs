@@ -3036,6 +3036,70 @@ fn offset_at_position(source: &str, line: usize, column: usize) -> Result<usize,
     Ok(line_start + byte_in_line)
 }
 
+/// Resolve positions inside written `have` and `open` bodies. The first
+/// position is the enclosing tactic, as reported by the usual claim mapper;
+/// each index then selects a direct tactic in that body's source block.
+pub fn nested_tactic_source_position(
+    source: &str,
+    outer: &SourcePosition,
+    nested_indices: &[usize],
+) -> Result<SourcePosition, ClickError> {
+    let tokens = scan_source_tokens(source)?;
+    let offset = offset_at_position(source, outer.line, outer.column)?;
+    let mut current = tokens
+        .iter()
+        .position(|token| token.span.start == offset)
+        .ok_or_else(|| ClickError::new("could not locate enclosing source tactic"))?;
+    for &index in nested_indices {
+        let kind = tokens[current].text.as_str();
+        if !matches!(kind, "have" | "open") {
+            return Err(ClickError::new(format!(
+                "source `{kind}` has no nested `have` or `open` tactic body"
+            )));
+        }
+        let mut depths = [0_usize; 3];
+        let mut body_open = None;
+        for cursor in current + 1..tokens.len() {
+            let token = tokens[cursor].text.as_str();
+            if depths == [0; 3] {
+                if kind == "have"
+                    && token == "by"
+                    && tokens.get(cursor + 1).map(|token| token.text.as_str()) == Some("{")
+                {
+                    body_open = Some(cursor + 1);
+                    break;
+                }
+                if kind == "open" && token == "{" {
+                    body_open = Some(cursor);
+                    break;
+                }
+                if token == ";" {
+                    break;
+                }
+            }
+            match token {
+                "(" => depths[0] += 1,
+                ")" => depths[0] = depths[0].saturating_sub(1),
+                "[" => depths[1] += 1,
+                "]" => depths[1] = depths[1].saturating_sub(1),
+                "{" => depths[2] += 1,
+                "}" => depths[2] = depths[2].saturating_sub(1),
+                _ => {}
+            }
+        }
+        let open = body_open.ok_or_else(|| {
+            ClickError::new(format!("could not locate source `{kind}` tactic body"))
+        })?;
+        let close = matching_delimiter(&tokens, open, "{", "}")?;
+        let ranges = direct_tactic_token_ranges(&tokens, open, close)?;
+        current = ranges
+            .get(index)
+            .ok_or_else(|| ClickError::new(format!("nested source tactic {index} is missing")))?
+            .start;
+    }
+    Ok(position_at_offset(source, tokens[current].span.start))
+}
+
 pub(super) fn position_at_offset(source: &str, offset: usize) -> SourcePosition {
     let prefix = &source[..offset];
     let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;

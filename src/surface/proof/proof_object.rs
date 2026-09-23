@@ -1909,7 +1909,7 @@ impl<'a> Proof<'a> {
             origin: crate::surface::proof_diagnostics::ProofDiagnosticOrigin {
                 stage: "proof step".to_owned(),
                 location,
-                source_tactic_index: self.site.outer_source_tactic_index(),
+                source_tactic_path: self.site.source_tactic_path(),
             },
             claim_label: self.context.claim_label().to_owned(),
             reason,
@@ -1935,7 +1935,7 @@ impl<'a> Proof<'a> {
             origin: crate::surface::proof_diagnostics::ProofDiagnosticOrigin {
                 stage: "proof step".to_owned(),
                 location,
-                source_tactic_index: self.site.outer_source_tactic_index(),
+                source_tactic_path: self.site.source_tactic_path(),
             },
             claim_label: self.context.claim_label().to_owned(),
             reason: error.raw_summary().to_owned(),

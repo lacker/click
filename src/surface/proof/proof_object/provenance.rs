@@ -131,14 +131,21 @@ impl ProofStepSite {
         (!segments.is_empty()).then(|| segments.join(" > "))
     }
 
-    pub(super) fn outer_source_tactic_index(&self) -> Option<usize> {
-        self.enclosing
-            .as_ref()
-            .and_then(|site| site.outer_source_tactic_index())
-            .or(match self.position {
-                Some(ProofStepPosition::SourceTactic(index)) => Some(index),
-                _ => None,
-            })
+    pub(super) fn source_tactic_path(&self) -> Option<Vec<usize>> {
+        let mut path = if let Some(enclosing) = &self.enclosing {
+            enclosing.source_tactic_path()?
+        } else {
+            Vec::new()
+        };
+        let Some(position) = self.position else {
+            return (!path.is_empty()).then_some(path);
+        };
+        match position {
+            ProofStepPosition::SourceTactic(index) if path.is_empty() => path.push(index),
+            ProofStepPosition::InBlock(index) if !path.is_empty() => path.push(index),
+            _ => return None,
+        }
+        Some(path)
     }
 }
 

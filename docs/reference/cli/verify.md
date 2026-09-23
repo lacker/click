@@ -96,8 +96,10 @@ itself the failure being investigated.
 When a proof error identifies a C function, the CLI suggests a rerun with
 `--trace-proof` and fills in the function and sidecar path. The trace includes
 successful simple steps before the failed attempt; the ordinary error starts
-with the failed check, shows the Click goal and a source excerpt when its
-written tactic can be located, and omits the internal premise dump. A trace reports
+with the failed check on separate lines, shows the Click goal and a source
+excerpt pointing to the failing written tactic (including steps inside `have`
+and `open`), and omits the internal premise dump. An `assumption()` failure on
+an existential goal suggests the `witness(name = value)` tactic. A trace reports
 facts introduced into the focused proof context and changes to exact resource
 representations. Retained Click goals and facts print in Click syntax. Generated
 facts without an exact Click spelling are labeled internal and carry bounded

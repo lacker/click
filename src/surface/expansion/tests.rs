@@ -1,6 +1,14 @@
 use super::*;
 
 #[test]
+fn nested_tactic_position_follows_have_and_open_bodies() {
+    let source = "have true by {\n    open(resource) {\n        have true by {\n            assumption();\n        }\n    }\n}\n";
+    let position = nested_tactic_source_position(source, &SourcePosition::new(1, 1), &[0, 0, 0])
+        .expect("nested step has a source position");
+    assert_eq!(position, SourcePosition::new(4, 13));
+}
+
+#[test]
 fn integer_function_unfold_expands_and_reverifies() {
     let source = r#"
 function successor(z: Integer) -> Integer {

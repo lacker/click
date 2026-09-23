@@ -23,10 +23,11 @@ use click::surface::{
     c0_project_external_dependencies, c0_project_selected_proof_count,
     c0_project_selected_proof_names, c0_project_tactic_source_position,
     cpp_prepared_project_external_dependencies, cpp_prepared_project_selected_proof_count,
-    cpp_prepared_project_tactic_source_position, selected_c_target, verify_c0_prepared_project,
-    verify_c0_prepared_project_at, verify_c0_prepared_project_functions, verify_c0_project,
-    verify_c0_project_at, verify_c0_project_functions, verify_cpp_prepared_project,
-    verify_cpp_prepared_project_at, verifying_source_paths, with_proof_trace,
+    cpp_prepared_project_tactic_source_position, nested_tactic_source_position, selected_c_target,
+    verify_c0_prepared_project, verify_c0_prepared_project_at,
+    verify_c0_prepared_project_functions, verify_c0_project, verify_c0_project_at,
+    verify_c0_project_functions, verify_cpp_prepared_project, verify_cpp_prepared_project_at,
+    verifying_source_paths, with_proof_trace,
 };
 
 const USAGE: &str = "\
@@ -418,10 +419,9 @@ fn proof_error_report(
         error.report()
     };
     if suggest_trace {
-        if let (Some(source), Some(position)) = (
-            project.entry_source(),
-            proof_source_position(error, project, inputs),
-        ) && let Some(excerpt) = source_excerpt(sidecar, source, &position)
+        if let Some(source) = project.entry_source()
+            && let Some(position) = proof_source_position(error, project, inputs, source)
+            && let Some(excerpt) = source_excerpt(sidecar, source, &position)
         {
             report.push('\n');
             report.push_str(&excerpt);
@@ -450,10 +450,12 @@ fn proof_source_position(
     error: &ClickError,
     project: &ClickProject,
     inputs: &CInput,
+    source: &str,
 ) -> Option<click::surface::SourcePosition> {
     let claim = error.proof_claim_label()?;
-    let source_index = error.proof_source_tactic_index()?;
-    match inputs {
+    let path = error.proof_source_tactic_path()?;
+    let source_index = *path.first()?;
+    let outer = match inputs {
         CInput::Bundle(sources) => {
             c0_project_tactic_source_position(project, &source_refs(sources), claim, source_index)
         }
@@ -464,7 +466,12 @@ fn proof_source_position(
             cpp_prepared_project_tactic_source_position(project, import, claim, source_index)
         }
     }
-    .ok()
+    .ok()?;
+    if path.len() == 1 {
+        Some(outer)
+    } else {
+        nested_tactic_source_position(source, &outer, &path[1..]).ok()
+    }
 }
 
 fn source_excerpt(
