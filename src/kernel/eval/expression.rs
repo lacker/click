@@ -2063,6 +2063,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                     assumptions,
                     is_external && has_read_resource,
                     source,
+                    budget.c_byte_order(),
                 );
                 if !lvalue.is_volatile() {
                     return Ok(paths);

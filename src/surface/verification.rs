@@ -669,7 +669,8 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         &predicate_environment,
         &click_function_environment,
         &resource_environment,
-    )?;
+    )?
+    .with_byte_order(file.selected_c_target().byte_order());
     let refinement_targets = file
         .theorem_definitions()
         .iter()
@@ -740,7 +741,8 @@ pub(in crate::surface) fn verify_click_project_theorem_context(
         &predicate_environment,
         &click_function_environment,
         &resource_environment,
-    )?;
+    )?
+    .with_byte_order(file.selected_c_target().byte_order());
     for target in contract_refinement_targets(&file, theorem_name) {
         let Some(function) = function_environment.get_function(&target).cloned() else {
             continue;
@@ -2276,7 +2278,8 @@ fn verify_c0_sources_with_context(
                 (selected_thread_runtime
                     == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread)
                     .then(crate::languages::c::thread_runtime::ModeledPthreadBinding::builtin),
-            );
+            )
+            .with_byte_order(selected_target.byte_order());
         // Contracts are declaration interfaces. A selected function receives
         // every well-formed callee contract as a scoped assumption, while its
         // own contract hypothesis supports the existing checked-recursion

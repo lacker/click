@@ -56,6 +56,45 @@ for the proposition.
 For `int32**` and `uint8**`, pointer arithmetic advances by the eight-byte
 ABI width of each pointer-valued cell.
 
+## Byte view of integer cells
+
+Known cells are typed: a store of an `unsigned int` records one four-byte
+integer cell, not four bytes. A one-byte C access (`unsigned char` or
+`signed char`) at a constant offset that lands inside a wider integer cell at
+a constant offset of the same block, including at the cell's own address,
+uses the cell's byte representation. That representation depends on the
+target's byte order, so the view exists only for a little-endian target;
+both selectable targets are. Under little-endian order byte `k` of an integer
+value `v` is `(v >> 8k) & 0xFF`:
+
+- A one-byte load reads that byte. An `unsigned char` load reads it as is;
+  a `signed char` load reads its sign extension when the byte is a constant
+  and is refused when it is symbolic.
+- A one-byte store updates the wider cell in place,
+  `(v & ~(0xFF << 8k)) | (b << 8k)`, keeping its type and address. No
+  separate one-byte cell is added, so the storage keeps a single description.
+  A signed 16- or 64-bit cell is updated only when both its value and the
+  byte are constants; otherwise the store forgets the wider cell, as any
+  partial overwrite does.
+
+The containing cell is found by a bounded lookup of the at most seven
+preceding constant offsets in the accessed block; it does no work for cells
+elsewhere in memory. Byte view reads apply to C execution only: a
+specification load reads a snapshot's cells without it.
+
+The following stay refused. A byte of a pointer cell has no view: its
+representation is opaque, so a one-byte read of a copied pointer fails as a
+load that does not fit the cell, and a one-byte write forgets the pointer
+rather than editing it. Several one-byte cells are never assembled into a
+wider integer load. A float or `_Bool` cell, a symbolic offset, and any byte
+order other than little-endian have no view either.
+`mdtests/byte_representation_buffer_byte_read.md` and
+`mdtests/byte_representation_byte_mutation.md` verify reads and a defined
+mutation through a `memcpy` buffer;
+`mdtests/byte_representation_pointer_bytes_refused.md` and
+`mdtests/byte_representation_pointer_byte_write_refused.md` pin the pointer
+refusals.
+
 ## Heap blocks and lifetimes
 
 The supported `malloc`, `calloc`, and `realloc` forms have a null outcome and a

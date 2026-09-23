@@ -59,6 +59,7 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
     assumptions: &PureFactContext,
     has_external_read_resource: bool,
     source: Option<&LoadSourceId>,
+    byte_order: Option<ByteOrder>,
 ) -> Vec<CExpressionPath> {
     let _assumptions_id_scope = assumptions.enter_id_scope();
     if has_pending_reallocation_for_pointer(memory, &pointer) {
@@ -81,6 +82,7 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
         true,
         &mut alias_cache,
         source,
+        byte_order,
     )
 }
 
@@ -123,6 +125,9 @@ pub(in crate::kernel) fn evaluate_spec_memory_load_paths(
         false,
         &mut alias_cache,
         None,
+        // A specification load denotes a snapshot's cell, not a C access;
+        // it has no byte view of a wider cell.
+        None,
     )
 }
 
@@ -163,6 +168,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     branches_on_unresolved_aliases: bool,
     alias_cache: &mut MemoryLoadAliasCache,
     source: Option<&LoadSourceId>,
+    byte_order: Option<ByteOrder>,
 ) -> Vec<CExpressionPath> {
     let use_symbolic_pointer_identity =
         should_use_symbolic_pointer_identity(memory, &pointer, value_type);
@@ -299,6 +305,28 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             && (assumptions.should_prefer_symbolic_external_loads()
                 || matches!(value_type, CType::FunctionPointer(_)))
     };
+    // A one-byte C load inside a wider integer cell, including at the cell's
+    // own address, reads that cell's little-endian representation. It is
+    // decided here, before the exact lookup (whose wider cell would not fit
+    // the load) and the whole-memory scan below, by a bounded lookup in the
+    // load's own block; a load with no byte view falls through unchanged.
+    if value_type.byte_width() == 1
+        && let Some(cell) = containing_integer_cell(memory, &pointer, byte_order)
+    {
+        let outcome = match byte_view_load_value(&cell, value_type) {
+            Some(value) => CExpressionOutcome::Value(value),
+            None => CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch {
+                pointer: pointer.clone(),
+                value_type,
+                stored: None,
+            }),
+        };
+        return vec![CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        }];
+    }
     // An exact materialized cell is already the authoritative value for this
     // non-union pointer. Avoid proving every other symbolic cell distinct
     // before the direct map lookup.
@@ -625,6 +653,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 branches_on_unresolved_aliases,
                 alias_cache,
                 source,
+                byte_order,
             ));
         }
 
@@ -2971,6 +3000,7 @@ mod tests {
                 &assumptions,
                 false,
                 None,
+                None,
             );
             assert_eq!(paths.len(), 1);
             assert_eq!(
@@ -3055,6 +3085,7 @@ mod tests {
             false,
             &mut cache,
             None,
+            None,
         );
         let [distinct_path] = distinct_paths.as_slice() else {
             panic!("the decided distinct load should have one path");
@@ -3083,6 +3114,7 @@ mod tests {
             false,
             false,
             &mut cache,
+            None,
             None,
         );
         let [aliasing_path] = aliasing_paths.as_slice() else {

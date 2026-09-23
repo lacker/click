@@ -2658,6 +2658,20 @@ pub struct CCallBinderTransport {
     pub(crate) bindings: std::sync::Arc<BTreeMap<Variable, Variable>>,
 }
 
+/// The order in which a target lays out the bytes of a multi-byte integer
+/// object. The kernel owns what a byte view of an integer cell means, so the
+/// order is a kernel value that the surface installs from the selected C
+/// target. Only [`ByteOrder::Little`] has a byte view; `Big` exists so a
+/// byte access under any other order is a refusal rather than a guess.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum ByteOrder {
+    /// Byte `k` of an integer object holds bits `8k .. 8k + 8` of its value.
+    #[default]
+    Little,
+    /// No selectable target uses it; every byte view is refused under it.
+    Big,
+}
+
 #[derive(Clone, Default)]
 pub struct CExecutionEnvironment {
     // A proof-local rule choice. This is not installed in the project environment.
@@ -2678,6 +2692,10 @@ pub struct CExecutionEnvironment {
     /// ordinary external function contract is never a substitute.
     pub(super) modeled_pthread_binding:
         Option<crate::languages::c::thread_runtime::ModeledPthreadBinding>,
+    /// The selected target's byte order. It decides whether a one-byte C
+    /// access inside a wider integer cell reads or updates that cell's
+    /// representation; see `crate::kernel::eval::byte_view`.
+    pub(super) byte_order: ByteOrder,
     pub(super) verified_loop_rules: std::sync::Arc<Vec<CVerifiedLoopRule>>,
     /// The function currently being certified, when it declares an expression
     /// `decreases` measure. It is part of this environment's identity below,
@@ -2713,6 +2731,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
                 &self.verified_function_termination_rules,
             )
             .field("modeled_pthread_binding", &self.modeled_pthread_binding)
+            .field("byte_order", &self.byte_order)
             .field("verified_loop_rules", &self.verified_loop_rules)
             .field("recursion_anchor", &self.recursion_anchor)
             .field(
@@ -2734,6 +2753,7 @@ impl PartialEq for CExecutionEnvironment {
             && self.verified_function_rules == other.verified_function_rules
             && self.verified_function_termination_rules == other.verified_function_termination_rules
             && self.modeled_pthread_binding == other.modeled_pthread_binding
+            && self.byte_order == other.byte_order
             && self.verified_loop_rules == other.verified_loop_rules
             && self.recursion_anchor == other.recursion_anchor
             && self.allow_conditional_resource_cases == other.allow_conditional_resource_cases
@@ -3421,6 +3441,11 @@ pub struct ExecutionBudget {
     /// element count to report, only the reason. Diagnostic only: no
     /// evaluation reads it back.
     pub(super) dropped_relation_range_extent: bool,
+    /// The byte order of the environment whose statements this budget is
+    /// executing, installed from `CExecutionEnvironment` at each statement.
+    /// `None` until a statement installs it: an expression evaluated with no
+    /// environment in hand has no byte view of integer cells at all.
+    pub(super) c_byte_order: Option<ByteOrder>,
 }
 
 /// A constant element range a lowering refused as a byte extent, for the

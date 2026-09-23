@@ -1272,7 +1272,19 @@ impl ExecutionBudget {
             dropped_range_extent: None,
             dropped_relation_range_extent: false,
             dropped_fold_body: None,
+            c_byte_order: None,
         }
+    }
+
+    /// Installs the byte order of the environment a C statement executes
+    /// under, for the byte view of integer cells its loads and stores use.
+    pub(in crate::kernel) fn install_c_byte_order(&mut self, byte_order: ByteOrder) {
+        self.c_byte_order = Some(byte_order);
+    }
+
+    /// The byte order installed by the executing statement, if any.
+    pub(in crate::kernel) fn c_byte_order(&self) -> Option<ByteOrder> {
+        self.c_byte_order
     }
 
     /// A budget for an execution that has issued nothing yet: the
