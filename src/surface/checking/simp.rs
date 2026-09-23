@@ -830,11 +830,113 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 "`rewrite` requires its equality to be an exact available fact".to_string(),
             );
         }
+        // A field or array access keeps its base pointer's block and adds a
+        // displacement. An equality of the bases therefore also rewrites the
+        // address of that access, with the same displacement on the right.
+        // Match one structural suffix; do not search the ambient pointer
+        // equalities or change the memory snapshot of a load.
+        fn offset_after_base(
+            address: &PointerOffsetTerm,
+            base: &PointerOffsetTerm,
+        ) -> Option<PointerOffsetTerm> {
+            if base == &PointerOffsetTerm::Constant(0) {
+                return Some(address.clone());
+            }
+            // Keep parent links rather than cloning a growing suffix at each
+            // Add node. A deeply nested address costs one walk plus one
+            // construction of the matched displacement.
+            struct OffsetNode<'a> {
+                offset: &'a PointerOffsetTerm,
+                parent: Option<usize>,
+                sibling: Option<&'a PointerOffsetTerm>,
+            }
+            let mut nodes = vec![OffsetNode {
+                offset: address,
+                parent: None,
+                sibling: None,
+            }];
+            let mut pending = vec![0];
+            while let Some(index) = pending.pop() {
+                let offset = nodes[index].offset;
+                let difference = if offset == base {
+                    Some(PointerOffsetTerm::Constant(0))
+                } else if let (
+                    PointerOffsetTerm::Constant(address),
+                    PointerOffsetTerm::Constant(base),
+                ) = (offset, base)
+                {
+                    address.checked_sub(*base).map(PointerOffsetTerm::Constant)
+                } else {
+                    None
+                };
+                if let Some(mut difference) = difference {
+                    let mut cursor = index;
+                    while let Some(parent) = nodes[cursor].parent {
+                        difference =
+                            add_pointer_offsets(difference, nodes[cursor].sibling?.clone())?;
+                        cursor = parent;
+                    }
+                    return Some(difference);
+                }
+                if let PointerOffsetTerm::Add(left, right) = offset {
+                    let left_index = nodes.len();
+                    nodes.push(OffsetNode {
+                        offset: left,
+                        parent: Some(index),
+                        sibling: Some(right),
+                    });
+                    let right_index = nodes.len();
+                    nodes.push(OffsetNode {
+                        offset: right,
+                        parent: Some(index),
+                        sibling: Some(left),
+                    });
+                    pending.push(right_index);
+                    pending.push(left_index);
+                }
+            }
+            None
+        }
+        fn add_pointer_offsets(
+            left: PointerOffsetTerm,
+            right: PointerOffsetTerm,
+        ) -> Option<PointerOffsetTerm> {
+            use PointerOffsetTerm::{Add, Constant};
+            match (left, right) {
+                (Constant(0), other) | (other, Constant(0)) => Some(other),
+                (Constant(left), Constant(right)) => left.checked_add(right).map(Constant),
+                (Add(base, trailing), Constant(right))
+                    if matches!(trailing.as_ref(), Constant(_)) =>
+                {
+                    let Constant(trailing) = *trailing else {
+                        unreachable!()
+                    };
+                    let combined = trailing.checked_add(right)?;
+                    if combined == 0 {
+                        Some(*base)
+                    } else {
+                        Some(Add(base, Box::new(Constant(combined))))
+                    }
+                }
+                (left, right) => Some(Add(Box::new(left), Box::new(right))),
+            }
+        }
         let rewrite_pointer = |pointer: &Pointer| {
             if pointer == left.as_ref() {
-                right.as_ref().clone()
-            } else {
-                pointer.clone()
+                return right.as_ref().clone();
+            }
+            if pointer.block != left.block {
+                return pointer.clone();
+            }
+            let Some(displacement) = offset_after_base(&pointer.offset, &left.offset) else {
+                return pointer.clone();
+            };
+            let Some(offset) = add_pointer_offsets(right.offset.clone(), displacement) else {
+                return pointer.clone();
+            };
+            Pointer {
+                block: right.block.clone(),
+                offset,
             }
         };
         // A pointer equality also rewrites the subject of a load: replacing
@@ -2451,6 +2553,79 @@ mod tests {
     use crate::kernel::{
         IntegerRangeFoldIndex, IntegerTerm, MachineIntegerType, SharedIntegerRangeEndpoint,
     };
+
+    #[test]
+    fn pointer_rewrite_changes_every_matching_field_load_at_one_snapshot() {
+        let memory = crate::kernel::intern_c_memory(CMemory::new());
+        let source = Pointer {
+            block: PointerBlock::Symbolic(Variable(91)),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let target = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(92)), 4),
+        };
+        let field_load = |base: &Pointer, displacement| {
+            Bitvector32Term::MemoryLoad(
+                memory.clone(),
+                Box::new(Pointer {
+                    block: base.block.clone(),
+                    offset: PointerOffsetTerm::add(
+                        base.offset.clone(),
+                        PointerOffsetTerm::Constant(displacement),
+                    ),
+                }),
+            )
+        };
+        let equality = Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(source.clone(), target.clone()),
+            true,
+        );
+        let goal = Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(field_load(&source, 4)),
+                    Box::new(field_load(&target, 4)),
+                ),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(field_load(&source, 8)),
+                    Box::new(field_load(&target, 12)),
+                ),
+                true,
+            )),
+        );
+        assert!(
+            rewrite_proposition_by_exact_equality(&goal, &equality, &[])
+                .expect_err("the equality must be available")
+                .contains("exact available fact")
+        );
+        let rewritten = rewrite_proposition_by_exact_equality(
+            &goal,
+            &equality,
+            std::slice::from_ref(&equality),
+        )
+        .expect("one cited equality rewrites both field addresses");
+        let expected = Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(field_load(&target, 4)),
+                    Box::new(field_load(&target, 4)),
+                ),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(field_load(&target, 8)),
+                    Box::new(field_load(&target, 12)),
+                ),
+                true,
+            )),
+        );
+        assert_eq!(rewritten, expected);
+    }
 
     #[test]
     fn rewrite_uses_pointer_offset_equalities_inside_pointer_goals() {
