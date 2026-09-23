@@ -1,16 +1,19 @@
 # Pthread calls as ordinary checked C steps
 
-Status: design direction accepted, 2026-09-22; clarified after review.
+Status: design direction accepted, 2026-09-22; implementation order amended to
+allow modeled-runtime client verification on macOS before native binding.
+
 This is the binding design for
-[Chunk A](../../issues/concurrency-demo.md#chunk-a-settle-and-lock-the-pthread-binding-contract),
+[Chunk A](../../issues/concurrency-demo.md#chunk-a-explicit-modeled-pthread-binding-identity),
 not implemented concurrency support or a verified parent proof.
 
 Implementation checkpoint: the [probe record](README.md#compiler-import-checkpoint)
 records completion of the user-space compiler-import foundation and successive
 real-header fixes through pointer-to-const struct fields (`d3aa4cd8`). The
-remaining parser boundary is `struct sigevent;` in `time.h`. The
+remaining Linux parser boundary is `struct sigevent;` in `time.h`. The
 [issue handoff](../../issues/concurrency-demo.md#resume-here-2026-09-22-handoff)
-is the starting point for the remaining implementation.
+starts with an explicit, Mac-runnable modeled binding. The real-header gap
+remains for later native runtime validation.
 
 ## Recommendation
 
@@ -34,8 +37,11 @@ The agreed design decisions are:
    slice, with no new public thread resource or spawn tactic.
 2. Store a success-conditioned completion right in execution state; preserve
    unresolved outcomes without enumerating their Cartesian product.
-3. Require a locked, declaration-specific runtime binding before enabling
-   these rules in ordinary verification. A target name alone is insufficient.
+3. Require a declaration-specific runtime binding before enabling these rules
+   in ordinary verification. An explicitly selected modeled binding produces a
+   conditional client result with visible runtime assumptions. A native claim
+   additionally requires a checked platform binding. A target name alone is
+   insufficient for either result.
 
 ## What exists and what changes
 
@@ -118,9 +124,12 @@ int fill_parallel(int output[4]) {
 }
 ```
 
-This is a contract candidate, not a complete proof file. The parent proof
-first steps its declarations and proves its initialization loop using ordinary
-loop syntax. At the first create condition, its proposed proof fragment is:
+This is a contract candidate, not a complete proof file. The modeled-runtime
+binding also needs explicit selection; the `target` directive alone does not
+select it. Its eventual spelling belongs to Chunk A and must be retained in
+proof artifacts. The parent proof first steps its declarations and proves its
+initialization loop using ordinary loop syntax. At the first create condition,
+its proposed proof fragment is:
 
 ```click
 let rc = step(pthread_create(&first, NULL, fill_range, &first_job), { });
@@ -167,8 +176,9 @@ This is a companion regression sketch, not an edit to the frozen source.
 ## The checked transition
 
 Each recognized creation has an immutable event identity. Record the source
-call, runtime binding, selected worker and termination rules, evaluated C
-arguments, task bindings, handle output location, and fresh status value.
+call, modeled or native runtime binding, selected worker and termination rules,
+evaluated C arguments, task bindings, handle output location, and fresh status
+value.
 Evaluate C arguments once with the ordinary expression engine. Pointer/handle
 stores must use its normal authority and alias checks.
 
@@ -292,18 +302,35 @@ C++ syntax, thread-object lifetime rules, callable lowering, ownership moves,
 and automatic joining remain later work. These commitments keep that work
 possible without making it a prerequisite for the pthread probe.
 
-## Lock the runtime binding
+## Bind the modeled runtime first, then validate native runtimes
 
-The modeled header provides declarations only. The compiler importer now
-supports both kernel and user-space profiles, with checked locks and target
-agreement. Real host header preparation succeeds, but parsing still stops at
-an incomplete struct declaration. Complete that import path and validate the
-selected Debian environment before enabling the declaration-specific runtime
-binding. A user-space compiler lock alone grants no pthread semantics.
+The existing modeled header provides declarations only. The next chunk adds an
+explicit trusted create/join specification and binds it to the exact built-in
+header and resolved declarations. This path runs on macOS while retaining the
+`x86_64-linux-userspace` source target. It proves the unchanged C client under
+the stated create/join assumptions; it does not claim that the host's native
+pthread implementation has been validated.
 
-Extend the existing import lock and `PreparedCImport` identity, rather than
-inventing a separate sidecar trust switch. The proposed runtime-binding record
-contains:
+The modeled record contains the target and ABI, exact built-in header
+provenance/digest, resolved external declarations and canonical types, the
+trusted specification version/digest, supported null-attribute/null-result
+restrictions, and scoped valid-join-success assumption. Select it explicitly;
+the target directive, an include spelling, or a same-named function alone must
+not grant authority. Reject local definitions, shadowing, incompatible
+redeclarations, changed modeled headers, and stale artifacts. Carry its
+identity and assumption through verification, certificates, caches, profile,
+and audit. A native binding has a distinct identity and cannot reuse a modeled
+result as an unconditional proof.
+
+The compiler importer already supports kernel and user-space profiles with
+checked locks and target agreement. Real Linux header preparation succeeds,
+but parsing still stops at an incomplete struct declaration. Native Linux
+validation remains necessary before claiming that a Debian pthread runtime
+satisfies the modeled operation. A user-space compiler lock alone grants no
+pthread semantics.
+
+For a native Linux binding, extend the existing import lock and
+`PreparedCImport` identity. Its proposed runtime-binding record contains:
 
 - The source profile: C11, x86-64 Linux user space, LP64, unsigned plain char,
   selected GCC/glibc environment, and exact compilation flags.
@@ -318,20 +345,21 @@ contains:
 - Observed size/alignment of handles and pointers and canonical callback ABI.
   Source locations support diagnostics; they are not sufficient authenticity.
 
-Recognize a call only after validating this record against its prepared import
-and resolved declaration. A local definition, shadowed name, different type,
-unsupported attribute value, kernel target, changed header, or stale profile
-must refuse the concurrency binding. Same-name redeclarations must resolve
-to that same checked external entity; an overriding definition must refuse.
+Recognize a native call only after validating this record against its prepared
+import and resolved declaration. A local definition, shadowed name, different
+type, unsupported attribute value, kernel target, changed header, or stale
+profile must refuse the concurrency binding. Same-name redeclarations must
+resolve to that same checked external entity; an overriding definition must refuse.
 
-Use the normal compiler import as the preferred route. Before implementing
-call semantics, demonstrate that it can load the unchanged probe with the
-selected real headers. If unsupported header constructs prevent that, report
-the exact import gap. Do not silently strip declarations or call the modeled
-header a glibc lock. A typed, checked declaration projection would require a
-separate concrete importer design and preservation tests; it is not assumed
-available by this proposal. Until this prerequisite is met, internal binding
-tests may use explicit test fixtures but no production concurrency claim.
+Full compiler import is one route to a native binding. If unrelated system
+header constructs prevent that route, a typed, checked projection of the
+actual selected declarations is acceptable with a concrete importer design,
+source/type preservation tests, and the same profile invalidation. Do not
+silently strip declarations or call the modeled header a glibc lock. Neither
+route is a prerequisite for modeled-runtime client verification on macOS;
+neither platform receives a native concurrency claim before its binding is
+validated. A macOS claim additionally needs a Darwin target and a checked
+binding to its actual SDK declarations and ABI.
 
 The complete binding digest must participate in certificate and cache identity,
 along with the concurrency semantics version. Reuse the existing invalidation
@@ -386,18 +414,23 @@ promise a result without terminating worker evidence remain insufficient.
 
 Implement in these independently checkable increments:
 
-1. **Runtime import identity:** user-space compiler lock, declaration binding,
-   profile invalidation, and hostile lookalike/mismatch tests. Resolve any real
-   header import gap before enabling production rules.
+1. **Modeled runtime identity on macOS:** explicit selection of the exact
+   built-in declarations and trusted two-call specification, distinct artifact
+   identity and visible assumption, and hostile lookalike/mismatch tests.
 2. **One create/join through actual C:** guarded state and handle binding,
    success/failure and delayed-test companions, using the existing thread
    engine. Check copies, stale/foreign handles, wrong worker evidence, withheld
    postconditions, overlapping slots, parent access, and local lifetime exits.
-   Include forged retained events and deterministic scaling regressions.
-3. **Frozen parent proof:** all three results, ordinary proof tools, original
-   source bytes. Shared-reader splitting remains the separate next chunk;
+   Include forged retained events and deterministic scaling regressions. Run
+   these source-level regressions under the explicit modeled assumption on macOS.
+3. **Frozen parent client proof:** all three results, ordinary proof tools,
+   original source bytes. Shared-reader splitting remains the separate next
+   chunk;
    mutexes, atomics, and exclusive transfer of implicit stack storage are not
    prerequisites for this binding.
+4. **Native runtime validation:** check the exact selected Linux declaration,
+   ABI, and specification binding through full import or a checked projection.
+   Add a separate Darwin target and binding for any native macOS claim.
 
 Each code increment needs focused hostile and positive tests, ordinary
 verification before expansion/profile, and an exit-zero `scripts/check.sh`.
@@ -415,9 +448,10 @@ and inventoried. `tests/compiler_import.rs` exercises these boundaries.
 The unchanged `fork_join.c` is prepared through real host GCC/glibc headers;
 its bounded regression records the next parser refusal. The
 [probe record](README.md#compiler-import-checkpoint) lists the successive
-header constructs now supported. Continue with incomplete struct declarations
-and later observed gaps, then establish the runtime declaration/specification
-identity described above. Do not strip headers or reshape the frozen C.
+header constructs now supported. Continue that Linux import investigation
+when pursuing native validation. The immediate modeled-binding work uses the
+same frozen C with Click's exact built-in declaration projection and explicit
+runtime assumption. Do not strip native headers or reshape the frozen C.
 
 The host regression uses Ubuntu GCC 13.3.0/glibc 2.39. The selected Debian GCC
 12.2.0/glibc 2.36 environment still needs validation. Import progress is not a

@@ -63,27 +63,41 @@ The regression names and original header shapes are in the probe record.
 `mdtests/const_pointer_fields.md` checks assignment, copies, and mutable-alias
 updates; the C unit tests also expand and reverify the new proofs.
 
-### Immediate next slice: incomplete struct declarations
+### Immediate next slice: portable modeled pthread binding identity
 
-`tests/compiler_import.rs::userspace_frozen_pthread_probe_records_real_header_boundary`
-prepares and reloads the unchanged `fork_join.c` with real host GCC/glibc
-headers. Preparation and lock loading succeed; parsing currently stops at
-`/usr/include/time.h:49`, `struct sigevent;`, with
-``unknown struct declaration `sigevent` ``.
+Make the two-call `pthread_create`/`pthread_join` binding selectable for
+conditional client verification with Click's existing modeled `<pthread.h>`.
+This work must run on macOS without GCC or glibc. Keep the frozen
+`design/concurrency-probes/fork_join.c` byte for byte; its existing source
+expansion and sequential worker proof are the starting fixtures.
 
-Add ordinary incomplete struct-tag declarations and their pointer uses,
-retaining tag identity when a later definition completes the type. Do not
-invent a layout or permit operations requiring a complete type (object
-storage, member access, or `sizeof`) before completion. Cover a bare forward
-declaration, pointer declarations before a definition, later completion, and
-invalid incomplete-type operations. Keep the frozen C and opened headers
-unchanged. Advance the bounded real-header regression and probe record to the
-next actual refusal; do not assume this is the final glibc parsing gap.
+First, define an explicit modeled-runtime selection and a checked binding
+record for the exact built-in header, resolved external declarations and
+canonical types, x86-64 Linux user-space target, trusted create/join
+specification version and digest, and the initial null-argument restrictions.
+The selector must not infer authority from a target name, an arbitrary
+same-named declaration, or an ordinary external contract. Record the modeled
+runtime assumption in verification, certificates, caches, profile, and audit;
+the result is a conditional client proof, not a claim about a native pthread
+library. Reject local definitions, shadowing, incompatible redeclarations,
+changed model headers, stale artifacts, and the kernel target.
 
-The observed host is Ubuntu GCC 13.3.0/glibc 2.39. It is **not** validation of
-the selected Debian Bookworm GCC 12.2.0/glibc 2.36 runtime profile. That selected
-environment still needs its own locked import and validation before the
-runtime binding is claimed.
+Exercise this record in Mac-runnable focused tests through the unchanged C
+call shapes and ordinary worker contracts. A successful identity check must
+select exactly the intended call for the checked create/join transition;
+hostile identities must refuse before thread authority changes. The following
+slice wires guarded outcomes and completion to the actual C steps. Use
+`scripts/check.sh` as the gate. This portable binding must not become a
+proof-only spawn or sequential execution of the worker in the parent.
+
+Real-header import remains an independent production-binding task. The bounded
+Linux regression still stops at `/usr/include/time.h:49`, `struct sigevent;`,
+with ``unknown struct declaration `sigevent` ``. Keep that regression and the
+opened headers unchanged. A later Linux binding may finish full header import
+or use a separately designed, checked declaration projection; either route
+must establish exact declaration, ABI, and runtime identity before making a
+Linux runtime claim. The observed Ubuntu GCC 13.3.0/glibc 2.39 is not the
+selected Debian Bookworm GCC 12.2.0/glibc 2.36 profile.
 
 ### Important implementation notes
 
@@ -111,11 +125,13 @@ runtime binding is claimed.
   demo uses external output ownership and shared local job views, so it does
   not require general exclusive transfer of implicit local storage.
 
-Remaining sequence: finish real-header import and declaration-specific runtime
-identity (Chunk A), bind real C create/join and guarded completion evidence
-(Chunk B), verify the frozen parent, and add shared-reader splitting and its
-companion (Chunks C/D). Then implement the separate mutex and release/acquire
-programs. None of those production concurrency steps landed in this session.
+Remaining sequence: establish the portable modeled binding identity (Chunk A),
+bind actual C create/join steps and guarded completion evidence under that
+explicit assumption (Chunk B), and verify the frozen parent with shared-reader
+splitting and its companion (Chunks C/D). Then validate a native runtime
+binding for each claimed platform and implement the separate mutex and
+release/acquire programs. None of those production concurrency steps landed in
+this session.
 
 ## Current checkpoint and scope
 
@@ -225,6 +241,8 @@ artifact integration, the concurrent parent sidecar, and verified concurrency
 examples remain to be implemented. The numeric representation of `pthread_t`
 grants no completion authority. Do not present the internal tests, a successful
 parse, or native compiler syntax check as race-freedom evidence for the C probe.
+The next modeled-runtime path must identify its trusted assumptions in every
+client result and keep them distinct from native runtime validation.
 
 Build on the authority conservation, stable borrowing, observation support,
 and checked transitions in the [stable-views record](../docs/internals/stable-views.md).
@@ -233,11 +251,12 @@ are design evidence only; they do not implement concurrent C semantics.
 
 The user-space target is available to normal verification, and compiler imports
 now lock the actual selected driver, opened headers, flags, and ABI observations.
-Before claiming concurrent verification, finish parsing the real headers,
-validate the selected Debian runtime environment, and bind the exact pthread
-declarations and trusted runtime specification into imports, certificates,
-and caches. A generic compiler lock does not yet identify a trusted thread
-operation.
+Conditional client verification may use an explicit, exact modeled-runtime
+binding once its checked C transitions and artifact identity are implemented.
+Before claiming that a native Linux or macOS build satisfies the proof, validate
+that platform's actual declarations, ABI, and runtime specification against the
+binding. A target name, modeled header alone, or generic compiler lock does not
+identify a trusted native thread operation.
 Use a coherent C11-compatible account of ordinary accesses, data races, thread
 start/join, mutex synchronization, and release/acquire publication. Bind the
 profile and modeled API identities into imports, certificates, and caches.
@@ -322,40 +341,37 @@ insert immediate status checks, or introduce proof-only locals or helper calls.
   work has advanced it. Further authority or artifact interpretation changes
   must invalidate older artifacts.
 
-### Chunk A: settle and lock the pthread binding contract
+### Chunk A: explicit modeled pthread binding identity
 
-**Design settled; import foundation delivered; runtime binding still open.**
-Follow the accepted [binding design](../design/concurrency-probes/pthread-binding-design.md).
-The candidate sidecar and direct-worker selection are already specified there.
-The remaining work is:
+The [binding design](../design/concurrency-probes/pthread-binding-design.md)
+keeps the ordinary `step`/`branch` author experience and direct-worker rule.
+This first implementation chunk runs on macOS and uses the repo-owned
+declaration projection under `x86_64-linux-userspace`:
 
-1. Resolve `struct sigevent;` and subsequent real-header gaps using the bounded
-   probe regression described above, then load the unchanged probe under the
-   selected Debian compiler/runtime profile.
-2. Extend the existing import identity with the resolved external declarations
-   for `pthread_create` and `pthread_join`, canonical callback and handle ABI,
-   and the trusted runtime specification's version/digest and restrictions.
-   Bind this record into certificates and caches. Matching names or the
-   modeled header alone grant no runtime authority. Reject lookalike user
-   definitions, shadowing, mismatched types, unsupported binding attributes,
-   changed headers, stale profiles, and the kernel target.
-3. Carry the accepted schema into the checked binding: a unique direct worker
-   rule and termination rule, guarded transfer on zero create status, a linear
-   completion identity associated with the stored handle, and a scoped valid
-   join-success assumption. Handle copies do not duplicate rights. Keep
-   null attributes and null join-result pointers as the initial restrictions.
+1. Add explicit modeled-runtime selection tied to the exact built-in
+   `<pthread.h>` provenance and digest, resolved external create/join
+   declarations and types, target/ABI, trusted specification version, and
+   null-argument restrictions. The model is a stated assumption, not an
+   inferred property of any host pthread library.
+2. Carry that identity and assumption through verification, retained
+   certificates, incremental caches, profile, and audit. A result checked
+   under the model cannot silently become a native-runtime result.
+3. Test successful resolution and hostile lookalikes on macOS: local
+   definitions, shadowing, conflicting types, incompatible redeclarations,
+   altered headers, stale artifacts, and the kernel target. Keep actual
+   worker/termination selection and thread authority behind the checked
+   transition added in Chunk B.
 
-**Acceptance:** the unchanged real-header probe loads under the selected
-profile; exact declaration/runtime identity and hostile mismatch regressions
-are checked and retained in artifacts. This completes the import/binding
-prerequisite, not the concurrent parent proof. Chunk B implements the actual
-checked transitions and ordinary C control-flow integration.
+**Acceptance:** focused Mac-runnable tests select exactly the intended modeled
+declarations and refuse hostile ones; the assumption and binding identity are
+visible and retained in artifacts; `scripts/check.sh` exits zero. This chunk
+does not claim the frozen parent or a native pthread implementation.
 
 ### Chunk B: wire actual C create/join operations and their evidence
 
-After A establishes the locked binding, route recognized C calls to the shared
-checked thread engine. The evaluator and retained certificate checker must use
-the same transition, including the handle store, return status, and memory
+After A establishes the explicit modeled binding, route recognized C calls to
+the shared checked thread engine. The evaluator and retained certificate
+checker must use the same transition, including the handle store, return status, and memory
 observations. Do not recursively execute Click or execute the worker body in the
 parent. Reuse its verified summary once per application.
 
@@ -378,8 +394,10 @@ status testing, invalid/foreign/stale handle, duplicate join, copied handle,
 wrong callback/argument/termination evidence, overlapping output/handle slots,
 parent read/write before join, premature job scope exit, and withheld child
 postconditions. Include forged evidence and cached-profile mismatch cases.
-**Acceptance:** positive and hostile tests through actual unchanged C call sites;
-verify, expand, reverify, profile, and audit agree under normal bounded tooling.
+**Acceptance:** positive and hostile tests through actual unchanged C call sites
+under the explicit modeled-runtime assumption; verify, expand, reverify,
+profile, and audit agree under normal bounded tooling on macOS. No native
+platform claim follows from this modeled result.
 
 ### Chunk C: shared-reader splitting and recombination
 
@@ -413,7 +431,21 @@ external-memory transfer path. Preserve the frozen C byte for byte. If a true
 claim cannot be expressed or proved, reduce the Click gap and fix it; do not
 specialize the C or weaken the required result. Move the source to a verifying
 example only when this proof, the shared-reader companion, and hostile C
-regressions pass. Document runtime assumptions and the exact support boundary.
+regressions pass under the explicit modeled-runtime profile. Document the
+assumption and exact support boundary; native runtime validation remains a
+separate requirement for a platform-specific claim.
+
+### Native runtime binding after the portable client proof
+
+Validate the selected Debian Bookworm GCC 12/glibc 2.36 declaration, callback
+ABI, handle representation, and trusted pthread specification against the
+modeled operation. A complete real-header import is one route; a typed,
+checked projection of the actual declarations is another if it preserves
+source and type identity without accepting lookalike functions. Keep the
+bounded Linux real-header regression and fix its `struct sigevent;` gap when
+pursuing the full-import route. A future macOS binding needs its own Darwin
+target, SDK declaration/ABI validation, and separate artifact identity; this
+x86-64 Linux model does not certify a native Mac binary.
 
 ### Separate extension: exclusive implicit-storage authority
 

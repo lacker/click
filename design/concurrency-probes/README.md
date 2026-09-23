@@ -9,12 +9,14 @@ make the normal example gate fail. The source-integrity test in
 `tests/examples.rs` pins its exact bytes. Later example work must use those
 bytes, not reshape the C to expose a friendlier proof state.
 
-## Binding proposal for review
+## Binding direction
 
-The [pthread binding design](pthread-binding-design.md) proposes how ordinary
+The [pthread binding design](pthread-binding-design.md) describes how ordinary
 C create/join calls use the existing worker contracts, `step`, and `branch`.
-It covers delayed status tests, completion authority, and the required locked
-runtime identity. It is a design proposal, not implemented support.
+The immediate implementation slice establishes an explicit modeled-runtime
+identity that can be tested on macOS; checked C transitions and native runtime
+bindings follow. The design covers delayed status tests and completion
+authority. None of those C call rules is implemented yet.
 
 ## Selected profile
 
@@ -112,9 +114,10 @@ does not freeze memory reachable through mutable aliases.
 
 The unchanged probe next stops in `time.h` at `struct sigevent;` with
 ``unknown struct declaration `sigevent` ``. Incomplete struct forward declarations
-are the next import step.
-Declaration-specific runtime identity and checked create/join call binding
-remain subsequent work.
+are the next full-import step when pursuing a native Linux binding. The
+immediate portable slice will use the modeled header with an explicit runtime
+assumption and does not depend on parsing glibc headers. Checked create/join
+call binding remains subsequent work.
 
 The compiler-backed regression uses the host GCC/header installation and locks
 those actual inputs. This run does not establish the selected Debian GCC
