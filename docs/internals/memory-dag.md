@@ -29,6 +29,24 @@ Equality rejects on the snapshot's O(1) content hash, accepts maps that share
 a root, and otherwise compares elementwise, charging each compared entry to
 the deterministic work counters. Ordering stays lexicographic over entries.
 
+A rule applied at one address visits only the entries that can alias it.
+Every snapshot collection is keyed by a `Pointer` (or a key that orders by
+one), `Pointer` orders by block first, and `PointerBlock` orders by variant,
+so one block's entries are one key range, the `Symbolic` blocks are one range
+and the `Heap` and `Temporary` blocks come last. `PointerBlock::proven_distinct`
+separates a `Heap` or `Temporary` block from every other block except a
+`Symbolic` one, so an access into an allocation can alias only its own block
+and the symbolic range; any other access can alias at most the non-heap prefix
+of storage the program declares. `AliasCandidates`
+(`src/kernel/primitives/alias_candidates.rs`) names those key ranges, and the
+store, call havoc and its checker, free, contract retirement, heap-status
+queries, the load path and the load-observability comparisons all visit only
+them. An entry outside the ranges is in a block proven distinct from the
+access, so each of those rules already kept it (or answered `false` for it)
+on the first rung of its ladder, and restricting the visit changes no answer.
+Loop havoc and the interface join stay whole-memory: their write set is every
+reachable cell.
+
 Interning looks up the caller's storage roots first, then the content. A
 structural hit registers the caller's roots too, and the arena pins them so
 the addresses cannot be reused by other content; asking again for the same

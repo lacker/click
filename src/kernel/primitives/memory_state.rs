@@ -1334,6 +1334,14 @@ impl CBlock {
     }
 }
 
+/// The cells [`call_havoc_keeps_cell`] can drop: those in a block not
+/// proven distinct from some mutable range's base. Every other cell is kept
+/// by the first rung of `range_proven_disjoint_from_pointer`, so the producer
+/// and the checker both visit these alone.
+fn call_havoc_candidates(mutable_ranges: &[CMemoryRange]) -> AliasCandidates {
+    AliasCandidates::of_blocks(mutable_ranges.iter().map(|range| &range.base().block))
+}
+
 /// Whether a call havoc keeps the cell at this address: the one rule, asked
 /// by the producer that applies it and by the checker that re-derives what the
 /// producer would have written.
@@ -1341,7 +1349,8 @@ impl CBlock {
 /// This is the *eager* half of a call's write set, and it is deliberately not
 /// the resource tracker's `CallHavoc` arm: that arm is re-derived per query
 /// against the querying context and may look through composite definitions,
-/// while this one runs once, over every cell, in the producing context. The
+/// while this one runs once, over every cell that may alias the write set
+/// ([`call_havoc_candidates`]), in the producing context. The
 /// two are compared in `docs/internals/resource-tracker.md`.
 ///
 /// The `local:` disjunct is the `local_versus_argument` arm of
@@ -1559,9 +1568,12 @@ impl CMemory {
         let mut memory = self.clone();
         let base = intern_c_memory_ref(&memory);
         std::sync::Arc::make_mut(&mut memory.blocks).remove(block);
-        std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| &pointer.block != block);
-        std::sync::Arc::make_mut(&mut memory.union_cells)
-            .retain(|(pointer, _), _| &pointer.block != block);
+        // Only the retired block's own cells go: one key range each.
+        let own = AliasCandidates::only_block(block);
+        own.retain_map(std::sync::Arc::make_mut(&mut memory.cells), |_, _| false);
+        own.retain_map(std::sync::Arc::make_mut(&mut memory.union_cells), |_, _| {
+            false
+        });
         std::sync::Arc::make_mut(&mut memory.forgotten)
             .ended_local_blocks
             .insert(block.clone());
@@ -1595,17 +1607,19 @@ impl CMemory {
         if self.heap.deallocated_allocations.contains_key(pointer) {
             return Err(CInvalidFree::DoubleFree);
         }
+        // Every heap entry and cell this free can retire is in a block not
+        // proven distinct from the freed pointer's: `heap_allocation_may_
+        // contain_pointer` answers `false` for every other block, and the
+        // aliased spellings above are not proven distinct by construction.
+        let candidates = AliasCandidates::of_block(&pointer.block);
         let Some(bytes) = std::sync::Arc::make_mut(&mut self.heap)
             .live_allocations
             .remove(pointer)
         else {
             return Err(
-                if self
-                    .heap
-                    .live_allocations
-                    .keys()
-                    .any(|base| heap_allocation_may_contain_pointer(base, pointer, assumptions))
-                {
+                if candidates.any_entry(&self.heap.live_allocations, |base, _| {
+                    heap_allocation_may_contain_pointer(base, pointer, assumptions)
+                }) {
                     CInvalidFree::InteriorPointer
                 } else {
                     CInvalidFree::NonHeapPointer
@@ -1633,68 +1647,18 @@ impl CMemory {
         };
         let heap = std::sync::Arc::make_mut(&mut self.heap);
         let freed_within = |base: &Pointer| retired_key(base);
-        {
-            let after_live = heap
-                .live_allocations
-                .iter()
-                .filter(|(base, _)| !freed_within(base))
-                .map(|(base, bytes)| (base.clone(), bytes.clone()))
-                .collect::<Vec<_>>();
-            heap.live_allocations.clear();
-            for (base, bytes) in after_live {
-                heap.live_allocations.insert(base, bytes);
-            }
-        }
-        {
-            let after_uninitialized = heap
-                .uninitialized_allocations
-                .iter()
-                .filter(|base| !freed_within(base))
-                .cloned()
-                .collect::<Vec<_>>();
-            heap.uninitialized_allocations.clear();
-            for base in after_uninitialized {
-                heap.uninitialized_allocations.insert(base);
-            }
-        }
-        {
-            let after_zeroed = heap
-                .zeroed_allocations
-                .iter()
-                .filter(|base| !freed_within(base))
-                .cloned()
-                .collect::<Vec<_>>();
-            heap.zeroed_allocations.clear();
-            for base in after_zeroed {
-                heap.zeroed_allocations.insert(base);
-            }
-        }
-        {
-            let after_prefix = heap
-                .zeroed_prefix_allocations
-                .iter()
-                .filter(|(base, _)| !freed_within(base))
-                .map(|(base, prefix)| (base.clone(), prefix.clone()))
-                .collect::<Vec<_>>();
-            heap.zeroed_prefix_allocations.clear();
-            for (base, prefix) in after_prefix {
-                heap.zeroed_prefix_allocations.insert(base, prefix);
-            }
-        }
-        {
-            let after_initialized = heap
-                .initialized_cells
-                .iter()
-                .filter(|(cell, _)| !freed_within(cell))
-                .map(|(cell, width)| (cell.clone(), *width))
-                .collect::<Vec<_>>();
-            heap.initialized_cells.clear();
-            for (cell, width) in after_initialized {
-                heap.initialized_cells.insert(cell, width);
-            }
-        }
-        std::sync::Arc::make_mut(&mut self.cells)
-            .retain(|cell, _| !aliased_blocks.contains(&cell.block) && !freed_within(cell));
+        candidates.retain_map(&mut heap.live_allocations, |base, _| !freed_within(base));
+        candidates.retain_set(&mut heap.uninitialized_allocations, |base| {
+            !freed_within(base)
+        });
+        candidates.retain_set(&mut heap.zeroed_allocations, |base| !freed_within(base));
+        candidates.retain_map(&mut heap.zeroed_prefix_allocations, |base, _| {
+            !freed_within(base)
+        });
+        candidates.retain_map(&mut heap.initialized_cells, |cell, _| !freed_within(cell));
+        candidates.retain_map(std::sync::Arc::make_mut(&mut self.cells), |cell, _| {
+            !aliased_blocks.contains(&cell.block) && !freed_within(cell)
+        });
         if let Some(base) = base {
             record_c_memory_derivation(
                 &self,
@@ -1720,10 +1684,13 @@ impl CMemory {
         pointer: &Pointer,
         assumptions: &PureFactContext,
     ) -> bool {
-        self.heap
-            .live_allocations
-            .keys()
-            .any(|base| heap_allocation_may_contain_pointer(base, pointer, assumptions))
+        // An allocation based in a block proven distinct from the pointer's
+        // never contains it, so only the candidate entries are asked.
+        self.heap.live_allocations.contains_key(pointer)
+            || AliasCandidates::of_block(&pointer.block)
+                .any_entry(&self.heap.live_allocations, |base, _| {
+                    heap_allocation_may_contain_pointer(base, pointer, assumptions)
+                })
     }
 
     pub(in crate::kernel) fn heap_live_allocation_bases(&self) -> impl Iterator<Item = &Pointer> {
@@ -1736,27 +1703,22 @@ impl CMemory {
         byte_width: u32,
         assumptions: &PureFactContext,
     ) -> bool {
-        self.heap
-            .uninitialized_allocations
-            .iter()
-            .any(|base| heap_allocation_may_contain_pointer(base, pointer, assumptions))
-            || self
-                .heap
-                .zeroed_prefix_allocations
-                .iter()
-                .any(|(base, prefix)| {
-                    let Some(offset) = pointer.offset.as_const() else {
-                        return false;
-                    };
-                    let Ok(offset) = u32::try_from(offset) else {
-                        return false;
-                    };
-                    let Some(end) = offset.checked_add(byte_width) else {
-                        return false;
-                    };
-                    heap_allocation_may_contain_pointer(base, pointer, assumptions)
-                        && prefix.as_const().is_some_and(|prefix| end > prefix)
-                })
+        let candidates = AliasCandidates::of_block(&pointer.block);
+        candidates.any_element(&self.heap.uninitialized_allocations, |base| {
+            heap_allocation_may_contain_pointer(base, pointer, assumptions)
+        }) || candidates.any_entry(&self.heap.zeroed_prefix_allocations, |base, prefix| {
+            let Some(offset) = pointer.offset.as_const() else {
+                return false;
+            };
+            let Ok(offset) = u32::try_from(offset) else {
+                return false;
+            };
+            let Some(end) = offset.checked_add(byte_width) else {
+                return false;
+            };
+            heap_allocation_may_contain_pointer(base, pointer, assumptions)
+                && prefix.as_const().is_some_and(|prefix| end > prefix)
+        })
     }
 
     /// Drops the zeroed reading of any allocation a write set can reach.
@@ -1779,10 +1741,22 @@ impl CMemory {
                 .iter()
                 .any(|range| heap_allocation_may_contain_pointer(base, range.base(), assumptions))
         };
+        // An allocation based in a block proven distinct from every range
+        // base contains none of them.
+        let candidates =
+            AliasCandidates::of_blocks(mutable_ranges.iter().map(|range| &range.base().block));
+        if !candidates.any_element(&self.heap.zeroed_allocations, |base| written(base))
+            && !candidates.any_entry(&self.heap.zeroed_prefix_allocations, |base, _| {
+                written(base)
+            })
+        {
+            return;
+        }
         let heap = std::sync::Arc::make_mut(&mut self.heap);
-        heap.zeroed_allocations.retain(|base| !written(base));
-        heap.zeroed_prefix_allocations
-            .retain(|base, _| !written(base));
+        candidates.retain_set(&mut heap.zeroed_allocations, |base| !written(base));
+        candidates.retain_map(&mut heap.zeroed_prefix_allocations, |base, _| {
+            !written(base)
+        });
     }
 
     pub(in crate::kernel) fn is_zeroed_heap_address(
@@ -1791,27 +1765,22 @@ impl CMemory {
         byte_width: u32,
         assumptions: &PureFactContext,
     ) -> bool {
-        self.heap
-            .zeroed_allocations
-            .iter()
-            .any(|base| heap_allocation_may_contain_pointer(base, pointer, assumptions))
-            || self
-                .heap
-                .zeroed_prefix_allocations
-                .iter()
-                .any(|(base, prefix)| {
-                    let Some(offset) = pointer.offset.as_const() else {
-                        return false;
-                    };
-                    let Ok(offset) = u32::try_from(offset) else {
-                        return false;
-                    };
-                    let Some(end) = offset.checked_add(byte_width) else {
-                        return false;
-                    };
-                    heap_allocation_may_contain_pointer(base, pointer, assumptions)
-                        && prefix.as_const().is_some_and(|prefix| end <= prefix)
-                })
+        let candidates = AliasCandidates::of_block(&pointer.block);
+        candidates.any_element(&self.heap.zeroed_allocations, |base| {
+            heap_allocation_may_contain_pointer(base, pointer, assumptions)
+        }) || candidates.any_entry(&self.heap.zeroed_prefix_allocations, |base, prefix| {
+            let Some(offset) = pointer.offset.as_const() else {
+                return false;
+            };
+            let Ok(offset) = u32::try_from(offset) else {
+                return false;
+            };
+            let Some(end) = offset.checked_add(byte_width) else {
+                return false;
+            };
+            heap_allocation_may_contain_pointer(base, pointer, assumptions)
+                && prefix.as_const().is_some_and(|prefix| end <= prefix)
+        })
     }
 
     pub(in crate::kernel) fn is_deallocated_heap_address(
@@ -1819,10 +1788,10 @@ impl CMemory {
         pointer: &Pointer,
         assumptions: &PureFactContext,
     ) -> bool {
-        self.heap
-            .deallocated_allocations
-            .keys()
-            .any(|base| heap_allocation_may_contain_pointer(base, pointer, assumptions))
+        AliasCandidates::of_block(&pointer.block)
+            .any_entry(&self.heap.deallocated_allocations, |base, _| {
+                heap_allocation_may_contain_pointer(base, pointer, assumptions)
+            })
     }
 
     /// Registers the exact base named by an allocation contract. Unlike a
@@ -1887,20 +1856,32 @@ impl CMemory {
             retired_blocks.contains(&candidate.block) || retired_claim(candidate)
         };
 
+        // Neither predicate holds in a block proven distinct from the base's,
+        // and the retired alias blocks are not proven distinct from it.
+        let candidates = AliasCandidates::of_block(&base.block);
         let heap = std::sync::Arc::make_mut(&mut self.heap);
-        heap.live_allocations
-            .retain(|candidate, _| !retired_claim(candidate));
-        heap.uninitialized_allocations
-            .retain(|candidate| !retired_claim(candidate));
-        heap.zeroed_allocations
-            .retain(|candidate| !retired_claim(candidate));
-        heap.zeroed_prefix_allocations
-            .retain(|candidate, _| !retired_claim(candidate));
-        heap.initialized_cells
-            .retain(|candidate, _| !retired_cell(candidate));
-        std::sync::Arc::make_mut(&mut self.cells).retain(|candidate, _| !retired_cell(candidate));
-        std::sync::Arc::make_mut(&mut self.union_cells)
-            .retain(|(candidate, _), _| !retired_cell(candidate));
+        candidates.retain_map(&mut heap.live_allocations, |candidate, _| {
+            !retired_claim(candidate)
+        });
+        candidates.retain_set(&mut heap.uninitialized_allocations, |candidate| {
+            !retired_claim(candidate)
+        });
+        candidates.retain_set(&mut heap.zeroed_allocations, |candidate| {
+            !retired_claim(candidate)
+        });
+        candidates.retain_map(&mut heap.zeroed_prefix_allocations, |candidate, _| {
+            !retired_claim(candidate)
+        });
+        candidates.retain_map(&mut heap.initialized_cells, |candidate, _| {
+            !retired_cell(candidate)
+        });
+        candidates.retain_map(std::sync::Arc::make_mut(&mut self.cells), |candidate, _| {
+            !retired_cell(candidate)
+        });
+        candidates.retain_map(
+            std::sync::Arc::make_mut(&mut self.union_cells),
+            |(candidate, _), _| !retired_cell(candidate),
+        );
         for block in &retired_blocks {
             if *block != PointerBlock::ExternalArgument {
                 std::sync::Arc::make_mut(&mut self.blocks).remove(block);
@@ -2108,6 +2089,11 @@ impl CMemory {
         // retained on the derivation edge for disjoint-load transport; the
         // marker block still distinguishes this havoc from ordinary memory.
         let base = Some(intern_c_memory_ref(&self));
+        // Whole-map by design, unlike the per-access rules that visit only
+        // `AliasCandidates`: the body may write through any pointer it can
+        // reach, so every cell is a candidate. The work is the cells dropped
+        // plus the ones something else keeps (declared locals and
+        // loan-protected bytes), charged by `retain`.
         let union_widths = union_overlay_widths(&self);
         std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, value| {
             loan_preserving_havoc_keeps_cell(
@@ -2298,6 +2284,9 @@ impl CMemory {
             return Err("interface arms disagree on zeroed pending heap allocations".to_string());
         }
 
+        // Whole-memory by design: a join merges every sibling's blocks and
+        // heap collections above, and forgets every cell nothing preserves,
+        // exactly as the loop havoc does.
         let union_widths = union_overlay_widths(&self);
         std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, value| {
             loan_preserving_havoc_keeps_cell(
@@ -2332,8 +2321,10 @@ impl CMemory {
         assumptions: &PureFactContext,
     ) -> Self {
         let base = Some(intern_c_memory_ref(&self));
-        std::sync::Arc::make_mut(&mut self.cells)
-            .retain(|pointer, _| call_havoc_keeps_cell(pointer, mutable_ranges, assumptions));
+        call_havoc_candidates(mutable_ranges)
+            .retain_map(std::sync::Arc::make_mut(&mut self.cells), |pointer, _| {
+                call_havoc_keeps_cell(pointer, mutable_ranges, assumptions)
+            });
         self.forget_zeroed_allocations_written_by(mutable_ranges, assumptions);
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("call-havoc:{}", variable.0).into(),
@@ -2375,18 +2366,19 @@ impl CMemory {
         if self.heap != before.heap || self.blocks.len() != before.blocks.len() + 2 {
             return false;
         }
-        if !before
-            .blocks
-            .iter()
-            .all(|(block, value)| self.blocks.get(block) == Some(value))
-        {
-            return false;
+        // `self.blocks` must be `before.blocks` plus exactly two new blocks.
+        // The maps share every unchanged subtree, so the diff walks only the
+        // two inserted paths.
+        let mut added_blocks = Vec::new();
+        for change in before.blocks.diff(&self.blocks) {
+            let SnapshotMapChange::Added(block) = change else {
+                return false;
+            };
+            let Some(contents) = self.blocks.get(block) else {
+                return false;
+            };
+            added_blocks.push((block, contents));
         }
-        let added_blocks = self
-            .blocks
-            .iter()
-            .filter(|(block, _)| !before.blocks.contains_key(*block))
-            .collect::<Vec<_>>();
         let Some((marker, marker_block)) = added_blocks
             .iter()
             .find(|(block, _)| block.starts_with("call-havoc:"))
@@ -2411,13 +2403,31 @@ impl CMemory {
             return false;
         }
 
-        let mut expected_cells = before.cells.as_ref().clone();
-        expected_cells
-            .retain(|pointer, _| call_havoc_keeps_cell(pointer, mutable_ranges, assumptions));
-        let mut expected_union_cells = before.union_cells.as_ref().clone();
-        expected_union_cells
-            .retain(|(pointer, _), _| call_havoc_keeps_cell(pointer, mutable_ranges, assumptions));
-        self.cells.as_ref() == &expected_cells && self.union_cells.as_ref() == &expected_union_cells
+        // The producer's rule, over the same candidates: every cell outside
+        // them is kept by `call_havoc_keeps_cell`, so the expected result is
+        // `before` without the candidates the rule drops, and the comparison
+        // walks only the paths the two snapshots do not share.
+        let candidates = call_havoc_candidates(mutable_ranges);
+        let mut visited = 0usize;
+        let dropped_cells = candidates
+            .entries(&before.cells)
+            .inspect(|_| visited += 1)
+            .filter(|(pointer, _)| !call_havoc_keeps_cell(pointer, mutable_ranges, assumptions))
+            .map(|(pointer, _)| pointer)
+            .collect::<Vec<_>>();
+        let dropped_union_cells = candidates
+            .entries(&before.union_cells)
+            .inspect(|_| visited += 1)
+            .filter(|((pointer, _), _)| {
+                !call_havoc_keeps_cell(pointer, mutable_ranges, assumptions)
+            })
+            .map(|(key, _)| key)
+            .collect::<Vec<_>>();
+        crate::instrumentation::record_deterministic_work(visited);
+        self.cells.is_without(&before.cells, &dropped_cells)
+            && self
+                .union_cells
+                .is_without(&before.union_cells, &dropped_union_cells)
     }
 
     pub fn store(self, pointer: Pointer, value: CValue) -> Self {
@@ -2486,8 +2496,7 @@ impl CMemory {
         // Skipped when empty so an ordinary store neither visits nor
         // reallocates the shared overlay map.
         if !self.union_cells.is_empty() {
-            std::sync::Arc::make_mut(&mut self.union_cells)
-                .retain(|(cell_pointer, _), _| cell_pointer != &pointer);
+            self.remove_union_views_at(&pointer);
         }
         record_c_memory_derivation(
             &self,
@@ -2507,27 +2516,22 @@ impl CMemory {
         }
     }
 
+    /// The pointers at which the two snapshots' cells or typed union views
+    /// differ, ascending. A pointer differs exactly when some entry keyed by
+    /// it is in one map's diff, so this walks only the paths the snapshots
+    /// do not share.
     pub fn differing_cell_pointers(&self, other: &Self) -> Vec<Pointer> {
-        let mut pointers = self.cells.keys().cloned().collect::<BTreeSet<_>>();
-        pointers.extend(other.cells.keys().cloned());
-        pointers.extend(self.union_cells.keys().map(|(pointer, _)| pointer.clone()));
-        pointers.extend(other.union_cells.keys().map(|(pointer, _)| pointer.clone()));
-        pointers
-            .into_iter()
-            .filter(|pointer| {
-                self.cells.get(pointer) != other.cells.get(pointer)
-                    || self
-                        .union_cells
-                        .iter()
-                        .filter(|((cell_pointer, _), _)| cell_pointer == pointer)
-                        .collect::<BTreeMap<_, _>>()
-                        != other
-                            .union_cells
-                            .iter()
-                            .filter(|((cell_pointer, _), _)| cell_pointer == pointer)
-                            .collect::<BTreeMap<_, _>>()
-            })
-            .collect()
+        let mut pointers = self
+            .cells
+            .diff(&other.cells)
+            .map(|change| change.key().clone())
+            .collect::<BTreeSet<_>>();
+        pointers.extend(
+            self.union_cells
+                .diff(&other.union_cells)
+                .map(|change| change.key().0.clone()),
+        );
+        pointers.into_iter().collect()
     }
 
     pub(in crate::kernel) fn known_value(&self, pointer: &Pointer) -> Option<CValue> {
@@ -2535,11 +2539,33 @@ impl CMemory {
     }
 
     pub(in crate::kernel) fn has_known_cell_at(&self, pointer: &Pointer) -> bool {
-        self.cells.contains_key(pointer)
-            || self
-                .union_cells
-                .keys()
-                .any(|(cell_pointer, _)| cell_pointer == pointer)
+        self.cells.contains_key(pointer) || self.has_union_overlay_at(pointer)
+    }
+
+    /// The typed union views recorded at exactly `pointer`: one key range,
+    /// since `(Pointer, CType)` keys order by pointer first.
+    fn union_views_at<'a>(
+        &'a self,
+        pointer: &'a Pointer,
+    ) -> impl Iterator<Item = (&'a (Pointer, CType), &'a CValue)> + 'a {
+        self.union_cells
+            .range::<_, (Pointer, CType)>((pointer.clone(), CType::Void)..)
+            .take_while(move |((cell_pointer, _), _)| cell_pointer == pointer)
+    }
+
+    /// Drops every typed union view at exactly `pointer`.
+    fn remove_union_views_at(&mut self, pointer: &Pointer) {
+        let views = self
+            .union_views_at(pointer)
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        if views.is_empty() {
+            return;
+        }
+        let union_cells = std::sync::Arc::make_mut(&mut self.union_cells);
+        for view in views {
+            union_cells.remove(&view);
+        }
     }
 
     /// Whether a typed scalar at this exact heap address was initialized
@@ -2565,9 +2591,7 @@ impl CMemory {
     /// asked anyway where the consequence of the two ever coexisting would be
     /// a wrong value rather than a lost one.
     pub(in crate::kernel) fn has_union_overlay_at(&self, pointer: &Pointer) -> bool {
-        self.union_cells
-            .keys()
-            .any(|(cell_pointer, _)| cell_pointer == pointer)
+        self.union_views_at(pointer).next().is_some()
     }
 
     pub(in crate::kernel) fn known_union_value(
@@ -2663,12 +2687,19 @@ impl CMemory {
                     .as_const()
                     .is_some_and(|offset| offset >= field_start && offset < field_end)
         };
-        std::sync::Arc::make_mut(&mut memory.cells).retain(|pointer, _| !overlaps(pointer));
-        std::sync::Arc::make_mut(&mut memory.union_cells)
-            .retain(|(pointer, _), _| !overlaps(pointer));
-        std::sync::Arc::make_mut(&mut memory.heap)
-            .initialized_cells
-            .retain(|pointer, _| !overlaps(pointer));
+        // `overlaps` holds only in the base's own block.
+        let own = AliasCandidates::only_block(&base.block);
+        own.retain_map(std::sync::Arc::make_mut(&mut memory.cells), |pointer, _| {
+            !overlaps(pointer)
+        });
+        own.retain_map(
+            std::sync::Arc::make_mut(&mut memory.union_cells),
+            |(pointer, _), _| !overlaps(pointer),
+        );
+        own.retain_map(
+            &mut std::sync::Arc::make_mut(&mut memory.heap).initialized_cells,
+            |pointer, _| !overlaps(pointer),
+        );
         // Nothing restores these cells — the copy could not carry the field —
         // so the result knows strictly less than its source and must not be
         // able to re-intern as a state that never knew it. See
@@ -2684,8 +2715,7 @@ impl CMemory {
     pub(in crate::kernel) fn without_cell(&self, pointer: &Pointer) -> Self {
         let mut memory = self.clone();
         std::sync::Arc::make_mut(&mut memory.cells).remove(pointer);
-        std::sync::Arc::make_mut(&mut memory.union_cells)
-            .retain(|(cell_pointer, _), _| cell_pointer != pointer);
+        memory.remove_union_views_at(pointer);
         std::sync::Arc::make_mut(&mut memory.heap)
             .initialized_cells
             .remove(pointer);
@@ -2747,7 +2777,12 @@ impl CMemory {
         // state it describes. A possibly aliasing cell is knowledge the
         // result no longer has, and that is what has to show in the content.
         let mut forgot_live_knowledge = false;
-        std::sync::Arc::make_mut(&mut memory.cells).retain(|cell_pointer, cell_value| {
+        // Every cell in a block proven distinct from the written one is kept
+        // by each ladder below (its bytes are `Separate` and its address is
+        // proven distinct on the first rung), so only the candidates are
+        // asked.
+        let candidates = AliasCandidates::of_block(&normalized_pointer.block);
+        candidates.retain_map(std::sync::Arc::make_mut(&mut memory.cells), |cell_pointer, cell_value| {
             let normalized_cell_pointer = Pointer {
                 block: cell_pointer.block.clone(),
                 offset: normalize_exact_memory_loads_in_pointer_offset(
@@ -2814,35 +2849,37 @@ impl CMemory {
             forgot_live_knowledge |= !kept;
             kept
         });
-        std::sync::Arc::make_mut(&mut memory.union_cells).retain(|(cell_pointer, cell_type), _| {
-            let normalized_cell_pointer = Pointer {
-                block: cell_pointer.block.clone(),
-                offset: normalize_exact_memory_loads_in_pointer_offset(
-                    &cell_pointer.offset,
-                    assumptions,
-                ),
-            };
-            if normalized_cell_pointer.block == normalized_pointer.block
-                && written.as_ref().is_some_and(|written| {
-                    written.overwrites_typed(&normalized_cell_pointer, *cell_type)
-                })
-            {
-                forgot_live_knowledge |= !written.as_ref().is_some_and(|written| {
-                    written.overwrites_typed_completely(&normalized_cell_pointer, *cell_type)
-                });
-                return false;
-            }
-            // A union view has no value to read a width from, so it stands in
-            // the width of the type it is keyed by — the access it records.
-            let address_inequality_separates_bytes = crate::kernel::reasoning::access_byte_overlap(
-                &normalized_cell_pointer,
-                cell_type.byte_width().max(1),
-                &normalized_pointer,
-                bytes,
-                assumptions,
-            )
-                == crate::kernel::reasoning::AccessByteOverlap::Separate;
-            let kept = address_inequality_separates_bytes
+        candidates.retain_map(
+            std::sync::Arc::make_mut(&mut memory.union_cells),
+            |(cell_pointer, cell_type), _| {
+                let normalized_cell_pointer = Pointer {
+                    block: cell_pointer.block.clone(),
+                    offset: normalize_exact_memory_loads_in_pointer_offset(
+                        &cell_pointer.offset,
+                        assumptions,
+                    ),
+                };
+                if normalized_cell_pointer.block == normalized_pointer.block
+                    && written.as_ref().is_some_and(|written| {
+                        written.overwrites_typed(&normalized_cell_pointer, *cell_type)
+                    })
+                {
+                    forgot_live_knowledge |= !written.as_ref().is_some_and(|written| {
+                        written.overwrites_typed_completely(&normalized_cell_pointer, *cell_type)
+                    });
+                    return false;
+                }
+                // A union view has no value to read a width from, so it stands in
+                // the width of the type it is keyed by — the access it records.
+                let address_inequality_separates_bytes =
+                    crate::kernel::reasoning::access_byte_overlap(
+                        &normalized_cell_pointer,
+                        cell_type.byte_width().max(1),
+                        &normalized_pointer,
+                        bytes,
+                        assumptions,
+                    ) == crate::kernel::reasoning::AccessByteOverlap::Separate;
+                let kept = address_inequality_separates_bytes
                 && pointers_proven_distinct_for_memory_resolution(
                     &normalized_cell_pointer,
                     &normalized_pointer,
@@ -2858,12 +2895,13 @@ impl CMemory {
                     assumptions,
                 )
                 .is_some();
-            forgot_live_knowledge |= !kept;
-            kept
-        });
-        std::sync::Arc::make_mut(&mut memory.heap)
-            .initialized_cells
-            .retain(|cell_pointer, width| {
+                forgot_live_knowledge |= !kept;
+                kept
+            },
+        );
+        candidates.retain_map(
+            &mut std::sync::Arc::make_mut(&mut memory.heap).initialized_cells,
+            |cell_pointer, width| {
                 let normalized_cell_pointer = Pointer {
                     block: cell_pointer.block.clone(),
                     offset: normalize_exact_memory_loads_in_pointer_offset(
@@ -2884,7 +2922,8 @@ impl CMemory {
                         &normalized_pointer,
                         assumptions,
                     ) || normalized_cell_pointer.block != normalized_pointer.block)
-            });
+            },
+        );
         // Forgetting nothing is not a transition: the memory is the same
         // snapshot, so a later load keeps resolving through it unchanged
         // instead of stopping at an edge that records no write.

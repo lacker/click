@@ -1623,25 +1623,69 @@ pub(in crate::kernel) fn memories_match_for_pointer_load(
     // have forgotten a different value at this very pointer. There is no
     // recorded history between the snapshots handled by this matcher that
     // could recover that distinction later.
+    //
+    // Every comparison below is of the entries observable by the load, and
+    // an entry in a block proven distinct from the load's is not observable,
+    // so each side walks its candidate ranges (`AliasCandidates`) alone, in
+    // the same order on both sides.
+    let candidates = AliasCandidates::of_block(&pointer.block);
     left.forgotten.forgotten_from == right.forgotten.forgotten_from
-        && observable_blocks_match_for_load(left, right, pointer)
+        && observable_blocks_match_for_load(left, right, pointer, &candidates)
         && retirements_agree_for_load(left, right, pointer)
-        && observable_heap_metadata_matches_for_load(left, right, pointer)
-        && left
-            .cells
-            .iter()
-            .filter(|(cell_pointer, _)| cell_pointer.block.observable_by_load(&pointer.block))
-            .eq(right
-                .cells
-                .iter()
-                .filter(|(cell_pointer, _)| cell_pointer.block.observable_by_load(&pointer.block)))
-        && left
-            .union_cells
-            .iter()
-            .filter(|((cell_pointer, _), _)| cell_pointer.block.observable_by_load(&pointer.block))
-            .eq(right.union_cells.iter().filter(|((cell_pointer, _), _)| {
-                cell_pointer.block.observable_by_load(&pointer.block)
-            }))
+        && observable_heap_metadata_matches_for_load(left, right, pointer, &candidates)
+        && observable_entries_match(&candidates, &left.cells, &right.cells, |cell_pointer| {
+            cell_pointer.block.observable_by_load(&pointer.block)
+        })
+        && observable_entries_match(
+            &candidates,
+            &left.union_cells,
+            &right.union_cells,
+            |(cell_pointer, _)| cell_pointer.block.observable_by_load(&pointer.block),
+        )
+}
+
+/// Whether the candidate entries `observable` accepts are the same in both
+/// maps. Charges one work unit per candidate entry visited.
+fn observable_entries_match<K: BlockKeyed, V: PartialEq>(
+    candidates: &AliasCandidates,
+    left: &SnapshotMap<K, V>,
+    right: &SnapshotMap<K, V>,
+    observable: impl Fn(&K) -> bool,
+) -> bool {
+    if left.ptr_eq(right) {
+        return true;
+    }
+    let visited = std::cell::Cell::new(0usize);
+    let equal = candidates
+        .entries(left)
+        .inspect(|_| visited.set(visited.get() + 1))
+        .filter(|(key, _)| observable(key))
+        .eq(candidates
+            .entries(right)
+            .inspect(|_| visited.set(visited.get() + 1))
+            .filter(|(key, _)| observable(key)));
+    crate::instrumentation::record_deterministic_work(visited.get());
+    equal
+}
+
+/// [`observable_entries_match`] for a set.
+fn observable_elements_match<K: BlockKeyed>(
+    candidates: &AliasCandidates,
+    left: &SnapshotSet<K>,
+    right: &SnapshotSet<K>,
+    observable: impl Fn(&K) -> bool,
+) -> bool {
+    let visited = std::cell::Cell::new(0usize);
+    let equal = candidates
+        .elements(left)
+        .inspect(|_| visited.set(visited.get() + 1))
+        .filter(|key| observable(key))
+        .eq(candidates
+            .elements(right)
+            .inspect(|_| visited.set(visited.get() + 1))
+            .filter(|key| observable(key)));
+    crate::instrumentation::record_deterministic_work(visited.get());
+    equal
 }
 
 /// Whether the two snapshots agree about every object this load may name.
@@ -1651,16 +1695,19 @@ pub(in crate::kernel) fn memories_match_for_pointer_load(
 /// pointers. Every other block is selected with the same may-alias predicate
 /// as cells. A never-address-taken local is the one safe omission: no pointer
 /// value in the program can designate it.
-fn observable_blocks_match_for_load(left: &CMemory, right: &CMemory, pointer: &Pointer) -> bool {
-    let observable = |block: &PointerBlock| {
-        block.starts_with("havoc:")
-            || block.starts_with("call-havoc:")
-            || !local_block_no_pointer_can_reach(block) && block.observable_by_load(&pointer.block)
-    };
-    left.blocks
-        .iter()
-        .filter(|(block, _)| observable(block))
-        .eq(right.blocks.iter().filter(|(block, _)| observable(block)))
+fn observable_blocks_match_for_load(
+    left: &CMemory,
+    right: &CMemory,
+    pointer: &Pointer,
+    candidates: &AliasCandidates,
+) -> bool {
+    // The havoc markers by their name ranges, then the candidate blocks the
+    // load may name. A marker that is also a candidate is compared twice,
+    // on both sides alike.
+    havoc_marker_blocks(&left.blocks).eq(havoc_marker_blocks(&right.blocks))
+        && observable_entries_match(candidates, &left.blocks, &right.blocks, |block| {
+            !local_block_no_pointer_can_reach(block) && block.observable_by_load(&pointer.block)
+        })
 }
 
 /// Whether heap facts that can change this load agree in two unrelated
@@ -1678,44 +1725,35 @@ fn observable_heap_metadata_matches_for_load(
     left: &CMemory,
     right: &CMemory,
     pointer: &Pointer,
+    candidates: &AliasCandidates,
 ) -> bool {
     let observable = |candidate: &Pointer| candidate.block.observable_by_load(&pointer.block);
-    let map_matches = |left: &SnapshotMap<Pointer, Bitvector32Term>,
-                       right: &SnapshotMap<Pointer, Bitvector32Term>| {
-        left.iter()
-            .filter(|(base, _)| observable(base))
-            .eq(right.iter().filter(|(base, _)| observable(base)))
-    };
-    let set_matches = |left: &SnapshotSet<Pointer>, right: &SnapshotSet<Pointer>| {
-        left.iter()
-            .filter(|base| observable(base))
-            .eq(right.iter().filter(|base| observable(base)))
-    };
-
-    map_matches(
+    observable_entries_match(
+        candidates,
         &left.heap.deallocated_allocations,
         &right.heap.deallocated_allocations,
-    ) && set_matches(
+        observable,
+    ) && observable_elements_match(
+        candidates,
         &left.heap.uninitialized_allocations,
         &right.heap.uninitialized_allocations,
-    ) && left
-        .heap
-        .initialized_cells
-        .iter()
-        .filter(|(cell, _)| observable(cell))
-        .eq(right
-            .heap
-            .initialized_cells
-            .iter()
-            .filter(|(cell, _)| observable(cell)))
-        && set_matches(
-            &left.heap.zeroed_allocations,
-            &right.heap.zeroed_allocations,
-        )
-        && map_matches(
-            &left.heap.zeroed_prefix_allocations,
-            &right.heap.zeroed_prefix_allocations,
-        )
+        observable,
+    ) && observable_entries_match(
+        candidates,
+        &left.heap.initialized_cells,
+        &right.heap.initialized_cells,
+        observable,
+    ) && observable_elements_match(
+        candidates,
+        &left.heap.zeroed_allocations,
+        &right.heap.zeroed_allocations,
+        observable,
+    ) && observable_entries_match(
+        candidates,
+        &left.heap.zeroed_prefix_allocations,
+        &right.heap.zeroed_prefix_allocations,
+        observable,
+    )
 }
 
 #[cfg(test)]
@@ -1901,11 +1939,16 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
     )) else {
         return memory.clone();
     };
-    let relevant_cells = memory
-        .cells
-        .iter()
+    // A cell in a block proven distinct from the load's is not observable
+    // by it, so every scan below visits the candidates alone.
+    let candidates = AliasCandidates::of_block(&pointer.block);
+    let mut visited = 0usize;
+    let relevant_cells = candidates
+        .entries(&memory.cells)
+        .inspect(|_| visited += 1)
         .filter(|(cell_pointer, _)| cell_pointer.block.observable_by_load(&pointer.block))
         .collect::<Vec<_>>();
+    crate::instrumentation::record_deterministic_work(visited);
     let materialization_sources = relevant_cells
         .iter()
         .map(|(cell_pointer, value)| {
@@ -1930,10 +1973,7 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
         // erasing the marker would let the canonical-equality shortcut
         // treat the load as unchanged with no frame evidence (pinned by
         // `sibling_materialization_cells_must_not_launder_a_havoc`).
-        let markers = memory
-            .blocks
-            .iter()
-            .filter(|(block, _)| block.starts_with("havoc:") || block.starts_with("call-havoc:"))
+        let markers = havoc_marker_blocks(&memory.blocks)
             .map(|(block, size)| (block.clone(), size.clone()))
             .collect::<Vec<_>>();
         let blocks = std::sync::Arc::make_mut(&mut canonical.blocks);
@@ -1951,18 +1991,58 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
     // Only the cells below decide what a load reads. Declaring a block writes
     // nothing, so the block list stays the load's own block plus the havoc
     // markers even where a cell of another block is kept.
-    std::sync::Arc::make_mut(&mut canonical.blocks).retain(|block, _| {
-        block == &pointer.block || block.starts_with("havoc:") || block.starts_with("call-havoc:")
-    });
-    std::sync::Arc::make_mut(&mut canonical.cells).retain(|cell_pointer, value| {
-        cell_pointer.block.observable_by_load(&pointer.block)
-            && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
-    });
-    std::sync::Arc::make_mut(&mut canonical.union_cells).retain(|(cell_pointer, _), value| {
-        cell_pointer.block.observable_by_load(&pointer.block)
-            && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
-    });
+    //
+    // Each map is rebuilt from the entries it keeps, found by key range, so
+    // the unrelated blocks and cells are never visited.
+    let blocks = canonical
+        .blocks
+        .get(&pointer.block)
+        .map(|size| (pointer.block.clone(), size.clone()))
+        .into_iter()
+        .chain(
+            havoc_marker_blocks(&canonical.blocks)
+                .map(|(block, size)| (block.clone(), size.clone())),
+        )
+        .collect::<SnapshotMap<_, _>>();
+    let mut visited = 0usize;
+    let cells = candidates
+        .entries(&canonical.cells)
+        .inspect(|_| visited += 1)
+        .filter(|(cell_pointer, value)| {
+            cell_pointer.block.observable_by_load(&pointer.block)
+                && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
+        })
+        .map(|(cell_pointer, value)| (cell_pointer.clone(), value.clone()))
+        .collect::<SnapshotMap<_, _>>();
+    let union_cells = candidates
+        .entries(&canonical.union_cells)
+        .inspect(|_| visited += 1)
+        .filter(|((cell_pointer, _), value)| {
+            cell_pointer.block.observable_by_load(&pointer.block)
+                && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<SnapshotMap<_, _>>();
+    crate::instrumentation::record_deterministic_work(visited);
+    canonical.blocks = std::sync::Arc::new(blocks);
+    canonical.cells = std::sync::Arc::new(cells);
+    canonical.union_cells = std::sync::Arc::new(union_cells);
     canonical
+}
+
+/// The loop- and call-havoc marker blocks of a block map, found as the two
+/// key ranges their name prefixes occupy (concrete block names order as
+/// strings, so the names sharing a prefix are contiguous).
+pub(in crate::kernel) fn havoc_marker_blocks(
+    blocks: &SnapshotMap<PointerBlock, CBlock>,
+) -> impl Iterator<Item = (&PointerBlock, &CBlock)> {
+    ["call-havoc:", "havoc:"]
+        .into_iter()
+        .flat_map(move |prefix| {
+            blocks
+                .range::<_, PointerBlock>(PointerBlock::Concrete(prefix.to_string())..)
+                .take_while(move |(block, _)| block.starts_with(prefix))
+        })
 }
 
 /// Splits a pointer offset into its non-constant atoms and total constant
