@@ -869,6 +869,108 @@ fn signed_add_overflow_is_native_undefined_behavior() {
 }
 
 #[test]
+fn wide_shift_counts_are_checked_before_narrowing() {
+    for (count_case, count_value_bits) in [2_u64, 0x1_0000_0002].into_iter().enumerate() {
+        for shift_left in [false, true] {
+            for left_is_64_bit in [false, true] {
+                for unsigned_count in [false, true] {
+                    let count_variable = Variable(
+                        93_900
+                            + count_case as u64 * 8
+                            + u64::from(shift_left) * 4
+                            + u64::from(left_is_64_bit) * 2
+                            + u64::from(unsigned_count),
+                    );
+                    let count_term = Bitvector32Term::Variable(count_variable);
+                    let (count_value, count_type, count_fact) = if unsigned_count {
+                        (
+                            CValue::UInt64(count_term.clone()),
+                            CType::UInt64,
+                            ConditionTerm::uint64_equal(
+                                count_term.clone(),
+                                Bitvector32Term::UInt64Constant(count_value_bits),
+                            ),
+                        )
+                    } else {
+                        (
+                            CValue::Int64(count_term.clone()),
+                            CType::Int64,
+                            ConditionTerm::int64_equal(
+                                count_term.clone(),
+                                Bitvector32Term::Int64Constant(count_value_bits as i64),
+                            ),
+                        )
+                    };
+                    let (left_value, left_type) = if left_is_64_bit {
+                        (
+                            CValue::Int64(Bitvector32Term::Int64Constant(1)),
+                            CType::Int64,
+                        )
+                    } else {
+                        (CValue::Int32(Bitvector32Term::Constant(1)), CType::Int32)
+                    };
+                    let mut state = CState::new()
+                        .with_local("left", left_value.clone())
+                        .with_local("count", count_value.clone());
+                    state.locals.set_typed("left", left_value, left_type);
+                    state.locals.set_typed("count", count_value, count_type);
+
+                    let left = c_variable("left");
+                    let right = c_variable("count");
+                    let expression = if shift_left {
+                        c_shift_left(left, right)
+                    } else {
+                        c_shift_right(left, right)
+                    };
+                    let assumptions = PureFactContext::new().assume_condition(count_fact, true);
+                    let paths = evaluate_c_expression_paths(
+                        &state,
+                        &expression,
+                        &assumptions,
+                        &mut ExecutionBudget::for_c_expression(&expression),
+                    )
+                    .expect("wide shift evaluation should stay within its execution budget");
+
+                    if count_value_bits == 2 {
+                        assert!(
+                            paths
+                                .iter()
+                                .any(|path| matches!(path.outcome, CExpressionOutcome::Value(_))),
+                            "in-range count unexpectedly lost its value path"
+                        );
+                        assert!(
+                            !paths.iter().any(|path| matches!(
+                                path.outcome,
+                                CExpressionOutcome::UndefinedBehavior(
+                                    CUndefinedBehavior::InvalidShift
+                                )
+                            )),
+                            "in-range count was reported as undefined behavior"
+                        );
+                    } else {
+                        assert!(
+                            paths.iter().any(|path| matches!(
+                                path.outcome,
+                                CExpressionOutcome::UndefinedBehavior(
+                                    CUndefinedBehavior::InvalidShift
+                                )
+                            )),
+                            "left_shift={shift_left}, left64={left_is_64_bit}, unsigned_count={unsigned_count}: {paths:?}"
+                        );
+                        assert!(
+                            !paths
+                                .iter()
+                                .any(|path| matches!(path.outcome, CExpressionOutcome::Value(_))),
+                            "an out-of-range 64-bit count must not be accepted via its low word"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn condition_evaluation_certifies_c_truthiness_directly() {
     let state = CState::new();
     let condition = c_less_than(c_int32_literal(1), c_int32_literal(2));
