@@ -147,10 +147,14 @@ the worker reborrows the other. A join ends that worker's child scope, returns
 its share, and joins only available siblings on that share's ancestry path.
 The parent binding advances when its retained share is recombined, so any
 other live child stays pinned and the original root returns only after every
-share is back. The thread ledger retains the checked sequence's origin and
-current loan roots across function return for contract certification. This
-first asynchronous path starts from an explicit parent view; implicit local
-view sharing and repeated lending from one owner remain separate work.
+share is back. For implicit local storage, the first worker opens one checked
+local root held by the parent. Later workers split its retained share rather
+than opening another root. The thread ledger indexes the parent's local share
+by the exact viewed fact, without adding a resource fact to the parent. Each
+join returns its own share; the final join closes the root and restores
+implicit access. The thread ledger also retains the checked sequence's origin
+and current loan roots across function return for contract certification.
+Repeated lending from one explicitly owned resource remains separate work.
 
 At return, obligations are validated before recovery: the callee's shares
 are transferred back, call-created scopes end, escrows are recovered, and the

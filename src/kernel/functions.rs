@@ -12418,9 +12418,29 @@ fn prepare_contract_resource_transfer(
                 // copy. Its views are backed by that checked entry allocation,
                 // which does not exist in the caller's earlier memory. The
                 // entry memory also retains the caller's original local blocks.
-                if let Err(error) =
-                    plan.lend_local_views(callee_state.memory(), &local_read_views, assumptions)
+                let local_worker_bindings = if purpose == ResourceTransitionPurpose::SuspendedWorker
                 {
+                    Some(
+                        local_read_views
+                            .iter()
+                            .filter_map(|requirement| {
+                                caller_state
+                                    .thread_ledger
+                                    .as_ref()?
+                                    .local_view_binding(&requirement.fact)
+                                    .map(|binding| (requirement.fact.clone(), binding.clone()))
+                            })
+                            .collect::<BTreeMap<_, _>>(),
+                    )
+                } else {
+                    None
+                };
+                if let Err(error) = plan.lend_local_views_with_worker_shares(
+                    callee_state.memory(),
+                    &local_read_views,
+                    assumptions,
+                    local_worker_bindings.as_ref(),
+                ) {
                     return Ok(Err(match error {
                         super::loans::StableViewPlanError::MissingResource(resource) => {
                             CRuntimeError::MissingResource { resource }

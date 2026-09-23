@@ -1229,6 +1229,133 @@ fn thread_reborrowed_view_stays_pinned_until_child_joins() {
 }
 
 #[test]
+fn two_workers_share_one_implicit_local_root_until_both_join() {
+    let function = c_function(
+        CType::Int32,
+        "thread_reader",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_return(c_load(c_variable("p"))),
+    )
+    .with_resource_summary(
+        vec![CResourceSpec::viewed_memory(CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        ))],
+        vec![],
+    )
+    .with_contract(
+        vec![],
+        vec![],
+        vec![],
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let (reader, termination) = certify_worker(function);
+    let local = Pointer {
+        block: "local:shared-reader".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let view = CResourceFact::view_memory(CMemoryRange::new(local.clone(), 0.into(), 1.into()));
+    let state = CState::new().with_memory(
+        CMemory::new()
+            .with_block(local.block.clone(), 4)
+            .store(local.clone(), int32(7)),
+    );
+    let original = ThreadContext::new(state).unwrap();
+    for reverse in [false, true] {
+        let mut budget = ExecutionBudget::new();
+        let (first, a, _) = original
+            .spawn(
+                &reader,
+                Some(&termination),
+                CValue::pointer(local.clone()),
+                &PureFactContext::new(),
+                &CExecutionEnvironment::new(),
+                &mut budget,
+            )
+            .unwrap()
+            .unwrap();
+        let first_binding = first
+            .parent()
+            .thread_ledger
+            .as_ref()
+            .unwrap()
+            .local_view_binding(&view)
+            .unwrap()
+            .clone();
+        let (second, b, _) = first
+            .spawn(
+                &reader,
+                Some(&termination),
+                CValue::pointer(local.clone()),
+                &PureFactContext::new(),
+                &CExecutionEnvironment::new(),
+                &mut budget,
+            )
+            .unwrap()
+            .unwrap();
+        let second_binding = second
+            .parent()
+            .thread_ledger
+            .as_ref()
+            .unwrap()
+            .local_view_binding(&view)
+            .unwrap();
+        assert_eq!(first_binding.loan, second_binding.loan);
+        assert_eq!(first_binding.scope, second_binding.scope);
+        assert_ne!(first_binding.share, second_binding.share);
+        assert!(second.parent().resources().facts().is_empty());
+        let (once, _) = second
+            .join(
+                if reverse { b } else { a },
+                JoinRuntimeAssumption::ValidJoinSucceeds,
+                &PureFactContext::new(),
+            )
+            .unwrap();
+        assert!(
+            once.parent()
+                .thread_ledger
+                .as_ref()
+                .unwrap()
+                .local_view_binding(&view)
+                .is_some()
+        );
+        assert!(
+            once.parent()
+                .loan_ledger()
+                .unwrap()
+                .permits_memory_access(view.memory_range().unwrap())
+                .is_err()
+        );
+        let (finished, _) = once
+            .join(
+                if reverse { a } else { b },
+                JoinRuntimeAssumption::ValidJoinSucceeds,
+                &PureFactContext::new(),
+            )
+            .unwrap();
+        assert!(
+            finished
+                .parent()
+                .thread_ledger
+                .as_ref()
+                .unwrap()
+                .local_view_binding(&view)
+                .is_none()
+        );
+        assert!(
+            !finished
+                .parent()
+                .loan_ledger()
+                .unwrap()
+                .has_active_memory_loans()
+        );
+        assert!(finished.parent().resources().facts().is_empty());
+    }
+}
+
+#[test]
 fn joining_one_of_many_shared_readers_touches_only_its_share_branch() {
     let function = c_function(
         CType::Int32,

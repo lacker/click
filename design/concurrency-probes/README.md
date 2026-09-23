@@ -22,7 +22,9 @@ both successful join orders. Source regressions reject abandoning the first
 completion on second failure and reading a child's cell before its join. The
 parent can now split one explicit stable view between two read-only workers;
 their source proof covers both join orders and cleanup after a failed second
-create. The frozen parent still needs its complete sidecar proof, broader
+create. The same sharing now works for a parent stack cell without an
+ownership annotation, and rejects writes or scope exit while a reader lives.
+The frozen parent still needs its complete sidecar proof, broader
 guarded operations, and the separate native runtime binding described below.
 
 ## Selected profile

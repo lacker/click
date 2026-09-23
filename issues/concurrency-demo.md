@@ -153,10 +153,15 @@ when all completion rights have been consumed and the summary reaches that
 exact ledger. An internal deterministic-work test joins one fixed reader among
 8, 16, 32, and 64 outstanding shares without scanning the other children.
 
-This checkpoint starts Chunk C for an explicitly supplied parent view. It does
-not yet turn an owned or implicit stack view into a reusable parent share.
-Local lifetime and parent-write regressions, forged recovery checks, and the
-frozen parent sidecar remain. The source proofs use the modeled runtime.
+This checkpoint starts Chunk C for an explicitly supplied parent view. The
+next checkpoint also shares an implicit stack view: the first worker opens a
+checked local root, the parent retains a share, and later workers split that
+share. The parent gets no resource fact. Source proofs cover both join orders,
+second-create failure cleanup, a nested reader, and a parent write after both
+joins. Hostile proofs reject a write or scope exit after only one join. A
+kernel test checks one root identity, no invented resource, and final closure.
+Repeated lending from one explicit owner, forged recovery checks, and the
+frozen parent sidecar remain. These source proofs use the modeled runtime.
 
 ### Important implementation notes
 

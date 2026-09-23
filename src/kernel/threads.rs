@@ -11,15 +11,16 @@
 //! Join assumes success only for this context's live, unique, terminating child.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::persistent::PersistentMap;
 
 use super::functions::suspend_verified_worker;
-use super::loans::{LoanLedger, LoanViewBindings, StableViewTransferPlan};
+use super::loans::{LoanLedger, LoanViewBinding, LoanViewBindings, StableViewTransferPlan};
 use super::{
-    Bitvector32Term, CExecutionEnvironment, CMemory, CMemoryRange, CState, CValue,
+    Bitvector32Term, CExecutionEnvironment, CMemory, CMemoryRange, CResourceFact, CState, CValue,
     CVerifiedFunctionRule, CVerifiedFunctionTerminationRule, ConditionTerm, ExecutionBudget,
     ExecutionPureFact, ExecutionResult, Pointer, PointerBlock, Proposition, PureFactContext,
     ResourceContext,
@@ -363,6 +364,7 @@ struct ThreadLedgerStorage {
     state: u64,
     rights: PersistentMap<ThreadHandle, Arc<CompletionRight>>,
     loan_trace: Option<ThreadLoanTrace>,
+    local_views: PersistentMap<CResourceFact, LoanViewBinding>,
 }
 
 /// The checked loan root before the first outstanding create and the root
@@ -389,6 +391,7 @@ impl ThreadLedger {
                 state: Self::fresh_state(),
                 rights: PersistentMap::default(),
                 loan_trace: None,
+                local_views: PersistentMap::default(),
             }),
         }
     }
@@ -401,6 +404,10 @@ impl ThreadLedger {
         !self.storage.rights.is_empty()
     }
 
+    pub(super) fn local_view_binding(&self, fact: &CResourceFact) -> Option<&LoanViewBinding> {
+        self.storage.local_views.get(fact)
+    }
+
     pub(super) fn witnesses_loan_recovery(
         &self,
         origin: &LoanLedger,
@@ -408,6 +415,7 @@ impl ThreadLedger {
         participant: super::loans::LoanParticipantId,
     ) -> bool {
         self.storage.rights.is_empty()
+            && self.storage.local_views.is_empty()
             && self.storage.loan_trace.as_ref().is_some_and(|trace| {
                 trace.origin == *origin
                     && trace.current == *current
@@ -446,11 +454,16 @@ impl ThreadLedger {
         after: &LoanLedger,
         participant: super::loans::LoanParticipantId,
     ) -> Self {
+        let mut local_views = self.storage.local_views.clone();
+        for (fact, binding) in right.completion.plan.suspended_local_parents() {
+            local_views = local_views.with_inserted(fact.clone(), binding.clone());
+        }
         Self {
             storage: Arc::new(ThreadLedgerStorage {
                 state: Self::fresh_state(),
                 rights: self.storage.rights.with_inserted(handle, Arc::new(right)),
                 loan_trace: self.advanced_loan_trace(before, after, participant),
+                local_views,
             }),
         }
     }
@@ -461,12 +474,21 @@ impl ThreadLedger {
         before: &LoanLedger,
         after: &LoanLedger,
         participant: super::loans::LoanParticipantId,
+        local_updates: &BTreeMap<CResourceFact, Option<LoanViewBinding>>,
     ) -> Self {
+        let mut local_views = self.storage.local_views.clone();
+        for (fact, binding) in local_updates {
+            local_views = match binding {
+                Some(binding) => local_views.with_inserted(fact.clone(), binding.clone()),
+                None => local_views.without_key(fact),
+            };
+        }
         Self {
             storage: Arc::new(ThreadLedgerStorage {
                 state: Self::fresh_state(),
                 rights: self.storage.rights.without_key(&handle),
                 loan_trace: self.advanced_loan_trace(before, after, participant),
+                local_views,
             }),
         }
     }
@@ -741,6 +763,18 @@ impl ThreadContext {
                 assumptions,
             )
             .map_err(|_| "worker outputs conflict with the current parent frame")?;
+        let local_bindings = completion
+            .plan
+            .suspended_local_parents()
+            .keys()
+            .filter_map(|fact| {
+                self.parent
+                    .thread_ledger
+                    .as_ref()?
+                    .local_view_binding(fact)
+                    .map(|binding| (fact.clone(), binding.clone()))
+            })
+            .collect();
         let recovery = completion
             .plan
             .clone()
@@ -748,6 +782,7 @@ impl ThreadContext {
                 ledger.clone(),
                 resources,
                 self.parent.loan_view_bindings().clone(),
+                local_bindings,
                 assumptions,
             )
             .map_err(|_| "worker loans cannot be recovered in the current parent context")?;
@@ -775,6 +810,7 @@ impl ThreadContext {
                     ledger,
                     &after_loans,
                     completion.plan.caller_participant(),
+                    &recovery.local_view_updates,
                 ),
         );
         Ok((next, completion.facts.clone()))

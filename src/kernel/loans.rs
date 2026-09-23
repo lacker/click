@@ -1372,6 +1372,9 @@ pub(crate) struct StableViewTransferPlan {
     pub(crate) rebound_parents: BTreeMap<LoanId, LoanViewBinding>,
     /// Reborrows whose parent share was split for a suspended worker.
     suspended_split_reborrows: BTreeMap<LoanId, (ResourceOccurrenceId, LoanShareId)>,
+    /// Implicit stack roots retained by the parent while modeled workers read.
+    suspended_local_parents: BTreeMap<CResourceFact, LoanViewBinding>,
+    suspended_local_reborrows: BTreeMap<LoanId, (CResourceFact, LoanShareId)>,
     /// For an adapter lend whose escrowed head was materialized for the call
     /// out of owned facts the caller already held: exactly those facts, which
     /// recovery hands back in place of the head (docs/internals/stable-views.md). The
@@ -1403,6 +1406,9 @@ pub(crate) struct StableViewRecovery {
     /// `transitions`.
     pub(crate) released_holds: Vec<LoanHoldId>,
     pub(crate) view_bindings: LoanViewBindings,
+    /// A completed local reader either advances its parent's share or closes
+    /// the implicit root after the final sibling returns.
+    pub(crate) local_view_updates: BTreeMap<CResourceFact, Option<LoanViewBinding>>,
     pub(crate) transitions: Vec<CheckedLoanTransition>,
 }
 
@@ -2652,6 +2658,8 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
         transferred_holds,
         rebound_parents,
         suspended_split_reborrows,
+        suspended_local_parents: BTreeMap::new(),
+        suspended_local_reborrows: BTreeMap::new(),
         adapter_restorations,
     })
 }
@@ -2665,6 +2673,16 @@ impl StableViewTransferPlan {
         requirements: &[CCheckedResourceFact],
         assumptions: &PureFactContext,
     ) -> Result<(), StableViewPlanError> {
+        self.lend_local_views_with_worker_shares(memory, requirements, assumptions, None)
+    }
+
+    pub(crate) fn lend_local_views_with_worker_shares(
+        &mut self,
+        memory: &super::CMemory,
+        requirements: &[CCheckedResourceFact],
+        assumptions: &PureFactContext,
+        existing: Option<&BTreeMap<CResourceFact, LoanViewBinding>>,
+    ) -> Result<(), StableViewPlanError> {
         let mut seen = std::collections::BTreeSet::new();
         for requirement in requirements {
             crate::instrumentation::record_deterministic_work(1);
@@ -2677,16 +2695,98 @@ impl StableViewTransferPlan {
                 .fact
                 .memory_range()
                 .expect("checked memory view");
-            // New local authority cannot bypass an existing loan. Views that
-            // the caller itself borrowed take the ordinary reborrow route.
-            self.parent_ledger
-                .permits_memory_access_with_assumptions(range, assumptions)?;
             let (resources, occurrence) = self
                 .callee_resources
                 .clone()
                 .try_compose_with_fact_with_occurrence(requirement.fact.clone(), assumptions)
                 .map_err(|_| StableViewPlanError::InvalidResidual)?;
             let support = occurrence.ok_or(StableViewPlanError::InvalidResidual)?;
+            if let Some(existing) = existing {
+                let parent = if let Some(binding) = existing.get(&requirement.fact) {
+                    self.ledger
+                        .validate_view_binding(binding.clone(), self.caller)?;
+                    binding.clone()
+                } else {
+                    // Only the first worker opens the local root. The parent
+                    // keeps its close right and a share, without receiving an
+                    // owned or viewed resource fact.
+                    self.ledger
+                        .permits_memory_access_with_assumptions(range, assumptions)?;
+                    let opening = self.ledger.open_borrowed_root(
+                        self.caller,
+                        support,
+                        requirement.fact.clone(),
+                        None,
+                        Some((self.caller, backing)),
+                    )?;
+                    self.ledger = self.ledger.apply(&opening.transition)?;
+                    self.entry_transitions.push(opening.transition);
+                    LoanViewBinding {
+                        loan: opening.loan,
+                        scope: opening.scope,
+                        share: opening.root_share,
+                        support,
+                        viewed: requirement.fact.clone(),
+                        hold: None,
+                    }
+                };
+                let (split, retained, worker) =
+                    self.ledger
+                        .split(parent.share, self.caller, self.caller, self.caller)?;
+                self.ledger = self.ledger.apply(&split)?;
+                self.entry_transitions.push(split);
+                let worker_binding = LoanViewBinding {
+                    share: worker,
+                    ..parent.clone()
+                };
+                let opening = self
+                    .ledger
+                    .reborrow(worker_binding, self.caller, self.callee)?;
+                self.ledger = self.ledger.apply(&opening.transition)?;
+                self.entry_transitions.push(opening.transition);
+                let child_binding = LoanViewBinding {
+                    loan: opening.loan,
+                    scope: opening.scope,
+                    share: opening.root_share,
+                    support: parent.support,
+                    viewed: requirement.fact.clone(),
+                    hold: None,
+                };
+                self.callee_resources =
+                    resources.with_loan_dependency(support, child_binding.clone());
+                self.callee_view_bindings = self
+                    .callee_view_bindings
+                    .with_inserted(support, child_binding);
+                self.loan_roots.push((
+                    opening.scope,
+                    opening.loan,
+                    opening.root_share,
+                    support,
+                    false,
+                ));
+                self.stable_views.push(PlannedStableView {
+                    requirement: requirement.clone(),
+                    support,
+                    loan: opening.loan,
+                    scope: opening.scope,
+                    share: opening.root_share,
+                    description: opening.description,
+                });
+                self.suspended_local_parents.insert(
+                    requirement.fact.clone(),
+                    LoanViewBinding {
+                        share: retained,
+                        ..parent
+                    },
+                );
+                self.suspended_local_reborrows
+                    .insert(opening.loan, (requirement.fact.clone(), worker));
+                continue;
+            }
+            // An ordinary local loan closes with its call. New local
+            // authority cannot bypass an existing loan.
+            self.parent_ledger
+                .permits_memory_access_with_assumptions(range, assumptions)?;
             let opening = self.ledger.open_borrowed_root(
                 self.callee,
                 support,
@@ -2727,6 +2827,10 @@ impl StableViewTransferPlan {
 
     pub(crate) fn caller_ledger(&self) -> &LoanLedger {
         &self.parent_ledger
+    }
+
+    pub(crate) fn suspended_local_parents(&self) -> &BTreeMap<CResourceFact, LoanViewBinding> {
+        &self.suspended_local_parents
     }
 
     pub(crate) fn caller_participant(&self) -> LoanParticipantId {
@@ -2792,11 +2896,13 @@ impl StableViewTransferPlan {
         ledger: LoanLedger,
         resources: ResourceContext,
         bindings: LoanViewBindings,
+        local_bindings: BTreeMap<CResourceFact, LoanViewBinding>,
         assumptions: &PureFactContext,
     ) -> Result<StableViewRecovery, StableViewPlanError> {
         self.ledger = ledger;
         self.caller_resources_after_requirements = resources;
         self.parent_view_bindings = bindings;
+        self.suspended_local_parents = local_bindings;
         self.recover_stable_views_impl(assumptions, &BTreeMap::new(), &[], true)
     }
 
@@ -2813,6 +2919,7 @@ impl StableViewTransferPlan {
         let mut ledger = self.ledger;
         let mut resources = self.caller_resources_after_requirements;
         let mut view_bindings = self.parent_view_bindings.clone();
+        let mut local_view_updates = BTreeMap::new();
         let mut transitions = Vec::new();
         let mut recovered_escrows = Vec::new();
         let mut pending_holds: Vec<(Vec<CResourceFact>, LoanViewBinding)> = Vec::new();
@@ -2861,6 +2968,37 @@ impl StableViewTransferPlan {
             let end = ledger.end(scope, self.caller)?;
             ledger = ledger.apply(&end)?;
             transitions.push(end);
+            if let Some((fact, worker_share)) = self.suspended_local_reborrows.get(&loan) {
+                let binding = self
+                    .suspended_local_parents
+                    .get(fact)
+                    .cloned()
+                    .ok_or(StableViewPlanError::Loan(LoanRefusal::MissingLoanBinding))?;
+                ledger.validate_view_binding(binding.clone(), self.caller)?;
+                let (joined, merged_share, joins) =
+                    ledger.join_available_share_ancestors(*worker_share, self.caller)?;
+                ledger = joined;
+                transitions.extend(joins);
+                let updated = if ledger.scope_can_end(binding.scope, self.caller) {
+                    let close = ledger.end(binding.scope, self.caller)?;
+                    ledger = ledger.apply(&close)?;
+                    transitions.push(close);
+                    None
+                } else if ledger
+                    .validate_view_binding(binding.clone(), self.caller)
+                    .is_ok()
+                {
+                    Some(binding)
+                } else {
+                    let updated = LoanViewBinding {
+                        share: merged_share,
+                        ..binding
+                    };
+                    ledger.validate_view_binding(updated.clone(), self.caller)?;
+                    Some(updated)
+                };
+                local_view_updates.insert(fact.clone(), updated);
+            }
             if let Some((occurrence, worker_share)) = self.suspended_split_reborrows.get(&loan) {
                 let (joined, merged_share, joins) =
                     ledger.join_available_share_ancestors(*worker_share, self.caller)?;
@@ -2972,6 +3110,7 @@ impl StableViewTransferPlan {
             escaped_holds,
             released_holds,
             view_bindings,
+            local_view_updates,
             transitions,
         })
     }
