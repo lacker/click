@@ -124,12 +124,14 @@ const removal. The pointer member remains assignable; const qualification
 does not freeze memory reachable through mutable aliases.
 `mdtests/const_pointer_fields.md` checks those distinctions.
 
-The unchanged probe next stops in `time.h` at `struct sigevent;` with
-``unknown struct declaration `sigevent` ``. Incomplete struct forward declarations
-are the next full-import step when pursuing a native Linux binding. The
-immediate portable slice will use the modeled header with an explicit runtime
-assumption and does not depend on parsing glibc headers. Checked create/join
-call binding remains subsequent work.
+The unchanged probe's Ubuntu GCC 13/glibc 2.39 preprocessed artifact is now
+committed as a locked fixture and loaded in the Mac gate without GCC or Linux
+headers. Bare `struct sigevent;` forward declarations now parse without
+inventing a layout. The next bounded refusal is in
+`bits/types/__locale_t.h:30`: a struct member is an array of pointers to
+incomplete `struct __locale_data`, while inline struct arrays currently admit
+only scalar elements. The modeled proof remains separate from native runtime
+validation; importing these headers grants no pthread semantics.
 
 The compiler-backed regression uses the host GCC/header installation and locks
 those actual inputs. This run does not establish the selected Debian GCC

@@ -1,0 +1,13 @@
+name: Check pthread Linux import fixture
+
+on:
+  push:
+    branches: [codex/pthread-linux-import]
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+      - run: cargo test --test compiler_import userspace_frozen_pthread_probe_records_real_header_boundary -- --exact

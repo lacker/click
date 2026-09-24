@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn file_scope_struct_forward_declarations_keep_incomplete_types_incomplete() {
+    let unit = syntax::parse_translation_unit_for_source(
+        "struct opaque; struct opaque; int accepts(struct opaque *value); \
+         struct opaque { int field; }; \
+         int read(struct opaque *value) { return value->field; }",
+        "forward.c",
+        &source::ExpandedLineMap::empty(),
+    )
+    .expect("a later definition completes the forward-declared tag");
+    assert_eq!(unit.structs["opaque"].size_bytes(), 4);
+    assert!(unit.function_declarations.contains_key("accepts"));
+
+    let error = match syntax::parse_translation_unit_for_source(
+        "struct opaque; int read(struct opaque value) { return 0; }",
+        "incomplete.c",
+        &source::ExpandedLineMap::empty(),
+    ) {
+        Ok(_) => panic!("passing an incomplete struct by value must fail"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("unknown struct declaration `opaque`")
+    );
+}
+
+#[test]
 fn modeled_userspace_pthread_declarations_parse_the_frozen_probe() {
     let frozen = include_str!("../../../examples/concurrency-fork-join/fork_join.c");
     let sources = std::collections::BTreeMap::from([("fork_join.c", frozen)]);

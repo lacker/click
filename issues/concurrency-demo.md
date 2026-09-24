@@ -31,6 +31,12 @@ C regressions remain in the gate. The modeled runtime is an explicit trusted
 assumption; native Linux/macOS binding validation, the mutex counter, and
 release/acquire publication remain open parts of this issue.
 
+A committed Ubuntu GCC 13/glibc 2.39 import of the frozen C source now loads
+offline on macOS. The parser accepts the first real-header forward declaration,
+`struct sigevent;`, and its next bounded refusal is an inline array of
+struct pointers in `bits/types/__locale_t.h:30`. This is import progress, not
+native pthread binding validation.
+
 ## Historical handoff: 2026-09-22
 
 The session's implementation is merged into `master` through `d3aa4cd8`
@@ -142,10 +148,10 @@ and hostile regressions, expand and reverify a successful proof fragment,
 and use `scripts/check.sh` as the gate.
 
 Real-header import remains an independent production-binding task. The bounded
-Linux regression still stops at `/usr/include/time.h:49`, `struct sigevent;`,
-with ``unknown struct declaration `sigevent` ``. Keep that regression and the
-opened headers unchanged. A later Linux binding may finish full header import
-or use a separately designed, checked declaration projection; either route
+Linux regression now stops at the inline pointer array in
+`/usr/include/x86_64-linux-gnu/bits/types/__locale_t.h:30`. Keep that
+regression and the opened headers unchanged. A later Linux binding may
+finish full header import or use a separately designed, checked declaration projection; either route
 must establish exact declaration, ABI, and runtime identity before making a
 Linux runtime claim. The observed Ubuntu GCC 13.3.0/glibc 2.39 is not the
 selected Debian Bookworm GCC 12.2.0/glibc 2.36 profile.
@@ -524,8 +530,8 @@ ABI, handle representation, and trusted pthread specification against the
 modeled operation. A complete real-header import is one route; a typed,
 checked projection of the actual declarations is another if it preserves
 source and type identity without accepting lookalike functions. Keep the
-bounded Linux real-header regression and fix its `struct sigevent;` gap when
-pursuing the full-import route. A future macOS binding needs its own Darwin
+bounded Linux real-header regression and advance its inline pointer-array
+gap when pursuing the full-import route. A future macOS binding needs its own Darwin
 target, SDK declaration/ABI validation, and separate artifact identity; this
 x86-64 Linux model does not certify a native Mac binary.
 
