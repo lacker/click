@@ -88,10 +88,11 @@ identity bytes. A committed artifact prepared on Ubuntu with GCC additionally
 verifies and expands through the ordinary C import path after relocation; its
 opened Linux system headers and compiler backend are absent on macOS.
 The frozen fork/join C source also has a committed Ubuntu GCC import. Its
-Mac regression loads the relocated artifact through the ordinary import path,
-so header-import progress can be tested without provisioning Linux on every
-development host. Its import-only sidecar does not prove the fork/join C
-functions or validate a native pthread runtime.
+Mac regression loads the relocated artifact and verifies the unchanged worker
+and parent proof under the explicit modeled pthread runtime, without
+provisioning Linux on every development host. The checked result includes the
+locked import identity and the runtime assumption; it does not validate a
+native pthread implementation.
 
 The Linux fixtures cover compiler conditional selection, token pasting and
 macro rescanning, contextual headers, configured dependencies, refresh after

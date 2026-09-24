@@ -137,13 +137,16 @@ alignment is represented in allocation and aggregate layout. The frozen import
 now recognizes the x86-64 `long double` size and alignment needed by
 `max_align_t`. Unused glibc external object declarations no longer require
 definitions in the verified source bundle, so the frozen artifact loads
-through the ordinary import path on macOS. Its sidecar checks import only.
+through the ordinary import path on macOS. The existing worker and parent
+sidecar now verifies against that locked artifact under the explicitly
+selected modeled pthread runtime; the binding checks the locked
+`/usr/include/pthread.h` declaration origin and parameter types.
 Weak linkage, asm symbol labels, and returns-twice annotations
 import with their limits retained; calls needing symbol availability or a
 returns-twice control-flow model are refused. GCC `access`, `const`,
 `nonnull`, `noreturn`, and `deprecated` annotations and standard or GNU
 `restrict` syntax import without granting proof facts. The modeled proof remains
-separate from native runtime validation; importing these headers grants no
+separate from native runtime validation; the imported headers alone grant no
 pthread semantics.
 
 The compiler-backed regression uses the host GCC/header installation and locks

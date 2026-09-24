@@ -43,6 +43,7 @@ struct PreparedInner {
     logical_source: String,
     source: String,
     source_map: CSourceMap,
+    locked_pthread_headers: BTreeSet<String>,
     identity: String,
 }
 
@@ -60,6 +61,17 @@ impl PreparedCImport {
     pub fn source_map(&self) -> &CSourceMap {
         &self.inner.source_map
     }
+    pub(crate) fn has_locked_pthread_declaration_at(&self, line: usize) -> bool {
+        let position = self
+            .inner
+            .source_map
+            .lookup(crate::source::SourcePosition::new(line, 1));
+        position.origin.is_some_and(|origin| {
+            self.inner
+                .locked_pthread_headers
+                .contains(origin.filename.as_ref())
+        })
+    }
     pub fn identity(&self) -> &str {
         &self.inner.identity
     }
@@ -73,6 +85,7 @@ impl PreparedCImport {
                 logical_source: logical_source.to_string(),
                 source,
                 source_map,
+                locked_pthread_headers: BTreeSet::new(),
                 identity: format!("test-{logical_source}"),
             }),
         }
@@ -267,6 +280,17 @@ fn load_imports_inner(config_path: &Path) -> Result<Vec<PreparedCImport>, String
                 logical_source: source.logical_source.clone(),
                 source: clean,
                 source_map: map,
+                locked_pthread_headers: locked
+                    .dependencies
+                    .keys()
+                    .filter(|path| {
+                        path.as_str() == "/usr/include/pthread.h"
+                            && Path::new(path)
+                                .strip_prefix(&lock.config_directory)
+                                .is_err()
+                    })
+                    .cloned()
+                    .collect(),
                 identity: locked.identity.clone(),
             }),
         });
@@ -1986,7 +2010,7 @@ mod tests {
     }
 
     #[test]
-    fn frozen_pthread_gcc_import_loads_offline_with_unused_extern_declarations() {
+    fn frozen_pthread_gcc_import_verifies_modeled_fork_join_offline() {
         struct CopiedFixture(PathBuf);
         impl Drop for CopiedFixture {
             fn drop(&mut self) {
@@ -2038,6 +2062,15 @@ mod tests {
 
         let sidecar = fixture.0.join("main.click");
         let proof = fs::read_to_string(&sidecar).unwrap();
+        let example_proof = include_str!("../../../examples/concurrency-fork-join/fork_join.click");
+        assert_eq!(
+            proof,
+            format!(
+                "target \"x86_64-linux-userspace\";\nruntime \"modeled-pthread\";\n{}",
+                example_proof.replacen("verifying \"fork_join.c\";", "verifying \"main.c\";", 1)
+            ),
+            "the locked fixture must use the existing fork/join proof"
+        );
         let crate::cli::CInput::Prepared(imports) =
             crate::cli::read_c_inputs(&sidecar, &proof).unwrap()
         else {
@@ -2048,7 +2081,45 @@ mod tests {
             load_imports(&original.join("main.click.import.json")).unwrap()[0].identity()
         );
         let verified = crate::surface::verify_c0_prepared_sources(&proof, &imports).unwrap();
-        assert!(verified.is_empty(), "this sidecar checks import only");
+        let proved_functions = verified
+            .iter()
+            .map(|theorem| theorem.function_block.signature().name())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            proved_functions,
+            BTreeSet::from(["fill_range", "fill_parallel"])
+        );
+        assert!(
+            verified
+                .iter()
+                .all(|theorem| theorem.import_identity.as_deref() == Some(imports[0].identity()))
+        );
+        let binding = verified[0]
+            .selection
+            .as_ref()
+            .unwrap()
+            .modeled_pthread_binding
+            .as_ref()
+            .unwrap();
+        assert_ne!(
+            binding.identity(),
+            crate::languages::c::thread_runtime::ModeledPthreadBinding::builtin().identity()
+        );
+        assert!(verified.iter().all(|theorem| {
+            theorem
+                .selection
+                .as_ref()
+                .is_some_and(|selection| selection.runtime_assumptions.len() == 1)
+        }));
+    }
+
+    #[test]
+    fn pthread_origin_marker_alone_does_not_authorize_imported_binding() {
+        let import = PreparedCImport::for_test(
+            "main.c",
+            "# 1 \"/usr/include/pthread.h\" 1 3 4\nint pthread_join(unsigned long, void **);\n",
+        );
+        assert!(!import.has_locked_pthread_declaration_at(2));
     }
 
     #[test]

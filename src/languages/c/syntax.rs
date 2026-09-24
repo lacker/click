@@ -6415,6 +6415,28 @@ impl C0FunctionHeader {
     pub(crate) fn compatible_with(&self, other: &Self) -> bool {
         function_headers_compatible(self, other)
     }
+
+    /// The modeled create rule accepts only null attributes. The real glibc
+    /// header names a complete union here, while Click's declaration-only
+    /// projection names an incomplete struct. Both are passed as a pointer;
+    /// no attributes object is read by this modeled operation.
+    pub(crate) fn compatible_with_modeled_pthread(&self, expected: &Self) -> bool {
+        if self.source_name != "pthread_create" {
+            return self.compatible_with(expected);
+        }
+        let Some(attributes) = self.parameters.get(1) else {
+            return false;
+        };
+        if attributes.c_type != C0Type::VoidPointer
+            || attributes.union_name.as_deref() != Some("pthread_attr_t")
+            || !attributes.pointee_constant
+        {
+            return false;
+        }
+        let mut normalized = self.clone();
+        normalized.parameters[1] = expected.parameters[1].clone();
+        function_headers_compatible(&normalized, expected)
+    }
 }
 
 fn function_headers_compatible(left: &C0FunctionHeader, right: &C0FunctionHeader) -> bool {

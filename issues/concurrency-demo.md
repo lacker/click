@@ -43,8 +43,10 @@ specification; it has **not** established that a native Linux or macOS
 pthread library matches that specification. The compiler-import path locks a
 real Ubuntu GCC/glibc artifact for the frozen source. That artifact now loads
 through the ordinary import path on macOS, including the real header
-declarations. Its import-only sidecar has no C function proofs. Importing
-declarations by itself does not validate runtime behavior.
+declarations, and verifies the unchanged worker and parent sidecar against the
+trusted modeled pthread runtime. The proof records the locked import identity
+and remains conditional on that runtime specification; it does not validate
+native runtime behavior.
 
 The mutex counter, release/acquire publication, and native pthread binding
 remain open. [The probe record](../design/concurrency-probes/README.md)
@@ -59,16 +61,16 @@ For each platform on which we claim the verified C program runs, connect the
 modeled operation to the actual selected declarations, ABI, and runtime
 semantics. The first intended profile is Debian Bookworm GCC 12/glibc 2.36,
 C11, x86-64 Linux user space, LP64, with the compile options in the probe
-record. The current Ubuntu GCC 13/glibc 2.39 artifact is a parser regression,
-not validation of that profile.
+record. The current Ubuntu GCC 13/glibc 2.39 artifact is an offline proof
+regression, not validation of that profile.
 
-A complete real-header import or a separately designed checked declaration
-projection could establish declaration and ABI identity. Either way, the
-binding must name the trusted runtime specification and reject mismatched
-headers, types, options, or same-named lookalike functions. Advance the frozen
-import's bounded refusal without changing the C source or silently treating a
-modeled result as a native one. A macOS claim would need its own target, SDK
-checks, runtime binding, and artifact identity.
+The locked Ubuntu import checks the selected declaration origin and types for
+the conditional modeled proof. A native claim additionally needs ABI and
+runtime evidence that the selected pthread implementation meets the trusted
+runtime specification, with a pinned platform profile. The binding must
+reject mismatched headers, types, options, or same-named lookalike functions.
+A macOS claim would need its own target, SDK checks, runtime binding, and
+artifact identity.
 
 ### Mutex-protected counter
 

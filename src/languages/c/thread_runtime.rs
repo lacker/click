@@ -3,8 +3,9 @@
 
 use sha2::{Digest, Sha256};
 
-/// Retained identity of the narrow built-in create/join projection. A verifier
-/// attaches this only after checking declaration provenance and call shapes.
+/// Retained identity of the selected create/join declarations and trusted
+/// modeled specification. A verifier attaches this only after checking
+/// declaration provenance and call shapes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModeledPthreadBinding {
     pub target: super::target::CTarget,
@@ -34,6 +35,16 @@ impl ModeledPthreadBinding {
             requires_direct_worker: true,
             requires_null_join_result: true,
         }
+    }
+
+    pub fn imported(import_identity: &str) -> Self {
+        let mut binding = Self::builtin();
+        // A locked import identity covers the compiler, target, source,
+        // artifact, and dependency bytes. Keep it distinct from the built-in
+        // declaration projection while retaining the same trusted runtime
+        // specification and null-only call restrictions.
+        binding.header_digest = Sha256::digest(import_identity.as_bytes()).into();
+        binding
     }
 
     pub fn identity(&self) -> String {
