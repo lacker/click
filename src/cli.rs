@@ -967,6 +967,59 @@ pub fn load_sidecar_inputs(
     Ok((click_source, project, inputs))
 }
 
+/// One file target of `click verify`, loaded for verification: a sidecar with
+/// its imports and declared C inputs, or an mdtest's fenced blocks.
+pub struct LoadedTarget {
+    pub click_source: String,
+    pub project: ClickProject,
+    pub inputs: CInput,
+    /// The parsed container when the target is an mdtest. Its
+    /// `click_start_line` maps lines of the Click block to lines of the file.
+    pub mdtest: Option<MdTest>,
+}
+
+impl LoadedTarget {
+    /// Lines before the Click source inside the target file: zero for a
+    /// sidecar, and the lines preceding the ```click block for an mdtest.
+    pub fn line_offset(&self) -> usize {
+        self.mdtest
+            .as_ref()
+            .map_or(0, |mdtest| mdtest.click_start_line.saturating_sub(1))
+    }
+}
+
+/// Loads one file target. A `.md` path is an mdtest whose ```click, ```c, and
+/// ```cpp fences are extracted and prepared exactly as the mdtest gate does;
+/// its Click imports resolve beside the markdown file. Any other path is a
+/// sidecar loaded by [`load_sidecar_inputs`].
+pub fn load_target_inputs(
+    path: &Path,
+    project_root: Option<&Path>,
+) -> Result<LoadedTarget, String> {
+    if !looks_like_mdtest(path) {
+        let (click_source, project, inputs) = load_sidecar_inputs(path, project_root)?;
+        return Ok(LoadedTarget {
+            click_source,
+            project,
+            inputs,
+            mdtest: None,
+        });
+    }
+    let mdtest = read_mdtest(path)?;
+    let click_source = mdtest
+        .click_source
+        .clone()
+        .ok_or_else(|| format!("mdtest `{}` has no ```click block", path.display()))?;
+    let inputs = prepare_mdtest_inputs(&mdtest)?;
+    let project = read_click_project(path, &click_source)?;
+    Ok(LoadedTarget {
+        click_source,
+        project,
+        inputs,
+        mdtest: Some(mdtest),
+    })
+}
+
 /// Returns true when the directory directly contains a `.click` sidecar.
 pub fn contains_click_file(path: &Path) -> Result<bool, String> {
     Ok(directory_entries(path)?.into_iter().any(|entry| {

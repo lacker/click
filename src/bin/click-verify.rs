@@ -8,9 +8,9 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use click::cli::{
-    CInput, DEFAULT_VERIFY_TIME_LIMIT, containing_directory, load_sidecar_inputs,
-    looks_like_source_location, parse_duration, parse_source_location, select_sidecars,
-    source_refs,
+    CInput, DEFAULT_VERIFY_TIME_LIMIT, LoadedTarget, containing_directory, load_sidecar_inputs,
+    load_target_inputs, looks_like_mdtest, looks_like_source_location, parse_duration,
+    parse_source_location, select_sidecars, source_refs,
 };
 use click::languages::c::source as c_source;
 use click::languages::c::target::CTarget;
@@ -31,8 +31,8 @@ use click::surface::{
 };
 
 const USAGE: &str = "\
-usage: click verify [--time-limit <DURATION>] <sidecar.click>[:<line>:<column>]
-       click verify --trace-proof <FUNCTION> <sidecar.click>
+usage: click verify [--time-limit <DURATION>] <sidecar.click|mdtest.md>[:<line>:<column>]
+       click verify --trace-proof <FUNCTION> <sidecar.click|mdtest.md>
        click verify [--time-limit <DURATION>] <project-directory|examples-directory>
        click verify --changed-since <REVISION> [--explain] <sidecar.click|directory>
 
@@ -40,6 +40,11 @@ Verifies proofs owned by the selected sidecar, or, when a one-based
 :LINE:COLUMN suffix is supplied, only the proof unit containing that source
 location. Imported declarations and unselected C function contracts are
 assumptions; their proof bodies are not recursively selected.
+
+An mdtest is verified from its embedded ```c or ```cpp and ```click blocks,
+prepared exactly as the mdtests gate prepares them. Locations are lines of
+the markdown file. Verify reports the proof outcome itself; it does not
+consult the ```expect block, so an expected-failure mdtest exits nonzero.
 
 Given a directory, verifies every sidecar in it: either the project directory
 itself when it holds sidecars, or each immediate subdirectory that does. This
@@ -231,6 +236,12 @@ fn verify_changed(
     time_limit: Duration,
     explain_only: bool,
 ) -> Result<(), String> {
+    if looks_like_mdtest(path) {
+        return Err(format!(
+            "`--changed-since` selects sidecars from a git baseline and does not take an mdtest; run `click verify {}` without it",
+            path.display()
+        ));
+    }
     let selection = select_sidecars(path)?;
     let project_root = selection.project_root.as_path();
     let mut sidecars = selection
@@ -324,7 +335,7 @@ fn verify_changed(
             } else {
                 verify_c0_project_functions(&project, &refs, selected.clone())
             }
-            .map_err(|error| proof_error_report(&error, &sidecar, true, &project, &inputs))
+            .map_err(|error| proof_error_report(&error, &sidecar, true, &project, &inputs, 0))
         })?;
         print_external_dependencies(&dependencies, &verified_theorems);
         if full_rebuild
@@ -384,6 +395,7 @@ fn proof_error_report(
     suggest_trace: bool,
     project: &ClickProject,
     inputs: &CInput,
+    line_offset: usize,
 ) -> String {
     let (mut report, mut context) = if suggest_trace {
         error.concise_report_parts()
@@ -393,7 +405,7 @@ fn proof_error_report(
     if suggest_trace {
         if let Some(source) = project.entry_source()
             && let Some(position) = proof_source_position(error, project, inputs, source)
-            && let Some(excerpt) = source_excerpt(sidecar, source, &position)
+            && let Some(excerpt) = source_excerpt(sidecar, source, &position, line_offset)
         {
             context.push(excerpt);
         }
@@ -452,6 +464,7 @@ fn source_excerpt(
     sidecar: &Path,
     source: &str,
     position: &click::surface::SourcePosition,
+    line_offset: usize,
 ) -> Option<String> {
     let line = source.lines().nth(position.line.checked_sub(1)?)?;
     let chars = line.chars().collect::<Vec<_>>();
@@ -475,13 +488,15 @@ fn source_excerpt(
         .map(|character| if *character == '\t' { 4 } else { 1 })
         .sum::<usize>()
         + usize::from(start > 0);
-    let width = position.line.to_string().len();
+    // An mdtest reports lines of the markdown file, not of its Click block.
+    let file_line = position.line + line_offset;
+    let width = file_line.to_string().len();
     Some(format!(
         "  --> {}:{}:{}\n  {:width$} | {}{}{}\n  {:width$} | {}{}",
         sidecar.display(),
-        position.line,
+        file_line,
         position.column,
-        position.line,
+        file_line,
         left,
         snippet,
         right,
@@ -864,7 +879,14 @@ fn verify_file(
     // A previous failed sidecar may have left admissions behind; each file
     // reports only its own.
     let _ = click::surface::take_sorry_admissions();
-    let (click_source, project, inputs) = load_sidecar_inputs(click_path, project_root)?;
+    let target = load_target_inputs(click_path, project_root)?;
+    let line_offset = target.line_offset();
+    let LoadedTarget {
+        click_source,
+        project,
+        inputs,
+        mdtest,
+    } = target;
     if let Some(function) = trace_proof {
         let names = match &inputs {
             CInput::Bundle(sources) => {
@@ -917,7 +939,14 @@ fn verify_file(
             (CInput::PreparedCpp(import), None) => verify_cpp_prepared_project(&project, import),
         };
         let report = |error: ClickError| {
-            proof_error_report(&error, click_path, trace_proof.is_none(), &project, &inputs)
+            proof_error_report(
+                &error,
+                click_path,
+                trace_proof.is_none(),
+                &project,
+                &inputs,
+                line_offset,
+            )
         };
         match trace_proof {
             Some(function) => with_proof_trace(function, || run_selected().map_err(report)),
@@ -948,6 +977,7 @@ fn verify_file(
     if admissions.is_empty() {
         if let CInput::Bundle(sources) = &inputs
             && trace_proof.is_none()
+            && mdtest.is_none()
             && project.modules().len() == 1
             && project.c_profile().is_none()
             && let Err(message) = record_full_verification(click_path, &click_source, sources, &[])
@@ -978,8 +1008,19 @@ fn verify_location(
     column: usize,
     time_limit: Duration,
 ) -> Result<(), String> {
-    let (_click_source, project, inputs) =
-        load_sidecar_inputs(click_path, Some(containing_directory(click_path)))?;
+    let target = load_target_inputs(click_path, Some(containing_directory(click_path)))?;
+    let line_offset = target.line_offset();
+    // An mdtest location names a line of the markdown file; the verifier
+    // selects by lines of the extracted Click block.
+    let line = match &target.mdtest {
+        Some(mdtest) => mdtest
+            .click_line(line)
+            .map_err(|error| format!("`{}:{line}:{column}`: {error}", click_path.display()))?,
+        None => line,
+    };
+    let LoadedTarget {
+        project, inputs, ..
+    } = target;
     let dependencies = match &inputs {
         CInput::Bundle(sources) => {
             c0_project_external_dependencies(&project, &source_refs(sources))
@@ -1004,7 +1045,9 @@ fn verify_location(
                 verify_cpp_prepared_project_at(&project, import, line, column)
             }
         };
-        result.map_err(|error| proof_error_report(&error, click_path, true, &project, &inputs))
+        result.map_err(|error| {
+            proof_error_report(&error, click_path, true, &project, &inputs, line_offset)
+        })
     })?;
     print_external_dependencies(&dependencies, &verified);
     println!("1 selected proof verified");
