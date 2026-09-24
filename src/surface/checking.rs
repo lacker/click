@@ -213,15 +213,53 @@ pub(super) fn prove_ensure_resource<'e>(
         post_state
     };
     let assumptions = assumptions_from_propositions(available_pure_facts);
-    let expected = lower_resource_clause_facts_at_state_with_result_and_entry(
-        resource,
-        parameters,
-        arguments,
-        entry_state,
-        clause_state,
-        result,
-        &assumptions,
-    )?;
+    let lower_at = |clause_state: &CState| {
+        lower_resource_clause_facts_at_state_with_result_and_entry(
+            resource,
+            parameters,
+            arguments,
+            entry_state,
+            clause_state,
+            result,
+            &assumptions,
+        )
+    };
+    let expected = match lower_at(clause_state) {
+        Ok(expected) => expected,
+        Err(error) => {
+            // A clause whose argument loads a cell inside a folded
+            // field-bearing instance the function holds at this state reads
+            // it through the cells that instance's unmatched body owns, as
+            // the contract's clauses do everywhere else they are evaluated.
+            // Views grant reads only; nothing is opened.
+            let definitions = checked_execution
+                .function()
+                .composite_resource_definitions();
+            let published = clause_state
+                .resources()
+                .facts()
+                .iter()
+                .flat_map(|fact| {
+                    crate::kernel::unmatched_instance_body_views(
+                        fact,
+                        definitions,
+                        clause_state,
+                        &assumptions,
+                    )
+                })
+                .collect::<Vec<_>>();
+            if published.is_empty() {
+                return Err(error);
+            }
+            let published_state = clause_state.clone().with_resource_context(
+                clause_state
+                    .resources()
+                    .clone()
+                    .unchecked_with_facts(published),
+            );
+            lower_at(&published_state).map_err(|_| error)?
+        }
+    };
     if expected.iter().all(|expected| {
         post_state
             .resources()

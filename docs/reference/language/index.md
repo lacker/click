@@ -1485,6 +1485,10 @@ resource clauses, as a folded field-free composite does:
 `consumes freed: arena_prefix_region(region);` beside
 `consumes before: arena_prefix_state(region->arena);` reads `region->arena`
 through the `object(region)` the region's body owns, in either clause order.
+The same holds for the clauses the contract returns and for the cells its
+postconditions read inside its folded instances
+(`mdtests/contract_returns_field_bearing_sibling.md`,
+`mdtests/contract_postcondition_reads_through_field_bearing_instance.md`).
 The cells are views only: writing one still needs an explicit `unfold`, and a
 cell the body does not own stays unreadable
 (`mdtests/contract_owns_through_field_bearing_instance.md`,

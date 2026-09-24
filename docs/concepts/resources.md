@@ -232,8 +232,13 @@ carries the fields `start` and `end` and owns `object(region)`, so a contract
 that consumes `freed: arena_prefix_region(region)` may also consume
 `arena_prefix_state(region->arena)`: while the clauses are evaluated, the
 instance's body is evaluated once at its own fields and the cells it owns are
-published as views. Clause order does not matter, and an entry-snapshot
-clause returned at the exit is read through the same publication. A guarded
+published as views. Clause order does not matter, and the clauses a contract
+returns are read the same way: `owns st: arena_prefix_state(region->arena)`
+beside `owns r: arena_prefix_region(region)` returns `st` at the address `r`
+supplies, and contract certification reads a postcondition's cells inside
+the contract's folded instances, such as
+`result == region->arena->data[region->start + index]`, through the cells
+their bodies own. A guarded
 body publishes nothing, since its case is a proof obligation rather than a
 premise; a matched body publishes the arm its premises decide, described
 under [Modeled bodies and arm selection](#modeled-bodies-and-arm-selection);
@@ -244,8 +249,14 @@ is never opened for this purpose.
 The publication is read authority and nothing more. The instance stays folded,
 so a store to a cell it owns is refused until an explicit `unfold` moves the
 cell into the proof state, and a cell the body does not own is not published
-at all. The regressions are `mdtests/contract_owns_through_field_bearing_instance.md`
-(both clause orders), `mdtests/arena_prefix_free_reads_region_arena.md`,
+at all. This publication belongs to the contract's own clauses at its entry
+and return; it is not one of the frontiers where a matched instance's arms
+are decided, so a loop head does not read through a folded field-bearing
+instance. The regressions are
+`mdtests/contract_owns_through_field_bearing_instance.md` (both clause
+orders), `mdtests/contract_returns_field_bearing_sibling.md` (both clause
+orders), `mdtests/contract_postcondition_reads_through_field_bearing_instance.md`,
+`mdtests/arena_prefix_free_reads_region_arena.md`,
 `mdtests/contract_field_bearing_instance_views_grant_no_write.md`, and
 `mdtests/contract_field_bearing_instance_views_only_owned_cells.md`.
 

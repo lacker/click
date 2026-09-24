@@ -1247,3 +1247,125 @@ void arena_free(struct region* region) {
     execute();
     simp();
 }
+
+verifying "arena_write.c";
+
+void arena_write(struct region* region, int32 index, int32 value) {
+    owns r: arena_prefix_region(region);
+    owns st: arena_prefix_state(region->arena);
+    requires 0 <= index;
+    requires defined(r.start + index) and r.start + index < r.end;
+
+    ensures r.start == old(r.start);
+    ensures r.end == old(r.end);
+    ensures st.prefix == old(st.prefix);
+    ensures st.live == old(st.live);
+    ensures region->arena == old(region->arena);
+    ensures region->arena->data[region->start + index] == value;
+} by {
+    let { partition: partition, prefix: p, live: n } = unfold(st);
+    let { start: s, end: e } = unfold(r);
+    have defined(s + index) by {
+        simp() using {
+            defined(s + index) and s + index < e;
+        }
+    }
+    have s + index < e by {
+        simp() using {
+            defined(s + index) and s + index < e;
+        }
+    }
+    have s <= s + index by {
+        apply(int32_add_nonnegative_right_is_at_least_left(s, index)) using {
+            0 <= index;
+            defined(s + index);
+        }
+    }
+    have s + index + 1 <= e by {
+        apply(int32_increment_upper_bound(s + index, e)) using {
+            s + index < e;
+        }
+    }
+    have region->start == s by {
+        assumption();
+    }
+    have defined(region->start + index) by {
+        rewrite(region->start == s);
+        assumption();
+    }
+    have region->start <= region->start + index by {
+        rewrite(region->start == s);
+        assumption();
+    }
+    have region->start + index + 1 <= e by {
+        rewrite(region->start == s);
+        assumption();
+    }
+    execute();
+    let r = fold(arena_prefix_region(region), { start: s, end: e });
+    let st = fold(arena_prefix_state(region->arena), {
+        prefix: p, live: n
+    }, { partition: partition });
+    simp();
+}
+
+verifying "arena_read.c";
+
+int32 arena_read(struct region* region, int32 index) {
+    owns r: arena_prefix_region(region);
+    owns st: arena_prefix_state(region->arena);
+    requires 0 <= index;
+    requires defined(r.start + index) and r.start + index < r.end;
+
+    ensures r.start == old(r.start);
+    ensures r.end == old(r.end);
+    ensures st.prefix == old(st.prefix);
+    ensures st.live == old(st.live);
+    ensures region->arena == old(region->arena);
+    ensures result == region->arena->data[region->start + index];
+} by {
+    let { partition: partition, prefix: p, live: n } = unfold(st);
+    let { start: s, end: e } = unfold(r);
+    have defined(s + index) by {
+        simp() using {
+            defined(s + index) and s + index < e;
+        }
+    }
+    have s + index < e by {
+        simp() using {
+            defined(s + index) and s + index < e;
+        }
+    }
+    have s <= s + index by {
+        apply(int32_add_nonnegative_right_is_at_least_left(s, index)) using {
+            0 <= index;
+            defined(s + index);
+        }
+    }
+    have s + index + 1 <= e by {
+        apply(int32_increment_upper_bound(s + index, e)) using {
+            s + index < e;
+        }
+    }
+    have region->start == s by {
+        assumption();
+    }
+    have defined(region->start + index) by {
+        rewrite(region->start == s);
+        assumption();
+    }
+    have region->start <= region->start + index by {
+        rewrite(region->start == s);
+        assumption();
+    }
+    have region->start + index + 1 <= e by {
+        rewrite(region->start == s);
+        assumption();
+    }
+    execute();
+    let r = fold(arena_prefix_region(region), { start: s, end: e });
+    let st = fold(arena_prefix_state(region->arena), {
+        prefix: p, live: n
+    }, { partition: partition });
+    simp();
+}

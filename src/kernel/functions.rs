@@ -13385,6 +13385,79 @@ fn evaluate_contract_return_resource_context(
                 .unchecked_with_facts(entry_argument_views.iter().cloned()),
         )
     };
+    // Evaluates one returned clause that has no checked entry borrow against
+    // the cells the contract makes readable, including the unmatched bodies
+    // of the field-bearing instances already returned beside it.
+    let evaluate_returned =
+        |resource: &CResourceSpec,
+         context: &ResourceContext,
+         canonical_by_checked: &mut BTreeMap<CResourceFact, VecDeque<CResourceFact>>,
+         budget: &mut ExecutionBudget|
+         -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
+            // Snapshot selection is carried by the normalized specification.
+            // A named instance uses post fields while retaining entry identity.
+            let state = match resource.snapshot() {
+                CResourceSnapshot::Entry => entry_state,
+                CResourceSnapshot::Current | CResourceSnapshot::Post => post_state,
+            };
+            // A returned view or a clause with no checked entry borrow still
+            // evaluates against the cells the contract makes readable.
+            let supply = state
+                .resources()
+                .clone()
+                .unchecked_with_facts(context.facts().iter().cloned());
+            let mut views = instance_arm_views(
+                &supply,
+                interface.composite_resource_definitions(),
+                state,
+                assumptions,
+            );
+            if resource.snapshot() == CResourceSnapshot::Entry {
+                views.extend(entry_opened_views.iter().cloned());
+            }
+            // A field-bearing instance this return has already produced supplies
+            // its unmatched body's cells to the other returned clauses, exactly as
+            // it does while the entry section is evaluated. Only the contract's
+            // own returned clauses are visited.
+            for fact in context.facts() {
+                views.extend(unmatched_instance_body_views(
+                    fact,
+                    interface.composite_resource_definitions(),
+                    state,
+                    assumptions,
+                ));
+            }
+            let evaluation_state = state
+                .clone()
+                .with_resource_context(supply.unchecked_with_facts(views));
+            let evaluated = match evaluate_function_resource_spec_with_entry(
+                &entry_state_for_argument_reads,
+                &evaluation_state,
+                resource,
+                assumptions,
+                budget,
+            )? {
+                Ok(resource) => resource,
+                Err(error) => return Ok(Err(error)),
+            };
+            Ok(Ok(
+                if resource.role() == CResourceTransferRole::Borrow
+                    && resource.snapshot() == CResourceSnapshot::Entry
+                    && !resource.is_view()
+                {
+                    canonical_by_checked
+                        .get_mut(&evaluated)
+                        .and_then(VecDeque::pop_front)
+                        .unwrap_or(evaluated)
+                } else {
+                    evaluated
+                },
+            ))
+        };
+    // A clause whose address loads a cell a later returned clause supplies
+    // waits for it: clause order does not decide what a contract returns,
+    // just as it does not decide what it requires.
+    let mut deferred: Vec<(&CResourceSpec, CRuntimeError)> = Vec::new();
     for resource in interface.resource_ensures().iter().take(count) {
         if let Some(guard) = resource.guard() {
             match evaluate_guarded_contract_condition_with_loop_entry(
@@ -13413,56 +13486,45 @@ fn evaluate_contract_return_resource_context(
         let resource = if let Some(entry_borrow) = entry_borrow {
             entry_borrow
         } else {
-            // Snapshot selection is carried by the normalized specification.
-            // A named instance uses post fields while retaining entry identity.
-            let state = match resource.snapshot() {
-                CResourceSnapshot::Entry => entry_state,
-                CResourceSnapshot::Current | CResourceSnapshot::Post => post_state,
-            };
-            // A returned view or a clause with no checked entry borrow still
-            // evaluates against the cells the contract makes readable.
-            let supply = state
-                .resources()
-                .clone()
-                .unchecked_with_facts(context.facts().iter().cloned());
-            let mut views = instance_arm_views(
-                &supply,
-                interface.composite_resource_definitions(),
-                state,
-                assumptions,
-            );
-            if resource.snapshot() == CResourceSnapshot::Entry {
-                views.extend(entry_opened_views.iter().cloned());
-            }
-            let evaluation_state = state
-                .clone()
-                .with_resource_context(supply.unchecked_with_facts(views));
-            let evaluated = match evaluate_function_resource_spec_with_entry(
-                &entry_state_for_argument_reads,
-                &evaluation_state,
-                resource,
-                assumptions,
-                budget,
-            )? {
+            match evaluate_returned(resource, &context, &mut canonical_by_checked, budget)? {
                 Ok(resource) => resource,
+                Err(error) if resource_clause_failure_awaits_supply(&error) => {
+                    deferred.push((resource, error));
+                    continue;
+                }
                 Err(error) => return Ok(Err(error)),
-            };
-            if resource.role() == CResourceTransferRole::Borrow
-                && resource.snapshot() == CResourceSnapshot::Entry
-                && !resource.is_view()
-            {
-                canonical_by_checked
-                    .get_mut(&evaluated)
-                    .and_then(VecDeque::pop_front)
-                    .unwrap_or(evaluated)
-            } else {
-                evaluated
             }
         };
         context = match context.try_compose_with_fact(resource, assumptions) {
             Ok(context) => context,
             Err(error) => return Ok(Err(resource_context_runtime_error(error))),
         };
+    }
+    // Each retry pass returns at least one waiting clause or stops, so the
+    // passes are bounded by the number of clauses that waited.
+    while !deferred.is_empty() {
+        let waited = deferred.len();
+        let mut waiting = Vec::new();
+        for (resource, error) in std::mem::take(&mut deferred) {
+            match evaluate_returned(resource, &context, &mut canonical_by_checked, budget)? {
+                Ok(returned) => {
+                    context = match context.try_compose_with_fact(returned, assumptions) {
+                        Ok(context) => context,
+                        Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+                    };
+                }
+                Err(retry_error) if resource_clause_failure_awaits_supply(&retry_error) => {
+                    waiting.push((resource, error));
+                }
+                Err(retry_error) => return Ok(Err(retry_error)),
+            }
+        }
+        if waiting.len() == waited {
+            // Nothing returned on this pass: no order supplies the cell.
+            let (_, error) = waiting.swap_remove(0);
+            return Ok(Err(error));
+        }
+        deferred = waiting;
     }
     Ok(Ok(context))
 }
@@ -19458,7 +19520,7 @@ fn instance_arm_read_authority(
 /// instance's own memory clauses, with no composite definitions in scope, so
 /// a body never re-enters this publication and nothing outside the instance
 /// is visited.
-fn unmatched_instance_body_views(
+pub(crate) fn unmatched_instance_body_views(
     fact: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     state: &CState,

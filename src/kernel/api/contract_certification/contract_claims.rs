@@ -1112,6 +1112,16 @@ fn prepare_function_claim_path(
             .to_string()
             .into());
     };
+    // The contract's own folded field-bearing instances make the cells their
+    // unmatched bodies own readable, as they did while the clauses were
+    // evaluated; certification reads the entry through the same authority.
+    let entry_resources = with_unmatched_instance_body_views(
+        entry_resources,
+        required_resources.facts(),
+        function,
+        &entry_state,
+        &assumptions,
+    );
     let Ok(resource_facts) = entry_resources.observable_facts(&assumptions) else {
         return Err("the entry resource context is not observable"
             .to_string()
@@ -1197,6 +1207,13 @@ fn prepare_function_claim_path(
             .to_string()
             .into());
     };
+    let post_resources = with_unmatched_instance_body_views(
+        post_resources,
+        claim_exit_state.resources().facts(),
+        function,
+        &claim_exit_state,
+        &assumptions,
+    );
     let Ok(post_resource_facts) = post_resources.observable_facts(&assumptions) else {
         return Err("the exit resource context is not observable"
             .to_string()
@@ -1299,6 +1316,35 @@ fn prepare_function_claim_path(
         checked_resource_claims,
         checked_resource_transition,
     })
+}
+
+/// `resources` with the read views the unmatched bodies of the field-bearing
+/// instances among `instances` publish at `state`. The instances are the
+/// contract's own entry clauses or the function's own exit frame, which the
+/// composite expansion beside this call already visits.
+fn with_unmatched_instance_body_views(
+    resources: crate::kernel::ResourceContext,
+    instances: &[CResourceFact],
+    function: &CFunction,
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> crate::kernel::ResourceContext {
+    let views = instances
+        .iter()
+        .flat_map(|fact| {
+            crate::kernel::unmatched_instance_body_views(
+                fact,
+                function.composite_resource_definitions(),
+                state,
+                assumptions,
+            )
+        })
+        .collect::<Vec<_>>();
+    if views.is_empty() {
+        resources
+    } else {
+        resources.unchecked_with_facts(views)
+    }
 }
 
 fn post_execution_population_obligation(obligation: &ProofObligation) -> bool {
