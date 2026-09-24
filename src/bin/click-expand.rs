@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use click::cli::{
-    CInput, DEFAULT_EXPANSION_TIME_LIMIT, looks_like_mdtest, parse_duration, parse_source_location,
-    prepare_mdtest_inputs, read_c_inputs, read_click_project, read_mdtest, source_refs,
+    CInput, DEFAULT_EXPANSION_TIME_LIMIT, containing_directory, looks_like_mdtest, parse_duration,
+    parse_source_location, prepare_mdtest_inputs, read_c_inputs, read_click_project, read_mdtest,
+    source_refs,
 };
 use click::surface::{
     ClickProject, c0_prepared_project_smart_tactic_source_sites,
@@ -207,12 +208,8 @@ fn write_context_preserved(
     if looks_like_mdtest(&arguments.click_path) {
         return write_artifact(&artifact.source);
     }
-    let source_dir = arguments
-        .click_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-    let output_dir = output.parent().unwrap_or_else(|| Path::new("."));
+    let source_dir = containing_directory(&arguments.click_path).to_path_buf();
+    let output_dir = containing_directory(output);
     let original_inputs = read_c_inputs(&arguments.click_path, &artifact.source)?;
     let same_directory = same_path(&source_dir, output_dir);
     let same_name = output.file_name() == arguments.click_path.file_name();
@@ -719,7 +716,7 @@ fn verify_expansion(
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn atomic_replace(path: &Path, contents: &[u8]) -> Result<(), String> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = containing_directory(path);
     let name = path
         .file_name()
         .and_then(|name| name.to_str())

@@ -7,9 +7,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use click::cli::{
-    self, CInput, MdTestExpectation, TargetSelection, find_mdtests, format_duration,
-    looks_like_mdtest, parse_duration, prepare_mdtest_inputs, read_c_inputs, read_click_project,
-    select_targets, shell_quote, source_refs,
+    self, CInput, MdTestExpectation, TargetSelection, containing_directory, find_mdtests,
+    format_duration, looks_like_mdtest, parse_duration, prepare_mdtest_inputs, read_c_inputs,
+    read_click_project, select_targets, shell_quote, source_refs,
 };
 use click::surface::{
     C0VerificationSession, ClickProject, SourcePosition, c0_incremental_selection,
@@ -979,7 +979,7 @@ fn git_repo_root(path: &Path) -> Result<PathBuf, String> {
     let anchor = if path.is_dir() {
         path
     } else {
-        path.parent().unwrap_or_else(|| Path::new("."))
+        containing_directory(path)
     };
     let output = Command::new("git")
         .args([
@@ -1094,7 +1094,7 @@ fn load_baseline_audit_source(
         // revision. Falling back to the ordinary full audit is safe.
         return Ok(None);
     }
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = containing_directory(path);
     let mut c_sources = Vec::new();
     for name in verifying_source_paths(&container_source).map_err(|error| {
         format!(

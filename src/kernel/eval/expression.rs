@@ -1133,10 +1133,11 @@ pub(in crate::kernel) fn cast_c_value_to_type(
 ///
 /// C11 6.2.4p2 makes a pointer's value indeterminate when its pointee's
 /// lifetime ends, and Annex J.2 lists using such a value as undefined. Reading
-/// the pointer out of a cell, storing it, or passing it along is not such a
-/// use in Click's model; comparing it (with anything, null included),
-/// subtracting or offsetting it, testing its truth, or converting it to an
-/// integer is. The evidence is positive: the pointer's own block holds an
+/// the pointer out of a cell, storing it, or passing or returning it as a
+/// pointer is not such a use in Click's model; comparing it (with anything,
+/// null included), subtracting or offsetting it, testing its truth, or
+/// converting it to an integer or `_Bool` (by a cast, or implicitly at an
+/// assignment, a `return`, or a call argument) is. The evidence is positive: the pointer's own block holds an
 /// exact deallocated base or an offset into one (see
 /// [`CMemory::deallocated_heap_allocation_holding`]). A pointer whose block
 /// is neither shown freed nor shown live keeps its ordinary meaning.

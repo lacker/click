@@ -1,13 +1,14 @@
 # `click verify` command
 
-`click verify` checks a complete sidecar, one selected proof unit, or every
-sidecar in a project collection. Use it before profiling or expansion.
+`click verify` checks a complete sidecar or mdtest, one selected proof unit,
+or every sidecar in a project collection. Use it before profiling or
+expansion.
 
 ## Synopsis
 
 ```text
-usage: click verify [--time-limit <DURATION>] <sidecar.click>[:<line>:<column>]
-       click verify --trace-proof <FUNCTION> <sidecar.click>
+usage: click verify [--time-limit <DURATION>] <sidecar.click|mdtest.md>[:<line>:<column>]
+       click verify --trace-proof <FUNCTION> <sidecar.click|mdtest.md>
        click verify [--time-limit <DURATION>] <project-directory|examples-directory>
        click verify --changed-since <REVISION> [--explain] <sidecar.click|directory>
 ```
@@ -16,6 +17,7 @@ Replace the following:
 
 - `DURATION`: a duration such as `500ms`, `30s`, or `2m`.
 - `SIDECAR`: the path to a `.click` sidecar.
+- `MDTEST`: the path to a `.md` markdown test.
 - `LINE` and `COLUMN`: one-based coordinates inside a proof unit.
 - `PROJECT_DIRECTORY`: either one project containing sidecars or a directory
   whose immediate subdirectories contain projects.
@@ -29,6 +31,16 @@ location. Imported declarations are available, but importing does not select
 their proof bodies; similarly, an unselected called C function contributes its
 well-formed contract without recursively selecting its implementation proof.
 The retained proof artifact records this selected/assumed boundary.
+
+An mdtest target verifies the Click block and the C or C++ fences embedded in
+one markdown test, extracted and prepared exactly as the mdtest gate,
+[`click profile`](profile.md), [`click expand`](expand.md), and
+[`click audit`](audit.md) extract them. Its Click imports resolve beside the
+markdown file, and `LINE` and reported source excerpts refer to lines of the
+`.md` file. `click verify` reports the proof outcome itself and does not
+consult the ```` ```expect ```` block, so an mdtest that expects a failure
+exits nonzero; the mdtest gate is what compares an outcome with its
+expectation. `--changed-since` does not take an mdtest.
 
 For a directory, Click first treats the directory itself as a project when it
 contains sidecars. Otherwise, it discovers projects in immediate

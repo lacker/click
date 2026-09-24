@@ -332,13 +332,25 @@ pub fn structured_tactic_budget_violations(events: &[VerificationEvent]) -> Vec<
         .collect()
 }
 
+/// The directory that holds `path`, which is `.` for a bare relative file name.
+///
+/// `Path::parent` returns an empty path for `a.click`, and an empty path names
+/// no directory: it cannot be canonicalized, joined as a project root, or
+/// handed to `git -C`. Every sidecar-relative lookup goes through here so a
+/// bare name and `./a.click` select the same directory.
+pub fn containing_directory(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
 /// Reads the C sources a sidecar declares with `verifying`, relative to the
 /// sidecar's directory.
 pub fn read_declared_sources(
     click_path: &Path,
     click_source: &str,
 ) -> Result<Vec<(String, String)>, String> {
-    let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = containing_directory(click_path);
     verifying_source_paths(click_source)
         .map_err(|error| error.report())?
         .into_iter()
@@ -368,7 +380,7 @@ pub fn read_verifying_sources_for_target(
     click_source: &str,
     target: crate::languages::c::target::CTarget,
 ) -> Result<Vec<(String, String)>, String> {
-    let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = containing_directory(click_path);
     let declared = read_declared_sources(click_path, click_source)?;
     let mut pending: Vec<String> = declared.iter().map(|(name, _)| name.clone()).collect();
     let mut loaded = Vec::new();
@@ -414,7 +426,7 @@ impl CInput {
 }
 
 pub fn read_c_inputs(sidecar: &Path, click_source: &str) -> Result<CInput, String> {
-    let directory = fs::canonicalize(sidecar.parent().unwrap_or_else(|| Path::new(".")))
+    let directory = fs::canonicalize(containing_directory(sidecar))
         .map_err(|error| format!("failed to resolve sidecar directory: {error}"))?;
     let target = match read_c_project_profile(&directory, &directory)?
         .and_then(|profile| profile.target)
@@ -529,7 +541,7 @@ fn read_c_project_profile(
 /// Callers that intentionally load a multi-directory project should use
 /// [`read_click_project_at_root`] and pass that project's explicit root.
 pub fn read_click_project(sidecar: &Path, click_source: &str) -> Result<ClickProject, String> {
-    let root = sidecar.parent().unwrap_or_else(|| Path::new("."));
+    let root = containing_directory(sidecar);
     read_click_project_at_root(sidecar, click_source, root)
 }
 
@@ -677,7 +689,7 @@ fn load_click_module(
             error.report()
         )
     })?;
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = containing_directory(path);
     let mut imports = Vec::with_capacity(sites.len());
     for site in sites {
         let candidate = parent.join(&site.path);
@@ -841,10 +853,7 @@ impl SidecarSelection {
 /// example may import another's model.
 pub fn select_sidecars(path: &Path) -> Result<SidecarSelection, String> {
     if !path.is_dir() {
-        let parent = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
+        let parent = containing_directory(path);
         return Ok(SidecarSelection {
             project_root: parent.to_path_buf(),
             projects: vec![SelectedProject {
@@ -855,9 +864,7 @@ pub fn select_sidecars(path: &Path) -> Result<SidecarSelection, String> {
     }
     let project_paths = find_projects(path)?;
     let project_root = if contains_click_file(path)? {
-        path.parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."))
+        containing_directory(path)
     } else {
         path
     };
@@ -954,10 +961,63 @@ pub fn load_sidecar_inputs(
     let project = read_click_project_at_root(
         click_path,
         &click_source,
-        project_root.unwrap_or_else(|| click_path.parent().unwrap_or_else(|| Path::new("."))),
+        project_root.unwrap_or_else(|| containing_directory(click_path)),
     )?;
     let inputs = read_c_inputs_for_project(click_path, &click_source, &project)?;
     Ok((click_source, project, inputs))
+}
+
+/// One file target of `click verify`, loaded for verification: a sidecar with
+/// its imports and declared C inputs, or an mdtest's fenced blocks.
+pub struct LoadedTarget {
+    pub click_source: String,
+    pub project: ClickProject,
+    pub inputs: CInput,
+    /// The parsed container when the target is an mdtest. Its
+    /// `click_start_line` maps lines of the Click block to lines of the file.
+    pub mdtest: Option<MdTest>,
+}
+
+impl LoadedTarget {
+    /// Lines before the Click source inside the target file: zero for a
+    /// sidecar, and the lines preceding the ```click block for an mdtest.
+    pub fn line_offset(&self) -> usize {
+        self.mdtest
+            .as_ref()
+            .map_or(0, |mdtest| mdtest.click_start_line.saturating_sub(1))
+    }
+}
+
+/// Loads one file target. A `.md` path is an mdtest whose ```click, ```c, and
+/// ```cpp fences are extracted and prepared exactly as the mdtest gate does;
+/// its Click imports resolve beside the markdown file. Any other path is a
+/// sidecar loaded by [`load_sidecar_inputs`].
+pub fn load_target_inputs(
+    path: &Path,
+    project_root: Option<&Path>,
+) -> Result<LoadedTarget, String> {
+    if !looks_like_mdtest(path) {
+        let (click_source, project, inputs) = load_sidecar_inputs(path, project_root)?;
+        return Ok(LoadedTarget {
+            click_source,
+            project,
+            inputs,
+            mdtest: None,
+        });
+    }
+    let mdtest = read_mdtest(path)?;
+    let click_source = mdtest
+        .click_source
+        .clone()
+        .ok_or_else(|| format!("mdtest `{}` has no ```click block", path.display()))?;
+    let inputs = prepare_mdtest_inputs(&mdtest)?;
+    let project = read_click_project(path, &click_source)?;
+    Ok(LoadedTarget {
+        click_source,
+        project,
+        inputs,
+        mdtest: Some(mdtest),
+    })
 }
 
 /// Returns true when the directory directly contains a `.click` sidecar.
@@ -1476,6 +1536,23 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bare file name has an empty `Path::parent`; it selects the current
+    /// directory exactly as `./name` does. The command-line regression that
+    /// runs every subcommand on a bare name is
+    /// `every_cli_tool_accepts_a_bare_sidecar_name` in `src/bin/click.rs`.
+    #[test]
+    fn a_bare_sidecar_name_selects_the_current_directory() {
+        assert_eq!(containing_directory(Path::new("a.click")), Path::new("."));
+        assert_eq!(containing_directory(Path::new("./a.click")), Path::new("."));
+        assert_eq!(
+            containing_directory(Path::new("examples/a.click")),
+            Path::new("examples")
+        );
+        assert_eq!(containing_directory(Path::new("/")), Path::new("."));
+        let selection = select_sidecars(Path::new("a.click")).unwrap();
+        assert_eq!(selection.project_root, Path::new("."));
+    }
 
     #[test]
     fn project_config_selects_pthread_without_sidecar_profile_directives() {

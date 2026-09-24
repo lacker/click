@@ -104,6 +104,121 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
+    /// A bare sidecar name has an empty `Path::parent`, which is not a
+    /// directory. Every subcommand must resolve it against the current
+    /// directory exactly as it resolves `./f.click`.
+    ///
+    /// This test changes the process working directory, which every other
+    /// test sharing the process would observe. It therefore runs only under
+    /// nextest's process-per-test mode, which `scripts/check.sh` always uses;
+    /// the directory is restored before any assertion can unwind.
+    #[test]
+    fn every_cli_tool_accepts_a_bare_sidecar_name() {
+        if std::env::var("NEXTEST_EXECUTION_MODE").as_deref() != Ok("process-per-test") {
+            eprintln!("skipped: changing the working directory needs nextest process isolation");
+            return;
+        }
+        let directory =
+            std::env::temp_dir().join(format!("click-bare-sidecar-name-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("f.c"), "int32 f() { return 1; }\n").unwrap();
+        fs::write(
+            directory.join("f.click"),
+            "verifying \"f.c\";\nint32 f() { ensures result == 1 by auto; }\n",
+        )
+        .unwrap();
+        let original = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&directory).unwrap();
+        let arguments = |words: &[&str]| {
+            words
+                .iter()
+                .map(|word| word.to_string())
+                .collect::<Vec<_>>()
+        };
+        let results = [
+            entry(arguments(&["verify", "f.click"])),
+            entry(arguments(&["verify", "f.click:2:13"])),
+            entry(arguments(&["profile", "f.click"])),
+            entry(arguments(&[
+                "expand",
+                "--claim",
+                "f.ensures_0",
+                "--output",
+                "expanded.click",
+                "f.click",
+            ])),
+            entry(arguments(&["audit", "--claim", "f.ensures_0", "f.click"])),
+            entry(arguments(&["verify", "expanded.click"])),
+        ];
+        std::env::set_current_dir(original).unwrap();
+        fs::remove_dir_all(&directory).unwrap();
+        for result in results {
+            result.unwrap();
+        }
+    }
+
+    /// `click verify` takes an mdtest as `profile`, `expand`, and `audit` do:
+    /// it verifies the fenced Click and C blocks, and every location it reads
+    /// or reports is a line of the markdown file.
+    #[test]
+    fn verify_accepts_an_mdtest_with_markdown_locations() {
+        let directory =
+            std::env::temp_dir().join(format!("click-verify-mdtest-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        let mdtest = |body: &str, expectation: &str| {
+            format!(
+                "# a markdown test\n\n```c filename=f.c\nint32 f() {{ return 1; }}\n```\n\n```click\nverifying \"f.c\";\n{body}\n```\n\n```expect\n{expectation}\n```\n"
+            )
+        };
+        let passing = directory.join("passing.md");
+        fs::write(
+            &passing,
+            mdtest("int32 f() { ensures result == 1 by auto; }", "pass"),
+        )
+        .unwrap();
+        let failing = directory.join("failing.md");
+        fs::write(
+            &failing,
+            mdtest(
+                "int32 f() { ensures result == 1; } by { step(); step(); simp(); }",
+                "fail: step",
+            ),
+        )
+        .unwrap();
+        let verify = |target: String| entry(["verify".to_string(), target]);
+
+        verify(passing.display().to_string()).expect("a passing mdtest verifies");
+        // Line 9 of the file is line 2 of the Click block.
+        verify(format!("{}:9:13", passing.display())).expect("an mdtest location verifies");
+        let outside = verify(format!("{}:2:1", passing.display())).unwrap_err();
+        assert!(
+            outside.contains("is not inside the ```click block"),
+            "{outside}"
+        );
+
+        let error = verify(failing.display().to_string()).unwrap_err();
+        assert!(error.starts_with("proof error:"), "{error}");
+        assert!(
+            error.contains(&format!("--> {}:9:49", failing.display())),
+            "{error}"
+        );
+        let changed = entry([
+            "verify".to_string(),
+            "--changed-since".to_string(),
+            "HEAD".to_string(),
+            passing.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(changed.contains("does not take an mdtest"), "{changed}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn verify_names_the_failed_simple_tactic() {
         let directory =
