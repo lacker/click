@@ -794,6 +794,42 @@ fn explicit_invariant_body_checks_expands_and_rejects_incomplete_proofs() {
     assert!(verify_c0_sources(&premature, &sources).is_err());
 }
 
+/// The smart closer finds a guarded bundle member's proof with direct steps
+/// only, and expansion prints exactly those steps: split the bundle, introduce
+/// the definedness guard, cite the body's fact, and close the ranking pair.
+#[test]
+fn guarded_member_closure_expands_to_intro_inside_both() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/close_invariants_closes_a_guarded_member_by_intro.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = fixture
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let click = fixture.click_source.as_deref().unwrap();
+    verify_c0_sources(click, &sources).unwrap_or_else(|error| panic!("{}", error.message()));
+    // The `else` arm's closer is the guarded one.
+    let offset = click
+        .rfind("close_invariants();")
+        .expect("the guarded arm closes with the smart closer");
+    let position = expansion::position_at_offset(click, offset);
+    let expanded = expand_c0_tactic_source_at(click, &sources, position.line, position.column)
+        .unwrap_or_else(|error| panic!("{}", error.message()));
+    let explicit = expanded[offset..]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        explicit.starts_with(
+            "close_invariants by { both { intro(); assumption(); } and { split(); } }"
+        ),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| panic!("{}", error.message()));
+}
+
 #[test]
 fn explicit_invariant_body_quantified_bubble_census() {
     let path =
