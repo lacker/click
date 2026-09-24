@@ -2497,3 +2497,105 @@ fn a_differing_cell_inside_a_read_stops_the_two_snapshots_matching() {
         );
     }
 }
+
+/// A contract call that leaves allocation continuity undecided records a
+/// `ContractAllocationRetired` edge right after its own `CallHavoc`. When one
+/// havoc range covers the whole retired allocation, the retirement is
+/// transparent to a cell's value: an unrelated cell is named where the call
+/// left it, and a cell of the allocation still stops at the havoc, never at a
+/// value from before the call. A retirement the havoc does not cover, or one
+/// separated from the havoc by another edge, still stops every cell it
+/// shares a block with.
+#[test]
+fn a_retirement_inside_its_calls_havoc_names_cells_at_the_call() {
+    let pointer = |variable| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+            byte_width: 4,
+        },
+    };
+    let owner = pointer(211);
+    let data = pointer(212);
+    let int32_range = |base: &Pointer| {
+        CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+            4,
+        )
+    };
+    let ranges = vec![int32_range(&owner), int32_range(&data)];
+    let assumptions = PureFactContext::new();
+    let named = |memory: &CMemory, cell: &Pointer| {
+        crate::kernel::resource_tracker::last_same_point(
+            crate::kernel::resource_tracker::Resource::Cell {
+                pointer: cell,
+                bytes: 4,
+            },
+            &crate::kernel::resource_tracker::ProgramPoint::at(&intern_c_memory_ref(memory)),
+        )
+        .map(|point| point.snapshot().clone())
+    };
+    // The allocation's claim is live before the call, so retiring it changes
+    // the snapshot and records the edge.
+    let havoc = |variable| {
+        CMemory::new()
+            .with_heap_allocation_claim(data.clone(), Bitvector32Term::Constant(4))
+            .expect("a fresh claim")
+            .with_call_memory_havoc(Variable(variable), &ranges, &assumptions)
+    };
+
+    let called = havoc(213);
+    let retired = called.clone().retire_contract_heap_allocation_claim(
+        &data,
+        &Bitvector32Term::Constant(4),
+        &assumptions,
+    );
+    assert_eq!(named(&retired, &owner), Some(intern_c_memory_ref(&called)));
+    assert_eq!(
+        named(&retired, &data),
+        Some(intern_c_memory_ref(&called)),
+        "a byte of the retired allocation is named by the call's own havoc"
+    );
+    let cell = with_extended_dag_bridging(|| {
+        memory_dag_cell_source(
+            &intern_c_memory_ref(&retired),
+            &owner,
+            4,
+            &assumptions,
+            false,
+        )
+    })
+    .expect("the walk has an answer");
+    let hop = &retained_memory_dag_path(&cell)[0];
+    assert_eq!(
+        hop.justification,
+        MemoryDagHopJustification::RetirementInsideItsCallHavoc
+    );
+    assert!(
+        hop.justification
+            .checks(&hop.derivation, &owner, 4, &assumptions)
+    );
+
+    // The havoc covers four bytes of an eight-byte allocation.
+    let called = havoc(214);
+    let wider = called.clone().retire_contract_heap_allocation_claim(
+        &data,
+        &Bitvector32Term::Constant(8),
+        &assumptions,
+    );
+    assert_eq!(named(&wider, &owner), Some(intern_c_memory_ref(&wider)));
+
+    // Another edge stands between the havoc and the retirement.
+    let declared = havoc(215).with_block("arg-memory", 4);
+    let separated = declared.clone().retire_contract_heap_allocation_claim(
+        &data,
+        &Bitvector32Term::Constant(4),
+        &assumptions,
+    );
+    assert_eq!(
+        named(&separated, &owner),
+        Some(intern_c_memory_ref(&separated))
+    );
+}

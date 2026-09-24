@@ -3052,6 +3052,7 @@ fn execute_verified_function_applications_with_suspension(
             assumptions_with_path_context(&effective_assumptions, &provisional_facts, &obligations);
         let allocation_delta = apply_verified_heap_allocation_delta(
             post_state.memory.clone(),
+            &entry_state.memory,
             &transfer.callee_resources,
             &caller_resources_after_requirements,
             &return_resources,
@@ -9257,26 +9258,80 @@ fn refuse_retiring_a_lent_allocation(
 }
 
 /// The resource the caller keeps across a call that could still refer to an
-/// allocation the call retires, or `None` when every kept resource is proven
+/// allocation the call retires, or `None` when every kept resource is known
 /// separate from it.
 ///
-/// Only the kept facts that can name the retired block are visited, drawn
-/// from the context's indexes (`facts_that_may_refer_to_memory_block`), so the
-/// work does not grow with kept resources in other blocks. Each visited fact
-/// still needs a separation the path facts prove
-/// (`is_proven_separate_from_allocation`).
+/// `lent` is what the caller handed the callee and `kept` the residual it
+/// holds across the call, both expanded under one memory. At the call the two
+/// were one valid composition, and owned memory is exclusive: two owned
+/// memory facts held at once are disjoint (`MemoryResourceAlgebra`'s
+/// `pair_validity_error`, the law `observable_facts_assuming_valid` states
+/// for one context). So when an owned memory fact the caller lent covers
+/// every byte of the allocation, each owned memory fact the caller kept is
+/// disjoint from that allocation by construction and cannot refer to it after
+/// the free. That is the only kept fact the partition speaks for: a kept view,
+/// a kept composite, or any kept fact when the lent owners do not cover the
+/// whole allocation, still needs a separation the path facts prove (a stated
+/// `separate(memory(..), memory(..))` that contains both sides, distinct
+/// blocks, disjoint constant intervals, or one context's own composition).
+///
+/// Only the kept facts that can name the retired block are visited, from the
+/// context's indexes, and the lent coverage is decided at most once from the
+/// lent facts in that block, so the work does not grow with unrelated kept
+/// resources.
 pub(in crate::kernel) fn caller_resource_left_stale_by_retirement<'a>(
+    lent: &ResourceContext,
     kept: &'a ResourceContext,
     base: &Pointer,
     bytes: &Bitvector32Term,
     assumptions: &PureFactContext,
 ) -> Option<&'a CResourceFact> {
-    kept.facts_that_may_refer_to_memory_block(&base.block)
-        .find(|resource| !resource.is_proven_separate_from_allocation(base, bytes, assumptions))
+    let mut lent_owners_cover_allocation = None;
+    for resource in kept.facts_that_may_refer_to_memory_block(&base.block) {
+        if resource.memory_own_range().is_some()
+            && resource.has_proven_positive_quantity(assumptions)
+            && *lent_owners_cover_allocation.get_or_insert_with(|| {
+                lent_owned_memory_covers_allocation(lent, base, bytes, assumptions)
+            })
+        {
+            continue;
+        }
+        if resource.is_proven_separate_from_allocation(base, bytes, assumptions) {
+            continue;
+        }
+        return Some(resource);
+    }
+    None
+}
+
+/// Whether one owned memory fact of `lent` covers the allocation's whole
+/// byte range `base[0..bytes]`. Coverage is the ordinary proof-aware
+/// `memory_range_covers`, so the owner may spell the range in another element
+/// width or with provably equal endpoints.
+fn lent_owned_memory_covers_allocation(
+    lent: &ResourceContext,
+    base: &Pointer,
+    bytes: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    let allocation = CMemoryRange::new_with_element_width(
+        base.clone(),
+        Bitvector32Term::Constant(0),
+        bytes.clone(),
+        1,
+    );
+    lent.memory_block_facts(&base.block).any(|fact| {
+        crate::instrumentation::record_deterministic_work(1);
+        fact.memory_own_range().is_some_and(|range| {
+            fact.has_proven_positive_quantity(assumptions)
+                && memory_range_covers(range, &allocation, assumptions)
+        })
+    })
 }
 
 fn apply_verified_heap_allocation_delta(
     mut memory: CMemory,
+    entry_memory: &CMemory,
     input_resources: &ResourceContext,
     preserved_caller_resources: &ResourceContext,
     output_resources: &ResourceContext,
@@ -9286,10 +9341,14 @@ fn apply_verified_heap_allocation_delta(
     ledger: Option<&LoanLedger>,
 ) -> Result<(CMemory, Vec<ExecutionPureFact>), VerifiedAllocationDeltaError> {
     let mut effects = Vec::new();
+    // What the callee consumed is read where it was consumed: at the call's
+    // entry. The post-call memory may have rewritten a pointer field the lent
+    // resources owned, so an allocation named through it at the post state
+    // is not the allocation the caller handed over.
     let input = expand_all_composite_resource_facts(
         input_resources,
         interface.composite_resource_definitions(),
-        &memory,
+        entry_memory,
         assumptions,
     )
     .ok_or_else(|| {
@@ -9397,6 +9456,7 @@ fn apply_verified_heap_allocation_delta(
             // proves to have the same pointer value.
             if continuity_is_undecided {
                 if let Some(resource) = caller_resource_left_stale_by_retirement(
+                    &input,
                     &preserved,
                     &base,
                     &bytes,
@@ -9424,6 +9484,7 @@ fn apply_verified_heap_allocation_delta(
         // the call. Any such resource that can still refer to an allocation
         // the contract definitely retires makes this transition unsafe.
         if let Some(resource) = caller_resource_left_stale_by_retirement(
+            &input,
             &preserved,
             &base,
             &bytes,

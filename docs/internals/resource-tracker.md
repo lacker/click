@@ -200,7 +200,7 @@ established.
 | `BlockDeclared` | separate under the extended-bridging gate: it writes nothing | separate when the declared object is proven distinct: it has its own `blocks` key, so this block's extent is the entry it was | separate: it writes nothing |
 | `HeapAllocationPending` | separate under the extended-bridging gate | separate: a request with no address yet records nothing a read of a block consults | separate: it writes nothing |
 | `ContractAllocationClaimsChanged` | separate under the extended-bridging gate | **stops** | separate: it writes nothing |
-| `ContractAllocationRetired` | separate only when the possibly released allocation misses the cell | separate when the allocation's object is proven distinct | separate when its bytes miss every range |
+| `ContractAllocationRetired` | separate when the possibly released allocation misses the cell, or, on every path including naming, when the retiring call's own havoc covers the whole allocation | separate when the allocation's object is proven distinct | separate when its bytes miss every range |
 | `CellsForgotten` | separate under the extended-bridging gate | **stops**: the state is the same, the cell map is not | separate: it writes nothing |
 | `HeapAllocated` | separate under the extended-bridging gate when the block differs | separate when the fresh object is proven distinct | separate: a stated footprint names objects that already existed, so the fresh one's bytes are in no range of it |
 | `LocalLifetimeEnded` | separate under the extended-bridging gate, on general distinctness | separate when the retired object is proven distinct | separate when the retired object is proven distinct from the object every range is in |
@@ -222,6 +222,38 @@ initialization, and zeroed status under equal pointer spellings, while leaving
 definite deallocation unasserted. The edge names the allocation and its extent,
 so a later memory proof may cross it only for storage shown separate from that
 possible release.
+
+The call rule reads the consumed resources, and so the retired allocation, at
+the call's entry: the post-call value of a pointer field the callee owned is a
+fresh load, and a callee that frees `box->data` and re-points it at memory the
+caller keeps would make a post-call reading retire the wrong object. A kept
+owned memory fact then needs no written separation from the retired
+allocation when one owned memory fact the caller lent covers the allocation's
+whole byte range: the two were held at once, and owned memory is exclusive
+within one valid composition. A kept view, a kept composite, or any kept fact
+when no lent owner covers the allocation still needs a separation the path
+facts prove (`caller_resource_left_stale_by_retirement` in
+`src/kernel/functions.rs`).
+
+Reading at entry makes every consume/produce of an allocation-bearing
+composite whose continuity the contract leaves open record a retirement right
+after the call's `CallHavoc`, followed by the returned claim. When one of that
+havoc's ranges covers the retired allocation by structure (the range starts at
+the allocation's base and spans at least its byte count), the retirement is
+transparent to cell values (`retirement_inside_its_call_havoc` in
+`src/kernel/resource_tracker/cell_source.rs`, hop
+`RetirementInsideItsCallHavoc`). It writes no byte, and the only reason a
+retirement stops a cell is that a later owner may reuse released addresses, so
+a load after it must not be named by a value from before the call. No byte of
+this allocation can reach one: every such byte lies in a range of the havoc
+just below, and a walk crosses a havoc only on a proof that the cell misses
+every range, so it stops at the havoc and names the call's post-call value. The
+retirement keeps that havoc's forget mark for the same reason
+(`retirement_keeps_its_call_havocs_forget_mark`), so the content-addressed
+projections load naming interns agree with the walk. Without this, the
+produced composite's fields were named at the havoc (where the return
+resources are evaluated) and later reads at the retirement, and every further
+reallocating call added one nested heap-extent proof to relate the two.
 
 Where the cell column names a gate, the answer is one a scope decides rather
 than the edge. `extended_dag_bridging_active` and `explicit_dag_check_active`

@@ -97,10 +97,11 @@ shared `arena_metadata` resources. The fixed second allocation lives in
 `arena_symbolic_alloc.click`.
 
 `arena_pipeline` remains unverified. Its every path ends in
-`arena_destroy(arena)` while the caller still owns its region descriptors, and
-the call rule cannot yet show that a descriptor the caller keeps lies outside
-an allocation the callee frees
-(`mdtests/call_retires_allocation_beside_unrelated_owner_frontier.md`). The
-rest of the pipeline's shape has been exercised against these contracts
-outside the gate; `issues/arena-resource-ownership.md` records how far it got
-and the open representation question for frees out of allocation order.
+`arena_destroy(arena)` while the caller still owns its region descriptors;
+that call alone now verifies, because the call rule reads the lent arena at
+the call's entry and the descriptors are separate from both freed arrays by
+the ownership partition
+(`mdtests/arena_destroy_beside_region_descriptors.md`). The rest of the
+pipeline's shape has been exercised against these contracts outside the gate;
+`issues/arena-resource-ownership.md` records how far it got and the open
+representation question for frees out of allocation order.

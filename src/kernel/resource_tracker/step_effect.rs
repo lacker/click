@@ -137,7 +137,7 @@ pub(in crate::kernel) struct Evidence<'a> {
 /// | `HeapAllocated` | separate when the block differs | separate when the fresh object is proven distinct; affected for this one |
 /// | `HeapAllocationPending` | separate: it writes nothing | separate: no read of any block consults a pending request |
 /// | `ContractAllocationClaimsChanged` | separate: it writes nothing | **not shown separate** |
-/// | `ContractAllocationRetired` | separate only when the possibly released allocation misses the cell | separate only for a proven-distinct object |
+/// | `ContractAllocationRetired` | separate when the possibly released allocation misses the cell, or when the retiring call's own havoc covers the whole allocation | separate only for a proven-distinct object |
 /// | `CellsForgotten` | separate: the state is the same | **not shown separate** |
 /// | `LocalLifetimeEnded` | separate on proven distinctness | separate when the retired object is proven distinct; affected for this one |
 /// | `HeapFreed` | separate on two separation ladders | separate when the released allocation's object is proven distinct; affected when it is this one |
@@ -477,6 +477,12 @@ fn cell_effect(
             // (`heap_allocation_proven_separate_from_pointer`).
             if allocation_base.blocks_proven_distinct(pointer) {
                 hop(MemoryDagHopJustification::HeapFreeOfDistinctBlock)
+            } else if super::cell_source::retirement_inside_its_call_havoc(step) {
+                // A contract retirement recorded right after its call's havoc,
+                // whose write set covers the whole allocation: no byte of the
+                // allocation can be named past that havoc, so the edge itself
+                // changes no value (`retirement_inside_its_call_havoc`).
+                hop(MemoryDagHopJustification::RetirementInsideItsCallHavoc)
             } else if heap_allocation_proven_separate_from_pointer(
                 allocation_base,
                 bytes,

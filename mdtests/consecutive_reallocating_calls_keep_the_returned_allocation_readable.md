@@ -7,12 +7,20 @@ then reads `box->data[0]` must still find the cell through the `boxed(box)`
 the second call produced, and must still relate the value to the one it
 started with.
 
-This pins a pattern that a change to the call rule's allocation retirement
-must keep: reading the lent resources at the call's entry, so that each call
-retires the allocation it was actually handed, made the second read fail
-with a missing `views` fact, because the retirement and returned-claim edges
-it then records hide the pointer field from the block walk
-(`ContractAllocationClaimsChanged` is not shown separate for a block).
+The call rule reads the lent `boxed(box)` at each call's entry, so each call
+retires the allocation it was handed and installs the one it returns, right
+after its own havoc. The returned composite's fields are named at that havoc,
+and a later read of `box->data` must be named there too. It is: the
+retirement is covered by the havoc's range `box->data[0..1]`, so the naming
+walk crosses it (`RetirementInsideItsCallHavoc`, see
+`docs/internals/resource-tracker.md`). Before that rule, the read after the
+first call was named at the retirement and related to the field only through
+a heap-extent proof, and the second call nested a second such proof inside
+the first, so the read failed with a missing `views` fact.
+`three_consecutive_reallocating_calls_keep_the_returned_allocation_readable.md`
+and the four-call form extend the chain, and
+`consecutive_reallocating_calls_do_not_carry_an_unstated_value.md` is the
+negative.
 
 ```c filename=box.c
 struct box {
