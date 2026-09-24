@@ -277,18 +277,23 @@ A registry entry is consumed once; a foreign handle or a user resource token
 cannot authorize recovery. The runtime assumption that a valid join succeeds
 is explicit and scoped to this parent's live, terminating child.
 
-This is an internal ownership checkpoint, not a C threading API. It supports
-explicit external-memory ownership and nonescaping stable views, including
-views backed by live local storage without an ownership annotation. The local
-loan remains active from spawn to join, so the parent cannot write its viewed
-bytes or end the allocation lifetime early. Exclusive transfers of
+The modeled pthread C binding uses this checkpoint. Its internal resource
+classification admits exclusive transfer of external memory and stable views,
+including views backed by live local storage without an ownership annotation.
+The local loan remains active from spawn to join, so the parent cannot write
+its viewed bytes or end the allocation lifetime early. Exclusive transfers of
 caller stack/global/static storage are refused until ordinary accesses to that
 storage enforce thread authority; dropping an ownership fact alone would not
-block the caller's implicit storage access. A reborrow pins its
-parent share, so a second overlapping reader is refused until explicit share
-splitting and recombination are implemented at the thread boundary. Pthread
-imports, handle stores, result branches, artifact integration, heap protocols,
-and composite or escaping borrows remain outside this checkpoint.
+block the caller's implicit storage access. Composite, counted-population,
+token, and named-instance resources also remain outside the asynchronous
+transfer rule. In particular, a unit of a counted population cannot expose
+its shared body to a worker while another context may rely on that body. This
+classification grants no authority on its own: the partition and loan plan
+still check each accepted transfer. A reborrow pins its parent share, and
+checked splitting lets multiple overlapping readers recover independently.
+Pthread imports and the modeled create/join calls are separate from native
+pthread runtime validation. Heap protocols and composite or escaping borrows
+remain outside this checkpoint.
 
 ## Model-only extensions
 

@@ -14,6 +14,7 @@ pub(crate) mod api;
 pub const RESOURCE_SEMANTICS_VERSION: u32 = 4;
 
 pub(crate) mod assumptions;
+mod concurrent_resources;
 mod eval;
 mod functions;
 pub(crate) use functions::ResourceBodyClauseRecord;

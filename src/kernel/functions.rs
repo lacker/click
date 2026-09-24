@@ -1,3 +1,4 @@
+use super::concurrent_resources::WorkerResourceClass;
 use super::loans::{
     CheckedLoanCallEvidence, CompositeLoanBacking, CompositeProjectionEvidence, LoanId, LoanLedger,
     LoanRefusal, LoanRefusalOperation, LoanRefusalSubject, LoanViewBinding, LoanViewBindings,
@@ -3106,11 +3107,9 @@ fn execute_verified_function_applications_with_suspension(
         }
 
         if let Some(completions) = suspended.as_deref_mut() {
-            // This first internal slice accepts direct memory ownership and
-            // nonescaping stable views. Heap, composite, counted and returned
-            // borrowing protocols need their own checked asynchronous deltas.
-            // Local/global/static storage has implicit C access authority;
-            // removing a resource alone would not suspend that authority.
+            // Resource classes do not grant authority by themselves. The
+            // checked plan below still proves the transfer and stable loans;
+            // protocol and population classes have no asynchronous delta.
             let supported = obligations.is_empty()
                 && transfer
                     .stable_view_plan
@@ -3122,12 +3121,7 @@ fn execute_verified_function_applications_with_suspension(
                     .callee_resources
                     .facts()
                     .iter()
-                    .all(|fact| match fact.resource() {
-                        CResource::Memory(range) => {
-                            !fact.is_own() || is_external_memory_pointer(range.base())
-                        }
-                        _ => false,
-                    })
+                    .all(|fact| WorkerResourceClass::of(fact).may_enter_worker())
                 && transfer
                     .memory_effects
                     .iter()
@@ -3135,7 +3129,7 @@ fn execute_verified_function_applications_with_suspension(
                 && output_resources
                     .facts()
                     .iter()
-                    .all(|fact| fact.is_own() && matches!(fact.resource(), CResource::Memory(range) if is_external_memory_pointer(range.base())));
+                    .all(|fact| WorkerResourceClass::of(fact).may_return_from_worker());
             if !supported {
                 paths.push(resource_call_failure(
                     "suspended worker requires discharged preconditions, explicit ownership of external memory, and nonescaping views",
