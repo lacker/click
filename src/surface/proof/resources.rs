@@ -409,7 +409,7 @@ pub(super) fn materialize_counted_population_bodies(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) | CResource::Instance(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => continue,
         };
         if resource_environment.get(name).is_none() {
             continue;
@@ -523,7 +523,10 @@ fn materialize_folded_composite_resource_memory(
     for resource in state.resources().facts() {
         let (name, resource_arguments) = match resource.resource() {
             CResource::Composite { name, arguments } => (name, arguments),
-            CResource::Memory(_) | CResource::Token { .. } | CResource::Instance(_) => {
+            CResource::Memory(_)
+            | CResource::Token { .. }
+            | CResource::Instance(_)
+            | CResource::Iterated(_) => {
                 continue;
             }
         };
@@ -1464,7 +1467,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 "`{claim_label}` tactic {tactic_index}: `observe` expects a declared resource"
             )));
         }
-        ResourceClause::MemoryAggregate { .. } => {
+        ResourceClause::MemoryAggregate { .. } | ResourceClause::Iterated(_) => {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `observe` expects a declared resource"
             )));
@@ -1893,6 +1896,11 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
     let parent_subject = resource_clause_subject(resource);
     let mut owned_children = Vec::new();
     for contained in composite_body.contains() {
+        if matches!(contained, ResourceClause::Iterated(_)) {
+            // An iterated clause has no `contains(...)` or `separate(...)`
+            // spelling; its element facts come only from `take`.
+            continue;
+        }
         let contained =
             instantiate_resource_clause(contained, substitutions).map_err(|message| {
                 format!(
@@ -1986,6 +1994,9 @@ fn resource_clause_subject(resource: &ResourceClause) -> ResourceSubject {
                 .expect("aggregate resource clause has at least one segment")
                 .clone(),
         ),
+        // Iterated ownership has no resource-subject spelling; callers skip it
+        // before asking, and the element range is the closest description.
+        ResourceClause::Iterated(clause) => ResourceSubject::Memory(clause.element.clone()),
         ResourceClause::Declared {
             kind,
             name,
@@ -2103,7 +2114,10 @@ fn project_held_resource_observable_facts(
 ) -> Result<CMemory, String> {
     let (name, resource_arguments) = match resource.resource() {
         CResource::Composite { name, arguments } => (name, arguments),
-        CResource::Memory(_) | CResource::Token { .. } | CResource::Instance(_) => {
+        CResource::Memory(_)
+        | CResource::Token { .. }
+        | CResource::Instance(_)
+        | CResource::Iterated(_) => {
             return Ok(state.memory().clone());
         }
     };
@@ -3009,7 +3023,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 (name.clone(), arguments.clone())
             }
             CResource::Memory(_) => unreachable!("a declared resource lowered to memory"),
-            CResource::Instance(_) => {
+            CResource::Instance(_) | CResource::Iterated(_) => {
                 return Err(ClickError::new(
                     "instance unfolding is not a population operation",
                 ));
@@ -3150,7 +3164,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                     Some((name, arguments))
                 }
-                CResource::Memory(_) | CResource::Instance(_) => None,
+                CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => None,
             };
             if let Some((name, resource_arguments)) = named
                 && state.counted_population(name, resource_arguments).is_none()
@@ -3586,7 +3600,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                     (name, arguments)
                 }
-                CResource::Memory(_) | CResource::Instance(_) => {
+                CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` path {path_index}: `fold({})` did not lower to a declared resource",
                         describe_resource_clause(resource)
@@ -3669,7 +3683,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                     (name, arguments)
                 }
                 CResource::Memory(_) => unreachable!("declared resource lowered to memory"),
-                CResource::Instance(_) => {
+                CResource::Instance(_) | CResource::Iterated(_) => {
                     return Err(ClickError::new(
                         "instance folding is not a population operation",
                     ));
@@ -4361,6 +4375,59 @@ fn fold_composite_resource_for_proof_with_closure(
 
 /// Resolves the source declaration that supplies fold, unfold, and observation
 /// laws for a composite resource fact.
+/// The hole-free iterated ownership fact the one iterated clause of
+/// `resource`'s definition denotes at the tactic's own arguments, read at
+/// `state`. `gather` forms it and `scatter` dissolves it.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn iterated_template_for_resource(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    action: &str,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    claim_label: &str,
+    tactic_index: usize,
+) -> Result<crate::kernel::CIteratedMemory, ClickError> {
+    let definition = composite_resource_law_definition(
+        resource_environment,
+        resource,
+        action,
+        claim_label,
+        tactic_index,
+    )?;
+    let body = definition
+        .composite_body()
+        .expect("composite_resource_law_definition should require a composite body");
+    let Some(clause) = body.contains().iter().find_map(|clause| match clause {
+        ResourceClause::Iterated(clause) => Some(clause),
+        _ => None,
+    }) else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: `{action}` expects a resource whose body declares iterated ownership, but `{}` declares none",
+            definition.name()
+        )));
+    };
+    let substitutions =
+        resource_argument_substitutions(definition, resource, claim_label, tactic_index)?;
+    let clause = instantiate_resource_clause(&ResourceClause::Iterated(clause.clone()), &substitutions)
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: could not instantiate the iterated clause of `{}`: {message}",
+                definition.name()
+            ))
+        })?;
+    let lowered =
+        lower_resource_clause_at_current_locals(&clause, parameters, arguments, state, None)?;
+    match lowered {
+        CResourceFact::Own(CResource::Iterated(iterated), _) => Ok(iterated.as_ref().clone()),
+        _ => Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: the iterated clause of `{}` did not lower to iterated ownership",
+            definition.name()
+        ))),
+    }
+}
+
 fn composite_resource_law_definition<'a>(
     resource_environment: &'a ResourceEnvironment,
     resource: &ResourceClause,
@@ -4554,6 +4621,9 @@ pub(super) fn instantiate_resource_clause(
         ResourceClause::OwnMemory(segment) => Ok(ResourceClause::OwnMemory(
             instantiate_contract_segment(segment, substitutions)?,
         )),
+        ResourceClause::Iterated(clause) => Ok(ResourceClause::Iterated(Box::new(
+            substitute_iterated_clause(clause, &ContractSubstitutions::new(substitutions))?,
+        ))),
         ResourceClause::MemoryAggregate { access, segments } => {
             Ok(ResourceClause::MemoryAggregate {
                 access: *access,
@@ -4634,7 +4704,9 @@ fn materialize_composite_resource_cells_from_snapshot(
         ResourceClause::OwnMemory(segment) => {
             lowered.memory_own_range().map(|range| (segment, range))
         }
-        ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => None,
+        ResourceClause::Declared { .. }
+        | ResourceClause::Quantified { .. }
+        | ResourceClause::Iterated(_) => None,
         ResourceClause::MemoryAggregate { .. } => None,
     }) else {
         return memory;

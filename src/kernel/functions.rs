@@ -12003,7 +12003,7 @@ fn evaluate_resource_population_body_resources(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) | CResource::Instance(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => continue,
         };
         let Some(definition) = definitions
             .iter()
@@ -14148,7 +14148,7 @@ fn counted_population_quantities(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) | CResource::Instance(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => continue,
         };
         if name == CResourceFact::ALLOCATION_RESOURCE_NAME {
             continue;
@@ -16262,7 +16262,7 @@ fn instance_body_clauses_are_exchangeable(contains: &[CResourceSpec]) -> bool {
     contains.iter().all(|body| {
         !body.is_view()
             && match body.family() {
-                ResourceFamily::Memory => true,
+                ResourceFamily::Memory | ResourceFamily::Iterated => true,
                 ResourceFamily::Composite | ResourceFamily::Token => {
                     matches!(body.quantity(), CResourceQuantity::One)
                 }
@@ -17400,7 +17400,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) | CResource::Instance(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => continue,
         };
         let Some(quantity) = fact.owned_quantity_term() else {
             continue;
@@ -20342,7 +20342,9 @@ fn resource_clause_supply_with_fact(
                     }
                 }
                 CResource::Composite { .. } => pending.push_back(child),
-                CResource::Token { .. } | CResource::Instance(_) => {}
+                // Iterated ownership grants no read authority of its own: an
+                // element is read only after it is taken out.
+                CResource::Token { .. } | CResource::Instance(_) | CResource::Iterated(_) => {}
             }
         }
     }
@@ -20686,6 +20688,26 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                 instance.clone(),
             ))))
         }
+        CResourceTerm::Iterated(spec) => {
+            let mut spec = (**spec).clone();
+            for expression in spec.expressions_mut() {
+                resolve_retained_aggregate_fields(
+                    entry_state,
+                    state,
+                    expression,
+                    true,
+                    assumptions,
+                    budget,
+                )?;
+            }
+            Ok(evaluate_iterated_resource_spec(
+                state,
+                &spec,
+                resource.is_view(),
+                assumptions,
+                budget,
+            )?)
+        }
         CResourceTerm::Memory(segment) => {
             let element_width = segment.element_width();
             let mut segment = segment.clone();
@@ -20813,6 +20835,73 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
             Ok(Ok(fact))
         }
     }
+}
+
+/// Evaluates one iterated guarded-ownership clause to its fact: the element
+/// base and index bounds as one memory segment, the guard base, and the guard
+/// value, each read once in `state`. Nothing is enumerated.
+pub(super) fn evaluate_iterated_resource_spec(
+    state: &CState,
+    spec: &crate::kernel::primitives::CIteratedSpec,
+    view: bool,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
+    let failure = |what: &str| {
+        Ok(Err(CRuntimeError::FunctionContract(format!(
+            "could not evaluate the {what} of the iterated ownership clause of `{}`",
+            spec.owner
+        ))))
+    };
+    let Ok(element) = evaluate_loop_effect_segment(state, &spec.element, assumptions, budget)?
+    else {
+        return failure("element range");
+    };
+    let guard_base = match evaluate_loop_effect_segment_value(
+        state,
+        &spec.guard_base,
+        assumptions,
+        "iterated guard base",
+        budget,
+    )? {
+        Ok(CValue::Pointer(pointer)) => pointer.into_pointer(),
+        _ => return failure("guard base"),
+    };
+    let guard_value = match evaluate_loop_effect_segment_value(
+        state,
+        &spec.guard_value,
+        assumptions,
+        "iterated guard value",
+        budget,
+    )? {
+        Ok(CValue::Int32(value)) => value,
+        _ => return failure("guard value"),
+    };
+    let Some(iterated) = crate::kernel::CIteratedMemory::new(
+        &spec.owner,
+        element.base,
+        spec.element.element_width,
+        spec.stride,
+        spec.start_offset,
+        spec.end_offset,
+        element.start,
+        element.end,
+        crate::kernel::CIteratedGuard::new(
+            guard_base,
+            spec.guard_cell_type,
+            spec.guard_cell_width,
+            spec.holds_when_equal,
+            guard_value,
+        ),
+    ) else {
+        return failure("element shape");
+    };
+    let resource = CResource::iterated(iterated);
+    Ok(Ok(if view {
+        CResourceFact::View(resource)
+    } else {
+        CResourceFact::own(resource)
+    }))
 }
 
 /// Lowers the nonnegativity conditions implicit in quantified resource
@@ -21006,7 +21095,7 @@ fn evaluate_function_declared_resource_spec(
             name: name.to_string(),
             arguments: values.into_iter().map(AlgebraicValue::C).collect(),
         },
-        ResourceFamily::Memory | ResourceFamily::Instance => {
+        ResourceFamily::Memory | ResourceFamily::Instance | ResourceFamily::Iterated => {
             return Ok(Err(CRuntimeError::FunctionContract(
                 "declared resources cannot use the raw memory family".to_string(),
             )));
@@ -21023,7 +21112,10 @@ fn resource_fact_transfer_priority(resource: &CResourceFact) -> u8 {
         CResourceFact::View(_) => 0,
         CResourceFact::Own(CResource::Memory(_), _) => 1,
         CResourceFact::Own(
-            CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_),
+            CResource::Composite { .. }
+            | CResource::Token { .. }
+            | CResource::Instance(_)
+            | CResource::Iterated(_),
             _,
         ) => 2,
     }

@@ -42,6 +42,8 @@ pub(crate) use memory_state::{
     withdraw_never_address_taken_locals,
 };
 pub(crate) use persistent_map::{SnapshotMap, SnapshotMapChange, SnapshotSet};
+mod iterated;
+pub use iterated::{CIteratedGuard, CIteratedMemory};
 mod resource_algebra;
 mod term_operations;
 pub(super) use derivations::*;
@@ -5093,6 +5095,10 @@ pub(super) struct ResourceContextIndex {
     pub(super) by_resource: PersistentMap<CResource, ResourceEntryIds>,
     pub(super) exact_shapes: PersistentMap<(ResourceFamily, String, usize), ResourceEntryIds>,
     pub(super) memory_by_block: PersistentMap<PointerBlock, ResourceEntryIds>,
+    /// Iterated guarded-ownership facts keyed by both blocks their
+    /// denotation depends on: the element base and the guard cells. A store,
+    /// havoc, or free visits only the facts filed under its own block.
+    pub(super) iterated_by_block: PersistentMap<PointerBlock, ResourceEntryIds>,
     /// Memory facts keyed by their exact base spelling. Direct pointer
     /// equalities can then find only the facts whose bases they identify,
     /// without scanning every resource in an aliased block.
@@ -5378,6 +5384,17 @@ pub enum CResource {
         arguments: ResourceArguments,
     },
     Instance(ResourceInstance),
+    /// Iterated guarded ownership: one fact for every element of a bounded
+    /// index range whose guard cell holds (`iterated.rs`).
+    Iterated(Arc<CIteratedMemory>),
+}
+
+impl CResource {
+    /// One iterated guarded-ownership fact. The fact is shared, so cloning a
+    /// resource context never copies its terms.
+    pub(crate) fn iterated(iterated: CIteratedMemory) -> Self {
+        Self::Iterated(Arc::new(iterated))
+    }
 }
 
 /// A proof-only, exclusive resource instance. Identity is independent of its
@@ -5510,6 +5527,14 @@ pub(super) trait ResourceFamilyAlgebra {
                     ));
                 }
             }
+            ResourceFamily::Iterated => {
+                if !matches!(spec.quantity, CResourceQuantity::One) {
+                    return Err(CResourceSpecError::InvalidQuantity {
+                        family: ResourceFamily::Iterated,
+                        reason: "iterated ownership has unit quantity".into(),
+                    });
+                }
+            }
             ResourceFamily::Composite | ResourceFamily::Token => {
                 if matches!(spec.quantity, CResourceQuantity::Count(_))
                     && spec.access != CResourceAccessMode::Own
@@ -5575,6 +5600,12 @@ static MEMORY_RESOURCE_ALGEBRA: MemoryResourceAlgebra = MemoryResourceAlgebra;
 static TOKEN_RESOURCE_ALGEBRA: TokenResourceAlgebra = TokenResourceAlgebra;
 static COMPOSITE_RESOURCE_ALGEBRA: CompositeResourceAlgebra = CompositeResourceAlgebra;
 static INSTANCE_RESOURCE_ALGEBRA: InstanceResourceAlgebra = InstanceResourceAlgebra;
+/// Iterated guarded ownership is exact-match: one fact is equal to another
+/// when every term it carries is proved equal. Taking and giving elements are
+/// checked kernel operations (`crate::kernel::iterated`), never algebraic
+/// splitting, so the algebra itself neither splits nor joins.
+struct IteratedResourceAlgebra;
+static ITERATED_RESOURCE_ALGEBRA: IteratedResourceAlgebra = IteratedResourceAlgebra;
 
 /// Primitive resource families. Adding a variant also requires registering one
 /// `ResourceFamilyAlgebra` implementation in `resource_family_algebra`.
@@ -5584,6 +5615,8 @@ pub enum ResourceFamily {
     Composite,
     Token,
     Instance,
+    /// Iterated guarded ownership (`CResource::Iterated`).
+    Iterated,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -5631,6 +5664,29 @@ pub enum CResourceTerm {
         schema: ResourceFieldSchema,
         resource: Box<CResourceTerm>,
     },
+    /// An iterated guarded-ownership clause of a resource body. It evaluates
+    /// to one `CResource::Iterated` fact; see `primitives/iterated.rs`.
+    Iterated(Box<CIteratedSpec>),
+}
+
+/// The unevaluated form of an iterated guarded-ownership clause: C
+/// expressions over the body's parameters, with the element and guard shape
+/// fixed by validation.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CIteratedSpec {
+    pub(crate) owner: String,
+    /// `element.base[element.start..element.end]` is the index range
+    /// `lo..hi` read against the element base; the element width is the
+    /// base's.
+    pub(crate) element: CMemorySegment,
+    pub(crate) stride: u32,
+    pub(crate) start_offset: i32,
+    pub(crate) end_offset: i32,
+    pub(crate) guard_base: CExpression,
+    pub(crate) guard_cell_type: CType,
+    pub(crate) guard_cell_width: u32,
+    pub(crate) holds_when_equal: bool,
+    pub(crate) guard_value: CExpression,
 }
 
 /// Quantity is explicit in the normalized form.  `One` is the ordinary unit
@@ -5727,6 +5783,7 @@ impl CResourceTerm {
             Self::Composite { .. } => ResourceFamily::Composite,
             Self::Token { .. } => ResourceFamily::Token,
             Self::Instance { .. } => ResourceFamily::Instance,
+            Self::Iterated(_) => ResourceFamily::Iterated,
         }
     }
 
@@ -5917,7 +5974,7 @@ impl CResourceSpec {
                 argument_snapshots,
                 parameter_types,
             },
-            ResourceFamily::Memory | ResourceFamily::Instance => {
+            ResourceFamily::Memory | ResourceFamily::Instance | ResourceFamily::Iterated => {
                 return Err(CResourceSpecError::InvalidNestedTerm(
                     "only composite and token families have declared resource terms".into(),
                 ));

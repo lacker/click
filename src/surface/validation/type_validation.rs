@@ -2015,6 +2015,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::SmartExecuteAllPaths
             | ProofTactic::ExecuteUntil(_)
             | ProofTactic::ObserveResource(_)
+            | ProofTactic::Iterated(_)
             | ProofTactic::Transport { .. }
             | ProofTactic::UnfoldResource(_)
             | ProofTactic::FoldResource(_)
@@ -2058,6 +2059,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::CallOutcomes(_) => "outcomes",
         ProofTactic::Loop(_) => "loop",
         ProofTactic::ObserveResource(_) => "observe",
+        ProofTactic::Iterated(tactic) => tactic.name(),
         ProofTactic::Witness(_) => "witness",
         ProofTactic::LetSatisfy(_) => "let satisfy",
         ProofTactic::Sorry => "sorry",
@@ -2148,6 +2150,9 @@ pub(in crate::surface) fn describe_resource_clause(resource: &ResourceClause) ->
                 ResourceAccessMode::Own => resource,
                 ResourceAccessMode::View => format!("view {resource}"),
             }
+        }
+        ResourceClause::Iterated(clause) => {
+            crate::surface::lowering::describe_iterated_clause(clause)
         }
     }
 }
@@ -3076,6 +3081,9 @@ pub(super) fn validate_resource_clause(
         ),
         ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => Ok(()),
         ResourceClause::MemoryAggregate { .. } => Ok(()),
+        // The index binder is in scope only inside the clause; the resource
+        // definition validation checks the clause with it bound.
+        ResourceClause::Iterated(_) => Ok(()),
         ResourceClause::Quantified { quantity, resource } => {
             validate_contract_expression_calls(quantity, click_functions, context)?;
             let actual =

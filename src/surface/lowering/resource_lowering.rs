@@ -455,7 +455,9 @@ fn materialize_symbolic_access_resource_cells(
                         materialize_access_segment_cells(memory, segment, parameters, arguments)?;
                 }
             }
-            ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => {}
+            ResourceClause::Declared { .. }
+            | ResourceClause::Quantified { .. }
+            | ResourceClause::Iterated(_) => {}
         }
     }
     Ok(memory)
@@ -514,7 +516,8 @@ pub(in crate::surface) fn check_resource_segment_base_loadability(
             ResourceClause::MemoryAggregate { segments, .. } => segments,
             ResourceClause::Named { .. }
             | ResourceClause::Declared { .. }
-            | ResourceClause::Quantified { .. } => continue,
+            | ResourceClause::Quantified { .. }
+            | ResourceClause::Iterated(_) => continue,
         };
         for segment in segments {
             let Err(message) = check_segment_base_loadability(
@@ -1391,6 +1394,24 @@ fn lower_resource_clause_with_values_mode_at_entry(
         ResourceClause::MemoryAggregate { .. } => Err(ClickError::new(
             "aggregate resource clauses require batch lowering",
         )),
+        ResourceClause::Iterated(clause) => {
+            let assumptions = if allow_symbolic_resource_arguments {
+                base_assumptions
+                    .clone()
+                    .allow_symbolic_contract_loads()
+                    .prefer_symbolic_external_loads()
+            } else {
+                base_assumptions.clone()
+            };
+            lower_iterated_clause_with_values(
+                clause,
+                parameters,
+                values,
+                state,
+                result,
+                &assumptions,
+            )
+        }
         ResourceClause::Quantified { quantity, resource } => {
             let original_quantity = quantity.clone();
             let (quantity, quantity_snapshot) =
@@ -2173,7 +2194,9 @@ pub(in crate::surface) fn resource_clause_memory_ranges_at_state(
                 })
                 .collect()
         }
-        ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => return Ok(None),
+        ResourceClause::Declared { .. }
+        | ResourceClause::Quantified { .. }
+        | ResourceClause::Iterated(_) => return Ok(None),
     };
     Ok(Some(ranges))
 }
@@ -2266,7 +2289,9 @@ pub(in crate::surface) fn concrete_access_resource_blocks(
             vec![segment]
         }
         ResourceClause::MemoryAggregate { segments, .. } => segments.iter().collect(),
-        ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => {
+        ResourceClause::Declared { .. }
+        | ResourceClause::Quantified { .. }
+        | ResourceClause::Iterated(_) => {
             return Ok(Vec::new());
         }
     };

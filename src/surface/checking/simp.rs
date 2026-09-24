@@ -702,9 +702,10 @@ fn rewrite_atomic_proposition_by_exact_equality(
                     rewrite_term_offset(range.start(), left, right),
                     rewrite_term_offset(range.end(), left, right),
                 )),
-                CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_) => {
-                    resource.clone()
-                }
+                CResource::Composite { .. }
+                | CResource::Token { .. }
+                | CResource::Instance(_)
+                | CResource::Iterated(_) => resource.clone(),
             }
         }
         let rewritten = match goal {
@@ -1464,9 +1465,10 @@ fn rewrite_atomic_proposition_by_exact_equality(
             rewrite_term(range.start(), left, right),
             rewrite_term(range.end(), left, right),
         )),
-        CResource::Composite { .. } | CResource::Token { .. } | CResource::Instance(_) => {
-            resource.clone()
-        }
+        CResource::Composite { .. }
+        | CResource::Token { .. }
+        | CResource::Instance(_)
+        | CResource::Iterated(_) => resource.clone(),
     };
     let rewritten = match goal {
         Proposition::ConditionIs(condition, expected) => {

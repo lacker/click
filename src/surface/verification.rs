@@ -7303,7 +7303,9 @@ fn resource_clause_to_resource_spec_for_body(
             CResourceTransferRole::Consume
         }
         ResourceClause::ViewMemory(_) => CResourceTransferRole::Borrow,
-        ResourceClause::OwnMemory(_) => CResourceTransferRole::Consume,
+        ResourceClause::OwnMemory(_) | ResourceClause::Iterated(_) => {
+            CResourceTransferRole::Consume
+        }
         ResourceClause::MemoryAggregate { access, .. }
         | ResourceClause::Declared { access, .. } => match access {
             ResourceAccessMode::Own => CResourceTransferRole::Consume,
@@ -7406,6 +7408,16 @@ fn resource_clause_to_resource_spec_with_metadata(
         ResourceClause::MemoryAggregate { .. } => Err(ClickError::new(
             "aggregate resource clauses must be expanded before one resource spec is required",
         )),
+        ResourceClause::Iterated(clause) => CResourceSpec::new(
+            crate::kernel::CResourceTerm::Iterated(Box::new(
+                crate::surface::lowering::iterated_clause_to_spec(clause, parameters)?,
+            )),
+            CResourceAccessMode::Own,
+            crate::kernel::CResourceQuantity::One,
+            role,
+            snapshot,
+        )
+        .map_err(|error| ClickError::new(error.to_string())),
         ResourceClause::Declared {
             access,
             kind,
@@ -7486,6 +7498,9 @@ pub(in crate::surface) fn substitute_resource_clause_for_summary_in(
         ResourceClause::OwnMemory(segment) => Ok(ResourceClause::OwnMemory(
             substitute_contract_segment(segment, substitutions)?,
         )),
+        ResourceClause::Iterated(clause) => Ok(ResourceClause::Iterated(Box::new(
+            crate::surface::lowering::substitute_iterated_clause(clause, substitutions)?,
+        ))),
         ResourceClause::MemoryAggregate { access, segments } => {
             Ok(ResourceClause::MemoryAggregate {
                 access: *access,

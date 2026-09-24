@@ -350,7 +350,7 @@ fn resource_is_direct_observed_core(
                 ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
                     ResourceClause::ViewMemory(segment)
                 }
-                ResourceClause::MemoryAggregate { .. } => continue,
+                ResourceClause::MemoryAggregate { .. } | ResourceClause::Iterated(_) => continue,
                 ResourceClause::Declared {
                     kind,
                     name,
