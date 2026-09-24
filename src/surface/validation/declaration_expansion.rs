@@ -362,6 +362,7 @@ fn expand_declared_composite_resource_body(
     Ok(CompositeResourceBody {
         children: composite_body.children,
         fields: composite_body.fields,
+        guarded_by: composite_body.guarded_by,
         matched: composite_body
             .matched
             .map(|matched| {

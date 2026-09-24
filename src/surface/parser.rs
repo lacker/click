@@ -1513,6 +1513,17 @@ impl Parser {
                 })
                 .collect();
         }
+        let guarded_by = if self.peek_ident() == Some("guarded_by") {
+            self.position += 1;
+            let mutex = self.parse_current_contract_segment()?;
+            if !matches!(mutex.surface, ContractSegmentSurface::Field { .. }) {
+                return Err(self.error("`guarded_by` requires one C field place"));
+            }
+            self.expect(Token::Semicolon)?;
+            Some(mutex)
+        } else {
+            None
+        };
         if self.peek_ident() == Some("match") {
             if self.match_nesting != 0 {
                 return Err(self.error("nested resource matches are not supported"));
@@ -1560,6 +1571,7 @@ impl Parser {
                     self.current_contract_bindings.remove(&name);
                 }
                 if !body.fields.is_empty()
+                    || body.guarded_by.is_some()
                     || body.matched.is_some()
                     || body.condition.is_some()
                     || !body.witnesses.is_empty()
@@ -1584,6 +1596,7 @@ impl Parser {
             return Ok(CompositeResourceBody {
                 children: vec![],
                 fields,
+                guarded_by,
                 matched: Some(ResourceMatchBody { field, arms }),
                 condition: None,
                 contains: vec![],
@@ -1604,6 +1617,7 @@ impl Parser {
         let mut witnesses: Vec<ResourceWitness> = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
+                Some("guarded_by") => return Err(self.error("`guarded_by` must appear once before the resource body clauses")),
                 Some("field") => return Err(self.error("resource fields must be declared before body clauses and outside the resource guard")),
                 Some("let") => {
                     let binding = self.parse_contract_let_binding()?;
@@ -1689,6 +1703,7 @@ impl Parser {
         Ok(CompositeResourceBody {
             children: vec![],
             fields,
+            guarded_by,
             matched: None,
             condition,
             contains,
