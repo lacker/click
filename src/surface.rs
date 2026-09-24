@@ -1150,7 +1150,7 @@ pub struct TerminationMeasure {
     /// = unfold(...)` binder is replaced by the value it names, but the
     /// termination plan reads the written clause, so the loop head keeps the
     /// written spelling to name the component by.
-    written: Option<Vec<ContractExpression>>,
+    written: Option<Vec<Option<ContractExpression>>>,
 }
 
 impl TerminationMeasure {
@@ -1171,8 +1171,7 @@ impl TerminationMeasure {
         &self,
         index: usize,
     ) -> Option<&ContractExpression> {
-        let written = self.written.as_ref()?.get(index)?;
-        (Some(written) != self.components.get(index)).then_some(written)
+        self.written.as_ref()?.get(index)?.as_ref()
     }
 }
 
@@ -6683,22 +6682,29 @@ impl StructuralClause {
             .collect::<Result<Vec<_>, String>>()?;
         clause.decreases = match &self.decreases {
             Some(measure) => {
-                let components = measure
-                    .components
-                    .iter()
-                    .map(|component| {
-                        crate::surface::lowering::substitute_contract_expression(
-                            component,
-                            substitutions,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-                let written = (components != measure.components).then(|| {
-                    measure
-                        .written
-                        .clone()
-                        .unwrap_or_else(|| measure.components.clone())
-                });
+                let mut components = Vec::with_capacity(measure.components.len());
+                let mut written = Vec::with_capacity(measure.components.len());
+                for (index, component) in measure.components.iter().enumerate() {
+                    components.push(crate::surface::lowering::substitute_contract_expression(
+                        component,
+                        substitutions,
+                    )?);
+                    // Only a component that names a proof local changes
+                    // meaning; substitution may otherwise re-spell a C
+                    // fragment without changing what it reads.
+                    let names_scope =
+                        crate::surface::lowering::contract_expression_referenced_names(component)
+                            .iter()
+                            .any(|name| substitutions.contains_key(name));
+                    written.push(
+                        measure
+                            .written
+                            .as_ref()
+                            .and_then(|previous| previous[index].clone())
+                            .or_else(|| names_scope.then(|| component.clone())),
+                    );
+                }
+                let written = written.iter().any(Option::is_some).then_some(written);
                 Some(TerminationMeasure {
                     components,
                     written,

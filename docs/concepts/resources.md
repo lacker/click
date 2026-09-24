@@ -601,7 +601,10 @@ payload: `let { start: s } = unfold(before);` binds `s` to the value the
 folded instance held. That name is ordinary proof data for the rest of the
 function, which matters most in a loop: a loop invariant reads `old(...)` at
 the loop's entry, where `before` is already consumed, so the invariant has to
-say `s`. One pattern may name child slots and fields together; see
+say `s`. Unfolding also names the cells such a body owns at their folded
+values, as it does for a matched instance's selected arm, so a C read of
+`b->p` after the unfold is the load the owned range `b->p[0..b->n]` was
+written over. One pattern may name child slots and fields together; see
 `mdtests/resource_unfold_binds_scalar_field.md` and
 `mdtests/resource_unfold_binds_children_and_fields.md`.
 

@@ -15222,3 +15222,39 @@ fn an_unfold_bound_scalar_field_expands_and_reverifies() {
     verify_c0_sources(&expanded, &sources)
         .unwrap_or_else(|error| panic!("the expansion should reverify: {error:?}\n{expanded}"));
 }
+
+#[test]
+fn a_decided_branch_in_a_loop_body_expands_and_reverifies() {
+    // The certificate records the decided C branch as a logical `if` with an
+    // empty infeasible arm. The preservation driver must read that expanded
+    // `if` as the checked execution split, or the continuation runs on the
+    // refuted arm and the expanded claim does not verify.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/loop_preserve_decided_branch_expands.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("the fixture has a click block");
+    let sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let expanded =
+        expand_c0_claim_source_by_label(click_source, &sources, "count_zero_run.contract")
+            .expect("the claim should expand");
+    assert!(
+        !expanded.contains("branch {"),
+        "the decided branch should be printed as its checked split: {expanded}"
+    );
+    assert!(
+        !expanded.contains("simp();") && !expanded.contains("close_invariants();"),
+        "every smart site should be replaced: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .unwrap_or_else(|error| panic!("the expansion should reverify: {error:?}\n{expanded}"));
+}
