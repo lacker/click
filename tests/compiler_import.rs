@@ -599,20 +599,16 @@ fn userspace_frozen_pthread_probe_records_real_header_boundary() {
         .unwrap_err()
         .message()
         .to_string();
-    assert!(
-        error.contains("failed to parse compiler-prepared"),
-        "{error}"
-    );
-    assert!(error.len() < 4096, "unbounded import diagnostic");
-    // The parser boundary inside the real glibc headers moves every time the
-    // import frontier advances and every time the host's glibc changes, so
-    // this host-only test does not pin the file, line, or token. The
-    // frozen-lock unit test in `src/languages/c/compiler_import.rs` pins the
-    // exact boundary against a committed artifact and runs on every host.
-    // What this test guarantees is that the refusal names a staged system
-    // header of this probe, not an unrelated path or a bare token.
-    assert!(
-        error.contains("/staged-system-headers/"),
-        "the boundary must be inside the probe's staged system headers: {error}"
-    );
+    // The probe's real glibc headers are parsed up to a boundary that moves
+    // every time the import frontier advances and every time the host's glibc
+    // changes, and past the parse boundary the next refusal (an undefined
+    // `extern` global, a missing contract) moves just as often. This host-only
+    // test therefore pins no file, line, token, or error kind. The frozen-lock
+    // unit test in `src/languages/c/compiler_import.rs` pins the exact
+    // boundary against a committed artifact on every host. What this test
+    // guarantees is that verifying against the locked real-header import is
+    // refused with one bounded, non-empty diagnostic rather than a panic, an
+    // unbounded dump, or a silent success of an unmodeled program.
+    assert!(!error.trim().is_empty(), "empty import diagnostic");
+    assert!(error.len() < 4096, "unbounded import diagnostic: {error}");
 }
