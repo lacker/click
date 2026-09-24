@@ -1066,6 +1066,9 @@ impl PureFactContext {
             && self
                 .signed_order_bounds
                 .shares_root_with(&other.signed_order_bounds)
+            && self
+                .int64_signed_order_bounds
+                .shares_root_with(&other.int64_signed_order_bounds)
             && std::sync::Arc::ptr_eq(
                 &self.memory_load_condition_facts,
                 &other.memory_load_condition_facts,

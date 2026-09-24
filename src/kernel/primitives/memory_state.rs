@@ -1794,6 +1794,41 @@ impl CMemory {
             })
     }
 
+    /// Whether no allocation has been freed in this snapshot.
+    pub(in crate::kernel) fn heap_has_no_deallocations(&self) -> bool {
+        self.heap.deallocated_allocations.is_empty()
+    }
+
+    /// The deallocated allocation base that `pointer` provably points into,
+    /// asked of the entries in `pointer`'s own block only.
+    ///
+    /// This is the evidence the pointer-value rules use: a pointer whose
+    /// pointee's lifetime has ended has an indeterminate value (C11 6.2.4p2),
+    /// and operating on it is undefined. Unlike a load, which also consults
+    /// symbolic aliases, this looks up one block's key range, so an ordinary
+    /// comparison or cast costs O(log n) plus that block's freed entries. A
+    /// symbolic block that is not itself recorded as freed answers `None`.
+    pub(in crate::kernel) fn deallocated_heap_allocation_holding(
+        &self,
+        pointer: &Pointer,
+        assumptions: &PureFactContext,
+    ) -> Option<Pointer> {
+        if self.heap.deallocated_allocations.is_empty() {
+            return None;
+        }
+        let candidates = AliasCandidates::only_block(&pointer.block);
+        let mut visited = 0usize;
+        let found = candidates
+            .entries(&self.heap.deallocated_allocations)
+            .find(|(base, _)| {
+                visited += 1;
+                heap_allocation_may_contain_pointer(base, pointer, assumptions)
+            })
+            .map(|(base, _)| base.clone());
+        crate::instrumentation::record_deterministic_work(visited);
+        found
+    }
+
     /// Registers the exact base named by an allocation contract. Unlike a
     /// fresh `malloc`, this does not create a concrete block or imply that its
     /// existing bytes are uninitialized; access remains governed by the

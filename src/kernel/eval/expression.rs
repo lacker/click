@@ -1128,6 +1128,84 @@ pub(in crate::kernel) fn cast_c_value_to_type(
         .ok_or(CRuntimeError::TypeMismatch)
 }
 
+/// The undefined behavior of operating on `value` when it is a pointer into
+/// an allocation the current snapshot has freed.
+///
+/// C11 6.2.4p2 makes a pointer's value indeterminate when its pointee's
+/// lifetime ends, and Annex J.2 lists using such a value as undefined. Reading
+/// the pointer out of a cell, storing it, or passing it along is not such a
+/// use in Click's model; comparing it (with anything, null included),
+/// subtracting or offsetting it, testing its truth, or converting it to an
+/// integer is. The evidence is positive: the pointer's own block holds an
+/// exact deallocated base or an offset into one (see
+/// [`CMemory::deallocated_heap_allocation_holding`]). A pointer whose block
+/// is neither shown freed nor shown live keeps its ordinary meaning.
+pub(in crate::kernel) fn freed_pointer_use(
+    state: &CState,
+    value: &CValue,
+    assumptions: &PureFactContext,
+) -> Option<CUndefinedBehavior> {
+    let CValue::Pointer(pointer) = value else {
+        return None;
+    };
+    if pointer.is_null() || pointer.block.is_function() {
+        return None;
+    }
+    let base = state
+        .memory()
+        .deallocated_heap_allocation_holding(pointer.pointer(), assumptions)?;
+    let allocation = match &base.offset {
+        PointerOffsetTerm::Constant(0) if base.block != PointerBlock::ExternalArgument => {
+            base.block.to_string()
+        }
+        PointerOffsetTerm::Constant(offset) => format!("{}@{offset}", base.block),
+        PointerOffsetTerm::Variable(variable) => format!("{}@v{}", base.block, variable.0),
+        _ => format!("{}@<symbolic offset>", base.block),
+    };
+    Some(CUndefinedBehavior::FreedPointerUse { allocation })
+}
+
+/// Refuses each value path whose value is a pointer into a freed allocation;
+/// see [`freed_pointer_use`]. Every other path is kept as it is.
+pub(in crate::kernel) fn refuse_freed_pointer_value_paths(
+    state: &CState,
+    paths: Vec<CExpressionPath>,
+    assumptions: &PureFactContext,
+) -> Vec<CExpressionPath> {
+    if state.memory().heap_has_no_deallocations() {
+        return paths;
+    }
+    paths
+        .into_iter()
+        .map(|path| match &path.outcome {
+            CExpressionOutcome::Value(value) => {
+                match freed_pointer_use(state, value, assumptions) {
+                    Some(undefined_behavior) => CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                        ..path
+                    },
+                    None => path,
+                }
+            }
+            _ => path,
+        })
+        .collect()
+}
+
+/// Evaluates a controlling expression whose value will be tested for truth
+/// (`if`, loops, `?:`, `!`, `&&`, `||`, `assert`). Testing a freed pointer's
+/// truth compares it with null, so such a value is refused here; see
+/// [`freed_pointer_use`].
+pub(in crate::kernel) fn evaluate_c_condition_paths(
+    state: &CState,
+    condition: &CExpression,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let paths = evaluate_c_expression_paths(state, condition, assumptions, budget)?;
+    Ok(refuse_freed_pointer_value_paths(state, paths, assumptions))
+}
+
 pub(in crate::kernel) fn coerce_c_null_pointer_constant(
     value: CValue,
     target_type: CType,
@@ -1507,6 +1585,20 @@ fn evaluate_c_cast_paths(
             mut facts,
             mut obligations,
         } = path;
+        // Converting a freed pointer to an integer (or to `_Bool`) uses its
+        // indeterminate value; a pointer-to-pointer cast only retags it, like
+        // a store. See `freed_pointer_use`.
+        let outcome = match outcome {
+            CExpressionOutcome::Value(value) if !target_type.is_pointer() => {
+                match freed_pointer_use(state, &value, assumptions) {
+                    Some(undefined_behavior) => {
+                        CExpressionOutcome::UndefinedBehavior(undefined_behavior)
+                    }
+                    None => CExpressionOutcome::Value(value),
+                }
+            }
+            outcome => outcome,
+        };
         let outcome = match outcome {
             CExpressionOutcome::Value(value) => {
                 let effective_assumptions =
@@ -1661,7 +1753,7 @@ fn evaluate_c_conditional_paths(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for condition_path in evaluate_c_expression_paths(state, condition, assumptions, budget)? {
+    for condition_path in evaluate_c_condition_paths(state, condition, assumptions, budget)? {
         let CExpressionPath {
             outcome,
             facts,

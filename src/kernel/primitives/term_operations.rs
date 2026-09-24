@@ -62,7 +62,54 @@ fn signed_shift_left_overflows_const(left: u32, right: u32) -> Option<bool> {
     Some(((left as i64) << count) > i64::from(i32::MAX))
 }
 
+/// Whether every sum of an `int64` value in `left` and one in `right` is a
+/// representable `int64`. An unknown interval never fits.
+pub(in crate::kernel) fn int64_add_interval_fits(
+    left: Option<(i64, i64)>,
+    right: Option<(i64, i64)>,
+) -> bool {
+    let (Some((left_lower, left_upper)), Some((right_lower, right_upper))) = (left, right) else {
+        return false;
+    };
+    int64_interval_fits(
+        i128::from(left_lower) + i128::from(right_lower),
+        i128::from(left_upper) + i128::from(right_upper),
+    )
+}
+
+/// Whether every difference `left - right` of values in the two intervals is
+/// a representable `int64`. An unknown interval never fits.
+pub(in crate::kernel) fn int64_subtract_interval_fits(
+    left: Option<(i64, i64)>,
+    right: Option<(i64, i64)>,
+) -> bool {
+    let (Some((left_lower, left_upper)), Some((right_lower, right_upper))) = (left, right) else {
+        return false;
+    };
+    int64_interval_fits(
+        i128::from(left_lower) - i128::from(right_upper),
+        i128::from(left_upper) - i128::from(right_lower),
+    )
+}
+
+fn int64_interval_fits(lower: i128, upper: i128) -> bool {
+    lower >= i128::from(i64::MIN) && upper <= i128::from(i64::MAX)
+}
+
 impl Bitvector32Term {
+    /// The range an `int64` term has from its own root constructor alone: a
+    /// constant is itself, and a value widened from a 32-bit source lies in
+    /// that source type's range. This inspects only the root, never
+    /// assumptions or subterms, so a constructor may call it for free.
+    pub(in crate::kernel) fn int64_width_interval(&self) -> Option<(i64, i64)> {
+        match self {
+            Self::Int64Constant(value) => Some((*value, *value)),
+            Self::Int64From32(_) => Some((i64::from(i32::MIN), i64::from(i32::MAX))),
+            Self::Int64FromUInt32(_) => Some((0, i64::from(u32::MAX))),
+            _ => None,
+        }
+    }
+
     // Local structural bounds only: do not search assumptions or traverse an
     // unrelated expression tree to establish a shift-count bound.
     fn unsigned32_upper_bound(&self) -> u32 {
@@ -2013,6 +2060,13 @@ impl ConditionTerm {
     ) -> Self {
         match (left.int64_as_const(), right.int64_as_const()) {
             (Some(left), Some(right)) => Self::Constant(left.checked_add(right).is_none()),
+            _ if int64_add_interval_fits(
+                left.int64_width_interval(),
+                right.int64_width_interval(),
+            ) =>
+            {
+                Self::Constant(false)
+            }
             _ => Self::Bitvector64SignedAddOverflows(Box::new(left), Box::new(right)),
         }
     }
@@ -2023,6 +2077,13 @@ impl ConditionTerm {
     ) -> Self {
         match (left.int64_as_const(), right.int64_as_const()) {
             (Some(left), Some(right)) => Self::Constant(left.checked_sub(right).is_none()),
+            _ if int64_subtract_interval_fits(
+                left.int64_width_interval(),
+                right.int64_width_interval(),
+            ) =>
+            {
+                Self::Constant(false)
+            }
             _ => Self::Bitvector64SignedSubtractOverflows(Box::new(left), Box::new(right)),
         }
     }

@@ -199,9 +199,23 @@ pub(in crate::kernel) fn evaluate_c_add_paths(
             }
         };
 
+        // A binary operator operating on a freed pointer uses its
+        // indeterminate value; see `freed_pointer_use`.
+        if let Some(undefined_behavior) = freed_pointer_use(state, &left, assumptions) {
+            paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                facts: left_facts,
+                obligations: left_obligations,
+            });
+            continue;
+        }
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
-        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
+        for right_path in refuse_freed_pointer_value_paths(
+            state,
+            evaluate_c_expression_paths(state, right, &right_assumptions, budget)?,
+            assumptions,
+        ) {
             let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &left_facts,
                 &left_obligations,
@@ -503,9 +517,23 @@ pub(in crate::kernel) fn evaluate_c_value_binary_paths(
             }
         };
 
+        // A binary operator operating on a freed pointer uses its
+        // indeterminate value; see `freed_pointer_use`.
+        if let Some(undefined_behavior) = freed_pointer_use(state, &left, assumptions) {
+            paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                facts: left_facts,
+                obligations: left_obligations,
+            });
+            continue;
+        }
         let right_assumptions =
             assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
-        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
+        for right_path in refuse_freed_pointer_value_paths(
+            state,
+            evaluate_c_expression_paths(state, right, &right_assumptions, budget)?,
+            assumptions,
+        ) {
             let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                 &left_facts,
                 &left_obligations,
@@ -4033,7 +4061,7 @@ pub(in crate::kernel) fn evaluate_c_not_paths(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
+    for path in evaluate_c_condition_paths(state, expression, assumptions, budget)? {
         match path.outcome {
             CExpressionOutcome::Value(value) => {
                 paths.extend(
@@ -4077,7 +4105,7 @@ pub(in crate::kernel) fn evaluate_c_logical_and_paths(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+    for left_path in evaluate_c_condition_paths(state, left, assumptions, budget)? {
         match left_path.outcome {
             CExpressionOutcome::Value(left_value) => {
                 for left_truthiness in c_truthiness_paths(
@@ -4101,7 +4129,7 @@ pub(in crate::kernel) fn evaluate_c_logical_and_paths(
                         &left_truthiness.obligations,
                     );
                     for right_path in
-                        evaluate_c_expression_paths(state, right, &right_assumptions, budget)?
+                        evaluate_c_condition_paths(state, right, &right_assumptions, budget)?
                     {
                         let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                             &left_truthiness.facts,
@@ -4168,7 +4196,7 @@ pub(in crate::kernel) fn evaluate_c_logical_or_paths(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     let mut paths = Vec::new();
-    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+    for left_path in evaluate_c_condition_paths(state, left, assumptions, budget)? {
         match left_path.outcome {
             CExpressionOutcome::Value(left_value) => {
                 for left_truthiness in c_truthiness_paths(
@@ -4192,7 +4220,7 @@ pub(in crate::kernel) fn evaluate_c_logical_or_paths(
                         &left_truthiness.obligations,
                     );
                     for right_path in
-                        evaluate_c_expression_paths(state, right, &right_assumptions, budget)?
+                        evaluate_c_condition_paths(state, right, &right_assumptions, budget)?
                     {
                         let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                             &left_truthiness.facts,

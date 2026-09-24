@@ -3127,7 +3127,7 @@ pub fn prove_symbolic_c_condition_evaluation(
 ) -> SymbolicCConditionEvaluation {
     let mut budget = ExecutionBudget::beside_live_state().with_c_expression_cost(&condition);
     let expression_paths =
-        match evaluate_c_expression_paths(&state, &condition, &assumptions, &mut budget) {
+        match evaluate_c_condition_paths(&state, &condition, &assumptions, &mut budget) {
             Ok(paths) => paths,
             Err(limit) => {
                 return SymbolicCConditionEvaluation {

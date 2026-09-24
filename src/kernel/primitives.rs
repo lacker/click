@@ -48,6 +48,9 @@ pub(super) use derivations::*;
 pub(crate) use memory_state::resource_context_has_symbolic_range_read;
 pub use memory_state::value_independent_click_memory;
 pub(super) use resource_algebra::*;
+pub(in crate::kernel) use term_operations::{
+    int64_add_interval_fits, int64_subtract_interval_fits,
+};
 
 pub(super) const C_POINTER_BYTE_WIDTH: u32 = 8;
 
@@ -3282,17 +3285,28 @@ pub enum CUndefinedBehavior {
     InvalidShift,
     InvalidMemory,
     UninitializedRead,
+    /// An operation on a pointer value whose pointee's lifetime has ended
+    /// (C11 6.2.4p2, Annex J.2): comparing, subtracting, offsetting, testing
+    /// or converting a pointer into a freed allocation. `allocation` names
+    /// the freed allocation for the diagnostic.
+    FreedPointerUse {
+        allocation: String,
+    },
 }
 
 impl CUndefinedBehavior {
-    pub fn description(&self) -> &'static str {
+    pub fn description(&self) -> String {
         match self {
-            Self::SignedOverflow => "signed overflow",
-            Self::PointerArithmetic => "pointer arithmetic left the pointed-to object",
-            Self::DivisionByZero => "division by zero",
-            Self::InvalidShift => "invalid shift",
-            Self::InvalidMemory => "invalid memory access",
-            Self::UninitializedRead => "read of uninitialized storage",
+            Self::SignedOverflow => "signed overflow".to_string(),
+            Self::PointerArithmetic => "pointer arithmetic left the pointed-to object".to_string(),
+            Self::DivisionByZero => "division by zero".to_string(),
+            Self::InvalidShift => "invalid shift".to_string(),
+            Self::InvalidMemory => "invalid memory access".to_string(),
+            Self::UninitializedRead => "read of uninitialized storage".to_string(),
+            Self::FreedPointerUse { allocation } => format!(
+                "use of a pointer into freed allocation {allocation}: its value is \
+                 indeterminate after the free"
+            ),
         }
     }
 }
@@ -7017,6 +7031,13 @@ pub struct PureFactContext {
     /// found through the alias can still cite the exact fact. Counts
     /// preserve equivalent condition terms when one source fact is replaced.
     pub(super) signed_order_bounds: crate::persistent::PersistentMap<
+        Bitvector32Term,
+        crate::persistent::PersistentMap<(Bitvector32Term, Bitvector32Term, bool, bool), usize>,
+    >,
+    /// The `int64` counterpart of `signed_order_bounds`, maintained by the
+    /// same insert and remove path over `Bitvector64Signed*` order facts. It
+    /// is kept separate so an `int64` bound is never read as an int32 one.
+    pub(super) int64_signed_order_bounds: crate::persistent::PersistentMap<
         Bitvector32Term,
         crate::persistent::PersistentMap<(Bitvector32Term, Bitvector32Term, bool, bool), usize>,
     >,

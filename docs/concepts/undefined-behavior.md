@@ -39,9 +39,64 @@ Click currently models obligations for cases such as:
 - invalid shift counts,
 - invalid signed left shifts,
 - out-of-bounds memory access,
-- reads of uninitialized automatic storage.
+- reads of uninitialized automatic storage,
+- loads, stores, and pointer operations through a freed allocation.
 
 The C0 subset reference has the full current list.
+
+## Freed pointers are indeterminate
+
+When `free` ends an allocation's lifetime, C11 6.2.4p2 makes the value of
+every pointer into that allocation indeterminate, and Annex J.2 lists using
+such a value as undefined behavior. A load or store through the pointer is
+refused as an invalid memory access. Operating on the pointer value itself is
+refused too:
+
+- `==` and `!=`, including a comparison with null;
+- `<`, `<=`, `>`, and `>=`;
+- pointer subtraction and adding or subtracting an integer offset;
+- testing its truth in `if`, a loop condition, `?:`, `!`, `&&`, or `||`;
+- converting it to an integer by a cast, or to `_Bool` by a cast or an
+  assignment.
+
+The diagnostic names the freed allocation, for example
+`use of a pointer into freed allocation heap-allocation:1000000`.
+
+<!-- verified-example: mdtests/freed_pointer_equality_rejected.md -->
+```c
+int *q = p;
+free(p);
+return q == p;
+```
+
+A pointer counts as freed when its own block holds an allocation base the
+current snapshot has deallocated: the exact base, or an offset into it.
+Copies count too, so a pointer restored through a byte-representation copy
+is refused in the same way. A symbolic pointer the verifier cannot tie to a
+freed block keeps its ordinary meaning.
+
+Only operations on the value are uses. Reading the pointer out of a variable
+or a structure field, storing it, passing it to a call, and a
+pointer-to-pointer cast all move the value without using it. A different
+live pointer is unaffected, so testing it against null is still fine. The
+common idioms therefore verify:
+
+<!-- verified-example: mdtests/freed_pointer_set_to_null_verifies.md -->
+```c
+free(p);
+p = 0;
+```
+
+<!-- verified-example: mdtests/freed_pointer_guarded_free_verifies.md -->
+```c
+if (p != 0) {
+    free(p);
+}
+```
+
+Compare pointers before the free, as
+`mdtests/byte_representation_compare_before_free.md` does, when a program needs
+the answer.
 
 ## Requirements are safety facts
 
@@ -67,6 +122,8 @@ needs a safety fact:
 - shifts need valid counts and representable results,
 - memory access needs viewable ranges and index bounds.
 - local reads need an assignment on every path that reaches them.
+- pointer comparisons, differences, truth tests, and integer conversions need
+  the pointer's allocation to still be live.
 
 The right fix is usually a requirement, a loop invariant, or a narrower
 contract. Do not hide the obligation in the postcondition; Click needs the fact

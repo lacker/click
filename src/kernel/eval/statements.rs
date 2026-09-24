@@ -430,6 +430,21 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             return Ok(Vec::new());
         }
     }
+    // Storing a freed pointer moves it without using it, but an implicit
+    // conversion to `_Bool` (or any non-pointer type) tests its value; see
+    // `freed_pointer_use`.
+    if !lvalue.value_type.is_pointer()
+        && let Some(undefined_behavior) = freed_pointer_use(state, &value, assumptions)
+    {
+        return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
+            outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+            facts,
+            obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        }]);
+    }
     let Some(value) = crate::kernel::functions::coerce_c_value_with_pointee_constant(
         value,
         lvalue.value_type,
@@ -2950,8 +2965,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             else_branch,
         } => {
             let mut paths = Vec::new();
-            for condition_path in
-                evaluate_c_expression_paths(state, condition, assumptions, budget)?
+            for condition_path in evaluate_c_condition_paths(state, condition, assumptions, budget)?
             {
                 let CExpressionPath {
                     outcome,
@@ -3329,7 +3343,7 @@ pub(in crate::kernel) fn execute_c_assert_paths(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let mut paths = Vec::new();
-    for condition_path in evaluate_c_expression_paths(state, condition, assumptions, budget)? {
+    for condition_path in evaluate_c_condition_paths(state, condition, assumptions, budget)? {
         let CExpressionPath {
             outcome,
             facts,
@@ -3452,7 +3466,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
         let loop_assumptions = assumptions_with_propositions(&current_assumptions, invariant);
 
         let condition_paths = if check_condition {
-            evaluate_c_expression_paths(&current_state, condition, &loop_assumptions, budget)?
+            evaluate_c_condition_paths(&current_state, condition, &loop_assumptions, budget)?
         } else {
             vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(CValue::Int32(Bitvector32Term::Constant(1))),

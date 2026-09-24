@@ -140,7 +140,11 @@ Click tracks two different facts on the successful branch:
 `free(NULL)` changes nothing. An interior, stack, opaque, or already-freed
 pointer is not a valid free target. A successful free ends the whole block's
 lifetime; all aliases and derived addresses then reject loads and stores, and
-a second free is diagnosed separately. Verified function exits also check
+a second free is diagnosed separately. Their values are also indeterminate,
+so comparing, subtracting, offsetting, truth-testing, or converting such a
+pointer to an integer is refused as undefined behavior, while copying,
+storing, or overwriting it is not (see
+[Undefined behavior](undefined-behavior.md#freed-pointers-are-indeterminate)). Verified function exits also check
 that live allocation authority was returned through the contract or freed.
 
 The allocation/null refinement and allocation/free transitions are recorded

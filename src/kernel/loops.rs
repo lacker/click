@@ -1607,8 +1607,7 @@ pub(super) fn execute_c_statement_verification_paths(
             else_branch,
         } => {
             let mut paths = Vec::new();
-            for condition_path in
-                evaluate_c_expression_paths(state, condition, assumptions, budget)?
+            for condition_path in evaluate_c_condition_paths(state, condition, assumptions, budget)?
             {
                 let CExpressionPath {
                     outcome,
@@ -1896,7 +1895,7 @@ fn c_loop_condition_feasibility(
     assumptions: &PureFactContext,
 ) -> ExecutionResult<(bool, bool)> {
     let mut budget = ExecutionBudget::beside_live_state().with_c_expression_cost(condition);
-    let expression_paths = evaluate_c_expression_paths(state, condition, assumptions, &mut budget)?;
+    let expression_paths = evaluate_c_condition_paths(state, condition, assumptions, &mut budget)?;
     let mut may_continue = false;
     let mut may_exit = false;
     for path in expression_paths {
@@ -6085,7 +6084,7 @@ fn assume_condition_branches_at_state(
         assumptions_with_path_context(assumptions, prefix_facts, prefix_obligations);
     let mut contexts = Vec::new();
     for condition_path in
-        evaluate_c_expression_paths(state, condition, &effective_assumptions, budget)?
+        evaluate_c_condition_paths(state, condition, &effective_assumptions, budget)?
     {
         if matches!(condition_path.outcome, CExpressionOutcome::Value(_))
             && condition_path_is_ruled_out(&condition_path.facts, &effective_assumptions)
