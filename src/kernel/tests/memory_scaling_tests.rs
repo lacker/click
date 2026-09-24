@@ -612,3 +612,124 @@ fn a_store_beside_fields_of_one_heap_object_is_linear_in_the_cached_cells() {
         );
     }
 }
+
+/// After N consecutive contract calls that each consume and produce an
+/// allocation-bearing composite (a call havoc over the owner and its
+/// allocation, the retirement of that allocation, and the claim for the one
+/// it returns), the call rule's retirement check and the walks that name the
+/// owner's field, the new allocation's cell and the owner's block all stop
+/// at the last call. So each call costs the same, and N calls cost linear
+/// work: an earlier call is never re-examined. The sizes use disjoint
+/// variables, so no snapshot or memo is shared between them.
+#[test]
+fn consecutive_reallocating_calls_cost_the_same_each() {
+    const CALLS: [usize; 4] = [16, 64, 256, 1024];
+    let external = |variable: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+            byte_width: 4,
+        },
+    };
+    let int32_range = |base: &Pointer, end: u32| {
+        CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(end),
+            4,
+        )
+    };
+    let bytes = Bitvector32Term::Constant(4);
+    let assumptions = PureFactContext::new();
+    let mut last_call_samples = Vec::new();
+    let mut total_samples = Vec::new();
+    for (size_index, calls) in CALLS.into_iter().enumerate() {
+        let variables = 5_100_000 + 10_000 * size_index as u64;
+        let owner = external(variables);
+        let field = owner.offset_by_bytes(0);
+        let other = external(variables + 1);
+        let data = |call: usize| external(variables + 2 + call as u64);
+        let kept = ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own_memory(int32_range(&other, 2)));
+        let mut memory = CMemory::new();
+        let mut total = 0;
+        let mut last = 0;
+        for call in 0..calls {
+            let ranges = vec![int32_range(&owner, 2), int32_range(&data(call), 1)];
+            let lent = ResourceContext::new()
+                .unchecked_with_facts(ranges.iter().cloned().map(CResourceFact::own_memory));
+            let (next, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let stale = crate::kernel::functions::caller_resource_left_stale_by_retirement(
+                    &lent,
+                    &kept,
+                    &data(call),
+                    &bytes,
+                    &assumptions,
+                )
+                .cloned();
+                assert_eq!(stale, None, "the lent owner covers the retired allocation");
+                let next = memory
+                    .clone()
+                    .with_call_memory_havoc(
+                        Variable(variables + 5_000 + call as u64),
+                        &ranges,
+                        &assumptions,
+                    )
+                    .retire_contract_heap_allocation_claim(&data(call), &bytes, &assumptions)
+                    .with_heap_allocation_claim(data(call + 1), bytes.clone())
+                    .expect("a fresh claim");
+                let point =
+                    crate::kernel::resource_tracker::ProgramPoint::at(&intern_c_memory_ref(&next));
+                for cell in [&field, &data(call + 1)] {
+                    crate::kernel::resource_tracker::last_same_point(
+                        crate::kernel::resource_tracker::Resource::Cell {
+                            pointer: cell,
+                            bytes: 4,
+                        },
+                        &point,
+                    );
+                }
+                crate::kernel::resource_tracker::last_same_point(
+                    crate::kernel::resource_tracker::Resource::Block(
+                        &PointerBlock::ExternalArgument,
+                    ),
+                    &point,
+                );
+                next
+            });
+            memory = next;
+            total += work;
+            last = work;
+        }
+        // The field is named at the last call's havoc, not at any earlier one.
+        let named = crate::kernel::resource_tracker::last_same_point(
+            crate::kernel::resource_tracker::Resource::Cell {
+                pointer: &field,
+                bytes: 4,
+            },
+            &crate::kernel::resource_tracker::ProgramPoint::at(&intern_c_memory_ref(&memory)),
+        )
+        .expect("the walk has an answer");
+        assert!(
+            matches!(
+                named.snapshot().derivation().as_deref(),
+                Some(CMemoryDerivation::CallHavoc { .. })
+            ),
+            "the field is named at the last call's havoc"
+        );
+        last_call_samples.push((calls, last));
+        total_samples.push((calls, total));
+    }
+    assert_constant_plus_log_growth("the last of N reallocating calls", &last_call_samples, 4.0);
+    // Linear in N: the per-call average does not grow.
+    let (smallest, smallest_total) = total_samples[0];
+    let per_call = smallest_total as f64 / smallest as f64;
+    for (calls, total) in &total_samples {
+        assert!(
+            *total as f64 <= (per_call + 4.0) * *calls as f64,
+            "{calls} reallocating calls charged {total} units, above {:.1} per call: \
+             {total_samples:?}",
+            per_call + 4.0
+        );
+    }
+}

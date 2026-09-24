@@ -247,13 +247,13 @@ worked out outside the gate and got this far:
   before the call and `have x == at(mark, x)` after it; `simp` does not chain
   the call's field equality with an earlier `have` by itself. The value read
   back from the combined region at index 3 did not yet close the same way.
-- Converting the final state back to `arena_empty` folds, but the
-  `arena_destroy` call is refused on every path: the caller still owns its
-  descriptors, and the call rule cannot show that a kept owned object lies
-  outside an allocation the callee frees
-  (`mdtests/call_retires_allocation_beside_unrelated_owner_frontier.md`). This
-  is the current blocker, and it is a kernel gap, not a representation
-  question.
+- Converting the final state back to `arena_empty` folds. The
+  `arena_destroy` call was refused on every path because the call rule could
+  not show that a kept owned descriptor lies outside an allocation the callee
+  frees; that kernel gap is closed
+  (`mdtests/call_retires_allocation_beside_unrelated_owner.md`,
+  `mdtests/arena_destroy_beside_region_descriptors.md`), and the pipeline has
+  not been re-run against it since.
 
 Two tooling findings from that work need their own fixes before the pipeline
 lands:

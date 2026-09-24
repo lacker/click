@@ -1986,8 +1986,13 @@ impl CMemory {
             }
         }
         // Losing an allocation's cached knowledge can otherwise re-intern as
-        // an older empty snapshot and drop this safety-critical edge.
-        self.mark_forgotten_from(&prior);
+        // an older empty snapshot and drop this safety-critical edge. A
+        // retirement inside its own call's havoc keeps that havoc's mark
+        // instead: see `retirement_keeps_its_call_havocs_forget_mark`.
+        use crate::kernel::resource_tracker::cell_source::retirement_keeps_its_call_havocs_forget_mark;
+        if !retirement_keeps_its_call_havocs_forget_mark(&prior, base, bytes) {
+            self.mark_forgotten_from(&prior);
+        }
         record_c_memory_derivation(
             &mut self,
             CMemoryDerivation::ContractAllocationRetired {

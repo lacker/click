@@ -598,6 +598,7 @@ fn retirement_stale_check_ignores_unrelated_kept_resources() {
         let assumptions = PureFactContext::new();
         let (stale, work) = crate::instrumentation::measure_deterministic_work(|| {
             crate::kernel::functions::caller_resource_left_stale_by_retirement(
+                &ResourceContext::new(),
                 &kept,
                 &allocation,
                 &bytes,
@@ -618,6 +619,7 @@ fn retirement_stale_check_ignores_unrelated_kept_resources() {
             .unchecked_with_fact(owned_range(allocation.clone(), 2, 3));
         assert_eq!(
             crate::kernel::functions::caller_resource_left_stale_by_retirement(
+                &ResourceContext::new(),
                 &overlapping,
                 &allocation,
                 &bytes,

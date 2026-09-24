@@ -107,6 +107,12 @@ pub(in crate::kernel) enum MemoryDagHopJustification {
     AllocationOfOtherBlock,
     LocalLifetimeEndedOfOtherBlock,
     HeapFreeOfDistinctBlock,
+    /// A `ContractAllocationRetired` edge whose retired allocation lies
+    /// inside the write set of the call that retired it
+    /// ([`retirement_inside_its_call_havoc`]). The edge writes no byte, and
+    /// every byte it could have released was already rewritten by that
+    /// call's `CallHavoc`, which is the next edge the walk meets for it.
+    RetirementInsideItsCallHavoc,
     CallHavocRanges {
         ranges: Vec<RangeDisjointFromPointerEvidence>,
     },
@@ -335,6 +341,7 @@ impl MemoryDagHopJustification {
                     allocation_base, ..
                 } if allocation_base.blocks_proven_distinct(pointer)
             ),
+            Self::RetirementInsideItsCallHavoc => retirement_inside_its_call_havoc(derivation),
             Self::CallHavocRanges { ranges } => {
                 let CMemoryDerivation::CallHavoc { mutable_ranges, .. } = derivation else {
                     return false;
@@ -684,6 +691,119 @@ impl PointerInRangeEvidence {
             &ConditionTerm::signed_less_than(index, range.end().clone()),
             assumptions,
         )
+    }
+}
+
+/// Whether `step` retires an allocation that the call retiring it had
+/// already put inside its own write set: the edge is a
+/// `ContractAllocationRetired` whose base, past any other retirements the
+/// same call recorded, is a `CallHavoc` with a mutable range that covers every
+/// byte of the allocation by structure.
+///
+/// Such an edge is transparent to a cell's value. It writes no byte; the only
+/// reason a retirement ever stops a cell is that the callee may have freed the
+/// allocation and let a later owner reuse its addresses, so a load after the
+/// edge must not be named by a value from *before the call*. A byte of this
+/// allocation cannot reach one: the havoc just below is inside the same call,
+/// every such byte lies in one of its ranges, and a walk crosses a havoc only
+/// on a proof that the cell misses every range. So the walk stops at the havoc
+/// at the latest, and the name it gives is the call's post-call value, which is
+/// exactly what the load reads. A byte outside the allocation is untouched by
+/// the retirement in the first place.
+///
+/// Coverage is structural and assumption-free (the range starts at the
+/// allocation's base pointer, and its byte count is the allocation's size or a
+/// constant at least as large), so the answer is a property of the recorded
+/// edges alone and may serve the naming walk. The work is one unit per edge
+/// looked through, bounded by the retirements of one call.
+pub(in crate::kernel) fn retirement_inside_its_call_havoc(step: &CMemoryDerivation) -> bool {
+    let CMemoryDerivation::ContractAllocationRetired {
+        base,
+        allocation_base,
+        bytes,
+    } = step
+    else {
+        return false;
+    };
+    retired_allocation_inside_call_havoc(base, allocation_base, bytes)
+}
+
+/// Whether a retirement of `allocation_base[0..bytes]` taken from `base` may
+/// keep `base`'s forget mark rather than marking itself forgotten from
+/// `base` ([`CMemory::mark_forgotten_from`]).
+///
+/// The mark exists so a snapshot that dropped knowledge cannot re-intern as
+/// the one it forgot from, or as anything older. A retirement inside its
+/// call's havoc ([`retirement_inside_its_call_havoc`]) is, for every cell
+/// value, the same memory as that havoc's snapshot: the dropped cells of the
+/// allocation hold the havoc's post-call values, and the other dropped cells
+/// are untouched. Keeping the havoc's mark is what makes the
+/// content-addressed load names (the projections
+/// `canonical_memory_for_pointer_load` interns, which carry the mark) agree
+/// with the memory-DAG walk, which crosses such a retirement to the havoc.
+///
+/// Re-interning is still ruled out. The result carries the havoc's marker
+/// block, whose identity is the call's fresh variable, so it cannot equal any
+/// snapshot from before the call. It can equal the havoc snapshot itself only
+/// when the retirement dropped nothing, and then the dropped edge lost
+/// nothing either: the havoc, the next edge down, stops every cell and every
+/// block question the retirement would have stopped for this allocation.
+pub(in crate::kernel) fn retirement_keeps_its_call_havocs_forget_mark(
+    base: &SharedCMemory,
+    allocation_base: &Pointer,
+    bytes: &Bitvector32Term,
+) -> bool {
+    retired_allocation_inside_call_havoc(base, allocation_base, bytes)
+}
+
+fn retired_allocation_inside_call_havoc(
+    base: &SharedCMemory,
+    allocation_base: &Pointer,
+    bytes: &Bitvector32Term,
+) -> bool {
+    let mut current = base.clone();
+    loop {
+        crate::instrumentation::record_deterministic_work(1);
+        let Some(derivation) = current.derivation() else {
+            return false;
+        };
+        match derivation.as_ref() {
+            CMemoryDerivation::ContractAllocationRetired { base, .. } => current = base.clone(),
+            CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
+                return mutable_ranges.iter().any(|range| {
+                    range_structurally_covers_allocation(range, allocation_base, bytes)
+                });
+            }
+            _ => return false,
+        }
+    }
+}
+
+fn range_structurally_covers_allocation(
+    range: &CMemoryRange,
+    allocation_base: &Pointer,
+    bytes: &Bitvector32Term,
+) -> bool {
+    if range.base() != allocation_base || range.start() != &Bitvector32Term::Constant(0) {
+        return false;
+    }
+    let covered = memory_range_byte_count(
+        range.start().clone(),
+        range.end().clone(),
+        range.element_width(),
+    );
+    if &covered == bytes {
+        return true;
+    }
+    // Both extents constant: the range covers the allocation when it spans at
+    // least as many bytes. A count that does not fit a non-negative `i32` is
+    // not read as an extent.
+    match (
+        signed_bitvector_constant(&covered),
+        signed_bitvector_constant(bytes),
+    ) {
+        (Some(covered), Some(bytes)) => bytes >= 0 && covered >= bytes,
+        _ => false,
     }
 }
 

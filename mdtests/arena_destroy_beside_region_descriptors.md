@@ -1,4 +1,4 @@
-# Frontier: destroying an arena while the caller keeps region descriptors
+# Destroying an arena while the caller keeps region descriptors
 
 `examples/arena`'s `arena_pipeline` ends every path in `arena_destroy(arena)`
 while it still owns its region descriptors. This is that call in isolation,
@@ -7,11 +7,12 @@ with `arena_destroy`'s contract and the resources it needs copied from
 owns both backing arrays and their allocation authority, and keeps
 `object(first)` and `object(second)`.
 
-It fails for the reason
-`call_retires_allocation_beside_unrelated_owner_frontier.md` records: the
-call rule names the retired allocations through `arena->data` and
-`arena->occupied` read after the call, which `arena_destroy` sets to null, so
-nothing the caller holds separates a descriptor from them.
+`arena_destroy` sets `arena->data` and `arena->occupied` to null, so the
+allocations it frees can only be named through the values those fields had
+at the call's entry, which is where the call rule reads what the caller lent.
+There, the lent arena owns every byte of both backing arrays, so the owned
+descriptors the caller kept are disjoint from both freed allocations by the
+ownership partition (`call_retires_allocation_beside_unrelated_owner.md`).
 
 ```c filename=arena_destroy.c
 struct arena {
@@ -133,5 +134,5 @@ void arena_teardown(
 ```
 
 ```expect
-fail: resource would remain usable after its allocation is freed
+pass
 ```
