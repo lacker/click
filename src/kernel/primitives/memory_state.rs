@@ -693,6 +693,67 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
 }
 
 #[cfg(test)]
+mod call_havoc_local_retention_tests {
+    use super::*;
+
+    #[test]
+    fn call_havoc_drops_local_cell_when_write_range_is_assumed_equal_to_it() {
+        let local = Pointer {
+            block: PointerBlock::Concrete("local:t".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let symbolic = Pointer {
+            block: PointerBlock::Symbolic(Variable(944_001)),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let assumed_alias_range = CMemoryRange::new(
+            symbolic.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(symbolic, local.clone()),
+            true,
+        ));
+        let unrelated_range = CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        let value = CValue::Int32(Bitvector32Term::Constant(41));
+        let before = CMemory::new()
+            .with_block(local.block.clone(), 4)
+            .store(local.clone(), value.clone());
+
+        let retained = before.clone().with_call_memory_havoc(
+            Variable(944_010),
+            std::slice::from_ref(&unrelated_range),
+            &PureFactContext::new(),
+        );
+        assert_eq!(retained.known_value(&local), Some(value));
+
+        let havocked = before.clone().with_call_memory_havoc(
+            Variable(944_011),
+            std::slice::from_ref(&assumed_alias_range),
+            &assumptions,
+        );
+        assert_eq!(
+            havocked.known_value(&local),
+            None,
+            "an assumed-equal write range must invalidate the local cell"
+        );
+        assert!(havocked.matches_call_memory_havoc_result(
+            &before,
+            std::slice::from_ref(&assumed_alias_range),
+            &assumptions,
+        ));
+    }
+}
+
+#[cfg(test)]
 mod havoc_identity_tests {
     use super::*;
 
@@ -1353,21 +1414,23 @@ fn call_havoc_candidates(mutable_ranges: &[CMemoryRange]) -> AliasCandidates {
 /// ([`call_havoc_candidates`]), in the producing context. The
 /// two are compared in `docs/internals/resource-tracker.md`.
 ///
-/// The `local:` disjunct is the `local_versus_argument` arm of
-/// [`PointerBlock::proven_distinct`] spelled as a prefix: a `local:` block is
-/// storage this function declared, and memory a callee reaches through its
-/// arguments existed before the call. It is only sound while a checked write
-/// set can never be based in a `local:` block, which holds because such a
-/// write set is the callee's owned ranges resolved at the call site, and a
-/// `local:` range cannot be owned — passing `&t` to a callee that owns
-/// `t[0..1]` is refused for want of `owns local:t@0[0..1]`.
+/// Local cells may be kept without an owned-range lookup when the write set
+/// names the same local block directly. A different spelling cannot use the
+/// structural local-versus-argument separation rule: consult the proven
+/// pointer-equality graph before keeping the cell, so an assumed alias drops
+/// it. Other cells use the ordinary range-disjointness query.
 fn call_havoc_keeps_cell(
     pointer: &Pointer,
     mutable_ranges: &[CMemoryRange],
     assumptions: &PureFactContext,
 ) -> bool {
-    pointer.block.starts_with("local:")
-        || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+    if pointer.block.starts_with("local:") {
+        return mutable_ranges.iter().all(|range| {
+            range.base().block == pointer.block
+                || !pointers_proven_equal_for_memory_resolution(range.base(), pointer, assumptions)
+        });
+    }
+    assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
 }
 
 /// Whether a havoc that preserves loans keeps the cell at this address: the
