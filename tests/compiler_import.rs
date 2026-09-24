@@ -604,6 +604,15 @@ fn userspace_frozen_pthread_probe_records_real_header_boundary() {
         "{error}"
     );
     assert!(error.len() < 4096, "unbounded import diagnostic");
-    assert!(error.contains("atomic_wide_counter.h:26"), "{error}");
-    assert!(error.contains("expected union name, got `{`"), "{error}");
+    // The parser boundary inside the real glibc headers moves every time the
+    // import frontier advances and every time the host's glibc changes, so
+    // this host-only test does not pin the file, line, or token. The
+    // frozen-lock unit test in `src/languages/c/compiler_import.rs` pins the
+    // exact boundary against a committed artifact and runs on every host.
+    // What this test guarantees is that the refusal names a staged system
+    // header of this probe, not an unrelated path or a bare token.
+    assert!(
+        error.contains("/staged-system-headers/"),
+        "the boundary must be inside the probe's staged system headers: {error}"
+    );
 }
