@@ -7,9 +7,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use click::cli::{
-    self, CInput, MdTestExpectation, files_with_extension, find_mdtests, find_projects,
-    format_duration, looks_like_mdtest, parse_duration, prepare_mdtest_inputs, read_c_inputs,
-    read_click_project, shell_quote, source_refs,
+    self, CInput, MdTestExpectation, TargetSelection, find_mdtests, format_duration,
+    looks_like_mdtest, parse_duration, prepare_mdtest_inputs, read_c_inputs, read_click_project,
+    select_targets, shell_quote, source_refs,
 };
 use click::surface::{
     C0VerificationSession, ClickProject, SourcePosition, c0_incremental_selection,
@@ -625,18 +625,10 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
     }
 }
 
+/// Selects audit sources with the target selection shared with `click
+/// verify` and `click profile`, plus the repository root, which covers both
+/// `examples/` and `mdtests/`.
 fn audit_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
-    if looks_like_mdtest(path) {
-        return find_mdtests(path);
-    }
-    if path
-        .extension()
-        .is_some_and(|extension| extension == "click")
-    {
-        return Ok(vec![fs::canonicalize(path).map_err(|error| {
-            format!("failed to resolve `{}`: {error}", path.display())
-        })?]);
-    }
     let examples = path.join("examples");
     let mdtests = path.join("mdtests");
     if examples.is_dir() && mdtests.is_dir() {
@@ -646,15 +638,13 @@ fn audit_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
         sources.dedup();
         return Ok(sources);
     }
-    if path.is_dir() && directory_contains_mdtests(path)? {
-        return find_mdtests(path);
-    }
-    match find_projects(path) {
-        Ok(projects) => {
-            let mut sources = Vec::new();
-            for project in projects {
-                sources.extend(files_with_extension(&project, "click")?);
-            }
+    match select_targets(path)? {
+        TargetSelection::Mdtests(paths) => Ok(paths),
+        TargetSelection::Sidecars(selection) => {
+            let mut sources = selection
+                .sidecars()
+                .map(Path::to_path_buf)
+                .collect::<Vec<_>>();
             sources.sort();
             sources
                 .into_iter()
@@ -665,35 +655,7 @@ fn audit_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
                 })
                 .collect()
         }
-        Err(project_error) => {
-            if path.is_dir() && !files_with_extension(path, "md")?.is_empty() {
-                find_mdtests(path)
-            } else {
-                Err(project_error)
-            }
-        }
     }
-}
-
-fn directory_contains_mdtests(path: &Path) -> Result<bool, String> {
-    for markdown in files_with_extension(path, "md")? {
-        let source = fs::read_to_string(&markdown)
-            .map_err(|error| format!("failed to read `{}`: {error}", markdown.display()))?;
-        match cli::parse_mdtest(&markdown, &source) {
-            Ok(mdtest) if mdtest.click_source.is_some() && mdtest.expectation.is_some() => {
-                return Ok(true);
-            }
-            // Preserve the old behavior of surfacing malformed mdtests from
-            // an otherwise recognizable collection instead of silently
-            // reclassifying a directory as a Click project merely because it
-            // also contains imported `.click` support modules.
-            Err(_) if source.contains("```click") && source.contains("```expect") => {
-                return Ok(true);
-            }
-            Ok(_) | Err(_) => {}
-        }
-    }
-    Ok(false)
 }
 
 struct AuditSource {

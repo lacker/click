@@ -19,6 +19,14 @@ compiler importer. Profiling ignores quarantine so a
 specific quarantined fixture can be diagnosed. Each selected project receives
 its own deadline and report.
 
+Sidecar, example-project, and examples-directory targets select sidecars
+exactly as [`click verify`](verify.md#target-selection) does: a directory that
+contains sidecars is one project, and otherwise each immediate subdirectory
+with sidecars is a project. A project report covers all of its sidecars, and
+local imports resolve within the same project root `click verify` uses. A
+directory is an mdtests directory instead when it directly contains a markdown
+test, even if it also holds `.click` modules those tests import.
+
 For a sidecar with local Click imports, profiling loads the same transitive
 module graph as verification but executes and attributes only proof units
 owned by the selected entry. Profile the library file itself to measure its

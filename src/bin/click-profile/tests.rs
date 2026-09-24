@@ -1,3 +1,5 @@
+use std::fs;
+
 use super::*;
 
 #[test]
@@ -558,25 +560,27 @@ fn targets_prefer_example_projects_over_stray_markdown() {
     let mdtest = manifest.join("mdtests/count_to_three_loop_invariants.md");
     assert_eq!(
         profile_targets(&mdtest),
-        Ok(vec![mdtest.clone()]),
+        Ok(vec![ProfileTarget::Mdtest(mdtest.clone())]),
         "a `.md` argument names one mdtest"
     );
 
     let projects = profile_targets(&manifest.join("examples/input-cursor"))
         .expect("an example project with a README is still a project");
     assert_eq!(projects.len(), 1);
-    assert!(projects[0].ends_with("input-cursor"), "{projects:?}");
+    assert!(projects[0].path().ends_with("input-cursor"), "{projects:?}");
 
     let mdtests = profile_targets(&manifest.join("mdtests"))
         .expect("a directory of markdown tests profiles all of them");
     assert!(mdtests.len() > 1);
     assert!(
-        mdtests.iter().all(|path| looks_like_mdtest(path)),
+        mdtests
+            .iter()
+            .all(|target| matches!(target, ProfileTarget::Mdtest(path) if looks_like_mdtest(path))),
         "{mdtests:?}"
     );
     let imported_mdtest = mdtests
         .iter()
-        .find(|path| path.ends_with("mdtests/specification_imports.md"))
+        .find(|target| target.path().ends_with("mdtests/specification_imports.md"))
         .expect("import-backed markdown remains a profile target");
     let imported_profile = profile_target(
         imported_mdtest,
@@ -589,8 +593,117 @@ fn targets_prefer_example_projects_over_stray_markdown() {
     let sidecar = manifest.join("examples/input-cursor/input_cursor.click");
     assert_eq!(
         profile_targets(&sidecar),
-        Ok(vec![sidecar.clone()]),
+        Ok(vec![ProfileTarget::Sidecars {
+            project: sidecar.clone(),
+            project_root: manifest.join("examples/input-cursor"),
+            sidecars: vec![sidecar.clone()],
+        }]),
         "a direct sidecar target is needed to profile an expanded artifact"
+    );
+}
+
+/// Profiles every target a path selects and renders the combined report with
+/// enough attribution rows to list every claim.
+fn profile_report(path: &Path) -> (Vec<ProfileTarget>, Vec<ProjectProfile>, String) {
+    let targets = profile_targets(path)
+        .unwrap_or_else(|error| panic!("`{}` should select targets: {error}", path.display()));
+    let profiles = targets
+        .iter()
+        .map(|target| {
+            profile_target(target, Thresholds::default(), Duration::from_secs(30))
+                .unwrap_or_else(|error| panic!("`{}` should profile: {error}", path.display()))
+        })
+        .collect::<Vec<_>>();
+    for profile in &profiles {
+        assert_eq!(profile.verification_failure, None, "{}", profile.project);
+    }
+    let report = render_profiles_with_top(
+        &profiles,
+        Thresholds::default(),
+        Duration::from_secs(30),
+        64,
+    );
+    (targets, profiles, report)
+}
+
+fn assert_report_names_claims(report: &str, project: &str, files: &str, claims: &[&str]) {
+    assert!(
+        report.contains(&format!("{project}: {files}")),
+        "`{project}` should report {files}:\n{report}"
+    );
+    for claim in claims {
+        assert!(
+            report.contains(&format!("CLAIM    {claim}.contract")),
+            "`{project}` should name claim `{claim}`:\n{report}"
+        );
+    }
+}
+
+/// `click profile` selects sidecars exactly as `click verify` does, so a
+/// project directory profiles all of its sidecars instead of trying to read
+/// the directory as one sidecar.
+#[test]
+fn project_and_examples_directories_profile_every_sidecar() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let numeric_claims = ["json_object_get_double", "json_object_scale_double"];
+    let refcount_claims = [
+        "json_object_get_ref_count",
+        "json_object_inc_ref_count",
+        "json_object_set_ref_count",
+    ];
+
+    let (targets, profiles, report) = profile_report(&manifest.join("examples/jsonc-refcount"));
+    assert_eq!(targets.len(), 1, "{targets:?}");
+    assert_eq!(profiles[0].project, "jsonc-refcount");
+    assert_report_names_claims(&report, "jsonc-refcount", "3 files", &refcount_claims);
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after the Unix epoch")
+        .as_nanos();
+    let examples = env::temp_dir().join(format!(
+        "click-profile-examples-{}-{unique}",
+        std::process::id()
+    ));
+    for project in ["jsonc-numeric", "jsonc-refcount"] {
+        let destination = examples.join(project);
+        fs::create_dir_all(&destination).expect("temporary project should be creatable");
+        for entry in fs::read_dir(manifest.join("examples").join(project))
+            .expect("example project should be readable")
+        {
+            let source = entry.expect("example entry should be readable").path();
+            fs::copy(&source, destination.join(source.file_name().unwrap()))
+                .expect("example file should copy");
+        }
+    }
+    fs::write(examples.join("README.md"), "# Examples\n").expect("README should be writable");
+    let (targets, profiles, report) = profile_report(&examples);
+    fs::remove_dir_all(&examples).expect("temporary examples should be removable");
+    assert_eq!(
+        profiles
+            .iter()
+            .map(|profile| profile.project.as_str())
+            .collect::<Vec<_>>(),
+        ["jsonc-numeric", "jsonc-refcount"]
+    );
+    assert!(
+        targets
+            .iter()
+            .all(|target| target.project_root() == Some(examples.as_path())),
+        "an examples directory is the import root of each project: {targets:?}"
+    );
+    assert_report_names_claims(&report, "jsonc-numeric", "2 files", &numeric_claims);
+    assert_report_names_claims(&report, "jsonc-refcount", "3 files", &refcount_claims);
+
+    let rbtree_insert = profile_targets(&manifest.join("examples"))
+        .expect("the examples directory should select projects")
+        .into_iter()
+        .find(|target| target.path().ends_with("rbtree-insert"))
+        .expect("the examples directory selects rbtree-insert");
+    assert_eq!(
+        rbtree_insert.project_root(),
+        Some(manifest.join("examples").as_path()),
+        "rbtree-insert imports a sibling project's model, as under `click verify`"
     );
 }
 
@@ -600,7 +713,7 @@ fn targets_prefer_example_projects_over_stray_markdown() {
 fn quarantined_mdtests_are_profileable() {
     let path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mdtests/bubble_sort3_two_pass_sorted.md");
-    let source = load_profiled_source(&path).expect("a quarantined mdtest still extracts");
+    let source = load_profiled_source(&path, None).expect("a quarantined mdtest still extracts");
 
     assert!(source.click_source.contains("bubble_sort3_two_pass"));
     assert!(matches!(&source.inputs, CInput::Bundle(sources) if !sources.is_empty()));
@@ -613,7 +726,7 @@ fn quarantined_mdtests_are_profileable() {
 #[test]
 fn cpp_mdtests_profile_the_compiler_imported_source() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mdtests/cpp_scalar_catch.md");
-    let source = load_profiled_source(&path).expect("prepare C++ mdtest");
+    let source = load_profiled_source(&path, None).expect("prepare C++ mdtest");
     assert!(matches!(source.inputs, CInput::PreparedCpp(_)));
     assert!(source.project.is_some());
     assert!(source.line_offset > 0);

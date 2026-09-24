@@ -587,8 +587,11 @@ workflow. An mdtest is profiled from its embedded
 ` ```c ` or ` ```cpp ` and ` ```click ` blocks using the same preparation the mdtests gate
 uses, and reported locations point into the markdown file. Quarantine does not
 apply — a quarantined mdtest is exactly the one worth profiling. The two modes
-are told apart by shape: example projects win whenever a Click sidecar is found
-under the directory, so their `README.md` files are not mistaken for mdtests.
+are told apart by shape: a directory that directly contains a markdown test is
+an mdtests directory; otherwise example projects win whenever a Click sidecar is
+found in or directly under the directory, so their `README.md` files are not
+mistaken for mdtests. Project targets select sidecars exactly as `click verify`
+does.
 
 The defaults report smart tactics at 2 seconds, simple tactics at
 500 milliseconds, control-tactic containers at 6 seconds, and stop each project
