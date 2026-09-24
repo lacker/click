@@ -285,6 +285,12 @@ impl MemoryDagHopJustification {
                     }
                 };
                 authority_checks
+                    && !assumptions.memory_ranges_overlap_after_base_equality(left, right)
+                    && !crate::kernel::reasoning::pointers_proven_equal_for_memory_resolution(
+                        write,
+                        pointer,
+                        assumptions,
+                    )
                     && match orientation {
                         StoreSeparatedRangeOrientation::WriteLeftLoadRight => {
                             write_membership.checks(write, left, assumptions)

@@ -7,7 +7,6 @@ regression, and acceptance criteria. An accepted bug is deleted here when its
 fix, regression coverage, and documentation land.
 
 - [Spec-carrier substitution has no binder handling: capture and silent drops](spec-substitution-captures-and-drops-binders.md) — machine-confirmed
-- [Entry-partition separation facts are never re-checked after equalities](entry-partition-separation-facts-unrechecked.md) — statically confirmed
 - [The annotation quantifier counter is raised into other producers' bands](quantifier-counter-rises-into-other-producers.md) — statically confirmed
 - [The call-havoc retention's `local:` promise has no enforced boundary](call-havoc-local-retention-unenforced.md) — statically confirmed
 - [The interface join erases a deallocation one arm performed](interface-join-erases-one-arm-deallocation.md) — machine-confirmed

@@ -717,6 +717,112 @@ fn store_hop_retains_direct_or_composed_separated_range_authority() {
 }
 
 #[test]
+fn entry_separation_does_not_frame_a_store_after_its_bases_become_equal() {
+    let base = CMemory::new().with_block("arg-memory", 16);
+    let left = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(130_001)), 4),
+    };
+    let right = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(130_002)), 4),
+    };
+    let bridge = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(130_003)), 4),
+    };
+    let left_range = memory_range(left.clone(), 0, 1);
+    let right_range = memory_range(right.clone(), 0, 1);
+    let separation = Proposition::CResourceSeparate {
+        left: CResource::Memory(left_range.clone()),
+        right: CResource::Memory(right_range.clone()),
+    };
+    let entry_assumptions = PureFactContext::new().assume_proposition(separation);
+    let retained = crate::kernel::memory_provenance::typed_store_separated_ranges_evidence(
+        &left,
+        &right,
+        &entry_assumptions,
+    )
+    .expect("the entry-time partition initially supplies the hop");
+    let assumptions = entry_assumptions
+        .assume_condition(
+            ConditionTerm::pointer_equal(left.clone(), bridge.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::pointer_equal(bridge, right.clone()), true);
+    assert_eq!(
+        assumptions
+            .exact_condition_value(&ConditionTerm::pointer_equal(left.clone(), right.clone())),
+        None,
+        "the alias is established through the intermediate pointer, not a direct fact"
+    );
+    assert!(
+        crate::kernel::reasoning::pointers_proven_equal_for_memory_resolution(
+            &left,
+            &right,
+            &assumptions,
+        )
+    );
+    assert!(assumptions.memory_ranges_overlap_after_base_equality(&left_range, &right_range));
+    assert!(
+        !assumptions.proves_resource_separate(
+            &CResource::Memory(left_range.clone()),
+            &CResource::Memory(right_range.clone()),
+        ),
+        "a stale entry partition cannot prove overlapping ranges separate"
+    );
+    assert!(
+        crate::kernel::memory_provenance::typed_store_separated_ranges_evidence(
+            &left,
+            &right,
+            &assumptions,
+        )
+        .is_none(),
+        "a stale entry partition cannot frame equal store and load addresses"
+    );
+    let after = base
+        .clone()
+        .store(left.clone(), CValue::Int32(Bitvector32Term::Constant(7)));
+    let derivation = crate::kernel::intern_c_memory_ref(&after)
+        .derivation()
+        .expect("the written snapshot retains its store");
+    assert!(
+        !retained.checks(derivation.as_ref(), &right, 4, &assumptions),
+        "a retained hop must be refused after its own ranges become overlapping"
+    );
+}
+
+#[test]
+fn equal_range_bases_keep_a_separation_for_disjoint_byte_intervals() {
+    let left = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(130_011)), 4),
+    };
+    let right = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(130_012)), 4),
+    };
+    let left_range = memory_range(left.clone(), 0, 1);
+    let right_range = memory_range(right.clone(), 1, 2);
+    let separation = Proposition::CResourceSeparate {
+        left: CResource::Memory(left_range.clone()),
+        right: CResource::Memory(right_range.clone()),
+    };
+    let assumptions = PureFactContext::new()
+        .assume_proposition(separation)
+        .assume_condition(ConditionTerm::pointer_equal(left, right), true);
+
+    assert!(
+        !assumptions.memory_ranges_overlap_after_base_equality(&left_range, &right_range),
+        "adjacent element intervals remain separate when their bases are equal"
+    );
+    assert!(assumptions.proves_resource_separate(
+        &CResource::Memory(left_range),
+        &CResource::Memory(right_range),
+    ));
+}
+
+#[test]
 fn separated_range_store_hop_retains_symbolic_membership_bounds() {
     let base = CMemory::new().with_block("arg-memory", 64);
     let range_base = |variable| Pointer {

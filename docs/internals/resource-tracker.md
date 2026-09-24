@@ -881,6 +881,19 @@ contract's evaluated **clause list** — the `Vec<CCheckedResourceFact>` that
 written clause — never a context. That is the whole discriminator: a context
 holds the owner observation above, and the clause list does not.
 
+The resulting separation remains path evidence, not a permanent address fact.
+A later equality can make its two ranges overlap while the original
+`CResourceSeparate` proposition remains in the context. Before an indexed
+separation candidate can be used, `PureFactContext` now compares the ranges'
+current bases using path equalities that do not consult separation evidence,
+then checks their byte intervals; an overlapping or undecidable pair cannot
+justify separation. `StoreSeparatedRanges` evidence repeats that check when a
+retained hop is consumed. This breaks the circular case where the stale
+separation would otherwise veto the equality that invalidates it.
+`entry_separation_does_not_frame_a_store_after_its_bases_become_equal`
+(`src/kernel/tests/memory_dag_tests.rs`) pins both evidence production and
+rechecking of an already-retained hop.
+
 Four pairs it does not build:
 
 - **an owner and the observation of its own range.** Not in the clause list,
