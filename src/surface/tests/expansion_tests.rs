@@ -365,6 +365,88 @@ fn nested_null_check_chain_expands_and_reverifies() {
     }
 }
 
+fn mdtest_sources(relative: &str) -> (String, Vec<(String, String)>) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .clone()
+        .unwrap_or_else(|| panic!("`{relative}` should contain Click source"));
+    (click_source, mdtest.c_sources.clone())
+}
+
+/// A proof `if` after `execute()` reaches its `result == 0` arm from both
+/// arms of the C `if`, with different closers on each. Claim expansion places
+/// the proof cases inside each C arm instead of refusing for want of a
+/// proof-level condition between those outcomes.
+#[test]
+fn proof_cases_after_c_branch_expand_and_reverify() {
+    let (click_source, c_sources) = mdtest_sources("mdtests/proof_cases_after_c_branch_expands.md");
+    let c_sources = c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(&click_source, &c_sources).expect("the smart proof verifies");
+    let expanded =
+        expand_c0_claim_source(&click_source, &c_sources, "use_pick", CProofClaim::Grouped)
+            .unwrap_or_else(|error| panic!("the caller proof should expand: {}", error.message()));
+    assert!(
+        expanded.contains(" if at(statement(2).entry, copied)"),
+        "{expanded}"
+    );
+    assert_eq!(
+        expanded.matches(" if result == 0 {").count(),
+        1,
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("cases (result == 18 or result == -1)"),
+        "{expanded}"
+    );
+    let caller = &expanded[expanded.find("int use_pick").expect("caller proof")..];
+    assert!(!caller.contains("execute()"), "{expanded}");
+    assert!(!caller.contains("simp()"), "{expanded}");
+    if let Err(error) = verify_c0_sources(&expanded, &c_sources) {
+        panic!(
+            "the expanded caller proof should re-verify: {}\n{expanded}",
+            error.message()
+        );
+    }
+}
+
+/// Eleven nested null checks expand to eleven nested proof `if`s, the checked
+/// drivers' bound, and re-verify. Twelve would nest one past it: expansion
+/// refuses before emitting the rewrite, with the verifier's diagnostic.
+#[test]
+fn expansion_refuses_a_rewrite_past_the_nesting_bound() {
+    let (click_source, c_sources) =
+        mdtest_sources("mdtests/expand_refuses_rewrite_past_nesting_bound.md");
+    let c_sources = c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(&click_source, &c_sources).expect("both smart proofs verify");
+    let expanded =
+        expand_c0_claim_source(&click_source, &c_sources, "eleven", CProofClaim::Grouped)
+            .unwrap_or_else(|error| panic!("eleven checks should expand: {}", error.message()));
+    assert_eq!(expanded.matches(" if at(").count(), 11, "{expanded}");
+    if let Err(error) = verify_c0_sources(&expanded, &c_sources) {
+        panic!(
+            "the eleven-region rewrite should re-verify: {}\n{expanded}",
+            error.message()
+        );
+    }
+    let error = expand_c0_claim_source(&click_source, &c_sources, "twelve", CProofClaim::Grouped)
+        .expect_err("twelve nested regions exceed the checked drivers' bound");
+    assert_eq!(
+        error.message(),
+        "`twelve.contract`: this proof nests 12 execution regions; the checked proof drivers support at most 11. Move an inner `match`, `branch`, or proof `if` into a contracted helper, or prove part of it in a `have`."
+    );
+}
+
 #[test]
 fn symbolic_branch_source_requirement_have_expands_and_deletion_rejects() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
