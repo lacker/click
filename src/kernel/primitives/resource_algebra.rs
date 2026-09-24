@@ -4245,7 +4245,7 @@ impl ResourceContext {
                 continue;
             }
             let mut changed = false;
-            for j in index.candidates_after(i, &fact) {
+            for j in index.candidates_after(i, &fact, assumptions) {
                 crate::instrumentation::record_deterministic_work(1);
                 let Some((right_occurrence, right)) = slots[j].as_ref() else {
                     continue;
@@ -4474,23 +4474,47 @@ impl ResourceNormalizationIndex {
         }
     }
 
-    fn candidates_after(&self, position: usize, fact: &CResourceFact) -> Vec<usize> {
+    /// The facts after `position` that may normalize with `fact`.
+    ///
+    /// A memory range meets the ranges whose end is its start and whose start
+    /// is its end. Those endpoints are looked up as written and under every
+    /// spelling an exact equality premise joins to them, because
+    /// [`merge_memory_ranges`] merges two ranges that abut by a proved
+    /// equality: `data[0..n]` and `data[m..4]` under `n == m` are one range,
+    /// and a lookup by the written spelling alone would never offer them to
+    /// each other. The extra lookups cost the endpoint's equality class.
+    fn candidates_after(
+        &self,
+        position: usize,
+        fact: &CResourceFact,
+        assumptions: &PureFactContext,
+    ) -> Vec<usize> {
         let mut keys = vec![ResourceNormalizationKey::Resource(fact.resource().clone())];
         match fact.resource() {
             CResource::Instance(instance) => {
                 keys.push(ResourceNormalizationKey::Instance(instance.identity))
             }
             CResource::Memory(range) => {
-                keys.push(ResourceNormalizationKey::MemoryEnd(
-                    range.base().block.clone(),
-                    fact.is_own(),
-                    memory_normalization_position(range, range.start()),
-                ));
-                keys.push(ResourceNormalizationKey::MemoryStart(
-                    range.base().block.clone(),
-                    fact.is_own(),
-                    memory_normalization_position(range, range.end()),
-                ));
+                let block = range.base().block.clone();
+                let owned = fact.is_own();
+                for start in std::iter::once(range.start().clone())
+                    .chain(assumptions.bitvector_equality_class(range.start()))
+                {
+                    keys.push(ResourceNormalizationKey::MemoryEnd(
+                        block.clone(),
+                        owned,
+                        memory_normalization_position(range, &start),
+                    ));
+                }
+                for end in std::iter::once(range.end().clone())
+                    .chain(assumptions.bitvector_equality_class(range.end()))
+                {
+                    keys.push(ResourceNormalizationKey::MemoryStart(
+                        block.clone(),
+                        owned,
+                        memory_normalization_position(range, &end),
+                    ));
+                }
             }
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 // Two facts of one shape merge only when their arguments are

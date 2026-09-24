@@ -1479,6 +1479,22 @@ range; match it and use a C-typed constructor binding instead. The negative regr
 `mdtests/resource_field_memory_endpoint_rejects_out_of_bounds_fold.md` and
 `mdtests/resource_field_memory_endpoint_unfold_rejects_other_endpoint.md`.
 
+In a contract, a folded field-bearing instance whose body is unconditional and
+unmatched makes the cells its body owns readable to the contract's other
+resource clauses, as a folded field-free composite does:
+`consumes freed: arena_prefix_region(region);` beside
+`consumes before: arena_prefix_state(region->arena);` reads `region->arena`
+through the `object(region)` the region's body owns, in either clause order.
+The same holds for the clauses the contract returns and for the cells its
+postconditions read inside its folded instances
+(`mdtests/contract_returns_field_bearing_sibling.md`,
+`mdtests/contract_postcondition_reads_through_field_bearing_instance.md`).
+The cells are views only: writing one still needs an explicit `unfold`, and a
+cell the body does not own stays unreadable
+(`mdtests/contract_owns_through_field_bearing_instance.md`,
+`mdtests/contract_field_bearing_instance_views_grant_no_write.md`,
+`mdtests/contract_field_bearing_instance_views_only_owned_cells.md`).
+
 Unfolding consumes the instance, so its fields have nothing to read afterward:
 `before.prefix` is refused, and so is `old(before.prefix)` in a loop invariant,
 because a loop invariant reads `old(...)` at the loop's entry. The unfold
@@ -1955,7 +1971,11 @@ particular syntactic spelling of that pointer.
 A call can pass a covered subrange, such as consuming `p[0..1]` from a caller
 that owns `p[0..2]`; Click keeps the residue and rejoins adjacent returned
 ranges. The same applies to symbolic ranges when the current facts prove the
-subrange is covered. Viewed and owned memory elements also make the covered
+subrange is covered. Two held ranges are adjacent when one ends where the
+other starts as written or by an exact equality premise, so `p[0..n]` and
+`p[m..4]` under `n == m` rejoin into `p[0..4]`; a gap between them is never
+bridged (`mdtests/fold_joins_ranges_abutting_by_proved_equality.md`,
+`mdtests/fold_join_needs_the_endpoint_equality.md`). Viewed and owned memory elements also make the covered
 range viewable for symbolic execution, so ordinary external reads and writes
 do not need a separate `viewable(...)` requirement for the same range.
 
