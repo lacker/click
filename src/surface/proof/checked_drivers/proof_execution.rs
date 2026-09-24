@@ -5,6 +5,13 @@ thread_local! {
     /// "shape not accepted" diagnostic can say which driver rule declined.
     static DRIVER_DECLINES: std::cell::RefCell<Vec<&'static std::panic::Location<'static>>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Whether a driver declined because the proof's regions nest past the
+    /// checked bound, so the terminal diagnostic can name that bound.
+    static REGION_DEPTH_DECLINED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The deepest region depth the structural driver entered, for the
+    /// depth-accounting regression tests.
+    #[cfg(test)]
+    static DEEPEST_REGION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Declines the current shape and records where, for the terminal diagnostic.
@@ -13,6 +20,22 @@ fn decline<T>() -> Result<Option<T>, ClickError> {
     let location = std::panic::Location::caller();
     DRIVER_DECLINES.with(|declines| declines.borrow_mut().push(location));
     Ok(None)
+}
+
+/// Declines because the proof nests execution regions past
+/// `MAX_CHECKED_EXECUTION_REGION_DEPTH`. The reason is recorded so the terminal
+/// diagnostic names the nesting bound instead of calling the shape
+/// unimplemented.
+#[track_caller]
+fn decline_region_depth<T>() -> Result<Option<T>, ClickError> {
+    REGION_DEPTH_DECLINED.with(|declined| declined.set(true));
+    decline()
+}
+
+/// Takes whether any driver declined on the region-depth bound since the
+/// last take, and clears it.
+pub(in crate::surface::proof) fn take_region_depth_decline() -> bool {
+    REGION_DEPTH_DECLINED.with(|declined| declined.replace(false))
 }
 
 /// Takes the recorded decline locations, in order.
@@ -141,6 +164,17 @@ enum CheckedExecutionRegionEnd {
 // `MAX_CHECKED_EXECUTION_SPLIT_DEPTH`. Charging those to the same counter made
 // the effective nesting limit five, which is what declined a four-scrutinee
 // rbtree proof.
+//
+// Likewise a node's continuation, the rest of the region after it, keeps the
+// region's depth: that is what `proof_region_nesting_depth` counts. The
+// drivers and the structural predicates walk continuations in a loop, so a
+// run of sibling regions reserves no Rust stack. Every remaining recursion
+// descends a level: into an arm, a case, a call outcome, an `open` body, or
+// the rest of the proof run *inside* a continuing arm, which happens when one
+// arm of a `branch` or call outcome returns and the other continues, or a
+// proof `if` case continues past its arm. That last descent is charged at the
+// continuing arm's level, so it can exceed the written nesting; the terminal
+// diagnostic says so when it is what reached the bound.
 const MAX_CHECKED_EXECUTION_REGION_DEPTH: usize = 12;
 
 /// The deepest nesting of `match`, `branch`, and proof `if` regions the
@@ -219,6 +253,11 @@ fn checked_execution_region_end(node: &InternalProofNode) -> Option<CheckedExecu
     checked_execution_region_end_at(node, 0, CheckedExecutionRegionEnd::SharedContinuation)
 }
 
+/// Nested regions (`match` arms, `branch` and proof `if` cases, call
+/// outcomes, an `open` body) are one level deeper. A node's continuation is
+/// the rest of the region the node sits in, so it keeps `depth` and is walked
+/// iteratively: a long run of sibling regions neither charges the nesting
+/// bound nor reserves Rust stack.
 fn checked_execution_region_end_at(
     node: &InternalProofNode,
     depth: usize,
@@ -227,82 +266,92 @@ fn checked_execution_region_end_at(
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
         return None;
     }
-    match node {
-        InternalProofNode::Match {
-            arms, continuation, ..
-        } => (!arms.is_empty()
-            && matches!(continuation.as_ref(), InternalProofNode::Done)
-            && arms.iter().all(|arm| {
-                checked_execution_region_end_at(arm, depth + 1, initial)
-                    == Some(CheckedExecutionRegionEnd::FunctionExit)
-            }))
-        .then_some(CheckedExecutionRegionEnd::FunctionExit),
-        InternalProofNode::Done => Some(initial),
-        InternalProofNode::CallOutcomes {
-            returned_branch,
-            threw_branch,
-            continuation,
-            ..
-        } => {
-            if initial == CheckedExecutionRegionEnd::FunctionExit {
-                return (deferred_post_execution_region(returned_branch).is_some()
-                    && deferred_post_execution_region(threw_branch).is_some())
-                .then(|| checked_execution_region_end_at(continuation, depth + 1, initial))
-                .flatten();
+    let mut node = node;
+    let mut initial = initial;
+    loop {
+        match node {
+            InternalProofNode::Match {
+                arms, continuation, ..
+            } => {
+                return (!arms.is_empty()
+                    && matches!(continuation.as_ref(), InternalProofNode::Done)
+                    && arms.iter().all(|arm| {
+                        checked_execution_region_end_at(arm, depth + 1, initial)
+                            == Some(CheckedExecutionRegionEnd::FunctionExit)
+                    }))
+                .then_some(CheckedExecutionRegionEnd::FunctionExit);
             }
-            let returned_end =
-                checked_execution_region_end_at(returned_branch, depth + 1, initial)?;
-            let threw_end = checked_execution_region_end_at(threw_branch, depth + 1, initial)?;
-            (returned_end != threw_end && matches!(continuation.as_ref(), InternalProofNode::Done))
-                .then_some(CheckedExecutionRegionEnd::FunctionExit)
-        }
-        // A linear run continues the region it is in; the control node it
-        // ends at is the next level.
-        InternalProofNode::Linear {
-            tactics,
-            continuation,
-        } => checked_execution_region_end_at(
-            continuation,
-            depth,
-            checked_execution_arm_tactics_end(tactics, initial)?,
-        ),
-        InternalProofNode::Branch {
-            then_branch,
-            else_branch,
-            continuation,
-            ..
-        } => {
-            if initial == CheckedExecutionRegionEnd::FunctionExit {
-                return None;
+            InternalProofNode::Done => return Some(initial),
+            InternalProofNode::CallOutcomes {
+                returned_branch,
+                threw_branch,
+                continuation,
+                ..
+            } => {
+                if initial == CheckedExecutionRegionEnd::FunctionExit {
+                    if deferred_post_execution_region(returned_branch).is_none()
+                        || deferred_post_execution_region(threw_branch).is_none()
+                    {
+                        return None;
+                    }
+                    node = continuation;
+                    continue;
+                }
+                let returned_end =
+                    checked_execution_region_end_at(returned_branch, depth + 1, initial)?;
+                let threw_end = checked_execution_region_end_at(threw_branch, depth + 1, initial)?;
+                return (returned_end != threw_end
+                    && matches!(continuation.as_ref(), InternalProofNode::Done))
+                .then_some(CheckedExecutionRegionEnd::FunctionExit);
             }
-            let then_end = checked_execution_region_end_at(then_branch, depth + 1, initial)?;
-            let else_end = checked_execution_region_end_at(else_branch, depth + 1, initial)?;
-            if then_end != else_end {
-                return None;
+            // A linear run continues the region it is in, and so does the
+            // control node it ends at; only that node's arms nest.
+            InternalProofNode::Linear {
+                tactics,
+                continuation,
+            } => {
+                initial = checked_execution_arm_tactics_end(tactics, initial)?;
+                node = continuation;
             }
-            checked_execution_region_end_at(continuation, depth + 1, then_end)
-        }
-        InternalProofNode::Open {
-            body, continuation, ..
-        } => {
-            if initial == CheckedExecutionRegionEnd::FunctionExit {
-                return None;
+            InternalProofNode::Branch {
+                then_branch,
+                else_branch,
+                continuation,
+                ..
+            } => {
+                if initial == CheckedExecutionRegionEnd::FunctionExit {
+                    return None;
+                }
+                let then_end = checked_execution_region_end_at(then_branch, depth + 1, initial)?;
+                let else_end = checked_execution_region_end_at(else_branch, depth + 1, initial)?;
+                if then_end != else_end {
+                    return None;
+                }
+                initial = then_end;
+                node = continuation;
             }
-            let body_end = checked_execution_region_end_at(body, depth + 1, initial)?;
-            checked_execution_region_end_at(continuation, depth + 1, body_end)
-        }
-        InternalProofNode::If {
-            then_branch,
-            else_branch,
-            continuation,
-            ..
-        } => {
-            let then_end = checked_execution_region_end_at(then_branch, depth + 1, initial)?;
-            let else_end = checked_execution_region_end_at(else_branch, depth + 1, initial)?;
-            (then_end == CheckedExecutionRegionEnd::FunctionExit
-                && else_end == CheckedExecutionRegionEnd::FunctionExit
-                && matches!(continuation.as_ref(), InternalProofNode::Done))
-            .then_some(CheckedExecutionRegionEnd::FunctionExit)
+            InternalProofNode::Open {
+                body, continuation, ..
+            } => {
+                if initial == CheckedExecutionRegionEnd::FunctionExit {
+                    return None;
+                }
+                initial = checked_execution_region_end_at(body, depth + 1, initial)?;
+                node = continuation;
+            }
+            InternalProofNode::If {
+                then_branch,
+                else_branch,
+                continuation,
+                ..
+            } => {
+                let then_end = checked_execution_region_end_at(then_branch, depth + 1, initial)?;
+                let else_end = checked_execution_region_end_at(else_branch, depth + 1, initial)?;
+                return (then_end == CheckedExecutionRegionEnd::FunctionExit
+                    && else_end == CheckedExecutionRegionEnd::FunctionExit
+                    && matches!(continuation.as_ref(), InternalProofNode::Done))
+                .then_some(CheckedExecutionRegionEnd::FunctionExit);
+            }
         }
     }
 }
@@ -365,6 +414,8 @@ fn note_dropped_execution_region(
     }
 }
 
+/// Walks nested regions one level deeper and continuations at the same
+/// level, iteratively, exactly as `checked_execution_region_end_at` does.
 fn checked_execution_region_contains_source_at(
     node: &InternalProofNode,
     source_index: usize,
@@ -373,95 +424,74 @@ fn checked_execution_region_contains_source_at(
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
         return false;
     }
-    match node {
-        InternalProofNode::Match {
-            source_index: own,
-            arms,
-            continuation,
-            ..
-        } => {
-            *own == source_index
-                || arms.iter().any(|arm| {
-                    checked_execution_region_contains_source_at(arm, source_index, depth + 1)
-                })
-                || checked_execution_region_contains_source_at(
-                    continuation,
-                    source_index,
-                    depth + 1,
-                )
-        }
-        InternalProofNode::Done => false,
-        InternalProofNode::Linear {
-            tactics,
-            continuation,
-        } => {
-            tactics
-                .iter()
-                .any(|indexed| indexed.source_index == source_index)
-                || checked_execution_region_contains_source_at(continuation, source_index, depth)
-        }
-        InternalProofNode::Branch {
-            source_index: branch_source_index,
-            then_branch,
-            else_branch,
-            continuation,
-            ..
-        } => {
-            *branch_source_index == source_index
-                || checked_execution_region_contains_source_at(then_branch, source_index, depth + 1)
-                || checked_execution_region_contains_source_at(else_branch, source_index, depth + 1)
-                || checked_execution_region_contains_source_at(
-                    continuation,
-                    source_index,
-                    depth + 1,
-                )
-        }
-        InternalProofNode::CallOutcomes {
-            source_index: branch_source_index,
-            returned_branch: then_branch,
-            threw_branch: else_branch,
-            continuation,
-            ..
-        } => {
-            *branch_source_index == source_index
-                || checked_execution_region_contains_source_at(then_branch, source_index, depth + 1)
-                || checked_execution_region_contains_source_at(else_branch, source_index, depth + 1)
-                || checked_execution_region_contains_source_at(
-                    continuation,
-                    source_index,
-                    depth + 1,
-                )
-        }
-        InternalProofNode::Open {
-            source_index: open_source_index,
-            body,
-            continuation,
-            ..
-        } => {
-            *open_source_index == source_index
-                || checked_execution_region_contains_source_at(body, source_index, depth + 1)
-                || checked_execution_region_contains_source_at(
-                    continuation,
-                    source_index,
-                    depth + 1,
-                )
-        }
-        InternalProofNode::If {
-            source_index: if_source_index,
-            then_branch,
-            else_branch,
-            continuation,
-            ..
-        } => {
-            *if_source_index == source_index
-                || checked_execution_region_contains_source_at(then_branch, source_index, depth + 1)
-                || checked_execution_region_contains_source_at(else_branch, source_index, depth + 1)
-                || checked_execution_region_contains_source_at(
-                    continuation,
-                    source_index,
-                    depth + 1,
-                )
-        }
+    let nested = |region: &InternalProofNode| {
+        checked_execution_region_contains_source_at(region, source_index, depth + 1)
+    };
+    let mut node = node;
+    loop {
+        node = match node {
+            InternalProofNode::Done => return false,
+            InternalProofNode::Match {
+                source_index: own,
+                arms,
+                continuation,
+                ..
+            } => {
+                if *own == source_index || arms.iter().any(&nested) {
+                    return true;
+                }
+                continuation
+            }
+            InternalProofNode::Linear {
+                tactics,
+                continuation,
+            } => {
+                if tactics
+                    .iter()
+                    .any(|indexed| indexed.source_index == source_index)
+                {
+                    return true;
+                }
+                continuation
+            }
+            InternalProofNode::Branch {
+                source_index: own,
+                then_branch: first,
+                else_branch: second,
+                continuation,
+                ..
+            }
+            | InternalProofNode::CallOutcomes {
+                source_index: own,
+                returned_branch: first,
+                threw_branch: second,
+                continuation,
+                ..
+            }
+            | InternalProofNode::If {
+                source_index: own,
+                then_branch: first,
+                else_branch: second,
+                continuation,
+                ..
+            } => {
+                if *own == source_index || nested(first) || nested(second) {
+                    return true;
+                }
+                continuation
+            }
+            InternalProofNode::Open {
+                source_index: own,
+                body,
+                continuation,
+                ..
+            } => {
+                if *own == source_index || nested(body) {
+                    return true;
+                }
+                continuation
+            }
+        };
     }
 }
 
@@ -2358,6 +2388,8 @@ fn advance_focused_execution_region_after_leading_tactic<'a>(
     else {
         return decline();
     };
+    // The rest of the arm continues the arm's own region: `depth` already
+    // charges this arm, so the continuation is not a level of its own.
     advance_focused_execution_region(
         proof,
         enclosing_record,
@@ -2365,7 +2397,7 @@ fn advance_focused_execution_region_after_leading_tactic<'a>(
         expansion_capture,
         proof_site,
         owning_source_index,
-        depth + 1,
+        depth,
     )
 }
 
@@ -2440,9 +2472,10 @@ fn advance_execution_match_group<'a>(
     depth: usize,
     split_depth: usize,
 ) -> Result<Option<Proof<'a>>, ClickError> {
-    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH
-        || split_depth >= MAX_CHECKED_EXECUTION_SPLIT_DEPTH
-    {
+    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
+        return decline_region_depth();
+    }
+    if split_depth >= MAX_CHECKED_EXECUTION_SPLIT_DEPTH {
         return decline();
     }
     let [index] = live else {
@@ -2523,6 +2556,15 @@ fn advance_focused_execution_region<'a>(
 /// while its normal sibling is still open. The split record already owns the
 /// checked frontier transition; this parameter only identifies the proof
 /// region to run after that transition.
+///
+/// `depth` is the nesting depth of the region this cursor is in. Descending
+/// into an arm, a `then`/`else` case, or a call outcome opens a region one
+/// level deeper. A node's continuation is the rest of the region the node
+/// sits in, so it runs at the same depth; this loop walks it iteratively, so
+/// a long run of sibling regions reserves no Rust stack. The only recursion is
+/// into a nested region (charged a level) or into the rest of the proof run
+/// inside a continuing arm (charged at that arm's level), so the depth bound
+/// still bounds the recursion.
 fn advance_focused_execution_region_with_branch_continuation<'a>(
     mut proof: Proof<'a>,
     enclosing_record: Option<&ExecutionSplit<'a>>,
@@ -2533,444 +2575,403 @@ fn advance_focused_execution_region_with_branch_continuation<'a>(
     depth: usize,
     branch_continuation: Option<&InternalProofNode>,
 ) -> Result<Option<Proof<'a>>, ClickError> {
+    #[cfg(test)]
+    DEEPEST_REGION_DEPTH.with(|deepest| deepest.set(deepest.get().max(depth)));
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
-        return decline();
+        return decline_region_depth();
     }
-    match region {
-        InternalProofNode::Match {
-            index,
-            proof_match,
-            arms,
-            continuation,
-            ..
-        } => {
-            proof = proof.with_execution_tactic_index(*index)?;
-            advance_execution_match(
-                proof,
+    let mut region = region;
+    let mut branch_continuation = branch_continuation;
+    loop {
+        match region {
+            InternalProofNode::Match {
+                index,
                 proof_match,
                 arms,
                 continuation,
-                expansion_capture,
-                proof_site,
-                owning_source_index,
-                depth,
-            )
-        }
-        InternalProofNode::Done => Ok(Some(proof)),
-        InternalProofNode::Linear {
-            tactics,
-            continuation,
-        } => {
-            let Some(advanced) = advance_focused_execution_arm(
-                proof,
-                tactics,
-                expansion_capture.as_deref_mut(),
-                proof_site,
-                owning_source_index,
-            )?
-            else {
-                return decline();
-            };
-            // The linear run continues this region; its continuation is the
-            // control node that opens the next one, and that charges a level.
-            advance_focused_execution_region_with_branch_continuation(
-                advanced,
-                enclosing_record,
-                continuation,
-                expansion_capture,
-                proof_site,
-                owning_source_index,
-                depth,
-                branch_continuation,
-            )
-        }
-        InternalProofNode::Branch {
-            index,
-            source_index,
-            ensuring,
-            then_branch,
-            else_branch,
-            continuation,
-        } => {
-            let owner = proof.clone();
-            let Some((nested, _, certificate, consumed_continuation)) =
-                try_advance_checked_execution_branch(
+                ..
+            } => {
+                proof = proof.with_execution_tactic_index(*index)?;
+                return advance_execution_match(
                     proof,
-                    *index,
-                    ensuring,
-                    then_branch,
-                    else_branch,
+                    proof_match,
+                    arms,
                     continuation,
-                    expansion_capture.as_deref_mut(),
+                    expansion_capture,
                     proof_site,
                     owning_source_index,
                     depth,
+                );
+            }
+            InternalProofNode::Done => return Ok(Some(proof)),
+            InternalProofNode::Linear {
+                tactics,
+                continuation,
+            } => {
+                let Some(advanced) = advance_focused_execution_arm(
+                    proof,
+                    tactics,
+                    expansion_capture.as_deref_mut(),
+                    proof_site,
+                    owning_source_index,
                 )?
-            else {
-                return decline();
-            };
-            proof = nested.restore_execution_tactic_attribution(&owner)?;
-            let selected_source_index = proof_site.as_ref().and_then(|site| {
-                selected_tactic_index_for_site(expansion_capture.as_deref(), site)
-            });
-            if selected_source_index == Some(*source_index)
-                && let Some(site) = proof_site
-            {
-                record_proof_site_tactic_expansion(
-                    expansion_capture.as_deref_mut(),
-                    site,
-                    *source_index,
-                    &certificate
-                        .expect("an expansion request retains the nested branch certificate")
-                        .to_proof_tactics(),
-                );
+                else {
+                    return decline();
+                };
+                // The linear run continues this region, and so does the
+                // control node it ends at: only that node's arms nest. The
+                // enclosing branch's continuation is still the one a mixed
+                // call-outcome join inside this region runs.
+                proof = advanced;
+                region = continuation;
             }
-            advance_focused_execution_region(
-                proof,
-                enclosing_record,
-                if consumed_continuation {
-                    &InternalProofNode::Done
-                } else {
-                    continuation
-                },
-                expansion_capture,
-                proof_site,
-                owning_source_index,
-                depth + 1,
-            )
-        }
-        InternalProofNode::Open {
-            index,
-            source_index,
-            resource,
-            body,
-            continuation,
-        } => {
-            let owner = proof.clone();
-            let proof = proof.with_execution_tactic_index(*index)?;
-            let scope = proof.begin_open(resource.clone(), *source_index)?;
-            let Some(scope) = advance_checked_open_scope(
-                scope,
-                body,
-                expansion_capture.as_deref_mut(),
-                proof_site,
-                owning_source_index,
-            )?
-            else {
-                return decline();
-            };
-            let proof = scope.join()?.restore_execution_tactic_attribution(&owner)?;
-            advance_focused_execution_region(
-                proof,
-                enclosing_record,
+            InternalProofNode::Branch {
+                index,
+                source_index,
+                ensuring,
+                then_branch,
+                else_branch,
                 continuation,
-                expansion_capture,
-                proof_site,
-                owning_source_index,
-                depth + 1,
-            )
-        }
-        InternalProofNode::CallOutcomes {
-            index,
-            source_index,
-            returned_branch,
-            threw_branch,
-            continuation,
-        } => {
-            if !proof.is_at_function_exit() {
+            } => {
                 let owner = proof.clone();
-                let proof = proof.with_execution_tactic_index(*index)?;
-                let Some((split, record)) = proof.split_focused_call_outcomes()? else {
-                    return decline();
-                };
-                let mut advanced = split;
-                for (take_returned, region) in [
-                    (true, returned_branch.as_ref()),
-                    (false, threw_branch.as_ref()),
-                ] {
-                    let Some(leading) = execution_region_leading_tactic(region) else {
-                        return decline();
-                    };
-                    if !matches!(leading.tactic, ProofTactic::Step) {
-                        return decline();
-                    }
-                    let focused = advanced.focus_split_arm(&record, take_returned)?;
-                    let Some(next) = advance_focused_execution_region_after_leading_tactic(
-                        focused,
-                        Some(&record),
-                        region,
-                        expansion_capture.as_deref_mut(),
-                        proof_site,
-                        owning_source_index,
-                        depth + 1,
-                    )?
-                    else {
-                        return decline();
-                    };
-                    advanced = next;
-                }
-                let returned_exit = advanced.arm_at_function_exit(&record, true);
-                let threw_exit = advanced.arm_at_function_exit(&record, false);
-                let mixed = returned_exit != threw_exit;
-                if mixed {
-                    let (Some(enclosing_record), Some(branch_continuation)) =
-                        (enclosing_record, branch_continuation)
-                    else {
-                        return decline();
-                    };
-                    if !matches!(continuation.as_ref(), InternalProofNode::Done) {
-                        return decline();
-                    }
-                    let continuing = advanced.focus_split_arm(&record, !returned_exit)?;
-                    if !continuing.is_at_region_boundary() {
-                        return decline();
-                    }
-                    let continuing =
-                        continuing.continue_arm_into_parent_frontier(enclosing_record)?;
-                    let Some(continued) = advance_focused_execution_region(
-                        continuing,
-                        Some(enclosing_record),
-                        branch_continuation,
-                        expansion_capture.as_deref_mut(),
-                        proof_site,
-                        owning_source_index,
-                        depth + 1,
-                    )?
-                    else {
-                        return decline();
-                    };
-                    advanced = continued;
-                }
-                if !advanced.is_at_function_exit() {
-                    return decline();
-                }
-                let joined = advanced.join_focused_call_outcomes_terminal(&record)?;
-                let joined = joined.restore_execution_tactic_attribution(&owner)?;
-                return advance_focused_execution_region(
-                    joined,
-                    enclosing_record,
-                    if mixed {
-                        &InternalProofNode::Done
-                    } else {
-                        continuation
-                    },
-                    expansion_capture,
-                    proof_site,
-                    owning_source_index,
-                    depth + 1,
-                );
-            }
-            let Some(returned_tactics) = deferred_post_execution_region(returned_branch) else {
-                return decline();
-            };
-            let Some(threw_tactics) = deferred_post_execution_region(threw_branch) else {
-                return decline();
-            };
-            let proof = proof.defer_post_execution_source_tactic(
-                *index,
-                *source_index,
-                PostExecutionTactic::CallOutcomes {
-                    returned_tactics,
-                    threw_tactics,
-                },
-                expansion_capture.as_deref_mut(),
-            )?;
-            advance_focused_execution_region(
-                proof,
-                enclosing_record,
-                continuation,
-                expansion_capture,
-                proof_site,
-                owning_source_index,
-                depth + 1,
-            )
-        }
-        InternalProofNode::If {
-            index,
-            source_index,
-            condition,
-            then_branch,
-            else_branch,
-            continuation,
-            ..
-        } => {
-            if proof.is_at_function_exit() {
-                let Some(then_tactics) = deferred_post_execution_region(then_branch) else {
-                    return decline();
-                };
-                let Some(else_tactics) = deferred_post_execution_region(else_branch) else {
-                    return decline();
-                };
-                if then_tactics
-                    .iter()
-                    .chain(&else_tactics)
-                    .any(|tactic| matches!(tactic.tactic, PostExecutionTactic::If { .. }))
-                    || !deferred_post_execution_if_is_explicit_path_cursor(
-                        condition,
-                        &then_tactics,
-                        &else_tactics,
-                    ) && !proof.post_execution_if_is_path_decided(condition)?
-                {
-                    // A proof-level case split on some outcome path, as at
-                    // the top level: fork those paths, one per polarity.
-                    match proof.split_outcome_paths_by_case(condition, &then_tactics, &else_tactics)
-                    {
-                        Ok(split) => proof = split,
-                        Err(_) => {
-                            check_verification_deadline()?;
-                            return decline();
-                        }
-                    }
-                }
-                let proof = proof.defer_post_execution_source_tactic(
-                    *index,
-                    *source_index,
-                    PostExecutionTactic::If {
-                        condition: condition.clone(),
-                        then_tactics,
-                        else_tactics,
-                    },
-                    expansion_capture.as_deref_mut(),
-                )?;
-                return advance_focused_execution_region(
-                    proof,
-                    enclosing_record,
-                    continuation,
-                    expansion_capture,
-                    proof_site,
-                    owning_source_index,
-                    depth + 1,
-                );
-            }
-            let owner = proof.clone();
-            let proof = proof.with_execution_tactic_index(*index)?;
-            if let Some((then_steps, else_steps)) =
-                expanded_execution_if_steps(then_branch, else_branch)
-                && proof.frontier_is_execution_branch(condition)?
-            {
-                let proof = proof
-                    .apply_expanded_execution_if(condition, &then_steps, &else_steps)?
-                    .restore_execution_tactic_attribution(&owner)?;
-                return advance_focused_execution_region(
-                    proof,
-                    enclosing_record,
-                    continuation,
-                    expansion_capture,
-                    proof_site,
-                    owning_source_index,
-                    depth + 1,
-                );
-            }
-            let arm_steps = match (
-                execution_region_leading_tactic(then_branch),
-                execution_region_leading_tactic(else_branch),
-            ) {
-                (Some(then_tactic), Some(else_tactic)) => match (
-                    source_successor_if_arm_step(then_tactic),
-                    source_successor_if_arm_step(else_tactic),
-                ) {
-                    (Some(then_step), Some(else_step)) => Some([then_step, else_step]),
-                    _ => None,
-                },
-                _ => None,
-            };
-            let product = if let Some(arm_steps) = arm_steps.as_ref() {
-                let product = proof.try_split_source_successor_if(
-                    condition,
-                    [
-                        (arm_steps[0].0, arm_steps[0].1),
-                        (arm_steps[1].0, arm_steps[1].1),
-                    ],
-                )?;
-                if product.is_some() {
-                    record_source_successor_smart_expansions(
-                        arm_steps,
-                        expansion_capture.as_deref_mut(),
-                        proof_site,
-                        owning_source_index,
-                    );
-                }
-                product
-            } else {
-                None
-            };
-            let consumed_leading_steps = product.is_some();
-            let (split, record) = if let Some(split) = product {
-                split
-            } else {
-                proof.split_focused_execution_if(condition.clone())?
-            };
-            let mut advanced = split;
-            let mut consumed_continuation = false;
-            for (take_then, branch) in [(true, then_branch.as_ref()), (false, else_branch.as_ref())]
-            {
-                let focused = advanced.focus_execution_if_arm(&record, take_then)?;
-                let next = if consumed_leading_steps {
-                    advance_focused_execution_region_after_leading_tactic(
-                        focused,
-                        enclosing_record,
-                        branch,
-                        expansion_capture.as_deref_mut(),
-                        proof_site,
-                        owning_source_index,
-                        depth + 1,
-                    )?
-                } else {
-                    advance_focused_execution_region(
-                        focused,
-                        enclosing_record,
-                        branch,
-                        expansion_capture.as_deref_mut(),
-                        proof_site,
-                        owning_source_index,
-                        depth + 1,
-                    )?
-                };
-                let Some(mut next) = next else {
-                    return decline();
-                };
-                // Case split, as at the top level: a case whose arm ends
-                // short of function exit runs the shared continuation to
-                // its own exit.
-                if !next.is_at_function_exit()
-                    && !matches!(continuation.as_ref(), InternalProofNode::Done)
-                {
-                    let Some(continued) = advance_focused_execution_region(
-                        next,
-                        enclosing_record,
+                let Some((nested, _, certificate, consumed_continuation)) =
+                    try_advance_checked_execution_branch(
+                        proof,
+                        *index,
+                        ensuring,
+                        then_branch,
+                        else_branch,
                         continuation,
                         expansion_capture.as_deref_mut(),
                         proof_site,
                         owning_source_index,
-                        depth + 1,
+                        depth,
                     )?
-                    else {
+                else {
+                    return decline();
+                };
+                proof = nested.restore_execution_tactic_attribution(&owner)?;
+                let selected_source_index = proof_site.as_ref().and_then(|site| {
+                    selected_tactic_index_for_site(expansion_capture.as_deref(), site)
+                });
+                if selected_source_index == Some(*source_index)
+                    && let Some(site) = proof_site
+                {
+                    record_proof_site_tactic_expansion(
+                        expansion_capture.as_deref_mut(),
+                        site,
+                        *source_index,
+                        &certificate
+                            .expect("an expansion request retains the nested branch certificate")
+                            .to_proof_tactics(),
+                    );
+                }
+                if consumed_continuation {
+                    return Ok(Some(proof));
+                }
+                region = continuation;
+                branch_continuation = None;
+            }
+            InternalProofNode::Open {
+                index,
+                source_index,
+                resource,
+                body,
+                continuation,
+            } => {
+                let owner = proof.clone();
+                let opened = proof.with_execution_tactic_index(*index)?;
+                let scope = opened.begin_open(resource.clone(), *source_index)?;
+                let Some(scope) = advance_checked_open_scope(
+                    scope,
+                    body,
+                    expansion_capture.as_deref_mut(),
+                    proof_site,
+                    owning_source_index,
+                )?
+                else {
+                    return decline();
+                };
+                proof = scope.join()?.restore_execution_tactic_attribution(&owner)?;
+                region = continuation;
+                branch_continuation = None;
+            }
+            InternalProofNode::CallOutcomes {
+                index,
+                source_index,
+                returned_branch,
+                threw_branch,
+                continuation,
+            } => {
+                if !proof.is_at_function_exit() {
+                    let owner = proof.clone();
+                    let at_outcomes = proof.with_execution_tactic_index(*index)?;
+                    let Some((split, record)) = at_outcomes.split_focused_call_outcomes()? else {
                         return decline();
                     };
-                    next = continued;
-                    consumed_continuation = true;
+                    let mut advanced = split;
+                    for (take_returned, region) in [
+                        (true, returned_branch.as_ref()),
+                        (false, threw_branch.as_ref()),
+                    ] {
+                        let Some(leading) = execution_region_leading_tactic(region) else {
+                            return decline();
+                        };
+                        if !matches!(leading.tactic, ProofTactic::Step) {
+                            return decline();
+                        }
+                        let focused = advanced.focus_split_arm(&record, take_returned)?;
+                        let Some(next) = advance_focused_execution_region_after_leading_tactic(
+                            focused,
+                            Some(&record),
+                            region,
+                            expansion_capture.as_deref_mut(),
+                            proof_site,
+                            owning_source_index,
+                            depth + 1,
+                        )?
+                        else {
+                            return decline();
+                        };
+                        advanced = next;
+                    }
+                    let returned_exit = advanced.arm_at_function_exit(&record, true);
+                    let threw_exit = advanced.arm_at_function_exit(&record, false);
+                    let mixed = returned_exit != threw_exit;
+                    if mixed {
+                        let (Some(enclosing_record), Some(branch_continuation)) =
+                            (enclosing_record, branch_continuation)
+                        else {
+                            return decline();
+                        };
+                        if !matches!(continuation.as_ref(), InternalProofNode::Done) {
+                            return decline();
+                        }
+                        let continuing = advanced.focus_split_arm(&record, !returned_exit)?;
+                        if !continuing.is_at_region_boundary() {
+                            return decline();
+                        }
+                        let continuing =
+                            continuing.continue_arm_into_parent_frontier(enclosing_record)?;
+                        // The enclosing branch's continuation runs inside the
+                        // continuing outcome, so it is charged at that
+                        // outcome's level: this is a genuine nested descent.
+                        let Some(continued) = advance_focused_execution_region(
+                            continuing,
+                            Some(enclosing_record),
+                            branch_continuation,
+                            expansion_capture.as_deref_mut(),
+                            proof_site,
+                            owning_source_index,
+                            depth + 1,
+                        )?
+                        else {
+                            return decline();
+                        };
+                        advanced = continued;
+                    }
+                    if !advanced.is_at_function_exit() {
+                        return decline();
+                    }
+                    let joined = advanced.join_focused_call_outcomes_terminal(&record)?;
+                    proof = joined.restore_execution_tactic_attribution(&owner)?;
+                    if mixed {
+                        return Ok(Some(proof));
+                    }
+                    region = continuation;
+                    branch_continuation = None;
+                    continue;
                 }
-                if !next.is_at_function_exit() {
+                let Some(returned_tactics) = deferred_post_execution_region(returned_branch) else {
                     return decline();
-                }
-                advanced = next;
+                };
+                let Some(threw_tactics) = deferred_post_execution_region(threw_branch) else {
+                    return decline();
+                };
+                proof = proof.defer_post_execution_source_tactic(
+                    *index,
+                    *source_index,
+                    PostExecutionTactic::CallOutcomes {
+                        returned_tactics,
+                        threw_tactics,
+                    },
+                    expansion_capture.as_deref_mut(),
+                )?;
+                region = continuation;
+                branch_continuation = None;
             }
-            let proof = advanced
-                .join_focused_execution_if_terminal(&record)?
-                .restore_execution_tactic_attribution(&owner)?;
-            advance_focused_execution_region(
-                proof,
-                enclosing_record,
-                if consumed_continuation {
-                    &InternalProofNode::Done
+            InternalProofNode::If {
+                index,
+                source_index,
+                condition,
+                then_branch,
+                else_branch,
+                continuation,
+                ..
+            } => {
+                if proof.is_at_function_exit() {
+                    let Some(then_tactics) = deferred_post_execution_region(then_branch) else {
+                        return decline();
+                    };
+                    let Some(else_tactics) = deferred_post_execution_region(else_branch) else {
+                        return decline();
+                    };
+                    if then_tactics
+                        .iter()
+                        .chain(&else_tactics)
+                        .any(|tactic| matches!(tactic.tactic, PostExecutionTactic::If { .. }))
+                        || !deferred_post_execution_if_is_explicit_path_cursor(
+                            condition,
+                            &then_tactics,
+                            &else_tactics,
+                        ) && !proof.post_execution_if_is_path_decided(condition)?
+                    {
+                        // A proof-level case split on some outcome path, as at
+                        // the top level: fork those paths, one per polarity.
+                        match proof.split_outcome_paths_by_case(
+                            condition,
+                            &then_tactics,
+                            &else_tactics,
+                        ) {
+                            Ok(split) => proof = split,
+                            Err(_) => {
+                                check_verification_deadline()?;
+                                return decline();
+                            }
+                        }
+                    }
+                    proof = proof.defer_post_execution_source_tactic(
+                        *index,
+                        *source_index,
+                        PostExecutionTactic::If {
+                            condition: condition.clone(),
+                            then_tactics,
+                            else_tactics,
+                        },
+                        expansion_capture.as_deref_mut(),
+                    )?;
+                    region = continuation;
+                    branch_continuation = None;
+                    continue;
+                }
+                let owner = proof.clone();
+                let proof_at_if = proof.with_execution_tactic_index(*index)?;
+                if let Some((then_steps, else_steps)) =
+                    expanded_execution_if_steps(then_branch, else_branch)
+                    && proof_at_if.frontier_is_execution_branch(condition)?
+                {
+                    proof = proof_at_if
+                        .apply_expanded_execution_if(condition, &then_steps, &else_steps)?
+                        .restore_execution_tactic_attribution(&owner)?;
+                    region = continuation;
+                    branch_continuation = None;
+                    continue;
+                }
+                let arm_steps = match (
+                    execution_region_leading_tactic(then_branch),
+                    execution_region_leading_tactic(else_branch),
+                ) {
+                    (Some(then_tactic), Some(else_tactic)) => match (
+                        source_successor_if_arm_step(then_tactic),
+                        source_successor_if_arm_step(else_tactic),
+                    ) {
+                        (Some(then_step), Some(else_step)) => Some([then_step, else_step]),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let product = if let Some(arm_steps) = arm_steps.as_ref() {
+                    let product = proof_at_if.try_split_source_successor_if(
+                        condition,
+                        [
+                            (arm_steps[0].0, arm_steps[0].1),
+                            (arm_steps[1].0, arm_steps[1].1),
+                        ],
+                    )?;
+                    if product.is_some() {
+                        record_source_successor_smart_expansions(
+                            arm_steps,
+                            expansion_capture.as_deref_mut(),
+                            proof_site,
+                            owning_source_index,
+                        );
+                    }
+                    product
                 } else {
-                    continuation
-                },
-                expansion_capture,
-                proof_site,
-                owning_source_index,
-                depth + 1,
-            )
+                    None
+                };
+                let consumed_leading_steps = product.is_some();
+                let (split, record) = if let Some(split) = product {
+                    split
+                } else {
+                    proof_at_if.split_focused_execution_if(condition.clone())?
+                };
+                let mut advanced = split;
+                let mut consumed_continuation = false;
+                for (take_then, branch) in
+                    [(true, then_branch.as_ref()), (false, else_branch.as_ref())]
+                {
+                    let focused = advanced.focus_execution_if_arm(&record, take_then)?;
+                    let next = if consumed_leading_steps {
+                        advance_focused_execution_region_after_leading_tactic(
+                            focused,
+                            enclosing_record,
+                            branch,
+                            expansion_capture.as_deref_mut(),
+                            proof_site,
+                            owning_source_index,
+                            depth + 1,
+                        )?
+                    } else {
+                        advance_focused_execution_region(
+                            focused,
+                            enclosing_record,
+                            branch,
+                            expansion_capture.as_deref_mut(),
+                            proof_site,
+                            owning_source_index,
+                            depth + 1,
+                        )?
+                    };
+                    let Some(mut next) = next else {
+                        return decline();
+                    };
+                    // Case split, as at the top level: a case whose arm ends
+                    // short of function exit runs the shared continuation to
+                    // its own exit. That continuation runs inside the case,
+                    // so it is charged at the case's level.
+                    if !next.is_at_function_exit()
+                        && !matches!(continuation.as_ref(), InternalProofNode::Done)
+                    {
+                        let Some(continued) = advance_focused_execution_region(
+                            next,
+                            enclosing_record,
+                            continuation,
+                            expansion_capture.as_deref_mut(),
+                            proof_site,
+                            owning_source_index,
+                            depth + 1,
+                        )?
+                        else {
+                            return decline();
+                        };
+                        next = continued;
+                        consumed_continuation = true;
+                    }
+                    if !next.is_at_function_exit() {
+                        return decline();
+                    }
+                    advanced = next;
+                }
+                proof = advanced
+                    .join_focused_execution_if_terminal(&record)?
+                    .restore_execution_tactic_attribution(&owner)?;
+                if consumed_continuation {
+                    return Ok(Some(proof));
+                }
+                region = continuation;
+                branch_continuation = None;
+            }
         }
     }
 }
@@ -2995,7 +2996,7 @@ fn try_advance_checked_execution_branch<'a>(
     depth: usize,
 ) -> Result<Option<(Proof<'a>, bool, Option<ProofCertificate>, bool)>, ClickError> {
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
-        return decline();
+        return decline_region_depth();
     }
     let proof = proof.with_execution_tactic_index(tactic_index)?;
     let checkpoint = proof.checkpoint();
@@ -3765,4 +3766,148 @@ fn pre_exit_outcome_tactic_error(tactic: &ProofTactic) -> Option<String> {
     Some(format!(
         "`{name}` requires execution to reach function exit first"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// C that allocates `count` cells, returning `-1` after freeing the
+    /// earlier ones when an allocation fails, and `18` after freeing them all.
+    fn null_checked_allocation_chain(count: usize) -> String {
+        let mut source =
+            "void *malloc(unsigned long size);\nvoid free(void *ptr);\n\nint f(void) {\n"
+                .to_string();
+        for index in 0..count {
+            source.push_str(&format!(
+                "    int *p{index} = malloc(sizeof(int));\n    if (p{index} == 0) {{\n"
+            ));
+            for earlier in 0..index {
+                source.push_str(&format!("        free(p{earlier});\n"));
+            }
+            source.push_str("        return -1;\n    }\n");
+        }
+        for index in 0..count {
+            source.push_str(&format!("    free(p{index});\n"));
+        }
+        source.push_str("    return 18;\n}\n");
+        source
+    }
+
+    /// The explicit proof `click expand` writes for that chain: one proof
+    /// `if` per null check, each nested in the previous one's `else` arm, so
+    /// the proof nests exactly `count` regions.
+    fn nested_null_check_proof(count: usize) -> String {
+        fn steps(out: &mut String, indent: usize, count: usize) {
+            for _ in 0..count {
+                out.push_str(&format!("{:indent$}step();\n", ""));
+            }
+        }
+        let mut proof = String::from(
+            "verifying \"chain.c\";\n\nint f() {\n    ensures result == 18 or result == -1;\n} by {\n",
+        );
+        steps(&mut proof, 4, 2);
+        let mut statement = 2;
+        for index in 0..count {
+            let indent = 4 * (index + 1);
+            proof.push_str(&format!(
+                "{:indent$}if at(statement({statement}).entry, p{index}) == at(statement({statement}).entry, 0) {{\n",
+                ""
+            ));
+            steps(&mut proof, indent + 4, index + 2);
+            proof.push_str(&format!(
+                "{:w$}simp();\n{:indent$}}} else {{\n",
+                "",
+                "",
+                w = indent + 4
+            ));
+            if index + 1 < count {
+                steps(&mut proof, indent + 4, 4);
+            } else {
+                steps(&mut proof, indent + 4, count + 3);
+                proof.push_str(&format!("{:w$}simp();\n", "", w = indent + 4));
+            }
+            statement += index + 5;
+        }
+        for index in (0..count).rev() {
+            proof.push_str(&format!("{:w$}}}\n", "", w = 4 * (index + 1)));
+        }
+        proof.push_str("}\n");
+        proof
+    }
+
+    /// A proof `if` charges one level for its arms; the rest of an arm,
+    /// including the next proof `if` it ends at, continues that arm's region.
+    /// Counting the arm's continuation as a level of its own charged each
+    /// `if` twice and declined this chain at six allocations, far inside the
+    /// documented bound.
+    #[test]
+    fn nested_proof_ifs_charge_one_level_each() {
+        for count in 1..=MAX_CHECKED_PROOF_REGION_NESTING + 1 {
+            let c_source = null_checked_allocation_chain(count);
+            let proof = nested_null_check_proof(count);
+            DEEPEST_REGION_DEPTH.with(|deepest| deepest.set(0));
+            let result = crate::surface::verify_c0_sources(&proof, &[("chain.c", &c_source)]);
+            let deepest = DEEPEST_REGION_DEPTH.with(std::cell::Cell::get);
+            assert_eq!(deepest, count, "{count} nested proof `if`s\n{proof}");
+            if count <= MAX_CHECKED_PROOF_REGION_NESTING {
+                if let Err(error) = result {
+                    panic!("{count} nested proof `if`s: {}\n{proof}", error.message());
+                }
+            } else {
+                let error = result.expect_err("one past the nesting bound is declined");
+                assert!(
+                    error.message().contains(&format!(
+                        "this proof nests {count} execution regions; the checked proof drivers support at most {MAX_CHECKED_PROOF_REGION_NESTING}"
+                    )),
+                    "{}",
+                    error.message()
+                );
+            }
+        }
+    }
+
+    fn linear(tactics: usize, continuation: InternalProofNode) -> InternalProofNode {
+        InternalProofNode::Linear {
+            tactics: (0..tactics)
+                .map(|index| IndexedTactic {
+                    index,
+                    source_index: index,
+                    tactic: ProofTactic::Step,
+                })
+                .collect(),
+            continuation: Box::new(continuation),
+        }
+    }
+
+    fn branch(source_index: usize, continuation: InternalProofNode) -> InternalProofNode {
+        InternalProofNode::Branch {
+            index: source_index,
+            source_index,
+            ensuring: None,
+            then_branch: Box::new(linear(1, InternalProofNode::Done)),
+            else_branch: Box::new(linear(1, InternalProofNode::Done)),
+            continuation: Box::new(continuation),
+        }
+    }
+
+    /// The structural predicates walk a continuation at its region's depth:
+    /// a run of sibling `branch`es far longer than the nesting bound is one
+    /// level, and a source tactic at its end is still found.
+    #[test]
+    fn sibling_regions_do_not_charge_the_nesting_bound() {
+        let count = 4 * MAX_CHECKED_EXECUTION_REGION_DEPTH;
+        let mut region = InternalProofNode::Done;
+        for source_index in (1000..1000 + count).rev() {
+            region = linear(1, branch(source_index, region));
+        }
+        assert!(
+            checked_execution_region_end(&region)
+                == Some(CheckedExecutionRegionEnd::SharedContinuation)
+        );
+        assert!(checked_execution_region_contains_source(
+            &region,
+            1000 + count - 1
+        ));
+    }
 }

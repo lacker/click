@@ -330,6 +330,41 @@ fn exists_loadable_range_call_requirement_expands_and_deletion_rejects() {
     );
 }
 
+/// Six null-checked allocations expand to six proof `if`s, each nested in
+/// the previous one's `else` arm. The structural driver used to charge each
+/// arm's continuation a level of its own, so this rewrite reached the region
+/// bound at six and was declined as an unimplemented shape.
+#[test]
+fn nested_null_check_chain_expands_and_reverifies() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/nested_null_check_chain_expands.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("the null-check chain mdtest should contain Click source");
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(click_source, &c_sources).expect("the smart proof verifies");
+    let expanded = expand_c0_claim_source(click_source, &c_sources, "f", CProofClaim::Grouped)
+        .unwrap_or_else(|error| panic!("the null-check chain should expand: {}", error.message()));
+    assert_eq!(expanded.matches("\n    if ").count(), 1, "{expanded}");
+    assert_eq!(expanded.matches(" if at(").count(), 6, "{expanded}");
+    assert!(!expanded.contains("execute()"), "{expanded}");
+    if let Err(error) = verify_c0_sources(&expanded, &c_sources) {
+        panic!(
+            "the expanded chain should re-verify: {}\n{expanded}",
+            error.message()
+        );
+    }
+}
+
 #[test]
 fn symbolic_branch_source_requirement_have_expands_and_deletion_rejects() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

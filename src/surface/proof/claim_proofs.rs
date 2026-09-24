@@ -211,10 +211,23 @@ fn unsupported_proof_shape(
     claim_labels: &[String],
     tactics: &[ProofTactic],
 ) -> ClickError {
+    // The decline records are internal bookkeeping. Consume them here so a
+    // later diagnostic does not inherit stale state, but do not expose the
+    // driver topology to users.
+    let _ = take_driver_declines();
+    let depth_declined = take_region_depth_decline();
     let nesting = proof_region_nesting_depth(tactics);
     if nesting > MAX_CHECKED_PROOF_REGION_NESTING {
         return ClickError::new(format!(
             "`{proof_label}`: this proof nests {nesting} execution regions; the checked proof drivers support at most {MAX_CHECKED_PROOF_REGION_NESTING}. Move an inner `match`, `branch`, or proof `if` into a contracted helper, or prove part of it in a `have`."
+        ));
+    }
+    if depth_declined {
+        // The written nesting is within the bound, so the depth the driver
+        // reached came from running the rest of the proof inside a
+        // continuing arm. Say so, rather than calling the shape unsupported.
+        return ClickError::new(format!(
+            "`{proof_label}`: this proof nests execution regions more deeply than the checked proof drivers support, at most {MAX_CHECKED_PROOF_REGION_NESTING}. When one arm of a `branch` or call outcome returns and the other continues, or a proof `if` case continues past its arm, the proof after that split runs inside the continuing arm, one region deeper. Move an inner `match`, `branch`, or proof `if` into a contracted helper, or prove part of it in a `have`."
         ));
     }
     let claim_description = if claim_labels.len() == 1 {
@@ -236,10 +249,6 @@ fn unsupported_proof_shape(
     } else {
         "If `step()` reaches a maybe-throwing call, use `outcomes { returned { ... } threw { ... } }` to handle its two successors. For proposition-only work, move the operation into `have proposition by { ... }`."
     };
-    // The decline records are internal bookkeeping. Consume them here so a
-    // later diagnostic does not inherit stale state, but do not expose the
-    // driver topology to users.
-    let _ = take_driver_declines();
     ClickError::new(format!(
         "`{proof_label}`: the proof script is valid, but the verifier cannot yet certify it for {claim_description}. It reached {shape}, which is not implemented in this execution context. No listed claim was shown false. {rewrite}"
     ))
@@ -401,6 +410,10 @@ pub(in crate::surface) fn prove_claim_by_tactics(
     // The checked drivers are tried in order: the structural driver owns
     // scopes and branches, and the flat driver owns linear proofs. A decline
     // tries the next checked driver; an error is terminal.
+    // A decline recorded by an earlier claim's attempt, which another driver
+    // then satisfied, must not colour this claim's diagnostic.
+    let _ = take_driver_declines();
+    let _ = take_region_depth_decline();
     let structural = try_check_structural_function_proof(
         &initial,
         &pure_facts,
@@ -633,6 +646,10 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         )
     );
     // Same order as the single-claim route: structural, then flat.
+    // A decline recorded by an earlier claim's attempt, which another driver
+    // then satisfied, must not colour this claim's diagnostic.
+    let _ = take_driver_declines();
+    let _ = take_region_depth_decline();
     let structural = try_check_structural_function_proof(
         &initial,
         &pure_facts,
