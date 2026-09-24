@@ -91,6 +91,10 @@ pub(crate) enum CheckedExecutionEvent {
     ResourceObservation(CheckedResourceObservation),
     AutomaticLifetimeEnd(CheckedAutomaticLifetimeEnd),
     ResourceRewrite(CheckedResourceRewrite),
+    /// One iterated guarded-ownership step (`take`, `give`, `gather`,
+    /// `scatter`). Like a lifetime end, it changes only the resource context
+    /// and is re-derived from its input state when the trace is checked.
+    IteratedStep(CheckedIteratedStep),
 }
 
 /// Proof-object-owned authority for one checked call occurrence.
@@ -1235,6 +1239,37 @@ impl CheckedAutomaticLifetimeEnd {
             return None;
         }
         Some(self.after_state.clone())
+    }
+}
+
+/// One iterated guarded-ownership step, retained with the exact state it
+/// started from and the fact context it was decided under. Construction is
+/// private to the kernel: `record_iterated_step` applies the step itself, and
+/// trace checking applies it again from the same input.
+#[derive(Clone)]
+pub(crate) struct CheckedIteratedStep {
+    before_state: CState,
+    after_state: CState,
+    before_facts: ProofFacts,
+    step: crate::kernel::IteratedStep,
+}
+
+impl CheckedIteratedStep {
+    pub(crate) fn before_state(&self) -> &CState {
+        &self.before_state
+    }
+
+    fn advance_checked(&self, state: &CState, facts: &ProofFacts) -> Option<CState> {
+        if state != &self.before_state || facts.introduced_since(&self.before_facts).is_none() {
+            return None;
+        }
+        let after = crate::kernel::apply_iterated_step(
+            &self.before_state,
+            &self.step,
+            self.before_facts.assumptions(),
+        )
+        .ok()?;
+        (after == self.after_state).then(|| self.after_state.clone())
     }
 }
 
@@ -3744,7 +3779,8 @@ fn collect_retained_call_events(
             | CheckedExecutionEvent::ProofCase(_)
             | CheckedExecutionEvent::ResourceObservation(_)
             | CheckedExecutionEvent::AutomaticLifetimeEnd(_)
-            | CheckedExecutionEvent::ResourceRewrite(_) => {}
+            | CheckedExecutionEvent::ResourceRewrite(_)
+            | CheckedExecutionEvent::IteratedStep(_) => {}
         }
     }
 }
@@ -4222,6 +4258,10 @@ fn check_evidence_events_with_call_events(
                 state = rewrite.after_state.clone();
                 continue;
             }
+            CheckedExecutionEvent::IteratedStep(step) => {
+                state = step.advance_checked(&state, &current_facts)?;
+                continue;
+            }
             // The retained context of the preceding theorem; the arm check
             // above already holds the arm's own facts.
             CheckedExecutionEvent::Context(_) => continue,
@@ -4302,7 +4342,7 @@ fn check_evidence_events_with_call_events(
             | CheckedExecutionEvent::ResourceObservation(_) => {
                 unreachable!("handled before source advance")
             }
-            CheckedExecutionEvent::ResourceRewrite(_) => {
+            CheckedExecutionEvent::ResourceRewrite(_) | CheckedExecutionEvent::IteratedStep(_) => {
                 unreachable!("handled before source advance")
             }
         }
@@ -4506,7 +4546,9 @@ fn trace_completion(
                         .ok_or("lifetime end has mismatched state")?;
                 }
             }
-            CheckedExecutionEvent::Condition(_) | CheckedExecutionEvent::ResourceObservation(_) => {
+            CheckedExecutionEvent::Condition(_)
+            | CheckedExecutionEvent::ResourceObservation(_)
+            | CheckedExecutionEvent::IteratedStep(_) => {
                 fallthrough = None;
                 if completed.is_some() {
                     return Err("a trace continues past its completing theorem");
@@ -4555,6 +4597,7 @@ fn events_use_the_function_definitions(
                 })
         }
         CheckedExecutionEvent::AutomaticLifetimeEnd(_)
+        | CheckedExecutionEvent::IteratedStep(_)
         | CheckedExecutionEvent::Statement(_)
         | CheckedExecutionEvent::Call(_)
         | CheckedExecutionEvent::Condition(_)
@@ -4630,7 +4673,8 @@ fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(),
             }
             CheckedExecutionEvent::AutomaticLifetimeEnd(_)
             | CheckedExecutionEvent::ResourceObservation(_)
-            | CheckedExecutionEvent::ResourceRewrite(_) => {
+            | CheckedExecutionEvent::ResourceRewrite(_)
+            | CheckedExecutionEvent::IteratedStep(_) => {
                 pending_call_views.clear();
                 continue;
             }
@@ -6217,6 +6261,35 @@ impl ExecutionProofCore {
         self.evidence_state = Some(after_state.clone());
         for trace in &mut *self.execution_evidence {
             trace.push(CheckedExecutionEvent::AutomaticLifetimeEnd(end.clone()));
+        }
+        Ok(after_state)
+    }
+
+    /// Applies one iterated guarded-ownership step to the running state and
+    /// records it. The kernel performs the step; the caller supplies only the
+    /// step's operands.
+    pub(crate) fn record_iterated_step(
+        &mut self,
+        before_facts: &ProofFacts,
+        step: crate::kernel::IteratedStep,
+    ) -> Result<CState, String> {
+        if self.evidence_completed {
+            return Err("an iterated ownership step was recorded after the trace completed".into());
+        }
+        let before_state = self.reached_state().clone();
+        let after_state =
+            crate::kernel::apply_iterated_step(&before_state, &step, before_facts.assumptions())?;
+        let checked = CheckedIteratedStep {
+            before_state,
+            after_state: after_state.clone(),
+            before_facts: before_facts.clone(),
+            step,
+        };
+        if self.evidence_state.is_some() {
+            self.evidence_state = Some(after_state.clone());
+        }
+        for trace in &mut *self.execution_evidence {
+            trace.push(CheckedExecutionEvent::IteratedStep(checked.clone()));
         }
         Ok(after_state)
     }

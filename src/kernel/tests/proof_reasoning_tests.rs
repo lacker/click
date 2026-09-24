@@ -592,7 +592,7 @@ fn function_contract_lookup_ignores_unrelated_pointer_facts() {
         Proposition::Predicate {
             name: CFunctionContract::predicate_name_for(name),
             arguments: vec![
-                Term::CState(CState::new()),
+                Term::CState(Box::new(CState::new())),
                 Term::CValue(CValue::typed_pointer(
                     pointer,
                     CType::FunctionPointer(CallbackSignature::from_encoded(90_000)),
@@ -1023,6 +1023,80 @@ fn equality_graph_queries_share_one_condition_fact_index_build() {
         PureFactContext::bitvector_equality_index_fact_visits(),
         expected_visits,
         "distinct equality queries must share one index build instead of rescanning ambient facts"
+    );
+}
+
+/// `exact_signed_constant` answers from an index keyed by the term, so what
+/// it examines does not grow with the unrelated condition facts beside the
+/// one that pins the term. It used to scan every condition fact, uncharged,
+/// on each range-membership and offset-equality query that asked it.
+#[test]
+fn exact_signed_constant_is_a_keyed_lookup_among_unrelated_facts() {
+    use crate::kernel::assumptions::exact_signed_constant;
+
+    let pinned = Bitvector32Term::Variable(Variable(230_000));
+    let reversed = Bitvector32Term::Variable(Variable(230_001));
+    let wide = Bitvector32Term::Variable(Variable(230_002));
+    let unpinned = Bitvector32Term::Variable(Variable(230_003));
+    let mut samples = Vec::new();
+    for size in [64_u32, 128, 256, 512] {
+        let mut assumptions = PureFactContext::new();
+        for index in 0..size {
+            let other = Bitvector32Term::Variable(Variable(231_000 + u64::from(index)));
+            // Unrelated constant equalities, unrelated order facts, and
+            // facts that mention the queried terms without pinning them.
+            assumptions = assumptions
+                .assume_condition(
+                    ConditionTerm::equal(other.clone(), Bitvector32Term::Constant(index)),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_less_than(pinned.clone(), other.clone()),
+                    true,
+                )
+                .assume_condition(ConditionTerm::equal(unpinned.clone(), other), false);
+        }
+        assumptions = assumptions
+            .assume_condition(
+                ConditionTerm::equal(pinned.clone(), Bitvector32Term::Constant(7)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Constant(-3_i32 as u32)),
+                    Box::new(reversed.clone()),
+                ),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::Bitvector64Equal(
+                    Box::new(wide.clone()),
+                    Box::new(Bitvector32Term::Int64Constant(1 << 40)),
+                ),
+                true,
+            );
+        PureFactContext::reset_exact_constant_fact_visits();
+        let (answers, work) = crate::instrumentation::measure_deterministic_work(|| {
+            [&pinned, &reversed, &wide, &unpinned]
+                .map(|term| exact_signed_constant(term, &assumptions))
+        });
+        assert_eq!(answers, [Some(7), Some(-3), Some(1 << 40), None]);
+        let visits = PureFactContext::exact_constant_fact_visits();
+        assert_eq!(
+            visits, 3,
+            "each pinned term reads its own entry and nothing else at {size} facts"
+        );
+        samples.push((size, work));
+        // Withdrawing the pinning fact withdraws its entry.
+        let forgotten = assumptions.without_exact_fact(&Proposition::ConditionIs(
+            ConditionTerm::equal(pinned.clone(), Bitvector32Term::Constant(7)),
+            true,
+        ));
+        assert_eq!(exact_signed_constant(&pinned, &forgotten), None);
+    }
+    assert!(
+        samples.iter().all(|(_, work)| *work == samples[0].1),
+        "exact_signed_constant work must not grow with unrelated facts: {samples:?}"
     );
 }
 
@@ -7425,4 +7499,71 @@ fn range_fold_alpha_identity_equates_nested_folds_under_renamed_binders() {
         ),
     );
     assert!(!assumptions.range_fold_terms_alpha_equivalent(&left, &inner_item_instead));
+}
+
+/// A lower-bound search compares its term with the ambient order facts at
+/// most once, at the outermost search; the searches its recursive `decide`
+/// calls start read only the bounds recorded at their own term
+/// (`signed_order_bounds`). It used to rescan every fact at every level of
+/// the recursion, so its work was the fact count to the power of the chain
+/// depth; in `examples/arena`'s pipeline one loadability check spent 96
+/// seconds there.
+#[test]
+fn lower_bound_search_ignores_unrelated_facts() {
+    let bounded = Bitvector32Term::Variable(Variable(97_500));
+    let middle = Bitvector32Term::Variable(Variable(97_501));
+    let inner = Bitvector32Term::Variable(Variable(97_502));
+    let zero = Bitvector32Term::Constant(0);
+    let samples = [16, 64, 256]
+        .into_iter()
+        .map(|size| {
+            // `bounded >= middle >= inner >= 1`: the searches must recurse
+            // through `middle` and `inner` to reach the constant.
+            let mut assumptions = PureFactContext::new()
+                .assume_condition(
+                    ConditionTerm::signed_greater_equal(bounded.clone(), middle.clone()),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_greater_equal(middle.clone(), inner.clone()),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_greater_equal(
+                        inner.clone(),
+                        Bitvector32Term::Constant(1),
+                    ),
+                    true,
+                );
+            for index in 0..size {
+                let unrelated = Bitvector32Term::Variable(Variable(97_600 + index as u64));
+                assumptions = assumptions
+                    .assume_condition(
+                        ConditionTerm::signed_greater_equal(unrelated.clone(), zero.clone()),
+                        true,
+                    )
+                    .assume_condition(
+                        ConditionTerm::signed_less_equal(
+                            unrelated,
+                            Bitvector32Term::Constant(1_000),
+                        ),
+                        true,
+                    );
+            }
+            PureFactContext::reset_lower_bound_candidate_visits();
+            let found = assumptions.has_lower_bound_at_or_above(&bounded, &zero)
+                && assumptions.has_lower_bound_above(&bounded, &zero);
+            assert!(found, "size {size}: the recorded chain was not found");
+            let facts = assumptions.condition_facts.len();
+            (facts, PureFactContext::lower_bound_candidate_visits())
+        })
+        .collect::<Vec<_>>();
+    // Two searches, each scanning the order facts once at its outermost level
+    // and reading only indexed entries below it.
+    assert!(
+        samples
+            .iter()
+            .all(|(facts, visits)| *visits <= 2 * facts + 16),
+        "a nested lower-bound search rescanned the fact set: {samples:?}"
+    );
 }

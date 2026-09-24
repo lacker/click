@@ -719,6 +719,22 @@ id = "language.word.fold"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.gather"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.give"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.scatter"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.take"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.forall"
 path = "reference/language/grammar.md#word-index"
 
@@ -1082,6 +1098,10 @@ path = "reference/language/index.md#read-and-write-resources"
 id = "language.resource-witness"
 path = "reference/language/index.md#read-and-write-resources"
 
+[[item]]
+id = "language.iterated-ownership"
+path = "reference/language/index.md#iterated-guarded-ownership"
+
 
 
 [[item]]
@@ -1410,6 +1430,22 @@ id = "tactic.construct"
 path = "reference/tactics/index.md#resources-and-snapshots"
 
 [[item]]
+id = "tactic.take"
+path = "reference/tactics/index.md#resources-and-snapshots"
+
+[[item]]
+id = "tactic.give"
+path = "reference/tactics/index.md#resources-and-snapshots"
+
+[[item]]
+id = "tactic.gather"
+path = "reference/tactics/index.md#resources-and-snapshots"
+
+[[item]]
+id = "tactic.scatter"
+path = "reference/tactics/index.md#resources-and-snapshots"
+
+[[item]]
 id = "tactic.observe"
 path = "reference/tactics/index.md#resources-and-snapshots"
 
@@ -1500,6 +1536,18 @@ id = "tactic-form.unfold-resource"
 path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]
 id = "tactic-form.fold-resource"
+path = "reference/tactics/index.md#resources-and-snapshots"
+[[item]]
+id = "tactic-form.take-element"
+path = "reference/tactics/index.md#resources-and-snapshots"
+[[item]]
+id = "tactic-form.give-element"
+path = "reference/tactics/index.md#resources-and-snapshots"
+[[item]]
+id = "tactic-form.gather-resource"
+path = "reference/tactics/index.md#resources-and-snapshots"
+[[item]]
+id = "tactic-form.scatter-resource"
 path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]
 id = "tactic-form.construct-resource"

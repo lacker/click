@@ -6,6 +6,7 @@ thread_local! {
     static MEMORY_SEPARATION_CANDIDATE_CHECKS: Cell<usize> = const { Cell::new(0) };
     static MEMORY_SEPARATION_RECURSIVE_CANDIDATE_CHECKS: Cell<usize> = const { Cell::new(0) };
     static BITVECTOR_EQUALITY_INDEX_FACT_VISITS: Cell<usize> = const { Cell::new(0) };
+    static EXACT_CONSTANT_FACT_VISITS: Cell<usize> = const { Cell::new(0) };
 }
 use std::cell::{Cell, RefCell};
 
@@ -1666,7 +1667,7 @@ fn collect_term_memory_loads(
                 Ok(())
             }
         },
-        Term::CStatementOutcome(outcome) => match outcome {
+        Term::CStatementOutcome(outcome) => match outcome.as_ref() {
             CStatementOutcome::Normal(state)
             | CStatementOutcome::Break(state)
             | CStatementOutcome::Continue(state)
@@ -1683,7 +1684,7 @@ fn collect_term_memory_loads(
             | CStatementOutcome::UndefinedBehavior(_)
             | CStatementOutcome::RuntimeError(_) => Ok(()),
         },
-        Term::CFunctionOutcome(outcome) => match outcome {
+        Term::CFunctionOutcome(outcome) => match outcome.as_ref() {
             CFunctionOutcome::Return { value, state }
             | CFunctionOutcome::Throw { value, state } => {
                 let _ = state;
@@ -2430,6 +2431,18 @@ impl PureFactContext {
         BITVECTOR_EQUALITY_INDEX_FACT_VISITS.with(Cell::get)
     }
 
+    /// How many condition facts `exact_signed_constant` has examined on this
+    /// thread since the last reset.
+    #[cfg(test)]
+    pub(crate) fn exact_constant_fact_visits() -> usize {
+        EXACT_CONSTANT_FACT_VISITS.with(Cell::get)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_exact_constant_fact_visits() {
+        EXACT_CONSTANT_FACT_VISITS.with(|visits| visits.set(0));
+    }
+
     pub(in crate::kernel) fn has_same_reasoning_policy(&self, other: &Self) -> bool {
         self.defer_non_exact_loadability_obligations
             == other.defer_non_exact_loadability_obligations
@@ -2755,6 +2768,47 @@ impl PureFactContext {
             .flat_map(|aliases| aliases.iter().map(|(alias, _)| alias))
     }
 
+    /// Whether exact pointer equalities connect these addresses. Each
+    /// adjacency lookup is keyed by the current pointer or offset, so the
+    /// walk visits only the equality component reachable from `left` rather
+    /// than rescanning every path condition for every separation candidate.
+    pub(in crate::kernel) fn has_indexed_pointer_equality_path(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> bool {
+        let matches = |candidate: &Pointer, expected: &Pointer| {
+            candidate == expected
+                || candidate.block == expected.block
+                    && crate::kernel::api::canonicalize_pointer_loads(candidate)
+                        == crate::kernel::api::canonicalize_pointer_loads(expected)
+        };
+        let mut seen = std::collections::BTreeSet::from([left.clone()]);
+        let mut frontier = vec![left.clone()];
+        while let Some(current) = frontier.pop() {
+            if matches(&current, right) {
+                return true;
+            }
+            for alias in self.exact_pointer_aliases(&current) {
+                if matches(alias, right) {
+                    return true;
+                }
+                if seen.insert(alias.clone()) {
+                    frontier.push(alias.clone());
+                }
+            }
+            for alias in self.exact_pointer_offset_aliases(&current) {
+                if matches(&alias, right) {
+                    return true;
+                }
+                if seen.insert(alias.clone()) {
+                    frontier.push(alias);
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn rebuild_null_pointer_offsets(&mut self) {
         self.null_pointer_offsets = crate::persistent::PersistentMap::default();
         let facts = self
@@ -2856,9 +2910,57 @@ impl PureFactContext {
         self.memory_load_condition_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.bitvector_equality_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.bitvector64_equality_facts = crate::persistent::PersistentMap::default();
+        self.exact_constant_equalities = crate::persistent::PersistentMap::default();
         let conditions = self.condition_facts.clone();
         for (condition, value) in conditions.iter() {
             self.adjust_bitvector64_equality(condition, *value, true);
+            self.adjust_exact_constant_equality(condition, *value, true);
+        }
+    }
+
+    /// Files or withdraws one true equality under each side it pins to a
+    /// constant. The two sides are filed exactly as `exact_signed_constant`
+    /// used to read them from a scan: the left side names the right side's
+    /// constant, and the right side, unless it is the left side itself,
+    /// names the left side's.
+    fn adjust_exact_constant_equality(
+        &mut self,
+        condition: &ConditionTerm,
+        value: bool,
+        insert: bool,
+    ) {
+        let (ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)) = condition
+        else {
+            return;
+        };
+        if !value {
+            return;
+        }
+        let mut filed = vec![(left.as_ref(), exact_equality_constant(right))];
+        if left != right {
+            filed.push((right.as_ref(), exact_equality_constant(left)));
+        }
+        for (term, constant) in filed {
+            let Some(constant) = constant else {
+                continue;
+            };
+            let facts = self
+                .exact_constant_equalities
+                .get(term)
+                .cloned()
+                .unwrap_or_default();
+            let facts = if insert {
+                facts.with_inserted(condition.clone(), constant)
+            } else {
+                facts.without_key(condition)
+            };
+            self.exact_constant_equalities = if facts.is_empty() {
+                self.exact_constant_equalities.without_key(term)
+            } else {
+                self.exact_constant_equalities
+                    .with_inserted(term.clone(), facts)
+            };
         }
     }
 
@@ -4084,6 +4186,7 @@ impl PureFactContext {
                 false,
             );
             self.adjust_bitvector64_equality(&condition, old, false);
+            self.adjust_exact_constant_equality(&condition, old, false);
             self.adjust_algebraic_predicate_fact(&condition, old, false);
             self.adjust_signed_order_bound(&condition, old, false);
             self.adjust_null_pointer_offset(&condition, old, false);
@@ -4101,6 +4204,7 @@ impl PureFactContext {
         self.adjust_pointer_block_alias(&condition, value, true);
         self.adjust_pointer_offset_alias(&condition, value, true);
         self.adjust_bitvector64_equality(&condition, value, true);
+        self.adjust_exact_constant_equality(&condition, value, true);
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
         self
     }
@@ -5078,36 +5182,30 @@ pub(in crate::kernel) fn exact_signed_constant(
     if let Some(value) = signed_bitvector_constant(term) {
         return Some(value);
     }
-    assumptions
-        .condition_facts
+    // The first true equality, in fact order, that pins `term` to a
+    // constant: one keyed lookup instead of a scan of every condition fact.
+    crate::instrumentation::record_deterministic_work(1);
+    let (_, constant) = assumptions
+        .exact_constant_equalities
+        .get(term)?
         .iter()
-        .find_map(|(condition, value)| {
-            if !*value {
-                return None;
-            }
-            let constant = |candidate: &Bitvector32Term| {
-                signed_bitvector_constant(candidate).or_else(|| {
-                    candidate.int64_as_const().or_else(|| {
-                        candidate
-                            .uint64_as_const()
-                            .and_then(|value| i64::try_from(value).ok())
-                    })
-                })
-            };
-            match condition {
-                ConditionTerm::Bitvector32Equal(left, right)
-                | ConditionTerm::Bitvector64Equal(left, right) => {
-                    if left.as_ref() == term {
-                        constant(right)
-                    } else if right.as_ref() == term {
-                        constant(left)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            }
+        .next()?;
+    #[cfg(test)]
+    EXACT_CONSTANT_FACT_VISITS.with(|visits| visits.set(visits.get() + 1));
+    Some(*constant)
+}
+
+/// The constant an exact equality's other side names, read the way
+/// [`exact_signed_constant`] reads it: signed 32-bit, then 64-bit signed,
+/// then 64-bit unsigned when it fits.
+fn exact_equality_constant(candidate: &Bitvector32Term) -> Option<i64> {
+    signed_bitvector_constant(candidate).or_else(|| {
+        candidate.int64_as_const().or_else(|| {
+            candidate
+                .uint64_as_const()
+                .and_then(|value| i64::try_from(value).ok())
         })
+    })
 }
 
 /// [`exact_signed_constant`] for a term whose *sixty-four-bit* value is the

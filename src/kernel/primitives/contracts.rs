@@ -1154,6 +1154,7 @@ impl CFunction {
         mut definitions: Vec<CCompositeResourceDefinition>,
     ) -> Self {
         definitions.sort_by(|left, right| left.name().cmp(right.name()));
+        super::super::thread_confinement::propagate_thread_confinement(&mut definitions);
         self.contract_interface.composite_resource_definitions = definitions;
         self
     }
@@ -1360,6 +1361,15 @@ impl CPredicateUnfolding {
 }
 
 impl CCompositeResourceDefinition {
+    pub(crate) fn with_mutex_guard(mut self, guarded_by: Option<CMutexGuardDeclaration>) -> Self {
+        self.guarded_by = guarded_by;
+        self
+    }
+
+    pub(crate) fn mutex_guard(&self) -> Option<&CMutexGuardDeclaration> {
+        self.guarded_by.as_ref()
+    }
+
     pub(crate) fn with_instance_schema(mut self, schema: Option<ResourceFieldSchema>) -> Self {
         self.instance_schema = schema;
         self
@@ -1371,12 +1381,14 @@ impl CCompositeResourceDefinition {
 
     pub(crate) fn with_resource_match_body(mut self, body: Option<CResourceMatchBody>) -> Self {
         self.matched = body;
+        self.thread_confined |= self.counted_population && self.matched.is_some();
         self
     }
 
     /// Named child instances of the unmatched body.
     pub(crate) fn with_children(mut self, children: Vec<CResourceChildSpec>) -> Self {
         self.children = children;
+        self.thread_confined |= self.counted_population && !self.children.is_empty();
         self
     }
     pub fn new(
@@ -1390,6 +1402,7 @@ impl CCompositeResourceDefinition {
         let fact_source_indices = (0..facts.len()).collect();
         Self {
             instance_schema: None,
+            guarded_by: None,
             matched: None,
             name: name.into(),
             parameters,
@@ -1398,6 +1411,7 @@ impl CCompositeResourceDefinition {
             recursive,
             matched_recursive: false,
             counted_population: false,
+            thread_confined: false,
             facts_claim_liveness: false,
             contains,
             children: Vec::new(),
@@ -1459,8 +1473,10 @@ impl CCompositeResourceDefinition {
         facts: Vec<SpecProposition>,
     ) -> Self {
         let fact_source_indices = (0..facts.len()).collect();
+        let thread_confined = condition.is_some() || !contains.is_empty() || !facts.is_empty();
         Self {
             instance_schema: None,
+            guarded_by: None,
             matched: None,
             name: name.into(),
             parameters,
@@ -1469,6 +1485,7 @@ impl CCompositeResourceDefinition {
             recursive: false,
             matched_recursive: false,
             counted_population: true,
+            thread_confined,
             facts_claim_liveness: false,
             contains,
             children: Vec::new(),
@@ -1510,6 +1527,10 @@ impl CCompositeResourceDefinition {
 
     pub fn is_counted_population(&self) -> bool {
         self.counted_population
+    }
+
+    pub fn is_thread_confined(&self) -> bool {
+        self.thread_confined
     }
 
     pub fn needs_outcome_resource_transfer(&self) -> bool {
@@ -2368,6 +2389,14 @@ impl CExecutionEnvironment {
         binding: Option<crate::languages::c::thread_runtime::ModeledPthreadBinding>,
     ) -> Self {
         self.modeled_pthread_binding = binding;
+        self
+    }
+
+    pub(crate) fn with_modeled_mutex_guards(
+        mut self,
+        guards: BTreeMap<String, CMutexGuardDeclaration>,
+    ) -> Self {
+        self.modeled_mutex_guards = std::sync::Arc::new(guards);
         self
     }
 

@@ -15258,3 +15258,68 @@ fn a_decided_branch_in_a_loop_body_expands_and_reverifies() {
     verify_c0_sources(&expanded, &sources)
         .unwrap_or_else(|error| panic!("the expansion should reverify: {error:?}\n{expanded}"));
 }
+
+/// Expands every smart site of one claim in an iterated-ownership fixture and
+/// reverifies the result, checking that the explicit `take`/`give` steps
+/// survive expansion as written.
+fn expand_iterated_ownership_claim(fixture: &str, claim: &str, kept: &[&str]) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("the fixture has a click block");
+    let sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let expanded = expand_c0_claim_source_by_label(click_source, &sources, claim)
+        .unwrap_or_else(|error| panic!("`{claim}` should expand: {error:?}"));
+    for step in kept {
+        assert!(
+            expanded.contains(step),
+            "the expansion should keep `{step}` as written: {expanded}"
+        );
+    }
+    assert!(
+        !expanded.contains("simp();") && !expanded.contains("close_invariants();"),
+        "every smart site should be replaced: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .unwrap_or_else(|error| panic!("the expansion should reverify: {error:?}\n{expanded}"));
+}
+
+#[test]
+fn the_iterated_ownership_allocation_protocol_expands_and_reverifies() {
+    // `take` is a simple step: the expansion prints it unchanged, and the
+    // closers around it become explicit steps that verify on their own.
+    expand_iterated_ownership_claim(
+        "mdtests/iterated_ownership_allocate_one.md",
+        "claim.contract",
+        &["take(data[index..(index + 1)]);"],
+    );
+}
+
+#[test]
+fn the_iterated_ownership_claim_loop_expands_and_reverifies() {
+    // The loop takes one element per iteration from the iterated fact inside
+    // its window; the expanded preservation proof still takes it explicitly.
+    expand_iterated_ownership_claim(
+        "mdtests/iterated_ownership_claim_loop.md",
+        "claim_run.contract",
+        &["take(data[i..(i + 1)]);"],
+    );
+}
+
+#[test]
+fn the_iterated_ownership_release_loop_expands_and_reverifies() {
+    expand_iterated_ownership_claim(
+        "mdtests/iterated_ownership_release_loop.md",
+        "release_run.contract",
+        &["give(data[i..(i + 1)]);"],
+    );
+}

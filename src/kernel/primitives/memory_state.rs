@@ -693,6 +693,67 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
 }
 
 #[cfg(test)]
+mod call_havoc_local_retention_tests {
+    use super::*;
+
+    #[test]
+    fn call_havoc_drops_local_cell_when_write_range_is_assumed_equal_to_it() {
+        let local = Pointer {
+            block: PointerBlock::Concrete("local:t".to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let symbolic = Pointer {
+            block: PointerBlock::Symbolic(Variable(944_001)),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let assumed_alias_range = CMemoryRange::new(
+            symbolic.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(symbolic, local.clone()),
+            true,
+        ));
+        let unrelated_range = CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        let value = CValue::Int32(Bitvector32Term::Constant(41));
+        let before = CMemory::new()
+            .with_block(local.block.clone(), 4)
+            .store(local.clone(), value.clone());
+
+        let retained = before.clone().with_call_memory_havoc(
+            Variable(944_010),
+            std::slice::from_ref(&unrelated_range),
+            &PureFactContext::new(),
+        );
+        assert_eq!(retained.known_value(&local), Some(value));
+
+        let havocked = before.clone().with_call_memory_havoc(
+            Variable(944_011),
+            std::slice::from_ref(&assumed_alias_range),
+            &assumptions,
+        );
+        assert_eq!(
+            havocked.known_value(&local),
+            None,
+            "an assumed-equal write range must invalidate the local cell"
+        );
+        assert!(havocked.matches_call_memory_havoc_result(
+            &before,
+            std::slice::from_ref(&assumed_alias_range),
+            &assumptions,
+        ));
+    }
+}
+
+#[cfg(test)]
 mod havoc_identity_tests {
     use super::*;
 
@@ -1353,21 +1414,23 @@ fn call_havoc_candidates(mutable_ranges: &[CMemoryRange]) -> AliasCandidates {
 /// ([`call_havoc_candidates`]), in the producing context. The
 /// two are compared in `docs/internals/resource-tracker.md`.
 ///
-/// The `local:` disjunct is the `local_versus_argument` arm of
-/// [`PointerBlock::proven_distinct`] spelled as a prefix: a `local:` block is
-/// storage this function declared, and memory a callee reaches through its
-/// arguments existed before the call. It is only sound while a checked write
-/// set can never be based in a `local:` block, which holds because such a
-/// write set is the callee's owned ranges resolved at the call site, and a
-/// `local:` range cannot be owned — passing `&t` to a callee that owns
-/// `t[0..1]` is refused for want of `owns local:t@0[0..1]`.
+/// Local cells may be kept without an owned-range lookup when the write set
+/// names the same local block directly. A different spelling cannot use the
+/// structural local-versus-argument separation rule: consult the proven
+/// pointer-equality graph before keeping the cell, so an assumed alias drops
+/// it. Other cells use the ordinary range-disjointness query.
 fn call_havoc_keeps_cell(
     pointer: &Pointer,
     mutable_ranges: &[CMemoryRange],
     assumptions: &PureFactContext,
 ) -> bool {
-    pointer.block.starts_with("local:")
-        || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+    if pointer.block.starts_with("local:") {
+        return mutable_ranges.iter().all(|range| {
+            range.base().block == pointer.block
+                || !pointers_proven_equal_for_memory_resolution(range.base(), pointer, assumptions)
+        });
+    }
+    assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
 }
 
 /// Whether a havoc that preserves loans keeps the cell at this address: the
@@ -1923,8 +1986,13 @@ impl CMemory {
             }
         }
         // Losing an allocation's cached knowledge can otherwise re-intern as
-        // an older empty snapshot and drop this safety-critical edge.
-        self.mark_forgotten_from(&prior);
+        // an older empty snapshot and drop this safety-critical edge. A
+        // retirement inside its own call's havoc keeps that havoc's mark
+        // instead: see `retirement_keeps_its_call_havocs_forget_mark`.
+        use crate::kernel::resource_tracker::cell_source::retirement_keeps_its_call_havocs_forget_mark;
+        if !retirement_keeps_its_call_havocs_forget_mark(&prior, base, bytes) {
+            self.mark_forgotten_from(&prior);
+        }
         record_c_memory_derivation(
             &mut self,
             CMemoryDerivation::ContractAllocationRetired {
@@ -2817,6 +2885,14 @@ impl CMemory {
         // proven distinct on the first rung), so only the candidates are
         // asked.
         let candidates = AliasCandidates::of_block(&normalized_pointer.block);
+        // Ownership first. A cell that a resource composition owns through a
+        // different member than the written bytes is kept by the partition
+        // law, whichever rung below would have found that out; asking it
+        // first, through the composition's base index, spares such cells the
+        // pure-fact distinctness ladder, whose failing searches cost work in
+        // every separation fact of the block. Cells ownership does not place
+        // go down the ladder unchanged.
+        let owned_footprint = assumptions.owned_store_footprint(&normalized_pointer, bytes);
         candidates.retain_map(std::sync::Arc::make_mut(&mut memory.cells), |cell_pointer, cell_value| {
             let normalized_cell_pointer = Pointer {
                 block: cell_pointer.block.clone(),
@@ -2837,6 +2913,14 @@ impl CMemory {
                     written.overwrites_completely(&normalized_cell_pointer, cell_value)
                 });
                 return false;
+            }
+            if assumptions.access_owned_apart_from_store(
+                &owned_footprint,
+                &normalized_pointer,
+                &normalized_cell_pointer,
+                crate::kernel::reasoning::cell_access_byte_width(cell_value),
+            ) {
+                return true;
             }
             let address_inequality_separates_bytes = crate::kernel::reasoning::access_byte_overlap(
                 &normalized_cell_pointer,
@@ -2903,6 +2987,14 @@ impl CMemory {
                         written.overwrites_typed_completely(&normalized_cell_pointer, *cell_type)
                     });
                     return false;
+                }
+                if assumptions.access_owned_apart_from_store(
+                    &owned_footprint,
+                    &normalized_pointer,
+                    &normalized_cell_pointer,
+                    cell_type.byte_width().max(1),
+                ) {
+                    return true;
                 }
                 // A union view has no value to read a width from, so it stands in
                 // the width of the type it is keyed by — the access it records.
@@ -3301,6 +3393,7 @@ impl CState {
             && self.loan_participant == other.loan_participant
             && self.loan_view_bindings == other.loan_view_bindings
             && self.thread_ledger == other.thread_ledger
+            && self.mutex_ledger == other.mutex_ledger
             && self.pending_thread_create == other.pending_thread_create
             && (std::sync::Arc::ptr_eq(&self.counted_populations, &other.counted_populations)
                 || (self.counted_populations.is_empty() && other.counted_populations.is_empty()))
@@ -3415,10 +3508,18 @@ impl CState {
     /// Keeping this beside `with_memory` prevents evaluator paths that already
     /// own a mutable state from bypassing resource-observation invalidation.
     pub(crate) fn set_memory(&mut self, memory: CMemory) {
+        self.set_memory_with_checked_stores(memory, false);
+    }
+
+    /// [`Self::set_memory`] for the C store path, which has already applied
+    /// the iterated-ownership store rule (`plan_iterated_guard_store`) to its
+    /// one store. Every other transition keeps the conservative rule.
+    pub(crate) fn set_memory_with_checked_stores(&mut self, memory: CMemory, stores_checked: bool) {
         self.resources = self
             .resources
             .clone()
-            .invalidate_memory_support(&self.memory, &memory);
+            .invalidate_memory_support(&self.memory, &memory)
+            .invalidate_iterated_facts(&self.memory, &memory, stores_checked);
         self.loan_view_bindings = crate::kernel::loans::LoanViewBindings::from_state(
             self.resources.loan_dependency_state(),
         );

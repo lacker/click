@@ -1062,15 +1062,152 @@ impl PureFactContext {
 
     /// Decides separation from indexed facts plus range membership, without
     /// invoking the composition-backed derived-separation search.
+    /// The owned members of this context's resource compositions that hold
+    /// every byte of an access of `bytes` at `write`, computed once per store
+    /// so that [`Self::access_owned_apart_from_store`] can ask each cached
+    /// cell a constant number of indexed questions.
+    ///
+    /// Members are found through each composition's base index under the
+    /// additive base spellings of `write` (see [`additive_base_spellings`]),
+    /// never by walking a block bucket: every object a parameter reaches
+    /// shares the one `ExternalArgument` block, so a bucket walk would visit
+    /// every owned object in the function for each cell.
+    pub(in crate::kernel) fn owned_store_footprint(
+        &self,
+        write: &Pointer,
+        bytes: u32,
+    ) -> OwnedStoreFootprint<'_> {
+        let mut members = Vec::new();
+        if self.resource_compositions.is_empty() {
+            return OwnedStoreFootprint { members };
+        }
+        let spellings = additive_base_spellings(write);
+        // Compositions of one context commonly restate one member (a
+        // composite's unfolding beside the context it was unfolded in), and
+        // the containment proof depends only on the range: prove each
+        // distinct range once.
+        let mut decided = BTreeMap::<&CMemoryRange, bool>::new();
+        for resources in self.resource_compositions.iter() {
+            crate::instrumentation::record_deterministic_work(1);
+            for base in &spellings {
+                for (entry, range) in resources.owned_memory_members_with_base(base) {
+                    let contains = *decided
+                        .entry(range)
+                        .or_insert_with(|| self.access_within_memory_range(write, bytes, range));
+                    if contains {
+                        members.push((resources, entry, range));
+                    }
+                }
+            }
+        }
+        OwnedStoreFootprint { members }
+    }
+
+    /// Whether ownership alone keeps an access of `bytes` at `pointer` off a
+    /// store's written bytes: some composition owns the write through one
+    /// member and every byte of this access through a different one.
+    ///
+    /// This is the partition law of a valid composition, the one
+    /// [`crate::kernel::memory_provenance::owned_composition_store_separated_evidence`]
+    /// and the projected pairs in `composition_separation_facts` already
+    /// apply; only the route to the two members differs. Both memberships
+    /// are full, assumption-checked containments of the whole access, not
+    /// of its first element, and the same guards apply: the two addresses
+    /// must not be proven equal, and ranges whose distinct base spellings
+    /// were later proven equal must not overlap. Lookup is by base, so the
+    /// question costs what the two accesses spell and the members they name,
+    /// independent of the other objects owned in the block.
+    pub(in crate::kernel) fn access_owned_apart_from_store(
+        &self,
+        footprint: &OwnedStoreFootprint<'_>,
+        write: &Pointer,
+        pointer: &Pointer,
+        bytes: u32,
+    ) -> bool {
+        if footprint.members.is_empty() {
+            return false;
+        }
+        let spellings = additive_base_spellings(pointer);
+        let separated = footprint
+            .members
+            .iter()
+            .find(|(resources, write_entry, write_range)| {
+                spellings.iter().any(|base| {
+                    resources
+                        .owned_memory_members_with_base(base)
+                        .any(|(entry, range)| {
+                            entry != *write_entry
+                                && self.access_within_memory_range(pointer, bytes, range)
+                                && !self
+                                    .memory_ranges_overlap_after_base_equality(write_range, range)
+                        })
+                })
+            });
+        let Some((resources, _, _)) = separated else {
+            return false;
+        };
+        if self.pointers_proven_equal_ignoring_memory_separation(pointer, write) {
+            return false;
+        }
+        record_implicit_reasoning_provenance(
+            self,
+            &Proposition::CResourceComposition((*resources).clone()),
+        );
+        true
+    }
+
+    /// Whether every byte of an access of `bytes` at `pointer` lies in
+    /// `range`: its first element and, for an access wider than one element,
+    /// its last. Element membership places `pointer` exactly on an element
+    /// boundary, so the elements in between are in the range as well.
+    ///
+    /// Membership is read structurally: `pointer` must be the range's base
+    /// itself or that base plus one displacement, the direct route of
+    /// [`Self::pointer_in_range_with_width`], and only the two endpoint
+    /// bounds are then proved. The other routes there compare offsets that
+    /// are *not* syntactically related, and on a miss that comparison is a
+    /// failing distinctness search, which is exactly the cost this rung
+    /// exists to avoid; a pointer spelled some other way leaves the
+    /// decision to the caller's full ladder.
+    fn access_within_memory_range(
+        &self,
+        pointer: &Pointer,
+        bytes: u32,
+        range: &CMemoryRange,
+    ) -> bool {
+        let width = range.element_width();
+        if width == 0 {
+            return false;
+        }
+        let contains = |pointer: &Pointer| {
+            structural_element_index(pointer, range.base(), width, self).is_some_and(|index| {
+                self.proves_range_bound(ConditionTerm::signed_less_equal(
+                    range.start().clone(),
+                    index.clone(),
+                )) && self
+                    .proves_range_bound(ConditionTerm::signed_less_than(index, range.end().clone()))
+            })
+        };
+        let elements = bytes.max(1).div_ceil(width);
+        contains(pointer)
+            && (elements == 1
+                || contains(
+                    &pointer.offset_by_elements(Bitvector32Term::Constant(elements - 1), width),
+                ))
+    }
+
     pub(in crate::kernel) fn pointers_directly_disjoint_by_range(
         &self,
         left: &Pointer,
         right: &Pointer,
     ) -> bool {
+        if self.pointers_proven_equal_ignoring_memory_separation(left, right) {
+            return false;
+        }
         let direct = self
             .memory_separation_candidates(&left.block, &right.block)
             .find_map(|(proposition, left_range, right_range, _)| {
-                (self.pointer_in_range_with_width(
+                let contained = self.pointer_in_range_with_width(
                     left,
                     left_range.base(),
                     left_range.start(),
@@ -1094,7 +1231,9 @@ impl PureFactContext {
                     right_range.start(),
                     right_range.end(),
                     right_range.element_width(),
-                ))
+                );
+                (contained
+                    && !self.memory_ranges_overlap_after_base_equality(left_range, right_range))
                 .then_some(proposition)
             });
         if let Some(proposition) = direct {
@@ -1109,6 +1248,9 @@ impl PureFactContext {
         left: &Pointer,
         right: &Pointer,
     ) -> bool {
+        if self.pointers_proven_equal_ignoring_memory_separation(left, right) {
+            return false;
+        }
         self.memory_separation_candidates(&left.block, &right.block)
             .any(|(proposition, left_range, right_range, composition)| {
                 let proved = self.pointer_in_range_by_shallow_fact_graph_with_width(
@@ -1136,6 +1278,8 @@ impl PureFactContext {
                     right_range.end(),
                     right_range.element_width(),
                 );
+                let proved = proved
+                    && !self.memory_ranges_overlap_after_base_equality(left_range, right_range);
                 if proved {
                     let authority = composition.map_or_else(
                         || proposition.clone(),
@@ -1255,6 +1399,9 @@ impl PureFactContext {
         left: &Pointer,
         right: &Pointer,
     ) -> bool {
+        if self.pointers_proven_equal_ignoring_memory_separation(left, right) {
+            return false;
+        }
         let Some(_query) = crate::kernel::reasoning::ResolutionQueryGuard::enter(
             crate::kernel::reasoning::ResolutionQuery::RangeDisjoint(left.clone(), right.clone()),
         ) else {
@@ -1298,6 +1445,9 @@ impl PureFactContext {
                                     right_range,
                                     self,
                                 );
+                        let proved = proved
+                            && !self
+                                .memory_ranges_overlap_after_base_equality(left_range, right_range);
                         if proved {
                             record_candidate(proposition, composition);
                         }
@@ -1322,6 +1472,9 @@ impl PureFactContext {
                             && self.pointer_in_range_by_exact_facts(right, right_range)
                             || self.pointer_in_range_by_exact_facts(right, left_range)
                                 && self.pointer_in_range_by_exact_facts(left, right_range);
+                        let proved = proved
+                            && !self
+                                .memory_ranges_overlap_after_base_equality(left_range, right_range);
                         if proved {
                             record_candidate(proposition, composition);
                         }
@@ -1410,6 +1563,8 @@ impl PureFactContext {
                                 right_range,
                                 self,
                             );
+                    let proved = proved
+                        && !self.memory_ranges_overlap_after_base_equality(left_range, right_range);
                     if proved {
                         record_candidate(proposition, composition);
                     }
@@ -1426,6 +1581,9 @@ impl PureFactContext {
     ) -> bool {
         if left.base().blocks_proven_distinct(right.base()) {
             return true;
+        }
+        if self.memory_ranges_overlap_after_base_equality(left, right) {
+            return false;
         }
         let Some(_query) = crate::kernel::reasoning::ResolutionQueryGuard::enter(
             crate::kernel::reasoning::ResolutionQuery::RangesSeparate(left.clone(), right.clone()),
@@ -1454,14 +1612,15 @@ impl PureFactContext {
             else {
                 return false;
             };
-            memory_range_shallowly_contained_with_facts(left, fact_left, self)
+            (memory_range_shallowly_contained_with_facts(left, fact_left, self)
                 && memory_range_contained_for_memory_resolution(right, fact_right, self)
                 || memory_range_shallowly_contained_with_facts(right, fact_right, self)
                     && memory_range_contained_for_memory_resolution(left, fact_left, self)
                 || memory_range_shallowly_contained_with_facts(right, fact_left, self)
                     && memory_range_contained_for_memory_resolution(left, fact_right, self)
                 || memory_range_shallowly_contained_with_facts(left, fact_right, self)
-                    && memory_range_contained_for_memory_resolution(right, fact_left, self)
+                    && memory_range_contained_for_memory_resolution(right, fact_left, self))
+                && !self.memory_ranges_overlap_after_base_equality(fact_left, fact_right)
         }) {
             return true;
         }
@@ -1473,10 +1632,11 @@ impl PureFactContext {
             else {
                 return false;
             };
-            memory_range_contained_for_memory_resolution(left, fact_left, self)
+            (memory_range_contained_for_memory_resolution(left, fact_left, self)
                 && memory_range_contained_for_memory_resolution(right, fact_right, self)
                 || memory_range_contained_for_memory_resolution(right, fact_left, self)
-                    && memory_range_contained_for_memory_resolution(left, fact_right, self)
+                    && memory_range_contained_for_memory_resolution(left, fact_right, self))
+                && !self.memory_ranges_overlap_after_base_equality(fact_left, fact_right)
         }) || self.resource_compositions.iter().any(|resources| {
             // The proof-aware form of the shallow composition fallback above:
             // the same containment relation the materialized-pair loops use,
@@ -1591,6 +1751,15 @@ impl PureFactContext {
         None
     }
 
+    /// One endpoint bound of a range-membership question, by the exact
+    /// routes first and the decision procedure last.
+    fn proves_range_bound(&self, condition: ConditionTerm) -> bool {
+        self.exact_condition_value(&condition) == Some(true)
+            || self.exact_ordering_modulo_canonical_atoms(&condition)
+            || self.nonnegative_successor_by_exact_facts(&condition)
+            || self.decide(&condition) == Some(true)
+    }
+
     fn pointer_in_range_with_width(
         &self,
         pointer: &Pointer,
@@ -1634,12 +1803,7 @@ impl PureFactContext {
         {
             return true;
         }
-        let proves = |condition: ConditionTerm| {
-            self.exact_condition_value(&condition) == Some(true)
-                || self.exact_ordering_modulo_canonical_atoms(&condition)
-                || self.nonnegative_successor_by_exact_facts(&condition)
-                || self.decide(&condition) == Some(true)
-        };
+        let proves = |condition: ConditionTerm| self.proves_range_bound(condition);
         let range_base = base.offset_by_elements(start.clone(), element_width);
         if let Some(index) =
             self.pointer_element_index_from_base_with_width(pointer, &range_base, element_width)
@@ -1780,11 +1944,138 @@ impl PureFactContext {
         false
     }
 
+    /// Address equality from the path facts, intentionally before consulting
+    /// any resource-separation premise. A stale separation must not veto the
+    /// equality that makes that same premise invalid.
+    pub(in crate::kernel) fn pointers_proven_equal_ignoring_memory_separation(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        if left.blocks_proven_distinct(right) {
+            return false;
+        }
+        self.exact_condition_value(&ConditionTerm::pointer_equal(left.clone(), right.clone()))
+            == Some(true)
+            || self.has_indexed_pointer_equality_path(left, right)
+    }
+
+    /// Whether a recorded separation between these ranges contradicts pointer
+    /// equalities now known in this context. Separation is path evidence, so
+    /// an entry-time fact is usable only while the ranges it names still miss
+    /// each other. When their bases are proven equal, decide overlap in bytes;
+    /// unknown bounds fail closed because they cannot validate the separation.
+    pub(in crate::kernel) fn memory_ranges_overlap_after_base_equality(
+        &self,
+        left: &CMemoryRange,
+        right: &CMemoryRange,
+    ) -> bool {
+        // A separation between ranges already written against the exact same
+        // base was not made stale by a later alias. Keep that range authority;
+        // the check here is only for formerly distinct base spellings.
+        if left.base() == right.base()
+            || !self.pointers_proven_equal_ignoring_memory_separation(left.base(), right.base())
+        {
+            return false;
+        }
+        if left.element_width() == right.element_width()
+            && (self.decide(&ConditionTerm::signed_less_equal(
+                left.end().clone(),
+                right.start().clone(),
+            )) == Some(true)
+                || self.decide(&ConditionTerm::signed_less_equal(
+                    right.end().clone(),
+                    left.start().clone(),
+                )) == Some(true))
+        {
+            return false;
+        }
+        let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
+            signed_bitvector_constant(left.start()),
+            signed_bitvector_constant(left.end()),
+            signed_bitvector_constant(right.start()),
+            signed_bitvector_constant(right.end()),
+        ) else {
+            return true;
+        };
+        if left_start >= left_end || right_start >= right_end {
+            return false;
+        }
+        let left_width = i64::from(left.element_width());
+        let right_width = i64::from(right.element_width());
+        let Some(left_start) = left_start.checked_mul(left_width) else {
+            return true;
+        };
+        let Some(left_end) = left_end.checked_mul(left_width) else {
+            return true;
+        };
+        let Some(right_start) = right_start.checked_mul(right_width) else {
+            return true;
+        };
+        let Some(right_end) = right_end.checked_mul(right_width) else {
+            return true;
+        };
+        left_start < right_end && right_start < left_end
+    }
+
+    pub(in crate::kernel) fn pointer_overlaps_range_after_path_equality(
+        &self,
+        pointer: &Pointer,
+        range: &CMemoryRange,
+    ) -> bool {
+        if pointer_in_memory_range_shallow_with_facts(pointer, range, self) {
+            return true;
+        }
+        if !self.pointers_proven_equal_ignoring_memory_separation(pointer, range.base()) {
+            return false;
+        }
+        let (Some(start), Some(end)) = (
+            signed_bitvector_constant(range.start()),
+            signed_bitvector_constant(range.end()),
+        ) else {
+            return true;
+        };
+        start <= 0 && 0 < end && range.element_width() > 0
+    }
+
+    pub(in crate::kernel) fn resource_separation_conflicts_with_equalities(
+        &self,
+        left: &CResource,
+        right: &CResource,
+    ) -> bool {
+        match (left, right) {
+            (CResource::Memory(left), CResource::Memory(right)) => {
+                self.memory_ranges_overlap_after_base_equality(left, right)
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn proves_resource_separate(&self, left: &CResource, right: &CResource) -> bool {
         self.proves_resource_separate_inner(left, right)
     }
 
     fn proves_resource_separate_inner(&self, left: &CResource, right: &CResource) -> bool {
+        if self.resource_separation_conflicts_with_equalities(left, right) {
+            return false;
+        }
+        // Iterated ownership is separate from a range its elements provably
+        // miss: another block, or outside the span of every element. One
+        // decision, whatever the index range's size; a range that might hold
+        // an element is never proved separate.
+        match (left, right) {
+            (CResource::Iterated(iterated), CResource::Memory(range))
+            | (CResource::Memory(range), CResource::Iterated(iterated)) => {
+                return crate::kernel::iterated::iterated_separate_from_range(
+                    iterated, range, self,
+                );
+            }
+            (CResource::Iterated(_), _) | (_, CResource::Iterated(_)) => return false,
+            _ => {}
+        }
         if let (CResource::Memory(left), CResource::Memory(right)) = (left, right)
             && left.base().blocks_proven_distinct(right.base())
         {
@@ -1805,10 +2096,11 @@ impl PureFactContext {
         }
 
         let separation_fact_entails = |fact_left: &CResource, fact_right: &CResource| {
-            self.proves_resource_contains_inner(fact_left, left)
+            (self.proves_resource_contains_inner(fact_left, left)
                 && self.proves_resource_contains_inner(fact_right, right)
                 || self.proves_resource_contains_inner(fact_left, right)
-                    && self.proves_resource_contains_inner(fact_right, left)
+                    && self.proves_resource_contains_inner(fact_right, left))
+                && !self.resource_separation_conflicts_with_equalities(fact_left, fact_right)
         };
         // For a memory-memory query, memory-memory separation facts live in
         // the block-pair index and are consulted by the indexed pass below;
@@ -2041,6 +2333,9 @@ impl PureFactContext {
             let Proposition::CResourceSeparate { left, right } = proposition else {
                 continue;
             };
+            if self.resource_separation_conflicts_with_equalities(left, right) {
+                continue;
+            }
 
             if self.proves_resource_contains(right, &CResource::Memory(other.clone()))
                 && let CResource::Memory(left) = left
@@ -2412,7 +2707,7 @@ impl PureFactContext {
                             left: CResource::Memory(left_range),
                             right: CResource::Memory(right_range),
                         } => {
-                            memory_range_shallowly_contained_with_facts(range, left_range, self)
+                            (memory_range_shallowly_contained_with_facts(range, left_range, self)
                                 && (pointer_in_memory_range_shallow_with_facts(
                                     pointer,
                                     right_range,
@@ -2450,7 +2745,11 @@ impl PureFactContext {
                                 || self.pointer_directly_in_memory_range(pointer, right_range)
                                     && memory_range_contained_for_memory_resolution(
                                         range, left_range, self,
-                                    )
+                                    ))
+                                && !self.memory_ranges_overlap_after_base_equality(
+                                    left_range,
+                                    right_range,
+                                )
                         }
                         _ => false,
                     })
@@ -2687,7 +2986,7 @@ impl PureFactContext {
         if range.base.blocks_proven_distinct(pointer) {
             return true;
         }
-        if pointer_in_memory_range_shallow_with_facts(pointer, range, self) {
+        if self.pointer_overlaps_range_after_path_equality(pointer, range) {
             return false;
         }
         let owned_member_holds_pointer = |resources: &ResourceContext| {
@@ -2720,10 +3019,13 @@ impl PureFactContext {
                     left: CResource::Memory(left_range),
                     right: CResource::Memory(right_range),
                 } => {
-                    memory_range_shallowly_contained_with_facts(range, left_range, self)
+                    (memory_range_shallowly_contained_with_facts(range, left_range, self)
                         && pointer_in_memory_range_shallow_with_facts(pointer, right_range, self)
                         || memory_range_shallowly_contained_with_facts(range, right_range, self)
-                            && pointer_in_memory_range_shallow_with_facts(pointer, left_range, self)
+                            && pointer_in_memory_range_shallow_with_facts(
+                                pointer, left_range, self,
+                            ))
+                        && !self.memory_ranges_overlap_after_base_equality(left_range, right_range)
                 }
                 _ => false,
             })
@@ -2929,4 +3231,58 @@ impl PureFactContext {
             },
         )
     }
+}
+
+/// The owned members that contain a store's written bytes; see
+/// [`PureFactContext::owned_store_footprint`].
+pub(in crate::kernel) struct OwnedStoreFootprint<'a> {
+    members: Vec<(&'a ResourceContext, u64, &'a CMemoryRange)>,
+}
+
+/// The element index of `pointer` from `base` when `pointer` is `base`
+/// itself or `base` plus one displacement: the syntactic branches of the
+/// proof-aware index, with no offset comparison that could fail slowly.
+fn structural_element_index(
+    pointer: &Pointer,
+    base: &Pointer,
+    element_width: u32,
+    assumptions: &PureFactContext,
+) -> Option<Bitvector32Term> {
+    crate::instrumentation::record_deterministic_work(1);
+    if pointer.block != base.block {
+        return None;
+    }
+    if pointer.offset == base.offset {
+        return Some(Bitvector32Term::Constant(0));
+    }
+    let PointerOffsetTerm::Add(left, right) = &pointer.offset else {
+        return None;
+    };
+    if left.as_ref() != &base.offset {
+        return None;
+    }
+    element_index_from_offset_with_facts(right, element_width, assumptions)
+}
+
+/// The bases an owned range could be stated over for an access at `pointer`:
+/// the pointer itself and each left operand down its offset's additive spine.
+///
+/// Pointer arithmetic and member access both build `Add(base, displacement)`
+/// (`PointerOffsetTerm::add`), so `p->f` is `Add(p, f)`, `p[i]` is
+/// `Add(p, i·w)`, and `p->a[i]` is `Add(Add(p, a), i·w)`: the spine walks back
+/// through every one of them. A range stated over a base spelled some other
+/// way is simply not found here; the caller then asks its full ladder, so a
+/// miss costs time and never a decision. Linear in the offset's size.
+fn additive_base_spellings(pointer: &Pointer) -> Vec<Pointer> {
+    let mut spellings = vec![pointer.clone()];
+    let mut offset = &pointer.offset;
+    while let PointerOffsetTerm::Add(left, _) = offset {
+        crate::instrumentation::record_deterministic_work(1);
+        spellings.push(Pointer {
+            block: pointer.block.clone(),
+            offset: left.as_ref().clone(),
+        });
+        offset = left;
+    }
+    spellings
 }

@@ -2130,3 +2130,50 @@ fn pointer_field_synthesis_through_cast_and_local_selects_current_value() {
         );
     }
 }
+
+/// A struct-pointer local and the array one of its fields points to are two
+/// external pointers in one symbolic block. The array cell `occupied + k`
+/// has a numeric element offset from the local, but `arena[occupied + k -
+/// arena]` is not how the C names it: it reads the local as an `int32` array,
+/// and it lowers to a different address term, so a bundle rendered that way
+/// no longer lowers back to its goal. Reduced from the arena prefix free's
+/// occupancy-clearing loop, whose invariant closer `both` refused.
+#[test]
+fn a_local_indexes_only_addresses_formed_from_it() {
+    let scaled = |variable: u64| PointerOffsetTerm::Int32Scaled {
+        value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+        byte_width: 4,
+    };
+    let external = |offset: PointerOffsetTerm| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset,
+    };
+    let (arena, occupied, index) = (200_000, 200_001, 200_002);
+    let state = CState::new().with_local(
+        "arena",
+        CValue::typed_pointer(external(scaled(arena)), CType::Int32Pointer),
+    );
+    let unrelated_cell = external(PointerOffsetTerm::Add(
+        Box::new(scaled(occupied)),
+        Box::new(scaled(index)),
+    ));
+    assert_eq!(
+        synthesize_local_indexed_int32_load(&unrelated_cell, &[], &[], &state, &BTreeMap::new()),
+        None,
+        "a cell addressed from another pointer is not an index of the local"
+    );
+    let own_cell = external(PointerOffsetTerm::Add(
+        Box::new(scaled(arena)),
+        Box::new(scaled(index)),
+    ));
+    let bound = BTreeMap::from([(Variable(index), "k".to_string())]);
+    let Some(ContractExpression::Index(base, _)) =
+        synthesize_local_indexed_int32_load(&own_cell, &[], &[], &state, &bound)
+    else {
+        panic!("a cell addressed from the local is its index");
+    };
+    assert_eq!(
+        *base,
+        ContractExpression::CFragment(CExpression::Variable("arena".to_string()))
+    );
+}

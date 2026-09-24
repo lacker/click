@@ -359,3 +359,274 @@ fn field_endpoint_fold_and_unfold_ignore_unrelated_resources() {
     }
     assert_constant_plus_log_growth("field-endpoint fold and unfold", &samples, 16.0);
 }
+
+/// A field-bearing `window(p)` whose unconditional, unmatched body owns
+/// `cells` one-element ranges of `p`, the first starting at its own `start`
+/// field: the body shape whose cells a folded instance publishes as read
+/// authority to its sibling contract clauses.
+fn window_definitions(cells: u32) -> Vec<CCompositeResourceDefinition> {
+    let schema =
+        ResourceFieldSchema::new(vec![("start".into(), ResourceFieldType::C(CType::Int32))])
+            .unwrap();
+    let contains = (0..cells)
+        .map(|cell| {
+            CResourceSpec::owned_memory(CMemorySegment {
+                base: c_variable("p"),
+                start: if cell == 0 {
+                    c_variable("start")
+                } else {
+                    c_int32_literal(cell)
+                },
+                end: c_int32_literal(cell + 1),
+                element_width: 4,
+                guard: None,
+            })
+        })
+        .collect();
+    vec![
+        CCompositeResourceDefinition::new(
+            "window",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            contains,
+            vec![],
+        )
+        .with_instance_schema(Some(schema)),
+    ]
+}
+
+fn window_instance(block: u64, identity: u64) -> CResourceFact {
+    CResourceFact::own(CResource::Instance(
+        ResourceInstance::new(
+            Variable(identity),
+            "window".into(),
+            vec![CValue::pointer(heap_base(block)).into()].into(),
+            ResourceFieldSchema::new(vec![("start".into(), ResourceFieldType::C(CType::Int32))])
+                .unwrap(),
+            vec![int32(0).into()].into(),
+        )
+        .unwrap(),
+    ))
+}
+
+/// The views a section's own folded field-bearing instance publishes cost
+/// that instance's body: the frame the section is evaluated against may hold
+/// any number of unrelated instances of the same family, each with a body
+/// of its own, and none of them is evaluated.
+#[test]
+fn unmatched_instance_body_views_ignore_unrelated_instances() {
+    let definitions = window_definitions(4);
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let frame = ResourceContext::new().unchecked_with_facts((0..size).flat_map(|index| {
+            [
+                owned_range(heap_base(index as u64 + 1), 0, 4),
+                window_instance(index as u64 + 1, TARGET_HEAP + 1 + index as u64),
+            ]
+        }));
+        let state = CState::new().with_resource_context(frame);
+        let target = window_instance(TARGET_HEAP, 2 * TARGET_HEAP);
+        let assumptions = PureFactContext::new();
+        let (supply, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::functions::resource_clause_section_supply(
+                &state,
+                std::slice::from_ref(&target),
+                &definitions,
+                &assumptions,
+            )
+        });
+        let published = supply
+            .facts()
+            .iter()
+            .filter(|fact| {
+                matches!(fact, CResourceFact::View(CResource::Memory(range))
+                    if range.base().block == PointerBlock::Heap(TARGET_HEAP))
+            })
+            .count();
+        assert_eq!(published, 4, "the target body's four cells are published");
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("unmatched instance body views", &samples, 4.0);
+}
+
+/// The same publication grows with the instance's own body: one evaluation
+/// of each owned clause, and nothing more.
+#[test]
+fn unmatched_instance_body_views_are_linear_in_the_body() {
+    // Smaller than `SIZES`: the charged work is linear in the body, but the
+    // wall time of publishing a body of 1024 owned cells is tens of seconds
+    // in a debug build, which points at uncharged superlinear work somewhere
+    // below this call (resource normalization of many same-block ranges is
+    // the suspect) and would make this test time out under gate load. The
+    // linearity claim is the same at these sizes.
+    const BODY_SIZES: [usize; 4] = [4, 16, 64, 256];
+    let mut samples = Vec::new();
+    for size in BODY_SIZES {
+        let definitions = window_definitions(size as u32);
+        let state = CState::new();
+        let target = window_instance(TARGET_HEAP, 2 * TARGET_HEAP);
+        let assumptions = PureFactContext::new();
+        let (supply, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::functions::resource_clause_section_supply(
+                &state,
+                std::slice::from_ref(&target),
+                &definitions,
+                &assumptions,
+            )
+        });
+        let published = supply
+            .facts()
+            .iter()
+            .filter(|fact| matches!(fact, CResourceFact::View(CResource::Memory(_))))
+            .count();
+        assert_eq!(published, size, "every owned cell of the body is published");
+        samples.push((size, work));
+    }
+    eprintln!("unmatched instance body views by body size (N, units): {samples:?}");
+    let (smallest, base_work) = samples[0];
+    let per_clause = base_work as f64 / smallest as f64;
+    for (size, work) in &samples {
+        let allowed = 2.0 * per_clause * *size as f64 + 8.0;
+        assert!(
+            (*work as f64) <= allowed,
+            "a {size}-clause body charged {work} units, above {allowed:.1} (linear in the \
+             body): {samples:?}"
+        );
+    }
+}
+
+fn variable_range(base: Pointer, start: Bitvector32Term, end: Bitvector32Term) -> CResourceFact {
+    CResourceFact::own_memory(CMemoryRange::new(base, start, end))
+}
+
+fn int32_equal(left: u64, right: u64) -> ConditionTerm {
+    ConditionTerm::Bitvector32Equal(
+        Box::new(Bitvector32Term::Variable(Variable(left))),
+        Box::new(Bitvector32Term::Variable(Variable(right))),
+    )
+}
+
+/// Two held ranges that abut only by a proved endpoint equality merge in
+/// normalization, and finding the partner costs the endpoint's equality
+/// class: unrelated equalities among other values add no work.
+#[test]
+fn joining_ranges_by_a_proved_endpoint_ignores_unrelated_equalities() {
+    let (end, start) = (3 * TARGET_HEAP, 3 * TARGET_HEAP + 1);
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let frame = ResourceContext::new().unchecked_with_facts([
+            variable_range(
+                heap_base(TARGET_HEAP),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Variable(Variable(end)),
+            ),
+            variable_range(
+                heap_base(TARGET_HEAP),
+                Bitvector32Term::Variable(Variable(start)),
+                Bitvector32Term::Constant(16),
+            ),
+        ]);
+        let assumptions = (0..size as u64).fold(
+            PureFactContext::new().assume_condition(int32_equal(end, start), true),
+            |facts, index| {
+                facts.assume_condition(
+                    int32_equal(4 * TARGET_HEAP + 2 * index, 4 * TARGET_HEAP + 2 * index + 1),
+                    true,
+                )
+            },
+        );
+        // The premise set's lazy indexes (the equality graph and the ones
+        // any normalization consults) are built once per premise set and
+        // shared by every later query. Warm them on an unrelated merge of
+        // identically spelled endpoints so the measurement below is the
+        // join alone.
+        let warm = ResourceContext::new().unchecked_with_facts([
+            variable_range(
+                heap_base(TARGET_HEAP + 1),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Variable(Variable(end)),
+            ),
+            variable_range(
+                heap_base(TARGET_HEAP + 1),
+                Bitvector32Term::Variable(Variable(end)),
+                Bitvector32Term::Constant(16),
+            ),
+        ]);
+        assert_eq!(warm.normalized(&assumptions).facts().len(), 1);
+        assert!(assumptions.bitvector_terms_equal_from_facts(
+            &Bitvector32Term::Variable(Variable(end)),
+            &Bitvector32Term::Variable(Variable(start)),
+        ));
+        let (normalized, work) = crate::instrumentation::measure_deterministic_work(|| {
+            frame.clone().normalized(&assumptions)
+        });
+        assert_eq!(
+            normalized.facts(),
+            &[variable_range(
+                heap_base(TARGET_HEAP),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(16),
+            )],
+            "the two ranges join into one"
+        );
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("joining by a proved endpoint", &samples, 4.0);
+}
+
+/// A call that retires an allocation asks which resource the caller keeps
+/// could still refer to it. Only the kept facts that can name the retired
+/// block are candidates, and they come from the context's indexes, so kept
+/// ranges and instances elsewhere add no work: the answer costs the block's
+/// own candidates.
+#[test]
+fn retirement_stale_check_ignores_unrelated_kept_resources() {
+    let allocation = heap_base(TARGET_HEAP);
+    let bytes = Bitvector32Term::Constant(16);
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let unrelated = (0..size).flat_map(|index| {
+            [
+                owned_range(heap_base(index as u64 + 1), 0, 4),
+                owned_instance(TARGET_HEAP + 1 + index as u64),
+            ]
+        });
+        let kept = ResourceContext::new()
+            .unchecked_with_facts(unrelated.clone())
+            .unchecked_with_fact(owned_range(allocation.clone(), 4, 8));
+        let assumptions = PureFactContext::new();
+        let (stale, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::functions::caller_resource_left_stale_by_retirement(
+                &ResourceContext::new(),
+                &kept,
+                &allocation,
+                &bytes,
+                &assumptions,
+            )
+            .cloned()
+        });
+        assert_eq!(
+            stale, None,
+            "a kept range past the allocation's end is separate from it"
+        );
+        samples.push((size, work));
+
+        // The same frame keeping a range inside the allocation is refused,
+        // so the measurement above is of a check that can say no.
+        let overlapping = ResourceContext::new()
+            .unchecked_with_facts(unrelated)
+            .unchecked_with_fact(owned_range(allocation.clone(), 2, 3));
+        assert_eq!(
+            crate::kernel::functions::caller_resource_left_stale_by_retirement(
+                &ResourceContext::new(),
+                &overlapping,
+                &allocation,
+                &bytes,
+                &assumptions,
+            ),
+            Some(&owned_range(allocation.clone(), 2, 3)),
+        );
+    }
+    assert_constant_plus_log_growth("retirement stale check", &samples, 4.0);
+}

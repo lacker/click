@@ -669,8 +669,47 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             } else {
                 (pointer.clone(), value.clone())
             };
+            // A store to a guard cell of an iterated ownership fact is
+            // permitted only where the fact claims nothing at that index
+            // (`crate::kernel::iterated`); the plan respells the fact so the
+            // write itself names a hole, and settles the hole afterwards.
+            let iterated_plan = match crate::kernel::plan_iterated_guard_store(
+                state,
+                &written_pointer,
+                &written_value,
+                &effective_assumptions,
+            ) {
+                Ok(plan) => plan,
+                Err(message) => {
+                    return Ok(vec![CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
+                        outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                            message,
+                        )),
+                        facts,
+                        obligations,
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
+                    }]);
+                }
+            };
             let before_memory = state.memory.clone();
             let mut state = state.clone();
+            if !iterated_plan.is_empty() {
+                match iterated_plan.before_store(state.resources().clone()) {
+                    Ok(resources) => state = state.with_resource_context(resources),
+                    Err(message) => {
+                        return Ok(vec![CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
+                            outcome: CStatementOutcome::RuntimeError(
+                                CRuntimeError::FunctionContract(message),
+                            ),
+                            facts,
+                            obligations,
+                            loan_evidence: empty_checked_loan_evidence_sequence(),
+                        }]);
+                    }
+                }
+            }
             let next_memory = state
                 .memory
                 .clone()
@@ -684,7 +723,23 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     written_value.clone(),
                     &effective_assumptions,
                 );
-            state.set_memory(next_memory);
+            state.set_memory_with_checked_stores(next_memory, true);
+            if !iterated_plan.is_empty() {
+                match iterated_plan.after_store(state.resources().clone()) {
+                    Ok(resources) => state = state.with_resource_context(resources),
+                    Err(message) => {
+                        return Ok(vec![CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
+                            outcome: CStatementOutcome::RuntimeError(
+                                CRuntimeError::FunctionContract(message),
+                            ),
+                            facts,
+                            obligations,
+                            loan_evidence: empty_checked_loan_evidence_sequence(),
+                        }]);
+                    }
+                }
+            }
             if let Some(pending) = &state.pending_thread_create {
                 state.pending_thread_create = Some(pending.with_delta(
                     super::super::threads::PendingThreadMemoryDelta::Store {
@@ -2134,6 +2189,19 @@ fn live_thread_return_refusal() -> CStatementOutcome {
     ))
 }
 
+fn has_live_mutex(state: &CState) -> bool {
+    state
+        .mutex_ledger
+        .as_ref()
+        .is_some_and(super::super::mutexes::MutexLedger::has_any_mutex)
+}
+
+fn live_mutex_return_refusal() -> CStatementOutcome {
+    CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+        "a function cannot return with an initialized modeled mutex; destroy it first".to_string(),
+    ))
+}
+
 fn execute_c_return_expression_paths(
     state: &CState,
     expression: &CExpression,
@@ -2176,6 +2244,8 @@ fn execute_c_return_expression_paths(
                     };
                     let outcome = if has_live_thread_completion(&resolved_state) {
                         live_thread_return_refusal()
+                    } else if has_live_mutex(&resolved_state) {
+                        live_mutex_return_refusal()
                     } else if resolved_state.memory.has_pending_heap_allocation() {
                         CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
                     } else {
@@ -2197,6 +2267,8 @@ fn execute_c_return_expression_paths(
             CExpressionOutcome::Value(value) => {
                 let outcome = if has_live_thread_completion(state) {
                     live_thread_return_refusal()
+                } else if has_live_mutex(state) {
+                    live_mutex_return_refusal()
                 } else if state.memory.has_pending_heap_allocation() {
                     CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
                 } else {
@@ -2816,6 +2888,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
         CStatement::Return(CExpression::Value(CValue::Void)) => {
             let outcome = if has_live_thread_completion(state) {
                 live_thread_return_refusal()
+            } else if has_live_mutex(state) {
+                live_mutex_return_refusal()
             } else if state.memory.has_pending_heap_allocation() {
                 CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
             } else {
@@ -2843,6 +2917,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     CExpressionOutcome::Value(value @ CValue::Int32(_)) => {
                         if has_live_thread_completion(state) {
                             live_thread_return_refusal()
+                        } else if has_live_mutex(state) {
+                            live_mutex_return_refusal()
                         } else {
                             CStatementOutcome::Throw {
                                 value,

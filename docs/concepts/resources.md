@@ -226,6 +226,41 @@ transferred clause set opened by its definitions, so the caller needs no
 callee's own clauses cannot justify is refused at the callee's entry, before
 any call.
 
+A folded field-bearing instance supplies its sibling clauses the same way
+when its body is unconditional and unmatched. `arena_prefix_region(region)`
+carries the fields `start` and `end` and owns `object(region)`, so a contract
+that consumes `freed: arena_prefix_region(region)` may also consume
+`arena_prefix_state(region->arena)`: while the clauses are evaluated, the
+instance's body is evaluated once at its own fields and the cells it owns are
+published as views. Clause order does not matter, and the clauses a contract
+returns are read the same way: `owns st: arena_prefix_state(region->arena)`
+beside `owns r: arena_prefix_region(region)` returns `st` at the address `r`
+supplies, and contract certification reads a postcondition's cells inside
+the contract's folded instances, such as
+`result == region->arena->data[region->start + index]`, through the cells
+their bodies own. A guarded
+body publishes nothing, since its case is a proof obligation rather than a
+premise; a matched body publishes the arm its premises decide, described
+under [Modeled bodies and arm selection](#modeled-bodies-and-arm-selection);
+and a body with existential witnesses publishes nothing. Only the section's
+own clauses publish; the rest of the frame the section is evaluated against
+is never opened for this purpose.
+
+The publication is read authority and nothing more. The instance stays folded,
+so a store to a cell it owns is refused until an explicit `unfold` moves the
+cell into the proof state, and a cell the body does not own is not published
+at all. This publication belongs to the contract's own clauses at its entry
+and return; it is not one of the frontiers where a matched instance's arms
+are decided, so a loop head does not read through a folded field-bearing
+instance. The regressions are
+`mdtests/contract_owns_through_field_bearing_instance.md` (both clause
+orders), `mdtests/contract_returns_field_bearing_sibling.md` (both clause
+orders), `mdtests/call_through_field_bearing_sibling.md` (a caller applying
+such a contract), `mdtests/contract_postcondition_reads_through_field_bearing_instance.md`,
+`mdtests/arena_prefix_free_reads_region_arena.md`,
+`mdtests/contract_field_bearing_instance_views_grant_no_write.md`, and
+`mdtests/contract_field_bearing_instance_views_only_owned_cells.md`.
+
 One checked resource transition serves every way a contract is applied: a
 direct call, a call through a function pointer under a named contract, an
 explicit execution theorem, and independent certification. The transition
@@ -529,6 +564,12 @@ read as an observation supported by whatever holds that memory, and folding a
 unit places no hold. Lending a unit of a bodyless token population leaves the
 remaining units usable.
 
+A resource body may place `guarded_by object->mutex;` after any field
+declarations to identify the C mutex intended to guard the whole body. This
+spelling is reserved while the checked mutex protocol is being implemented:
+verification refuses the declaration rather than treating it as an ordinary
+resource or assuming that an unmodeled lock protects its facts.
+
 A contract clause speaks about parameters, so `consumes t: tree_at(root);`
 names the tree at the entry argument. These tactics are not contract clauses:
 they name the state the execution has reached. After `root = root->left` a
@@ -569,6 +610,53 @@ Declared resource identity respects proved equality of its arguments. This is
 important after reading a next pointer: if the context proves
 `node->next == tail`, ownership of `list(node->next)` is ownership of
 `list(tail)` as well.
+
+### Iterated guarded ownership
+
+A body can own one element per index of a bounded range, selected by a
+guard cell it owns. This is how an arena's occupancy map describes its free
+cells: the arena owns `occupied`, and owns `data[k]` exactly while
+`occupied[k] == 0`.
+
+<!-- verified-example: mdtests/iterated_ownership_declaration.md -->
+```click
+resource arena_cells(data: int32*, occupied: int32*, capacity: int32) {
+    owns occupied[0..capacity];
+    forall (k: int32) where 0 <= k and k < capacity {
+        if occupied[k] == 0 {
+            owns data[k..k + 1];
+        }
+    }
+}
+```
+
+The clause is a single resource fact, not `capacity` facts. The invariant it
+keeps is simple to state: at every fold, the fact holds exactly the elements
+whose guard is true in the current memory. Everything else follows from
+keeping that invariant with local steps.
+
+- `take(data[j..j + 1])` moves element `j` out while its guard is known true;
+  the fact then makes no claim about `j`, and the element is ordinary owned
+  memory that C can write.
+- A C store to a guard cell is allowed only where the fact claims nothing:
+  at an index taken out, whose guard is known false, or whose element the
+  context owns outright. Marking a taken-out cell occupied (`occupied[j] =
+  1`) closes the gap, because the guard is now false and the fact owes
+  nothing for `j`. Clearing a cell whose element the caller owns
+  (`occupied[j] = 0`) opens one, which `give(data[j..j + 1])` closes by moving
+  the element back.
+- `gather` and `scatter` convert between the fact and the range its elements
+  cover when a quantified fact decides every guard, which is what an
+  initializer that zeroes the map needs.
+
+No step visits the range. `take` reads one guard cell; a loop that claims a
+run of `M` cells does `M` such steps; folding and unfolding the declaring
+resource move one fact. Because the free cells are simply the cells whose
+flag is clear, freeing two regions and reusing them for a larger run needs no
+merge step (`mdtests/iterated_ownership_coalescing.md`). The language
+reference lists the declaration rules and the exact step conditions under
+[Iterated guarded
+ownership](../reference/language/index.md#iterated-guarded-ownership).
 
 ### Fields that choose cells
 
@@ -1002,6 +1090,10 @@ Click implements:
 - composite resources with explicit `unfold(resource)` and
   `fold(resource)` tactics, including composition over other declared
   resources,
+- iterated guarded ownership in composite bodies, one fact for a bounded
+  family of elements selected by owned guard cells, with checked `take`,
+  `give`, `gather`, and `scatter` steps and a store rule for the guard
+  cells,
 - one-step fact views for folded composite resources, plus
   `observe(resource)` tactics that explicitly record fact-view projection
   without exposing contained owned resource facts,

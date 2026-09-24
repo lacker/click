@@ -3,7 +3,7 @@
 
 use sha2::{Digest, Sha256};
 
-/// Retained identity of the selected create/join declarations and trusted
+/// Retained identity of the selected pthread declarations and trusted
 /// modeled specification. A verifier attaches this only after checking
 /// declaration provenance and call shapes.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -14,6 +14,10 @@ pub struct ModeledPthreadBinding {
     pub specification_digest: [u8; 32],
     pub create_name: &'static str,
     pub join_name: &'static str,
+    pub mutex_init_name: &'static str,
+    pub mutex_lock_name: &'static str,
+    pub mutex_unlock_name: &'static str,
+    pub mutex_destroy_name: &'static str,
     pub requires_null_attributes: bool,
     pub requires_direct_worker: bool,
     pub requires_null_join_result: bool,
@@ -23,7 +27,7 @@ impl ModeledPthreadBinding {
     pub fn builtin() -> Self {
         Self {
             target: super::target::CTarget::X86_64LinuxUserspace,
-            specification_version: 1,
+            specification_version: 2,
             header_digest: Sha256::digest(include_str!("modeled_pthread.h").as_bytes()).into(),
             specification_digest: Sha256::digest(
                 include_str!("modeled_pthread_spec.md").as_bytes(),
@@ -31,6 +35,10 @@ impl ModeledPthreadBinding {
             .into(),
             create_name: "pthread_create",
             join_name: "pthread_join",
+            mutex_init_name: "pthread_mutex_init",
+            mutex_lock_name: "pthread_mutex_lock",
+            mutex_unlock_name: "pthread_mutex_unlock",
+            mutex_destroy_name: "pthread_mutex_destroy",
             requires_null_attributes: true,
             requires_direct_worker: true,
             requires_null_join_result: true,
@@ -50,13 +58,17 @@ impl ModeledPthreadBinding {
     pub fn identity(&self) -> String {
         let mut hasher = Sha256::new();
         for part in [
-            b"click-modeled-pthread-binding-v1".as_slice(),
+            b"click-modeled-pthread-binding-v2".as_slice(),
             self.target.name().as_bytes(),
             &self.specification_version.to_be_bytes(),
             &self.header_digest,
             &self.specification_digest,
             self.create_name.as_bytes(),
             self.join_name.as_bytes(),
+            self.mutex_init_name.as_bytes(),
+            self.mutex_lock_name.as_bytes(),
+            self.mutex_unlock_name.as_bytes(),
+            self.mutex_destroy_name.as_bytes(),
             &[
                 self.requires_null_attributes as u8,
                 self.requires_direct_worker as u8,
@@ -106,7 +118,7 @@ impl CThreadRuntime {
         match self {
             Self::None => None,
             Self::ModeledPthread => Some(
-                "modeled-pthread v1: pthread_create/pthread_join obey the trusted Click create/join specification; native runtime binding unvalidated",
+                "modeled-pthread v2: pthread create/join and single-thread mutex calls obey the trusted Click specification; native runtime binding unvalidated",
             ),
         }
     }

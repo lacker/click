@@ -1751,6 +1751,9 @@ pub(super) fn c_function_contract_certification_assumptions(
                     CResource::Composite { name, .. } => format!("composite {name}"),
                     CResource::Token { name, .. } => format!("token {name}"),
                     CResource::Instance(instance) => format!("instance {}", instance.name()),
+                    CResource::Iterated(iterated) => {
+                        format!("iterated ownership of {}", iterated.owner())
+                    }
                 };
                 format!("{index}: {kind}")
             })
@@ -1781,7 +1784,7 @@ pub(super) fn c_function_contract_certification_assumptions(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) | CResource::Instance(_) => continue,
+            CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => continue,
         };
         let Some(count) = entry_state.counted_population(name, arguments) else {
             continue;
@@ -2132,12 +2135,12 @@ pub fn prove_c_function_satisfies_specification_from_symbolic_path(
     let conclusion = if verifies {
         Proposition::CFunctionPartiallySatisfiesSpecification {
             function,
-            specification,
+            specification: Box::new(specification),
         }
     } else {
         Proposition::CFunctionSatisfiesSpecification {
             function,
-            specification,
+            specification: Box::new(specification),
         }
     };
     let proposition = requires

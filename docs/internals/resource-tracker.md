@@ -200,7 +200,7 @@ established.
 | `BlockDeclared` | separate under the extended-bridging gate: it writes nothing | separate when the declared object is proven distinct: it has its own `blocks` key, so this block's extent is the entry it was | separate: it writes nothing |
 | `HeapAllocationPending` | separate under the extended-bridging gate | separate: a request with no address yet records nothing a read of a block consults | separate: it writes nothing |
 | `ContractAllocationClaimsChanged` | separate under the extended-bridging gate | **stops** | separate: it writes nothing |
-| `ContractAllocationRetired` | separate only when the possibly released allocation misses the cell | separate when the allocation's object is proven distinct | separate when its bytes miss every range |
+| `ContractAllocationRetired` | separate when the possibly released allocation misses the cell, or, on every path including naming, when the retiring call's own havoc covers the whole allocation | separate when the allocation's object is proven distinct | separate when its bytes miss every range |
 | `CellsForgotten` | separate under the extended-bridging gate | **stops**: the state is the same, the cell map is not | separate: it writes nothing |
 | `HeapAllocated` | separate under the extended-bridging gate when the block differs | separate when the fresh object is proven distinct | separate: a stated footprint names objects that already existed, so the fresh one's bytes are in no range of it |
 | `LocalLifetimeEnded` | separate under the extended-bridging gate, on general distinctness | separate when the retired object is proven distinct | separate when the retired object is proven distinct from the object every range is in |
@@ -222,6 +222,40 @@ initialization, and zeroed status under equal pointer spellings, while leaving
 definite deallocation unasserted. The edge names the allocation and its extent,
 so a later memory proof may cross it only for storage shown separate from that
 possible release.
+
+The call rule reads the consumed resources, and so the retired allocation, at
+the call's entry: the post-call value of a pointer field the callee owned is a
+fresh load, and a callee that frees `box->data` and re-points it at memory the
+caller keeps would make a post-call reading retire the wrong object. A kept
+owned memory fact then needs no written separation from the retired
+allocation when one owned memory fact the caller lent covers the allocation's
+whole byte range: the two were held at once, and owned memory is exclusive
+within one valid composition. The same holds for a kept view of exactly the
+bytes of a kept owned range (the view a caller holds of a descriptor a callee
+returned), found by one exact lookup of that owner. Any other kept view, a
+kept composite, or any kept fact when no lent owner covers the allocation
+still needs a separation the path facts prove
+(`caller_resource_left_stale_by_retirement` in `src/kernel/functions.rs`).
+
+Reading at entry makes every consume/produce of an allocation-bearing
+composite whose continuity the contract leaves open record a retirement right
+after the call's `CallHavoc`, followed by the returned claim. When one of that
+havoc's ranges covers the retired allocation by structure (the range starts at
+the allocation's base and spans at least its byte count), the retirement is
+transparent to cell values (`retirement_inside_its_call_havoc` in
+`src/kernel/resource_tracker/cell_source.rs`, hop
+`RetirementInsideItsCallHavoc`). It writes no byte, and the only reason a
+retirement stops a cell is that a later owner may reuse released addresses, so
+a load after it must not be named by a value from before the call. No byte of
+this allocation can reach one: every such byte lies in a range of the havoc
+just below, and a walk crosses a havoc only on a proof that the cell misses
+every range, so it stops at the havoc and names the call's post-call value. The
+retirement keeps that havoc's forget mark for the same reason
+(`retirement_keeps_its_call_havocs_forget_mark`), so the content-addressed
+projections load naming interns agree with the walk. Without this, the
+produced composite's fields were named at the havoc (where the return
+resources are evaluated) and later reads at the retirement, and every further
+reallocating call added one nested heap-extent proof to relate the two.
 
 Where the cell column names a gate, the answer is one a scope decides rather
 than the edge. `extended_dag_bridging_active` and `explicit_dag_check_active`
@@ -397,12 +431,12 @@ edge exists. Each decides the same abstract question as the matching arm of
 
 | Site | Class | Why it differs |
 | --- | --- | --- |
-| `call_havoc_keeps_cell` `src/kernel/primitives/memory_state.rs` | disagrees | Keeps a cell on `local:` **or** `ranges_proven_disjoint_from_pointer`. The rule's `CallHavoc` arm has neither the `local:` disjunct nor the plain variant: it reads typed range evidence and the `_for_frame` expansion, which looks through composite definitions. Weaker in one direction, stronger in the other. The `local:` disjunct is sound only because a call's checked write set can never be based in a `local:` block — a write set is the callee's owned ranges resolved at the call site, and passing `&t` to a callee that owns `t[0..1]` is refused for want of `owns local:t@0[0..1]`, which is what enforces it today. |
+| `call_havoc_keeps_cell` `src/kernel/primitives/memory_state.rs` | disagrees | For ordinary cells, keeps a cell only when plain `ranges_proven_disjoint_from_pointer` proves the declared write set cannot reach it. A local cell whose block has a differently spelled write-range base is retained only when the pointer-equality graph does not resolve that base to the cell; this catches assumed aliases while preserving direct same-block construction transitions. The rule's `CallHavoc` arm uses typed range evidence and the `_for_frame` expansion, which looks through composite definitions, so the two remain weaker in different cases. |
 | `CMemory::with_call_memory_havoc`, `CMemory::matches_call_memory_havoc_result` | disagrees | The producer that applies a call's write set and the checker that re-derives what it would have written. Both now ask `call_havoc_keeps_cell`, so the retain rule is one function: the checker has to stay identical to the producer, not to the rule, and sharing the function is what makes that structural instead of remembered. |
 | `loan_preserving_havoc_keeps_cell` | disagrees | Preserved-block membership **or** bytes `LoanLedger::permits_memory_access` refuses a write through. An ownership question, with fail-open polarity, and no pointer-alias reasoning at all — a loop body or a joined branch arm may write through any pointer it can reach, so separation has nothing to decide. The width it asks the ledger about is the wider of the cell's value and the widest typed overlay recorded there (`union_overlay_widths`), and an unknown width fails closed. |
 | `CMemory::with_loop_memory_havoc_preserving_loans`, `CMemory::with_interface_memory_havoc_preserving_loans` | disagrees | The loop head and the interface join, which both ask `loan_preserving_havoc_keeps_cell`. Neither records an edge, so no rule covers either; what used to be the same retain written twice is now one function asked twice. |
 | `CMemory::forget_zeroed_allocations_written_by` | disagrees | The other half of a call's write set: it drops the zeroed reading of every allocation the declared ranges may reach, because "reads as zero where unwritten" is a claim about contents that an unseen write invalidates exactly as it invalidates a stored cell. It drops the status for the whole allocation rather than narrowing it to a prefix, since a write set bounds where a callee may store and not where it did. The rule has no arm for it: a zeroed reading is not a resource the tracker names. |
-| `CMemory::without_possible_aliasing_cells` | disagrees | A store's own eager drop, and the one site on this list that shares the rule's byte question: the address ladder is conjoined with `access_byte_overlap`, exactly as the rule's `Store` arm conjoins it, so a ladder that proves two addresses differ may stand in for byte separation only where the gap it establishes clears both accesses. The ladder itself is `pointers_proven_distinct_for_memory_resolution`, **or** `pointers_proven_disjoint_by_explicit_range_for_memory_resolution`, **or** `pointers_directly_disjoint_by_range`, **or** `owned_composition_store_separated_evidence`. The two range rungs are the cross-base pairs offset reasoning cannot decide and the byte question answers `Unknown` for; they are a range-index scan the rule's hot `Store` arm must not pay for. The last is shared with the rule's `Store` arm and the two transport sites, and it has to be here too: a cell this function drops is lost to every later route, because the two snapshots then differ at the read's own address. |
+| `CMemory::without_possible_aliasing_cells` | disagrees | A store's own eager drop, and the one site on this list that shares the rule's byte question: the address ladder is conjoined with `access_byte_overlap`, exactly as the rule's `Store` arm conjoins it, so a ladder that proves two addresses differ may stand in for byte separation only where the gap it establishes clears both accesses. Ahead of the ladder, and before `access_byte_overlap`, it asks ownership through the composition base index (`PureFactContext::access_owned_apart_from_store`, below); a cell ownership does not place goes down the ladder unchanged. The ladder itself is `pointers_proven_distinct_for_memory_resolution`, **or** `pointers_proven_disjoint_by_explicit_range_for_memory_resolution`, **or** `pointers_directly_disjoint_by_range`, **or** `owned_composition_store_separated_evidence`. The two range rungs are the cross-base pairs offset reasoning cannot decide and the byte question answers `Unknown` for; they are a range-index scan the rule's hot `Store` arm must not pay for. The last is shared with the rule's `Store` arm and the two transport sites, and it has to be here too: a cell this function drops is lost to every later route, because the two snapshots then differ at the read's own address. |
 | `CMemory::without_field_cells` | disagrees | Same-block equality and a constant byte interval. Across blocks it removes too little, which for a copy is the safe direction; a completeness difference only. |
 | `heap_allocation_may_contain_pointer`, `CMemory::freed_heap_allocation_may_contain` | disagrees | `base.block != pointer.block` answers "not contained", which is fail-open on a spelling. The rule's `HeapFreed` arm is two separation ladders instead. Reaching it needs a freed allocation whose base block is not proven distinct from a live cell's block. The second is the same test over every deallocated allocation, and it is what the zeroed drop, the availability check below and contract certification all read, so the spelling is at least in one place. |
 | loop frame assembly `src/kernel/loops.rs`, `collect_loop_effect_check_obligations`, the multi-exit join | disagrees | Each reinstates or drops cells against the loop's *stated* effect summaries rather than a recorded edge, with a hardcoded `local:` skip. |
@@ -800,6 +834,32 @@ stays off this path, which is what the comment on
 
 Cost: an emptiness gate first, then two block-bucket lookups per composition
 held, no pair materialization and no expansion.
+
+`CMemory::without_possible_aliasing_cells` also asks the same law *first*, in
+an indexed form. Every pointer parameter shares the one `ExternalArgument`
+block, so neither `AliasCandidates` nor the block-pair separation index
+narrows a store through one parameter, and every cached cell of every other
+parameter reaches the ladder, where the range rungs fail slowly: each failing
+search walks the composition's projected pairs, which grow with the square of
+the owned objects. So the store computes once which owned members hold its
+written bytes (`PureFactContext::owned_store_footprint`), and each cached cell
+then asks whether a *different* member of one of those compositions holds all
+of its bytes (`access_owned_apart_from_store`). Both lookups go through each
+composition's `memory_by_base` index under the additive base spellings of the
+address (`p`, `p + f`, `p + i·w` and their left spines), never a block
+bucket, and membership is the structural route only — base, or base plus
+one displacement — with the two endpoint bounds proved; the whole access must
+fit, not just its first element. The guards are the ones above: the two
+addresses must not be proven equal, and ranges whose base spellings were
+later proven equal must not overlap. A cell the rung does not place goes
+down the ladder unchanged, so a miss costs time and never a decision.
+`a_store_beside_owned_parameter_fields_is_linear_in_the_cached_cells`
+(`src/kernel/tests/memory_scaling_tests.rs`) is the regression: 96, 160,
+288, 544 units at 4, 8, 16, 32 cached parameter fields, where the ladder
+alone charged 376, 1508, 8732, 60940.
+`a_store_through_one_parameter_forgets_another_unless_ownership_separates_them`
+and `a_cell_straddling_two_owned_members_is_not_separated_from_either`
+(`src/kernel/tests/memory_reasoning_tests.rs`) are its attack set.
 `stores_beside_many_owned_ranges_scale_near_linearly`
 (`src/surface/tests/scaling_tests.rs`) is the deterministic regression: the
 query's own work over 2/4/8/16 stores is 9, 11, 15, 23 units.
@@ -880,6 +940,19 @@ contract's evaluated **clause list** — the `Vec<CCheckedResourceFact>` that
 `evaluate_function_resource_context_with_metadata` returns, one fact per
 written clause — never a context. That is the whole discriminator: a context
 holds the owner observation above, and the clause list does not.
+
+The resulting separation remains path evidence, not a permanent address fact.
+A later equality can make its two ranges overlap while the original
+`CResourceSeparate` proposition remains in the context. Before an indexed
+separation candidate can be used, `PureFactContext` now compares the ranges'
+current bases using path equalities that do not consult separation evidence,
+then checks their byte intervals; an overlapping or undecidable pair cannot
+justify separation. `StoreSeparatedRanges` evidence repeats that check when a
+retained hop is consumed. This breaks the circular case where the stale
+separation would otherwise veto the equality that invalidates it.
+`entry_separation_does_not_frame_a_store_after_its_bases_become_equal`
+(`src/kernel/tests/memory_dag_tests.rs`) pins both evidence production and
+rechecking of an already-retained hop.
 
 Four pairs it does not build:
 
@@ -979,10 +1052,160 @@ comparisons in `src/surface/diagnostics.rs` all compare block identities
 without deciding staleness. Two carry a residual risk worth naming:
 `may_refer_to_memory_block` compares a block by spelling before the proof-based
 allocation-separation check runs, so a caller resource spelled differently from
-a retired allocation is skipped rather than refused; and the
+a retired allocation is skipped rather than refused (the call rule draws the
+same selection from the resource indexes, through
+`ResourceContext::facts_that_may_refer_to_memory_block`, so its cost is the
+retired block's candidates and not the caller's whole frame); and the
 `held_child_witness` filter accepts `own.block != pointer.block` as "a
 different pointer" with no proof, which selects a witness rather than proving
 anything.
+
+## Iterated guarded ownership
+
+This section is the design record for the resource-body clause
+
+```text
+forall (k: int32) where lo <= k and k < hi {
+    if g[k] == v { owns base[s * k + a..s * k + b]; }
+}
+```
+
+and the kernel fact it lowers to. It belongs here because the one hard
+question about it is a version question: the guard is read against the
+*current* guard cells, so the fact's meaning changes whenever those cells do,
+and the kernel has to know exactly which transitions may change them.
+
+### The fact
+
+`CResource::Iterated(CIteratedMemory)` (`src/kernel/primitives/iterated.rs`)
+carries the element base and width, the constant stride and offsets, the two
+index bounds, the guard (cell base, cell type, `==` or `!=`, compared value),
+and a short list of *holes*: indices about which the fact currently makes no
+claim. Its denotation in memory `M` is the separating conjunction, over every
+`k` in `lo..hi` that is not a hole, of `base[s * k + a..s * k + b]` when
+`g[k] OP v` holds in `M` and of nothing otherwise. The name of the declaring
+resource travels with the fact for diagnostics and takes no part in its
+identity, so two definitions that declare the same clause over the same cells
+denote one holding.
+
+The family is exact-match (`IteratedResourceAlgebra`): two facts are the same
+when every term is equal or proved equal, holes in order. It never splits or
+joins, and it grants no access — a load or store needs an element taken out
+as ordinary memory, so no memory authority check ever reads the fact.
+
+### The invariant
+
+At every fold of the declaring resource the fact has no holes, so it holds
+exactly the elements whose guard is true. While the resource is folded its
+guard cells are inside it (validation requires the body to own every guard
+cell it reads), so nobody can write them and the fact unfolds meaning what it
+meant when it was folded.
+
+While the fact is unfolded, every operation preserves its denotation:
+
+- `take` requires the index in range, its guard known true, and the index
+  provably different from every hole; it adds the index as a hole and
+  composes the element as owned memory. Before, the fact held the element;
+  after, the element is held outright and the fact claims nothing there.
+- `give` requires a hole at the index and its guard known true, consumes the
+  element, and removes the hole.
+- `gather` and `scatter` require every guard decided one way by a quantified
+  fact, which the kernel instantiates once at a reserved arbitrary index under
+  the range hypotheses. With every guard true the fact is the covering range;
+  with every guard false it is empty. `gather` also requires the guard cells
+  to be owned, so the formed fact is as stable as a declared one.
+
+### The guard-store rule
+
+A C store to a guard cell at index `j` is permitted exactly when the fact
+claims nothing at `j` before the store: `j` is out of range, `j` is a hole,
+the guard at `j` is known false, or the element at `j` is owned outright in
+the same context. The last case needs no guard fact: a valid resource context
+is a partition, so a context that owns the element cannot also hold it inside
+the fact, and the fact therefore claims nothing at `j` whatever the cell
+says. That is what lets the free protocol clear a flag with no fact about it.
+
+`plan_iterated_guard_store` (`src/kernel/iterated.rs`) runs in the statement
+evaluator before the write. It makes `j` a hole for the write itself — so the
+write provably changes nothing the fact claims — and afterwards removes the
+hole when `j` is out of range or the stored value makes the guard known false,
+since excluding an index and including it with a false guard denote the same
+thing. A store that makes the guard true leaves the hole open; the element
+must come back through `give` before the next fold. Any other store is
+refused: at an index whose guard is true and whose element was not taken out,
+the fact would silently gain or lose a cell.
+
+Soundness rests on every write to the guard cells being one of these
+permitted stores or a transition that drops the fact:
+
+- The statement evaluator is the C store path, and it calls the planner. The
+  memory transition it then makes is marked as checked
+  (`CState::set_memory_with_checked_stores`).
+- Every other memory transition goes through `CState::set_memory`, whose
+  `invalidate_iterated_facts` walks the derivation steps between the two
+  snapshots, visiting only the facts filed under each written block. An
+  unchecked store keeps a fact only when it provably misses the guard block
+  or names a hole structurally; a call's havoc that may write the guard
+  cells, a free, and an ended lifetime drop it. Dropping loses ownership,
+  which is sound; keeping a claim that may have changed is not.
+- A loop-head havoc keeps the fact. The head is a generalization, not a
+  write: a loop that inherits the fact runs every body store through the
+  planner, and its back edge compares the fact like any other resource. A
+  loop that declares its own resources executes its body without the frame's
+  facts, so no body store meets the planner; the loop rule drops from the
+  frame any fact whose guard cells the loop may write
+  (`frame_out_iterated_facts_written_by_loop`).
+- `free` refuses while a fact refers to the freed block, because the fact is
+  indexed under both of its blocks and `facts_that_may_refer_to_memory_block`
+  reads that index.
+
+### Queries
+
+"Does the fact hold element `j`?" (`iterated_holds_element`) answers from the
+index's range membership, the holes, and the guard cell at `j`: yes, no, or
+*may hold* when the guard is not decided. A store is refused on *may hold*.
+"Is the fact separate from this range?" (`iterated_separate_from_range`)
+answers yes only for a range in another block or outside the span of every
+element; it is the resource-separation prover's answer for an iterated
+resource and never claims separation for a range that may hold an element.
+Neither query reads more than one guard cell or the fact's own terms.
+
+### Certificates, expansion, and cost
+
+Each step is recorded as `CheckedExecutionEvent::IteratedStep`, which retains
+its input state and fact context; trace checking applies the kernel step again
+and compares the result, as it does for a lifetime end. The store rule lives
+in the statement evaluator, so re-executing a statement re-applies it.
+Expansion prints the steps as written.
+
+`take` and `give` read one fact, one guard cell, and the fact's holes; a
+store reads the facts filed under its block; unfolding and folding the
+declaring resource move one fact. The deterministic regressions in
+`src/kernel/tests/iterated_ownership_tests.rs` hold the index range at 64,
+256, 1024, and 4096 cells: taking one element costs 14 units at every size,
+unfolding the declaring resource 39, a separation query nothing measurable,
+and a loop claiming `M` elements costs 40 units per element (1275, 2555, 5115,
+and 10235 for 32 to 256). The one linear scan is `gather`'s and `scatter`'s
+instantiation of the quantified guard fact, which reads the context's
+quantified facts once per step, as other quantified matching does.
+
+### Decisions this slice made
+
+- The steps are named `take`, `give`, `gather`, and `scatter`. `take` and
+  `give` name the element range itself rather than an index, and find their
+  fact by the element base.
+- An unguarded clause must own the one-cell element `base[k..k + 1]` and
+  lowers to `owns base[lo..hi]`; any other unguarded element is refused with
+  that spelling.
+- Guards compare `int32` cells with `==` or `!=`; an iterated clause owns one
+  element range per index; a body declares at most one iterated clause, and
+  match arms, contracts, and loop headers declare none.
+- A call that may write the guard cells drops the fact rather than being
+  refused; the loss surfaces at the next fold.
+- When an instance folds, an owned memory clause whose range is provably
+  empty is satisfied by nothing. A body such as `owns data[start..next]`
+  must fold at `next == start`; before this slice that needed an empty fact
+  left over from an earlier split.
 
 ## What stays out
 
@@ -1020,11 +1243,11 @@ the final answer there is open.
   not the two saved states the answer needs.
 - **From the map above** — the two duplicated retain closures are one function
   each now, `call_havoc_keeps_cell` and `loan_preserving_havoc_keeps_cell`, so
-  a producer and the checker that re-derives it can no longer drift apart by an
-  edit to one of them. What the map still calls *disagrees* is the difference
-  that is left: `call_havoc_keeps_cell` keeps a cell on a `local:` spelling or
-  plain range disjointness, while the rule's `CallHavoc` arm reads typed range
-  evidence and the `_for_frame` expansion. That one is a behaviour change
-  rather than a refactor, so it needs a regression in each direction — a
-  program the eager half keeps and the rule would not, and one the other way
-  round — before either side moves.
+  a producer and the checker that re-derives it can no longer drift apart by
+  an edit to one of them. `call_havoc_keeps_cell` now requires range-disjointness
+  evidence when a local cell has a differently spelled range base; direct
+  same-block construction transitions retain their existing behavior, while an
+  assumed-equal alternate spelling drops the cached cell.
+  The remaining *disagrees* entry is the difference between plain range
+  disjointness and the rule's typed range evidence plus `_for_frame` composite
+  expansion.

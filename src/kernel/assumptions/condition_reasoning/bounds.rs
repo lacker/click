@@ -16,7 +16,52 @@ thread_local! {
 
 const ORDER_FACTS_MEMO_LIMIT: usize = 20_000;
 
+thread_local! {
+    // How many lower-bound searches enclose the current one. Only the
+    // outermost search compares its term with every order fact; see
+    // `lower_bounds_for_search`.
+    static LOWER_BOUND_SEARCH_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Marks one lower-bound search as open for the searches its recursive
+/// `decide` calls start.
+struct LowerBoundSearch;
+
+impl LowerBoundSearch {
+    fn enter() -> (Self, bool) {
+        let outermost = LOWER_BOUND_SEARCH_DEPTH.with(|depth| {
+            let current = depth.get();
+            depth.set(current + 1);
+            current == 0
+        });
+        (Self, outermost)
+    }
+}
+
+impl Drop for LowerBoundSearch {
+    fn drop(&mut self) {
+        LOWER_BOUND_SEARCH_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    // Order facts the lower-bound search has compared with its term, so a
+    // regression can pin that unrelated facts are never visited.
+    static LOWER_BOUND_CANDIDATE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl PureFactContext {
+    #[cfg(test)]
+    pub(in crate::kernel) fn reset_lower_bound_candidate_visits() {
+        LOWER_BOUND_CANDIDATE_VISITS.with(|visits| visits.set(0));
+    }
+
+    #[cfg(test)]
+    pub(in crate::kernel) fn lower_bound_candidate_visits() -> usize {
+        LOWER_BOUND_CANDIDATE_VISITS.with(std::cell::Cell::get)
+    }
+
     pub(in crate::kernel) fn condition_order_facts(&self) -> std::rc::Rc<Vec<OrderFact>> {
         // Ambient scope id when live, content id otherwise — the same
         // hash-once-per-distinct-fact-set policy `decide` pays at its entry.
@@ -362,6 +407,78 @@ impl PureFactContext {
         }
     }
 
+    /// The lower bounds of `term` a lower-bound search may use, as
+    /// `(lower, strict)` for each true order fact `lower < term` (strict) or
+    /// `lower <= term`, in any of the written shapes (`<`, `<=`, `>`, `>=`,
+    /// or a refuted converse).
+    ///
+    /// Every signed-order fact is indexed at both endpoints, under the term
+    /// it wrote and under that term's canonical form
+    /// (`PureFactContext::signed_order_bounds`), so the recorded bounds cost
+    /// only the entries at `term`.
+    ///
+    /// A fact whose bounded endpoint is only *provably* equal to `term`
+    /// (neither syntactically nor canonically the same, such as one load read
+    /// at two snapshots) needs a proof-aware comparison with every ambient
+    /// order fact. The outermost search (`outermost`) still makes it; the
+    /// searches that its own `decide` calls start do not. Before, every level
+    /// of the recursion rescanned the whole fact set, so one search cost the
+    /// fact count to the power of the chain depth: in `examples/arena`'s
+    /// pipeline, one loadability check spent 96 seconds here. A chain whose
+    /// inner links are named only through such an equality is no longer
+    /// followed (`lower_bound_search_ignores_unrelated_facts` pins the
+    /// recursion).
+    fn lower_bounds_for_search(
+        &self,
+        term: &Bitvector32Term,
+        outermost: bool,
+    ) -> Vec<(Bitvector32Term, bool)> {
+        let canonical = crate::kernel::eval::canonical_term(term);
+        let keys = if canonical == *term {
+            vec![canonical]
+        } else {
+            vec![term.clone(), canonical]
+        };
+        let mut bounds = Vec::new();
+        for key in keys {
+            let Some(entries) = self.signed_order_bounds.get(&key) else {
+                continue;
+            };
+            for (_, other, strict, own_is_lower) in entries.keys() {
+                crate::instrumentation::record_deterministic_work(1);
+                #[cfg(test)]
+                LOWER_BOUND_CANDIDATE_VISITS.with(|visits| visits.set(visits.get() + 1));
+                if !*own_is_lower && !bounds.contains(&(other.clone(), *strict)) {
+                    bounds.push((other.clone(), *strict));
+                }
+            }
+        }
+        if outermost {
+            for (fact, value) in self.condition_facts.iter() {
+                let (fact_left, lower, strict) = match (fact, value) {
+                    (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
+                    | (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true) => {
+                        (fact_left, lower, false)
+                    }
+                    (ConditionTerm::Bitvector32SignedGreaterThan(fact_left, lower), true)
+                    | (ConditionTerm::Bitvector32SignedLessThan(lower, fact_left), true) => {
+                        (fact_left, lower, true)
+                    }
+                    _ => continue,
+                };
+                #[cfg(test)]
+                LOWER_BOUND_CANDIDATE_VISITS.with(|visits| visits.set(visits.get() + 1));
+                let candidate = (lower.as_ref().clone(), strict);
+                if !bounds.contains(&candidate)
+                    && self.bitvector_terms_equal_for_transport(fact_left, term)
+                {
+                    bounds.push(candidate);
+                }
+            }
+        }
+        bounds
+    }
+
     pub(in crate::kernel) fn has_lower_bound_above(
         &self,
         left: &Bitvector32Term,
@@ -388,36 +505,17 @@ impl PureFactContext {
                 }
             }
         };
-        self.condition_facts
-            .iter()
-            .any(|(fact, value)| match (fact, value) {
-                (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
-                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
-                {
-                    bound_is_above(lower)
+        let (_search, outermost) = LowerBoundSearch::enter();
+        self.lower_bounds_for_search(left, outermost)
+            .into_iter()
+            .any(|(lower, strict)| {
+                if strict {
+                    // `lower < left` and `lower >= right` give `left > right`.
+                    self.decide(&ConditionTerm::signed_greater_equal(lower, right.clone()))
+                        == Some(true)
+                } else {
+                    bound_is_above(&lower)
                 }
-                (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
-                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
-                {
-                    bound_is_above(lower)
-                }
-                (ConditionTerm::Bitvector32SignedGreaterThan(fact_left, lower), true)
-                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
-                {
-                    self.decide(&ConditionTerm::signed_greater_equal(
-                        lower.as_ref().clone(),
-                        right.clone(),
-                    )) == Some(true)
-                }
-                (ConditionTerm::Bitvector32SignedLessThan(lower, fact_left), true)
-                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
-                {
-                    self.decide(&ConditionTerm::signed_greater_equal(
-                        lower.as_ref().clone(),
-                        right.clone(),
-                    )) == Some(true)
-                }
-                _ => false,
             })
     }
 
@@ -426,42 +524,12 @@ impl PureFactContext {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> bool {
-        self.condition_facts
-            .iter()
-            .any(|(fact, value)| match (fact, value) {
-                (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
-                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
-                {
-                    self.decide(&ConditionTerm::signed_greater_equal(
-                        lower.as_ref().clone(),
-                        right.clone(),
-                    )) == Some(true)
-                }
-                (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
-                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
-                {
-                    self.decide(&ConditionTerm::signed_greater_equal(
-                        lower.as_ref().clone(),
-                        right.clone(),
-                    )) == Some(true)
-                }
-                (ConditionTerm::Bitvector32SignedGreaterThan(fact_left, lower), true)
-                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
-                {
-                    self.decide(&ConditionTerm::signed_greater_equal(
-                        lower.as_ref().clone(),
-                        right.clone(),
-                    )) == Some(true)
-                }
-                (ConditionTerm::Bitvector32SignedLessThan(lower, fact_left), true)
-                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
-                {
-                    self.decide(&ConditionTerm::signed_greater_equal(
-                        lower.as_ref().clone(),
-                        right.clone(),
-                    )) == Some(true)
-                }
-                _ => false,
+        let (_search, outermost) = LowerBoundSearch::enter();
+        self.lower_bounds_for_search(left, outermost)
+            .into_iter()
+            .any(|(lower, _)| {
+                self.decide(&ConditionTerm::signed_greater_equal(lower, right.clone()))
+                    == Some(true)
             })
     }
 

@@ -148,6 +148,43 @@ fn checked_load_equality_capture_retains_and_rechecks_the_exact_query() {
     assert!(equalities[0].checks(&assumptions));
 }
 
+/// A load variable's origin is first-seen per verified function. A name the
+/// naming cache returned from an earlier function must not carry that
+/// function's origin into the next one: the later function's transport would
+/// walk the earlier function's DAG history, so its cost would depend on what
+/// was verified before it in the same session.
+#[test]
+fn a_new_load_origin_epoch_retires_cached_origins() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(733)), 4),
+    };
+    let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("arg-memory", 32));
+    let load = Bitvector32Term::MemoryLoad(memory.clone(), Box::new(pointer.clone()));
+    crate::kernel::eval::begin_load_origin_epoch();
+    let (variable, _) =
+        crate::kernel::eval::load_variable_for_term(&load).expect("a load term has a name");
+    assert_eq!(
+        crate::kernel::eval::registered_load_origin_for_variable(&variable),
+        Some((memory.clone(), pointer.clone()))
+    );
+    crate::kernel::eval::begin_load_origin_epoch();
+    assert_eq!(
+        crate::kernel::eval::registered_load_origin_for_variable(&variable),
+        None,
+        "an origin minted by an earlier function must not answer in this one"
+    );
+    let (renamed, _) =
+        crate::kernel::eval::load_variable_for_term(&load).expect("a load term has a name");
+    assert_eq!(renamed, variable, "ids stay session-wide");
+    assert_eq!(
+        crate::kernel::eval::registered_load_origin_for_variable(&variable),
+        Some((memory, pointer)),
+        "naming the load in the new epoch records its origin afresh"
+    );
+}
+
 #[test]
 fn origin_load_equality_retains_singleton_index_bounds() {
     let index = Bitvector32Term::Variable(Variable(710));
@@ -714,6 +751,112 @@ fn store_hop_retains_direct_or_composed_separated_range_authority() {
         !composed.checks(derivation.as_ref(), &load, 4, &PureFactContext::new()),
         "the retained composition must still be present during checking"
     );
+}
+
+#[test]
+fn entry_separation_does_not_frame_a_store_after_its_bases_become_equal() {
+    let base = CMemory::new().with_block("arg-memory", 16);
+    let left = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(130_001)), 4),
+    };
+    let right = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(130_002)), 4),
+    };
+    let bridge = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(130_003)), 4),
+    };
+    let left_range = memory_range(left.clone(), 0, 1);
+    let right_range = memory_range(right.clone(), 0, 1);
+    let separation = Proposition::CResourceSeparate {
+        left: CResource::Memory(left_range.clone()),
+        right: CResource::Memory(right_range.clone()),
+    };
+    let entry_assumptions = PureFactContext::new().assume_proposition(separation);
+    let retained = crate::kernel::memory_provenance::typed_store_separated_ranges_evidence(
+        &left,
+        &right,
+        &entry_assumptions,
+    )
+    .expect("the entry-time partition initially supplies the hop");
+    let assumptions = entry_assumptions
+        .assume_condition(
+            ConditionTerm::pointer_equal(left.clone(), bridge.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::pointer_equal(bridge, right.clone()), true);
+    assert_eq!(
+        assumptions
+            .exact_condition_value(&ConditionTerm::pointer_equal(left.clone(), right.clone())),
+        None,
+        "the alias is established through the intermediate pointer, not a direct fact"
+    );
+    assert!(
+        crate::kernel::reasoning::pointers_proven_equal_for_memory_resolution(
+            &left,
+            &right,
+            &assumptions,
+        )
+    );
+    assert!(assumptions.memory_ranges_overlap_after_base_equality(&left_range, &right_range));
+    assert!(
+        !assumptions.proves_resource_separate(
+            &CResource::Memory(left_range.clone()),
+            &CResource::Memory(right_range.clone()),
+        ),
+        "a stale entry partition cannot prove overlapping ranges separate"
+    );
+    assert!(
+        crate::kernel::memory_provenance::typed_store_separated_ranges_evidence(
+            &left,
+            &right,
+            &assumptions,
+        )
+        .is_none(),
+        "a stale entry partition cannot frame equal store and load addresses"
+    );
+    let after = base
+        .clone()
+        .store(left.clone(), CValue::Int32(Bitvector32Term::Constant(7)));
+    let derivation = crate::kernel::intern_c_memory_ref(&after)
+        .derivation()
+        .expect("the written snapshot retains its store");
+    assert!(
+        !retained.checks(derivation.as_ref(), &right, 4, &assumptions),
+        "a retained hop must be refused after its own ranges become overlapping"
+    );
+}
+
+#[test]
+fn equal_range_bases_keep_a_separation_for_disjoint_byte_intervals() {
+    let left = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(130_011)), 4),
+    };
+    let right = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(130_012)), 4),
+    };
+    let left_range = memory_range(left.clone(), 0, 1);
+    let right_range = memory_range(right.clone(), 1, 2);
+    let separation = Proposition::CResourceSeparate {
+        left: CResource::Memory(left_range.clone()),
+        right: CResource::Memory(right_range.clone()),
+    };
+    let assumptions = PureFactContext::new()
+        .assume_proposition(separation)
+        .assume_condition(ConditionTerm::pointer_equal(left, right), true);
+
+    assert!(
+        !assumptions.memory_ranges_overlap_after_base_equality(&left_range, &right_range),
+        "adjacent element intervals remain separate when their bases are equal"
+    );
+    assert!(assumptions.proves_resource_separate(
+        &CResource::Memory(left_range),
+        &CResource::Memory(right_range),
+    ));
 }
 
 #[test]
@@ -2353,4 +2496,106 @@ fn a_differing_cell_inside_a_read_stops_the_two_snapshots_matching() {
             "a cell past the read's last byte holds none of its bytes"
         );
     }
+}
+
+/// A contract call that leaves allocation continuity undecided records a
+/// `ContractAllocationRetired` edge right after its own `CallHavoc`. When one
+/// havoc range covers the whole retired allocation, the retirement is
+/// transparent to a cell's value: an unrelated cell is named where the call
+/// left it, and a cell of the allocation still stops at the havoc, never at a
+/// value from before the call. A retirement the havoc does not cover, or one
+/// separated from the havoc by another edge, still stops every cell it
+/// shares a block with.
+#[test]
+fn a_retirement_inside_its_calls_havoc_names_cells_at_the_call() {
+    let pointer = |variable| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+            byte_width: 4,
+        },
+    };
+    let owner = pointer(211);
+    let data = pointer(212);
+    let int32_range = |base: &Pointer| {
+        CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+            4,
+        )
+    };
+    let ranges = vec![int32_range(&owner), int32_range(&data)];
+    let assumptions = PureFactContext::new();
+    let named = |memory: &CMemory, cell: &Pointer| {
+        crate::kernel::resource_tracker::last_same_point(
+            crate::kernel::resource_tracker::Resource::Cell {
+                pointer: cell,
+                bytes: 4,
+            },
+            &crate::kernel::resource_tracker::ProgramPoint::at(&intern_c_memory_ref(memory)),
+        )
+        .map(|point| point.snapshot().clone())
+    };
+    // The allocation's claim is live before the call, so retiring it changes
+    // the snapshot and records the edge.
+    let havoc = |variable| {
+        CMemory::new()
+            .with_heap_allocation_claim(data.clone(), Bitvector32Term::Constant(4))
+            .expect("a fresh claim")
+            .with_call_memory_havoc(Variable(variable), &ranges, &assumptions)
+    };
+
+    let called = havoc(213);
+    let retired = called.clone().retire_contract_heap_allocation_claim(
+        &data,
+        &Bitvector32Term::Constant(4),
+        &assumptions,
+    );
+    assert_eq!(named(&retired, &owner), Some(intern_c_memory_ref(&called)));
+    assert_eq!(
+        named(&retired, &data),
+        Some(intern_c_memory_ref(&called)),
+        "a byte of the retired allocation is named by the call's own havoc"
+    );
+    let cell = with_extended_dag_bridging(|| {
+        memory_dag_cell_source(
+            &intern_c_memory_ref(&retired),
+            &owner,
+            4,
+            &assumptions,
+            false,
+        )
+    })
+    .expect("the walk has an answer");
+    let hop = &retained_memory_dag_path(&cell)[0];
+    assert_eq!(
+        hop.justification,
+        MemoryDagHopJustification::RetirementInsideItsCallHavoc
+    );
+    assert!(
+        hop.justification
+            .checks(&hop.derivation, &owner, 4, &assumptions)
+    );
+
+    // The havoc covers four bytes of an eight-byte allocation.
+    let called = havoc(214);
+    let wider = called.clone().retire_contract_heap_allocation_claim(
+        &data,
+        &Bitvector32Term::Constant(8),
+        &assumptions,
+    );
+    assert_eq!(named(&wider, &owner), Some(intern_c_memory_ref(&wider)));
+
+    // Another edge stands between the havoc and the retirement.
+    let declared = havoc(215).with_block("arg-memory", 4);
+    let separated = declared.clone().retire_contract_heap_allocation_claim(
+        &data,
+        &Bitvector32Term::Constant(4),
+        &assumptions,
+    );
+    assert_eq!(
+        named(&separated, &owner),
+        Some(intern_c_memory_ref(&separated))
+    );
 }

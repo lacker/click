@@ -42,6 +42,8 @@ pub(crate) use memory_state::{
     withdraw_never_address_taken_locals,
 };
 pub(crate) use persistent_map::{SnapshotMap, SnapshotMapChange, SnapshotSet};
+mod iterated;
+pub use iterated::{CIteratedGuard, CIteratedMemory};
 mod resource_algebra;
 mod term_operations;
 pub(super) use derivations::*;
@@ -2624,6 +2626,7 @@ pub struct CPredicateUnfolding {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CCompositeResourceDefinition {
     pub(super) instance_schema: Option<ResourceFieldSchema>,
+    pub(super) guarded_by: Option<CMutexGuardDeclaration>,
     pub(super) matched: Option<CResourceMatchBody>,
     pub(super) name: String,
     pub(super) parameters: Vec<CParameter>,
@@ -2640,6 +2643,9 @@ pub struct CCompositeResourceDefinition {
     /// answers for the definition as a whole.
     pub(super) matched_recursive: bool,
     pub(super) counted_population: bool,
+    /// A definition-level restriction on direct transfer to another thread.
+    /// Computed when definitions are installed, including contained families.
+    pub(super) thread_confined: bool,
     /// Whether a body fact mentions an allocation-liveness claim
     /// (`loadable(...)`, directly or through a predicate). A loan of the
     /// composite stabilizes its memory and tokens, not the liveness of
@@ -2656,6 +2662,15 @@ pub struct CCompositeResourceDefinition {
     pub(super) fact_source_indices: Vec<usize>,
     /// Source spellings are diagnostic metadata. They never justify a fact.
     pub(super) fact_source_spellings: Vec<String>,
+}
+
+/// The direct C struct member named by a resource body's `guarded_by` clause.
+/// Parsing and declaration validation check its pthread type and ABI. The
+/// parameter index and byte offset make guard matching independent of names.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CMutexGuardDeclaration {
+    pub parameter_index: usize,
+    pub field_offset_bytes: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2789,6 +2804,9 @@ pub struct CExecutionEnvironment {
     /// ordinary external function contract is never a substitute.
     pub(super) modeled_pthread_binding:
         Option<crate::languages::c::thread_runtime::ModeledPthreadBinding>,
+    /// Resource-definition metadata for selected modeled mutex calls. Named
+    /// lookup avoids scanning unrelated project definitions at each call.
+    pub(super) modeled_mutex_guards: std::sync::Arc<BTreeMap<String, CMutexGuardDeclaration>>,
     /// The selected target's byte order. It decides whether a one-byte C
     /// access inside a wider integer cell reads or updates that cell's
     /// representation; see `crate::kernel::eval::byte_view`.
@@ -2828,6 +2846,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
                 &self.verified_function_termination_rules,
             )
             .field("modeled_pthread_binding", &self.modeled_pthread_binding)
+            .field("modeled_mutex_guards", &self.modeled_mutex_guards)
             .field("byte_order", &self.byte_order)
             .field("verified_loop_rules", &self.verified_loop_rules)
             .field("recursion_anchor", &self.recursion_anchor)
@@ -2850,6 +2869,7 @@ impl PartialEq for CExecutionEnvironment {
             && self.verified_function_rules == other.verified_function_rules
             && self.verified_function_termination_rules == other.verified_function_termination_rules
             && self.modeled_pthread_binding == other.modeled_pthread_binding
+            && self.modeled_mutex_guards == other.modeled_mutex_guards
             && self.byte_order == other.byte_order
             && self.verified_loop_rules == other.verified_loop_rules
             && self.recursion_anchor == other.recursion_anchor
@@ -4788,6 +4808,9 @@ pub struct CState {
     /// Live child completion rights travel with the C path through ordinary
     /// statements. `None` is the canonical state before any thread operation.
     pub(super) thread_ledger: Option<super::threads::ThreadLedger>,
+    /// Initialized mutex invariants and live guards on this C path. `None`
+    /// denotes the canonical state before the first mutex operation.
+    pub(super) mutex_ledger: Option<super::mutexes::MutexLedger>,
     /// One unresolved modeled pthread creation. The visible state carries
     /// only authority safe in either outcome; this record selects the exact
     /// checked delta when a C condition establishes the returned status.
@@ -5072,6 +5095,10 @@ pub(super) struct ResourceContextIndex {
     pub(super) by_resource: PersistentMap<CResource, ResourceEntryIds>,
     pub(super) exact_shapes: PersistentMap<(ResourceFamily, String, usize), ResourceEntryIds>,
     pub(super) memory_by_block: PersistentMap<PointerBlock, ResourceEntryIds>,
+    /// Iterated guarded-ownership facts keyed by both blocks their
+    /// denotation depends on: the element base and the guard cells. A store,
+    /// havoc, or free visits only the facts filed under its own block.
+    pub(super) iterated_by_block: PersistentMap<PointerBlock, ResourceEntryIds>,
     /// Memory facts keyed by their exact base spelling. Direct pointer
     /// equalities can then find only the facts whose bases they identify,
     /// without scanning every resource in an aliased block.
@@ -5357,6 +5384,17 @@ pub enum CResource {
         arguments: ResourceArguments,
     },
     Instance(ResourceInstance),
+    /// Iterated guarded ownership: one fact for every element of a bounded
+    /// index range whose guard cell holds (`iterated.rs`).
+    Iterated(Arc<CIteratedMemory>),
+}
+
+impl CResource {
+    /// One iterated guarded-ownership fact. The fact is shared, so cloning a
+    /// resource context never copies its terms.
+    pub(crate) fn iterated(iterated: CIteratedMemory) -> Self {
+        Self::Iterated(Arc::new(iterated))
+    }
 }
 
 /// A proof-only, exclusive resource instance. Identity is independent of its
@@ -5489,6 +5527,14 @@ pub(super) trait ResourceFamilyAlgebra {
                     ));
                 }
             }
+            ResourceFamily::Iterated => {
+                if !matches!(spec.quantity, CResourceQuantity::One) {
+                    return Err(CResourceSpecError::InvalidQuantity {
+                        family: ResourceFamily::Iterated,
+                        reason: "iterated ownership has unit quantity".into(),
+                    });
+                }
+            }
             ResourceFamily::Composite | ResourceFamily::Token => {
                 if matches!(spec.quantity, CResourceQuantity::Count(_))
                     && spec.access != CResourceAccessMode::Own
@@ -5554,6 +5600,12 @@ static MEMORY_RESOURCE_ALGEBRA: MemoryResourceAlgebra = MemoryResourceAlgebra;
 static TOKEN_RESOURCE_ALGEBRA: TokenResourceAlgebra = TokenResourceAlgebra;
 static COMPOSITE_RESOURCE_ALGEBRA: CompositeResourceAlgebra = CompositeResourceAlgebra;
 static INSTANCE_RESOURCE_ALGEBRA: InstanceResourceAlgebra = InstanceResourceAlgebra;
+/// Iterated guarded ownership is exact-match: one fact is equal to another
+/// when every term it carries is proved equal. Taking and giving elements are
+/// checked kernel operations (`crate::kernel::iterated`), never algebraic
+/// splitting, so the algebra itself neither splits nor joins.
+struct IteratedResourceAlgebra;
+static ITERATED_RESOURCE_ALGEBRA: IteratedResourceAlgebra = IteratedResourceAlgebra;
 
 /// Primitive resource families. Adding a variant also requires registering one
 /// `ResourceFamilyAlgebra` implementation in `resource_family_algebra`.
@@ -5563,6 +5615,8 @@ pub enum ResourceFamily {
     Composite,
     Token,
     Instance,
+    /// Iterated guarded ownership (`CResource::Iterated`).
+    Iterated,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -5610,6 +5664,29 @@ pub enum CResourceTerm {
         schema: ResourceFieldSchema,
         resource: Box<CResourceTerm>,
     },
+    /// An iterated guarded-ownership clause of a resource body. It evaluates
+    /// to one `CResource::Iterated` fact; see `primitives/iterated.rs`.
+    Iterated(Box<CIteratedSpec>),
+}
+
+/// The unevaluated form of an iterated guarded-ownership clause: C
+/// expressions over the body's parameters, with the element and guard shape
+/// fixed by validation.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CIteratedSpec {
+    pub(crate) owner: String,
+    /// `element.base[element.start..element.end]` is the index range
+    /// `lo..hi` read against the element base; the element width is the
+    /// base's.
+    pub(crate) element: CMemorySegment,
+    pub(crate) stride: u32,
+    pub(crate) start_offset: i32,
+    pub(crate) end_offset: i32,
+    pub(crate) guard_base: CExpression,
+    pub(crate) guard_cell_type: CType,
+    pub(crate) guard_cell_width: u32,
+    pub(crate) holds_when_equal: bool,
+    pub(crate) guard_value: CExpression,
 }
 
 /// Quantity is explicit in the normalized form.  `One` is the ordinary unit
@@ -5706,6 +5783,7 @@ impl CResourceTerm {
             Self::Composite { .. } => ResourceFamily::Composite,
             Self::Token { .. } => ResourceFamily::Token,
             Self::Instance { .. } => ResourceFamily::Instance,
+            Self::Iterated(_) => ResourceFamily::Iterated,
         }
     }
 
@@ -5896,7 +5974,7 @@ impl CResourceSpec {
                 argument_snapshots,
                 parameter_types,
             },
-            ResourceFamily::Memory | ResourceFamily::Instance => {
+            ResourceFamily::Memory | ResourceFamily::Instance | ResourceFamily::Iterated => {
                 return Err(CResourceSpecError::InvalidNestedTerm(
                     "only composite and token families have declared resource terms".into(),
                 ));
@@ -6102,6 +6180,14 @@ impl CResourceSpec {
         self.term.declared_name()
     }
 
+    pub(crate) fn contained_definition_name(&self) -> Option<&str> {
+        let mut term = &self.term;
+        while let CResourceTerm::Instance { resource, .. } = term {
+            term = resource;
+        }
+        term.declared_name()
+    }
+
     pub fn declared_arguments(&self) -> Option<&[CExpression]> {
         self.term.declared_arguments()
     }
@@ -6233,10 +6319,12 @@ pub enum Term {
     Sequence(SequenceTerm),
     Algebraic(AlgebraicTerm),
     CExpressionOutcome(CExpressionOutcome),
-    CStatementOutcome(CStatementOutcome),
-    CFunctionOutcome(CFunctionOutcome),
+    // Outcomes carry CState. Keep them out of Term's inline size so cloning
+    // a deep pure proposition does not spend stack on unused C variants.
+    CStatementOutcome(Box<CStatementOutcome>),
+    CFunctionOutcome(Box<CFunctionOutcome>),
     CMemory(CMemory),
-    CState(CState),
+    CState(Box<CState>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -6286,13 +6374,14 @@ pub enum Proposition {
     },
     CFunctionSatisfiesSpecification {
         function: CFunction,
-        specification: CFunctionSpecification,
+        // Large C payloads stay out of every pure proposition clone frame.
+        specification: Box<CFunctionSpecification>,
     },
     /// The specification describes one allowed return branch and makes no
     /// claim that the branch is reachable or that the function terminates.
     CFunctionPartiallySatisfiesSpecification {
         function: CFunction,
-        specification: CFunctionSpecification,
+        specification: Box<CFunctionSpecification>,
     },
     CMemoryLoads {
         memory: CMemory,
@@ -6999,6 +7088,15 @@ pub struct PureFactContext {
         crate::persistent::PersistentMap<Bitvector32Term, ConditionTerm>,
     >,
     pub(super) condition_facts: crate::persistent::PersistentMap<ConditionTerm, bool>,
+    /// True `Bitvector32Equal` and `Bitvector64Equal` facts that pin a term
+    /// to a constant, keyed by that term and carrying, per fact, the constant
+    /// it names. Derived incrementally from `condition_facts`; ordered by
+    /// fact so the first entry is the one a scan of `condition_facts` in its
+    /// own order would find (`exact_signed_constant`).
+    pub(super) exact_constant_equalities: crate::persistent::PersistentMap<
+        Bitvector32Term,
+        crate::persistent::PersistentMap<ConditionTerm, i64>,
+    >,
     /// What an exact fact says about the null-ness of a pointer, keyed by
     /// that pointer's offset term and carrying the block the fact named
     /// together with the fact itself. Derived incrementally from

@@ -516,6 +516,11 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             &prefix,
             &format!("observe({});", format_resource_target(resource)),
         ),
+        ProofTactic::Iterated(tactic) => line(
+            output,
+            &prefix,
+            &format!("{};", describe_iterated_tactic(tactic)),
+        ),
         ProofTactic::Witness(witness) => line(
             output,
             &prefix,
@@ -1088,6 +1093,22 @@ fn format_resource_call(resource: &ResourceClause) -> String {
     )
 }
 
+/// One iterated-ownership tactic as it is written: `take(data[j..j + 1])`.
+pub(in crate::surface) fn describe_iterated_tactic(tactic: &IteratedTactic) -> String {
+    format!(
+        "{}({})",
+        tactic.name(),
+        match tactic {
+            IteratedTactic::Take(segment) | IteratedTactic::Give(segment) => {
+                describe_contract_segment(segment)
+            }
+            IteratedTactic::Gather(resource) | IteratedTactic::Scatter(resource) => {
+                format_resource_target(resource)
+            }
+        }
+    )
+}
+
 fn format_resource_target(resource: &ResourceClause) -> String {
     match resource {
         ResourceClause::Named { binding, resource } => {
@@ -1110,6 +1131,9 @@ fn format_resource_target(resource: &ResourceClause) -> String {
                 .join(", ")
         ),
         ResourceClause::Declared { .. } => format_resource_call(resource),
+        ResourceClause::Iterated(clause) => {
+            crate::surface::lowering::describe_iterated_clause(clause)
+        }
     }
 }
 
@@ -1121,6 +1145,7 @@ fn resource_access(resource: &ResourceClause) -> ResourceAccessMode {
         ResourceClause::OwnMemory(_) => ResourceAccessMode::Own,
         ResourceClause::MemoryAggregate { access, .. } => *access,
         ResourceClause::Declared { access, .. } => *access,
+        ResourceClause::Iterated(_) => ResourceAccessMode::Own,
     }
 }
 

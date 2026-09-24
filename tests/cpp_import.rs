@@ -1322,6 +1322,97 @@ fn scalar_int32_profile_unwinds_one_guard_on_both_paths() {
 }
 
 #[test]
+fn scalar_int32_profile_emits_function_scope_cleanup_edges_for_escaping_throws() {
+    let project = Project::with_fixture(
+        "escaping.cpp",
+        "escaping",
+        "struct Restore {\n\
+             int* pointer;\n\
+             explicit Restore(int* slot) noexcept : pointer(slot) { *pointer = 9; }\n\
+             ~Restore() noexcept { *pointer = 42; }\n\
+         };\n\
+         int helper(bool should_throw) {\n\
+             if (should_throw) { throw 7; }\n\
+             return 5;\n\
+         }\n\
+         int escaping(int& value, bool throw_now, bool initializer_throws) {\n\
+             Restore guard(&value);\n\
+             if (throw_now) { throw 7; }\n\
+             int ignored = helper(initializer_throws);\n\
+             return value;\n\
+         }\n",
+    );
+    project.write_exception_enabled_compilation_database();
+    project.write_config_with_exception_behavior("escaping", "escaping.cpp", true, "scalar_int32");
+    refresh_import(&project.config()).expect("export the escaping throw and initializer paths");
+    let prepared = load_import(&project.config()).expect("load the checked C++ artifact");
+    let lowered = lower_import(&prepared).expect("lower function-scope unwind edges");
+
+    fn collect_unwind_edges<'a>(
+        statement: &'a CStatement,
+        edges: &mut Vec<(&'a CStatement, &'a CStatement)>,
+    ) {
+        match statement {
+            CStatement::TryCatchInt32 {
+                try_body,
+                handler,
+                cleanup_unwind: true,
+                ..
+            } => {
+                edges.push((try_body, handler));
+                collect_unwind_edges(try_body, edges);
+                collect_unwind_edges(handler, edges);
+            }
+            CStatement::Seq(first, second) => {
+                collect_unwind_edges(first, edges);
+                collect_unwind_edges(second, edges);
+            }
+            CStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_unwind_edges(then_branch, edges);
+                collect_unwind_edges(else_branch, edges);
+            }
+            CStatement::TryCatchInt32 {
+                try_body, handler, ..
+            } => {
+                collect_unwind_edges(try_body, edges);
+                collect_unwind_edges(handler, edges);
+            }
+            _ => {}
+        }
+    }
+
+    let mut edges = Vec::new();
+    collect_unwind_edges(lowered.kernel_function().body(), &mut edges);
+    assert_eq!(
+        edges.len(),
+        2,
+        "both exceptional operations need cleanup edges"
+    );
+    for (_, handler) in &edges {
+        assert!(
+            matches!(handler, CStatement::Seq(cleanup, rethrow)
+                if contains_call(cleanup, "Restore_destructor")
+                    && matches!(rethrow.as_ref(), CStatement::Throw(_))),
+            "each escaping edge must run the live destructor before rethrowing"
+        );
+    }
+    assert!(
+        edges
+            .iter()
+            .any(|(try_body, _)| matches!(try_body, CStatement::Throw(_)))
+    );
+    assert!(edges.iter().any(|(try_body, _)| {
+        matches!(try_body, CStatement::Seq(declare, call)
+            if matches!(declare.as_ref(), CStatement::Declare { name, .. } if name == "ignored")
+                && matches!(call.as_ref(), CStatement::CallAssign { function_name, .. } if function_name == "helper"))
+    }));
+}
+
+#[test]
 fn scalar_int32_profile_rejects_hostile_cleanup_proofs() {
     let mdtest = parse_mdtest(
         Path::new("cpp_guard_unwind_before_second.md"),

@@ -87,6 +87,7 @@ fn linear_execution_proof_step(tactic: &ProofTactic) -> Option<ProofStep> {
         ProofTactic::ObserveResource(resource) => {
             Some(ProofStep::ObserveResource(resource.clone()))
         }
+        ProofTactic::Iterated(tactic) => Some(ProofStep::Iterated(tactic.clone())),
         ProofTactic::ApplyTheoremUsing {
             application,
             premises,

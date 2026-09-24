@@ -2359,7 +2359,7 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
         };
         let owned = &owned;
         match owned.resource() {
-            CResource::Instance(_) => {
+            CResource::Instance(_) | CResource::Iterated(_) => {
                 return Err(StableViewPlanError::Loan(LoanRefusal::UnsupportedResource));
             }
             CResource::Composite { .. } => {
@@ -4551,7 +4551,9 @@ impl LoanLedger {
                 let memory_backing = match escrow.resource() {
                     CResource::Memory(range) => vec![range.clone()],
                     CResource::Token { .. } => Vec::new(),
-                    CResource::Composite { .. } | CResource::Instance(_) => {
+                    CResource::Composite { .. }
+                    | CResource::Instance(_)
+                    | CResource::Iterated(_) => {
                         return Err(LoanRefusal::UnsupportedResource);
                     }
                 };

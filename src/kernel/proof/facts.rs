@@ -2627,7 +2627,7 @@ mod integer_equality_fact_index_tests {
             body: Box::new(Proposition::Predicate {
                 name: "sample".to_string(),
                 arguments: vec![
-                    Term::CState(state),
+                    Term::CState(Box::new(state)),
                     Term::CValue(CValue::Int32(Bitvector32Term::Variable(binder))),
                 ],
             }),

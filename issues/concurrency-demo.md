@@ -48,10 +48,20 @@ trusted modeled pthread runtime. The proof records the locked import identity
 and remains conditional on that runtime specification; it does not validate
 native runtime behavior.
 
-The mutex counter, release/acquire publication, and native pthread binding
-remain open. [The probe record](../design/concurrency-probes/README.md)
+The concurrent mutex counter, release/acquire publication, and native pthread
+binding remain open. The [mutex counter C source](../design/concurrency-probes/mutex_counter.c)
+is now frozen; its [shared-protocol design](../design/concurrency-probes/mutex-shared-protocol.md)
+records the required authority rules. [The probe record](../design/concurrency-probes/README.md)
 describes the selected source and profile; [the binding design](../design/concurrency-probes/pthread-binding-design.md)
 records the existing create/join rule and trust boundary.
+The resource-body spelling `guarded_by counter->mutex;` now binds a folded,
+exclusive instance to a typed `pthread_mutex_t` member. A single C path can
+initialize that mutex with an explicit resource selection, lock to retrieve
+the resource, restore it before unlock, and destroy the mutex to recover it.
+The [C proof fixture](../mdtests/guarded_resource_mutex_flow.md) exercises
+this flow and rejects a wrong mutex and an unfolded unlock. The runtime model
+assumes these valid calls succeed. Worker sharing and interference rules are
+still needed before this proves the concurrent counter.
 
 ## Remaining work
 
@@ -74,8 +84,8 @@ artifact identity.
 
 ### Mutex-protected counter
 
-Freeze a small ordinary C program before adding its sidecar. Two workers each
-increment the same ordinary counter once under one mutex. Starting from zero,
+The C program is frozen before its sidecar. Two workers each increment the
+same ordinary counter once under one mutex. Starting from zero,
 prove the final count is exactly two after both joins and that all counter
 accesses are protected.
 

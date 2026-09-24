@@ -2510,7 +2510,8 @@ fn declared_resource_family(resource: &ResourceClause) -> Option<&str> {
         ResourceClause::Declared { name, .. } => Some(name),
         ResourceClause::ViewMemory(_)
         | ResourceClause::OwnMemory(_)
-        | ResourceClause::MemoryAggregate { .. } => None,
+        | ResourceClause::MemoryAggregate { .. }
+        | ResourceClause::Iterated(_) => None,
     }
 }
 

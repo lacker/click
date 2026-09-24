@@ -6378,7 +6378,7 @@ mod integer_source_quantifier_tests {
     }
 
     #[test]
-    fn integer_quantifier_does_not_capture_a_caller_binding() {
+    fn integer_quantifier_stays_out_of_the_execution_band_and_avoids_caller_bindings() {
         let file = crate::surface::parse(
             "theorem capture(x: Integer) { ensures forall (z: Integer) { x == z }; }",
         )
@@ -6387,44 +6387,54 @@ mod integer_source_quantifier_tests {
         else {
             panic!("expected proposition")
         };
-        let integer_values = [(
-            "x".to_string(),
-            SpecIntegerExpression::Term(IntegerTerm::var(Variable(2_000_000))),
-        )]
-        .into_iter()
-        .collect();
         let state = CState::new();
-        let lowered = elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
-            proposition,
-            BTreeMap::new(),
-            BTreeMap::new(),
-            &state,
-            BTreeMap::new(),
-            BTreeMap::new(),
-            BTreeMap::new(),
-            &integer_values,
-            None,
-            &RecordedSnapshots::new(),
-            &PureFactContext::new(),
-            &PredicateEnvironment::new(&[]),
-            &ClickFunctionEnvironment::new(&[]),
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
-        .unwrap();
-        let SpecProposition::ForAllInteger { variable, body, .. } = lowered else {
-            panic!("expected Integer forall")
-        };
-        assert_ne!(variable, Variable(2_000_000));
-        let SpecProposition::IntegerComparison {
-            left: SpecIntegerExpression::Term(left),
-            right: SpecIntegerExpression::Term(right),
-            ..
-        } = *body
-        else {
-            panic!("expected Integer comparison")
-        };
-        assert_eq!(left, IntegerTerm::var(Variable(2_000_000)));
-        assert_eq!(right, IntegerTerm::var(variable));
+
+        // The final execution identity must not move the quantifier allocator
+        // back into the execution band's range. The first quantifier identity
+        // is also captured here to ensure the binder advances past caller data.
+        for captured_variable in [1_999_999, 2_000_000] {
+            let integer_values = [(
+                "x".to_string(),
+                SpecIntegerExpression::Term(IntegerTerm::var(Variable(captured_variable))),
+            )]
+            .into_iter()
+            .collect();
+            let lowered = elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
+                proposition,
+                BTreeMap::new(),
+                BTreeMap::new(),
+                &state,
+                BTreeMap::new(),
+                BTreeMap::new(),
+                BTreeMap::new(),
+                &integer_values,
+                None,
+                &RecordedSnapshots::new(),
+                &PureFactContext::new(),
+                &PredicateEnvironment::new(&[]),
+                &ClickFunctionEnvironment::new(&[]),
+                BTreeSet::new(),
+                BTreeMap::new(),
+            )
+            .unwrap();
+            let SpecProposition::ForAllInteger { variable, body, .. } = lowered else {
+                panic!("expected Integer forall")
+            };
+            assert_ne!(variable, Variable(captured_variable));
+            assert!(
+                (2_000_000..4_000_000).contains(&variable.0),
+                "quantifier variable {variable:?} must stay outside the execution band"
+            );
+            let SpecProposition::IntegerComparison {
+                left: SpecIntegerExpression::Term(left),
+                right: SpecIntegerExpression::Term(right),
+                ..
+            } = *body
+            else {
+                panic!("expected Integer comparison")
+            };
+            assert_eq!(left, IntegerTerm::var(Variable(captured_variable)));
+            assert_eq!(right, IntegerTerm::var(variable));
+        }
     }
 }

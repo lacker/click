@@ -1,7 +1,7 @@
 # An arena region cannot be freed twice
 
 `arena_prefix_region` is the live-region resource of the symbolic arena
-allocation in `examples/arena/arena_symbolic_alloc.click`: the descriptor
+allocation in `examples/arena/arena_pipeline.click`: the descriptor
 object and the exact data interval `[start, end)` it names. A free consumes
 that instance. The caller owns one instance, so the first call takes it and
 the second call has no instance to hand over: the double free is refused at

@@ -836,7 +836,7 @@ fn check_executed_refinement_shape(return_type: CType, alter_result: bool) {
     let conclusion = Proposition::Predicate {
         name: target.predicate_name(),
         arguments: vec![
-            Term::CState(CState::new()),
+            Term::CState(Box::new(CState::new())),
             Term::CValue(CValue::Pointer(CPointerValue::new(
                 Pointer {
                     block: PointerBlock::FunctionSymbolic(Variable(0)),
@@ -2018,7 +2018,7 @@ fn callback_fact_lookup_scales_with_calls_not_unrelated_supported_facts() {
         Proposition::Predicate {
             name: CFunctionContract::predicate_name_for(name),
             arguments: vec![
-                Term::CState(state),
+                Term::CState(Box::new(state)),
                 Term::CValue(CValue::typed_pointer(
                     pointer,
                     CType::FunctionPointer(CallbackSignature::from_encoded(91_000)),

@@ -865,6 +865,18 @@ fn validate_resource_definition<'a>(
     let Some(composite_body) = definition.composite_body() else {
         return Ok(());
     };
+    if composite_body.guarded_by().is_some()
+        && (composite_body.matched.is_some()
+            || composite_body
+                .facts()
+                .iter()
+                .any(proposition_contains_resource_count))
+    {
+        return Err(ClickError::new(format!(
+            "resource `{}` must be exclusive and unmatched to use `guarded_by`",
+            definition.name()
+        )));
+    }
     if composite_body.matched.is_some() {
         for (_, _, arm) in resource_match_arm_scopes(
             definition,
@@ -997,6 +1009,16 @@ fn validate_resource_definition<'a>(
         composite_body.contains(),
         &format!("composite resource `{}` body", definition.name()),
     )?;
+    validate_iterated_resource_clauses(
+        definition,
+        composite_body,
+        &variables,
+        click_function_types,
+        predicate_definitions,
+        click_function_definitions,
+        predicate_environment,
+        click_function_environment,
+    )?;
     for resource in composite_body.contains() {
         validate_resource_clause(
             resource,
@@ -1052,6 +1074,147 @@ fn validate_resource_definition<'a>(
             click_function_environment,
         )?;
         prior_facts.push(fact);
+    }
+    Ok(())
+}
+
+/// Checks every iterated guarded-ownership clause of one body: the kernel can
+/// read its shape, the index shadows nothing, the guard reads only cells the
+/// same body owns (so no one can change it while the resource is folded), and
+/// the guard cells are not themselves elements.
+#[allow(clippy::too_many_arguments)]
+fn validate_iterated_resource_clauses(
+    definition: &ResourceDefinition,
+    composite_body: &CompositeResourceBody,
+    variables: &BTreeMap<String, C0Type>,
+    click_function_types: &BTreeMap<String, ClickFunctionType>,
+    predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
+    click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(), ClickError> {
+    let clauses = composite_body
+        .contains()
+        .iter()
+        .filter_map(|clause| match clause {
+            ResourceClause::Iterated(clause) => Some(clause.as_ref()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if clauses.len() > 1 {
+        return Err(ClickError::new(format!(
+            "resource `{}` declares {} iterated ownership clauses; a body may declare at most one",
+            definition.name(),
+            clauses.len()
+        )));
+    }
+    for clause in clauses {
+        let context = format!(
+            "resource `{}` iterated ownership clause `{}`",
+            definition.name(),
+            crate::surface::lowering::describe_iterated_clause(clause)
+        );
+        let index = clause.binder.as_str();
+        if variables.contains_key(index)
+            || composite_body
+                .fields
+                .iter()
+                .any(|field| field.name() == index)
+        {
+            return Err(ClickError::new(format!(
+                "{context}: the index `{index}` shadows a parameter, field, or witness of the resource; choose a fresh index name"
+            )));
+        }
+        let shape = crate::surface::lowering::iterated_clause_shape(clause)
+            .map_err(|message| ClickError::new(format!("{context}: {message}")))?;
+        let guard = shape.guard.as_ref().ok_or_else(|| {
+            ClickError::new(format!(
+                "{context}: an unguarded clause is the plain range `owns base[lo..hi]`"
+            ))
+        })?;
+        if guard.base == shape.element_base {
+            return Err(ClickError::new(format!(
+                "{context}: the guard cells and the elements are the same array; a guard must read cells the elements do not include"
+            )));
+        }
+        // A range the body owns outright may share the elements' base: the
+        // body's facts say which of those elements the guard excludes, and
+        // a fold consumes both from one context, where owned memory is a
+        // partition, so no cell is ever held twice.
+        let mut scoped = variables.clone();
+        scoped.insert(index.to_string(), C0Type::Int32);
+        let clause_guard = clause
+            .guard
+            .as_ref()
+            .expect("a guarded clause keeps its guard proposition");
+        for proposition in [&clause.range, clause_guard] {
+            validate_proposition_expression_types(
+                proposition,
+                &scoped,
+                click_function_types,
+                &context,
+            )?;
+            if proposition_contains_old_expression(proposition)
+                || proposition_contains_at_expression(proposition)
+            {
+                return Err(ClickError::new(format!(
+                    "{context}: `old(...)` and `at(...)` are not available in a resource body"
+                )));
+            }
+        }
+        if let ClickProposition::Comparison { left, right, .. } = clause_guard {
+            for side in [left, right] {
+                let Some(ty) =
+                    infer_contract_expression_type(side, &scoped, click_function_types, &context)?
+                else {
+                    continue;
+                };
+                if ty != C0Type::Int32 {
+                    return Err(ClickError::new(format!(
+                        "{context}: the guard compares `int32` cells in this slice, but `{}` has type `{}`",
+                        crate::surface::diagnostics::describe_contract_expression(side),
+                        describe_c0_type(ty)
+                    )));
+                }
+            }
+        }
+        // The guard is read against the cells the body itself owns: state it
+        // as the bounded fact `forall k. range implies guard` and ask the
+        // same read-authority check a body fact gets. A guard over a cell the
+        // body does not own could change while the resource is folded.
+        let guard_fact = ClickProposition::ForAll {
+            click_type: ClickType::C(C0Type::Int32),
+            name: index.to_string(),
+            written_name: None,
+            body: Box::new(ClickProposition::Implies(
+                Box::new(clause.range.clone()),
+                Box::new(clause_guard.clone()),
+            )),
+        };
+        let no_values = BTreeMap::new();
+        let guard_fact = crate::surface::lowering::substitute_click_proposition_in(
+            &guard_fact,
+            &crate::surface::lowering::ContractSubstitutions::with_body_fields_as_c_names(
+                &no_values,
+            ),
+        )
+        .map_err(|message| ClickError::new(format!("{context}: {message}")))?;
+        validate_resource_fact_memory_read_authority(
+            definition,
+            composite_body,
+            &guard_fact,
+            &[],
+            predicate_definitions,
+            click_function_definitions,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|error| {
+            ClickError::new(format!(
+                "{context}: the guard must read only cells the same body owns, so that it cannot change while the resource is folded\n{}",
+                error.message()
+            ))
+        })?;
     }
     Ok(())
 }
@@ -2615,7 +2778,8 @@ fn declared_composite_resource_name(resource: &ResourceClause) -> Option<&str> {
         ResourceClause::ViewMemory(_)
         | ResourceClause::OwnMemory(_)
         | ResourceClause::MemoryAggregate { .. }
-        | ResourceClause::Declared { .. } => None,
+        | ResourceClause::Declared { .. }
+        | ResourceClause::Iterated(_) => None,
     }
 }
 
@@ -2639,7 +2803,9 @@ fn reject_composite_resource_cycles(definitions: &[ResourceDefinition]) -> Resul
                     ResourceClause::ViewMemory(_)
                     | ResourceClause::OwnMemory(_)
                     | ResourceClause::MemoryAggregate { .. } => None,
-                    ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => None,
+                    ResourceClause::Declared { .. }
+                    | ResourceClause::Quantified { .. }
+                    | ResourceClause::Iterated(_) => None,
                 })
                 .filter(|dependency| {
                     dependency != definition.name()

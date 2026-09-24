@@ -1168,8 +1168,15 @@ pub(crate) fn clear_load_variable_registry() {
 /// records its live origin afresh, so origins registered while verifying an
 /// earlier function do not answer transport in this one. Ids and their
 /// canonical loads are untouched.
+///
+/// The naming caches are per epoch. A cached name is returned without
+/// minting, and minting is what refreshes a variable's origin, so a name
+/// cached by an earlier function would keep that function's origin: a later
+/// function's transport would then walk the earlier function's DAG history,
+/// and its proof cost would depend on what was verified before it.
 pub(crate) fn begin_load_origin_epoch() {
     LOAD_ORIGIN_EPOCH.with(|epoch| epoch.set(epoch.get() + 1));
+    clear_load_canonicalization_caches();
 }
 
 /// The load represented by a load variable minted on this thread.
@@ -1343,10 +1350,14 @@ pub(crate) fn registered_load_bytes_for_variable(variable: &Variable) -> Option<
 pub(crate) fn registered_load_origin_for_variable(
     variable: &Variable,
 ) -> Option<(SharedCMemory, Pointer)> {
+    let current_epoch = LOAD_ORIGIN_EPOCH.with(std::cell::Cell::get);
     LOAD_VARIABLE_REGISTRY.with(|registry| {
         registry
             .borrow()
             .get(variable)
+            // An origin recorded under an earlier epoch belongs to another
+            // function's DAG; it can relate nothing this function executes.
+            .filter(|(_, _, _, epoch, _)| *epoch == current_epoch)
             .map(|(_, pointer, origin, _, _)| (origin.clone(), pointer.clone()))
     })
 }

@@ -2621,3 +2621,161 @@ fn grouped_proof_finalization_reads_each_path_once() {
         .join()
         .expect("fan-out thread");
 }
+
+/// A fixed one-store proof verified after an unrelated proof in the same
+/// sidecar. Everything a proof unit builds in the session (interned snapshots,
+/// load names, memo tables) outlives it, so this is where a later proof can
+/// end up walking an earlier one's history. The naming cache once returned
+/// load names minted by the earlier function without refreshing their origin,
+/// and the later store's pointer transport walked the earlier function's DAG
+/// from that origin: 30,000 units alone became over a million, and the
+/// arena's `arena_write` failed its budget only when `arena_init` ran first.
+#[test]
+fn a_fixed_store_proof_costs_the_same_after_a_growing_unrelated_proof() {
+    const RESOURCES: &str = "resource box_state(b: struct box*) {
+    field len: int32;
+    owns &b->data;
+    owns b->len;
+    owns b->data[0..len];
+    fact b->len == len;
+    fact 0 <= len;
+    fact separate(memory(object(b)), memory(b->data[0..b->len]));
+}
+
+resource holder_state(h: struct holder*) {
+    field start: int32;
+    owns object(h);
+    fact h->start == start;
+    fact 0 <= start;
+}
+";
+    const FIXED_C: &str = "void one(struct holder* h, int32 i) {
+    struct box* b;
+
+    b = h->box;
+    b->data[h->start + i] = 1;
+}
+";
+    const FIXED_PROOF: &str = "void one(struct holder* h, int32 i) {
+    owns r: holder_state(h);
+    owns st: box_state(h->box);
+    requires 0 <= i;
+    requires defined(r.start + i) and r.start + i < st.len;
+    ensures st.len == old(st.len);
+} by {
+    let { len: l } = unfold(st);
+    let { start: s } = unfold(r);
+    have defined(s + i) by {
+        simp() using {
+            defined(s + i) and s + i < l;
+        }
+    }
+    have s + i < l by {
+        simp() using {
+            defined(s + i) and s + i < l;
+        }
+    }
+    have s <= s + i by {
+        apply(int32_add_nonnegative_right_is_at_least_left(s, i)) using {
+            0 <= i;
+            defined(s + i);
+        }
+    }
+    have s + i + 1 <= l by {
+        apply(int32_increment_upper_bound(s + i, l)) using {
+            s + i < l;
+        }
+    }
+    have h->start == s by {
+        assumption();
+    }
+    have defined(h->start + i) by {
+        rewrite(h->start == s);
+        assumption();
+    }
+    have h->start <= h->start + i by {
+        rewrite(h->start == s);
+        assumption();
+    }
+    have h->start + i + 1 <= l by {
+        rewrite(h->start == s);
+        assumption();
+    }
+    execute();
+    let r = fold(holder_state(h), { start: s });
+    let st = fold(box_state(h->box), { len: l });
+    simp();
+}
+";
+    const STRUCTS: &str = "struct box {
+    int32* data;
+    int32 len;
+};
+
+struct holder {
+    struct box* box;
+    int32 start;
+};
+";
+    // The work of the fixed proof's own tactics, and whether it verified.
+    let fixed_proof_work = |unrelated_stores: Option<usize>| {
+        let (big_c, big_proof) = match unrelated_stores {
+            None => (String::new(), String::new()),
+            Some(stores) => (
+                format!(
+                    "void big(struct box* b) {{\n{}}}\n\n",
+                    (0..stores)
+                        .map(|index| format!("    b->data[{index}] = 0;\n"))
+                        .collect::<String>()
+                ),
+                format!(
+                    "void big(struct box* b) {{
+    owns st: box_state(b);
+    requires {stores} <= st.len;
+    ensures st.len == old(st.len);
+}} by {{
+    let {{ len: l }} = unfold(st);
+    execute();
+    let st = fold(box_state(b), {{ len: l }});
+    simp();
+}}
+
+"
+                ),
+            ),
+        };
+        let c_source = format!("{STRUCTS}\n{big_c}{FIXED_C}");
+        let click_source =
+            format!("{RESOURCES}\nverifying \"order.c\";\n\n{big_proof}{FIXED_PROOF}");
+        let (result, events) = crate::instrumentation::collect(|| {
+            verify_c0_sources(&click_source, &[("order.c", &c_source)])
+        });
+        result.unwrap_or_else(|error| {
+            panic!(
+                "the fixed proof after {unrelated_stores:?} unrelated stores should verify: {}",
+                error.message()
+            )
+        });
+        events
+            .into_iter()
+            .filter_map(|event| match event {
+                crate::instrumentation::VerificationEvent::TacticFinished {
+                    tactic, work, ..
+                } if tactic.claim.starts_with("one.") => Some(work),
+                _ => None,
+            })
+            .sum::<usize>()
+    };
+    let alone = fixed_proof_work(None);
+    assert!(alone > 0);
+    let samples = [4, 8, 16, 32].map(|stores| (stores, fixed_proof_work(Some(stores))));
+    for &(stores, work) in &samples {
+        // Constant plus a logarithmic allowance for indexed session tables.
+        let allowance = 64 * (usize::BITS - stores.leading_zeros()) as usize;
+        assert!(
+            work <= alone + allowance,
+            "the fixed proof's work must not depend on the unrelated proof before it: \
+             alone {alone}, after (stores, work) {samples:?}"
+        );
+    }
+}

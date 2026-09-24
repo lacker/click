@@ -713,7 +713,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                 true,
             )
             .with_resource_derived_mutable_frame(),
-            specification: verified.specification.clone(),
+            specification: Box::new(verified.specification.clone()),
         }
     );
 }

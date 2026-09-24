@@ -1623,6 +1623,9 @@ pub(in crate::kernel) fn exact_separation_fact_covers_range_and_pointer(
         } => (left.clone(), right.clone()),
         _ => return false,
     };
+    if assumptions.memory_ranges_overlap_after_base_equality(&left, &right) {
+        return false;
+    }
     super::assumptions::memory_range_shallowly_contained_with_facts(range, &left, assumptions)
         && super::assumptions::pointer_in_memory_range_shallow_with_facts(
             pointer,
@@ -1748,6 +1751,13 @@ pub(in crate::kernel) fn typed_store_separated_ranges_evidence(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> Option<MemoryDagHopJustification> {
+    if crate::kernel::reasoning::pointers_proven_equal_for_memory_resolution(
+        write,
+        pointer,
+        assumptions,
+    ) {
+        return None;
+    }
     assumptions
         .memory_separation_candidates(&write.block, &pointer.block)
         .find_map(|(proposition, left, right, composition)| {
@@ -1782,6 +1792,9 @@ pub(in crate::kernel) fn typed_store_separated_ranges_evidence(
                 } else {
                     return None;
                 };
+            if assumptions.memory_ranges_overlap_after_base_equality(left, right) {
+                return None;
+            }
             let authority = composition.map_or_else(
                 || StoreSeparatedRangesAuthority::ExactProposition(proposition.clone()),
                 |resources| StoreSeparatedRangesAuthority::ResourceComposition(resources.clone()),
@@ -1855,7 +1868,11 @@ pub(in crate::kernel) fn owned_composition_store_separated_evidence(
     assumptions: &PureFactContext,
 ) -> Option<MemoryDagHopJustification> {
     if assumptions.resource_compositions.is_empty()
-        || write.block == pointer.block && write.offset == pointer.offset
+        || crate::kernel::reasoning::pointers_proven_equal_for_memory_resolution(
+            write,
+            pointer,
+            assumptions,
+        )
     {
         return None;
     }
@@ -1881,6 +1898,9 @@ pub(in crate::kernel) fn owned_composition_store_separated_evidence(
                         PointerInRangeEvidence::for_pointer(write, &left, assumptions)?;
                     let load_membership =
                         PointerInRangeEvidence::for_pointer(pointer, &right, assumptions)?;
+                    if assumptions.memory_ranges_overlap_after_base_equality(&left, &right) {
+                        return None;
+                    }
                     crate::kernel::record_implicit_reasoning_provenance(
                         assumptions,
                         &Proposition::CResourceComposition(resources.clone()),

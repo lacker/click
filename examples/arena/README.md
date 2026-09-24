@@ -31,7 +31,7 @@ suffix `[count, capacity)` in the same outcome resource. This deliberately
 specialized contract establishes the first ownership-partition transition
 without pretending that arbitrary holes are modeled yet.
 
-`arena_symbolic_alloc.click` verifies `arena_alloc` as one symbolic
+`arena_pipeline.click` verifies `arena_alloc` as one symbolic
 transition over a retained prefix. Its `arena_prefix_state` resource carries
 two plain fields, the occupied prefix `prefix` and the live count `live`, and
 owns the arena metadata plus an `arena_prefix_partition` child: the complete
@@ -51,6 +51,25 @@ unfold(before);`, so the scan loop's invariant, the mark loop, the transported
 occupancy facts, and every refold can say `p` and `n` after the state itself
 is consumed.
 
+The same sidecar verifies the fixed `arena_free`, `arena_read`, and
+`arena_write` over those resources. `arena_prefix_region` takes the region
+descriptor alone and reaches the arena as `region->arena`, so each contract can
+name both resources from the region argument: while a contract's clauses are
+read, the folded region publishes the cells its body owns as read authority
+for its siblings. `arena_free` is a prefix shrink. It consumes the most
+recently allocated region (`freed.end == before.prefix`) together with the
+state, requires `1 <= before.live` and `before.live - 1 <= freed.start`, clears
+`occupied[start..end]` through the C loop, refolds the partition at prefix
+`start` by rejoining the freed data interval to the free suffix under
+`end == prefix`, and produces the state at `prefix == old(freed.start)` and
+`live == old(before.live) - 1` together with the descriptor. `arena_read` and
+`arena_write` borrow the region and the state, require the index inside the
+region's interval in field terms, keep both instances' fields, and state the
+value read or written as `region->arena->data[region->start + index]`. The
+`arena.click` read, write, and free contracts are over `arena_region` and the
+shared `arena_metadata` population instead, which the prefix model does not
+use, so they stay as the fixed-interval forms.
+
 `arena_second_alloc.click` verifies the pipeline's second allocation as a
 separate, fixed transition. Its input state describes the occupied prefix
 `[0, 2)`, owns the free data suffix `[2, capacity)` plus the complete
@@ -69,12 +88,40 @@ second allocation fails. Destruction requires an `arena_empty` resource with
 `live_regions == 0`, consumes both allocation authorities, and returns the
 zeroed descriptor.
 
-`arena.click` keeps every source in the C0 parser gate and declares checked
-contracts for `arena_init`, the specialized first-allocation form of
-`arena_alloc`, `arena_region_length`, `arena_read`, `arena_write`, `arena_free`,
-and `arena_destroy` over the lifecycle, `arena_region`, `arena_available`, and
-shared `arena_metadata` resources. The fixed second allocation lives in
-`arena_second_alloc.click` and the symbolic prefix transition in
-`arena_symbolic_alloc.click`. `arena_pipeline` remains unverified. The next
-ownership step is to connect the symbolic transition's region to `arena_free`
-and the pipeline; arbitrary free-interval collections remain later work.
+## Sidecar layout
+
+A caller can use a callee's contract only when the callee is verified earlier
+in the same sidecar, and imports carry resources but not C function specs. So
+the files are split by what they share:
+
+- `shared/arena_resources.click` is resources only: the lifecycle resources
+  (`arena_initialized_storage`, `arena_initialized_access`,
+  `arena_init_result`, `arena_empty`) and the prefix resources
+  (`arena_prefix_partition`, `arena_prefix_state`, `arena_prefix_region`). It
+  sits in a subdirectory because it names `object(arena)`: struct layouts come
+  from the entry sidecar's `verifying` sources, so a resources-only module
+  selected as its own directory entry has no layout for `struct arena`.
+  Importers resolve it within the project root.
+- `arena_pipeline.click` proves every contract the pipeline calls:
+  `arena_init`, the symbolic `arena_alloc`, the prefix-shrink `arena_free`,
+  `arena_write`, `arena_read`, and `arena_destroy`, in that order, and declares
+  `arena_pipeline.c`. It holds the `ArenaPrefixAllocOutcome` enum and
+  `arena_prefix_alloc_result`, which only the symbolic allocation uses.
+- `arena.click` keeps the fixed-interval model: `arena_metadata`,
+  `arena_region`, `arena_available`, the specialized first allocation of
+  `arena_alloc`, and `arena_region_length`, `arena_read`, `arena_write`, and
+  `arena_free` over `arena_region`.
+- `arena_second_alloc.click` stays the fixed instance check of the pipeline's
+  second two-cell allocation.
+
+## The pipeline
+
+`arena_pipeline` has no proof in the gate yet. Its every path ends in
+`arena_destroy(arena)` while the caller still owns its region descriptors;
+that call verifies (`mdtests/arena_destroy_beside_region_descriptors.md`).
+A full proof against the contracts in `arena_pipeline.click` now checks every
+step on every path, but the unit takes about 28 seconds and one path's final
+claim closing exceeds its smart time limit, so it is not landed;
+`issues/arena-resource-ownership.md` records how far it got, the remaining
+kernel costs, and the open representation question for frees out of
+allocation order.

@@ -1,4 +1,4 @@
-# Modeled pthread create/join specification, version 1
+# Modeled pthread create/join and mutex specification, version 2
 
 This trusted specification is an explicit assumption of a conditional Click
 client proof. It does not certify an operating system's pthread implementation.
@@ -18,6 +18,20 @@ client proof. It does not certify an operating system's pthread implementation.
 - Handles are C values associated with an unforgeable creation identity.
   Copies preserve that identity but never duplicate its completion right.
   Integer representations alone grant no thread authority.
+- `pthread_mutex_init` with null attributes and a selected folded, exclusive
+  resource whose `guarded_by` field is the passed mutex address succeeds and
+  deposits that resource in the mutex. This model treats the mutex bytes as
+  opaque and tracks initialization through unique proof authority.
+- `pthread_mutex_lock` succeeds for an initialized, unlocked mutex and gives
+  the current path its escrowed resource. `pthread_mutex_unlock` succeeds only
+  when that same resource has been folded and returned to escrow.
+  `pthread_mutex_destroy` succeeds only for an unlocked initialized mutex and
+  returns its resource to the caller. These calls do not branch on a failure
+  status under their checked preconditions.
+
+The checked mutex transitions currently apply to one C path with no worker
+sharing. Creation of a worker while a mutex is initialized is refused.
+Every initialized mutex must be destroyed before its C function returns.
 
 The C client still owes its worker proof, creation failure paths, ownership
 separation, parent access checks, and every source-level continuation. The

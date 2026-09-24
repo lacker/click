@@ -1185,6 +1185,15 @@ impl Renderer<'_> {
             CResource::Instance(instance) => {
                 self.fmt(format_args!("resource-instance({})", instance.name()))
             }
+            CResource::Iterated(iterated) => {
+                self.push("iterated-resource(");
+                self.push(iterated.owner());
+                self.push(", ");
+                self.bitvector(iterated.lower());
+                self.push("..");
+                self.bitvector(iterated.upper());
+                self.push(")");
+            }
         }
     }
 

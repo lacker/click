@@ -268,7 +268,7 @@ mod pointee_const_return_tests {
         let value = CValue::typed_pointer(pointer.clone(), qualified);
         let assumptions = PureFactContext::new().assume_proposition(Proposition::Predicate {
             name: contract.predicate_name(),
-            arguments: vec![Term::CState(CState::new()), Term::CValue(value)],
+            arguments: vec![Term::CState(Box::new(CState::new())), Term::CValue(value)],
         });
         let environment = CExecutionEnvironment::new().with_function_contract(contract);
         for (signature, mutable_destination) in
@@ -412,6 +412,25 @@ pub(super) fn execute_c_call_assign_paths(
         return execute_modeled_pthread_join_paths(
             state,
             Some(target),
+            arguments,
+            assumptions,
+            environment,
+            budget,
+        );
+    }
+    if let Some(binding) = environment.modeled_pthread_binding.as_ref()
+        && [
+            binding.mutex_init_name,
+            binding.mutex_lock_name,
+            binding.mutex_unlock_name,
+            binding.mutex_destroy_name,
+        ]
+        .contains(&function_name)
+    {
+        return execute_modeled_pthread_mutex_paths(
+            state,
+            Some(target),
+            function_name,
             arguments,
             assumptions,
             environment,
@@ -681,6 +700,25 @@ pub(super) fn execute_c_call_paths(
             budget,
         );
     }
+    if let Some(binding) = environment.modeled_pthread_binding.as_ref()
+        && [
+            binding.mutex_init_name,
+            binding.mutex_lock_name,
+            binding.mutex_unlock_name,
+            binding.mutex_destroy_name,
+        ]
+        .contains(&function_name)
+    {
+        return execute_modeled_pthread_mutex_paths(
+            state,
+            None,
+            function_name,
+            arguments,
+            assumptions,
+            environment,
+            budget,
+        );
+    }
     if let Some(path) = unbound_modeled_pthread_call(function_name, environment) {
         return Ok(vec![path]);
     }
@@ -766,7 +804,16 @@ fn unbound_modeled_pthread_call(
     environment: &CExecutionEnvironment,
 ) -> Option<CStatementExecutionPath> {
     let binding = environment.modeled_pthread_binding.as_ref()?;
-    if function_name != binding.create_name && function_name != binding.join_name {
+    if ![
+        binding.create_name,
+        binding.join_name,
+        binding.mutex_init_name,
+        binding.mutex_lock_name,
+        binding.mutex_unlock_name,
+        binding.mutex_destroy_name,
+    ]
+    .contains(&function_name)
+    {
         return None;
     }
     Some(CStatementExecutionPath {
@@ -778,6 +825,146 @@ fn unbound_modeled_pthread_call(
         obligations: Vec::new(),
         loan_evidence: empty_checked_loan_evidence_sequence(),
     })
+}
+
+fn execute_modeled_pthread_mutex_paths(
+    state: &CState,
+    target: Option<&str>,
+    function_name: &str,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let binding = environment
+        .modeled_pthread_binding
+        .as_ref()
+        .expect("selected runtime");
+    let initializing = function_name == binding.mutex_init_name;
+    let expected_arity = if initializing { 2 } else { 1 };
+    let refusal = |message: &str| {
+        CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message.to_string()))
+    };
+    if state.pending_thread_create.is_some()
+        || environment.selected_call_contract.is_some()
+        || arguments.len() != expected_arity
+        || (!initializing && environment.selected_call_binders.is_some())
+    {
+        return Ok(vec![CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
+            outcome: refusal(
+                "modeled-pthread mutex call has unsupported arguments or pending thread authority",
+            ),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        }]);
+    }
+    let mut paths = Vec::new();
+    for mut path in super::functions::evaluate_c_arguments_paths(
+        state,
+        arguments,
+        assumptions,
+        budget,
+        Some(environment),
+    )? {
+        let outcome = if let Some(outcome) = path.outcome {
+            match outcome {
+                CFunctionOutcome::UndefinedBehavior(error) => {
+                    CStatementOutcome::UndefinedBehavior(error)
+                }
+                CFunctionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+                _ => refusal("modeled-pthread mutex argument did not evaluate"),
+            }
+        } else if !matches!(&path.values[0], CValue::Pointer(pointer) if !pointer.is_null()) {
+            refusal("modeled-pthread mutex requires a nonnull mutex pointer")
+        } else if initializing
+            && !matches!(&path.values[1],
+                CValue::Pointer(pointer) if pointer.is_null())
+            && !matches!(&path.values[1], CValue::Int32(Bitvector32Term::Constant(0)))
+        {
+            refusal("modeled-pthread mutex init requires null attributes")
+        } else {
+            let CValue::Pointer(mutex) = &path.values[0] else {
+                unreachable!()
+            };
+            let current = super::reasoning::path_facts::assumptions_with_path_context(
+                assumptions,
+                &path.facts,
+                &path.obligations,
+            );
+            let transition = if initializing {
+                let selected = environment.selected_call_binders.as_ref();
+                let identity = selected
+                    .filter(|transport| {
+                        transport.function.as_ref() == function_name
+                            && transport.arity == expected_arity
+                            && transport.bindings.len() == 1
+                    })
+                    .and_then(|transport| transport.bindings.get(&Variable(u64::MAX - 1)));
+                identity
+                    .ok_or("mutex init requires `step(pthread_mutex_init(...), { invariant: instance })`")
+                    .and_then(|identity| state.resources.owned_instance(*identity)
+                        .ok_or("selected mutex invariant is not held folded"))
+                    .and_then(|instance| {
+                        let guard = environment.modeled_mutex_guards.get(instance.name())
+                            .ok_or("selected resource has no `guarded_by` mutex field")?;
+                        let Some(AlgebraicValue::C(CValue::Pointer(base))) =
+                            instance.arguments().get(guard.parameter_index) else {
+                            return Err("guarded resource parameter is not a pointer");
+                        };
+                        let expected = base.pointer().offset_by_bytes(guard.field_offset_bytes);
+                        if !super::reasoning::pointers_proven_equal_for_memory_resolution(
+                            &expected, mutex.pointer(), &current,
+                        ) {
+                            return Err("selected resource is guarded by a different mutex");
+                        }
+                        let fact = CResourceFact::own(CResource::Instance(instance.clone()));
+                        super::mutexes::MutexContext::new(state.clone())
+                            .publish(expected, fact, &current)
+                            .map(|context| context.into_state())
+                    })
+            } else {
+                let context = super::mutexes::MutexContext::new(state.clone());
+                let result = if function_name == binding.mutex_lock_name {
+                    context.acquire_current(mutex.pointer(), &current)
+                } else if function_name == binding.mutex_unlock_name {
+                    context.release_current(mutex.pointer(), &current)
+                } else {
+                    context.destroy(mutex.pointer(), &current)
+                };
+                result.map(|context| context.into_state())
+            };
+            match transition {
+                Ok(mut next) => {
+                    if target.is_some_and(|target| {
+                        assign_call_result(
+                            &mut next,
+                            target,
+                            CValue::Int32(Bitvector32Term::Constant(0)),
+                            &mut path.obligations,
+                            &current,
+                        )
+                        .is_none()
+                    }) {
+                        refusal("modeled-pthread mutex status target is not writable")
+                    } else {
+                        CStatementOutcome::Normal(next)
+                    }
+                }
+                Err(message) => refusal(message),
+            }
+        };
+        paths.push(CStatementExecutionPath {
+            loop_invariant_correspondence: Default::default(),
+            outcome,
+            facts: path.facts,
+            obligations: path.obligations,
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        });
+    }
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
 }
 
 fn modeled_pthread_handle_store(
@@ -1031,6 +1218,7 @@ fn execute_modeled_pthread_create_paths(
                                     neutral.resources = success.resources.clone();
                                     neutral.loan_ledger = success.loan_ledger.clone();
                                     neutral.loan_view_bindings = success.loan_view_bindings.clone();
+                                    neutral.mutex_ledger = success.mutex_ledger.clone();
                                     neutral = modeled_pthread_indeterminate_handle(
                                         neutral,
                                         output_slot,
@@ -4628,6 +4816,17 @@ pub(super) fn prepare_loop_top_state(
     // models are the fresh ones an arbitrary visit carries.
     let (body_state, body_failures) =
         loop_body_resource_context(&head_state, &top_state, resource_specs, assumptions, budget)?;
+    // A declaring loop's body does not hold the frame's iterated ownership
+    // facts, so a guard cell it writes escapes the store rule; the frame
+    // loses any fact whose guard cells the loop may write.
+    let top_state = if resource_specs.is_empty() {
+        top_state
+    } else {
+        super::iterated::frame_out_iterated_facts_written_by_loop(
+            top_state,
+            loop_havoc_ranges.as_deref(),
+        )
+    };
     resource_failures.append(&mut rebound_failures);
     resource_failures.extend(body_failures);
     resource_failures.extend(havoc_loan_failure);
@@ -5368,7 +5567,10 @@ fn viewed_form_of_resource_fact(fact: &CResourceFact) -> Option<CResourceFact> {
         CResourceFact::Own(resource @ (CResource::Memory(_) | CResource::Composite { .. }), _) => {
             Some(CResourceFact::View(resource.clone()))
         }
-        CResourceFact::Own(CResource::Token { .. } | CResource::Instance(_), _) => None,
+        CResourceFact::Own(
+            CResource::Token { .. } | CResource::Instance(_) | CResource::Iterated(_),
+            _,
+        ) => None,
     }
 }
 

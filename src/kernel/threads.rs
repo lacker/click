@@ -97,6 +97,7 @@ struct PendingCreateAuthority {
     loan_ledger: Option<LoanLedger>,
     loan_view_bindings: LoanViewBindings,
     thread_ledger: Option<ThreadLedger>,
+    mutex_ledger: Option<super::mutexes::MutexLedger>,
 }
 
 impl PendingCreateAuthority {
@@ -106,6 +107,7 @@ impl PendingCreateAuthority {
             loan_ledger: state.loan_ledger.clone(),
             loan_view_bindings: state.loan_view_bindings.clone(),
             thread_ledger: state.thread_ledger.clone(),
+            mutex_ledger: state.mutex_ledger.clone(),
         }
     }
 
@@ -114,6 +116,7 @@ impl PendingCreateAuthority {
         state.loan_ledger = self.loan_ledger.clone();
         state.loan_view_bindings = self.loan_view_bindings.clone();
         state.thread_ledger = self.thread_ledger.clone();
+        state.mutex_ledger = self.mutex_ledger.clone();
     }
 }
 
@@ -185,12 +188,14 @@ impl PendingThreadCreate {
                     loan_ledger: storage.success.loan_ledger.clone(),
                     loan_view_bindings: storage.success.loan_view_bindings.clone(),
                     thread_ledger: storage.success.thread_ledger.clone(),
+                    mutex_ledger: storage.success.mutex_ledger.clone(),
                 },
                 failure: PendingCreateAuthority {
                     resources: storage.failure.resources.clone(),
                     loan_ledger: storage.failure.loan_ledger.clone(),
                     loan_view_bindings: storage.failure.loan_view_bindings.clone(),
                     thread_ledger: storage.failure.thread_ledger.clone(),
+                    mutex_ledger: storage.failure.mutex_ledger.clone(),
                 },
                 deltas: storage.deltas.with_inserted(storage.next_delta, delta),
                 next_delta: storage.next_delta + 1,
@@ -212,6 +217,7 @@ impl PendingThreadCreate {
             loan_ledger: authority.loan_ledger.clone(),
             loan_view_bindings: authority.loan_view_bindings.clone(),
             thread_ledger: authority.thread_ledger.clone(),
+            mutex_ledger: authority.mutex_ledger.clone(),
         };
         let mut deltas = PersistentMap::default();
         for (index, delta) in &storage.deltas {
@@ -644,6 +650,13 @@ pub(super) struct ThreadContext {
 
 impl ThreadContext {
     pub(super) fn new(mut parent: CState) -> Result<Self, &'static str> {
+        if parent
+            .mutex_ledger
+            .as_ref()
+            .is_some_and(super::mutexes::MutexLedger::has_any_mutex)
+        {
+            return Err("modeled pthread workers cannot yet share an initialized mutex");
+        }
         match (parent.loan_ledger(), parent.loan_participant()) {
             (None, None) => {
                 let ledger = LoanLedger::new();

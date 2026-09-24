@@ -364,7 +364,9 @@ impl PureFactContext {
                 byte_width,
             } => self.proves_memory_access(memory, pointer, *byte_width),
             Proposition::CResourceSeparate { left, right } => {
-                self.prop_facts.contains(proposition) || self.proves_resource_separate(left, right)
+                (self.prop_facts.contains(proposition)
+                    && !self.resource_separation_conflicts_with_equalities(left, right))
+                    || self.proves_resource_separate(left, right)
             }
             Proposition::CResourceContains { parent, child } => {
                 self.prop_facts.contains(proposition)
@@ -2519,6 +2521,31 @@ impl PureFactContext {
             );
             values.pop();
         }
+    }
+
+    /// The consequents of this context's universal implications, instantiated
+    /// where `condition` names their bound variable and their antecedent is
+    /// proved here. One scan of the quantified facts; each candidate costs its
+    /// own antecedent.
+    pub(in crate::kernel) fn instantiated_universal_consequents(
+        &self,
+        condition: &ConditionTerm,
+    ) -> Vec<Proposition> {
+        let mut consequents = Vec::new();
+        for proposition in self.prop_facts.iter() {
+            if !matches!(proposition, Proposition::ForAll { .. }) {
+                continue;
+            }
+            crate::instrumentation::record_deterministic_work(1);
+            for instance in self.forall_instantiations_for_condition(proposition, condition) {
+                if let Proposition::Implies(antecedent, consequent) = instance
+                    && self.proves_without_prop_facts(&antecedent)
+                {
+                    consequents.push(*consequent);
+                }
+            }
+        }
+        consequents
     }
 
     pub(in crate::kernel) fn forall_instantiations_for_condition(

@@ -11,12 +11,12 @@ pub(crate) mod api;
 /// artifacts.  This is deliberately separate from source and compiler
 /// identities: changing the authority interpretation must invalidate an old
 /// certificate even when its inputs are byte-identical.
-pub const RESOURCE_SEMANTICS_VERSION: u32 = 4;
+pub const RESOURCE_SEMANTICS_VERSION: u32 = 6;
 
 pub(crate) mod assumptions;
-mod concurrent_resources;
 mod eval;
 mod functions;
+mod thread_confinement;
 pub(crate) use functions::ResourceBodyClauseRecord;
 #[cfg(test)]
 pub(crate) use functions::rewrite_resource_instance;
@@ -24,6 +24,8 @@ pub(crate) use functions::rewrite_resource_instance_selecting_children;
 pub(crate) use functions::{
     InstantiatedCompositeResourceFacts, instantiate_composite_resource_facts,
 };
+mod iterated;
+pub(crate) use iterated::{IteratedStep, apply_iterated_step, plan_iterated_guard_store};
 // V0-V6 of the stable-view migration build the checked semantic spine before
 // V7 routes ordinary calls through it.
 #[allow(dead_code)]
@@ -43,6 +45,8 @@ pub use loans::{
 mod loops;
 mod memory_provenance;
 pub(crate) mod model_fields;
+#[allow(dead_code)]
+mod mutexes;
 mod nat_integer;
 pub(crate) use nat_integer::{check_nat_integer_law, is_conversion_nat_type};
 mod primitives;
@@ -117,7 +121,7 @@ pub(crate) use functions::unreturned_allocation_with_checked_returned_resources;
 pub(crate) use functions::{
     contract_entry_partition_facts, evaluate_function_resource_context_with_metadata,
     project_contract_memory_effects, quantified_resource_requirement_assumptions,
-    resource_clause_position_note, resource_clause_stall_note,
+    resource_clause_position_note, resource_clause_stall_note, unmatched_instance_body_views,
     validate_resource_derived_loop_frames,
 };
 pub use loops::CLoopBinder;

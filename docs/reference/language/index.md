@@ -1479,6 +1479,22 @@ range; match it and use a C-typed constructor binding instead. The negative regr
 `mdtests/resource_field_memory_endpoint_rejects_out_of_bounds_fold.md` and
 `mdtests/resource_field_memory_endpoint_unfold_rejects_other_endpoint.md`.
 
+In a contract, a folded field-bearing instance whose body is unconditional and
+unmatched makes the cells its body owns readable to the contract's other
+resource clauses, as a folded field-free composite does:
+`consumes freed: arena_prefix_region(region);` beside
+`consumes before: arena_prefix_state(region->arena);` reads `region->arena`
+through the `object(region)` the region's body owns, in either clause order.
+The same holds for the clauses the contract returns and for the cells its
+postconditions read inside its folded instances
+(`mdtests/contract_returns_field_bearing_sibling.md`,
+`mdtests/contract_postcondition_reads_through_field_bearing_instance.md`).
+The cells are views only: writing one still needs an explicit `unfold`, and a
+cell the body does not own stays unreadable
+(`mdtests/contract_owns_through_field_bearing_instance.md`,
+`mdtests/contract_field_bearing_instance_views_grant_no_write.md`,
+`mdtests/contract_field_bearing_instance_views_only_owned_cells.md`).
+
 Unfolding consumes the instance, so its fields have nothing to read afterward:
 `before.prefix` is refused, and so is `old(before.prefix)` in a loop invariant,
 because a loop invariant reads `old(...)` at the loop's entry. The unfold
@@ -1955,7 +1971,11 @@ particular syntactic spelling of that pointer.
 A call can pass a covered subrange, such as consuming `p[0..1]` from a caller
 that owns `p[0..2]`; Click keeps the residue and rejoins adjacent returned
 ranges. The same applies to symbolic ranges when the current facts prove the
-subrange is covered. Viewed and owned memory elements also make the covered
+subrange is covered. Two held ranges are adjacent when one ends where the
+other starts as written or by an exact equality premise, so `p[0..n]` and
+`p[m..4]` under `n == m` rejoin into `p[0..4]`; a gap between them is never
+bridged (`mdtests/fold_joins_ranges_abutting_by_proved_equality.md`,
+`mdtests/fold_join_needs_the_endpoint_equality.md`). Viewed and owned memory elements also make the covered
 range viewable for symbolic execution, so ordinary external reads and writes
 do not need a separate `viewable(...)` requirement for the same range.
 
@@ -1966,6 +1986,88 @@ runtime-sized `int32` arrays are the
 supported heap slices. `viewable` remains a separate concept from memory
 permission: viewability proves an access is in bounds, while memory resources
 authorize the access.
+
+### Iterated guarded ownership
+
+A resource body may own one element range per index of a bounded range, held
+exactly when a guard cell the same body owns says so:
+
+<!-- verified-example: mdtests/iterated_ownership_declaration.md -->
+```click
+resource arena_cells(data: int32*, occupied: int32*, capacity: int32) {
+    owns occupied[0..capacity];
+    forall (k: int32) where 0 <= k and k < capacity {
+        if occupied[k] == 0 {
+            owns data[k..k + 1];
+        }
+    }
+}
+```
+
+The clause reads: for every `k` with `0 <= k < capacity`, if `occupied[k] ==
+0`, the body owns `data[k..k + 1]`. It is one resource fact, never a list of
+`capacity` facts, and nothing enumerates the range: unfolding `arena_cells`
+exposes the owned guard cells and the one iterated fact, folding consumes
+them, and every question about one element reads that element's guard cell.
+
+The declaration is checked once:
+
+- the `where` proposition must be `lo <= k and k < hi` (in any of the
+  equivalent comparison spellings) with bounds that do not mention `k`;
+- the guard must be `g[k] == v` or `g[k] != v` over `int32` cells, and every
+  guard cell must be owned by the same body, so no one else can change it
+  while the resource is folded
+  (`mdtests/iterated_ownership_rejects_unowned_guard.md`);
+- the element must be `base[s * k + a..s * k + b]` with integer constants
+  and `0 < b - a <= s`, so no two indices share a cell; `data[k..k + 2]` is
+  refused with the stride that would fix it
+  (`mdtests/iterated_ownership_rejects_overlapping_elements.md`);
+- a body declares at most one iterated clause, and match arms declare none.
+
+Without an `if`, the clause owns every element; it must then be the
+one-cell element `base[k..k + 1]`, and it is exactly the range `owns
+base[lo..hi]` and lowers to it.
+
+Four simple steps move ownership in and out of an unfolded iterated fact.
+Each reads the one fact it names, one guard cell or one quantified guard fact,
+and the indices currently taken out:
+
+- `take(data[j..j + 1]);` moves element `j` out as ordinary owned memory. The
+  index must be known to lie in the range, its guard must be known true, and
+  it must not already be out. The fact then makes no claim about `j`.
+- `give(data[j..j + 1]);` moves it back. The guard at `j` must be known true
+  and `j` must be out.
+- `gather(arena_cells(data, occupied, capacity));` forms the fact the
+  resource's clause denotes from the range its elements cover, when a
+  quantified fact says every guard is true, or from nothing when every guard
+  is false.
+- `scatter(arena_cells(data, occupied, capacity));` is the converse.
+
+The guard is read against the current cells, so a C store to a guard cell
+changes which elements the fact claims. Such a store is allowed only at an
+index where the fact claims nothing: an index out of range, an index taken
+out, an index whose guard is known false, or an index whose element this
+context owns outright. After the store the index stays out until `give`
+returns its element, unless the stored value makes the guard false. So the
+allocation protocol is `take` then mark
+(`mdtests/iterated_ownership_allocate_one.md`), the free protocol is clear
+then `give` (`mdtests/iterated_ownership_release_one.md`), and marking a
+cell the fact still holds is refused
+(`mdtests/iterated_ownership_rejects_guard_store_while_held.md`). A fold of
+the declaring resource requires the fact with nothing taken out, so it
+holds exactly the elements whose guard is true
+(`mdtests/iterated_ownership_rejects_fold_with_element_out.md`). A write
+to guard cells that does not pass through a C store, such as a call's
+effect, drops the fact instead.
+
+The fact itself grants no access: a store to `data[j]` needs the element
+taken out first (`mdtests/iterated_ownership_rejects_store_without_take.md`).
+A loop takes one element per iteration from a fact inside its own resource
+(`mdtests/iterated_ownership_claim_loop.md`,
+`mdtests/iterated_ownership_release_loop.md`), and freed cells are reused by
+a larger run with no merge step (`mdtests/iterated_ownership_coalescing.md`).
+The design record is in [the resource tracker's internals
+page](../../internals/resource-tracker.md#iterated-guarded-ownership).
 
 ### Calls that transport named instances
 

@@ -9,6 +9,12 @@ verifies both the worker and parent under the explicit modeled pthread runtime.
 The normal example gate verifies that project, and the source-integrity test
 in `tests/examples.rs` pins the C bytes.
 
+The [mutex counter source](mutex_counter.c) is frozen separately. Its two
+workers mutate the same ordinary cell under one lock. The
+[shared-protocol design](mutex-shared-protocol.md) records the authority and
+interference rules needed to verify it; the current one-path mutex escrow
+still refuses worker creation while that mutex is initialized.
+
 ## Binding direction
 
 The [pthread binding design](pthread-binding-design.md) describes how ordinary

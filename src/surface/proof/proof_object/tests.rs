@@ -9003,7 +9003,7 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
     let predicate = Proposition::Predicate {
         name: "selected".to_string(),
         arguments: vec![
-            Term::CState(state.clone()),
+            Term::CState(Box::new(state.clone())),
             Term::CValue(CValue::Int32(Bitvector32Term::Constant(7))),
         ],
     };
@@ -9114,7 +9114,7 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
     let source = Proposition::Predicate {
         name: "selected".to_string(),
         arguments: vec![
-            Term::CState(state.clone()),
+            Term::CState(Box::new(state.clone())),
             Term::CValue(CValue::Int32(Bitvector32Term::Constant(7))),
         ],
     };

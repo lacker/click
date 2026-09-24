@@ -1513,6 +1513,14 @@ impl Parser {
                 })
                 .collect();
         }
+        let guarded_by = if self.peek_ident() == Some("guarded_by") {
+            self.position += 1;
+            let mutex = self.parse_guarded_by_mutex_field()?;
+            self.expect(Token::Semicolon)?;
+            Some(mutex)
+        } else {
+            None
+        };
         if self.peek_ident() == Some("match") {
             if self.match_nesting != 0 {
                 return Err(self.error("nested resource matches are not supported"));
@@ -1559,7 +1567,17 @@ impl Parser {
                 for name in inserted {
                     self.current_contract_bindings.remove(&name);
                 }
+                if body
+                    .contains
+                    .iter()
+                    .any(|clause| matches!(clause, ResourceClause::Iterated(_)))
+                {
+                    return Err(self.error(
+                        "iterated ownership (`forall ... { owns ...; }`) is supported in an unmatched resource body, not inside a match arm",
+                    ));
+                }
                 if !body.fields.is_empty()
+                    || body.guarded_by.is_some()
                     || body.matched.is_some()
                     || body.condition.is_some()
                     || !body.witnesses.is_empty()
@@ -1584,6 +1602,7 @@ impl Parser {
             return Ok(CompositeResourceBody {
                 children: vec![],
                 fields,
+                guarded_by,
                 matched: Some(ResourceMatchBody { field, arms }),
                 condition: None,
                 contains: vec![],
@@ -1604,6 +1623,7 @@ impl Parser {
         let mut witnesses: Vec<ResourceWitness> = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
+                Some("guarded_by") => return Err(self.error("`guarded_by` must appear once before the resource body clauses")),
                 Some("field") => return Err(self.error("resource fields must be declared before body clauses and outside the resource guard")),
                 Some("let") => {
                     let binding = self.parse_contract_let_binding()?;
@@ -1665,14 +1685,17 @@ impl Parser {
                     facts.push(self.parse_proposition()?);
                     self.expect(Token::Semicolon)?;
                 }
+                Some("forall") => {
+                    contains.push(self.parse_iterated_resource_clause(resource_name)?);
+                }
                 Some(name) => {
                     return Err(self.error(format!(
-                        "expected `contains`, `owns`, `views`, `fact`, or `let` in resource body, got `{name}`"
+                        "expected `contains`, `owns`, `views`, `fact`, `forall`, or `let` in resource body, got `{name}`"
                     )));
                 }
                 None => {
                     return Err(self.error(
-                        "expected `contains`, `owns`, `views`, `fact`, or `let` in resource body, got end of input",
+                        "expected `contains`, `owns`, `views`, `fact`, `forall`, or `let` in resource body, got end of input",
                     ));
                 }
             }
@@ -1689,12 +1712,151 @@ impl Parser {
         Ok(CompositeResourceBody {
             children: vec![],
             fields,
+            guarded_by,
             matched: None,
             condition,
             contains,
             facts,
             witnesses,
         })
+    }
+
+    fn parse_guarded_by_mutex_field(&mut self) -> Result<ContractSegment, ClickError> {
+        let parameter = self.expect_ident("resource's struct pointer parameter")?;
+        self.expect(Token::Arrow)?;
+        let field_name = self.expect_ident("pthread mutex field")?;
+        let struct_name = self.current_struct_params.get(&parameter).ok_or_else(|| {
+            self.error(format!(
+                "`guarded_by {parameter}->{field_name}` requires a struct pointer parameter"
+            ))
+        })?;
+        let field = self.resolve_struct_field_metadata(struct_name, &field_name)?;
+        let Some(union_name) = field.union_name.as_deref() else {
+            return Err(self.error("`guarded_by` requires a `pthread_mutex_t` field"));
+        };
+        let Some(layout) = self.union_layouts.get(union_name) else {
+            return Err(self.error("`guarded_by` mutex type has no imported layout"));
+        };
+        if !matches!(union_name, "__click_pthread_mutex" | "pthread_mutex_t")
+            || layout.size_bytes() != 40
+            || layout.alignment_bytes() != 8
+            || field.byte_width != 40
+            || !field.offset_bytes.is_multiple_of(8)
+        {
+            return Err(self
+                .error("`guarded_by` requires a 40-byte, 8-byte-aligned `pthread_mutex_t` field"));
+        }
+        Ok(Self::field_segment_from_metadata(
+            CExpression::Variable(parameter.clone()),
+            Some(ContractExpression::CFragment(CExpression::Variable(
+                parameter,
+            ))),
+            &field_name,
+            &field,
+        ))
+    }
+
+    /// `forall (k: int32) where <range> { [if <guard> {] owns <segment>; [}] }`
+    /// inside a resource body. The binder is a C `int32` name for the range,
+    /// the guard, and the element segment, and for nothing after the clause.
+    fn parse_iterated_resource_clause(
+        &mut self,
+        resource_name: &str,
+    ) -> Result<ResourceClause, ClickError> {
+        self.expect_ident_spelling("forall")?;
+        self.expect(Token::LParen)?;
+        let binder = self.expect_ident("iterated ownership index name")?;
+        self.expect(Token::Colon)?;
+        let (click_type, _) = self.parse_click_type()?;
+        if click_type != ClickType::C(C0Type::Int32) {
+            return Err(self.error(format!(
+                "iterated ownership index `{binder}` must have type `int32`"
+            )));
+        }
+        self.expect(Token::RParen)?;
+        if self.peek_ident() != Some("where") {
+            return Err(self.error(format!(
+                "iterated ownership needs a bounded index: write `forall ({binder}: int32) where lo <= {binder} and {binder} < hi {{ ... }}`"
+            )));
+        }
+        self.position += 1;
+        let integer_was_bound = self.current_integer_params.remove(&binder);
+        let integer_let_was_bound = self.current_integer_lets.remove(&binder);
+        let c_was_bound = self.current_contract_bindings.remove(&binder);
+        let parsed = (|| {
+            let range = self.parse_proposition()?;
+            self.expect(Token::LBrace)?;
+            let guard = if self.peek_ident() == Some("if") {
+                self.position += 1;
+                let guard = self.parse_proposition()?;
+                self.expect(Token::LBrace)?;
+                Some(guard)
+            } else {
+                None
+            };
+            let mut elements = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                match self.peek_ident() {
+                    Some("owns") => {
+                        self.position += 1;
+                        elements.push(self.parse_resource_target(ResourceAccessMode::Own)?);
+                        self.expect(Token::Semicolon)?;
+                    }
+                    Some(other) => {
+                        return Err(self.error(format!(
+                            "an iterated ownership clause holds `owns` element ranges only, got `{other}`"
+                        )));
+                    }
+                    None => {
+                        return Err(self.error(
+                            "an iterated ownership clause holds `owns` element ranges only",
+                        ));
+                    }
+                }
+            }
+            self.expect(Token::RBrace)?;
+            if guard.is_some() {
+                self.expect(Token::RBrace)?;
+            }
+            Ok((range, guard, elements))
+        })();
+        if integer_was_bound {
+            self.current_integer_params.insert(binder.clone());
+        }
+        if integer_let_was_bound {
+            self.current_integer_lets.insert(binder.clone());
+        }
+        if c_was_bound {
+            self.current_contract_bindings.insert(binder.clone());
+        }
+        let (range, guard, elements) = parsed?;
+        let [ResourceClause::OwnMemory(element)] = <[ResourceClause; 1]>::try_from(elements)
+            .map_err(|elements| {
+                self.error(format!(
+                    "an iterated ownership clause owns exactly one element range per index, found {}",
+                    elements.len()
+                ))
+            })?
+        else {
+            return Err(self.error(
+                "an iterated ownership clause owns one memory range `base[start..end]` per index",
+            ));
+        };
+        let clause = IteratedResourceClause {
+            owner: resource_name.to_string(),
+            binder,
+            range,
+            guard,
+            element,
+        };
+        if clause.guard.is_none() {
+            // Unconditional iterated ownership of one cell per index is the
+            // plain range; it lowers to exactly the clause `owns base[lo..hi]`.
+            return crate::surface::lowering::unguarded_iterated_clause_as_range(&clause)
+                .map(ResourceClause::OwnMemory)
+                .map_err(|message| self.error(message));
+        }
+        Ok(ResourceClause::Iterated(Box::new(clause)))
     }
 
     fn parse_composite_resource_contains_clause(&mut self) -> Result<ResourceClause, ClickError> {
@@ -3396,6 +3558,31 @@ impl Parser {
             self.expect(Token::Colon)?;
             let instance = self.expect_ident("caller resource instance")?;
             crate::instrumentation::record_deterministic_work(1);
+            if callee == "pthread_mutex_init" {
+                if binder != "invariant" {
+                    return Err(
+                        self.error("`pthread_mutex_init` call map requires `invariant: instance`")
+                    );
+                }
+                if !bound.insert(binder.clone()) {
+                    return Err(self.error("duplicate `invariant` in the mutex init call map"));
+                }
+                let Some((identity, _)) = self.current_resource_bindings.get(&instance).cloned()
+                else {
+                    return Err(self.error(format!("unknown resource instance `{instance}`")));
+                };
+                binders.push(CallBinderBinding {
+                    binder,
+                    binder_identity: Variable(u64::MAX - 1),
+                    instance,
+                    identity,
+                });
+                if self.peek() != Some(&Token::Comma) {
+                    break;
+                }
+                self.position += 1;
+                continue;
+            }
             let Some(declaration) = declared.get(&binder) else {
                 return Err(self.error(format!(
                     "`{callee}` declares no resource instance binder `{binder}`"
@@ -3436,6 +3623,9 @@ impl Parser {
             self.position += 1;
         }
         self.expect(Token::RBrace)?;
+        if callee == "pthread_mutex_init" && !bound.contains("invariant") {
+            return Err(self.error("`pthread_mutex_init` call map requires `invariant: instance`"));
+        }
         if let Some((missing, _)) = declared.iter().find(|(name, entry)| {
             entry.kind == CalleeResourceBinderKind::Supplied && !bound.contains(*name)
         }) {
@@ -5488,6 +5678,27 @@ impl Parser {
                         premises,
                     });
                 }
+            }
+            "take" | "give" => {
+                self.expect(Token::LParen)?;
+                let segment = self.parse_current_contract_segment()?;
+                self.expect(Token::RParen)?;
+                ProofTactic::Iterated(if name == "take" {
+                    IteratedTactic::Take(segment)
+                } else {
+                    IteratedTactic::Give(segment)
+                })
+            }
+            "gather" | "scatter" => {
+                self.expect(Token::LParen)?;
+                let resource =
+                    self.parse_declared_resource_call_with_access(ResourceAccessMode::Own)?;
+                self.expect(Token::RParen)?;
+                ProofTactic::Iterated(if name == "gather" {
+                    IteratedTactic::Gather(resource)
+                } else {
+                    IteratedTactic::Scatter(resource)
+                })
             }
             "observe" => {
                 self.expect(Token::LParen)?;

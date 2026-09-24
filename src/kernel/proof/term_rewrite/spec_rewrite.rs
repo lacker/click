@@ -589,6 +589,34 @@ fn collect_spec_resource_carriers(
 }
 
 impl<'a> TermRewrite<'a> {
+    /// Rewrite a complete specification expression with the typed
+    /// replacements installed in this walker. This reserves every source
+    /// carrier before visiting any nested binder, matching the proposition
+    /// entry point below.
+    pub(crate) fn spec_expression(
+        &mut self,
+        expression: &SpecExpression,
+    ) -> Result<SpecExpression, SpecRewriteError> {
+        self.reserve_spec_expression_sources(std::iter::once(expression))?;
+        let result = self.rewrite_spec_expression(expression)?;
+        self.spec_status()?;
+        Ok(result)
+    }
+
+    /// Rewrite a complete mathematical Integer specification expression
+    /// with the typed replacements installed in this walker.  Reserve all
+    /// carriers before entering a fold binder so a later source cannot be
+    /// captured by an earlier fresh identity.
+    pub(crate) fn spec_integer_expression(
+        &mut self,
+        expression: &SpecIntegerExpression,
+    ) -> Result<SpecIntegerExpression, SpecRewriteError> {
+        self.reserve_spec_integer_sources(std::iter::once(expression))?;
+        let result = self.rewrite_spec_integer(expression)?;
+        self.spec_status()?;
+        Ok(result)
+    }
+
     /// Rewrite a complete specification proposition with the typed
     /// replacements installed in this walker.  This is intentionally one
     /// entry point for all Spec carriers: resource matching used to rewrite
@@ -649,6 +677,54 @@ impl<'a> TermRewrite<'a> {
             }
         }
         self.reserve_source_variables(variables);
+    }
+
+    fn reserve_spec_expression_sources<'p, I>(
+        &mut self,
+        expressions: I,
+    ) -> Result<(), SpecRewriteError>
+    where
+        I: IntoIterator<Item = &'p SpecExpression>,
+    {
+        self.ensure_replacement_carriers();
+        if self.source_variables_reserved || self.integer_work_exhausted {
+            return self.spec_status();
+        }
+
+        let mut variables = self.new_carrier_variables();
+        let mut integer_seen = BTreeSet::new();
+        for expression in expressions {
+            collect_spec_expression_carriers(expression, &mut variables, &mut integer_seen);
+            if variables.exhausted() {
+                break;
+            }
+        }
+        self.reserve_source_variables(variables);
+        self.spec_status()
+    }
+
+    fn reserve_spec_integer_sources<'p, I>(
+        &mut self,
+        expressions: I,
+    ) -> Result<(), SpecRewriteError>
+    where
+        I: IntoIterator<Item = &'p SpecIntegerExpression>,
+    {
+        self.ensure_replacement_carriers();
+        if self.source_variables_reserved || self.integer_work_exhausted {
+            return self.spec_status();
+        }
+
+        let mut variables = self.new_carrier_variables();
+        let mut integer_seen = BTreeSet::new();
+        for expression in expressions {
+            collect_spec_integer_carriers(expression, &mut variables, &mut integer_seen);
+            if variables.exhausted() {
+                break;
+            }
+        }
+        self.reserve_source_variables(variables);
+        self.spec_status()
     }
 
     fn spec_status(&self) -> Result<(), SpecRewriteError> {

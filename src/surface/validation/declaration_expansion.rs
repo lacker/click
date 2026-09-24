@@ -362,6 +362,7 @@ fn expand_declared_composite_resource_body(
     Ok(CompositeResourceBody {
         children: composite_body.children,
         fields: composite_body.fields,
+        guarded_by: composite_body.guarded_by,
         matched: composite_body
             .matched
             .map(|matched| {
@@ -561,7 +562,8 @@ fn expand_declared_resource_tactic(
         tactic @ (ProofTactic::UnfoldResource(_)
         | ProofTactic::ObserveResource(_)
         | ProofTactic::FoldResource(_)
-        | ProofTactic::ConstructResource(_)) => {
+        | ProofTactic::ConstructResource(_)
+        | ProofTactic::Iterated(_)) => {
             expand_declared_resource_tactic_with_resources(tactic, resource_definitions)
         }
         tactic @ (ProofTactic::Have(_)
@@ -787,6 +789,19 @@ fn expand_declared_resource_tactic_with_resources(
         ProofTactic::ConstructResource(resource) => Ok(ProofTactic::ConstructResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
+        ProofTactic::Iterated(IteratedTactic::Gather(resource)) => {
+            Ok(ProofTactic::Iterated(IteratedTactic::Gather(
+                expand_declared_resource_clause(resource, resource_definitions)?,
+            )))
+        }
+        ProofTactic::Iterated(IteratedTactic::Scatter(resource)) => {
+            Ok(ProofTactic::Iterated(IteratedTactic::Scatter(
+                expand_declared_resource_clause(resource, resource_definitions)?,
+            )))
+        }
+        tactic @ ProofTactic::Iterated(IteratedTactic::Take(_) | IteratedTactic::Give(_)) => {
+            Ok(tactic)
+        }
         _ => unreachable!("tactic dispatched to the wrong declaration-expansion helper"),
     }
 }
