@@ -789,8 +789,9 @@ fn advance_execution_proof_statement(
                 CStatementOutcome::VerificationDiverges => {}
                 CStatementOutcome::UndefinedBehavior(kind) => {
                     return Err(ClickError::new(format!(
-                        "execution proof traversal for {} statement({statement_index}) produced undefined behavior: {kind:?}",
-                        environment.function_block.signature().name()
+                        "execution proof traversal for {} statement({statement_index}) produced undefined behavior: {}",
+                        environment.function_block.signature().name(),
+                        kind.description()
                     )));
                 }
                 CStatementOutcome::RuntimeError(error) => {

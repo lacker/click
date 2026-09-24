@@ -179,6 +179,10 @@ A copied pointer keeps its allocation identity, and nothing else:
 - **Lifetime.** Restoring a representation does not restore a freed
   allocation. `mdtests/byte_representation_use_after_free_rejected.md` frees
   the pointee and refuses `*dst->target` as an invalid access.
+  `mdtests/byte_representation_freed_pointer_compare_rejected.md` refuses
+  even `dst->target == pointee` after the free, because both values are
+  indeterminate (C11 6.2.4p2); the same comparison before the free verifies
+  (`mdtests/byte_representation_compare_before_free.md`).
 - **Heap authority.** Resource normalization never merges `allocation` tokens
   for blocks it proves distinct, so the several live heap authorities of a
   round trip stay unique through copies and frees

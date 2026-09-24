@@ -380,7 +380,8 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                     outcome: CConditionOutcome::UndefinedBehavior(kind),
                     ..
                 } => Err(ClickError::new(format!(
-                    "{context_label} produced undefined behavior while evaluating the condition: {kind:?}"
+                    "{context_label} produced undefined behavior while evaluating the condition: {}",
+                    kind.description()
                 ))),
                 Proposition::CConditionEvaluates {
                     outcome: CConditionOutcome::RuntimeError(error),
