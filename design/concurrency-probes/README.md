@@ -134,15 +134,17 @@ structs; compound union member operations remain bounded refusals pending
 typed access and copy support. Pointer uses of the aligned typedef
 `__pthread_unwind_buf_t` now import; value storage still refuses until its
 alignment is represented in allocation and aggregate layout. The frozen import
-now reaches the `long double` member of `max_align_t` in GCC `stddef.h:427`;
-the preceding member alignment attribute is included in the struct layout.
+now recognizes the x86-64 `long double` size and alignment needed by
+`max_align_t`. Unused glibc external object declarations no longer require
+definitions in the verified source bundle, so the frozen artifact loads
+through the ordinary import path on macOS. Its sidecar checks import only.
 Weak linkage, asm symbol labels, and returns-twice annotations
 import with their limits retained; calls needing symbol availability or a
 returns-twice control-flow model are refused. GCC `access`, `const`,
 `nonnull`, `noreturn`, and `deprecated` annotations and standard or GNU
-`restrict` syntax import without granting proof facts. The modeled proof remains separate
-from native runtime validation; importing these headers grants no pthread
-semantics.
+`restrict` syntax import without granting proof facts. The modeled proof remains
+separate from native runtime validation; importing these headers grants no
+pthread semantics.
 
 The compiler-backed regression uses the host GCC/header installation and locks
 those actual inputs. This run does not establish the selected Debian GCC

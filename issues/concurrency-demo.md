@@ -41,11 +41,10 @@ This is a conditional client proof. Click checks the client and the
 create/join authority transitions against a trusted modeled pthread
 specification; it has **not** established that a native Linux or macOS
 pthread library matches that specification. The compiler-import path locks a
-real Ubuntu GCC/glibc artifact for the frozen source, but header parsing
-currently stops at the `long double` member of `max_align_t` in GCC
-`stddef.h:427`.
-Importing declarations by itself would not validate
-runtime behavior.
+real Ubuntu GCC/glibc artifact for the frozen source. That artifact now loads
+through the ordinary import path on macOS, including the real header
+declarations. Its import-only sidecar has no C function proofs. Importing
+declarations by itself does not validate runtime behavior.
 
 The mutex counter, release/acquire publication, and native pthread binding
 remain open. [The probe record](../design/concurrency-probes/README.md)

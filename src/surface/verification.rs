@@ -5562,6 +5562,15 @@ pub(in crate::surface) fn parse_verified_sources_context(
         validate_modeled_pthread_binding(&units)?;
     }
 
+    // Headers may declare libc objects that the verified program never uses.
+    // Keep those declarations for compatibility checks, but require storage
+    // only when a C value or address expression actually names the object.
+    let referenced_external_objects = units
+        .values()
+        .flat_map(|unit| unit.referenced_external_objects.iter())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
     for (source_path, unit) in &mut units {
         for function in std::mem::take(&mut unit.functions) {
             let function_name = function.name().to_string();
@@ -5677,7 +5686,9 @@ pub(in crate::surface) fn parse_verified_sources_context(
             }
         }
     }
-    if let Some((name, _)) = globals.iter().find(|(_, global)| !global.is_defined()) {
+    if let Some((name, _)) = globals.iter().find(|(name, global)| {
+        referenced_external_objects.contains(name.as_str()) && !global.is_defined()
+    }) {
         return Err(ClickError::new(format!(
             "global `{name}` is declared `extern` but has no definition"
         )));
@@ -5774,7 +5785,10 @@ pub(in crate::surface) fn parse_verified_sources_context(
             }
         }
     }
-    if let Some((name, array)) = global_arrays.iter().find(|(_, array)| !array.is_defined()) {
+    if let Some((name, array)) = global_arrays.iter().find(|(name, array)| {
+        !array.is_defined()
+            && (array.is_tentative() || referenced_external_objects.contains(name.as_str()))
+    }) {
         let message = if array.is_tentative() {
             format!(
                 "global array `{name}` has an incomplete tentative definition but no complete definition"
@@ -5890,10 +5904,9 @@ pub(in crate::surface) fn parse_verified_sources_context(
             }
         }
     }
-    if let Some((name, _)) = global_aggregates
-        .iter()
-        .find(|(_, aggregate)| !aggregate.is_defined())
-    {
+    if let Some((name, _)) = global_aggregates.iter().find(|(name, aggregate)| {
+        referenced_external_objects.contains(name.as_str()) && !aggregate.is_defined()
+    }) {
         return Err(ClickError::new(format!(
             "aggregate global `{name}` is declared `extern` but has no definition"
         )));
@@ -6018,10 +6031,9 @@ pub(in crate::surface) fn parse_verified_sources_context(
             }
         }
     }
-    if let Some((name, _)) = global_aggregate_arrays
-        .iter()
-        .find(|(_, aggregate)| !aggregate.is_defined())
-    {
+    if let Some((name, _)) = global_aggregate_arrays.iter().find(|(name, aggregate)| {
+        referenced_external_objects.contains(name.as_str()) && !aggregate.is_defined()
+    }) {
         return Err(ClickError::new(format!(
             "aggregate global array `{name}` is declared `extern` but has no definition"
         )));

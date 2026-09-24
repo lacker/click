@@ -1986,7 +1986,7 @@ mod tests {
     }
 
     #[test]
-    fn frozen_pthread_gcc_import_reaches_unresolved_extern_boundary_offline() {
+    fn frozen_pthread_gcc_import_loads_offline_with_unused_extern_declarations() {
         struct CopiedFixture(PathBuf);
         impl Drop for CopiedFixture {
             fn drop(&mut self) {
@@ -2047,16 +2047,8 @@ mod tests {
             imports[0].identity(),
             load_imports(&original.join("main.click.import.json")).unwrap()[0].identity()
         );
-        let error = match crate::surface::verify_c0_prepared_sources(&proof, &imports) {
-            Ok(_) => panic!("the remaining real-header parser gap must be refused"),
-            Err(error) => error.message().to_string(),
-        };
-        assert!(error.len() < 4096, "unbounded import diagnostic: {error}");
-        assert!(
-            error.contains("global `__daylight` is declared `extern` but has no definition"),
-            "{error}"
-        );
-        assert!(!error.contains("unknown struct declaration `sigevent`"));
+        let verified = crate::surface::verify_c0_prepared_sources(&proof, &imports).unwrap();
+        assert!(verified.is_empty(), "this sidecar checks import only");
     }
 
     #[test]

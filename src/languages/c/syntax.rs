@@ -4343,6 +4343,8 @@ pub(crate) struct C0TranslationUnit {
     pub global_arrays: BTreeMap<String, C0GlobalArray>,
     pub global_aggregates: BTreeMap<String, C0GlobalAggregate>,
     pub global_aggregate_arrays: BTreeMap<String, C0GlobalAggregateArray>,
+    /// External objects named in value or address positions by this unit.
+    pub referenced_external_objects: BTreeSet<String>,
 }
 
 pub(crate) fn parse_translation_unit_for_source(
@@ -6333,6 +6335,7 @@ struct Parser {
     global_arrays: BTreeMap<String, C0GlobalArray>,
     global_aggregates: BTreeMap<String, C0GlobalAggregate>,
     global_aggregate_arrays: BTreeMap<String, C0GlobalAggregateArray>,
+    referenced_external_objects: BTreeSet<String>,
     static_locals: BTreeMap<String, C0StaticLocal>,
     static_arrays: BTreeMap<String, C0StaticArray>,
     static_aggregates: BTreeMap<String, C0StaticAggregate>,
@@ -6549,6 +6552,7 @@ impl Parser {
             global_arrays: BTreeMap::new(),
             global_aggregates: BTreeMap::new(),
             global_aggregate_arrays: BTreeMap::new(),
+            referenced_external_objects: BTreeSet::new(),
             static_locals: BTreeMap::new(),
             static_arrays: BTreeMap::new(),
             static_aggregates: BTreeMap::new(),
@@ -6720,7 +6724,7 @@ impl Parser {
     /// are both rejected here rather than lowered to a variable the kernel
     /// would later report as unbound.
     fn resolve_object_name(
-        &self,
+        &mut self,
         source_name: &str,
         position: Option<SourcePosition>,
     ) -> Result<String, C0SyntaxError> {
@@ -6728,6 +6732,25 @@ impl Parser {
         if !self.out_of_scope_names.contains(source_name)
             && self.declares_source_object(source_name)
         {
+            if self
+                .globals
+                .get(&name)
+                .is_some_and(|object| !object.is_file_static())
+                || self
+                    .global_arrays
+                    .get(&name)
+                    .is_some_and(|object| !object.is_file_static())
+                || self
+                    .global_aggregates
+                    .get(&name)
+                    .is_some_and(|object| !object.is_file_static())
+                || self
+                    .global_aggregate_arrays
+                    .get(&name)
+                    .is_some_and(|object| !object.is_file_static())
+            {
+                self.referenced_external_objects.insert(name.clone());
+            }
             Ok(name)
         } else {
             Err(self.error_at_position(
@@ -7527,6 +7550,7 @@ impl Parser {
             global_arrays: self.global_arrays,
             global_aggregates: self.global_aggregates,
             global_aggregate_arrays: self.global_aggregate_arrays,
+            referenced_external_objects: self.referenced_external_objects,
         })
     }
 
