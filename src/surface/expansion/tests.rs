@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn tactic_line_disambiguation_uses_columns_only_for_shared_lines() {
+    let source = "by { step(); step(); }\nby {\n    step();\n}\n";
+    assert!(tactic_line_has_multiple_starts(source, &SourcePosition::new(1, 6)).unwrap());
+    assert!(tactic_line_has_multiple_starts(source, &SourcePosition::new(1, 14)).unwrap());
+    assert!(!tactic_line_has_multiple_starts(source, &SourcePosition::new(3, 5)).unwrap());
+
+    let quantified = "by { have exists (x: int32) { x == x }; }\n";
+    assert!(!tactic_line_has_multiple_starts(quantified, &SourcePosition::new(1, 6)).unwrap());
+
+    let nested = "by {\n    have n <= n by { simp(); }\n}\n";
+    let have = position_at_offset(nested, nested.find("have").unwrap());
+    let simp = position_at_offset(nested, nested.find("simp").unwrap());
+    assert!(!tactic_line_has_multiple_starts(nested, &have).unwrap());
+    assert!(tactic_line_has_multiple_starts(nested, &simp).unwrap());
+}
+
+#[test]
+fn trace_target_selects_only_the_arm_containing_its_source_position() {
+    let source = "by {\n  branch { then { step(); } else { step(); } }\n  step();\n}\n";
+    let branch = position_at_offset(source, source.find("branch").unwrap());
+    let then_step = position_at_offset(
+        source,
+        source.find("then { step").unwrap() + "then { ".len(),
+    );
+    let else_step = position_at_offset(
+        source,
+        source.find("else { step").unwrap() + "else { ".len(),
+    );
+    let continuation = position_at_offset(source, source.rfind("step();").unwrap());
+    assert_eq!(
+        tactic_arm_containing_position(source, &branch, &then_step).unwrap(),
+        Some(0)
+    );
+    assert_eq!(
+        tactic_arm_containing_position(source, &branch, &else_step).unwrap(),
+        Some(1)
+    );
+    assert_eq!(
+        tactic_arm_containing_position(source, &branch, &continuation).unwrap(),
+        None
+    );
+}
+
+#[test]
 fn nested_tactic_position_follows_have_and_open_bodies() {
     let source = "have true by {\n    open(resource) {\n        have true by {\n            assumption();\n        }\n    }\n}\n";
     let position = nested_tactic_source_position(source, &SourcePosition::new(1, 1), &[0, 0, 0])

@@ -123,7 +123,9 @@ pub use expansion::{
     expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
     map_verifying_source_paths, nested_tactic_source_position, selected_c_target,
     selected_project_c_target, selected_project_thread_runtime, selected_thread_runtime,
-    tactic_source_at_position, verifying_source_paths,
+    tactic_arm_containing_position, tactic_have_body_contains_position,
+    tactic_line_has_multiple_starts, tactic_source_at_position, tactic_starts_on_line,
+    verifying_source_paths,
 };
 use expansion::{
     ExpansionCapture, ProofSite, VerificationTarget, verification_target_at,
@@ -164,6 +166,31 @@ pub use verification::{
 };
 mod proof_trace;
 pub use proof_trace::with_proof_trace;
+
+/// Render one accepted checked path while `with_proof_trace` is active.
+/// The selected tactic, when supplied, must occur on that path.
+pub fn accepted_proof_trace(
+    tactic_location: &dyn Fn(&str, &[usize]) -> Option<(String, crate::source::SourcePosition)>,
+    branch_arm: &dyn Fn(&str, &[usize], &crate::source::SourcePosition) -> Option<usize>,
+    have_body_contains: &dyn Fn(&str, &[usize], &crate::source::SourcePosition) -> bool,
+    target: Option<&crate::source::SourcePosition>,
+) -> Option<String> {
+    let mut labels = proof_diagnostics::render::SnapshotLabels::default();
+    proof_trace::render_accepted(
+        &mut labels,
+        tactic_location,
+        branch_arm,
+        have_body_contains,
+        target,
+    )
+    .map(|trace| {
+        trace
+            .lines()
+            .map(|line| line.strip_prefix("  ").unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
+}
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
 const COUNTED_POPULATION_VARIABLE_BASE: u64 = 200_000;
@@ -2739,6 +2766,26 @@ impl RecordedSnapshots {
 
     fn keys(&self) -> impl DoubleEndedIterator<Item = &SnapshotSelector> {
         self.iter().map(|(selector, _)| selector)
+    }
+
+    /// Bounded, newest-first source points for diagnostic reconstruction.
+    /// History can repeat a key; only its currently recorded state is returned.
+    fn recent(&self, limit: usize) -> Vec<(&SnapshotSelector, &CState)> {
+        let mut result = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut change = self.version.history.as_ref();
+        while let Some(current) = change {
+            if seen.insert(&current.selector)
+                && let Some(state) = self.get(&current.selector)
+            {
+                result.push((&current.selector, state));
+                if result.len() >= limit {
+                    break;
+                }
+            }
+            change = current.parent.as_ref();
+        }
+        result
     }
 
     fn retain(&mut self, mut keep: impl FnMut(&SnapshotSelector, &mut CState) -> bool) {
@@ -5918,6 +5965,7 @@ pub struct ClickError {
     diagnostic: Option<std::sync::Arc<proof_diagnostics::ProofFailureDiagnostic>>,
     search_failures: Option<std::sync::Arc<Vec<proof_diagnostics::ProofSearchFailure>>>,
     unresolved_requirement: Option<std::sync::Arc<UnresolvedRequirement>>,
+    missing_tactic_requirement: Option<std::sync::Arc<String>>,
     timing_tactic: Option<Box<TimingTacticContext>>,
 }
 
@@ -7080,6 +7128,7 @@ impl ClickError {
             diagnostic: None,
             search_failures: None,
             unresolved_requirement: None,
+            missing_tactic_requirement: None,
             timing_tactic: current_timing_tactic().map(Box::new),
         }
     }
@@ -7104,6 +7153,7 @@ impl ClickError {
             diagnostic: Some(std::sync::Arc::new(diagnostic)),
             search_failures: None,
             unresolved_requirement: None,
+            missing_tactic_requirement: None,
             timing_tactic: current_timing_tactic().map(Box::new),
         }
     }
@@ -7188,10 +7238,14 @@ impl ClickError {
         }
         if self.kind == ClickErrorKind::Proof
             && let Some(trace) = self.diagnostic.as_ref().and_then(|diagnostic| {
-                diagnostic
-                    .state
-                    .as_ref()?
-                    .proof_trace(&diagnostic.claim_label, &mut snapshot_labels)
+                diagnostic.state.as_ref()?.proof_trace(
+                    &diagnostic.claim_label,
+                    &mut snapshot_labels,
+                    &|_| None,
+                    &|_, _| None,
+                    &|_, _| false,
+                    None,
+                )
             })
         {
             report.push('\n');
@@ -7211,6 +7265,11 @@ impl ClickError {
                 diagnostic.reason.as_str()
             });
         let reason = reason.split("\nproof context:").next().unwrap_or(reason);
+        let requirement_reason = self
+            .missing_tactic_requirement
+            .as_ref()
+            .map(|required| format!("requirement `{required}` not satisfied"));
+        let reason = requirement_reason.as_deref().unwrap_or(reason);
         let (mut report, reason, certification_obligation) = if self.kind == ClickErrorKind::Proof
             && let Some(rest) = reason.strip_prefix("could not certify contract for `")
             && let Some((function, detail)) = rest.split_once("`: ")
@@ -7250,12 +7309,16 @@ impl ClickError {
         if let Some(tactic) = self.failed_tactic {
             context.push(format!("tactic: {tactic}"));
         }
+        if let Some(required) = &self.missing_tactic_requirement {
+            context.push(format!("requires: {required}"));
+        }
         if let Some(diagnostic) = &self.diagnostic
             && let Some(state) = diagnostic.state.as_ref()
         {
             let source_goal = state.source_goal();
             if let Some(goal) = &source_goal
                 && !certification_obligation
+                && self.missing_tactic_requirement.is_none()
             {
                 context.push(format!("goal: {goal}"));
             }
@@ -7292,6 +7355,23 @@ impl ClickError {
     /// by ordinary `click verify`. No repeated error classification or tactic
     /// metadata belongs in this section.
     pub fn trace_context_report(&self) -> Option<String> {
+        self.trace_context_report_with_tactic_locations(
+            &|_| None,
+            &|_, _| None,
+            &|_, _| false,
+            None,
+        )
+    }
+
+    /// Render a trace with source labels resolved by the CLI at the terminal
+    /// boundary, without making proof checking depend on source lookup.
+    pub fn trace_context_report_with_tactic_locations(
+        &self,
+        tactic_location: &dyn Fn(&[usize]) -> Option<(String, crate::source::SourcePosition)>,
+        branch_arm: &dyn Fn(&[usize], &crate::source::SourcePosition) -> Option<usize>,
+        have_body_contains: &dyn Fn(&[usize], &crate::source::SourcePosition) -> bool,
+        target: Option<&crate::source::SourcePosition>,
+    ) -> Option<String> {
         let diagnostic = self.diagnostic.as_ref()?;
         if self.kind != ClickErrorKind::Proof || !proof_trace::enabled_for(&diagnostic.claim_label)
         {
@@ -7308,7 +7388,16 @@ impl ClickError {
         let trace = diagnostic
             .state
             .as_ref()
-            .and_then(|state| state.proof_trace(&diagnostic.claim_label, &mut labels))
+            .and_then(|state| {
+                state.proof_trace(
+                    &diagnostic.claim_label,
+                    &mut labels,
+                    tactic_location,
+                    branch_arm,
+                    have_body_contains,
+                    target,
+                )
+            })
             .map(|trace| {
                 trace
                     .lines()
@@ -7364,6 +7453,12 @@ impl ClickError {
         self
     }
 
+    pub(crate) fn with_missing_tactic_requirement(mut self, required: String) -> Self {
+        self.missing_tactic_requirement = Some(std::sync::Arc::new(required));
+        self.rendered = std::sync::OnceLock::new();
+        self
+    }
+
     /// The bounded cause text, without rendering proof state or premises.
     pub(crate) fn raw_summary(&self) -> &str {
         &self.message
@@ -7416,6 +7511,7 @@ impl ClickError {
             diagnostic: self.diagnostic,
             search_failures: self.search_failures,
             unresolved_requirement: self.unresolved_requirement,
+            missing_tactic_requirement: self.missing_tactic_requirement,
             timing_tactic: self.timing_tactic,
         }
     }
@@ -7447,6 +7543,7 @@ impl Clone for ClickError {
             diagnostic: self.diagnostic.clone(),
             search_failures: self.search_failures.clone(),
             unresolved_requirement: self.unresolved_requirement.clone(),
+            missing_tactic_requirement: self.missing_tactic_requirement.clone(),
             timing_tactic: self.timing_tactic.clone(),
         }
     }
@@ -7460,6 +7557,7 @@ impl PartialEq for ClickError {
             && self.diagnostic == other.diagnostic
             && self.search_failures == other.search_failures
             && self.unresolved_requirement == other.unresolved_requirement
+            && self.missing_tactic_requirement == other.missing_tactic_requirement
             && self.timing_tactic == other.timing_tactic
     }
 }

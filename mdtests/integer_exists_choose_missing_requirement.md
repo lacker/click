@@ -12,5 +12,5 @@ theorem integer_exists_choose_missing_requirement() {
 ```
 
 ```expect
-fail: available fact
+fail: required existential fact is not available
 ```

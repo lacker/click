@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -17,14 +19,16 @@ use click::languages::c::target::CTarget;
 #[cfg(test)]
 use click::surface::verify_c0_sources;
 use click::surface::{
-    ClickError, ClickErrorKind, ClickProject, VerifiedCTheorem, c0_incremental_selection,
-    c0_prepared_project_external_dependencies, c0_prepared_project_selected_proof_count,
-    c0_prepared_project_selected_proof_names, c0_prepared_project_tactic_source_position,
-    c0_project_external_dependencies, c0_project_selected_proof_count,
-    c0_project_selected_proof_names, c0_project_tactic_source_position,
-    cpp_prepared_project_external_dependencies, cpp_prepared_project_selected_proof_count,
-    cpp_prepared_project_tactic_source_position, nested_tactic_source_position, selected_c_target,
-    tactic_source_at_position, verify_c0_prepared_project, verify_c0_prepared_project_at,
+    ClickError, ClickErrorKind, ClickProject, VerifiedCTheorem, accepted_proof_trace,
+    c0_incremental_selection, c0_prepared_project_external_dependencies,
+    c0_prepared_project_selected_proof_count, c0_prepared_project_selected_proof_names,
+    c0_prepared_project_tactic_source_position, c0_project_external_dependencies,
+    c0_project_selected_proof_count, c0_project_selected_proof_names,
+    c0_project_tactic_source_position, cpp_prepared_project_external_dependencies,
+    cpp_prepared_project_selected_proof_count, cpp_prepared_project_tactic_source_position,
+    nested_tactic_source_position, selected_c_target, tactic_arm_containing_position,
+    tactic_have_body_contains_position, tactic_line_has_multiple_starts, tactic_source_at_position,
+    tactic_starts_on_line, verify_c0_prepared_project, verify_c0_prepared_project_at,
     verify_c0_prepared_project_functions, verify_c0_project, verify_c0_project_at,
     verify_c0_project_functions, verify_cpp_prepared_project, verify_cpp_prepared_project_at,
     verifying_source_paths, with_proof_trace,
@@ -32,7 +36,7 @@ use click::surface::{
 
 const USAGE: &str = "\
 usage: click verify [--time-limit <DURATION>] <sidecar.click|mdtest.md>[:<line>:<column>]
-       click verify --trace-proof <FUNCTION> <sidecar.click|mdtest.md>
+       click verify --trace-proof <FUNCTION> [--trace-to <LINE[:COLUMN]>] <sidecar.click|mdtest.md>
        click verify [--time-limit <DURATION>] <project-directory|examples-directory>
        click verify --changed-since <REVISION> [--explain] <sidecar.click|directory>
 
@@ -52,8 +56,10 @@ is the command to run after applying an expansion emitted by `click expand`.
 Each sidecar has a 30-second limit by default.
 
 `--trace-proof FUNCTION` verifies one C function and shows checked fact and
-resource changes on the failing path. Ordinary proof errors suggest this
-command with the failing function filled in.
+resource changes on the path to the failing tactic, or an accepted path when
+the proof succeeds. `--trace-to` selects a written tactic by source line (and
+column when the line has several tactics) within the selected proof.
+Ordinary proof errors suggest this command with the failing function filled in.
 
 `--allow-sorry` enables the dev-only `sorry` proof hole: a proof unit whose
 body is exactly `sorry();` is admitted without checking. This is purely a
@@ -73,6 +79,13 @@ struct Arguments {
     explain: bool,
     allow_sorry: bool,
     trace_proof: Option<String>,
+    trace_to: Option<TraceTo>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TraceTo {
+    line: usize,
+    column: Option<usize>,
 }
 
 fn main() {
@@ -114,6 +127,9 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
                 .to_string(),
         );
     }
+    if arguments.trace_to.is_some() && arguments.trace_proof.is_none() {
+        return Err("`--trace-to` requires `--trace-proof`".to_string());
+    }
     if arguments.allow_sorry {
         // An admission records what an ordinary run did not check, so it
         // cannot say which proofs a baseline still has to check, and it must
@@ -151,6 +167,7 @@ fn run(arguments: Arguments) -> Result<(), String> {
             arguments.time_limit,
             Some(containing_directory(path)),
             arguments.trace_proof.as_deref(),
+            arguments.trace_to.as_ref(),
         )
     }
 }
@@ -162,6 +179,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut explain = false;
     let mut allow_sorry = false;
     let mut trace_proof = None;
+    let mut trace_to = None;
     let mut parse_options = true;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -194,6 +212,33 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
                     .next()
                     .ok_or_else(|| format!("missing function after `--trace-proof`\n{USAGE}"))?,
             );
+        } else if parse_options && argument == "--trace-to" {
+            if trace_to.is_some() {
+                return Err("`--trace-to` may only be supplied once".to_string());
+            }
+            let value = arguments
+                .next()
+                .ok_or_else(|| format!("missing source location after `--trace-to`\n{USAGE}"))?;
+            let (line, column) = value
+                .split_once(':')
+                .map_or((value.as_str(), None), |(line, column)| {
+                    (line, Some(column))
+                });
+            let line = line
+                .parse::<usize>()
+                .ok()
+                .filter(|line| *line > 0)
+                .ok_or_else(|| "`--trace-to` needs a positive LINE[:COLUMN]".to_string())?;
+            let column = column
+                .map(|column| {
+                    column
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|column| *column > 0)
+                        .ok_or_else(|| "`--trace-to` needs a positive LINE[:COLUMN]".to_string())
+                })
+                .transpose()?;
+            trace_to = Some(TraceTo { line, column });
         } else if parse_options && argument.starts_with('-') {
             return Err(format!("unknown option `{argument}`\n{USAGE}"));
         } else if target.replace(argument).is_some() {
@@ -207,7 +252,59 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         explain,
         allow_sorry,
         trace_proof,
+        trace_to,
     })
+}
+
+fn resolve_trace_target(
+    source: &str,
+    line_offset: usize,
+    target: &TraceTo,
+) -> Result<click::surface::SourcePosition, String> {
+    let line = target
+        .line
+        .checked_sub(line_offset)
+        .filter(|line| *line > 0)
+        .ok_or_else(|| format!("tactic@{} is outside the Click source", target.line))?;
+    let starts = tactic_starts_on_line(source, line).map_err(click_message)?;
+    let selected = match target.column {
+        Some(column) => starts
+            .into_iter()
+            .find(|position| position.column == column)
+            .ok_or_else(|| {
+                format!(
+                    "no written tactic starts at tactic@{}:{column}",
+                    target.line
+                )
+            })?,
+        None => match starts.as_slice() {
+            [position] => position.clone(),
+            [] => {
+                return Err(format!(
+                    "no written tactic starts at tactic@{}",
+                    target.line
+                ));
+            }
+            _ => {
+                let outer = starts
+                    .iter()
+                    .filter(|position| {
+                        !tactic_line_has_multiple_starts(source, position).unwrap_or(true)
+                    })
+                    .collect::<Vec<_>>();
+                match outer.as_slice() {
+                    [position] => (*position).clone(),
+                    _ => {
+                        return Err(format!(
+                            "several tactics start on line {}; use --trace-to LINE:COLUMN",
+                            target.line
+                        ));
+                    }
+                }
+            }
+        },
+    };
+    Ok(selected)
 }
 
 /// Verifies every sidecar under a project or examples directory, reporting
@@ -218,7 +315,7 @@ fn verify_directory(path: &Path, time_limit: Duration) -> Result<(), String> {
     let projects = &selection.projects;
     let project_root = selection.project_root.as_path();
     for sidecar in &sidecars {
-        verify_file(sidecar, time_limit, Some(project_root), None)?;
+        verify_file(sidecar, time_limit, Some(project_root), None, None)?;
         println!("verified {}", display_path(sidecar, path));
     }
     println!(
@@ -336,7 +433,9 @@ fn verify_changed(
             } else {
                 verify_c0_project_functions(&project, &refs, selected.clone())
             }
-            .map_err(|error| proof_error_report(&error, &sidecar, false, &project, &inputs, 0))
+            .map_err(|error| {
+                proof_error_report(&error, &sidecar, false, &project, &inputs, 0, None)
+            })
         })?;
         print_external_dependencies(&dependencies, &verified_theorems);
         if full_rebuild
@@ -397,39 +496,98 @@ fn proof_error_report(
     project: &ClickProject,
     inputs: &CInput,
     line_offset: usize,
+    trace_target: Option<&click::surface::SourcePosition>,
 ) -> String {
     let (mut report, mut context) = error.concise_report_parts();
     if let Some(source) = project.entry_source()
         && let Some(position) = proof_source_position(error, project, inputs, source)
     {
-        if let Ok(tactic) = tactic_source_at_position(source, &position) {
-            let source_line = source.lines().nth(position.line - 1).unwrap_or("");
-            let indent = source_line
-                .chars()
-                .take(position.column - 1)
-                .collect::<String>();
-            let formatted = format_source_tactic(&tactic, &indent);
+        let mut has_full_tactic = false;
+        if let Some(formatted) = format_source_tactic_at_position(source, &position, line_offset) {
             if let Some(index) = context.iter().position(|line| line.starts_with("tactic: ")) {
                 context[index] = formatted;
             } else {
                 context.insert(0, formatted);
             }
+            has_full_tactic = true;
         }
-        if let Some(excerpt) = source_excerpt(sidecar, source, &position, line_offset) {
+        if !has_full_tactic
+            && let Some(excerpt) = source_excerpt(sidecar, source, &position, line_offset)
+        {
             context.push(excerpt);
         }
-    }
-    if let Some(location) = error.proof_step_location() {
-        context.push(format!("step: {location}"));
     }
     if !context.is_empty() {
         report.push_str("\n\n");
         report.push_str(&context.join("\n"));
     }
     if show_trace {
-        if let Some(trace) = error.trace_context_report() {
+        let target = trace_target.cloned().or_else(|| {
+            project
+                .entry_source()
+                .and_then(|source| proof_source_position(error, project, inputs, source))
+        });
+        let positions = RefCell::new(HashMap::<
+            Vec<usize>,
+            Option<(String, click::surface::SourcePosition)>,
+        >::new());
+        let tactic_location = |path: &[usize]| {
+            if let Some(cached) = positions.borrow().get(path) {
+                return cached.clone();
+            }
+            let label = error.proof_claim_label().and_then(|claim| {
+                let source = project.entry_source()?;
+                let position =
+                    proof_source_position_for_path(claim, path, project, inputs, source)?;
+                let multiple = tactic_line_has_multiple_starts(source, &position).unwrap_or(true);
+                let line = position.line + line_offset;
+                let label = if multiple {
+                    format!("tactic@{line}:{}", position.column)
+                } else {
+                    format!("tactic@{line}")
+                };
+                Some((label, position))
+            });
+            positions.borrow_mut().insert(path.to_vec(), label.clone());
+            label
+        };
+        let branch_arm = |path: &[usize], target: &click::surface::SourcePosition| {
+            let source = project.entry_source()?;
+            let claim = error.proof_claim_label()?;
+            let branch = proof_source_position_for_path(claim, path, project, inputs, source)?;
+            tactic_arm_containing_position(source, &branch, target)
+                .ok()
+                .flatten()
+        };
+        let have_body_contains = |path: &[usize], target: &click::surface::SourcePosition| {
+            let Some(source) = project.entry_source() else {
+                return false;
+            };
+            let Some(claim) = error.proof_claim_label() else {
+                return false;
+            };
+            let Some(have) = proof_source_position_for_path(claim, path, project, inputs, source)
+            else {
+                return false;
+            };
+            tactic_have_body_contains_position(source, &have, target).unwrap_or(false)
+        };
+        if let Some(trace) = error.trace_context_report_with_tactic_locations(
+            &tactic_location,
+            &branch_arm,
+            &have_body_contains,
+            target.as_ref(),
+        ) {
             report.push_str("\n\n");
             report.push_str(&trace);
+            if let Some(formatted) = target.as_ref().and_then(|position| {
+                project.entry_source().and_then(|source| {
+                    format_source_tactic_at_position(source, position, line_offset)
+                })
+            }) {
+                report.push_str("\n\n");
+                report.push_str(&formatted);
+            }
         }
         return report;
     }
@@ -447,11 +605,17 @@ fn proof_error_report(
     report
 }
 
-fn format_source_tactic(tactic: &str, source_indent: &str) -> String {
-    if !tactic.contains('\n') {
-        return format!("tactic: {tactic}");
-    }
-    let mut report = String::from("tactic:");
+fn format_source_tactic(
+    tactic: &str,
+    source_indent: &str,
+    line: usize,
+    column: Option<usize>,
+) -> String {
+    let location = column.map_or_else(
+        || format!("tactic@{line}"),
+        |column| format!("tactic@{line}:{column}"),
+    );
+    let mut report = format!("{location}:");
     for (index, line) in tactic.lines().enumerate() {
         report.push_str("\n  ");
         if index == 0 {
@@ -463,6 +627,29 @@ fn format_source_tactic(tactic: &str, source_indent: &str) -> String {
     report
 }
 
+fn format_source_tactic_at_position(
+    source: &str,
+    position: &click::surface::SourcePosition,
+    line_offset: usize,
+) -> Option<String> {
+    let tactic = tactic_source_at_position(source, position).ok()?;
+    let source_line = source
+        .lines()
+        .nth(position.line.checked_sub(1)?)
+        .unwrap_or("");
+    let indent = source_line
+        .chars()
+        .take(position.column.saturating_sub(1))
+        .collect::<String>();
+    let multiple = tactic_line_has_multiple_starts(source, position).unwrap_or(true);
+    Some(format_source_tactic(
+        &tactic,
+        &indent,
+        position.line + line_offset,
+        multiple.then_some(position.column),
+    ))
+}
+
 fn proof_source_position(
     error: &ClickError,
     project: &ClickProject,
@@ -471,6 +658,16 @@ fn proof_source_position(
 ) -> Option<click::surface::SourcePosition> {
     let claim = error.proof_claim_label()?;
     let path = error.proof_source_tactic_path()?;
+    proof_source_position_for_path(claim, path, project, inputs, source)
+}
+
+fn proof_source_position_for_path(
+    claim: &str,
+    path: &[usize],
+    project: &ClickProject,
+    inputs: &CInput,
+    source: &str,
+) -> Option<click::surface::SourcePosition> {
     let source_index = *path.first()?;
     let outer = match inputs {
         CInput::Bundle(sources) => {
@@ -906,6 +1103,7 @@ fn verify_file(
     time_limit: Duration,
     project_root: Option<&Path>,
     trace_proof: Option<&str>,
+    trace_to: Option<&TraceTo>,
 ) -> Result<(), String> {
     // A previous failed sidecar may have left admissions behind; each file
     // reports only its own.
@@ -944,6 +1142,9 @@ fn verify_file(
             ));
         }
     }
+    let trace_target = trace_to
+        .map(|target| resolve_trace_target(&click_source, line_offset, target))
+        .transpose()?;
     let dependencies = match &inputs {
         CInput::Bundle(sources) => {
             c0_project_external_dependencies(&project, &source_refs(sources))
@@ -956,7 +1157,7 @@ fn verify_file(
             cpp_prepared_project_external_dependencies(&project, import).map_err(click_message)?
         }
     };
-    let verified = click::instrumentation::with_deadline(time_limit, || {
+    let (verified, successful_trace) = click::instrumentation::with_deadline(time_limit, || {
         let run_selected = || match (&inputs, trace_proof) {
             (CInput::Bundle(sources), Some(function)) => {
                 verify_c0_project_functions(&project, &source_refs(sources), [function.to_owned()])
@@ -977,13 +1178,77 @@ fn verify_file(
                 &project,
                 &inputs,
                 line_offset,
+                trace_target.as_ref(),
             )
         };
         match trace_proof {
-            Some(function) => with_proof_trace(function, || run_selected().map_err(report)),
-            None => run_selected().map_err(report),
+            Some(function) => with_proof_trace(function, || {
+                let verified = run_selected().map_err(report)?;
+                let locate = |claim: &str, path: &[usize]| {
+                    let source = project.entry_source()?;
+                    let position =
+                        proof_source_position_for_path(claim, path, &project, &inputs, source)?;
+                    let multiple = tactic_line_has_multiple_starts(source, &position).ok()?;
+                    let line = position.line + line_offset;
+                    let label = if multiple {
+                        format!("tactic@{line}:{}", position.column)
+                    } else {
+                        format!("tactic@{line}")
+                    };
+                    Some((label, position))
+                };
+                let arm = |claim: &str, path: &[usize], target: &click::surface::SourcePosition| {
+                    let source = project.entry_source()?;
+                    let branch =
+                        proof_source_position_for_path(claim, path, &project, &inputs, source)?;
+                    tactic_arm_containing_position(source, &branch, target)
+                        .ok()
+                        .flatten()
+                };
+                let body =
+                    |claim: &str, path: &[usize], target: &click::surface::SourcePosition| {
+                        let Some(source) = project.entry_source() else {
+                            return false;
+                        };
+                        let Some(have) =
+                            proof_source_position_for_path(claim, path, &project, &inputs, source)
+                        else {
+                            return false;
+                        };
+                        tactic_have_body_contains_position(source, &have, target).unwrap_or(false)
+                    };
+                let trace = accepted_proof_trace(&locate, &arm, &body, trace_target.as_ref()).map(
+                    |mut trace| {
+                        if let Some(formatted) = trace_target.as_ref().and_then(|position| {
+                            format_source_tactic_at_position(&click_source, position, line_offset)
+                        }) {
+                            trace.push_str("\n\n");
+                            trace.push_str(&formatted);
+                        }
+                        trace
+                    },
+                );
+                Ok((verified, trace))
+            }),
+            None => run_selected()
+                .map(|verified| (verified, None))
+                .map_err(report),
         }
     })?;
+    if trace_proof.is_some() {
+        let trace = successful_trace.ok_or_else(|| {
+            trace_to.map_or_else(
+                || "verified proof has no retained checked path to trace".to_owned(),
+                |target| {
+                    format!(
+                        "tactic@{} has no recorded checked step on an accepted path",
+                        target.line
+                    )
+                },
+            )
+        })?;
+        println!("{trace}\n");
+    }
     print_external_dependencies(&dependencies, &verified);
     let selected = if trace_proof.is_some() {
         1
@@ -1077,7 +1342,15 @@ fn verify_location(
             }
         };
         result.map_err(|error| {
-            proof_error_report(&error, click_path, false, &project, &inputs, line_offset)
+            proof_error_report(
+                &error,
+                click_path,
+                false,
+                &project,
+                &inputs,
+                line_offset,
+                None,
+            )
         })
     })?;
     print_external_dependencies(&dependencies, &verified);
@@ -1120,6 +1393,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn trace_target_uses_a_unique_line_or_an_explicit_column() {
+        let source = "by { step(); step(); }\nby {\n  step();\n}\n";
+        assert_eq!(
+            resolve_trace_target(
+                source,
+                8,
+                &TraceTo {
+                    line: 11,
+                    column: None
+                }
+            )
+            .unwrap(),
+            click::surface::SourcePosition::new(3, 3),
+        );
+        assert!(
+            resolve_trace_target(
+                source,
+                8,
+                &TraceTo {
+                    line: 9,
+                    column: None
+                }
+            )
+            .unwrap_err()
+            .contains("several tactics")
+        );
+        assert_eq!(
+            resolve_trace_target(
+                source,
+                8,
+                &TraceTo {
+                    line: 9,
+                    column: Some(6)
+                }
+            )
+            .unwrap(),
+            click::surface::SourcePosition::new(1, 6),
+        );
+
+        let nested = "by {\n    have n <= n by { simp(); }\n}\n";
+        assert_eq!(
+            resolve_trace_target(
+                nested,
+                8,
+                &TraceTo {
+                    line: 10,
+                    column: None,
+                },
+            )
+            .unwrap(),
+            click::surface::SourcePosition::new(2, 5),
+        );
+    }
+
+    #[test]
     fn location_suffixes_win_over_paths_that_could_be_directories() {
         assert!(looks_like_source_location("examples/tiny/tiny.click:12:5"));
         assert!(!looks_like_source_location("examples/tiny"));
@@ -1137,6 +1465,7 @@ mod tests {
                 explain: false,
                 allow_sorry: true,
                 trace_proof: None,
+                trace_to: None,
             })
         );
         assert_eq!(
@@ -1161,6 +1490,7 @@ mod tests {
                 explain: false,
                 allow_sorry: false,
                 trace_proof: None,
+                trace_to: None,
             })
         );
         assert_eq!(
@@ -1176,6 +1506,7 @@ mod tests {
                 explain: false,
                 allow_sorry: false,
                 trace_proof: None,
+                trace_to: None,
             })
         );
         assert_eq!(
@@ -1192,6 +1523,7 @@ mod tests {
                 explain: true,
                 allow_sorry: false,
                 trace_proof: None,
+                trace_to: None,
             })
         );
     }

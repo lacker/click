@@ -127,5 +127,5 @@ struct tree_node* rotate_left(struct tree_node* root) {
 ```
 
 ```expect
-fail: `rotate_left.contract` proof step source tactic 10: selected child does not satisfy the proposed parent model
+fail: `rotate_left.contract` proof step tactic 10: selected child does not satisfy the proposed parent model
 ```

@@ -2287,6 +2287,24 @@ impl<'a> Proof<'a> {
         let parent_node = marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join `branch`: the split marker lost its root")
         })?;
+        let trace_added_facts =
+            crate::surface::proof_trace::enabled_for(self.claim_label()).then(|| {
+                (
+                    parts
+                        .common_added_facts
+                        .iter()
+                        .filter(|fact| crate::surface::proof_trace::visible_checked_fact(fact))
+                        .take(8)
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                    parts
+                        .common_added_facts
+                        .iter()
+                        .filter(|fact| crate::surface::proof_trace::visible_checked_fact(fact))
+                        .count()
+                        .saturating_sub(8),
+                )
+            });
         let state = self
             .state
             .publish_reserved_checked_frontier_join(
@@ -2313,6 +2331,12 @@ impl<'a> Proof<'a> {
             }),
         };
         if crate::surface::proof_trace::enabled_for(self.claim_label()) {
+            let (trace_added_facts, more_facts) =
+                trace_added_facts.expect("trace facts retained when enabled");
+            let facts = trace_added_facts
+                .into_iter()
+                .map(|fact| successor.checked_trace_fact(fact))
+                .collect();
             crate::surface::proof_trace::record_join(
                 Arc::as_ptr(&successor.node) as usize,
                 crate::surface::proof_trace::TraceJoin {
@@ -2321,6 +2345,9 @@ impl<'a> Proof<'a> {
                         trace_arm_lineage(&self.node, &marker.node, ids[0]),
                         trace_arm_lineage(&self.node, &marker.node, ids[1]),
                     ],
+                    facts,
+                    more_facts,
+                    continuation_arm: None,
                     _retained: Box::new(self.node.clone()),
                 },
             );
@@ -3037,7 +3064,7 @@ impl<'a> Proof<'a> {
                 split_branches: arm_ids.iter().flatten().copied().collect(),
             }),
         };
-        self.record_trace_c_branch(&successor.node, arm_ids, &path_facts);
+        successor.record_trace_c_branch(&successor.node, arm_ids, &path_facts);
         let record = ExecutionSplit {
             marker: successor.checkpoint(),
             split,

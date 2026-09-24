@@ -4626,6 +4626,10 @@ pub(super) fn finish_ordered_proof<'a>(
                         deferred_capture_tactics_by_path.push(path_deferred_capture_tactics);
                         deferred_capture_branches_by_path.push(deferred_capture_branch_path);
                     }
+                    outcome_proof
+                        .as_ref()
+                        .unwrap_or(&proof)
+                        .record_accepted_trace(&proof_label, path_index);
                     drop(_path_certification_timing);
                 }
                 Ok(())

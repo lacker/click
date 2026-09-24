@@ -52,7 +52,7 @@ enum ProofStepPosition {
 impl ProofStepPosition {
     fn describe(self, block: ProofStepBlock) -> String {
         match self {
-            Self::SourceTactic(index) => format!("source tactic {index}"),
+            Self::SourceTactic(index) => format!("tactic {index}"),
             Self::InBlock(index) => format!("{} tactic {}", block.name(), index + 1),
         }
     }

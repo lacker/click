@@ -20,7 +20,15 @@ pub(crate) trait ProofDiagnosticState: Send + Sync {
     fn kernel_goal(&self) -> Option<&Proposition>;
     fn premises(&self, limit: usize) -> Vec<&Proposition>;
     fn premise_count(&self) -> usize;
-    fn proof_trace(&self, _claim: &str, _labels: &mut render::SnapshotLabels) -> Option<String> {
+    fn proof_trace(
+        &self,
+        _claim: &str,
+        _labels: &mut render::SnapshotLabels,
+        _tactic_location: &dyn Fn(&[usize]) -> Option<(String, crate::source::SourcePosition)>,
+        _branch_arm: &dyn Fn(&[usize], &crate::source::SourcePosition) -> Option<usize>,
+        _have_body_contains: &dyn Fn(&[usize], &crate::source::SourcePosition) -> bool,
+        _target: Option<&crate::source::SourcePosition>,
+    ) -> Option<String> {
         None
     }
 }
@@ -144,7 +152,9 @@ fn render_diagnostic_labeled(
     // line, so a premise that reads exactly like the goal could be about
     // another state entirely — which is the one thing a reader compares these
     // lines to decide.
-    if let Some(goal) = diagnostic.kernel_goal() {
+    if summary.is_some()
+        && let Some(goal) = diagnostic.kernel_goal()
+    {
         if let Some(source) = diagnostic
             .state
             .as_ref()
@@ -370,6 +380,13 @@ mod tests {
                 &self,
                 claim: &str,
                 labels: &mut render::SnapshotLabels,
+                tactic_location: &dyn Fn(
+                    &[usize],
+                )
+                    -> Option<(String, crate::source::SourcePosition)>,
+                branch_arm: &dyn Fn(&[usize], &crate::source::SourcePosition) -> Option<usize>,
+                have_body_contains: &dyn Fn(&[usize], &crate::source::SourcePosition) -> bool,
+                target: Option<&crate::source::SourcePosition>,
             ) -> Option<String> {
                 crate::surface::proof_trace::render(
                     claim,
@@ -378,6 +395,10 @@ mod tests {
                         selected_arm: None,
                     }],
                     labels,
+                    tactic_location,
+                    branch_arm,
+                    have_body_contains,
+                    target,
                 )
             }
         }
@@ -395,10 +416,12 @@ mod tests {
                 1,
                 crate::surface::proof_trace::TraceStep {
                     header: "\n    source tactic 0: step".into(),
+                    source_tactic_path: None,
                     call_source: None,
                     facts: vec![crate::surface::proof_trace::TraceFact {
                         kernel: at(memory.clone()),
                         source: None,
+                        surface_view: None,
                     }],
                     more_facts: 0,
                     frontier: None,

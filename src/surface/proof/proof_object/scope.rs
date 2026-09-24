@@ -324,6 +324,10 @@ impl<'a> ProofScope<'a> {
         Ok(next)
     }
 
+    pub(in crate::surface::proof) fn note_trace_join_continuation_arm(&self, arm: Option<usize>) {
+        self.body.note_trace_join_continuation_arm(arm);
+    }
+
     /// Applies an already-expanded logical C branch inside this resource
     /// scope without constructing or comparing a parallel certificate.
     /// Whether the scope body's frontier is the C `if` whose condition is
@@ -767,10 +771,12 @@ impl<'a> ProofScope<'a> {
                         node,
                         crate::surface::proof_trace::TraceStep {
                             header: format!("{location}: have {source}"),
+                            source_tactic_path: self.root.site().source_tactic_path(),
                             call_source: None,
                             facts: vec![crate::surface::proof_trace::TraceFact {
                                 kernel,
                                 source: Some(source),
+                                surface_view: None,
                             }],
                             more_facts: 0,
                             frontier: None,

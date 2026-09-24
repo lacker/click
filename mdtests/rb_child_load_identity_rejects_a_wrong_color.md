@@ -113,5 +113,5 @@ void reparent_left_child(struct rb_node* victim, struct rb_node* new_node,
 ```
 
 ```expect
-fail: `reparent_left_child.contract` proof step source tactic 7: fold requires the instance body facts for the proposed fields
+fail: `reparent_left_child.contract` proof step tactic 7: fold requires the instance body facts for the proposed fields
 ```

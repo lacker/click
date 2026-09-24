@@ -1011,12 +1011,24 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
         &self,
         claim: &str,
         labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+        tactic_location: &dyn Fn(&[usize]) -> Option<(String, crate::source::SourcePosition)>,
+        branch_arm: &dyn Fn(&[usize], &crate::source::SourcePosition) -> Option<usize>,
+        have_body_contains: &dyn Fn(&[usize], &crate::source::SourcePosition) -> bool,
+        target: Option<&crate::source::SourcePosition>,
     ) -> Option<String> {
         if !crate::surface::proof_trace::enabled_for(claim) {
             return None;
         }
         let lineage = trace_path_lineage(&self.1, self.0.focused_branch());
-        crate::surface::proof_trace::render(claim, &lineage, labels)
+        crate::surface::proof_trace::render(
+            claim,
+            &lineage,
+            labels,
+            tactic_location,
+            branch_arm,
+            have_body_contains,
+            target,
+        )
     }
 }
 
@@ -1085,6 +1097,58 @@ fn trace_arm_lineage(
 }
 
 impl Proof<'_> {
+    pub(in crate::surface::proof) fn record_accepted_trace(&self, claim: &str, path_index: usize) {
+        if crate::surface::proof_trace::enabled_for(claim) {
+            crate::surface::proof_trace::record_accepted_path(
+                claim,
+                path_index,
+                trace_path_lineage(&self.node, self.focused_branch_id()),
+                Box::new(self.node.clone()),
+            );
+        }
+    }
+
+    pub(in crate::surface::proof) fn note_trace_join_continuation_arm(&self, arm: Option<usize>) {
+        if let Some(arm) = arm {
+            crate::surface::proof_trace::set_join_continuation_arm(
+                Arc::as_ptr(&self.node) as usize,
+                arm,
+            );
+        }
+    }
+
+    /// Use the same checked source recovery for every fact added to a trace.
+    /// A snapshot-anchored form is a fallback, not a replacement for a
+    /// shorter source form that already denotes this exact kernel fact.
+    fn checked_trace_fact(&self, kernel: Proposition) -> crate::surface::proof_trace::TraceFact {
+        let mut source = self.branch_execution().and_then(|execution| {
+            let forms = &execution.presentation.surface_propositions;
+            let anchor = ProgramPointRef {
+                region: CodeRegionRef::Statement(execution.core.frontier.next_statement_index),
+                kind: ProgramPointKind::Entry,
+            };
+            self.available_surface_fact(forms, None, &kernel)
+                .or_else(|| self.available_surface_fact(forms, Some(&anchor), &kernel))
+                .map(|surface| crate::surface::printing::source_click_proposition(&surface))
+                .filter(|source| !source.contains("__click_"))
+        });
+        let mut surface_view = None;
+        if source.is_none()
+            && let Some((rendered, exact)) = self.trace_surface_fact(&kernel)
+        {
+            if exact {
+                source = Some(rendered);
+            } else {
+                surface_view = Some(rendered);
+            }
+        }
+        crate::surface::proof_trace::TraceFact {
+            kernel,
+            source,
+            surface_view,
+        }
+    }
+
     fn record_trace_branch(
         &self,
         marker: &Arc<ProofNode>,
@@ -1104,29 +1168,39 @@ impl Proof<'_> {
             &ClickProposition::Not(Box::new(condition.clone())),
         );
         let facts = |index: usize| {
+            let focused = self.focus_branch(arms[index]).ok();
             path_facts[index]
                 .iter()
+                .filter(|fact| crate::surface::proof_trace::visible_checked_fact(fact))
                 .take(8)
                 .cloned()
                 .enumerate()
-                .map(
-                    |(fact_index, kernel)| crate::surface::proof_trace::TraceFact {
-                        kernel,
-                        source: (fact_index == 0).then(|| {
-                            if index == 0 {
-                                then_source.clone()
-                            } else {
-                                else_source.clone()
-                            }
-                        }),
-                    },
-                )
+                .map(|(fact_index, kernel)| {
+                    let mut fact = if let Some(proof) = &focused {
+                        proof.checked_trace_fact(kernel)
+                    } else {
+                        crate::surface::proof_trace::TraceFact {
+                            kernel,
+                            source: None,
+                            surface_view: None,
+                        }
+                    };
+                    if fact_index == 0 {
+                        fact.source = Some(if index == 0 {
+                            then_source.clone()
+                        } else {
+                            else_source.clone()
+                        });
+                    }
+                    fact
+                })
                 .collect()
         };
         crate::surface::proof_trace::record_branch(
             Arc::as_ptr(marker) as usize,
             crate::surface::proof_trace::TraceBranch {
                 header: format!("{location}: branch"),
+                source_tactic_path: self.site().source_tactic_path(),
                 arms: [(arms[0], facts(0)), (arms[1], facts(1))],
             },
         );
@@ -1149,15 +1223,24 @@ impl Proof<'_> {
             .path()
             .unwrap_or_else(|| "checked branch".into());
         let facts = |index: usize| {
+            let focused = arms[index].and_then(|arm| self.focus_branch(arm).ok());
             path_facts[index]
                 .as_ref()
                 .into_iter()
                 .flatten()
+                .filter(|fact| crate::surface::proof_trace::visible_checked_fact(fact))
                 .take(8)
                 .cloned()
-                .map(|kernel| crate::surface::proof_trace::TraceFact {
-                    kernel,
-                    source: None,
+                .map(|kernel| {
+                    if let Some(proof) = &focused {
+                        proof.checked_trace_fact(kernel)
+                    } else {
+                        crate::surface::proof_trace::TraceFact {
+                            kernel,
+                            source: None,
+                            surface_view: None,
+                        }
+                    }
                 })
                 .collect()
         };
@@ -1165,6 +1248,7 @@ impl Proof<'_> {
             Arc::as_ptr(marker) as usize,
             crate::surface::proof_trace::TraceBranch {
                 header: format!("{location}: branch"),
+                source_tactic_path: self.site().source_tactic_path(),
                 arms: [(then_id, facts(0)), (else_id, facts(1))],
             },
         );
@@ -2248,6 +2332,7 @@ mod resource_steps;
 mod scope;
 mod splits_and_scopes;
 mod step_application;
+mod trace_surface;
 
 #[cfg(test)]
 mod tests;

@@ -204,10 +204,9 @@ mod tests {
 
         let error = verify(failing.display().to_string()).unwrap_err();
         assert!(error.starts_with("proof error:"), "{error}");
-        assert!(
-            error.contains(&format!("--> {}:9:49", failing.display())),
-            "{error}"
-        );
+        assert!(error.contains("tactic@9:"), "{error}");
+        assert!(error.contains("\n  step();"), "{error}");
+        assert!(!error.contains("-->"), "{error}");
         let changed = entry([
             "verify".to_string(),
             "--changed-since".to_string(),
@@ -236,7 +235,7 @@ mod tests {
         .unwrap();
         let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(error.starts_with("proof error:"), "{error}");
-        assert!(error.contains("\n\ntactic: step();"), "{error}");
+        assert!(error.contains("\n\ntactic@2:"), "{error}");
         assert!(
             error.contains("\n\nTo get a trace:\n  click verify --trace-proof f "),
             "{error}"
@@ -250,8 +249,8 @@ mod tests {
         ])
         .unwrap_err();
         assert!(traced.starts_with("proof error:\n"), "{traced}");
-        assert!(traced.contains("\n\ntactic: step();\n"), "{traced}");
-        assert!(traced.contains("\n  --> "), "{traced}");
+        assert!(traced.contains("\n\ntactic@2:"), "{traced}");
+        assert!(!traced.contains("\n  --> "), "{traced}");
         assert!(
             traced.contains("\n\nproof trace (checked tactics and branch facts):"),
             "{traced}"
@@ -260,7 +259,7 @@ mod tests {
             traced.contains("proof trace (checked tactics and branch facts)"),
             "{traced}"
         );
-        assert!(traced.contains("source tactic 0: step"), "{traced}");
+        assert!(traced.contains("steps through: return 1"), "{traced}");
         assert!(!traced.contains("error kind:"), "{traced}");
         assert!(!traced.contains("stage: proof step"), "{traced}");
         assert!(!traced.contains("To get a trace:"), "{traced}");
@@ -282,8 +281,9 @@ mod tests {
             sidecar.display().to_string(),
         ])
         .unwrap_err();
-        assert!(nested.contains("have body tactic"), "{nested}");
-        assert!(nested.contains("source tactic 0: step"), "{nested}");
+        assert!(nested.contains("tactic@2:66:\n  normalize();"), "{nested}");
+        assert!(!nested.contains("have body tactic"), "{nested}");
+        assert!(nested.contains("steps through: declare x"), "{nested}");
 
         let wrong = entry([
             "verify".to_string(),
@@ -318,14 +318,21 @@ mod tests {
             sidecar.display().to_string(),
         ])
         .unwrap_err();
+        assert!(!traced.contains("prove it with `have` first"), "{traced}");
         assert!(
-            traced.contains("tactic:\n  let (x: int32) satisfy {\n      x == 0\n  };"),
+            traced.contains("requirement `exists (x: int32) { x == 0 }` not satisfied"),
             "{traced}"
         );
         assert!(
-            traced.contains("step: source tactic 1 > have body tactic 1"),
+            traced.contains("requires: exists (x: int32) { x == 0 }"),
             "{traced}"
         );
+        assert!(!traced.contains("\ngoal:"), "{traced}");
+        assert!(
+            traced.contains("tactic@5:\n  let (x: int32) satisfy {\n      x == 0\n  };"),
+            "{traced}"
+        );
+        assert!(!traced.contains("\nstep: "), "{traced}");
         assert!(traced.contains("let (x: int32) satisfy {\n"), "{traced}");
         fs::remove_dir_all(directory).unwrap();
     }
@@ -387,7 +394,7 @@ mod tests {
             "{traced}"
         );
         assert!(
-            traced.contains("goal: fact obj->refs == count(child_ref(obj));"),
+            traced.contains("could not prove `fact obj->refs == count(child_ref(obj));`"),
             "{traced}"
         );
         assert!(
@@ -435,13 +442,10 @@ mod tests {
         ])
         .unwrap_err();
         assert!(traced.contains("read of uninitialized storage"), "{traced}");
-        assert!(traced.contains("step: source tactic 1"), "{traced}");
+        assert!(!traced.contains("\nstep: "), "{traced}");
         assert!(!traced.contains("error kind:"), "{traced}");
-        assert!(traced.contains("source tactic 0: step"), "{traced}");
-        assert!(
-            traced.contains("C frontier: function entry -> C statement 2"),
-            "{traced}"
-        );
+        assert!(traced.contains("tactic@2:41: step"), "{traced}");
+        assert!(traced.contains("steps through: declare x"), "{traced}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -505,16 +509,24 @@ int32 parent(int32 *a, int32 *visited, int32 cur) {
         assert!(!report.contains("recent premises"), "{report}");
         assert!(report.contains("adds: r == 1"), "{report}");
         assert!(
-            report.contains("ensures (source template): result != 0 implies exists"),
+            report.contains("tactic@19: let r = step(child("),
             "{report}"
         );
         assert!(
             report.contains("1 checked fact(s) with no exact Click spelling"),
             "{report}"
         );
-        assert!(report.contains("snapshot identity (internal):"), "{report}");
-        assert!(report.contains("(a*4+cur*4)"), "{report}");
-        assert!(report.contains("load A=load("), "{report}");
+        assert_eq!(
+            report
+                .matches("goal: exists (z: int32) { z == a[cur] }")
+                .count(),
+            1,
+            "{report}"
+        );
+        assert!(
+            !report.contains("snapshot identity (internal):"),
+            "{report}"
+        );
         assert!(!report.contains("v1000001"), "{report}");
         fs::remove_dir_all(directory).unwrap();
     }
@@ -575,17 +587,12 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
         ])
         .unwrap_err();
         assert!(
-            report.contains("source tactic 1: let r = step(child("),
+            report.contains("tactic@21: let r = step(child("),
             "{report}"
         );
         assert!(!report.contains("argument x = a[i]"), "{report}");
         assert!(
-            report
-                .contains("ensures (source template): exists (path: Path) { pick(x, path) == x }"),
-            "{report}"
-        );
-        assert!(
-            report.contains("1 checked fact(s) with no exact Click spelling"),
+            report.contains("adds (surface view): exists (path: Path) { pick("),
             "{report}"
         );
         assert!(!report.contains("checked fact snapshot(s)"), "{report}");
@@ -599,11 +606,10 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
             .unwrap()
             + 1;
         assert!(
-            plain.contains(&format!("--> {}:{line}:9", sidecar.display())),
+            plain.contains(&format!("tactic@{line}:\n  assumption();")),
             "{plain}"
         );
-        assert!(plain.contains("|         assumption();"), "{plain}");
-        assert!(plain.contains("|         ^^^^^^^^^^"), "{plain}");
+        assert!(!plain.contains("-->"), "{plain}");
         assert!(
             plain.contains("help: choose a witness with `witness(path = <value>);`"),
             "{plain}"

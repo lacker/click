@@ -591,9 +591,7 @@ impl<'a> Proof<'a> {
         result
     }
 
-    /// The callee's written guarantees are useful provenance for a checked
-    /// call, but are not claimed to be exact caller-side spellings after
-    /// evaluated arguments and memory snapshots are substituted.
+    /// Retain the call spelling for a checked call in the proof trace.
     fn trace_call_source(
         &self,
         step: &ProofStep,
@@ -601,15 +599,9 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return None;
         };
-        let (callee, call, named_contract) = match step {
-            ProofStep::StepCall(transport) => {
-                (transport.callee().to_string(), transport.to_string(), false)
-            }
-            ProofStep::StepContract(application) => (
-                application.name.clone(),
-                format!("step({})", application.name),
-                true,
-            ),
+        let call = match step {
+            ProofStep::StepCall(transport) => transport.to_string(),
+            ProofStep::StepContract(application) => format!("step({})", application.name),
             ProofStep::Step => {
                 let execution = self.execution()?;
                 let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
@@ -627,51 +619,11 @@ impl<'a> Proof<'a> {
                     | CStatement::Call { function_name, .. } => function_name,
                     _ => return None,
                 };
-                (callee.clone(), format!("step({callee}(...))"), false)
+                format!("step({callee}(...))")
             }
             _ => return None,
         };
-        let ordinary = (!named_contract)
-            .then(|| {
-                context
-                    .constants
-                    .function_source_registry
-                    .ordinary_function(&callee)
-            })
-            .flatten();
-        let (guarantees, more_guarantees) = if let Some(source) = ordinary {
-            let (_, propositions) = source.trace_guarantees();
-            (
-                propositions
-                    .iter()
-                    .take(4)
-                    .map(crate::surface::printing::source_click_proposition)
-                    .collect::<Vec<_>>(),
-                propositions.len().saturating_sub(4),
-            )
-        } else {
-            let definition = context.predicate_environment.contract_definition(&callee)?;
-            let block = definition.function_block();
-            let propositions = block
-                .ensures()
-                .iter()
-                .filter_map(|clause| match clause.ensure() {
-                    Ensure::Proposition(proposition) => Some(proposition),
-                    Ensure::Resource(_) => None,
-                });
-            let proposition_count = propositions.clone().count();
-            let guarantees = propositions
-                .take(4)
-                .map(crate::surface::printing::source_click_proposition)
-                .collect::<Vec<_>>();
-            let more_guarantees = proposition_count.saturating_sub(guarantees.len());
-            (guarantees, more_guarantees)
-        };
-        Some(crate::surface::proof_trace::TraceCallSource {
-            call,
-            guarantees,
-            more_guarantees,
-        })
+        Some(crate::surface::proof_trace::TraceCallSource { call })
     }
 
     /// Read only the changed fact/resource keys, and only under an explicit
@@ -693,6 +645,7 @@ impl<'a> Proof<'a> {
                     .as_ref()
                     .map_or(tactic, |call| call.call.as_str())
             ),
+            source_tactic_path: self.site().source_tactic_path(),
             call_source,
             facts: Vec::new(),
             more_facts: 0,
@@ -707,28 +660,42 @@ impl<'a> Proof<'a> {
         let added = added
             .as_deref()
             .unwrap_or_else(|| next.state().added_facts());
-        for fact in added.iter().take(8) {
-            let source = next.branch_execution().and_then(|execution| {
-                let forms = &execution.presentation.surface_propositions;
-                next.available_surface_fact(forms, None, fact)
-                    .map(|surface| crate::surface::printing::source_click_proposition(&surface))
-                    .filter(|source| !source.contains("__click_"))
-            });
-            detail.facts.push(crate::surface::proof_trace::TraceFact {
-                kernel: fact.clone(),
-                source,
-            });
+        let visible = added
+            .iter()
+            .filter(|fact| crate::surface::proof_trace::visible_checked_fact(fact));
+        for fact in visible.clone().take(8) {
+            detail.facts.push(next.checked_trace_fact(fact.clone()));
         }
-        if added.len() > 8 {
-            detail.more_facts = added.len() - 8;
-        }
+        detail.more_facts = visible.count().saturating_sub(8);
         if let (Some(before), Some(after)) = (self.branch_execution(), next.branch_execution()) {
             let before_frontier = &before.core.frontier;
             let after_frontier = &after.core.frontier;
             let before_position = trace_frontier(before_frontier);
             let after_position = trace_frontier(after_frontier);
-            if before_position != after_position {
-                detail.frontier = Some(format!("{before_position} -> {after_position}"));
+            if before_position != after_position && detail.call_source.is_none() {
+                detail.frontier = Some(
+                    match self.context.as_ref() {
+                        ProofContext::Execution(context) => {
+                            next_top_level_statement_from_frontier_position(
+                                before.view(context),
+                                &before.core.state,
+                                context.function,
+                                context.arguments,
+                                context.claim_label,
+                                context.tactic_index,
+                                "step",
+                            )
+                            .ok()
+                            .map(|(_, _, statement, _)| {
+                                format!("steps through: {}", trace_statement_head(&statement))
+                            })
+                        }
+                        _ => None,
+                    }
+                    .unwrap_or_else(|| {
+                        format!("C frontier: {before_position} -> {after_position}")
+                    }),
+                );
             }
             let before = before.core.reached_state().resources();
             let after = after.core.reached_state().resources();
@@ -737,7 +704,17 @@ impl<'a> Proof<'a> {
                     let old = before.exact_count(fact);
                     let new = after.exact_count(fact);
                     if old != new {
-                        detail.resources.push((old, new, fact.clone()));
+                        let description = match self.context.as_ref() {
+                            ProofContext::Execution(context) => trace_resource_fact(fact, context),
+                            _ => format!("{fact:?}"),
+                        };
+                        detail
+                            .resources
+                            .push(crate::surface::proof_trace::TraceResourceChange {
+                                before: old,
+                                after: new,
+                                description,
+                            });
                     }
                 }
                 if changed.len() > 8 {
@@ -2629,6 +2606,65 @@ fn trace_frontier(frontier: &ExecutionFrontier) -> String {
     } else {
         format!("C statement {}", frontier.next_statement_index + 1)
     }
+}
+
+fn trace_statement_head(statement: &CStatement) -> String {
+    if let CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } =
+        statement
+        && let CExpression::Add(base, index) = pointer
+    {
+        return format!(
+            "{}[{}] = {}",
+            crate::surface::diagnostics::describe_c_expression(base),
+            crate::surface::diagnostics::describe_c_expression(index),
+            crate::surface::diagnostics::describe_c_expression(value),
+        );
+    }
+    describe_statement_head(statement)
+}
+
+/// Prefer an exact parameter base for a trace. The general diagnostic range
+/// printer accepts an offset from any parameter, which can turn a `visited`
+/// view into `left[(v100002-v100000)..]` even though `visited` is available.
+fn trace_resource_fact(fact: &CResourceFact, context: &ExecutionProofContext<'_>) -> String {
+    if let Some(range) = fact.memory_range() {
+        for (parameter, argument) in context
+            .parsed_function
+            .parameters()
+            .iter()
+            .zip(context.arguments)
+        {
+            if let CExpression::Value(CValue::Pointer(base)) = argument
+                && base.pointer() == range.base()
+            {
+                let start = crate::surface::diagnostics::describe_bitvector_with_context(
+                    range.start(),
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                );
+                let end = crate::surface::diagnostics::describe_bitvector_with_context(
+                    range.end(),
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                );
+                return format!(
+                    "{} {}[{start}..{end}]",
+                    if fact.is_own() { "owns" } else { "views" },
+                    parameter.name()
+                );
+            }
+        }
+        return if fact.is_own() {
+            "ownership of a memory range (no source name)".into()
+        } else {
+            "view of a memory range (no source name)".into()
+        };
+    }
+    crate::surface::diagnostics::describe_resource_fact(
+        fact,
+        context.parsed_function.parameters(),
+        context.arguments,
+    )
 }
 
 fn describe_assumption_goal(goal: &Proposition) -> &'static str {

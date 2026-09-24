@@ -702,7 +702,7 @@ impl<'a> Proof<'a> {
                 split_branches: ids.to_vec(),
             }),
         };
-        self.record_trace_branch(&successor.node, ids, &path_facts, &condition);
+        successor.record_trace_branch(&successor.node, ids, &path_facts, &condition);
         let record = ExecutionProofCaseSplit {
             marker: successor.checkpoint(),
             split,
@@ -936,6 +936,7 @@ impl<'a> Proof<'a> {
             }),
         };
         if crate::surface::proof_trace::enabled_for(self.claim_label()) {
+            let added = successor.state().added_facts();
             crate::surface::proof_trace::record_join(
                 Arc::as_ptr(&successor.node) as usize,
                 crate::surface::proof_trace::TraceJoin {
@@ -944,6 +945,19 @@ impl<'a> Proof<'a> {
                         trace_arm_lineage(&self.node, &marker.node, ids[0]),
                         trace_arm_lineage(&self.node, &marker.node, ids[1]),
                     ],
+                    facts: added
+                        .iter()
+                        .filter(|fact| crate::surface::proof_trace::visible_checked_fact(fact))
+                        .take(8)
+                        .cloned()
+                        .map(|fact| successor.checked_trace_fact(fact))
+                        .collect(),
+                    more_facts: added
+                        .iter()
+                        .filter(|fact| crate::surface::proof_trace::visible_checked_fact(fact))
+                        .count()
+                        .saturating_sub(8),
+                    continuation_arm: None,
                     _retained: Box::new(self.node.clone()),
                 },
             );

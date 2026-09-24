@@ -829,9 +829,11 @@ impl<'a> Proof<'a> {
                 Variable(self.state().locals().next_choice_variable),
             )
             .map_err(|error| match error {
-                PropositionCloseError::IntegerChoiceSourceUnavailable => self.step_error(
-                    "`let (...) satisfy` needs this exact existential to be an available fact; prove it with `have` first",
-                ),
+                PropositionCloseError::IntegerChoiceSourceUnavailable => self
+                    .step_error("required existential fact is not available")
+                    .with_missing_tactic_requirement(
+                        crate::surface::printing::source_click_proposition(&binding.proposition),
+                    ),
                 PropositionCloseError::IntegerChoiceWrongSort => self.step_error(
                     "`let (...) satisfy` has more binders than the available existential, or an unsupported binder type",
                 ),

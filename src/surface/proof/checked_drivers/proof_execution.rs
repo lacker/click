@@ -1190,7 +1190,7 @@ fn try_check_structural_function_proof_inner<'a>(
                 }
                 let Some((advanced, _, certificate, consumed_continuation)) =
                     try_advance_checked_execution_branch(
-                        proof,
+                        proof.at_source_tactic(*source_index),
                         *index,
                         ensuring,
                         then_branch,
@@ -1917,6 +1917,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
         }
         InternalProofNode::Branch {
             index,
+            source_index,
             ensuring,
             then_branch,
             else_branch,
@@ -1926,7 +1927,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
             let proof = proof.with_execution_tactic_index(*index)?;
             let Some((advanced, _, _, consumed_continuation)) =
                 try_advance_checked_execution_branch(
-                    proof,
+                    proof.at_source_tactic(*source_index),
                     *index,
                     ensuring,
                     then_branch,
@@ -2679,7 +2680,7 @@ fn advance_focused_execution_region_with_branch_continuation<'a>(
                 let owner = proof.clone();
                 let Some((nested, _, certificate, consumed_continuation)) =
                     try_advance_checked_execution_branch(
-                        proof,
+                        proof.at_source_tactic(*source_index),
                         *index,
                         ensuring,
                         then_branch,
@@ -3064,10 +3065,11 @@ fn try_advance_checked_execution_branch<'a>(
     // structure's tactic. Restore the branch's own attribution after the
     // join, as the neighbouring `if` and call-outcome joins do, so the
     // certificate checkpoint and the caller see the branch's exact context.
-    let joined = arms
-        .advanced
-        .join_focused_execution_split(&record, arms.empty, arms.join_interface)?
-        .restore_execution_tactic_attribution(&at_branch)?;
+    let joined =
+        arms.advanced
+            .join_focused_execution_split(&record, arms.empty, arms.join_interface)?;
+    joined.note_trace_join_continuation_arm(arms.continuation_arm);
+    let joined = joined.restore_execution_tactic_attribution(&at_branch)?;
     let certificate = proof_site
         .is_some()
         .then(|| joined.certificate_since(&checkpoint))
@@ -3085,6 +3087,7 @@ fn try_advance_checked_execution_branch<'a>(
 struct AdvancedBranchArms<'a> {
     advanced: Proof<'a>,
     consumed_continuation: bool,
+    continuation_arm: Option<usize>,
     empty: bool,
     join_interface: Option<Vec<ProofAssertion>>,
 }
@@ -3161,6 +3164,7 @@ fn advance_checked_branch_arms<'a>(
         }
     }
     let mut consumed_continuation = false;
+    let mut continuation_arm = None;
     if !has_sole_feasible_arm {
         let then_exit = advanced.arm_at_function_exit(record, true);
         let else_exit = advanced.arm_at_function_exit(record, false);
@@ -3194,6 +3198,7 @@ fn advance_checked_branch_arms<'a>(
             }
             advanced = next;
             consumed_continuation = true;
+            continuation_arm = Some(usize::from(then_exit));
         }
     }
     let empty = checked_execution_region_is_empty(then_branch)
@@ -3206,6 +3211,7 @@ fn advance_checked_branch_arms<'a>(
     Ok(Some(AdvancedBranchArms {
         advanced,
         consumed_continuation,
+        continuation_arm,
         empty,
         join_interface,
     }))
@@ -3564,6 +3570,7 @@ fn advance_checked_open_scope<'a>(
     };
     let scope =
         scope.join_execution_split(&arms.advanced, &record, arms.empty, arms.join_interface)?;
+    scope.note_trace_join_continuation_arm(arms.continuation_arm);
     advance_checked_open_scope(
         scope,
         if arms.consumed_continuation {

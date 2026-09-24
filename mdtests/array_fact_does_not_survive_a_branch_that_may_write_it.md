@@ -32,5 +32,5 @@ void maybe_mark(int32 a[], int32 n, int32 flag) {
 ```
 
 ```expect
-fail: source tactic 3 > have body tactic 1: `simp` failed
+fail: tactic 3 > have body tactic 1: `simp` failed
 ```

@@ -37,5 +37,5 @@ int32 two_haves(int32 x) {
 ```
 
 ```expect
-fail: `two_haves.ensures_0` proof step source tactic 1 > have body tactic 2: `normalize` goal did not normalize to true
+fail: `two_haves.ensures_0` proof step tactic 1 > have body tactic 2: `normalize` goal did not normalize to true
 ```

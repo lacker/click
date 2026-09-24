@@ -3160,6 +3160,145 @@ pub fn tactic_source_at_position(
     Ok(source[tokens[start].span.start..tokens[end].span.end].to_string())
 }
 
+/// Select the written arm containing a trace target inside a two-arm tactic.
+/// Returning `None` means the target lies outside both arms (for example, in
+/// the continuation after a completed branch).
+pub fn tactic_arm_containing_position(
+    source: &str,
+    tactic_position: &SourcePosition,
+    target_position: &SourcePosition,
+) -> Result<Option<usize>, ClickError> {
+    let tokens = scan_source_tokens(source)?;
+    let tactic_offset = offset_at_position(source, tactic_position.line, tactic_position.column)?;
+    let target_offset = offset_at_position(source, target_position.line, target_position.column)?;
+    let start = tokens
+        .iter()
+        .position(|token| token.span.start == tactic_offset)
+        .ok_or_else(|| ClickError::new("could not locate trace branch tactic"))?;
+    let end = tactic_end_token(&tokens, start, tokens.len())?;
+    let range = start..end + 1;
+    let blocks = match tokens[start].text.as_str() {
+        "branch" => find_branch_blocks(&tokens, &range)?,
+        "if" => find_if_branch_blocks(&tokens, &range)?,
+        "outcomes" => find_named_arm_blocks(&tokens, &range, "returned", "threw", "outcomes")?,
+        _ => return Ok(None),
+    };
+    for (index, (open, close)) in [(blocks.0, blocks.1), (blocks.2, blocks.3)]
+        .into_iter()
+        .enumerate()
+    {
+        if tokens[open].span.start < target_offset && target_offset < tokens[close].span.end {
+            return Ok(Some(index));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether a selected tactic is inside the proof body of a written `have`.
+/// A completed `have` exports its proposition, not the body's intermediate
+/// facts; the trace only enters that body when it contains the target.
+pub fn tactic_have_body_contains_position(
+    source: &str,
+    tactic_position: &SourcePosition,
+    target_position: &SourcePosition,
+) -> Result<bool, ClickError> {
+    let tokens = scan_source_tokens(source)?;
+    let tactic_offset = offset_at_position(source, tactic_position.line, tactic_position.column)?;
+    let target_offset = offset_at_position(source, target_position.line, target_position.column)?;
+    let start = tokens
+        .iter()
+        .position(|token| token.span.start == tactic_offset)
+        .ok_or_else(|| ClickError::new("could not locate trace have tactic"))?;
+    if tokens[start].text != "have" {
+        return Ok(false);
+    }
+    let end = tactic_end_token(&tokens, start, tokens.len())?;
+    let Some(by) = (start..=end).find(|&index| tokens[index].text == "by") else {
+        return Ok(false);
+    };
+    let Some(open) = (by + 1..=end).find(|&index| tokens[index].text == "{") else {
+        return Ok(false);
+    };
+    let close = matching_delimiter(&tokens, open, "{", "}")?;
+    Ok(tokens[open].span.start < target_offset && target_offset < tokens[close].span.end)
+}
+
+/// Whether another written tactic starts on the same source line. Inspect
+/// tactic blocks through the source tokenizer, so semicolons inside a tactic
+/// or its nested expressions are not mistaken for sibling tactics.
+pub fn tactic_line_has_multiple_starts(
+    source: &str,
+    position: &SourcePosition,
+) -> Result<bool, ClickError> {
+    let selected = offset_at_position(source, position.line, position.column)?;
+    let mut starts = tactic_starts_on_line(source, position.line)?;
+    if !starts.iter().any(|start| start.column == position.column) {
+        starts.push(position_at_offset(source, selected));
+    }
+    if starts.len() <= 1 {
+        return Ok(false);
+    }
+    // A one-line `have ... by { simp(); }` has two lexical tactic starts,
+    // but the outer `have` is still the one unambiguous top-level tactic on
+    // that line. Keep a column for the nested tactic, or for sibling tactics.
+    if starts
+        .first()
+        .is_none_or(|start| start.column != position.column)
+    {
+        return Ok(true);
+    }
+    let tokens = scan_source_tokens(source)?;
+    let Some(start) = tokens.iter().position(|token| token.span.start == selected) else {
+        return Ok(true);
+    };
+    let end = tactic_end_token(&tokens, start, tokens.len())?;
+    Ok(starts.iter().skip(1).any(|start| {
+        offset_at_position(source, start.line, start.column)
+            .is_ok_and(|offset| offset >= tokens[end].span.end)
+    }))
+}
+
+/// Candidate written tactic starts on a Click source line, for selecting a
+/// trace target without requiring a column when the line is unambiguous.
+pub fn tactic_starts_on_line(source: &str, line: usize) -> Result<Vec<SourcePosition>, ClickError> {
+    let tokens = scan_source_tokens(source)?;
+    let mut starts = std::collections::BTreeSet::new();
+    for (open, token) in tokens.iter().enumerate() {
+        if token.text != "{" {
+            continue;
+        }
+        let preceding = open.checked_sub(1).and_then(|index| tokens.get(index));
+        let direct_proof_block = preceding.is_some_and(|token| {
+            matches!(token.text.as_str(), "by" | "then" | "else" | "and" | "=>")
+        });
+        let open_tactic_block = preceding.is_some_and(|token| token.text == ")")
+            && tokens[..open]
+                .iter()
+                .rev()
+                .take_while(|token| !matches!(token.text.as_str(), ";" | "{" | "}"))
+                .any(|token| token.text == "open");
+        if !direct_proof_block && !open_tactic_block {
+            continue;
+        }
+        let Ok(close) = matching_delimiter(&tokens, open, "{", "}") else {
+            continue;
+        };
+        let Ok(ranges) = direct_tactic_token_ranges(&tokens, open, close) else {
+            continue;
+        };
+        for range in ranges {
+            let start = tokens[range.start].span.start;
+            if position_at_offset(source, start).line == line {
+                starts.insert(start);
+            }
+        }
+    }
+    Ok(starts
+        .into_iter()
+        .map(|start| position_at_offset(source, start))
+        .collect())
+}
+
 pub(super) fn position_at_offset(source: &str, offset: usize) -> SourcePosition {
     let prefix = &source[..offset];
     let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
@@ -3605,9 +3744,19 @@ fn find_branch_blocks(
     tokens: &[SourceToken],
     tactic: &Range<usize>,
 ) -> Result<(usize, usize, usize, usize), ClickError> {
+    find_named_arm_blocks(tokens, tactic, "then", "else", "branch")
+}
+
+fn find_named_arm_blocks(
+    tokens: &[SourceToken],
+    tactic: &Range<usize>,
+    first: &str,
+    second: &str,
+    kind: &str,
+) -> Result<(usize, usize, usize, usize), ClickError> {
     let outer_open = (tactic.start + 1..tactic.end)
         .find(|index| tokens[*index].text == "{")
-        .ok_or_else(|| ClickError::new("source `branch` tactic has no body"))?;
+        .ok_or_else(|| ClickError::new(format!("source `{kind}` tactic has no body")))?;
     let outer_close = matching_delimiter(tokens, outer_open, "{", "}")?;
     let find_named_block = |name: &str| -> Result<(usize, usize), ClickError> {
         let mut depth = 0_usize;
@@ -3626,11 +3775,11 @@ fn find_branch_blocks(
             }
         }
         Err(ClickError::new(format!(
-            "could not locate `branch` {name} arm"
+            "could not locate `{kind}` {name} arm"
         )))
     };
-    let (then_open, then_close) = find_named_block("then")?;
-    let (else_open, else_close) = find_named_block("else")?;
+    let (then_open, then_close) = find_named_block(first)?;
+    let (else_open, else_close) = find_named_block(second)?;
     Ok((then_open, then_close, else_open, else_close))
 }
 
