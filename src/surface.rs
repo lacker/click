@@ -5979,6 +5979,10 @@ pub struct C0VerificationSession {
     baseline_file: ClickFile,
     verified_function_environment: CExecutionEnvironment,
     environment_identity: verification::CProofArtifactIdentity,
+    /// The kernel generation `verified_function_environment` was built
+    /// under. Its snapshots live in this thread's kernel tables, which the
+    /// next fresh verification on the thread replaces.
+    kernel_generation: u64,
 }
 
 impl ClickFile {

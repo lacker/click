@@ -1593,6 +1593,7 @@ impl C0VerificationSession {
                     baseline_file,
                     verified_function_environment,
                     environment_identity,
+                    kernel_generation: crate::kernel::verification_session_generation(),
                 },
                 verified,
             ))
@@ -1621,6 +1622,7 @@ impl C0VerificationSession {
                     baseline_file,
                     verified_function_environment,
                     environment_identity,
+                    kernel_generation: crate::kernel::verification_session_generation(),
                 },
                 verified,
             ))
@@ -1651,6 +1653,7 @@ impl C0VerificationSession {
                 baseline_file,
                 verified_function_environment,
                 environment_identity,
+                kernel_generation: crate::kernel::verification_session_generation(),
             },
             verified,
         ))
@@ -1688,6 +1691,7 @@ impl C0VerificationSession {
                     baseline_file,
                     verified_function_environment,
                     environment_identity,
+                    kernel_generation: crate::kernel::verification_session_generation(),
                 },
                 verified,
             ))
@@ -1722,6 +1726,7 @@ impl C0VerificationSession {
                     baseline_file,
                     verified_function_environment,
                     environment_identity,
+                    kernel_generation: crate::kernel::verification_session_generation(),
                 },
                 verified,
             ))
@@ -1756,6 +1761,7 @@ impl C0VerificationSession {
                     baseline_file,
                     verified_function_environment,
                     environment_identity,
+                    kernel_generation: crate::kernel::verification_session_generation(),
                 },
                 verified,
             ))
@@ -1776,12 +1782,35 @@ impl C0VerificationSession {
         self.environment_identity
     }
 
+    /// Refuses to reuse the retained environment once another verification
+    /// on this thread has started fresh kernel tables. The environment's
+    /// snapshots name entries of the tables it was built under; against a
+    /// replaced arena they would resolve to unrelated derivations, which at
+    /// best makes proof work depend on whatever ran in between (a tactic
+    /// exhausting its budget only in the session) and at worst lets a
+    /// snapshot inherit another verification's facts. Keep a session on a
+    /// thread of its own when other verification runs on the same thread.
+    /// On success, the returned guard joins those tables for the check, so a
+    /// check that starts no retained environment (a theorem target) still
+    /// runs inside them rather than replacing them for later checks.
+    fn ensure_kernel_state_retained(
+        &self,
+    ) -> Result<crate::kernel::VerificationSession, ClickError> {
+        if crate::kernel::verification_session_generation() == self.kernel_generation {
+            return Ok(crate::kernel::VerificationSession::resume());
+        }
+        Err(ClickError::new(
+            "this verification session's kernel state was replaced by another verification on the same thread; keep a reusable verification session on a thread that runs no other verification",
+        ))
+    }
+
     pub fn verify_at(
         &self,
         click_source: &str,
         line: usize,
         column: usize,
     ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+        let _kernel_tables = self.ensure_kernel_state_retained()?;
         instrumentation::with_default_tactic_limits(|| {
             self.verify_at_with_limits(click_source, line, column)
         })
@@ -1794,6 +1823,7 @@ impl C0VerificationSession {
         line: usize,
         column: usize,
     ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+        let _kernel_tables = self.ensure_kernel_state_retained()?;
         let baseline_project = self.click_project.as_ref().ok_or_else(|| {
             ClickError::new("verification session does not contain a Click module graph")
         })?;
@@ -1867,6 +1897,7 @@ impl C0VerificationSession {
         line: usize,
         column: usize,
     ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+        let _kernel_tables = self.ensure_kernel_state_retained()?;
         instrumentation::with_default_tactic_limits(|| {
             let sources = if let Some(import) = self.prepared_cpp_import.as_ref() {
                 CSourceContext::cpp(import)?

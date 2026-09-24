@@ -204,6 +204,19 @@ mod tests;
 
 thread_local! {
     static VERIFICATION_SESSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Counts the fresh sessions started on this thread, so state retained
+    /// past a session (a reusable surface verification session's snapshots)
+    /// can tell whether a later fresh session replaced the tables it names.
+    static VERIFICATION_SESSION_GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The generation of this thread's current kernel tables: it advances each
+/// time an outermost `VerificationSession` starts fresh. Snapshots and other
+/// arena ids minted under one generation are meaningless under another, so a
+/// caller that keeps kernel-derived state after its session ends compares
+/// this value before reusing that state.
+pub fn verification_session_generation() -> u64 {
+    VERIFICATION_SESSION_GENERATION.with(std::cell::Cell::get)
 }
 
 /// One verification's worth of kernel thread-local state.
@@ -232,6 +245,8 @@ impl VerificationSession {
             current == 0
         });
         if outermost {
+            VERIFICATION_SESSION_GENERATION
+                .with(|generation| generation.set(generation.get().wrapping_add(1)));
             primitives::start_fresh_c_memory_arena();
             eval::clear_load_variable_registry();
             model_fields::clear_model_field_registry();
@@ -250,6 +265,16 @@ impl VerificationSession {
             api::clear_borrowed_input_root_memo();
         }
         Self { fresh: outermost }
+    }
+
+    /// Joins this thread's current tables as a nested entry without
+    /// clearing them, for a caller that retains state built under those
+    /// tables (a reusable surface verification session) and checks it
+    /// against them. Verifications inside the guard join too, instead of
+    /// starting fresh tables that would invalidate the retained state.
+    pub fn resume() -> Self {
+        VERIFICATION_SESSION_DEPTH.with(|depth| depth.set(depth.get() + 1));
+        Self { fresh: false }
     }
 
     /// Whether this entry started the session (and so cleared the kernel's

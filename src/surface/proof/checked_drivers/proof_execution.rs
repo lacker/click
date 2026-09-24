@@ -451,7 +451,7 @@ fn checked_execution_region_contains_source_at(
             } => {
                 if tactics
                     .iter()
-                    .any(|indexed| indexed.source_index == source_index)
+                    .any(|indexed| indexed_tactic_contains_source_index(indexed, source_index))
                 {
                     return true;
                 }

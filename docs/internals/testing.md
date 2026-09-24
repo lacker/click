@@ -760,7 +760,11 @@ audit handles that file. Each site gets these checks:
 2. **verify** — verify the rewritten proof in the retained session. That
    entry point additionally requires the location to resolve to the same proof
    unit as the baseline and the Click source to be identical outside that unit;
-   it then reverifies just that proof unit while reusing certified dependencies;
+   it then reverifies just that proof unit while reusing certified dependencies.
+   The retained session runs on a thread of its own: its certified environment
+   names snapshots in that thread's kernel tables, which every other
+   verification on a thread replaces, and a session refuses to reuse an
+   environment whose tables were replaced;
 3. **cold original/rewritten** — on the first site of each claim, directly
    verify the original and expanded versions of the same targeted proof unit
    without the retained session. Later sites explicitly report

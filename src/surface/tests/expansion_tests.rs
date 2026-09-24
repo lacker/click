@@ -417,6 +417,65 @@ fn proof_cases_after_c_branch_expand_and_reverify() {
     }
 }
 
+/// Expands the smart tactic that starts at `anchor` (plus `skip` bytes) in
+/// an mdtest's Click source and re-verifies the rewrite.
+fn expand_mdtest_site_and_reverify(relative: &str, anchor: &str, skip: usize) -> String {
+    let (click_source, c_sources) = mdtest_sources(relative);
+    let c_sources = c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(&click_source, &c_sources).expect("the smart proof verifies");
+    let offset = click_source
+        .find(anchor)
+        .unwrap_or_else(|| panic!("`{relative}` should contain `{anchor}`"))
+        + skip;
+    let position = expansion::position_at_offset(&click_source, offset);
+    let expanded =
+        expand_c0_tactic_source_at(&click_source, &c_sources, position.line, position.column)
+            .unwrap_or_else(|error| panic!("the site should expand: {}", error.message()));
+    assert_ne!(expanded, click_source);
+    if let Err(error) = verify_c0_sources(&expanded, &c_sources) {
+        panic!(
+            "the expanded proof should re-verify: {}\n{expanded}",
+            error.message()
+        );
+    }
+    expanded
+}
+
+/// A loop's `initialize` tactic after a proof-level `branch` is numbered
+/// inside the loop tactic. The structural driver's search for the selected
+/// tactic in the rest of the proof used to miss it and decline the `branch`,
+/// so expansion refused a proof `click verify` accepts.
+#[test]
+fn loop_initialize_after_proof_branch_expands_and_reverifies() {
+    let expanded = expand_mdtest_site_and_reverify(
+        "mdtests/loop_after_proof_branch_expands.md",
+        "initialize by simp;",
+        "initialize by ".len(),
+    );
+    assert!(!expanded.contains("initialize by simp;"), "{expanded}");
+    assert_eq!(expanded.matches("branch {").count(), 1, "{expanded}");
+}
+
+/// A function-entry alignment fact cited after the loop renders as
+/// `at(function.entry, aligned(arena, 8))`, not as a pointer cast Click
+/// cannot parse.
+#[test]
+fn entry_alignment_premise_expands_in_source_spelling() {
+    let expanded = expand_mdtest_site_and_reverify(
+        "mdtests/entry_alignment_premise_expands.md",
+        "simp();\n        }\n    }\n    have i == capacity",
+        0,
+    );
+    assert!(
+        expanded.contains("at(function.entry, aligned(arena, 8));"),
+        "{expanded}"
+    );
+    assert!(!expanded.contains("(uint64)arena"), "{expanded}");
+}
+
 /// Eleven nested null checks expand to eleven nested proof `if`s, the checked
 /// drivers' bound, and re-verify. Twelve would nest one past it: expansion
 /// refuses before emitting the rewrite, with the verifier's diagnostic.

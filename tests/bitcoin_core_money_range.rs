@@ -232,8 +232,7 @@ fn pinned_upstream_money_range_reexports_and_verifies_in_normal_gate() {
             "profile missed {claim}"
         );
     }
-    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&project, &imported)
-        .expect("start a retained audit session on the same import");
+    let mut session_checks = Vec::new();
     let expanded_contract = expand_cpp_prepared_project_claim_source_by_label(
         &project,
         &imported,
@@ -291,8 +290,15 @@ fn pinned_upstream_money_range_reexports_and_verifies_in_normal_gate() {
             .expect("expanded certificate must reverify against the upstream import");
         let next = cpp_prepared_project_tactic_source_position(&rewritten, &imported, claim, 0)
             .expect("the audited claim remains source-selectable");
+        session_checks.push((expanded, next));
+    }
+    // A retained session's environment names its own kernel tables, which
+    // every verification above replaces, so the session starts after them.
+    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&project, &imported)
+        .expect("start a retained audit session on the same import");
+    for (expanded, next) in &session_checks {
         session
-            .verify_at_project(&expanded, next.line, next.column)
+            .verify_at_project(expanded, next.line, next.column)
             .expect("audit session must accept the expanded certificate");
     }
 
