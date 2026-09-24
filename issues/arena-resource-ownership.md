@@ -188,31 +188,126 @@ Three general gaps were fixed on the way, each with its own regression:
   split it spells, so whole-claim expansion of a preservation proof verifies
   (`mdtests/loop_preserve_decided_branch_expands.md`).
 
-## Next chunk: connect the symbolic region to free and the pipeline
+## Prefix free, reads, and writes
 
-Give `arena_free` a contract over `arena_prefix_region` that returns the
-region's occupancy and data cells to the state it came from, and verify
-`arena_pipeline` over the symbolic transition. Returning a region that is not
-the last one allocated needs a partition with holes, which the prefix model
-cannot express; decide that representation against the fixed C before adding
-syntax. Keep arbitrary holes out of the first free chunk if the pipeline's
-reverse-order frees can be modeled as prefix shrinks.
+`examples/arena/arena_symbolic_alloc.click` now verifies the fixed
+`arena_free`, `arena_read`, and `arena_write` over the prefix resources, beside
+the symbolic `arena_alloc`. `arena_prefix_region(region)` takes the descriptor
+alone and reaches the arena as `region->arena`; resource fields cannot have a
+struct pointer type, and the earlier two-parameter form's own argument read a
+cell it owns.
 
-The first attempt is blocked at contract lowering, before any proof runs.
-The fixed `arena_free`, `arena_read`, and `arena_write` take only the region
-descriptor, so their contracts must name the arena as `region->arena`, and
-the live-region resource owns that descriptor. A field-bearing resource's
-folded cells are not read authority for sibling contract clauses, while a
-field-free composite's and a decided match arm's are, so
-`consumes before: arena_prefix_state(region->arena);` cannot be evaluated
-next to the region instance. The landed two-parameter
-`arena_prefix_region(arena, region)` is worse still: its own argument reads a
-cell it owns. Resource fields also cannot have a struct pointer type, so the
-arena cannot be carried as a field instead. The frontier is pinned by
-`mdtests/arena_prefix_free_reads_region_arena_frontier.md`. The intended fix
-publishes an unconditional unmatched field-bearing body's cells as read
-authority during section clause evaluation, symmetric with the other two
-forms; ownership still moves only on `unfold`.
+- `arena_free` is a prefix shrink: it consumes the most recently allocated
+  region (`freed.end == before.prefix`, `1 <= before.live`,
+  `before.live - 1 <= freed.start`) and the state, clears `occupied[start..end]`
+  through the C loop, refolds the partition at prefix `start`, and produces the
+  state at `prefix == old(freed.start)` and `live == old(before.live) - 1` with
+  the descriptor.
+- `arena_read` and `arena_write` borrow the region and the state, require the
+  index inside the region's interval in field terms, keep both instances'
+  fields, and state the cell in C terms.
+
+What made these expressible, each with its own regression:
+
+- An unconditional, unmatched field-bearing instance body publishes the cells
+  it owns as read authority wherever the contract's own clauses are read: at
+  the callee's entry, at its return, in contract certification, and at a call
+  (`mdtests/arena_prefix_free_reads_region_arena.md`,
+  `mdtests/contract_owns_through_field_bearing_instance.md`,
+  `mdtests/contract_returns_field_bearing_sibling.md`,
+  `mdtests/contract_postcondition_reads_through_field_bearing_instance.md`,
+  `mdtests/call_through_field_bearing_sibling.md`, and the two refusals
+  `mdtests/contract_field_bearing_instance_views_grant_no_write.md` and
+  `mdtests/contract_field_bearing_instance_views_only_owned_cells.md`).
+  Ownership still moves only on `unfold`, and a loop head does not publish.
+- Normalization rejoins two held ranges that abut by a proved endpoint
+  equality, so the freed interval returns to the free suffix under
+  `end == prefix` (`mdtests/fold_joins_ranges_abutting_by_proved_equality.md`,
+  `mdtests/fold_join_needs_the_endpoint_equality.md`).
+- Surface synthesis no longer spells a cell an array field points to as an
+  `int32` index of a struct-pointer local, which had made the clearing loop's
+  invariant closer refuse its own bundle.
+
+## Next chunk: the pipeline
+
+`arena_pipeline` remains unverified. A proof against the contracts above was
+worked out outside the gate and got this far:
+
+- Initialization converts to the prefix state with checked folds: unfold
+  `arena_init_result` and `arena_initialized_access`, unfold and refold
+  `arena_initialized_storage` to expose `1 <= capacity <= 536870911`, prove the
+  two separations while the backing ranges are visible, fold the partition at
+  prefix 0 and the state at `prefix == 0, live == 0`. The storage composite
+  stays folded beside the state and is what `arena_empty` needs again.
+- Both allocations, their failure branches (the second one freeing `first` as a
+  prefix shrink), the writes of 11 and 22, both reads, the value `33`, the
+  reverse-order frees, the combined allocation of 4 from prefix 0, and its
+  write of `value` all step through the binder maps. Each borrowed call gives
+  the region and state fresh fields, so the proof carries them with a `mark`
+  before the call and `have x == at(mark, x)` after it; `simp` does not chain
+  the call's field equality with an earlier `have` by itself. The value read
+  back from the combined region at index 3 did not yet close the same way.
+- Converting the final state back to `arena_empty` folds, but the
+  `arena_destroy` call is refused on every path: the caller still owns its
+  descriptors, and the call rule cannot show that a kept owned object lies
+  outside an allocation the callee frees
+  (`mdtests/call_retires_allocation_beside_unrelated_owner_frontier.md`). This
+  is the current blocker, and it is a kernel gap, not a representation
+  question.
+
+Two tooling findings from that work need their own fixes before the pipeline
+lands:
+
+- The store in `arena_write` costs about 126,000 deterministic units alone,
+  and over 2,000,000 (its smart budget; 500,000 as a simple `step`) when the
+  `arena_init` or `arena_destroy` proof is verified earlier in the same
+  sidecar. The work is in pointer distinctness over explicit ranges
+  ("explicit range: recursive candidates", "range membership: offset
+  equality"), so a proof's cost depends on unrelated proofs verified before
+  it. Placing `arena_init` and `arena_destroy` after the region functions
+  avoids it but only hides it; reduce it first.
+- `arena_init`'s quantified postcondition over `occupied` has no caller-side
+  spelling, so `instantiate` cannot name it; `simp` proves the restated
+  quantifier.
+
+The planned sidecar restructuring (lifecycle resources in a resources-only
+file imported by `arena.click` and the pipeline sidecar, with the `arena_init`
+and `arena_destroy` proofs moved beside the pipeline) is deferred until the
+destroy call is admitted, since only the pipeline needs it and moving the
+proofs ahead of the region functions trips the cost blowup above.
+
+## Open design question: frees out of allocation order
+
+The pipeline frees in reverse order, which the prefix model expresses as
+shrinks. A free of any other region leaves a hole below the prefix that the
+fixed C's first-fit scan may later reuse. Three representations fit the fixed
+C differently.
+
+A partition listing live intervals. The state carries a sorted list of live
+`[start, end)` intervals as a model and owns the data cells of every gap
+between them through a resource recursive over that list; the occupancy map is
+related by `occupied[k] == 1` exactly when `k` lies in a listed interval.
+Allocation shows the first-fit run found by the scan lies in the first gap
+large enough and inserts the interval; free removes one from anywhere and
+merges the gaps on either side. It names exactly what the C's regions are, but
+it needs list-indexed recursive ownership and list reasoning inside the scan
+loop's invariant, which states per-cell facts.
+
+A per-cell occupancy view. The state owns the whole occupancy map and, for
+data, exactly the cells whose occupancy is 0: an iterated ownership guarded by
+the stable value of a cell the same resource owns. This is closest to the C,
+which decides availability per cell and needs no coalescing: allocation moves a
+run of free cells to a region while setting them occupied, free moves them back
+while clearing them, and the scan invariant stays per cell. It needs a new,
+general ownership form (value-guarded iterated ownership) in the kernel.
+
+A prefix plus a free list. Keep the prefix and add a list of holes below it:
+freeing the last region shrinks the prefix, freeing any other pushes a hole.
+It extends the model that verifies today in the smallest step, but it makes
+coalescing an explicit list normalization the C never performs, and relating
+first-fit to the earliest hole large enough requires the list to stay sorted
+and merged, so the scan proof inherits the partition model's list reasoning
+anyway.
 
 ## Violated invariant
 
