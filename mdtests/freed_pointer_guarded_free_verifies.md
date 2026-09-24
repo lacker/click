@@ -7,11 +7,8 @@ void *malloc(unsigned long size);
 void free(void *ptr);
 
 int f(void) {
-    int *q = malloc(sizeof(int));
-    if (q == 0) {
-        return -1;
-    }
     int *p = malloc(sizeof(int));
+    int *q = malloc(sizeof(int));
     if (p != 0) {
         free(p);
     }
@@ -27,7 +24,7 @@ int f(void) {
 verifying "guarded_free.c";
 
 int f() {
-    ensures result == 1 or result == -1;
+    ensures result == 1 or result == 0;
 } by {
     execute();
     simp();
