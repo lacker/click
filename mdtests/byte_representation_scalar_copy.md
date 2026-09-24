@@ -10,11 +10,10 @@ is the same program with `dst->x = src->x`. Both verify, so the copy mechanism
 is no longer what distinguishes them: a byte copy of a complete, initialized
 cell and a typed field copy now establish the same observation.
 
-This is the direct-copy half of the
-[byte-representation demo](../../issues/byte-representation-demo.md). The
-intermediate untyped buffer in
-[`examples/byte-representation/rep_copy.c`](../examples/byte-representation/rep_copy.c)
-and the pointer-provenance negatives remain open.
+This is the direct-copy half of the byte-representation round trip in
+[`examples/byte-representation/rep_copy.c`](../examples/byte-representation/rep_copy.c),
+which adds the intermediate untyped buffer and a pointer field; see
+[`docs/internals/byte-representation.md`](../docs/internals/byte-representation.md).
 
 ```c filename=scalar_memcpy.c
 void *malloc(unsigned long size);

@@ -16,8 +16,8 @@ contradiction fact in the assumptions made distinct pointers compare equal.
 The kernel now refuses to equate blocks it proves distinct, so no assumption
 can merge distinct allocations.
 
-See [`design/byte-representation/README.md`](../../design/byte-representation/README.md)
-for the frozen probe this unblocks.
+See [`docs/internals/byte-representation.md`](../docs/internals/byte-representation.md)
+for the byte-representation round trip this unblocks.
 
 ```c filename=memcpy_allocation_authority.c
 void *malloc(unsigned long size);

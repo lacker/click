@@ -73,6 +73,14 @@ Integer cells keep their values, including symbolic ones. Pointer cells keep
 their allocation identity: the restored pointer names the same block and
 offset as the original.
 
+This is the C11 rule for the destination object. Heap storage from `malloc`
+has no declared type, and a `memcpy` into it gives the copied bytes the
+effective type of the source object (C11 6.5p6), which is what the planted
+cells record. The later typed loads of `dst->tag` and `dst->target` read
+exactly those cells. A load of any other type at a planted cell meets a cell
+of another kind and is refused (see
+[Reinterpretation stays refused](#reinterpretation-stays-refused)).
+
 The transfer only adds observations the `bytes_equal` guarantee already
 justifies, and it refuses to plant a cell in four cases. The destination then
 keeps its post-havoc state, which has no cell there:
@@ -99,7 +107,9 @@ reader (`mdtests/byte_representation_borrowed_destination_rejected.md`, a
 modeled-pthread worker viewing heap bytes, with the after-join control
 `mdtests/byte_representation_borrowed_destination_after_join.md`) fails
 `owns destination[0..bytes]`. A loan escrows the owner's write authority, as
-described in [Stable views](stable-views.md).
+described in [Stable views](stable-views.md). A `static const` destination
+never reaches the call: the C frontend refuses discarding its `const`
+qualification (`mdtests/byte_representation_const_destination_rejected.md`).
 
 ## The byte view of integer cells
 

@@ -18,7 +18,9 @@ shared-heap-graph architecture milestones alongside the rbtree work and the
 Bitcoin Core C++ proof. The concurrency demo covers thread ownership,
 mutex-protected mutation, and one-shot release/acquire publication. The other
 demos exercise object representation copying, C cleanup jumps and narrow C++
-exception unwinding, and independently owned parents sharing a child.
+exception unwinding, and independently owned parents sharing a child. The
+representation-copy demo is implemented; its semantics are recorded in
+[Byte representation](byte-representation.md).
 
 The forward goto cleanup dependency and the selected control-flow demo are
 implemented; general backward and irreducible jumps remain deferred. The
