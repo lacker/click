@@ -1453,6 +1453,32 @@ field value; use an entry snapshot when that is the intended model.
 An ordinary C call transports constructed resources through the explicit
 binder map described under "Calls that transport named instances".
 
+A C-typed field is stable model data while its instance is folded, so the
+body may use it wherever it may use a C expression over the parameters: as a
+memory-range endpoint, and as a child's argument. Folding takes the endpoint
+from the proposed field value and checks the body facts against it; unfolding
+publishes the range at the folded field's value:
+
+<!-- verified-example: mdtests/resource_field_memory_endpoint.md -->
+```click
+resource zero_suffix(data: int32*, capacity: int32) {
+    field start: int32;
+    owns data[start..capacity];
+    fact 0 <= start;
+    fact start <= capacity;
+    fact forall (k: int32) {
+        start <= k and k < capacity implies data[k] == 0
+    };
+}
+```
+
+`let after = fold(zero_suffix(data, capacity), { start: old(before.start) + 1 })`
+refolds the suffix one cell later, leaving the first cell with the caller. A
+field of an algebraic or `Integer` type has no C value and cannot select a
+range; match it and use a C-typed constructor binding instead. The negative regressions are
+`mdtests/resource_field_memory_endpoint_rejects_out_of_bounds_fold.md` and
+`mdtests/resource_field_memory_endpoint_unfold_rejects_other_endpoint.md`.
+
 Guarded and constructor-matched memory-only bodies support explicit construction
 and field updates with the same `let c = fold(...)` syntax. No earlier unfold
 is required. Guarded bodies support the
@@ -1653,11 +1679,40 @@ carries that layout for the arm. After `let { sibling: s, up: u } = unfold(ctx)`
 the arm's facts hold of the exposed cells, so `fact parent->left == child`
 is what lets a proof read the focused node back out of the frame.
 
-Equations for all child fields must bind them to immediate constructor fields
-of the matching types. In particular, a child of the parent's own family
-strictly descends to a proper submodel.
+Equations for all child fields must bind each of them to an immediate
+constructor field or to a field of the parent itself, of the matching type.
+In particular, a child of the parent's own family strictly descends to a
+proper submodel, so its model field must be a constructor field.
 Child arguments may be read-only C expressions, including stored pointer
-fields such as `p->left`. Loads must be readable from the immediate body's
+fields such as `p->left` and C-typed fields of the parent.
+
+A body without a `match` may name children too, provided the parent has
+fields and each child is of another family. Its children's fields are then
+equations with the parent's fields:
+
+<!-- verified-example: mdtests/resource_field_child_equations.md -->
+```click
+resource arena_prefix_state(arena: struct arena*) {
+    field prefix: int32;
+    field live: int32;
+    owns &arena->data;
+    owns &arena->occupied;
+    owns arena->capacity;
+    owns arena->live_regions;
+    owns marks: occupied_marks(arena->occupied, prefix);
+    owns free: free_suffix(arena->data, arena->capacity);
+    fact marks.count == live;
+    fact free.start == prefix;
+    fact arena->live_regions == live;
+}
+```
+
+`let { marks: m, free: f } = unfold(state)` and
+`fold(arena_prefix_state(arena), { ... }, { marks: m, free: f })` expose and
+consume them as for an arm. A body or arm may also own a field-free declared
+resource without a name, `owns cell_value(cell);`; it stays folded while the
+parent is unfolded (`mdtests/resource_match_arm_unnamed_child.md`). A
+field-bearing resource owned in a body needs a child name. Loads must be readable from the immediate body's
 owned memory, not from a still-folded child or unrelated ambient ownership.
 Fold checks this memory before interpreting the child arguments. Expression
 safety and path premises must be proved; argument evaluation does not split

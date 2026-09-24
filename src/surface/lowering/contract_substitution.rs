@@ -2488,6 +2488,9 @@ static NO_INSTANCE_RENAMES: BTreeMap<String, InstanceRename> = BTreeMap::new();
 pub(in crate::surface) struct ContractSubstitutions<'a> {
     values: Cow<'a, BTreeMap<String, ContractExpression>>,
     instance_renames: Cow<'a, BTreeMap<String, InstanceRename>>,
+    /// Whether a scalar field of the resource body being defined is replaced
+    /// by the C name the kernel binds it to (see `resource_body_c_fragment`).
+    body_fields_as_c_names: bool,
 }
 
 impl<'a> ContractSubstitutions<'a> {
@@ -2496,6 +2499,20 @@ impl<'a> ContractSubstitutions<'a> {
         Self {
             values: Cow::Borrowed(values),
             instance_renames: Cow::Borrowed(&NO_INSTANCE_RENAMES),
+            body_fields_as_c_names: false,
+        }
+    }
+
+    /// Value substitutions that also spell each scalar field of the resource
+    /// body being defined as the C name the kernel binds it to while folding
+    /// or unfolding. Definition validation reads a field-bearing body this
+    /// way, so a field and a matched constructor payload are checked alike.
+    pub(in crate::surface) fn with_body_fields_as_c_names(
+        values: &'a BTreeMap<String, ContractExpression>,
+    ) -> Self {
+        Self {
+            body_fields_as_c_names: true,
+            ..Self::new(values)
         }
     }
 
@@ -2508,6 +2525,7 @@ impl<'a> ContractSubstitutions<'a> {
         Self {
             values: Cow::Borrowed(values),
             instance_renames: Cow::Borrowed(instance_renames),
+            body_fields_as_c_names: false,
         }
     }
 
@@ -2552,6 +2570,7 @@ impl<'a> ContractSubstitutions<'a> {
         ContractSubstitutions {
             values: Cow::Owned(values),
             instance_renames,
+            body_fields_as_c_names: self.body_fields_as_c_names,
         }
     }
 }
@@ -2575,6 +2594,12 @@ pub(in crate::surface) fn substitute_contract_expression_in(
 ) -> Result<ContractExpression, String> {
     match expression {
         ContractExpression::IntegerLiteral(_) => Ok(expression.clone()),
+        ContractExpression::ResourceField(_)
+            if substitutions.body_fields_as_c_names
+                && let Some(name) = resource_body_c_fragment(expression) =>
+        {
+            Ok(ContractExpression::CFragment(name))
+        }
         ContractExpression::ResourceField(access) => Ok(ContractExpression::ResourceField(
             match substitutions.instance_rename(&access.owner, access.identity) {
                 Some(owner) => ResourceFieldAccess {
@@ -3165,8 +3190,23 @@ pub(in crate::surface) fn substitute_c_fragment_in(
 pub(in crate::surface) fn contract_expression_as_c_fragment(
     expression: &ContractExpression,
 ) -> Option<CExpression> {
+    contract_expression_as_c_fragment_resolving_fields(expression, &|_| None)
+}
+
+/// Converts a contract expression to a C fragment, letting `field` supply
+/// the C spelling of a resource field access. Inside a resource body a scalar
+/// field of the instance being defined is stable model data, which the kernel
+/// binds by name exactly as it binds a matched constructor payload; every
+/// other field access has no C spelling.
+pub(in crate::surface) fn contract_expression_as_c_fragment_resolving_fields(
+    expression: &ContractExpression,
+    field: &dyn Fn(&ResourceFieldAccess) -> Option<CExpression>,
+) -> Option<CExpression> {
+    let contract_expression_as_c_fragment = |expression: &ContractExpression| {
+        contract_expression_as_c_fragment_resolving_fields(expression, field)
+    };
     match expression {
-        ContractExpression::ResourceField(_) => None,
+        ContractExpression::ResourceField(access) => field(access),
         ContractExpression::IntegerLiteral(value) => {
             let value = value.parse::<u64>().ok()?;
             Some(CExpression::Value(if value <= i32::MAX as u64 {
@@ -3259,6 +3299,27 @@ pub(in crate::surface) fn contract_expression_as_c_fragment(
         | ContractExpression::Let { .. } => None,
         ContractExpression::Call { .. } => None,
     }
+}
+
+/// The C spelling of an expression inside a resource body, where a scalar
+/// field of the resource being defined is stable model data. The kernel binds
+/// each C-typed field of an instance by name while it folds or unfolds the
+/// body, just as it binds a matched constructor payload, so the field may
+/// select a memory-range endpoint or supply a child argument. A field outside
+/// a resource body, or of a non-C type, has no C spelling.
+pub(in crate::surface) fn resource_body_c_fragment(
+    expression: &ContractExpression,
+) -> Option<CExpression> {
+    contract_expression_as_c_fragment_resolving_fields(expression, &|access| {
+        (access.identity == Variable(u64::MAX)
+            && access.owner == "__body"
+            && access.children.is_empty()
+            && access
+                .click_type
+                .as_ref()
+                .is_some_and(|click_type| click_type.c_type().is_some()))
+        .then(|| CExpression::Variable(access.field.clone()))
+    })
 }
 
 pub(in crate::surface) fn c_comparison_operator(

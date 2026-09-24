@@ -109,141 +109,23 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a, 'b>(
             }
             bindings.push((name.clone(), ty));
         }
-        let mut children = Vec::new();
-        let mut child_names = BTreeSet::new();
-        let mut child_equations = BTreeSet::new();
         let binding_indexes = bindings
             .iter()
             .enumerate()
             .map(|(index, (name, ty))| (name.as_str(), (index, ty)))
             .collect::<BTreeMap<_, _>>();
-        let mut equations = BTreeMap::<(Variable, &str), Vec<(usize, &ContractExpression)>>::new();
-        for (index, fact) in arm.body.facts.iter().enumerate() {
-            if let ClickProposition::Comparison {
-                left,
-                operator: ComparisonOperator::Equal,
-                right,
-            } = fact
-            {
-                for (access, value) in [(left, right), (right, left)] {
-                    if let ContractExpression::ResourceField(access) = access
-                        && access.children.is_empty()
-                    {
-                        equations
-                            .entry((access.identity, access.field.as_str()))
-                            .or_default()
-                            .push((index, value));
-                    }
-                }
-            }
-        }
-        for resource in &arm.body.contains {
-            if matches!(resource, ResourceClause::OwnMemory(_)) {
-                continue;
-            }
-            let ResourceClause::Named { binding, resource } = resource else {
-                return Err(ClickError::new(
-                    "resource match children require named exclusive ownership",
-                ));
-            };
-            let ResourceClause::Declared {
-                name, arguments, ..
-            } = resource.as_ref()
-            else {
-                return Err(ClickError::new(
-                    "child ownership requires a declared resource",
-                ));
-            };
-            if !binding.children.is_empty() {
-                return Err(ClickError::new(
-                    "a resource match child is one declared resource, not a child path",
-                ));
-            }
-            // A child may be the parent's own definition or another declared
-            // resource. Its arguments and field equations are checked against
-            // its own definition, so resolve that first.
-            let child_definition = if name == definition.name() {
-                definition
-            } else {
-                resources(name).ok_or_else(|| {
-                    ClickError::new(format!(
-                        "child `{}` names unknown resource `{name}`",
-                        binding.name
-                    ))
-                })?
-            };
-            if child_definition.parameters().len() != arguments.len() {
-                return Err(ClickError::new(format!(
-                    "child `{}` passes {} argument(s) to resource `{name}`, which takes {}",
-                    binding.name,
-                    arguments.len(),
-                    child_definition.parameters().len()
-                )));
-            }
-            if child_definition.fields().is_empty() {
-                return Err(ClickError::new(format!(
-                    "child `{}` requires a field-bearing resource; `{name}` has no fields",
-                    binding.name
-                )));
-            }
-            for argument in arguments {
-                // C expressions are read-only. The kernel checks their value,
-                // ownership requirements, and path obligations when rewriting.
-                resource_argument_to_c_expression(argument)?;
-            }
-            if reserved.contains(binding.name.as_str())
-                || names.contains(binding.name.as_str())
-                || !child_names.insert(binding.name.clone())
-            {
-                return Err(ClickError::new(
-                    "child name duplicates or shadows a resource binding",
-                ));
-            }
-            let mut field_bindings = Vec::new();
-            for field in child_definition.fields() {
-                let candidates = equations
-                    .get(&(binding.identity, field.name()))
-                    .ok_or_else(|| {
-                        ClickError::new(format!(
-                            "child `{}` needs an equation for field `{}`",
-                            binding.name,
-                            field.name()
-                        ))
-                    })?;
-                let [(fact_index, value)] = candidates.as_slice() else {
-                    return Err(ClickError::new("duplicate child field equation"));
-                };
-                let variable = match value {
-                    ContractExpression::Binding(name)
-                    | ContractExpression::CBinding(name)
-                    | ContractExpression::AlgebraicVariable { name, .. }
-                    | ContractExpression::CFragment(CExpression::Variable(name)) => name,
-                    _ => {
-                        return Err(ClickError::new(
-                            "child fields must be related to immediate constructor bindings",
-                        ));
-                    }
-                };
-                let (index, ty) = binding_indexes
-                    .get(variable.as_str())
-                    .filter(|(_, ty)| *ty == field.click_type())
-                    .ok_or_else(|| {
-                        ClickError::new(
-                            "child field requires a constructor binding of the same type",
-                        )
-                    })?;
-                let _ = ty;
-                field_bindings.push(*index);
-                child_equations.insert(*fact_index);
-            }
-            children.push(ResourceChildBody {
-                name: binding.name.clone(),
-                resource: name.clone(),
-                identity: binding.identity,
-                arguments: arguments.clone(),
-                field_bindings,
-            });
-        }
+        let BodyChildren {
+            children,
+            contains: body_contains,
+            facts: body_facts,
+        } = resource_body_children(
+            definition,
+            &arm.body,
+            &binding_indexes,
+            &reserved,
+            &names,
+            &resources,
+        )?;
         let mut referenced = BTreeSet::new();
         for fact in &arm.body.facts {
             collect_click_proposition_referenced_names(fact, &mut referenced);
@@ -268,15 +150,10 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a, 'b>(
         }
         let mut body = arm.body.clone();
         body.children = children;
-        body.contains
-            .retain(|resource| matches!(resource, ResourceClause::OwnMemory(_)));
+        body.contains = body_contains;
         body.fields = definition.fields().to_vec();
-        body.facts = body
-            .facts
+        body.facts = body_facts
             .iter()
-            .enumerate()
-            .filter(|(index, _)| !child_equations.contains(index))
-            .map(|(_, fact)| fact)
             .map(|fact| substitute_click_proposition(fact, &substitution).map_err(ClickError::new))
             .collect::<Result<_, _>>()?;
         result.push((
@@ -296,6 +173,291 @@ pub(in crate::surface) fn resource_match_arm_scopes<'a, 'b>(
         ));
     }
     Ok(result)
+}
+
+/// One resource body split for lowering: its named children, the clauses it
+/// keeps (owned memory and unnamed owned declared resources), and its facts
+/// without the child field equations the children now carry.
+pub(in crate::surface) struct BodyChildren {
+    pub(in crate::surface) children: Vec<ResourceChildBody>,
+    pub(in crate::surface) contains: Vec<ResourceClause>,
+    pub(in crate::surface) facts: Vec<ClickProposition>,
+}
+
+/// Splits `body`, a match arm or the unmatched body of `definition`, into
+/// its named children and the clauses it keeps.
+///
+/// A child's field is set by one body equation `child.f == v`, where `v` is
+/// an immediate constructor binding of the arm (`constructor_bindings`) or a
+/// field of the parent itself, of the child field's type. A scalar parent
+/// field used in a child argument or an unnamed resource argument is spelled
+/// as the C name the kernel binds it to (see `resource_body_c_fragment`).
+pub(in crate::surface) fn resource_body_children<'b>(
+    definition: &ResourceDefinition,
+    body: &CompositeResourceBody,
+    constructor_bindings: &BTreeMap<&str, (usize, &ClickType)>,
+    reserved: &BTreeSet<&str>,
+    names: &BTreeSet<&str>,
+    resources: &impl Fn(&str) -> Option<&'b ResourceDefinition>,
+) -> Result<BodyChildren, ClickError> {
+    let no_values = BTreeMap::new();
+    let field_names = ContractSubstitutions::with_body_fields_as_c_names(&no_values);
+    let spell_fields = |arguments: &[ContractExpression]| {
+        arguments
+            .iter()
+            .map(|argument| substitute_contract_expression_in(argument, &field_names))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ClickError::new)
+    };
+    let mut equations = BTreeMap::<(Variable, &str), Vec<(usize, &ContractExpression)>>::new();
+    for (index, fact) in body.facts.iter().enumerate() {
+        if let ClickProposition::Comparison {
+            left,
+            operator: ComparisonOperator::Equal,
+            right,
+        } = fact
+        {
+            for (access, value) in [(left, right), (right, left)] {
+                if let ContractExpression::ResourceField(access) = access
+                    && access.children.is_empty()
+                {
+                    equations
+                        .entry((access.identity, access.field.as_str()))
+                        .or_default()
+                        .push((index, value));
+                }
+            }
+        }
+    }
+    let mut children = Vec::new();
+    let mut contains = Vec::new();
+    let mut child_names = BTreeSet::new();
+    let mut child_equations = BTreeSet::new();
+    for resource in &body.contains {
+        let (binding, name, arguments) = match resource {
+            ResourceClause::OwnMemory(_) => {
+                contains.push(resource.clone());
+                continue;
+            }
+            ResourceClause::Declared {
+                access: ResourceAccessMode::Own,
+                kind,
+                name,
+                arguments,
+                parameter_types,
+            } => {
+                if resources(name).is_some_and(|child| !child.fields().is_empty()) {
+                    return Err(ClickError::new(format!(
+                        "an owned `{name}` in a resource body needs a child name, because `{name}` has fields"
+                    )));
+                }
+                contains.push(ResourceClause::Declared {
+                    access: ResourceAccessMode::Own,
+                    kind: *kind,
+                    name: name.clone(),
+                    arguments: spell_fields(arguments)?,
+                    parameter_types: parameter_types.clone(),
+                });
+                continue;
+            }
+            ResourceClause::Named { binding, resource } => {
+                let ResourceClause::Declared {
+                    name, arguments, ..
+                } = resource.as_ref()
+                else {
+                    return Err(ClickError::new(
+                        "child ownership requires a declared resource",
+                    ));
+                };
+                (binding, name, arguments)
+            }
+            _ => {
+                return Err(ClickError::new(
+                    "resource body children require exclusive ownership of memory, a declared resource, or a named child",
+                ));
+            }
+        };
+        if !binding.children.is_empty() {
+            return Err(ClickError::new(
+                "a resource child is one declared resource, not a child path",
+            ));
+        }
+        // A child may be the parent's own definition or another declared
+        // resource. Its arguments and field equations are checked against
+        // its own definition, so resolve that first.
+        let child_definition = if name == definition.name() {
+            definition
+        } else {
+            resources(name).ok_or_else(|| {
+                ClickError::new(format!(
+                    "child `{}` names unknown resource `{name}`",
+                    binding.name
+                ))
+            })?
+        };
+        if child_definition.parameters().len() != arguments.len() {
+            return Err(ClickError::new(format!(
+                "child `{}` passes {} argument(s) to resource `{name}`, which takes {}",
+                binding.name,
+                arguments.len(),
+                child_definition.parameters().len()
+            )));
+        }
+        if child_definition.fields().is_empty() {
+            return Err(ClickError::new(format!(
+                "child `{}` requires a field-bearing resource; `{name}` has no fields",
+                binding.name
+            )));
+        }
+        let arguments = spell_fields(arguments)?;
+        for argument in &arguments {
+            // C expressions are read-only. The kernel checks their value,
+            // ownership requirements, and path obligations when rewriting.
+            resource_argument_to_c_expression(argument)?;
+        }
+        if reserved.contains(binding.name.as_str())
+            || names.contains(binding.name.as_str())
+            || !child_names.insert(binding.name.clone())
+        {
+            return Err(ClickError::new(
+                "child name duplicates or shadows a resource binding",
+            ));
+        }
+        let mut field_bindings = Vec::new();
+        for field in child_definition.fields() {
+            let candidates = equations
+                .get(&(binding.identity, field.name()))
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "child `{}` needs an equation for field `{}`",
+                        binding.name,
+                        field.name()
+                    ))
+                })?;
+            let [(fact_index, value)] = candidates.as_slice() else {
+                return Err(ClickError::new("duplicate child field equation"));
+            };
+            let source = match value {
+                ContractExpression::ResourceField(access)
+                    if access.identity == Variable(u64::MAX)
+                        && access.owner == "__body"
+                        && access.children.is_empty() =>
+                {
+                    let parent = definition
+                        .fields()
+                        .get(access.field_index)
+                        .filter(|parent| parent.name() == access.field)
+                        .ok_or_else(|| ClickError::new("unknown parent field"))?;
+                    if parent.click_type() != field.click_type() {
+                        return Err(ClickError::new(format!(
+                            "child `{}` field `{}` is related to parent field `{}` of another type",
+                            binding.name,
+                            field.name(),
+                            parent.name()
+                        )));
+                    }
+                    crate::kernel::CResourceChildField::Parent(access.field_index)
+                }
+                ContractExpression::Binding(variable)
+                | ContractExpression::CBinding(variable)
+                | ContractExpression::AlgebraicVariable { name: variable, .. }
+                | ContractExpression::CFragment(CExpression::Variable(variable)) => {
+                    let (index, _) = constructor_bindings
+                        .get(variable.as_str())
+                        .filter(|(_, ty)| *ty == field.click_type())
+                        .ok_or_else(|| {
+                            ClickError::new(
+                                "child field requires a constructor binding or parent field of the same type",
+                            )
+                        })?;
+                    crate::kernel::CResourceChildField::Constructor(*index)
+                }
+                _ => {
+                    return Err(ClickError::new(
+                        "child fields must be related to immediate constructor bindings or parent fields",
+                    ));
+                }
+            };
+            field_bindings.push(source);
+            child_equations.insert(*fact_index);
+        }
+        children.push(ResourceChildBody {
+            name: binding.name.clone(),
+            resource: name.clone(),
+            identity: binding.identity,
+            arguments,
+            field_bindings,
+        });
+    }
+    let facts = body
+        .facts
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !child_equations.contains(index))
+        .map(|(_, fact)| fact.clone())
+        .collect();
+    Ok(BodyChildren {
+        children,
+        contains,
+        facts,
+    })
+}
+
+/// The unmatched body of `definition` with its named children split out, as
+/// `resource_match_arm_scopes` splits an arm. `None` when the body is matched
+/// or declares no named child, so it lowers exactly as written.
+pub(in crate::surface) fn resource_unmatched_body_scope<'b>(
+    definition: &ResourceDefinition,
+    resources: impl Fn(&str) -> Option<&'b ResourceDefinition>,
+) -> Result<Option<ResourceDefinition>, ClickError> {
+    let Some(body) = definition.composite_body() else {
+        return Ok(None);
+    };
+    if body.matched.is_some()
+        || !body
+            .contains
+            .iter()
+            .any(|clause| matches!(clause, ResourceClause::Named { .. }))
+    {
+        return Ok(None);
+    }
+    let reserved = definition
+        .parameters()
+        .iter()
+        .map(|p| p.name())
+        .chain(definition.fields().iter().map(|f| f.name()))
+        .collect::<BTreeSet<_>>();
+    let BodyChildren {
+        children,
+        contains,
+        facts,
+    } = resource_body_children(
+        definition,
+        body,
+        &BTreeMap::new(),
+        &reserved,
+        &BTreeSet::new(),
+        &resources,
+    )?;
+    if let Some(child) = children
+        .iter()
+        .find(|child| child.resource == definition.name)
+    {
+        return Err(ClickError::new(format!(
+            "child `{}` of `{}` has the resource's own family; only a matched arm may own a same-family child, which must be a proper submodel",
+            child.name, definition.name
+        )));
+    }
+    let mut body = body.clone();
+    body.children = children;
+    body.contains = contains;
+    body.facts = facts;
+    Ok(Some(ResourceDefinition {
+        name: definition.name.clone(),
+        parameters: definition.parameters.clone(),
+        composite_body: Some(body),
+        field_schema: definition.field_schema.clone(),
+    }))
 }
 
 pub(super) fn validate_algebraic_type_declarations(file: &ClickFile) -> Result<(), ClickError> {

@@ -247,3 +247,115 @@ fn indexed_validity_still_finds_every_violation_kind() {
         assert_eq!(aliased.validity_error(&none), None);
     }
 }
+
+/// A field-bearing `suffix(p)` whose owned range starts at its own `start`
+/// field, and a parent `holder(p)` whose field `at` sets that child's
+/// `start` and whose child is passed `p`: the body shapes of a plain-field
+/// endpoint and a field-to-field child equation.
+fn field_endpoint_definitions() -> Vec<CCompositeResourceDefinition> {
+    let suffix_schema =
+        ResourceFieldSchema::new(vec![("start".into(), ResourceFieldType::C(CType::Int32))])
+            .unwrap();
+    let holder_schema =
+        ResourceFieldSchema::new(vec![("at".into(), ResourceFieldType::C(CType::Int32))]).unwrap();
+    let suffix = CCompositeResourceDefinition::new(
+        "suffix",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        None,
+        false,
+        vec![CResourceSpec::owned_memory(CMemorySegment {
+            base: c_variable("p"),
+            start: c_variable("start"),
+            end: c_int32_literal(8),
+            element_width: 4,
+            guard: None,
+        })],
+        vec![],
+    )
+    .with_instance_schema(Some(suffix_schema));
+    let holder = CCompositeResourceDefinition::new(
+        "holder",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        None,
+        false,
+        vec![],
+        vec![],
+    )
+    .with_children(vec![CResourceChildSpec {
+        name: "rest".into(),
+        resource: "suffix".into(),
+        binding: Variable(90),
+        arguments: vec![c_variable("p")],
+        field_bindings: vec![CResourceChildField::Parent(0)],
+    }])
+    .with_instance_schema(Some(holder_schema));
+    // Definitions are looked up by binary search on their names.
+    vec![holder, suffix]
+}
+
+fn field_endpoint_instance(name: &str, field: &str, identity: u64) -> ResourceInstance {
+    ResourceInstance::new(
+        Variable(identity),
+        name.into(),
+        vec![CValue::pointer(heap_base(TARGET_HEAP)).into()].into(),
+        ResourceFieldSchema::new(vec![(field.into(), ResourceFieldType::C(CType::Int32))]).unwrap(),
+        vec![int32(2).into()].into(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn field_endpoint_fold_and_unfold_ignore_unrelated_resources() {
+    let definitions = field_endpoint_definitions();
+    let (holder, suffix) = (&definitions[0], &definitions[1]);
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let parent = field_endpoint_instance("holder", "at", 2 * TARGET_HEAP);
+        let child = field_endpoint_instance("suffix", "start", 2 * TARGET_HEAP + 1);
+        let frame = ResourceContext::new()
+            .unchecked_with_facts((0..size).flat_map(|index| {
+                [
+                    owned_range(heap_base(index as u64 + 1), 0, 4),
+                    owned_instance(TARGET_HEAP + 1 + index as u64),
+                ]
+            }))
+            .unchecked_with_facts([CResourceFact::own(CResource::Instance(parent.clone()))]);
+        let state = CState::new().with_resource_context(frame);
+        let assumptions = PureFactContext::new();
+        let children = vec![("rest".to_string(), child.identity)];
+        let (round_trip, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let rewrite = |state: &CState,
+                           instance: &ResourceInstance,
+                           definition: &CCompositeResourceDefinition,
+                           unfold: bool,
+                           children: Option<&[(String, Variable)]>| {
+                crate::kernel::rewrite_resource_instance_selecting_children(
+                    state,
+                    instance,
+                    definition,
+                    &definitions,
+                    &assumptions,
+                    unfold,
+                    children,
+                )
+                .map(|rewrite| rewrite.state)
+            };
+            let open = rewrite(&state, &parent, holder, true, Some(&children))?;
+            let cells = rewrite(&open, &child, suffix, true, None)?;
+            let child_again = rewrite(&cells, &child, suffix, false, None)?;
+            rewrite(&child_again, &parent, holder, false, Some(&children))
+        });
+        let closed = round_trip.unwrap_or_else(|refusal| {
+            panic!(
+                "the field-endpoint round trip should succeed: {}",
+                refusal.describe()
+            )
+        });
+        assert_eq!(
+            closed.resources.owned_instance(parent.identity),
+            Some(&parent)
+        );
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("field-endpoint fold and unfold", &samples, 16.0);
+}

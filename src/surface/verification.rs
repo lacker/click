@@ -6869,6 +6869,12 @@ pub(in crate::surface) fn composite_resource_definitions(
     // unrelated resources cannot accidentally share a carrier identity.
     let mut next_integer_binding_variable = 9_100_000_000u64;
     for definition in resource_environment.definitions.values() {
+        // An unmatched body's named children are split out of its clauses
+        // and facts, as each matched arm's are.
+        let unmatched_scope = validation::resource_unmatched_body_scope(definition, |name| {
+            resource_environment.get(name)
+        })?;
+        let definition = unmatched_scope.as_ref().unwrap_or(definition);
         // Field-bearing definitions retain their schema; only checked
         // instance exchanges may expose their bodies without erasing identity.
         let Some(body) = definition.composite_body() else {
@@ -7031,25 +7037,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                     .fields
                     .clone();
                 arms.push(crate::kernel::CResourceMatchArm {
-                    children: arm
-                        .composite_body()
-                        .unwrap()
-                        .children
-                        .iter()
-                        .map(|child| {
-                            Ok(crate::kernel::CResourceChildSpec {
-                                name: child.name.clone(),
-                                resource: child.resource.clone(),
-                                binding: child.identity,
-                                arguments: child
-                                    .arguments
-                                    .iter()
-                                    .map(resource_argument_to_c_expression)
-                                    .collect::<Result<_, _>>()?,
-                                field_bindings: child.field_bindings.clone(),
-                            })
-                        })
-                        .collect::<Result<_, ClickError>>()?,
+                    children: lower_resource_body_children(arm.composite_body().unwrap())?,
                     variant,
                     bindings: bindings.into_iter().map(|(name, _)| name).collect(),
                     binding_types,
@@ -7108,11 +7096,34 @@ pub(in crate::surface) fn composite_resource_definitions(
             )
             .with_liveness_facts(facts_claim_liveness)
             .with_resource_match_body(matched)
+            .with_children(lower_resource_body_children(body)?)
             .with_matched_recursion(matched_recursive)
             .with_instance_schema(definition.field_schema().cloned()),
         );
     }
     Ok(definitions)
+}
+
+/// The kernel child specifications of one split resource body.
+fn lower_resource_body_children(
+    body: &CompositeResourceBody,
+) -> Result<Vec<crate::kernel::CResourceChildSpec>, ClickError> {
+    body.children
+        .iter()
+        .map(|child| {
+            Ok(crate::kernel::CResourceChildSpec {
+                name: child.name.clone(),
+                resource: child.resource.clone(),
+                binding: child.identity,
+                arguments: child
+                    .arguments
+                    .iter()
+                    .map(resource_argument_to_c_expression)
+                    .collect::<Result<_, _>>()?,
+                field_bindings: child.field_bindings.clone(),
+            })
+        })
+        .collect()
 }
 
 pub(in crate::surface) fn append_entry_resource_specs(

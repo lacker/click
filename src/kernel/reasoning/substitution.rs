@@ -4397,6 +4397,20 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
                 .iter()
                 .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
                 .collect(),
+            children: definition
+                .children
+                .iter()
+                .map(|child| CResourceChildSpec {
+                    arguments: child
+                        .arguments
+                        .iter()
+                        .map(|argument| {
+                            substitute_bitvector_variable_in_c_expression(argument, from, to)
+                        })
+                        .collect(),
+                    ..child.clone()
+                })
+                .collect(),
             facts: definition
                 .facts
                 .iter()
@@ -7768,6 +7782,20 @@ fn substitute_pointer_variable_in_c_function(
                 .contains
                 .iter()
                 .map(|resource| substitute_pointer_variable_in_resource_spec(resource, from, to))
+                .collect(),
+            children: definition
+                .children
+                .iter()
+                .map(|child| CResourceChildSpec {
+                    arguments: child
+                        .arguments
+                        .iter()
+                        .map(|argument| {
+                            substitute_pointer_variable_in_c_expression(argument, from, to)
+                        })
+                        .collect(),
+                    ..child.clone()
+                })
                 .collect(),
             facts: definition
                 .facts

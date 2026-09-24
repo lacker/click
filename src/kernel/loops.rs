@@ -5189,7 +5189,10 @@ fn structural_measure_reaches_instance(
         let Some(submodel) = child
             .field_bindings
             .get(child_body.field_index)
-            .and_then(|index| fields.get(*index))
+            .and_then(|source| match source {
+                CResourceChildField::Constructor(index) => fields.get(*index),
+                CResourceChildField::Parent(_) => None,
+            })
         else {
             continue;
         };
