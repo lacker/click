@@ -35,7 +35,7 @@ use crate::kernel::{
     c_function_termination_plan, c_if, c_loop_invariants_hold_at_entry,
     c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect,
     c_resources_directly_match, c_seq, c_termination_height_plan, c_typed_pointer_value,
-    c_unverified_function_contract_claims_with_checked_propositions,
+    c_unverified_function_contract_claims_diagnostic,
     c_verified_function_contract_claims_with_checked_propositions, c_verified_function_rule,
     c_verified_function_termination_rules, c_while_with_invariant_and_effect_checks,
     certify_int32_above_one_predecessor_is_at_least_one,

@@ -172,6 +172,60 @@ mod tests {
     }
 
     #[test]
+    fn trace_reports_contract_certification_snapshot_gap() {
+        let directory =
+            std::env::temp_dir().join(format!("click-certification-trace-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("shared_parent.c"),
+            include_str!("../../design/shared-heap-probes/shared_parent.c"),
+        )
+        .unwrap();
+        let sidecar = directory.join("shared_parent.click");
+        let source = include_str!("../../design/shared-heap-probes/shared_parent.click");
+        let source = source.replacen(
+            "    produces &p->kid;\n} by {\n    match link.link {",
+            "    produces &p->kid;\n    ensures old(p->kid) == old(p->kid);\n} by {\n    match link.link {",
+            1,
+        );
+        fs::write(&sidecar, source).unwrap();
+
+        let plain = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
+        assert!(plain.starts_with("proof error:"), "{plain}");
+        assert!(
+            plain.contains("trace: click verify --trace-proof parent_detach "),
+            "{plain}"
+        );
+        let traced = entry([
+            "verify".to_string(),
+            "--trace-proof".to_string(),
+            "parent_detach".to_string(),
+            sidecar.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(traced.contains("stage: contract certification"), "{traced}");
+        assert!(
+            traced.contains("goal: fact obj->refs == count(child_ref(obj));"),
+            "{traced}"
+        );
+        assert!(
+            traced.contains("same address and required value"),
+            "{traced}"
+        );
+        assert!(traced.contains("snapshot reads agree"), "{traced}");
+        assert!(traced.contains("checked facts (showing"), "{traced}");
+        assert!(
+            !traced.contains("<no checked simple steps recorded"),
+            "{traced}"
+        );
+        assert!(!traced.contains("CMemory {"), "{traced}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn trace_includes_checked_prefix_before_a_statement_runtime_error() {
         let directory = std::env::temp_dir().join(format!(
             "click-trace-statement-runtime-error-{}",

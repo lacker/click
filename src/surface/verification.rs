@@ -3210,11 +3210,12 @@ fn verify_c0_sources_with_context(
                 });
             }
             let Some(certified_claims) = certified_claims else {
-                let detail = match c_unverified_function_contract_claims_with_checked_propositions(
+                let diagnostic_result = c_unverified_function_contract_claims_diagnostic(
                     &contract_function,
                     &contract_execution,
                     &checked_propositions,
-                ) {
+                );
+                let detail = match &diagnostic_result {
                     Ok(keys) if !keys.is_empty() => {
                         let described = keys
                             .iter()
@@ -3266,13 +3267,33 @@ fn verify_c0_sources_with_context(
                         format!("; unverified claims: {described}")
                     }
                     Ok(_) => String::new(),
-                    Err(reason) => format!("; {reason}"),
+                    Err(failure) => format!("; {}", failure.reason),
                 };
-                return Err(ClickError::new(format!(
+                let summary = format!(
                     "could not certify contract for `{}`: exact symbolic execution did not establish every contract claim{}",
                     function_block.signature.name(),
                     detail,
-                )));
+                );
+                if let Err(failure) = diagnostic_result
+                    && let Some(state) =
+                        proof_trace::CertificationTraceState::from_failure(&failure)
+                {
+                    let diagnostic = proof_diagnostics::ProofFailureDiagnostic {
+                        origin: proof_diagnostics::ProofDiagnosticOrigin {
+                            stage: "contract certification".to_string(),
+                            location: failure
+                                .reason
+                                .split_once(" is invalid:")
+                                .map_or("execution path".to_string(), |(path, _)| path.to_string()),
+                            source_tactic_path: None,
+                        },
+                        claim_label: format!("{}.contract", function_block.signature.name()),
+                        reason: summary.clone(),
+                        state: Some(Arc::new(state)),
+                    };
+                    return Err(ClickError::with_diagnostic(summary, diagnostic));
+                }
+                return Err(ClickError::new(summary));
             };
             let _ordered_claim_proofs = function_verified
                 .iter()

@@ -40,7 +40,7 @@ sidecar and project count.
 | Option | Meaning |
 | --- | --- |
 | `--time-limit DURATION` | Set the outer deadline independently for each selected sidecar or proof unit. The default is `30s`. |
-| `--trace-proof FUNCTION` | Verify only this C function in one sidecar and, on a proof error, show checked steps on its failing path with added facts and changed resource counts. Trace output is bounded. |
+| `--trace-proof FUNCTION` | Verify only this C function in one sidecar and, on a proof error, show checked steps on its failing path with added facts and changed resource counts. If the script completes but contract certification fails, show the failed obligation and a bounded view of facts available to that check. Trace output is bounded. |
 | `--changed-since REVISION` | Select claims affected since a Git revision. Reuse requires a valid full-verification marker for the baseline and verifier binary. |
 | `--explain` | With `--changed-since`, print the incremental selection without verifying it. |
 | `--allow-sorry` | Dev-only debugging switch: admit proof units whose body is exactly `sorry();` without checking them. Admissions are reported loudly, never recorded in incremental baselines, and `click audit`, `click expand`, and `scripts/check.sh` never enable the flag. Cannot be combined with `--changed-since`. |
@@ -105,8 +105,10 @@ representations. Retained Click goals and facts print in Click syntax. Generated
 facts without an exact Click spelling are labeled internal and carry bounded
 kernel detail, rather than being presented as source expressions. A surface
 goal that reads memory also shows a separate internal snapshot identity, so
-its read can be compared with an internal fact's read. The trace does not print
-whole memory snapshots. It records up to
+its read can be compared with an internal fact's read. When certification fails
+after a proof script completes, the trace names the failed contract check and
+compares any available fact about the same read at another snapshot. The trace
+does not print whole memory snapshots. It records up to
 2,048 checked steps and renders at most 64 KiB. The trace option requires one
 C sidecar file and cannot be combined with location or incremental selection,
 or `--allow-sorry`. A trace run does not record a full verification baseline.

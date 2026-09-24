@@ -4,7 +4,11 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::kernel::{CResourceFact, Proposition};
+use crate::kernel::ContractPathPreparationFailure;
+use crate::kernel::{
+    Bitvector32Term, CResourceFact, ConditionTerm, Pointer, Proposition, SharedCMemory,
+};
+use crate::surface::proof_diagnostics::ProofDiagnosticState;
 use crate::surface::proof_diagnostics::render::{self, SnapshotLabels};
 
 pub(super) const MAX_STEPS: usize = 2048;
@@ -42,6 +46,126 @@ pub(super) struct TraceFact {
     /// A form re-lowered to this exact fact at the checked step. A generated
     /// fact without such a form remains explicitly internal in the report.
     pub source: Option<String>,
+}
+
+/// The exact check that failed after the written proof completed. A completed
+/// script has no failing proof node, so it cannot use a node-lineage trace.
+/// These facts come from the certification context at the failed check.
+pub(super) struct CertificationTraceState {
+    goal: Proposition,
+    source_goal: Option<String>,
+    available: Vec<Proposition>,
+    available_count: usize,
+}
+
+impl CertificationTraceState {
+    pub(super) fn from_failure(failure: &ContractPathPreparationFailure) -> Option<Self> {
+        Some(Self {
+            goal: failure.obligation.clone()?,
+            source_goal: failure.source_goal.clone(),
+            available: failure.available.clone(),
+            available_count: failure.available_count,
+        })
+    }
+}
+
+fn traced_read(term: &Bitvector32Term) -> Option<(SharedCMemory, Pointer)> {
+    match term {
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            Some((memory.clone(), pointer.as_ref().clone()))
+        }
+        Bitvector32Term::Variable(variable) => {
+            crate::kernel::registered_load_for_variable(variable)
+        }
+        _ => None,
+    }
+}
+
+impl ProofDiagnosticState for CertificationTraceState {
+    fn source_goal(&self) -> Option<String> {
+        self.source_goal.clone()
+    }
+
+    fn kernel_goal(&self) -> Option<&Proposition> {
+        Some(&self.goal)
+    }
+
+    fn premises(&self, _limit: usize) -> Vec<&Proposition> {
+        Vec::new()
+    }
+
+    fn premise_count(&self) -> usize {
+        0
+    }
+
+    fn proof_trace(&self, _claim: &str, labels: &mut SnapshotLabels) -> Option<String> {
+        let mut output =
+            String::from("  certification trace (facts available at the failed check):");
+        let mut relevant = Vec::new();
+        let mut different_snapshots = false;
+        if let Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(needed_left, needed_right),
+            true,
+        ) = &self.goal
+            && let Some((needed_memory, needed_pointer)) = traced_read(needed_left)
+        {
+            let needed_snapshot = labels.snapshot_name(needed_memory.memory());
+            for fact in &self.available {
+                let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+                    fact
+                else {
+                    continue;
+                };
+                let Some((known_memory, known_pointer)) = traced_read(left) else {
+                    continue;
+                };
+                if known_pointer == needed_pointer && right == needed_right {
+                    relevant.push(fact);
+                    if known_memory != needed_memory {
+                        different_snapshots = true;
+                        output.push_str(&format!(
+                            "\n    same address and required value: known at {}, needed at {}",
+                            labels.snapshot_name(known_memory.memory()),
+                            needed_snapshot,
+                        ));
+                    }
+                }
+            }
+            if different_snapshots {
+                output.push_str(
+                    "\n    certification did not establish that these snapshot reads agree",
+                );
+            }
+        }
+        if relevant.is_empty() {
+            relevant.extend(self.available.iter().take(8));
+        }
+        let shown = relevant.len();
+        output.push_str(&format!(
+            "\n    checked facts (showing {} of {}):",
+            shown, self.available_count,
+        ));
+        for fact in relevant {
+            let source = render::render_simple_click_fact_labeled(fact, labels);
+            let description = source.unwrap_or_else(|| {
+                format!(
+                    "internal fact (no exact Click spelling): {}",
+                    render::render_proposition_labeled(fact, labels)
+                )
+            });
+            let description = trace_text(&description, 512);
+            if output.len() + description.len() > MAX_RENDER_BYTES {
+                output.push_str("\n    … <trace output limit reached>");
+                break;
+            }
+            output.push_str("\n    fact: ");
+            output.push_str(&description);
+        }
+        if shown < self.available_count {
+            output.push_str("\n    … <other available facts omitted>");
+        }
+        Some(output)
+    }
 }
 
 thread_local! {
