@@ -24,7 +24,7 @@ use click::surface::{
     c0_project_selected_proof_names, c0_project_tactic_source_position,
     cpp_prepared_project_external_dependencies, cpp_prepared_project_selected_proof_count,
     cpp_prepared_project_tactic_source_position, nested_tactic_source_position, selected_c_target,
-    verify_c0_prepared_project, verify_c0_prepared_project_at,
+    tactic_source_at_position, verify_c0_prepared_project, verify_c0_prepared_project_at,
     verify_c0_prepared_project_functions, verify_c0_project, verify_c0_project_at,
     verify_c0_project_functions, verify_cpp_prepared_project, verify_cpp_prepared_project_at,
     verifying_source_paths, with_proof_trace,
@@ -401,9 +401,23 @@ fn proof_error_report(
     let (mut report, mut context) = error.concise_report_parts();
     if let Some(source) = project.entry_source()
         && let Some(position) = proof_source_position(error, project, inputs, source)
-        && let Some(excerpt) = source_excerpt(sidecar, source, &position, line_offset)
     {
-        context.push(excerpt);
+        if let Ok(tactic) = tactic_source_at_position(source, &position) {
+            let source_line = source.lines().nth(position.line - 1).unwrap_or("");
+            let indent = source_line
+                .chars()
+                .take(position.column - 1)
+                .collect::<String>();
+            let formatted = format_source_tactic(&tactic, &indent);
+            if let Some(index) = context.iter().position(|line| line.starts_with("tactic: ")) {
+                context[index] = formatted;
+            } else {
+                context.insert(0, formatted);
+            }
+        }
+        if let Some(excerpt) = source_excerpt(sidecar, source, &position, line_offset) {
+            context.push(excerpt);
+        }
     }
     if let Some(location) = error.proof_step_location() {
         context.push(format!("step: {location}"));
@@ -429,6 +443,22 @@ fn proof_error_report(
             shell_word(function.0),
             shell_word(&sidecar.display().to_string())
         ));
+    }
+    report
+}
+
+fn format_source_tactic(tactic: &str, source_indent: &str) -> String {
+    if !tactic.contains('\n') {
+        return format!("tactic: {tactic}");
+    }
+    let mut report = String::from("tactic:");
+    for (index, line) in tactic.lines().enumerate() {
+        report.push_str("\n  ");
+        if index == 0 {
+            report.push_str(line);
+        } else {
+            report.push_str(line.strip_prefix(source_indent).unwrap_or(line));
+        }
     }
     report
 }

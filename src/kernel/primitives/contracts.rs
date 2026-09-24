@@ -1154,6 +1154,7 @@ impl CFunction {
         mut definitions: Vec<CCompositeResourceDefinition>,
     ) -> Self {
         definitions.sort_by(|left, right| left.name().cmp(right.name()));
+        super::super::thread_confinement::propagate_thread_confinement(&mut definitions);
         self.contract_interface.composite_resource_definitions = definitions;
         self
     }
@@ -1371,12 +1372,14 @@ impl CCompositeResourceDefinition {
 
     pub(crate) fn with_resource_match_body(mut self, body: Option<CResourceMatchBody>) -> Self {
         self.matched = body;
+        self.thread_confined |= self.counted_population && self.matched.is_some();
         self
     }
 
     /// Named child instances of the unmatched body.
     pub(crate) fn with_children(mut self, children: Vec<CResourceChildSpec>) -> Self {
         self.children = children;
+        self.thread_confined |= self.counted_population && !self.children.is_empty();
         self
     }
     pub fn new(
@@ -1398,6 +1401,7 @@ impl CCompositeResourceDefinition {
             recursive,
             matched_recursive: false,
             counted_population: false,
+            thread_confined: false,
             facts_claim_liveness: false,
             contains,
             children: Vec::new(),
@@ -1459,6 +1463,7 @@ impl CCompositeResourceDefinition {
         facts: Vec<SpecProposition>,
     ) -> Self {
         let fact_source_indices = (0..facts.len()).collect();
+        let thread_confined = condition.is_some() || !contains.is_empty() || !facts.is_empty();
         Self {
             instance_schema: None,
             matched: None,
@@ -1469,6 +1474,7 @@ impl CCompositeResourceDefinition {
             recursive: false,
             matched_recursive: false,
             counted_population: true,
+            thread_confined,
             facts_claim_liveness: false,
             contains,
             children: Vec::new(),
@@ -1510,6 +1516,10 @@ impl CCompositeResourceDefinition {
 
     pub fn is_counted_population(&self) -> bool {
         self.counted_population
+    }
+
+    pub fn is_thread_confined(&self) -> bool {
+        self.thread_confined
     }
 
     pub fn needs_outcome_resource_transfer(&self) -> bool {

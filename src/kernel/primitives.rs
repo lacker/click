@@ -2640,6 +2640,9 @@ pub struct CCompositeResourceDefinition {
     /// answers for the definition as a whole.
     pub(super) matched_recursive: bool,
     pub(super) counted_population: bool,
+    /// A definition-level restriction on direct transfer to another thread.
+    /// Computed when definitions are installed, including contained families.
+    pub(super) thread_confined: bool,
     /// Whether a body fact mentions an allocation-liveness claim
     /// (`loadable(...)`, directly or through a predicate). A loan of the
     /// composite stabilizes its memory and tokens, not the liveness of
@@ -6100,6 +6103,14 @@ impl CResourceSpec {
 
     pub fn declared_name(&self) -> Option<&str> {
         self.term.declared_name()
+    }
+
+    pub(crate) fn contained_definition_name(&self) -> Option<&str> {
+        let mut term = &self.term;
+        while let CResourceTerm::Instance { resource, .. } = term {
+            term = resource;
+        }
+        term.declared_name()
     }
 
     pub fn declared_arguments(&self) -> Option<&[CExpression]> {

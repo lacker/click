@@ -2149,6 +2149,8 @@ pub(super) fn finish_ordered_proof<'a>(
                         let tactic_index = &deferred.tactic_index;
                         let source_index = &deferred.source_index;
                         let post_tactic = &deferred.tactic;
+                        outcome_proof =
+                            outcome_proof.map(|proof| proof.at_source_tactic(*source_index));
                         let _timing = crate::instrumentation::enabled().then(|| {
                             let (tactic_name, tactic_class) =
                                 post_execution_tactic_timing(post_tactic);

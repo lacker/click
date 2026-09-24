@@ -236,7 +236,7 @@ mod tests {
         .unwrap();
         let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(error.starts_with("proof error:"), "{error}");
-        assert!(error.contains("\n\ntactic: step"), "{error}");
+        assert!(error.contains("\n\ntactic: step();"), "{error}");
         assert!(
             error.contains("\n\nTo get a trace:\n  click verify --trace-proof f "),
             "{error}"
@@ -250,7 +250,7 @@ mod tests {
         ])
         .unwrap_err();
         assert!(traced.starts_with("proof error:\n"), "{traced}");
-        assert!(traced.contains("\n\ntactic: step\n"), "{traced}");
+        assert!(traced.contains("\n\ntactic: step();\n"), "{traced}");
         assert!(traced.contains("\n  --> "), "{traced}");
         assert!(
             traced.contains("\n\nproof trace (checked tactics and branch facts):"),
@@ -293,6 +293,40 @@ mod tests {
         ])
         .unwrap_err();
         assert!(wrong.contains("is not a selected proof"), "{wrong}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn trace_shows_the_whole_failed_multiline_tactic() {
+        let directory =
+            std::env::temp_dir().join(format!("click-whole-failed-tactic-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("f.c"), "int32 f() { return 1; }\n").unwrap();
+        let sidecar = directory.join("f.click");
+        fs::write(
+            &sidecar,
+            "verifying \"f.c\";\nint32 f() { ensures result == 1; } by {\n    step();\n    have exists (x: int32) { x == 0 } by {\n        let (x: int32) satisfy {\n            x == 0\n        };\n    }\n    simp();\n}\n",
+        )
+        .unwrap();
+        let traced = entry([
+            "verify".to_string(),
+            "--trace-proof".to_string(),
+            "f".to_string(),
+            sidecar.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(
+            traced.contains("tactic:\n  let (x: int32) satisfy {\n      x == 0\n  };"),
+            "{traced}"
+        );
+        assert!(
+            traced.contains("step: source tactic 1 > have body tactic 1"),
+            "{traced}"
+        );
+        assert!(traced.contains("let (x: int32) satisfy {\n"), "{traced}");
         fs::remove_dir_all(directory).unwrap();
     }
 

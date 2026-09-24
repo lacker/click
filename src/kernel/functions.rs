@@ -1,4 +1,3 @@
-use super::concurrent_resources::WorkerResourceClass;
 use super::loans::{
     CheckedLoanCallEvidence, CompositeLoanBacking, CompositeProjectionEvidence, LoanId, LoanLedger,
     LoanRefusal, LoanRefusalOperation, LoanRefusalSubject, LoanViewBinding, LoanViewBindings,
@@ -8,6 +7,7 @@ use super::loans::{
 };
 use super::model_fields::{ModelFieldOrigin, ModelMint, algebraic_value_variable};
 use super::prelude::*;
+use super::thread_confinement::confined_resource_name;
 use std::sync::Arc;
 
 fn execute_c_function_body_paths(
@@ -3107,9 +3107,24 @@ fn execute_verified_function_applications_with_suspension(
         }
 
         if let Some(completions) = suspended.as_deref_mut() {
-            // Resource classes do not grant authority by themselves. The
-            // checked plan below still proves the transfer and stable loans;
-            // protocol and population classes have no asynchronous delta.
+            if let Some(name) = transfer
+                .callee_resources
+                .facts()
+                .iter()
+                .chain(output_resources.facts())
+                .find_map(|fact| {
+                    confined_resource_name(fact, interface.composite_resource_definitions())
+                })
+            {
+                paths.push(resource_call_failure(&format!(
+                    "resource `{name}` is thread confined and cannot cross a worker boundary"
+                )));
+                continue;
+            }
+            // Definition-level confinement is only an admission rule. The
+            // checked partition and loan plan still conserve the authority
+            // that a worker receives, and the storage checks below keep the
+            // parent's implicit stack/global accesses out of that transfer.
             let supported = obligations.is_empty()
                 && transfer
                     .stable_view_plan
@@ -3121,15 +3136,24 @@ fn execute_verified_function_applications_with_suspension(
                     .callee_resources
                     .facts()
                     .iter()
-                    .all(|fact| WorkerResourceClass::of(fact).may_enter_worker())
+                    .all(|fact| match fact {
+                        CResourceFact::Own(CResource::Memory(range), quantity) => {
+                            quantity.as_const() == Some(1)
+                                && is_external_memory_pointer(range.base())
+                        }
+                        _ => true,
+                    })
                 && transfer
                     .memory_effects
                     .iter()
                     .all(|range| is_external_memory_pointer(range.base()))
-                && output_resources
-                    .facts()
-                    .iter()
-                    .all(|fact| WorkerResourceClass::of(fact).may_return_from_worker());
+                && output_resources.facts().iter().all(|fact| match fact {
+                    CResourceFact::Own(CResource::Memory(range), quantity) => {
+                        quantity.as_const() == Some(1) && is_external_memory_pointer(range.base())
+                    }
+                    CResourceFact::Own(_, _) => true,
+                    CResourceFact::View(_) => false,
+                });
             if !supported {
                 paths.push(resource_call_failure(
                     "suspended worker requires discharged preconditions, explicit ownership of external memory, and nonescaping views",
