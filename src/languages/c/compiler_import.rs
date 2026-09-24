@@ -1986,7 +1986,7 @@ mod tests {
     }
 
     #[test]
-    fn frozen_pthread_gcc_import_reaches_the_next_header_boundary_offline() {
+    fn frozen_pthread_gcc_import_reaches_unresolved_extern_boundary_offline() {
         struct CopiedFixture(PathBuf);
         impl Drop for CopiedFixture {
             fn drop(&mut self) {
@@ -2053,11 +2053,7 @@ mod tests {
         };
         assert!(error.len() < 4096, "unbounded import diagnostic: {error}");
         assert!(
-            error.contains("/usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h:427"),
-            "{error}"
-        );
-        assert!(
-            error.contains("unsupported C type `long double`"),
+            error.contains("global `__daylight` is declared `extern` but has no definition"),
             "{error}"
         );
         assert!(!error.contains("unknown struct declaration `sigevent`"));

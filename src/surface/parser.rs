@@ -7572,6 +7572,11 @@ impl Parser {
                 "struct `{struct_name}` has no field `{field_name}`"
             )));
         };
+        if field.is_long_double() {
+            return Err(
+                self.error("long double member value operations need an extended-precision model")
+            );
+        }
         // A field's resource slot runs to the next field's offset (or the
         // struct's end), so ownership covers trailing alignment padding:
         // padding belongs to the object and no one else can own it.
@@ -7607,6 +7612,11 @@ impl Parser {
         let Some(field) = layout.field(field_name) else {
             return Err(self.error(format!("union `{union_name}` has no member `{field_name}`")));
         };
+        if field.is_long_double() {
+            return Err(
+                self.error("long double member value operations need an extended-precision model")
+            );
+        }
         Ok(ResolvedField {
             c_type: field.c_type(),
             pointee_constant: field.pointee_is_constant(),

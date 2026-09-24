@@ -1,8 +1,7 @@
-# C0 rejects extended-precision floating-point declarations
+# C0 rejects extended-precision floating-point values
 
-`long double` must not be consumed as the supported integer spelling `long`.
-It remains outside the explicit binary32/binary64 floating-point boundary and
-gets a focused source-positioned diagnostic.
+The target ABI layout is known, but value operations still need an 80-bit
+floating-point model. A local declaration receives a focused diagnostic.
 
 ```c filename=long_double_rejected.c
 int32 long_double_rejected() {
@@ -20,5 +19,5 @@ int32 long_double_rejected() {
 ```
 
 ```expect
-fail: unsupported C type `long double`: extended-precision floating-point values are not modeled in C0
+fail: long double value operations need an extended-precision model
 ```
