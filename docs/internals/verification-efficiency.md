@@ -192,6 +192,13 @@ at that ask, never into ambient fact sets. Adding a valid carrier must be
 monotone for already-provable snapshot premises
 (`added_composition_carrier_keeps_snapshot_premise_work_bounded`).
 
+Deciding that a context is a valid partition reads the same indexes. Only an
+identity held twice or with invalid access, a block owning two or more
+ranges, or a base that an exact pointer equality joins to another block can
+hold a violation, so a call composing its ensured resources into a caller
+frame never visits the caller's unrelated allocations
+(`src/kernel/tests/resource_scaling_tests.rs`).
+
 The pairs' accidental effectiveness came from restating each fact in every
 term form that ever existed, so lookup never proved cross-snapshot equality.
 The replacement gives terms one canonical identity and makes state changes

@@ -2725,6 +2725,11 @@ impl PureFactContext {
     /// own order. One hop: an alias of an alias is not reported, so the
     /// answer is bounded by the equalities stated about this pointer and no
     /// query walks an equality graph.
+    /// The pointers with at least one exact alias, in pointer order.
+    pub(crate) fn exactly_aliased_pointers(&self) -> impl ExactSizeIterator<Item = &Pointer> {
+        self.pointer_block_aliases.keys()
+    }
+
     pub(crate) fn exact_pointer_aliases(
         &self,
         pointer: &Pointer,

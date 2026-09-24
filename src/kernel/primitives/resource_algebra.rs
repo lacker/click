@@ -217,11 +217,38 @@ fn remove_resource_index_entry<K: Ord + Clone>(
 }
 
 impl ResourceContextIndex {
+    /// Files or withdraws one identity as able to fail instance validity:
+    /// held twice, or held once with other than one owned unit.
+    fn refresh_suspect_instance(&mut self, identity: Variable) {
+        let suspect = self
+            .instances
+            .get(&identity)
+            .is_some_and(|entries| entries.len() >= 2)
+            || self.invalid_instance_access.contains_key(&identity);
+        let filed = self.suspect_instances.contains_key(&identity);
+        if suspect && !filed {
+            self.suspect_instances = self.suspect_instances.with_inserted(identity, ());
+        } else if !suspect && filed {
+            self.suspect_instances = self.suspect_instances.without_key(&identity);
+        }
+    }
+
     fn with_inserted(&self, entry: ResourceEntryId, fact: &CResourceFact) -> Self {
         let mut result = self.clone();
         if let CResource::Instance(instance) = fact.resource() {
             result.instances =
                 insert_resource_index_entry(&result.instances, instance.identity, entry);
+            if !fact.has_valid_instance_access() {
+                let count = result
+                    .invalid_instance_access
+                    .get(&instance.identity)
+                    .copied()
+                    .unwrap_or(0);
+                result.invalid_instance_access = result
+                    .invalid_instance_access
+                    .with_inserted(instance.identity, count + 1);
+            }
+            result.refresh_suspect_instance(instance.identity);
             result.instance_shapes = insert_resource_index_entry(
                 &result.instance_shapes,
                 (instance.name.clone(), instance.arguments.len()),
@@ -297,6 +324,23 @@ impl ResourceContextIndex {
         if let CResource::Instance(instance) = fact.resource() {
             result.instances =
                 remove_resource_index_entry(&result.instances, &instance.identity, entry);
+            if !fact.has_valid_instance_access() {
+                let count = result
+                    .invalid_instance_access
+                    .get(&instance.identity)
+                    .copied()
+                    .expect("invalid instance access count exists");
+                result.invalid_instance_access = if count == 1 {
+                    result
+                        .invalid_instance_access
+                        .without_key(&instance.identity)
+                } else {
+                    result
+                        .invalid_instance_access
+                        .with_inserted(instance.identity, count - 1)
+                };
+            }
+            result.refresh_suspect_instance(instance.identity);
             result.instance_shapes = remove_resource_index_entry(
                 &result.instance_shapes,
                 &(instance.name.clone(), instance.arguments.len()),
@@ -3300,18 +3344,44 @@ impl ResourceContext {
             .get_or_init(|| self.iter().cloned().collect())
     }
 
+    /// Whether the context is a partition under `assumptions`, and the first
+    /// violation in the canonical order if not.
+    ///
+    /// The check is decided by indexed entries only. An identity can fail
+    /// instance validity only when it is held twice or with invalid access,
+    /// and those identities are indexed. Two owned ranges can overlap only
+    /// when they share a block, which only blocks holding two or more owned
+    /// ranges do, or when an exact pointer equality in `assumptions` joins
+    /// their bases across blocks; the second walk is driven from whichever
+    /// of the two sides — the context's bases or the equalities — is
+    /// smaller. Each walk visits its candidates in the same order the
+    /// unindexed scans did, so the reported violation is unchanged. A block
+    /// owning one range, or an unaliased base, holds no pair and is never
+    /// visited, so a caller's unrelated allocations cost nothing here.
     pub fn validity_error(
         &self,
         assumptions: &PureFactContext,
     ) -> Option<ResourceContextValidityError> {
-        for (_, entries) in self.storage.index.instances.iter() {
+        for (identity, ()) in self.storage.index.suspect_instances.iter() {
+            let entries = self
+                .storage
+                .index
+                .instances
+                .get(identity)
+                .expect("a suspect instance identity is held");
             for entry in entries.iter() {
                 if let Some(error) = self.instance_validity_error(self.fact(*entry)) {
                     return Some(error);
                 }
             }
         }
-        for (_, entries) in self.storage.index.memory_by_block.iter() {
+        for (block, ()) in self.storage.index.shared_owned_memory_blocks.iter() {
+            let entries = self
+                .storage
+                .index
+                .memory_by_block
+                .get(block)
+                .expect("a block with owned ranges has memory entries");
             let owned = entries
                 .iter()
                 .filter_map(|entry| {
@@ -3388,36 +3458,68 @@ impl ResourceContext {
 
         // The block sweep above covers every same-block pair. Visit the
         // output-sized set of exact-base matches for direct cross-block
-        // pointer equalities separately.
-        for (_, entries) in self.storage.index.memory_by_base.iter() {
-            for entry in entries.iter().copied() {
-                let Some(range) = self.fact(entry).memory_own_range() else {
+        // pointer equalities separately, from the smaller index. Both
+        // drivers visit the bases held here that have an exact alias, in
+        // pointer order.
+        let memory_by_base = &self.storage.index.memory_by_base;
+        let aliased = assumptions.exactly_aliased_pointers();
+        if aliased.len() < memory_by_base.len() {
+            for base in aliased {
+                crate::instrumentation::record_deterministic_work(1);
+                if let Some(entries) = memory_by_base.get(base)
+                    && let Some(error) = self.cross_block_alias_error(base, entries, assumptions)
+                {
+                    return Some(error);
+                }
+            }
+        } else {
+            for (base, entries) in memory_by_base.iter() {
+                crate::instrumentation::record_deterministic_work(1);
+                if let Some(error) = self.cross_block_alias_error(base, entries, assumptions) {
+                    return Some(error);
+                }
+            }
+        }
+        None
+    }
+
+    /// Checks the owned ranges at one exact base against those at each of
+    /// its direct cross-block aliases.
+    fn cross_block_alias_error(
+        &self,
+        base: &Pointer,
+        entries: &ResourceEntryIds,
+        assumptions: &PureFactContext,
+    ) -> Option<ResourceContextValidityError> {
+        for entry in entries.iter().copied() {
+            if self.fact(entry).memory_own_range().is_none() {
+                continue;
+            }
+            for alias in assumptions.exact_pointer_aliases(base) {
+                if alias.block == base.block {
+                    continue;
+                }
+                let Some(alias_entries) = self.storage.index.memory_by_base.get(alias) else {
                     continue;
                 };
-                for alias in assumptions.exact_pointer_aliases(range.base()) {
-                    if alias.block == range.base().block {
+                for alias_entry in alias_entries.iter().copied() {
+                    // Exact aliases are indexed symmetrically, so the
+                    // lower entry id owns this pair's one comparison.
+                    if entry >= alias_entry {
                         continue;
                     }
-                    let Some(alias_entries) = self.storage.index.memory_by_base.get(alias) else {
+                    let left = self.fact(entry);
+                    let right = self.fact(alias_entry);
+                    if left.memory_own_range().is_none() || right.memory_own_range().is_none() {
                         continue;
-                    };
-                    for alias_entry in alias_entries.iter().copied() {
-                        // Exact aliases are indexed symmetrically, so the
-                        // lower entry id owns this pair's one comparison.
-                        if entry >= alias_entry {
-                            continue;
-                        }
-                        let left = self.fact(entry);
-                        let right = self.fact(alias_entry);
-                        if left.memory_own_range().is_none() || right.memory_own_range().is_none() {
-                            continue;
-                        }
-                        crate::instrumentation::record_deterministic_work(1);
-                        if let Some(error) = resource_family_algebra(left.family())
-                            .pair_validity_error(left, right, assumptions)
-                        {
-                            return Some(error);
-                        }
+                    }
+                    crate::instrumentation::record_deterministic_work(1);
+                    if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
+                        left,
+                        right,
+                        assumptions,
+                    ) {
+                        return Some(error);
                     }
                 }
             }

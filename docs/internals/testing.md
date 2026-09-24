@@ -326,14 +326,26 @@ checked) beside a growing number of unrelated cells, which must also hand back
 the first derivation's storage. Normalizing allocation tokens in distinct heap
 blocks must stay linear in the tokens.
 
+Resource-context validity has its own in
+`src/kernel/tests/resource_scaling_tests.rs`. Validity of a caller frame, and
+composing one ensured range into it (a verified call's return), must cost
+work that does not grow with unrelated owned allocations and instances beside
+the target, nor with unrelated pointer equalities in the assumptions: the
+check reads only indexed candidates (identities held twice or with invalid
+access, blocks owning two or more ranges, and aliased bases, driven from the
+smaller of the bases and the equalities). A companion test finds each
+violation kind beside many unrelated resources from either side of the alias
+walk.
+
 End to end, `roundtrip_extra_copy_stays_nearly_flat_beside_unrelated_allocations`
 in `src/surface/tests/scaling_tests.rs` verifies the frozen byte-representation
 round trip beside 2, 4, 8, and 16 unrelated live heap allocations, with and
 without one extra fixed `memcpy`, and bounds the extra copy's marginal work by
-a quarter above its smallest value. It guards the collapse of the quadratic
-fact comparison at every free; it is not the logarithmic contract, which the
-smart `execute` planner does not yet meet (its test comment names the
-remaining linear terms).
+an eighth above its smallest value. It guards the collapse of the quadratic
+fact comparison at every free and of the whole-context resource validity
+sweep at every call; it is not the logarithmic contract, which the smart
+`execute` planner does not yet meet (its test comment names the remaining
+linear terms).
 
 Rust library tests and both fixture gates enforce deterministic tactic-work
 budgets but do not inherit production time limits. Tests specifically about

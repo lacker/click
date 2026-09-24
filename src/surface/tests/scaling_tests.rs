@@ -2257,17 +2257,22 @@ fn roundtrip_sample_on_this_thread(unrelated: usize, extra_copies: usize) -> Sca
 ///
 /// Every sample runs on its own thread after one warm-up verification, so no
 /// sample pays the once-per-process standard-library setup. Measured
-/// marginals on 2026-09-23: 3236, 3288, 3364, and 3548 units (and 3876 and
-/// 4476 at 32 and 64 allocations, too slow for a debug-build unit test).
-/// Before snapshot sharing they were about 33,000 at N = 8 and 58,000 at
-/// N = 16: every later free compared the copy's facts, whose embedded
-/// snapshots were equal but separately stored, entry by entry.
+/// marginals on 2026-09-23: 3232, 3276, 3336, and 3488 units (and 3752 at 32
+/// allocations, too slow for a debug-build unit test). Before snapshot
+/// sharing they were about 33,000 at N = 8 and 58,000 at N = 16: every later
+/// free compared the copy's facts, whose embedded snapshots were equal but
+/// separately stored, entry by entry. Before resource validity read only
+/// indexed candidates they were 3236, 3288, 3364, and 3548: each call's
+/// ensured-resource composition swept every block the caller owned.
 ///
-/// This guards that collapse; it is not the logarithmic contract. The
-/// remaining growth is roughly ten units per unrelated allocation — the
-/// execute planner's per-step rebuilding of fact contexts from fact lists
-/// and re-execution of the frontier tail, and whole-context resource
-/// validity at each call — and it doubles with each doubling of N.
+/// This guards those collapses; it is not the logarithmic contract. The
+/// remaining growth, about 18 units per unrelated allocation, is mostly the
+/// smart `execute` planner's condition-premise search over its listed pure
+/// facts and that search's simp checkpoints (about 12 per allocation); the
+/// rest is re-derived snapshot comparison relative to a base and more
+/// composition separation-candidate projections. The kernel call path is
+/// flat here: `ensured resource composition` and `verified call return
+/// resource evaluation` charge the same work at every size.
 #[test]
 fn roundtrip_extra_copy_stays_nearly_flat_beside_unrelated_allocations() {
     const SIZES: [usize; 4] = [2, 4, 8, 16];
@@ -2293,7 +2298,7 @@ fn roundtrip_extra_copy_stays_nearly_flat_beside_unrelated_allocations() {
         .collect::<Vec<_>>();
     eprintln!("extra-copy marginal work beside {SIZES:?} allocations: {marginal:?}");
     assert!(marginal[0] > 0, "{marginal:?}");
-    let allowed = marginal[0] + marginal[0] / 4;
+    let allowed = marginal[0] + marginal[0] / 8;
     assert!(
         marginal.iter().all(|work| *work <= allowed),
         "one extra memcpy grew with unrelated allocations beyond {allowed}: {marginal:?}"

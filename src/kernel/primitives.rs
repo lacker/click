@@ -4944,6 +4944,13 @@ pub(super) struct ResourceContextChange {
 #[derive(Clone, Debug, Default)]
 pub(super) struct ResourceContextIndex {
     pub(super) instances: PersistentMap<Variable, ResourceEntryIds>,
+    /// Instance identities with an entry whose access is not one owned unit.
+    /// With `instances`, these select the identities that can fail a
+    /// validity check without visiting every instance.
+    pub(super) invalid_instance_access: PersistentMap<Variable, usize>,
+    /// The identities held more than once or held with invalid access: the
+    /// only ones whose entries can fail `instance_validity_error`.
+    pub(super) suspect_instances: PersistentMap<Variable, ()>,
     /// Owned instances keyed by the resource family and arity they name. A
     /// loop binder selects its instance by family and arguments, so that
     /// selection costs the instances of one family rather than the whole
