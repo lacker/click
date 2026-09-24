@@ -253,11 +253,11 @@ mod tests {
         assert!(traced.contains("\n\ntactic: step\n"), "{traced}");
         assert!(traced.contains("\n  --> "), "{traced}");
         assert!(
-            traced.contains("\n\nproof trace (checked steps on the failing path):"),
+            traced.contains("\n\nproof trace (checked tactics and branch facts):"),
             "{traced}"
         );
         assert!(
-            traced.contains("proof trace (checked steps on the failing path)"),
+            traced.contains("proof trace (checked tactics and branch facts)"),
             "{traced}"
         );
         assert!(traced.contains("source tactic 0: step"), "{traced}");
@@ -468,14 +468,14 @@ int32 parent(int32 *a, int32 *visited, int32 cur) {
             report.contains("goal: exists (z: int32) { z == a[cur] }"),
             "{report}"
         );
-        assert!(report.contains("\n  r != 0"), "{report}");
-        assert!(report.contains("fact + r == 1"), "{report}");
+        assert!(!report.contains("recent premises"), "{report}");
+        assert!(report.contains("adds: r == 1"), "{report}");
         assert!(
-            report.contains("callee ensures (source template): result != 0 implies exists"),
+            report.contains("ensures (source template): result != 0 implies exists"),
             "{report}"
         );
         assert!(
-            report.contains("1 checked fact(s) have no exact caller-side Click spelling; checked fact snapshot(s): snapshot#4"),
+            report.contains("1 checked fact(s) with no exact Click spelling"),
             "{report}"
         );
         assert!(report.contains("snapshot identity (internal):"), "{report}");
@@ -541,24 +541,20 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
         ])
         .unwrap_err();
         assert!(
-            report.contains("source call: let r = step(child("),
+            report.contains("source tactic 1: let r = step(child("),
             "{report}"
         );
-        assert!(report.contains("argument x = a[i]"), "{report}");
+        assert!(!report.contains("argument x = a[i]"), "{report}");
         assert!(
-            report.contains(
-                "callee ensures (source template): exists (path: Path) { pick(x, path) == x }"
-            ),
-            "{report}"
-        );
-        assert!(
-            report.contains("1 checked fact(s) have no exact caller-side Click spelling"),
+            report
+                .contains("ensures (source template): exists (path: Path) { pick(x, path) == x }"),
             "{report}"
         );
         assert!(
-            report.contains("checked fact snapshot(s): snapshot#"),
+            report.contains("1 checked fact(s) with no exact Click spelling"),
             "{report}"
         );
+        assert!(!report.contains("checked fact snapshot(s)"), "{report}");
         assert!(!report.contains("kernel detail: ∃path"), "{report}");
         let plain = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(plain.contains("goal: exists (path: Path)"), "{plain}");

@@ -2300,7 +2300,7 @@ impl<'a> Proof<'a> {
                 parts.common_added_facts,
             )
             .map_err(|_| self.step_error("cannot join `branch`: invalid branch lineage"))?;
-        Ok(Self {
+        let successor = Self {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
@@ -2311,7 +2311,21 @@ impl<'a> Proof<'a> {
                 depth: parent_node.depth + 1,
                 split_branches: Vec::new(),
             }),
-        })
+        };
+        if crate::surface::proof_trace::enabled_for(self.claim_label()) {
+            crate::surface::proof_trace::record_join(
+                Arc::as_ptr(&successor.node) as usize,
+                crate::surface::proof_trace::TraceJoin {
+                    marker: Arc::as_ptr(&marker.node) as usize,
+                    arms: [
+                        trace_arm_lineage(&self.node, &marker.node, ids[0]),
+                        trace_arm_lineage(&self.node, &marker.node, ids[1]),
+                    ],
+                    _retained: Box::new(self.node.clone()),
+                },
+            );
+        }
+        Ok(successor)
     }
 
     /// Focuses one recorded sibling arm and installs that arm's split-time
@@ -3023,6 +3037,7 @@ impl<'a> Proof<'a> {
                 split_branches: arm_ids.iter().flatten().copied().collect(),
             }),
         };
+        self.record_trace_c_branch(&successor.node, arm_ids, &path_facts);
         let record = ExecutionSplit {
             marker: successor.checkpoint(),
             split,

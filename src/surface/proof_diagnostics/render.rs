@@ -5,11 +5,13 @@
 //! shared DAG, include whole memory snapshots, and grow without relation to
 //! the useful part of a diagnostic.
 
+#[cfg(test)]
+use crate::kernel::CResourceFact;
 use crate::kernel::{
     AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, AlgebraicValueType, Bitvector32Term,
-    CExpressionOutcome, CMemory, CResource, CResourceFact, CState, ConditionTerm,
-    IntegerRangeFoldIndex, IntegerTerm, Pointer, PointerOffsetTerm, Proposition,
-    PureFunctionArgument, Sort, SpecCaptureRefusal, Term, Variable,
+    CExpressionOutcome, CMemory, CResource, CState, ConditionTerm, IntegerRangeFoldIndex,
+    IntegerTerm, Pointer, PointerOffsetTerm, Proposition, PureFunctionArgument, Sort,
+    SpecCaptureRefusal, Term, Variable,
 };
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -148,6 +150,7 @@ pub(crate) fn render_resource_fact(fact: &CResourceFact) -> String {
     render_resource_fact_labeled(fact, &mut labels)
 }
 
+#[cfg(test)]
 pub(crate) fn render_resource_fact_labeled(
     fact: &CResourceFact,
     labels: &mut SnapshotLabels,
@@ -1185,6 +1188,7 @@ impl Renderer<'_> {
         }
     }
 
+    #[cfg(test)]
     fn trace_resource(&mut self, resource: &CResource) {
         match resource {
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {

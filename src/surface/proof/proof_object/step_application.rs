@@ -601,21 +601,13 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return None;
         };
-        let (callee, call, written_arguments, named_contract) = match step {
-            ProofStep::StepCall(transport) => (
-                transport.callee().to_string(),
-                transport.to_string(),
-                transport
-                    .arguments()
-                    .iter()
-                    .map(crate::surface::diagnostics::describe_contract_expression)
-                    .collect::<Vec<_>>(),
-                false,
-            ),
+        let (callee, call, named_contract) = match step {
+            ProofStep::StepCall(transport) => {
+                (transport.callee().to_string(), transport.to_string(), false)
+            }
             ProofStep::StepContract(application) => (
                 application.name.clone(),
                 format!("step({})", application.name),
-                Vec::new(),
                 true,
             ),
             ProofStep::Step => {
@@ -635,12 +627,7 @@ impl<'a> Proof<'a> {
                     | CStatement::Call { function_name, .. } => function_name,
                     _ => return None,
                 };
-                (
-                    callee.clone(),
-                    format!("step({callee}(...))"),
-                    Vec::new(),
-                    false,
-                )
+                (callee.clone(), format!("step({callee}(...))"), false)
             }
             _ => return None,
         };
@@ -652,10 +639,9 @@ impl<'a> Proof<'a> {
                     .ordinary_function(&callee)
             })
             .flatten();
-        let (parameter_names, guarantees, more_guarantees) = if let Some(source) = ordinary {
-            let (names, propositions) = source.trace_guarantees();
+        let (guarantees, more_guarantees) = if let Some(source) = ordinary {
+            let (_, propositions) = source.trace_guarantees();
             (
-                names.iter().take(8).cloned().collect::<Vec<_>>(),
                 propositions
                     .iter()
                     .take(4)
@@ -679,23 +665,10 @@ impl<'a> Proof<'a> {
                 .map(crate::surface::printing::source_click_proposition)
                 .collect::<Vec<_>>();
             let more_guarantees = proposition_count.saturating_sub(guarantees.len());
-            let parameter_names = block
-                .signature()
-                .parameters()
-                .iter()
-                .take(8)
-                .map(|parameter| parameter.name().to_string())
-                .collect();
-            (parameter_names, guarantees, more_guarantees)
+            (guarantees, more_guarantees)
         };
-        let arguments = parameter_names
-            .into_iter()
-            .zip(written_arguments)
-            .take(8)
-            .collect();
         Some(crate::surface::proof_trace::TraceCallSource {
             call,
-            arguments,
             guarantees,
             more_guarantees,
         })
@@ -714,7 +687,12 @@ impl<'a> Proof<'a> {
             .path()
             .unwrap_or_else(|| format!("checked step {}", next.node.depth));
         let mut detail = crate::surface::proof_trace::TraceStep {
-            header: format!("\n    {location}: {tactic}"),
+            header: format!(
+                "\n    {location}: {}",
+                call_source
+                    .as_ref()
+                    .map_or(tactic, |call| call.call.as_str())
+            ),
             call_source,
             facts: Vec::new(),
             more_facts: 0,

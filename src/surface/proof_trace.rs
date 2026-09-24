@@ -1,15 +1,16 @@
 //! Opt-in, bounded observations of checked proof steps for CLI diagnostics.
 //! The trace is diagnostic only; no recorded text participates in checking.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-
 use crate::kernel::ContractPathPreparationFailure;
+use crate::kernel::proof::BranchId;
 use crate::kernel::{
     Bitvector32Term, CResourceFact, ConditionTerm, Pointer, Proposition, SharedCMemory,
 };
 use crate::surface::proof_diagnostics::ProofDiagnosticState;
 use crate::surface::proof_diagnostics::render::{self, SnapshotLabels};
+use std::any::Any;
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 pub(super) const MAX_STEPS: usize = 2048;
 const MAX_RENDER_BYTES: usize = 64 * 1024;
@@ -17,8 +18,40 @@ const MAX_RENDER_BYTES: usize = 64 * 1024;
 struct Capture {
     function: String,
     steps: HashMap<usize, TraceStep>,
-    scope_parents: HashMap<usize, Vec<usize>>,
+    branches: HashMap<usize, TraceBranch>,
+    joins: HashMap<usize, TraceJoin>,
+    bodies: HashMap<usize, TraceBody>,
+    scope_parents: HashMap<usize, TraceScope>,
     limit_reached: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct TracePathNode {
+    pub node: usize,
+    pub selected_arm: Option<BranchId>,
+}
+
+pub(super) struct TraceJoin {
+    pub marker: usize,
+    pub arms: [Vec<TracePathNode>; 2],
+    /// Keeps arm provenance alive so later proof attempts cannot recycle its
+    /// pointer identities.
+    pub _retained: Box<dyn Any>,
+}
+
+struct TraceScope {
+    lineage: Vec<TracePathNode>,
+    _retained: Box<dyn Any>,
+}
+
+pub(super) struct TraceBody {
+    pub lineage: Vec<TracePathNode>,
+    pub _retained: Box<dyn Any>,
+}
+
+pub(super) struct TraceBranch {
+    pub header: String,
+    pub arms: [(BranchId, Vec<TraceFact>); 2],
 }
 
 pub(super) struct TraceStep {
@@ -36,7 +69,6 @@ pub(super) struct TraceStep {
 /// produce a fact that no Click proposition currently lowers to exactly.
 pub(super) struct TraceCallSource {
     pub call: String,
-    pub arguments: Vec<(String, String)>,
     pub guarantees: Vec<String>,
     pub more_guarantees: usize,
 }
@@ -184,6 +216,9 @@ pub fn with_proof_trace<R>(function: &str, verify: impl FnOnce() -> R) -> R {
         slot.replace(Some(Capture {
             function: function.to_owned(),
             steps: HashMap::new(),
+            branches: HashMap::new(),
+            joins: HashMap::new(),
+            bodies: HashMap::new(),
             scope_parents: HashMap::new(),
             limit_reached: false,
         }))
@@ -214,26 +249,70 @@ pub(super) fn record(node: usize, step: TraceStep) {
     });
 }
 
-/// Link a fresh scoped proof root to the checked enclosing path. Proof scopes
-/// intentionally have independent certificate roots, so their normal node
-/// lineage alone cannot explain an earlier call when a nested `have` fails.
-pub(super) fn register_scope(root: usize, parent_lineage: Vec<usize>) {
+pub(super) fn record_branch(node: usize, branch: TraceBranch) {
     CAPTURE.with(|slot| {
         let mut slot = slot.borrow_mut();
         let Some(capture) = slot.as_mut() else { return };
-        if capture.scope_parents.len() < MAX_STEPS {
-            capture.scope_parents.insert(root, parent_lineage);
+        if capture.branches.len() < MAX_STEPS {
+            capture.branches.insert(node, branch);
         } else {
             capture.limit_reached = true;
         }
     });
 }
 
-/// Render only nodes on the failing proof's lineage. Discarded smart-search
-/// candidates may have been checked but never appear on this path.
+pub(super) fn record_join(node: usize, join: TraceJoin) {
+    CAPTURE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(capture) = slot.as_mut() else { return };
+        if capture.joins.len() < MAX_STEPS {
+            capture.joins.insert(node, join);
+        } else {
+            capture.limit_reached = true;
+        }
+    });
+}
+
+pub(super) fn record_body(node: usize, body: TraceBody) {
+    CAPTURE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(capture) = slot.as_mut() else { return };
+        if capture.bodies.len() < MAX_STEPS {
+            capture.bodies.insert(node, body);
+        } else {
+            capture.limit_reached = true;
+        }
+    });
+}
+
+pub(super) fn register_scope(
+    root: usize,
+    parent_lineage: Vec<TracePathNode>,
+    retained: Box<dyn Any>,
+) {
+    CAPTURE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(capture) = slot.as_mut() else { return };
+        if capture.scope_parents.len() < MAX_STEPS {
+            capture.scope_parents.insert(
+                root,
+                TraceScope {
+                    lineage: parent_lineage,
+                    _retained: retained,
+                },
+            );
+        } else {
+            capture.limit_reached = true;
+        }
+    });
+}
+
+/// Walk the accepted proof lineage. A structural join carries the checked
+/// arm lineages it replaced, so an earlier call remains visible without
+/// including abandoned smart-search candidates.
 pub(super) fn render(
     claim: &str,
-    lineage: &[usize],
+    lineage: &[TracePathNode],
     labels: &mut SnapshotLabels,
 ) -> Option<String> {
     CAPTURE.with(|slot| {
@@ -242,110 +321,21 @@ pub(super) fn render(
         if !enabled_for(claim) {
             return None;
         }
-        let mut output = String::from(
-            "  proof trace (checked steps on the failing path):\n    snapshot# labels are shared with this report's goal and premises; snapshot<untracked> has unknown identity",
-        );
+        let mut output = String::from("  proof trace (checked tactics and branch facts):");
         let mut segments = vec![lineage];
         while segments.len() < MAX_STEPS {
             let Some(root) = segments.last().and_then(|segment| segment.first()) else {
                 break;
             };
-            let Some(parent) = capture.scope_parents.get(root) else {
+            let Some(parent) = capture.scope_parents.get(&root.node) else {
                 break;
             };
-            segments.push(parent);
+            segments.push(&parent.lineage);
         }
         let mut shown = 0;
-        for node in segments.into_iter().rev().flatten() {
-            let Some(step) = capture.steps.get(node) else {
-                continue;
-            };
-            let mut detail = step.header.clone();
-            if let Some(call) = &step.call_source {
-                detail.push_str("\n      source call: ");
-                detail.push_str(&trace_text(&call.call, 240));
-                for (parameter, argument) in &call.arguments {
-                    detail.push_str("\n      argument ");
-                    detail.push_str(&trace_text(parameter, 60));
-                    detail.push_str(" = ");
-                    detail.push_str(&trace_text(argument, 160));
-                }
-                for guarantee in &call.guarantees {
-                    detail.push_str("\n      callee ensures (source template): ");
-                    detail.push_str(&trace_text(guarantee, 240));
-                }
-                if call.more_guarantees > 0 {
-                    detail.push_str(&format!(
-                        "\n      … {} more source guarantees",
-                        call.more_guarantees
-                    ));
-                }
-            }
-            let mut unspelled = 0;
-            let mut unspelled_snapshots = Vec::new();
-            for fact in &step.facts {
-                if let Some(source) = fact.source.as_ref() {
-                    detail.push_str("\n      fact + ");
-                    detail.push_str(&trace_text(source, 240));
-                } else if let Some(source) =
-                    render::render_simple_click_fact_labeled(&fact.kernel, labels)
-                {
-                    detail.push_str("\n      fact + ");
-                    detail.push_str(&trace_text(&source, 240));
-                } else if step
-                    .call_source
-                    .as_ref()
-                    .is_some_and(|call| !call.guarantees.is_empty())
-                {
-                    // The source guarantees already explain this call. A
-                    // historical evaluated argument can prevent any exact
-                    // caller-side Click proposition from naming its fact;
-                    // do not turn the kernel rendering into a rival syntax.
-                    unspelled += 1;
-                    append_fact_snapshots(&fact.kernel, labels, &mut unspelled_snapshots);
-                } else {
-                    detail.push_str("\n      internal fact + (no exact Click spelling)");
-                    detail.push_str("\n        kernel detail: ");
-                    detail.push_str(&trace_text(
-                        &render::render_proposition_labeled(&fact.kernel, labels),
-                        240,
-                    ));
-                }
-            }
-            if unspelled > 0 {
-                detail.push_str(&format!(
-                    "\n      {unspelled} checked fact(s) have no exact caller-side Click spelling"
-                ));
-                if !unspelled_snapshots.is_empty() {
-                    detail.push_str("; checked fact snapshot(s): ");
-                    detail.push_str(&unspelled_snapshots.join(", "));
-                }
-            }
-            if step.more_facts > 0 {
-                detail.push_str(&format!("\n      … {} more facts", step.more_facts));
-            }
-            if let Some(frontier) = &step.frontier {
-                detail.push_str("\n      C frontier: ");
-                detail.push_str(frontier);
-            }
-            for (old, new, fact) in &step.resources {
-                detail.push_str(&format!(
-                    "\n      internal resource count {old} -> {new}: {}",
-                    trace_text(&render::render_resource_fact_labeled(fact, labels), 240)
-                ));
-            }
-            if step.more_resources > 0 {
-                detail.push_str(&format!(
-                    "\n      … {} more resource keys",
-                    step.more_resources
-                ));
-            }
-            if output.len() + detail.len() > MAX_RENDER_BYTES {
-                output.push_str("\n    … <trace output limit reached>");
-                break;
-            }
-            output.push_str(&detail);
-            shown += 1;
+        let mut depth = 0;
+        for segment in segments.into_iter().rev() {
+            depth = append_path(&mut output, capture, segment, labels, depth, &mut shown);
         }
         if shown == 0 {
             output.push_str("\n    <no checked simple steps recorded on this path>");
@@ -357,6 +347,139 @@ pub(super) fn render(
     })
 }
 
+fn append_path(
+    output: &mut String,
+    capture: &Capture,
+    lineage: &[TracePathNode],
+    labels: &mut SnapshotLabels,
+    mut depth: usize,
+    shown: &mut usize,
+) -> usize {
+    if depth > 64 || *shown >= MAX_STEPS || output.len() >= MAX_RENDER_BYTES {
+        return depth;
+    }
+    for path_node in lineage {
+        let indent = " ".repeat(2 + depth * 2);
+        let mut detail = String::new();
+        if let Some(join) = capture.joins.get(&path_node.node) {
+            if let Some(branch) = capture.branches.get(&join.marker) {
+                detail.push_str(&format!("\n{indent}{}", branch.header));
+                output.push_str(&detail);
+                *shown += 1;
+                for arm in 0..2 {
+                    let arm_indent = " ".repeat(4 + depth * 2);
+                    let mut arm_detail = format!(
+                        "\n{arm_indent}{} arm:",
+                        if arm == 0 { "then" } else { "else" }
+                    );
+                    append_added_facts(
+                        &mut arm_detail,
+                        &branch.arms[arm].1,
+                        labels,
+                        &format!("{arm_indent}  "),
+                    );
+                    output.push_str(&arm_detail);
+                    append_path(output, capture, &join.arms[arm], labels, depth + 2, shown);
+                }
+            }
+            continue;
+        }
+        if let (Some(branch), Some(selected_arm)) = (
+            capture.branches.get(&path_node.node),
+            path_node.selected_arm,
+        ) {
+            let Some((arm, (_, facts))) = branch
+                .arms
+                .iter()
+                .enumerate()
+                .find(|(_, (id, _))| *id == selected_arm)
+            else {
+                continue;
+            };
+            detail.push_str(&format!("\n{indent}{}", branch.header));
+            detail.push_str(&format!(
+                "\n{indent}  {} arm:",
+                if arm == 0 { "then" } else { "else" }
+            ));
+            append_added_facts(&mut detail, facts, labels, &format!("{indent}    "));
+            depth += 2;
+        } else if let Some(step) = capture.steps.get(&path_node.node) {
+            detail.push_str(&format!(
+                "\n{indent}{}",
+                trace_text(step.header.trim(), 240)
+            ));
+            let detail_indent = format!("{indent}  ");
+            if let Some(call) = &step.call_source {
+                for guarantee in &call.guarantees {
+                    detail.push_str(&format!(
+                        "\n{detail_indent}ensures (source template): {}",
+                        trace_text(guarantee, 240)
+                    ));
+                }
+                if call.more_guarantees > 0 {
+                    detail.push_str(&format!(
+                        "\n{detail_indent}… {} more source guarantees",
+                        call.more_guarantees
+                    ));
+                }
+            }
+            append_added_facts(&mut detail, &step.facts, labels, &detail_indent);
+            if step.more_facts > 0 {
+                detail.push_str(&format!(
+                    "\n{detail_indent}… {} more added facts",
+                    step.more_facts
+                ));
+            }
+            if let Some(frontier) = &step.frontier {
+                detail.push_str(&format!("\n{detail_indent}C frontier: {frontier}"));
+            }
+            let resource_changes = step.resources.len() + step.more_resources;
+            if resource_changes > 0 {
+                detail.push_str(&format!(
+                    "\n{detail_indent}resource changes: {resource_changes}"
+                ));
+            }
+        } else {
+            continue;
+        }
+        if output.len() + detail.len() > MAX_RENDER_BYTES {
+            output.push_str("\n    … <trace output limit reached>");
+            break;
+        }
+        output.push_str(&detail);
+        *shown += 1;
+        if let Some(body) = capture.bodies.get(&path_node.node) {
+            append_path(output, capture, &body.lineage, labels, depth + 1, shown);
+        }
+    }
+    depth
+}
+
+fn append_added_facts(
+    output: &mut String,
+    facts: &[TraceFact],
+    labels: &mut SnapshotLabels,
+    indent: &str,
+) {
+    let mut unspelled = 0;
+    for fact in facts {
+        let source = fact
+            .source
+            .clone()
+            .or_else(|| render::render_simple_click_fact_labeled(&fact.kernel, labels));
+        if let Some(source) = source {
+            output.push_str(&format!("\n{indent}adds: {}", trace_text(&source, 240)));
+        } else {
+            unspelled += 1;
+        }
+    }
+    if unspelled > 0 {
+        output.push_str(&format!(
+            "\n{indent}adds: {unspelled} checked fact(s) with no exact Click spelling"
+        ));
+    }
+}
+
 fn trace_text(text: &str, max_bytes: usize) -> String {
     if text.len() <= max_bytes {
         return text.to_owned();
@@ -366,67 +489,6 @@ fn trace_text(text: &str, max_bytes: usize) -> String {
         end -= 1;
     }
     format!("{}…", &text[..end])
-}
-
-/// The source template cannot express a historical evaluated argument, but
-/// the checked fact can still identify its memory without printing a second
-/// pseudo-language. Keep this diagnostic traversal independent of synthesis.
-fn append_fact_snapshots(
-    fact: &Proposition,
-    labels: &mut SnapshotLabels,
-    snapshots: &mut Vec<String>,
-) {
-    let mut pending = vec![fact];
-    let mut visited = 0;
-    while let Some(fact) = pending.pop() {
-        visited += 1;
-        if visited > 256 || snapshots.len() >= 32 {
-            break;
-        }
-        let memories = match fact {
-            Proposition::ConditionIs(condition, _) => {
-                let mut memories = crate::kernel::c_condition_fact_memories(fact);
-                let mut variables = std::collections::BTreeSet::new();
-                crate::kernel::collect_condition_bitvector_variables(condition, &mut variables);
-                for variable in variables {
-                    if let Some((memory, _)) =
-                        crate::kernel::registered_load_for_variable(&variable)
-                    {
-                        memories.push(memory.memory().clone());
-                    }
-                }
-                memories
-            }
-            Proposition::CMemoryLoads { memory, .. }
-            | Proposition::CMemoryCanStore { memory, .. }
-            | Proposition::CMemoryLoadable { memory, .. } => vec![memory.clone()],
-            Proposition::CMemoryMutatesOnly { before, after, .. }
-            | Proposition::CMemoryEffectSummary { before, after, .. }
-            | Proposition::CHeapAllocationFreed { before, after, .. } => {
-                vec![before.clone(), after.clone()]
-            }
-            Proposition::And(left, right)
-            | Proposition::Or(left, right)
-            | Proposition::Implies(left, right) => {
-                pending.push(right);
-                pending.push(left);
-                Vec::new()
-            }
-            Proposition::Not(body)
-            | Proposition::ForAll { body, .. }
-            | Proposition::Exists { body, .. } => {
-                pending.push(body);
-                Vec::new()
-            }
-            _ => Vec::new(),
-        };
-        for memory in memories {
-            let name = labels.snapshot_name(&memory);
-            if !snapshots.contains(&name) {
-                snapshots.push(name);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -473,16 +535,21 @@ mod tests {
             );
             let mut labels = SnapshotLabels::default();
             let goal = render::render_proposition_labeled(&loadable_at(first), &mut labels);
-            let trace = render("f", &[1], &mut labels).unwrap();
+            let trace = render(
+                "f",
+                &[TracePathNode {
+                    node: 1,
+                    selected_arm: None,
+                }],
+                &mut labels,
+            )
+            .unwrap();
             assert!(goal.contains("snapshot#1"), "{goal}");
             assert!(
-                trace.contains("kernel detail: viewable(memory=snapshot#1"),
+                trace.contains("adds: 2 checked fact(s) with no exact Click spelling"),
                 "{trace}"
             );
-            assert!(
-                trace.contains("kernel detail: viewable(memory=snapshot#2"),
-                "{trace}"
-            );
+            assert!(!trace.contains("snapshot#2"), "{trace}");
         });
     }
 
@@ -500,8 +567,29 @@ mod tests {
             };
             record(1, step("\n    source tactic 0: step".into()));
             record(3, step("\n    have body tactic 0: normalize".into()));
-            register_scope(2, vec![1]);
-            let trace = render("f", &[2, 3], &mut SnapshotLabels::default()).unwrap();
+            register_scope(
+                2,
+                vec![TracePathNode {
+                    node: 1,
+                    selected_arm: None,
+                }],
+                Box::new(()),
+            );
+            let trace = render(
+                "f",
+                &[
+                    TracePathNode {
+                        node: 2,
+                        selected_arm: None,
+                    },
+                    TracePathNode {
+                        node: 3,
+                        selected_arm: None,
+                    },
+                ],
+                &mut SnapshotLabels::default(),
+            )
+            .unwrap();
             assert!(trace.contains("source tactic 0: step"), "{trace}");
             assert!(trace.contains("have body tactic 0: normalize"), "{trace}");
         });
@@ -528,9 +616,153 @@ mod tests {
                     more_resources: 0,
                 },
             );
-            let report = render("f", &[1], &mut SnapshotLabels::default()).unwrap();
-            assert!(report.contains("fact + x == x"), "{report}");
-            assert!(!report.contains("kernel detail"), "{report}");
+            let report = render(
+                "f",
+                &[TracePathNode {
+                    node: 1,
+                    selected_arm: None,
+                }],
+                &mut SnapshotLabels::default(),
+            )
+            .unwrap();
+            assert!(report.contains("adds: x == x"), "{report}");
+            assert!(!report.contains("no exact Click spelling"), "{report}");
+        });
+    }
+
+    #[test]
+    fn joined_branch_retains_only_accepted_arm_steps() {
+        with_proof_trace("f", || {
+            let step = |name: &str| TraceStep {
+                header: format!("source tactic: {name}"),
+                call_source: None,
+                facts: Vec::new(),
+                more_facts: 0,
+                frontier: None,
+                resources: Vec::new(),
+                more_resources: 0,
+            };
+            record(2, step("then step"));
+            record(3, step("else step"));
+            record(4, step("discarded candidate"));
+            record_branch(
+                1,
+                TraceBranch {
+                    header: "source tactic 0: branch".into(),
+                    arms: [
+                        (
+                            BranchId::ROOT,
+                            vec![TraceFact {
+                                kernel: Proposition::ConditionIs(
+                                    ConditionTerm::Constant(true),
+                                    true,
+                                ),
+                                source: Some("x != 0".into()),
+                            }],
+                        ),
+                        (
+                            BranchId::ROOT,
+                            vec![TraceFact {
+                                kernel: Proposition::ConditionIs(
+                                    ConditionTerm::Constant(false),
+                                    false,
+                                ),
+                                source: Some("x == 0".into()),
+                            }],
+                        ),
+                    ],
+                },
+            );
+            record_join(
+                5,
+                TraceJoin {
+                    marker: 1,
+                    arms: [
+                        vec![TracePathNode {
+                            node: 2,
+                            selected_arm: None,
+                        }],
+                        vec![TracePathNode {
+                            node: 3,
+                            selected_arm: None,
+                        }],
+                    ],
+                    _retained: Box::new(()),
+                },
+            );
+            let trace = render(
+                "f",
+                &[TracePathNode {
+                    node: 5,
+                    selected_arm: None,
+                }],
+                &mut SnapshotLabels::default(),
+            )
+            .unwrap();
+            assert!(trace.contains("adds: x != 0"), "{trace}");
+            assert!(trace.contains("adds: x == 0"), "{trace}");
+            assert!(trace.contains("then step"), "{trace}");
+            assert!(trace.contains("else step"), "{trace}");
+            assert!(!trace.contains("discarded candidate"), "{trace}");
+        });
+    }
+
+    #[test]
+    fn completed_have_shows_its_fact_and_body_tactics() {
+        with_proof_trace("f", || {
+            let fact = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+            record(
+                1,
+                TraceStep {
+                    header: "source tactic 2: have x == x".into(),
+                    call_source: None,
+                    facts: vec![TraceFact {
+                        kernel: fact,
+                        source: Some("x == x".into()),
+                    }],
+                    more_facts: 0,
+                    frontier: None,
+                    resources: Vec::new(),
+                    more_resources: 0,
+                },
+            );
+            record(
+                2,
+                TraceStep {
+                    header: "have body tactic 1: normalize()".into(),
+                    call_source: None,
+                    facts: Vec::new(),
+                    more_facts: 0,
+                    frontier: None,
+                    resources: Vec::new(),
+                    more_resources: 0,
+                },
+            );
+            record_body(
+                1,
+                TraceBody {
+                    lineage: vec![TracePathNode {
+                        node: 2,
+                        selected_arm: None,
+                    }],
+                    _retained: Box::new(()),
+                },
+            );
+            let report = render(
+                "f",
+                &[TracePathNode {
+                    node: 1,
+                    selected_arm: None,
+                }],
+                &mut SnapshotLabels::default(),
+            )
+            .unwrap();
+            assert!(report.contains("source tactic 2: have x == x"), "{report}");
+            assert!(report.contains("adds: x == x"), "{report}");
+            assert!(
+                report.contains("have body tactic 1: normalize()"),
+                "{report}"
+            );
         });
     }
 }

@@ -738,7 +738,10 @@ impl<'a> ProofScope<'a> {
                         checked_facts,
                     )
                     .map_err(|_| self.root.step_error("`have` scope goal is no longer open"))?;
-                Ok(Proof {
+                let trace_source =
+                    crate::surface::proof_trace::enabled_for(self.root.claim_label())
+                        .then(|| crate::surface::printing::source_click_proposition(&proposition));
+                let successor = Proof {
                     site: self.root.site.clone(),
                     context: self.root.context.clone(),
                     state,
@@ -752,7 +755,41 @@ impl<'a> ProofScope<'a> {
                         depth: self.root.node.depth + 1,
                         split_branches: Vec::new(),
                     }),
-                })
+                };
+                if let Some(source) = trace_source {
+                    let location = self
+                        .root
+                        .site()
+                        .path()
+                        .unwrap_or_else(|| "checked have".into());
+                    let node = Arc::as_ptr(&successor.node) as usize;
+                    crate::surface::proof_trace::record(
+                        node,
+                        crate::surface::proof_trace::TraceStep {
+                            header: format!("{location}: have {source}"),
+                            call_source: None,
+                            facts: vec![crate::surface::proof_trace::TraceFact {
+                                kernel,
+                                source: Some(source),
+                            }],
+                            more_facts: 0,
+                            frontier: None,
+                            resources: Vec::new(),
+                            more_resources: 0,
+                        },
+                    );
+                    crate::surface::proof_trace::record_body(
+                        node,
+                        crate::surface::proof_trace::TraceBody {
+                            lineage: trace_path_lineage(
+                                &self.body.node,
+                                self.body.focused_branch_id(),
+                            ),
+                            _retained: Box::new(self.body.node.clone()),
+                        },
+                    );
+                }
+                Ok(successor)
             }
             ProofScopeStructure::Open {
                 resource,

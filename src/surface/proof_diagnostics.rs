@@ -167,7 +167,7 @@ fn render_diagnostic_labeled(
             rendered.push_str(&render::render_proposition_labeled(goal, labels));
         }
     }
-    {
+    if summary.is_some() {
         let premises = diagnostic.premises(8);
         if !premises.is_empty() {
             let total = diagnostic.premise_count();
@@ -371,7 +371,14 @@ mod tests {
                 claim: &str,
                 labels: &mut render::SnapshotLabels,
             ) -> Option<String> {
-                crate::surface::proof_trace::render(claim, &[1], labels)
+                crate::surface::proof_trace::render(
+                    claim,
+                    &[crate::surface::proof_trace::TracePathNode {
+                        node: 1,
+                        selected_arm: None,
+                    }],
+                    labels,
+                )
             }
         }
         let at = |memory| Proposition::CMemoryLoadable {
@@ -417,7 +424,7 @@ mod tests {
                 "{report}"
             );
             assert!(
-                report.contains("kernel detail: viewable(memory=snapshot#1"),
+                report.contains("adds: 1 checked fact(s) with no exact Click spelling"),
                 "{report}"
             );
         });

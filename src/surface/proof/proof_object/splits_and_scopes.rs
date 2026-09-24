@@ -702,6 +702,7 @@ impl<'a> Proof<'a> {
                 split_branches: ids.to_vec(),
             }),
         };
+        self.record_trace_branch(&successor.node, ids, &path_facts, &condition);
         let record = ExecutionProofCaseSplit {
             marker: successor.checkpoint(),
             split,
@@ -919,7 +920,7 @@ impl<'a> Proof<'a> {
         let parent = marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join `cases`: the split marker lost its root")
         })?;
-        Ok(Self {
+        let successor = Self {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
@@ -933,7 +934,21 @@ impl<'a> Proof<'a> {
                 depth: parent.depth + 1,
                 split_branches: Vec::new(),
             }),
-        })
+        };
+        if crate::surface::proof_trace::enabled_for(self.claim_label()) {
+            crate::surface::proof_trace::record_join(
+                Arc::as_ptr(&successor.node) as usize,
+                crate::surface::proof_trace::TraceJoin {
+                    marker: Arc::as_ptr(&marker.node) as usize,
+                    arms: [
+                        trace_arm_lineage(&self.node, &marker.node, ids[0]),
+                        trace_arm_lineage(&self.node, &marker.node, ids[1]),
+                    ],
+                    _retained: Box::new(self.node.clone()),
+                },
+            );
+        }
+        Ok(successor)
     }
 
     /// Selects the exact entry goal produced for one loop invariant. Known
@@ -1221,19 +1236,10 @@ impl<'a> Proof<'a> {
             }),
         };
         if crate::surface::proof_trace::enabled_for(self.claim_label()) {
-            let mut parent_lineage = Vec::new();
-            let mut node = Some(self.node.as_ref());
-            while let Some(current) = node {
-                parent_lineage.push(current as *const ProofNode as usize);
-                if parent_lineage.len() == crate::surface::proof_trace::MAX_STEPS {
-                    break;
-                }
-                node = current.parent.as_deref();
-            }
-            parent_lineage.reverse();
             crate::surface::proof_trace::register_scope(
                 Arc::as_ptr(&body.node) as usize,
-                parent_lineage,
+                trace_path_lineage(&self.node, self.focused_branch_id()),
+                Box::new(self.node.clone()),
             );
         }
         let scope = ProofScope {

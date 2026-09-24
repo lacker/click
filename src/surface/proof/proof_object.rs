@@ -1015,14 +1015,159 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
         if !crate::surface::proof_trace::enabled_for(claim) {
             return None;
         }
-        let mut lineage = Vec::new();
-        let mut node = Some(self.1.as_ref());
-        while let Some(current) = node {
-            lineage.push(current as *const ProofNode as usize);
-            node = current.parent.as_deref();
-        }
-        lineage.reverse();
+        let lineage = trace_path_lineage(&self.1, self.0.focused_branch());
         crate::surface::proof_trace::render(claim, &lineage, labels)
+    }
+}
+
+/// Follow one goal through interleaved sibling steps. A structural join is
+/// expanded later from its recorded checked arm lineages.
+fn trace_path_lineage(
+    node: &ProofNode,
+    mut goal: BranchId,
+) -> Vec<crate::surface::proof_trace::TracePathNode> {
+    let mut lineage = Vec::new();
+    let mut current = Some(node);
+    while let Some(entry) = current {
+        let selected_arm = if entry.step.is_some() {
+            if entry.focused_branch != goal {
+                current = entry.parent.as_deref();
+                continue;
+            }
+            None
+        } else if entry.split_branches.contains(&goal) {
+            let selected = goal;
+            goal = entry.focused_branch;
+            Some(selected)
+        } else if entry.split_branches.is_empty() {
+            goal = entry.focused_branch;
+            None
+        } else {
+            current = entry.parent.as_deref();
+            continue;
+        };
+        lineage.push(crate::surface::proof_trace::TracePathNode {
+            node: entry as *const ProofNode as usize,
+            selected_arm,
+        });
+        if lineage.len() == crate::surface::proof_trace::MAX_STEPS {
+            break;
+        }
+        current = entry.parent.as_deref();
+    }
+    lineage.reverse();
+    lineage
+}
+
+fn trace_arm_lineage(
+    node: &ProofNode,
+    marker: &Arc<ProofNode>,
+    arm: BranchId,
+) -> Vec<crate::surface::proof_trace::TracePathNode> {
+    let mut lineage = Vec::new();
+    let mut current = Some(node);
+    while let Some(entry) = current {
+        if std::ptr::eq(entry, marker.as_ref())
+            || lineage.len() == crate::surface::proof_trace::MAX_STEPS
+        {
+            break;
+        }
+        if entry.step.is_some() && entry.focused_branch == arm {
+            lineage.push(crate::surface::proof_trace::TracePathNode {
+                node: entry as *const ProofNode as usize,
+                selected_arm: None,
+            });
+        }
+        current = entry.parent.as_deref();
+    }
+    lineage.reverse();
+    lineage
+}
+
+impl Proof<'_> {
+    fn record_trace_branch(
+        &self,
+        marker: &Arc<ProofNode>,
+        arms: [BranchId; 2],
+        path_facts: &[Vec<Proposition>; 2],
+        condition: &ClickProposition,
+    ) {
+        if !crate::surface::proof_trace::enabled_for(self.claim_label()) {
+            return;
+        }
+        let location = self
+            .site()
+            .path()
+            .unwrap_or_else(|| format!("checked branch {}", marker.depth));
+        let then_source = crate::surface::printing::source_click_proposition(condition);
+        let else_source = crate::surface::printing::source_click_proposition(
+            &ClickProposition::Not(Box::new(condition.clone())),
+        );
+        let facts = |index: usize| {
+            path_facts[index]
+                .iter()
+                .take(8)
+                .cloned()
+                .enumerate()
+                .map(
+                    |(fact_index, kernel)| crate::surface::proof_trace::TraceFact {
+                        kernel,
+                        source: (fact_index == 0).then(|| {
+                            if index == 0 {
+                                then_source.clone()
+                            } else {
+                                else_source.clone()
+                            }
+                        }),
+                    },
+                )
+                .collect()
+        };
+        crate::surface::proof_trace::record_branch(
+            Arc::as_ptr(marker) as usize,
+            crate::surface::proof_trace::TraceBranch {
+                header: format!("{location}: branch"),
+                arms: [(arms[0], facts(0)), (arms[1], facts(1))],
+            },
+        );
+    }
+
+    fn record_trace_c_branch(
+        &self,
+        marker: &Arc<ProofNode>,
+        arms: [Option<BranchId>; 2],
+        path_facts: &[Option<Vec<Proposition>>; 2],
+    ) {
+        if !crate::surface::proof_trace::enabled_for(self.claim_label()) {
+            return;
+        }
+        let [Some(then_id), Some(else_id)] = arms else {
+            return;
+        };
+        let location = self
+            .site()
+            .path()
+            .unwrap_or_else(|| "checked branch".into());
+        let facts = |index: usize| {
+            path_facts[index]
+                .as_ref()
+                .into_iter()
+                .flatten()
+                .take(8)
+                .cloned()
+                .map(|kernel| crate::surface::proof_trace::TraceFact {
+                    kernel,
+                    source: None,
+                })
+                .collect()
+        };
+        crate::surface::proof_trace::record_branch(
+            Arc::as_ptr(marker) as usize,
+            crate::surface::proof_trace::TraceBranch {
+                header: format!("{location}: branch"),
+                arms: [(then_id, facts(0)), (else_id, facts(1))],
+            },
+        );
     }
 }
 
