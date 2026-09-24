@@ -282,19 +282,23 @@ A registry entry is consumed once; a foreign handle or a user resource token
 cannot authorize recovery. The runtime assumption that a valid join succeeds
 is explicit and scoped to this parent's live, terminating child.
 
-The modeled pthread C binding uses this checkpoint. Its internal resource
-classification admits exclusive transfer of external memory and stable views,
+The modeled pthread C binding uses this checkpoint. Resource definitions carry
+a thread-confinement property computed when they are installed. A counted
+population with a body is confined: one unit cannot move to a worker while
+other units may rely on the population-wide body. A resource containing a
+confined resource inherits that property. Bodyless counted tokens and ordinary
+exclusive resources are not confined by their definitions; a worker handoff
+still needs a checked resource partition and stable loan plan.
+
+The binding admits exclusive transfer of external memory and stable views,
 including views backed by live local storage without an ownership annotation.
 The local loan remains active from spawn to join, so the parent cannot write
 its viewed bytes or end the allocation lifetime early. Exclusive transfers of
 caller stack/global/static storage are refused until ordinary accesses to that
 storage enforce thread authority; dropping an ownership fact alone would not
-block the caller's implicit storage access. Composite, counted-population,
-token, and named-instance resources also remain outside the asynchronous
-transfer rule. In particular, a unit of a counted population cannot expose
-its shared body to a worker while another context may rely on that body. This
-classification grants no authority on its own: the partition and loan plan
-still check each accepted transfer. A reborrow pins its parent share, and
+block the caller's implicit storage access. Nonconfined composite, token, and
+named-instance resources may cross the worker boundary when the checked plan
+supports their transfer. A reborrow pins its parent share, and
 checked splitting lets multiple overlapping readers recover independently.
 Pthread imports and the modeled create/join calls are separate from native
 pthread runtime validation. Heap protocols and composite or escaping borrows
