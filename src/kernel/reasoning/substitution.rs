@@ -1783,7 +1783,7 @@ fn substitute_bitvector_variable_in_integer(
 ) -> IntegerTerm {
     match substitute_bitvector_variable_in_integer_checked(term, from, to) {
         Ok(result) => result,
-        Err(_) => term.clone(),
+        Err(error) => panic!("integer substitution refused: {error:?}"),
     }
 }
 
@@ -3179,363 +3179,17 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
     }
 }
 
-pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_memory(
-    memory: &SpecMemory,
-    from: Variable,
-    to: &Bitvector32Term,
-) -> SpecMemory {
-    match memory {
-        SpecMemory::Current => SpecMemory::Current,
-        SpecMemory::FunctionEntry => SpecMemory::FunctionEntry,
-        SpecMemory::LoopEntry => SpecMemory::LoopEntry,
-        SpecMemory::Fixed(memory) => {
-            SpecMemory::Fixed(substitute_bitvector_variable_in_memory(memory, from, to))
-        }
-    }
-}
-
-fn substitute_bitvector_variable_in_spec_algebraic_expression(
-    expression: &SpecAlgebraicExpression,
-    from: Variable,
-    to: &Bitvector32Term,
-) -> SpecAlgebraicExpression {
-    let node = match &expression.node {
-        SpecAlgebraicExpressionNode::ResourceField(projection) => {
-            SpecAlgebraicExpressionNode::ResourceField(projection.clone())
-        }
-        SpecAlgebraicExpressionNode::Variable(variable) => {
-            SpecAlgebraicExpressionNode::Variable(*variable)
-        }
-        SpecAlgebraicExpressionNode::Binding(name) => {
-            SpecAlgebraicExpressionNode::Binding(name.clone())
-        }
-        SpecAlgebraicExpressionNode::Constructor { variant, fields } => {
-            SpecAlgebraicExpressionNode::Constructor {
-                variant: variant.clone(),
-                fields: fields
-                    .iter()
-                    .map(|field| match field {
-                        SpecAlgebraicValue::C(field) => SpecAlgebraicValue::C(
-                            substitute_bitvector_variable_in_spec_expression(field, from, to),
-                        ),
-                        SpecAlgebraicValue::Integer(field) => {
-                            SpecAlgebraicValue::Integer(field.clone())
-                        }
-                        SpecAlgebraicValue::Algebraic(field) => SpecAlgebraicValue::Algebraic(
-                            substitute_bitvector_variable_in_spec_algebraic_expression(
-                                field, from, to,
-                            ),
-                        ),
-                    })
-                    .collect(),
-            }
-        }
-        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
-            SpecAlgebraicExpressionNode::Match {
-                scrutinee: Box::new(substitute_bitvector_variable_in_spec_algebraic_expression(
-                    scrutinee, from, to,
-                )),
-                arms: arms
-                    .iter()
-                    .map(|arm| SpecAlgebraicResultMatchArm {
-                        variant: arm.variant.clone(),
-                        bindings: arm.bindings.clone(),
-                        binding_types: arm.binding_types.clone(),
-                        body: Box::new(substitute_bitvector_variable_in_spec_algebraic_expression(
-                            &arm.body, from, to,
-                        )),
-                    })
-                    .collect(),
-            }
-        }
-        SpecAlgebraicExpressionNode::PureFunctionApplication { name, arguments } => {
-            SpecAlgebraicExpressionNode::PureFunctionApplication {
-                name: name.clone(),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| {
-                        substitute_bitvector_variable_in_spec_function_argument(argument, from, to)
-                    })
-                    .collect(),
-            }
-        }
-    };
-    SpecAlgebraicExpression {
-        algebraic_type: expression.algebraic_type.clone(),
-        node,
-    }
-}
-
 pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_expression(
     expression: &SpecExpression,
     from: Variable,
     to: &Bitvector32Term,
 ) -> SpecExpression {
-    match expression {
-        SpecExpression::ResourceField { .. } => expression.clone(),
-        SpecExpression::IntegerToMachine { value, destination } => {
-            SpecExpression::IntegerToMachine {
-                value: Box::new(substitute_bitvector_variable_in_spec_integer(
-                    value, from, to,
-                )),
-                destination: *destination,
-            }
-        }
-        SpecExpression::Value(value) => {
-            SpecExpression::Value(substitute_bitvector_variable_in_c_value(value, from, to))
-        }
-        SpecExpression::AlgebraicMatch { scrutinee, arms } => SpecExpression::AlgebraicMatch {
-            scrutinee: Box::new(substitute_bitvector_variable_in_spec_algebraic_expression(
-                scrutinee, from, to,
-            )),
-            arms: arms
-                .iter()
-                .map(|arm| SpecAlgebraicMatchArm {
-                    variant: arm.variant.clone(),
-                    bindings: arm.bindings.clone(),
-                    binding_types: arm.binding_types.clone(),
-                    body: substitute_bitvector_variable_in_spec_expression(&arm.body, from, to),
-                })
-                .collect(),
-        },
-        SpecExpression::CExpression(expression) => SpecExpression::CExpression(
-            substitute_bitvector_variable_in_c_expression(expression, from, to),
-        ),
-        SpecExpression::CountedResourceCount { name, arguments } => {
-            SpecExpression::CountedResourceCount {
-                name: name.clone(),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| {
-                        argument.as_ref().map(|argument| {
-                            substitute_bitvector_variable_in_spec_expression(argument, from, to)
-                        })
-                    })
-                    .collect(),
-            }
-        }
-        SpecExpression::Add(left, right) => SpecExpression::Add(
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                right, from, to,
-            )),
-        ),
-        SpecExpression::Subtract(left, right) => SpecExpression::Subtract(
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                right, from, to,
-            )),
-        ),
-        SpecExpression::Multiply(left, right) => SpecExpression::Multiply(
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                right, from, to,
-            )),
-        ),
-        SpecExpression::Divide(left, right) => SpecExpression::Divide(
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                right, from, to,
-            )),
-        ),
-        SpecExpression::Remainder(left, right) => SpecExpression::Remainder(
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                right, from, to,
-            )),
-        ),
-        SpecExpression::ShiftLeft(left, right) => SpecExpression::ShiftLeft(
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                right, from, to,
-            )),
-        ),
-        SpecExpression::ShiftRight(left, right) => SpecExpression::ShiftRight(
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                right, from, to,
-            )),
-        ),
-        SpecExpression::BitwiseAnd(left, right) => SpecExpression::BitwiseAnd(
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                right, from, to,
-            )),
-        ),
-        SpecExpression::BitwiseOr(left, right) => SpecExpression::BitwiseOr(
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                right, from, to,
-            )),
-        ),
-        SpecExpression::BitwiseXor(left, right) => SpecExpression::BitwiseXor(
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                right, from, to,
-            )),
-        ),
-        SpecExpression::BitwiseNot(expression) => SpecExpression::BitwiseNot(Box::new(
-            substitute_bitvector_variable_in_spec_expression(expression, from, to),
-        )),
-        SpecExpression::Cast(expression, target_type) => SpecExpression::Cast(
-            Box::new(substitute_bitvector_variable_in_spec_expression(
-                expression, from, to,
-            )),
-            *target_type,
-        ),
-        SpecExpression::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => SpecExpression::If {
-            condition: Box::new(substitute_bitvector_variable_in_spec_proposition(
-                condition, from, to,
-            )),
-            then_branch: Box::new(substitute_bitvector_variable_in_spec_expression(
-                then_branch,
-                from,
-                to,
-            )),
-            else_branch: Box::new(substitute_bitvector_variable_in_spec_expression(
-                else_branch,
-                from,
-                to,
-            )),
-        },
-        SpecExpression::RangeFold {
-            start,
-            end,
-            initial,
-            accumulator,
-            item,
-            body,
-        } => SpecExpression::RangeFold {
-            start: Box::new(substitute_bitvector_variable_in_spec_expression(
-                start, from, to,
-            )),
-            end: Box::new(substitute_bitvector_variable_in_spec_expression(
-                end, from, to,
-            )),
-            initial: Box::new(substitute_bitvector_variable_in_spec_expression(
-                initial, from, to,
-            )),
-            accumulator: accumulator.clone(),
-            item: item.clone(),
-            body: Box::new(substitute_bitvector_variable_in_spec_expression(
-                body, from, to,
-            )),
-        },
-        SpecExpression::Let { name, value, body } => SpecExpression::Let {
-            name: name.clone(),
-            value: Box::new(substitute_bitvector_variable_in_spec_expression(
-                value, from, to,
-            )),
-            body: Box::new(substitute_bitvector_variable_in_spec_expression(
-                body, from, to,
-            )),
-        },
-        SpecExpression::PureFunctionApplication {
-            name,
-            arguments,
-            result_type,
-        } => SpecExpression::PureFunctionApplication {
-            name: name.clone(),
-            arguments: arguments
-                .iter()
-                .map(|argument| {
-                    substitute_bitvector_variable_in_spec_function_argument(argument, from, to)
-                })
-                .collect(),
-            result_type: *result_type,
-        },
-        SpecExpression::LoopEntrySnapshot(expression) => {
-            SpecExpression::LoopEntrySnapshot(Box::new(
-                substitute_bitvector_variable_in_spec_expression(expression, from, to),
-            ))
-        }
-        SpecExpression::PointerOffset {
-            pointer,
-            elements,
-            byte_width,
-        } => SpecExpression::PointerOffset {
-            pointer: Box::new(substitute_bitvector_variable_in_spec_expression(
-                pointer, from, to,
-            )),
-            elements: Box::new(substitute_bitvector_variable_in_spec_expression(
-                elements, from, to,
-            )),
-            byte_width: *byte_width,
-        },
-        SpecExpression::AggregateFieldValue {
-            parameter,
-            pointer,
-            value_type,
-        } => SpecExpression::AggregateFieldValue {
-            parameter: parameter.clone(),
-            pointer: Box::new(substitute_bitvector_variable_in_spec_expression(
-                pointer, from, to,
-            )),
-            value_type: *value_type,
-        },
-        SpecExpression::MemoryLoad {
-            memory,
-            pointer,
-            value_type,
-        } => SpecExpression::MemoryLoad {
-            memory: substitute_bitvector_variable_in_spec_memory(memory, from, to),
-            pointer: Box::new(substitute_bitvector_variable_in_spec_expression(
-                pointer, from, to,
-            )),
-            value_type: *value_type,
-        },
-    }
-}
-
-fn substitute_bitvector_variable_in_spec_function_argument(
-    argument: &SpecPureFunctionArgument,
-    from: Variable,
-    to: &Bitvector32Term,
-) -> SpecPureFunctionArgument {
-    match argument {
-        SpecPureFunctionArgument::Integer(value) => SpecPureFunctionArgument::Integer(
-            substitute_bitvector_variable_in_spec_integer(value, from, to),
-        ),
-        SpecPureFunctionArgument::Value(expression) => SpecPureFunctionArgument::Value(
-            substitute_bitvector_variable_in_spec_expression(expression, from, to),
-        ),
-        SpecPureFunctionArgument::Algebraic(expression) => SpecPureFunctionArgument::Algebraic(
-            substitute_bitvector_variable_in_spec_algebraic_expression(expression, from, to),
-        ),
-        SpecPureFunctionArgument::ArrayRef {
-            memory,
-            pointer,
-            element_type,
-        } => SpecPureFunctionArgument::ArrayRef {
-            memory: substitute_bitvector_variable_in_spec_memory(memory, from, to),
-            pointer: substitute_bitvector_variable_in_spec_expression(pointer, from, to),
-            element_type: *element_type,
-        },
-    }
+    let source = Bitvector32Term::Variable(from);
+    let mut rewrite =
+        crate::kernel::proof::term_rewrite::TermRewrite::for_bits_checked(&source, to);
+    rewrite
+        .spec_expression(expression)
+        .unwrap_or_else(|error| panic!("spec expression substitution refused: {error:?}"))
 }
 
 pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
@@ -3543,204 +3197,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_spec_proposition(
     from: Variable,
     to: &Bitvector32Term,
 ) -> SpecProposition {
-    match proposition {
-        SpecProposition::IntegerComparison {
-            left,
-            operator,
-            right,
-        } => SpecProposition::IntegerComparison {
-            left: substitute_bitvector_variable_in_spec_integer(left, from, to),
-            operator: *operator,
-            right: substitute_bitvector_variable_in_spec_integer(right, from, to),
-        },
-        SpecProposition::AlgebraicComparison { left, equal, right } => {
-            SpecProposition::AlgebraicComparison {
-                left: substitute_bitvector_variable_in_spec_algebraic_expression(left, from, to),
-                equal: *equal,
-                right: substitute_bitvector_variable_in_spec_algebraic_expression(right, from, to),
-            }
-        }
-        SpecProposition::SequenceComparison { left, equal, right } => {
-            SpecProposition::SequenceComparison {
-                left: substitute_bitvector_variable_in_spec_sequence(left, from, to),
-                equal: *equal,
-                right: substitute_bitvector_variable_in_spec_sequence(right, from, to),
-            }
-        }
-        SpecProposition::Comparison {
-            left,
-            operator,
-            right,
-        } => SpecProposition::Comparison {
-            left: substitute_bitvector_variable_in_spec_expression(left, from, to),
-            operator: *operator,
-            right: substitute_bitvector_variable_in_spec_expression(right, from, to),
-        },
-        SpecProposition::And(left, right) => SpecProposition::And(
-            Box::new(substitute_bitvector_variable_in_spec_proposition(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_proposition(
-                right, from, to,
-            )),
-        ),
-        SpecProposition::Or(left, right) => SpecProposition::Or(
-            Box::new(substitute_bitvector_variable_in_spec_proposition(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_proposition(
-                right, from, to,
-            )),
-        ),
-        SpecProposition::Not(body) => SpecProposition::Not(Box::new(
-            substitute_bitvector_variable_in_spec_proposition(body, from, to),
-        )),
-        SpecProposition::Implies(left, right) => SpecProposition::Implies(
-            Box::new(substitute_bitvector_variable_in_spec_proposition(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_proposition(
-                right, from, to,
-            )),
-        ),
-        SpecProposition::ForAllInteger {
-            name,
-            variable,
-            body,
-        } if *variable != from => SpecProposition::ForAllInteger {
-            name: name.clone(),
-            variable: *variable,
-            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
-                body, from, to,
-            )),
-        },
-        SpecProposition::ForAllAlgebraic {
-            name,
-            variable,
-            algebraic_type,
-            body,
-        } if *variable != from => SpecProposition::ForAllAlgebraic {
-            name: name.clone(),
-            variable: *variable,
-            algebraic_type: algebraic_type.clone(),
-            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
-                body, from, to,
-            )),
-        },
-        SpecProposition::ForAllInt32 {
-            name,
-            variable,
-            body,
-        } if *variable != from => SpecProposition::ForAllInt32 {
-            name: name.clone(),
-            variable: *variable,
-            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
-                body, from, to,
-            )),
-        },
-        SpecProposition::ForAllPointer {
-            name,
-            variable,
-            c_type,
-            body,
-        } if *variable != from => SpecProposition::ForAllPointer {
-            name: name.clone(),
-            variable: *variable,
-            c_type: *c_type,
-            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
-                body, from, to,
-            )),
-        },
-        SpecProposition::ExistsInteger {
-            name,
-            variable,
-            body,
-        } if *variable != from => SpecProposition::ExistsInteger {
-            name: name.clone(),
-            variable: *variable,
-            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
-                body, from, to,
-            )),
-        },
-        SpecProposition::ExistsAlgebraic {
-            name,
-            variable,
-            algebraic_type,
-            body,
-        } if *variable != from => SpecProposition::ExistsAlgebraic {
-            name: name.clone(),
-            variable: *variable,
-            algebraic_type: algebraic_type.clone(),
-            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
-                body, from, to,
-            )),
-        },
-        SpecProposition::ExistsInt32 {
-            name,
-            variable,
-            body,
-        } if *variable != from => SpecProposition::ExistsInt32 {
-            name: name.clone(),
-            variable: *variable,
-            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
-                body, from, to,
-            )),
-        },
-        SpecProposition::ExistsPointer {
-            name,
-            variable,
-            c_type,
-            body,
-        } if *variable != from => SpecProposition::ExistsPointer {
-            name: name.clone(),
-            variable: *variable,
-            c_type: *c_type,
-            body: Box::new(substitute_bitvector_variable_in_spec_proposition(
-                body, from, to,
-            )),
-        },
-        SpecProposition::Predicate { name, arguments } => SpecProposition::Predicate {
-            name: name.clone(),
-            arguments: arguments
-                .iter()
-                .map(|argument| match argument {
-                    SpecPredicateArgument::Value(expression) => SpecPredicateArgument::Value(
-                        substitute_bitvector_variable_in_spec_expression(expression, from, to),
-                    ),
-                    SpecPredicateArgument::ArrayRef { memory, pointer } => {
-                        SpecPredicateArgument::ArrayRef {
-                            memory: memory.clone(),
-                            pointer: substitute_bitvector_variable_in_spec_expression(
-                                pointer, from, to,
-                            ),
-                        }
-                    }
-                })
-                .collect(),
-        },
-        SpecProposition::ResourceSeparate { left, right } => SpecProposition::ResourceSeparate {
-            left: substitute_bitvector_variable_in_spec_resource(left, from, to),
-            right: substitute_bitvector_variable_in_spec_resource(right, from, to),
-        },
-        SpecProposition::ResourceContains { parent, child } => SpecProposition::ResourceContains {
-            parent: substitute_bitvector_variable_in_spec_resource(parent, from, to),
-            child: substitute_bitvector_variable_in_spec_resource(child, from, to),
-        },
-        SpecProposition::MemoryLoadable {
-            memory,
-            base,
-            start,
-            end,
-            element_width,
-        } => SpecProposition::MemoryLoadable {
-            memory: substitute_bitvector_variable_in_spec_memory(memory, from, to),
-            base: substitute_bitvector_variable_in_spec_expression(base, from, to),
-            start: substitute_bitvector_variable_in_spec_expression(start, from, to),
-            end: substitute_bitvector_variable_in_spec_expression(end, from, to),
-            element_width: *element_width,
-        },
-        proposition => proposition.clone(),
-    }
+    let source = Bitvector32Term::Variable(from);
+    let mut rewrite =
+        crate::kernel::proof::term_rewrite::TermRewrite::for_bits_checked(&source, to);
+    rewrite
+        .spec_proposition(proposition)
+        .unwrap_or_else(|error| panic!("spec proposition substitution refused: {error:?}"))
 }
 
 fn substitute_bitvector_variable_in_spec_integer(
@@ -3748,112 +3210,232 @@ fn substitute_bitvector_variable_in_spec_integer(
     from: Variable,
     to: &Bitvector32Term,
 ) -> SpecIntegerExpression {
-    match expression {
-        SpecIntegerExpression::ResourceField(_) => expression.clone(),
-        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
-            SpecIntegerExpression::AlgebraicMatch {
-                scrutinee: Box::new(substitute_bitvector_variable_in_spec_algebraic_expression(
-                    scrutinee, from, to,
-                )),
-                arms: arms
-                    .iter()
-                    .map(|arm| SpecIntegerMatchArm {
-                        variant: arm.variant.clone(),
-                        bindings: arm.bindings.clone(),
-                        binding_types: arm.binding_types.clone(),
-                        binding_variables: arm.binding_variables.clone(),
-                        body: Box::new(substitute_bitvector_variable_in_spec_integer(
-                            &arm.body, from, to,
-                        )),
-                    })
-                    .collect(),
-            }
+    let source = Bitvector32Term::Variable(from);
+    let mut rewrite =
+        crate::kernel::proof::term_rewrite::TermRewrite::for_bits_checked(&source, to);
+    rewrite
+        .spec_integer_expression(expression)
+        .unwrap_or_else(|error| panic!("spec Integer substitution refused: {error:?}"))
+}
+
+#[cfg(test)]
+mod spec_carrier_substitution_binder_tests {
+    use super::*;
+
+    fn int32_value(variable: Variable) -> SpecExpression {
+        SpecExpression::Value(CValue::Int32(Bitvector32Term::Variable(variable)))
+    }
+
+    fn fold_body(item: Variable, source: Variable) -> SpecIntegerExpression {
+        SpecIntegerExpression::Add(
+            Box::new(SpecIntegerExpression::FromMachine(Box::new(int32_value(
+                item,
+            )))),
+            Box::new(SpecIntegerExpression::Term(IntegerTerm::Machine(
+                SharedMachineIntegerTerm::intern(
+                    MachineIntegerType::Int32,
+                    Bitvector32Term::Variable(source),
+                ),
+            ))),
+        )
+    }
+
+    fn int32_fold(item: Variable, source: Variable) -> SpecExpression {
+        SpecExpression::IntegerToMachine {
+            value: Box::new(SpecIntegerExpression::RangeFold {
+                index: SpecIntegerRangeFoldIndex::Int32 {
+                    start: Box::new(int32_value(source)),
+                    end: Box::new(SpecExpression::Value(CValue::Int32(
+                        Bitvector32Term::Constant(8),
+                    ))),
+                },
+                initial: Box::new(SpecIntegerExpression::Term(IntegerTerm::constant_i64(0))),
+                accumulator: Variable(330),
+                item,
+                body: Box::new(fold_body(item, source)),
+            }),
+            destination: MachineIntegerType::Int32,
         }
-        SpecIntegerExpression::PureFunctionApplication { name, arguments } => {
-            SpecIntegerExpression::PureFunctionApplication {
-                name: name.clone(),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| {
-                        substitute_bitvector_variable_in_spec_function_argument(argument, from, to)
-                    })
-                    .collect(),
-            }
-        }
-        SpecIntegerExpression::Term(term) => {
-            SpecIntegerExpression::Term(substitute_bitvector_variable_in_integer(term, from, to))
-        }
-        SpecIntegerExpression::FromMachine(machine) => {
-            SpecIntegerExpression::FromMachine(Box::new(
-                substitute_bitvector_variable_in_spec_expression(machine, from, to),
-            ))
-        }
-        SpecIntegerExpression::Negate(inner) => SpecIntegerExpression::Negate(Box::new(
-            substitute_bitvector_variable_in_spec_integer(inner, from, to),
-        )),
-        SpecIntegerExpression::Add(left, right) => SpecIntegerExpression::Add(
-            Box::new(substitute_bitvector_variable_in_spec_integer(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_integer(
-                right, from, to,
-            )),
-        ),
-        SpecIntegerExpression::Subtract(left, right) => SpecIntegerExpression::Subtract(
-            Box::new(substitute_bitvector_variable_in_spec_integer(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_integer(
-                right, from, to,
-            )),
-        ),
-        SpecIntegerExpression::Multiply(left, right) => SpecIntegerExpression::Multiply(
-            Box::new(substitute_bitvector_variable_in_spec_integer(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_integer(
-                right, from, to,
-            )),
-        ),
-        SpecIntegerExpression::RangeFold {
+    }
+
+    #[test]
+    fn spec_integer_fold_alpha_renames_an_item_that_would_capture() {
+        let source = Variable(310);
+        let item = Variable(311);
+        let rewritten = substitute_bitvector_variable_in_spec_expression(
+            &int32_fold(item, source),
+            source,
+            &Bitvector32Term::Variable(item),
+        );
+        let SpecExpression::IntegerToMachine { value, .. } = rewritten else {
+            panic!("the Integer fold was dropped")
+        };
+        let SpecIntegerExpression::RangeFold {
             index,
-            initial,
-            accumulator,
-            item,
+            item: renamed_item,
             body,
-        } => {
-            let index = match index {
-                SpecIntegerRangeFoldIndex::Int32 { start, end } => {
-                    SpecIntegerRangeFoldIndex::Int32 {
-                        start: Box::new(substitute_bitvector_variable_in_spec_expression(
-                            start, from, to,
-                        )),
-                        end: Box::new(substitute_bitvector_variable_in_spec_expression(
-                            end, from, to,
-                        )),
-                    }
-                }
-                SpecIntegerRangeFoldIndex::Integer { start, end } => {
-                    SpecIntegerRangeFoldIndex::Integer {
-                        start: Box::new(substitute_bitvector_variable_in_spec_integer(
-                            start, from, to,
-                        )),
-                        end: Box::new(substitute_bitvector_variable_in_spec_integer(end, from, to)),
-                    }
-                }
-            };
-            SpecIntegerExpression::RangeFold {
-                index,
-                initial: Box::new(substitute_bitvector_variable_in_spec_integer(
-                    initial, from, to,
-                )),
-                accumulator: *accumulator,
-                item: *item,
-                body: Box::new(substitute_bitvector_variable_in_spec_integer(
-                    body, from, to,
-                )),
+            ..
+        } = *value
+        else {
+            panic!("the Integer fold was dropped")
+        };
+        assert_ne!(
+            renamed_item, item,
+            "the replacement was captured by the item"
+        );
+        let SpecIntegerRangeFoldIndex::Int32 { start, .. } = index else {
+            panic!("the fold index changed carrier")
+        };
+        assert_eq!(*start, int32_value(item));
+        let SpecIntegerExpression::Add(bound_item, substituted_source) = *body else {
+            panic!("the fold body changed shape")
+        };
+        assert_eq!(
+            *bound_item,
+            SpecIntegerExpression::FromMachine(Box::new(int32_value(renamed_item)))
+        );
+        let SpecIntegerExpression::Term(IntegerTerm::Machine(substituted_source)) =
+            *substituted_source
+        else {
+            panic!("the source machine integer was silently dropped")
+        };
+        assert_eq!(substituted_source.value(), &Bitvector32Term::Variable(item));
+    }
+
+    #[test]
+    fn spec_integer_fold_does_not_substitute_through_its_own_item_binder() {
+        let source = Variable(320);
+        let rewritten = substitute_bitvector_variable_in_spec_expression(
+            &int32_fold(source, source),
+            source,
+            &Bitvector32Term::Constant(5),
+        );
+        let SpecExpression::IntegerToMachine { value, .. } = rewritten else {
+            panic!("the Integer fold was dropped")
+        };
+        let SpecIntegerExpression::RangeFold {
+            item, index, body, ..
+        } = *value
+        else {
+            panic!("the Integer fold was dropped")
+        };
+        assert_eq!(item, source);
+        let SpecIntegerRangeFoldIndex::Int32 { start, .. } = index else {
+            panic!("the fold index changed carrier")
+        };
+        assert_eq!(
+            *start,
+            SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(5)))
+        );
+        let SpecIntegerExpression::Add(bound_item, machine_source) = *body else {
+            panic!("the fold body changed shape")
+        };
+        assert_eq!(
+            *bound_item,
+            SpecIntegerExpression::FromMachine(Box::new(int32_value(source)))
+        );
+        assert_eq!(
+            *machine_source,
+            SpecIntegerExpression::Term(IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
+                MachineIntegerType::Int32,
+                Bitvector32Term::Variable(source),
+            ),))
+        );
+    }
+
+    #[test]
+    fn spec_quantifier_alpha_renames_a_binder_that_would_capture() {
+        let source = Variable(330);
+        let binder = Variable(331);
+        let proposition = SpecProposition::ForAllInt32 {
+            name: "i".into(),
+            variable: binder,
+            body: Box::new(SpecProposition::Comparison {
+                left: int32_value(source),
+                operator: CComparisonOperator::Equal,
+                right: int32_value(binder),
+            }),
+        };
+        let rewritten = substitute_bitvector_variable_in_spec_proposition(
+            &proposition,
+            source,
+            &Bitvector32Term::Variable(binder),
+        );
+        let SpecProposition::ForAllInt32 { variable, body, .. } = rewritten else {
+            panic!("the quantifier was dropped")
+        };
+        assert_ne!(
+            variable, binder,
+            "the replacement was captured by the quantifier"
+        );
+        assert_eq!(
+            *body,
+            SpecProposition::Comparison {
+                left: int32_value(binder),
+                operator: CComparisonOperator::Equal,
+                right: int32_value(variable),
             }
-        }
+        );
+    }
+
+    #[test]
+    fn spec_quantifier_does_not_substitute_through_its_own_binder() {
+        let source = Variable(335);
+        let proposition = SpecProposition::ForAllInt32 {
+            name: "i".into(),
+            variable: source,
+            body: Box::new(SpecProposition::Comparison {
+                left: int32_value(source),
+                operator: CComparisonOperator::Equal,
+                right: SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(8))),
+            }),
+        };
+        let rewritten = substitute_bitvector_variable_in_spec_proposition(
+            &proposition,
+            source,
+            &Bitvector32Term::Constant(5),
+        );
+        assert_eq!(rewritten, proposition);
+    }
+
+    #[test]
+    fn integer_substitution_refuses_instead_of_returning_the_unrewritten_term() {
+        let limits = crate::instrumentation::TacticWorkLimits {
+            simple: 0,
+            smart: 0,
+            control: 0,
+        };
+        let refused = crate::instrumentation::with_tactic_work_limits(limits, || {
+            crate::instrumentation::collect(|| {
+                let tactic = crate::instrumentation::TacticEvent {
+                    claim: "integer substitution regression".into(),
+                    tactic_index: 0,
+                    tactic_name: "integer_substitution_regression".into(),
+                    class: "simple".into(),
+                    statement_index: 0,
+                    source_index: 0,
+                };
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::TacticStarted(tactic.clone()),
+                );
+                let result = std::panic::catch_unwind(|| {
+                    substitute_bitvector_variable_in_integer(
+                        &IntegerTerm::var(Variable(340)),
+                        Variable(340),
+                        &Bitvector32Term::Constant(1),
+                    )
+                });
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::TacticFailed(tactic),
+                );
+                result
+            })
+            .0
+        });
+        assert!(
+            refused.is_err(),
+            "a failed substitution must not return its input"
+        );
     }
 }
 
@@ -3864,8 +3446,8 @@ mod machine_integer_substitution_tests {
     #[test]
     fn machine_backed_integer_substitution_scales_with_shared_dag() {
         for depth in [8, 16, 32, 64] {
-            let source = crate::kernel::SharedMachineIntegerTerm::intern(
-                crate::kernel::MachineIntegerType::Int32,
+            let source = SharedMachineIntegerTerm::intern(
+                MachineIntegerType::Int32,
                 Bitvector32Term::Variable(Variable(7)),
             );
             let mut term = IntegerTerm::Machine(source);
@@ -3884,67 +3466,6 @@ mod machine_integer_substitution_tests {
                 "unexpected shared DAG work at depth {depth}: {work}"
             );
         }
-    }
-}
-
-fn substitute_bitvector_variable_in_spec_sequence(
-    sequence: &SpecSequenceExpression,
-    from: Variable,
-    to: &Bitvector32Term,
-) -> SpecSequenceExpression {
-    match sequence {
-        SpecSequenceExpression::Literal(elements) => SpecSequenceExpression::Literal(
-            elements
-                .iter()
-                .map(|element| substitute_bitvector_variable_in_spec_expression(element, from, to))
-                .collect(),
-        ),
-        SpecSequenceExpression::Concat(left, right) => SpecSequenceExpression::Concat(
-            Box::new(substitute_bitvector_variable_in_spec_sequence(
-                left, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_spec_sequence(
-                right, from, to,
-            )),
-        ),
-    }
-}
-
-fn substitute_bitvector_variable_in_spec_resource(
-    resource: &SpecResource,
-    from: Variable,
-    to: &Bitvector32Term,
-) -> SpecResource {
-    match resource {
-        SpecResource::Memory {
-            base,
-            start,
-            end,
-            element_width,
-        } => SpecResource::Memory {
-            base: substitute_bitvector_variable_in_spec_expression(base, from, to),
-            start: substitute_bitvector_variable_in_spec_expression(start, from, to),
-            end: substitute_bitvector_variable_in_spec_expression(end, from, to),
-            element_width: *element_width,
-        },
-        SpecResource::Composite { name, arguments } => SpecResource::Composite {
-            name: name.clone(),
-            arguments: arguments
-                .iter()
-                .map(|argument| {
-                    substitute_bitvector_variable_in_spec_expression(argument, from, to)
-                })
-                .collect(),
-        },
-        SpecResource::Token { name, arguments } => SpecResource::Token {
-            name: name.clone(),
-            arguments: arguments
-                .iter()
-                .map(|argument| {
-                    substitute_bitvector_variable_in_spec_expression(argument, from, to)
-                })
-                .collect(),
-        },
     }
 }
 
