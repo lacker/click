@@ -992,7 +992,10 @@ comparisons in `src/surface/diagnostics.rs` all compare block identities
 without deciding staleness. Two carry a residual risk worth naming:
 `may_refer_to_memory_block` compares a block by spelling before the proof-based
 allocation-separation check runs, so a caller resource spelled differently from
-a retired allocation is skipped rather than refused; and the
+a retired allocation is skipped rather than refused (the call rule draws the
+same selection from the resource indexes, through
+`ResourceContext::facts_that_may_refer_to_memory_block`, so its cost is the
+retired block's candidates and not the caller's whole frame); and the
 `held_child_witness` filter accepts `own.block != pointer.block` as "a
 different pointer" with no proof, which selects a witness rather than proving
 anything.

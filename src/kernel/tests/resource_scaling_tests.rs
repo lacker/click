@@ -574,3 +574,57 @@ fn joining_ranges_by_a_proved_endpoint_ignores_unrelated_equalities() {
     }
     assert_constant_plus_log_growth("joining by a proved endpoint", &samples, 4.0);
 }
+
+/// A call that retires an allocation asks which resource the caller keeps
+/// could still refer to it. Only the kept facts that can name the retired
+/// block are candidates, and they come from the context's indexes, so kept
+/// ranges and instances elsewhere add no work: the answer costs the block's
+/// own candidates.
+#[test]
+fn retirement_stale_check_ignores_unrelated_kept_resources() {
+    let allocation = heap_base(TARGET_HEAP);
+    let bytes = Bitvector32Term::Constant(16);
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let unrelated = (0..size).flat_map(|index| {
+            [
+                owned_range(heap_base(index as u64 + 1), 0, 4),
+                owned_instance(TARGET_HEAP + 1 + index as u64),
+            ]
+        });
+        let kept = ResourceContext::new()
+            .unchecked_with_facts(unrelated.clone())
+            .unchecked_with_fact(owned_range(allocation.clone(), 4, 8));
+        let assumptions = PureFactContext::new();
+        let (stale, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::functions::caller_resource_left_stale_by_retirement(
+                &kept,
+                &allocation,
+                &bytes,
+                &assumptions,
+            )
+            .cloned()
+        });
+        assert_eq!(
+            stale, None,
+            "a kept range past the allocation's end is separate from it"
+        );
+        samples.push((size, work));
+
+        // The same frame keeping a range inside the allocation is refused,
+        // so the measurement above is of a check that can say no.
+        let overlapping = ResourceContext::new()
+            .unchecked_with_facts(unrelated)
+            .unchecked_with_fact(owned_range(allocation.clone(), 2, 3));
+        assert_eq!(
+            crate::kernel::functions::caller_resource_left_stale_by_retirement(
+                &overlapping,
+                &allocation,
+                &bytes,
+                &assumptions,
+            ),
+            Some(&owned_range(allocation.clone(), 2, 3)),
+        );
+    }
+    assert_constant_plus_log_growth("retirement stale check", &samples, 4.0);
+}

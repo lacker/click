@@ -1840,6 +1840,38 @@ impl ResourceContext {
         });
     }
 
+    /// The facts `CResourceFact::may_refer_to_memory_block` selects for
+    /// `block`, drawn from the indexes instead of a scan: the memory facts
+    /// based in the block, then the composite facts with a pointer argument
+    /// into it. Memory in other blocks, tokens and instances are never
+    /// visited; a held composite is, since its arguments are not indexed by
+    /// block. Charges one work unit per visited fact.
+    pub(in crate::kernel) fn facts_that_may_refer_to_memory_block<'a>(
+        &'a self,
+        block: &PointerBlock,
+    ) -> impl Iterator<Item = &'a CResourceFact> + use<'a> {
+        let composite_block = block.clone();
+        let composites = self
+            .storage
+            .index
+            .exact_shapes
+            .iter()
+            .skip_while(|((family, _, _), _)| *family < ResourceFamily::Composite)
+            .take_while(|((family, _, _), _)| *family == ResourceFamily::Composite)
+            .flat_map(|(_, entries)| entries.iter())
+            .map(|entry| self.fact(*entry))
+            .filter(move |fact| fact.may_refer_to_memory_block(&composite_block));
+        self.storage
+            .index
+            .memory_by_block
+            .get(block)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .map(|entry| self.fact(*entry))
+            .chain(composites)
+            .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+    }
+
     pub(in crate::kernel) fn memory_block_facts(
         &self,
         block: &PointerBlock,

@@ -1,0 +1,137 @@
+# Frontier: destroying an arena while the caller keeps region descriptors
+
+`examples/arena`'s `arena_pipeline` ends every path in `arena_destroy(arena)`
+while it still owns its region descriptors. This is that call in isolation,
+with `arena_destroy`'s contract and the resources it needs copied from
+`examples/arena/arena.click`: the caller lends `arena_empty(arena)`, which
+owns both backing arrays and their allocation authority, and keeps
+`object(first)` and `object(second)`.
+
+It fails for the reason
+`call_retires_allocation_beside_unrelated_owner_frontier.md` records: the
+call rule names the retired allocations through `arena->data` and
+`arena->occupied` read after the call, which `arena_destroy` sets to null, so
+nothing the caller holds separates a descriptor from them.
+
+```c filename=arena_destroy.c
+struct arena {
+    int32* data;
+    int32* occupied;
+    int32 capacity;
+    int32 live_regions;
+};
+
+struct region {
+    struct arena* arena;
+    int32 start;
+    int32 end;
+};
+
+void arena_destroy(struct arena* arena) {
+    free(arena->occupied);
+    free(arena->data);
+    arena->data = 0;
+    arena->occupied = 0;
+    arena->capacity = 0;
+    arena->live_regions = 0;
+}
+
+void arena_teardown(
+    struct arena* arena,
+    struct region* first,
+    struct region* second
+) {
+    arena_destroy(arena);
+}
+```
+
+```click
+resource arena_initialized_storage(
+    data: int32*,
+    occupied: int32*,
+    capacity: int32,
+    initialized: int32
+) {
+    if initialized == 1 {
+        contains allocation(data, capacity * 4);
+        contains allocation(occupied, capacity * 4);
+        fact 1 <= capacity;
+        fact capacity <= 536870911;
+    }
+}
+
+resource arena_initialized_access(
+    data: int32*,
+    occupied: int32*,
+    capacity: int32,
+    initialized: int32
+) {
+    if initialized == 1 {
+        owns data[0..capacity];
+        owns occupied[0..capacity];
+    }
+}
+
+resource arena_empty(arena: struct arena*) {
+    owns object(arena);
+    contains arena_initialized_storage(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        1
+    );
+    contains arena_initialized_access(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        1
+    );
+    fact arena->live_regions == 0;
+}
+
+verifying "arena_destroy.c";
+
+void arena_destroy(struct arena* arena) {
+    consumes arena_empty(arena);
+    produces object(arena);
+
+    ensures arena->data == 0;
+    ensures arena->occupied == 0;
+    ensures arena->capacity == 0;
+    ensures arena->live_regions == 0;
+} by {
+    unfold(arena_empty(arena));
+    unfold(arena_initialized_storage(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        1
+    ));
+    unfold(arena_initialized_access(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        1
+    ));
+    execute();
+    simp();
+}
+
+void arena_teardown(
+    struct arena* arena,
+    struct region* first,
+    struct region* second
+) {
+    consumes arena_empty(arena);
+    produces object(arena);
+    owns object(first);
+    owns object(second);
+} by {
+    execute();
+    simp();
+}
+```
+
+```expect
+fail: resource would remain usable after its allocation is freed
+```

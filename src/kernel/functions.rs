@@ -9256,6 +9256,25 @@ fn refuse_retiring_a_lent_allocation(
     }
 }
 
+/// The resource the caller keeps across a call that could still refer to an
+/// allocation the call retires, or `None` when every kept resource is proven
+/// separate from it.
+///
+/// Only the kept facts that can name the retired block are visited, drawn
+/// from the context's indexes (`facts_that_may_refer_to_memory_block`), so the
+/// work does not grow with kept resources in other blocks. Each visited fact
+/// still needs a separation the path facts prove
+/// (`is_proven_separate_from_allocation`).
+pub(in crate::kernel) fn caller_resource_left_stale_by_retirement<'a>(
+    kept: &'a ResourceContext,
+    base: &Pointer,
+    bytes: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> Option<&'a CResourceFact> {
+    kept.facts_that_may_refer_to_memory_block(&base.block)
+        .find(|resource| !resource.is_proven_separate_from_allocation(base, bytes, assumptions))
+}
+
 fn apply_verified_heap_allocation_delta(
     mut memory: CMemory,
     input_resources: &ResourceContext,
@@ -9377,16 +9396,12 @@ fn apply_verified_heap_allocation_delta(
             // the output occurrence is installed below even when it later
             // proves to have the same pointer value.
             if continuity_is_undecided {
-                for resource in preserved.facts() {
-                    if !resource.may_refer_to_memory_block(&base.block)
-                        || resource.is_proven_separate_from_allocation(
-                            &base,
-                            &bytes,
-                            &allocation_assumptions,
-                        )
-                    {
-                        continue;
-                    }
+                if let Some(resource) = caller_resource_left_stale_by_retirement(
+                    &preserved,
+                    &base,
+                    &bytes,
+                    &allocation_assumptions,
+                ) {
                     return Err(VerifiedAllocationDeltaError::Runtime(
                         CRuntimeError::StaleResourceAfterFree {
                             resource: resource.clone(),
@@ -9408,16 +9423,12 @@ fn apply_verified_heap_allocation_delta(
         // Only the untransferred caller frame survives independently across
         // the call. Any such resource that can still refer to an allocation
         // the contract definitely retires makes this transition unsafe.
-        for resource in preserved.facts() {
-            if !resource.may_refer_to_memory_block(&base.block)
-                || resource.is_proven_separate_from_allocation(
-                    &base,
-                    &bytes,
-                    &allocation_assumptions,
-                )
-            {
-                continue;
-            }
+        if let Some(resource) = caller_resource_left_stale_by_retirement(
+            &preserved,
+            &base,
+            &bytes,
+            &allocation_assumptions,
+        ) {
             return Err(VerifiedAllocationDeltaError::Runtime(
                 CRuntimeError::StaleResourceAfterFree {
                     resource: resource.clone(),
