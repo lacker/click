@@ -860,15 +860,32 @@ impl<'a> Proof<'a> {
         // ordinary simplification, then the loop-specific member planner.
         // Explicit source bodies use the source driver exactly once.
         let attempted = if body == [ProofTactic::Simp] {
-            match root.try_simp_closure()? {
+            match crate::instrumentation::measure_operation(
+                "surface",
+                "close invariants",
+                "close invariants: simp closure",
+                || root.try_simp_closure(),
+            )? {
                 Some(completed) => Ok(Some(completed)),
                 None => {
-                    let (candidate, premises) = root.named_arithmetic_premises(
-                        bundle,
-                        context.function_block.requires(),
-                        &path_branch_premises,
+                    let (candidate, premises) = crate::instrumentation::measure_operation(
+                        "surface",
+                        "close invariants",
+                        "close invariants: named premises",
+                        || {
+                            root.named_arithmetic_premises(
+                                bundle,
+                                context.function_block.requires(),
+                                &path_branch_premises,
+                            )
+                        },
                     )?;
-                    candidate.plan_invariant_bundle_closure(&premises, &named_loop_surfaces)
+                    crate::instrumentation::measure_operation(
+                        "surface",
+                        "close invariants",
+                        "close invariants: member planner",
+                        || candidate.plan_invariant_bundle_closure(&premises, &named_loop_surfaces),
+                    )
                 }
             }
         } else {

@@ -4,6 +4,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use click::cli::{
@@ -122,36 +124,74 @@ struct ConciseClaimProgress {
     total: usize,
 }
 
+/// The retained verification session lives on a thread of its own. Its
+/// verified environment names snapshots in the kernel's thread-local tables,
+/// and every expansion, cold reverification, and re-expansion the audit runs
+/// between session checks starts fresh tables on its own thread. Sharing the
+/// audit thread let those runs replace the session's tables, so a rewrite
+/// could exhaust a tactic budget only in the session. The kernel refuses a
+/// session whose tables were replaced; this thread keeps them intact.
 struct AuditSessionWorker {
     source: AuditSource,
-    session: C0VerificationSession,
+    requests: Option<mpsc::Sender<SessionRequest>>,
+    responses: mpsc::Receiver<Result<Duration, String>>,
+    thread: Option<thread::JoinHandle<()>>,
 }
+
+struct SessionRequest {
+    click_source: String,
+    position: SourcePosition,
+    limit: Duration,
+}
+
+/// At least the main thread's usual 8 MiB, so a proof that `click verify`
+/// checks on the main thread does not overflow only in the audit session.
+const SESSION_THREAD_STACK_BYTES: usize = 64 << 20;
 
 impl AuditSessionWorker {
     fn start(click_path: &Path, limit: Duration) -> Result<Self, String> {
         let started = Instant::now();
         let source = load_audit_source(click_path)?;
-        let (session, _) = click::instrumentation::with_deadline(limit, || match &source.inputs {
-            CInput::Bundle(sources) => match &source.project {
-                Some(project) => C0VerificationSession::new_project(project, &source_refs(sources)),
-                None => C0VerificationSession::new(&source.click_source, &source_refs(sources)),
-            },
-            CInput::Prepared(imports) => match &source.project {
-                Some(project) => C0VerificationSession::new_prepared_project(project, imports),
-                None => C0VerificationSession::new_prepared(&source.click_source, imports),
-            },
-            CInput::PreparedCpp(import) => match &source.project {
-                Some(project) => C0VerificationSession::new_cpp_prepared_project(project, import),
-                None => C0VerificationSession::new_cpp_prepared(&source.click_source, import),
-            },
-        })
-        .map_err(|error| error.report())?;
+        let session_source = source.clone();
+        let (request_sender, request_receiver) = mpsc::channel::<SessionRequest>();
+        let (response_sender, response_receiver) = mpsc::channel();
+        let thread = thread::Builder::new()
+            .name("click-audit-session".to_string())
+            .stack_size(SESSION_THREAD_STACK_BYTES)
+            .spawn(move || {
+                let session = match start_session(&session_source, limit) {
+                    Ok(session) => {
+                        if response_sender.send(Ok(Duration::ZERO)).is_err() {
+                            return;
+                        }
+                        session
+                    }
+                    Err(message) => {
+                        let _ = response_sender.send(Err(message));
+                        return;
+                    }
+                };
+                for request in request_receiver {
+                    let result = verify_in_session(&session, &session_source, &request);
+                    if response_sender.send(result).is_err() {
+                        return;
+                    }
+                }
+            })
+            .map_err(|error| format!("failed to start the verification-session thread: {error}"))?;
+        let mut worker = Self {
+            source,
+            requests: Some(request_sender),
+            responses: response_receiver,
+            thread: Some(thread),
+        };
+        worker.receive("verification-session initialization")?;
         ensure_phase_limit(
             started.elapsed(),
             limit,
             "verification-session initialization",
         )?;
-        Ok(Self { source, session })
+        Ok(worker)
     }
 
     fn verify(
@@ -160,37 +200,88 @@ impl AuditSessionWorker {
         position: SourcePosition,
         limit: Duration,
     ) -> Result<Duration, String> {
-        let start = Instant::now();
-        click::instrumentation::with_deadline(limit, || match &self.source.inputs {
-            CInput::Bundle(_) => match &self.source.project {
-                Some(_) => {
-                    self.session
-                        .verify_at_project(click_source, position.line, position.column)
-                }
-                None => self
-                    .session
-                    .verify_at(click_source, position.line, position.column),
-            },
-            CInput::Prepared(_) | CInput::PreparedCpp(_) => match &self.source.project {
-                Some(_) => {
-                    self.session
-                        .verify_at_project(click_source, position.line, position.column)
-                }
-                None => {
-                    self.session
-                        .verify_at_prepared(click_source, position.line, position.column)
-                }
-            },
+        let request = SessionRequest {
+            click_source: click_source.to_string(),
+            position,
+            limit,
+        };
+        self.requests
+            .as_ref()
+            .ok_or("the verification-session thread has stopped")?
+            .send(request)
+            .map_err(|_| "the verification-session thread has stopped".to_string())?;
+        self.receive("rewritten-sidecar verification")
+    }
+
+    fn receive(&mut self, label: &str) -> Result<Duration, String> {
+        self.responses.recv().unwrap_or_else(|_| {
+            Err(format!(
+                "the verification-session thread stopped during {label}"
+            ))
         })
-        .map_err(|error| error.report())?;
-        let elapsed = start.elapsed();
-        ensure_phase_limit(elapsed, limit, "rewritten-sidecar verification")?;
-        Ok(elapsed)
     }
 
     fn is_alive(&self) -> bool {
-        true
+        self.thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
     }
+}
+
+impl Drop for AuditSessionWorker {
+    fn drop(&mut self) {
+        // Closing the request channel ends the session thread's loop.
+        self.requests = None;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn start_session(source: &AuditSource, limit: Duration) -> Result<C0VerificationSession, String> {
+    let (session, _) = click::instrumentation::with_deadline(limit, || match &source.inputs {
+        CInput::Bundle(sources) => match &source.project {
+            Some(project) => C0VerificationSession::new_project(project, &source_refs(sources)),
+            None => C0VerificationSession::new(&source.click_source, &source_refs(sources)),
+        },
+        CInput::Prepared(imports) => match &source.project {
+            Some(project) => C0VerificationSession::new_prepared_project(project, imports),
+            None => C0VerificationSession::new_prepared(&source.click_source, imports),
+        },
+        CInput::PreparedCpp(import) => match &source.project {
+            Some(project) => C0VerificationSession::new_cpp_prepared_project(project, import),
+            None => C0VerificationSession::new_cpp_prepared(&source.click_source, import),
+        },
+    })
+    .map_err(|error| error.report())?;
+    Ok(session)
+}
+
+fn verify_in_session(
+    session: &C0VerificationSession,
+    source: &AuditSource,
+    request: &SessionRequest,
+) -> Result<Duration, String> {
+    let start = Instant::now();
+    let SessionRequest {
+        click_source,
+        position,
+        limit,
+    } = request;
+    click::instrumentation::with_deadline(*limit, || match &source.inputs {
+        CInput::Bundle(_) => match &source.project {
+            Some(_) => session.verify_at_project(click_source, position.line, position.column),
+            None => session.verify_at(click_source, position.line, position.column),
+        },
+        CInput::Prepared(_) | CInput::PreparedCpp(_) => match &source.project {
+            Some(_) => session.verify_at_project(click_source, position.line, position.column),
+            None => session.verify_at_prepared(click_source, position.line, position.column),
+        },
+    })
+    .map_err(|error| error.report())?;
+    let elapsed = start.elapsed();
+    ensure_phase_limit(elapsed, *limit, "rewritten-sidecar verification")?;
+    Ok(elapsed)
 }
 
 fn entry() -> Result<(), String> {
@@ -658,6 +749,7 @@ fn audit_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
     }
 }
 
+#[derive(Clone)]
 struct AuditSource {
     container_source: String,
     click_source: String,

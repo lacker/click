@@ -303,7 +303,14 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
                                 0 <= arena->capacity;
                             }
                         }
-                        close_invariants();
+                        close_invariants by {
+                            both {
+                                intro();
+                                assumption();
+                            } and {
+                                split();
+                            }
+                        }
                     }
                 }
             }

@@ -1021,8 +1021,6 @@ int32 caller(int32 x) {
 }
 "#;
     let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
-    let (session, _) =
-        C0VerificationSession::new(click_source, &sources).expect("baseline should verify");
     let caller_simp = click_source.rfind("simp();").unwrap();
     let position = expansion::position_at_offset(click_source, caller_simp);
     let expanded =
@@ -1030,6 +1028,10 @@ int32 caller(int32 x) {
             .expect("caller simp should expand");
     let expanded_position =
         c0_tactic_source_position(&expanded, &sources, "caller.contract", 0).unwrap();
+    // Expansion verifies on fresh kernel tables, so it runs before the
+    // session is built: a session's environment names its own tables.
+    let (session, _) =
+        C0VerificationSession::new(click_source, &sources).expect("baseline should verify");
 
     let verified = session
         .verify_at(&expanded, expanded_position.line, expanded_position.column)
@@ -1074,6 +1076,61 @@ int32 caller(int32 x) {
     session
         .verify_at(&shifted, shifted_position.line, shifted_position.column)
         .expect("session selection should follow the rewritten claim, not baseline coordinates");
+}
+
+/// A session's verified environment names snapshots in the kernel tables it
+/// was built under. Any later verification on the same thread starts fresh
+/// tables, so the session refuses to reuse its environment afterwards
+/// instead of rechecking a rewrite against unrelated snapshot derivations.
+/// `click audit` interleaved expansion with session checks this way, and a
+/// rewritten `arena_write` proof exhausted a simple tactic's work budget only
+/// in the session.
+#[test]
+fn verification_session_refuses_kernel_tables_replaced_by_another_verification() {
+    let c_source = r#"int32 same(int32 x) {
+    return x;
+}"#;
+    let click_source = r#"
+verifying "same.c";
+
+theorem one_is_one(x: int32) {
+    requires x == 1;
+
+    ensures x == 1 by {
+        simp();
+    }
+}
+
+int32 same(int32 x) {
+    ensures result == x;
+} by {
+    execute();
+    simp();
+}
+"#;
+    let sources = [("same.c", c_source)];
+    let position = c0_tactic_source_position(click_source, &sources, "same.contract", 0).unwrap();
+    let theorem_offset = click_source.find("simp();").unwrap();
+    let theorem_position = expansion::position_at_offset(click_source, theorem_offset);
+    let (session, _) =
+        C0VerificationSession::new(click_source, &sources).expect("baseline should verify");
+    // A theorem target starts no retained environment; it still checks
+    // inside the session's tables instead of replacing them.
+    session
+        .verify_at(click_source, theorem_position.line, theorem_position.column)
+        .expect("the session checks a theorem target");
+    session
+        .verify_at(click_source, position.line, position.column)
+        .expect("the session reuses its own kernel tables");
+    verify_c0_sources(click_source, &sources).expect("an unrelated verification succeeds");
+    let error = session
+        .verify_at(click_source, position.line, position.column)
+        .expect_err("the session's kernel tables were replaced");
+    assert!(
+        error.message().contains("kernel state was replaced"),
+        "{}",
+        error.message()
+    );
 }
 
 /// Termination evidence is recorded apart from the `ensures` judgment: a

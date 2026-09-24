@@ -3293,11 +3293,57 @@ pub(super) fn describe_binary_contract_expression(
 /// generated or expanded alignment fact renders in its source spelling.
 fn aligned_sugar(proposition: &ClickProposition) -> Option<(&CExpression, u64)> {
     let ClickProposition::Comparison {
-        left: ContractExpression::BitwiseAnd(address, mask),
+        left,
         operator: ComparisonOperator::Equal,
-        right: ContractExpression::CFragment(CExpression::Value(CValue::UInt64(zero))),
+        right,
     } = proposition
     else {
+        return None;
+    };
+    aligned_comparison_sugar(left, right)
+}
+
+/// The same sugar for an alignment fact read at one snapshot, whose sides
+/// are each qualified `at(S, address(p) & (n - 1)) == at(S, 0u64)`, as a
+/// function-entry alignment fact is when it is cited after execution. It
+/// renders as `at(S, aligned(p, n))`. The pointer-to-`uint64` conversion
+/// inside has no cast spelling in Click (only `address(p)` or `aligned`),
+/// so rendering the qualified sides expression by expression would emit an
+/// unparseable `(uint64)p`.
+fn snapshot_aligned_sugar(
+    proposition: &ClickProposition,
+) -> Option<(&SnapshotSelector, &CExpression, u64)> {
+    let ClickProposition::Comparison {
+        left: ContractExpression::At {
+            selector,
+            expression: left,
+        },
+        operator: ComparisonOperator::Equal,
+        right,
+    } = proposition
+    else {
+        return None;
+    };
+    let right = match right {
+        ContractExpression::At {
+            selector: right_selector,
+            expression,
+        } if right_selector == selector => expression.as_ref(),
+        ContractExpression::At { .. } => return None,
+        right => right,
+    };
+    let (pointer, alignment) = aligned_comparison_sugar(left, right)?;
+    Some((selector, pointer, alignment))
+}
+
+fn aligned_comparison_sugar<'a>(
+    left: &'a ContractExpression,
+    right: &ContractExpression,
+) -> Option<(&'a CExpression, u64)> {
+    let ContractExpression::BitwiseAnd(address, mask) = left else {
+        return None;
+    };
+    let ContractExpression::CFragment(CExpression::Value(CValue::UInt64(zero))) = right else {
         return None;
     };
     if zero.uint64_as_const() != Some(0) {
@@ -3324,6 +3370,13 @@ fn aligned_sugar(proposition: &ClickProposition) -> Option<(&CExpression, u64)> 
 pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> String {
     if let Some((pointer, alignment)) = aligned_sugar(proposition) {
         return format!("aligned({}, {alignment})", describe_c_expression(pointer));
+    }
+    if let Some((selector, pointer, alignment)) = snapshot_aligned_sugar(proposition) {
+        return format!(
+            "at({}, aligned({}, {alignment}))",
+            describe_snapshot_selector(selector),
+            describe_c_expression(pointer)
+        );
     }
     match proposition {
         ClickProposition::Comparison {

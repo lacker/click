@@ -1765,6 +1765,19 @@ fn source_tactic_width(tactic: &ProofTactic) -> usize {
     }
 }
 
+/// Whether `wanted` names this linear tactic or a source tactic nested inside
+/// it. A `loop` is one linear tactic whose `initialize` and `preserve` proofs
+/// number their own source tactics directly after it, so an expansion site
+/// inside a loop body is contained by the loop tactic's source span. The span
+/// is measured only when `wanted` lies after this tactic, so the walk costs
+/// the selected tactic's subtree, not every nested proof.
+fn indexed_tactic_contains_source_index(indexed: &IndexedTactic, wanted: usize) -> bool {
+    indexed.source_index == wanted
+        || (wanted > indexed.source_index
+            && wanted - indexed.source_index
+                < source_tactic_count(std::slice::from_ref(&indexed.tactic)))
+}
+
 fn internal_proof_contains_source_index(node: &InternalProofNode, wanted: usize) -> bool {
     match node {
         InternalProofNode::Match {
@@ -1784,7 +1797,9 @@ fn internal_proof_contains_source_index(node: &InternalProofNode, wanted: usize)
             tactics,
             continuation,
         } => {
-            tactics.iter().any(|tactic| tactic.source_index == wanted)
+            tactics
+                .iter()
+                .any(|tactic| indexed_tactic_contains_source_index(tactic, wanted))
                 || internal_proof_contains_source_index(continuation, wanted)
         }
         InternalProofNode::Open {

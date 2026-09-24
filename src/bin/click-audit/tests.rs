@@ -1007,3 +1007,40 @@ int32 stop_at(int32 n) {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// The reduced `examples/arena` audit failures audit every smart site: a
+/// loop proof after a proof-level `branch`, an entry alignment fact cited as
+/// a premise, and the retained session checked between main-thread
+/// expansions and cold reverifications. Before the session had a thread of
+/// its own, every expansion replaced the kernel tables its environment names.
+#[test]
+fn reduced_arena_init_fixtures_audit_every_site() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let limit = Duration::from_secs(60);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    for relative in [
+        "mdtests/loop_after_proof_branch_expands.md",
+        "mdtests/entry_alignment_premise_expands.md",
+    ] {
+        let path = root.join(relative);
+        let sites = inventory_sites(std::slice::from_ref(&path)).unwrap();
+        assert!(sites.len() >= 4, "{relative}: {sites:?}");
+        let mut worker = AuditSessionWorker::start(&path, limit).unwrap();
+        for (index, site) in sites.iter().enumerate() {
+            if let Err(message) = audit_site(
+                site,
+                &mut worker,
+                limit,
+                limit,
+                Duration::from_secs(1),
+                index == 0,
+                deadline,
+            ) {
+                panic!(
+                    "{relative}:{}:{} should audit: {message}",
+                    site.position.line, site.position.column
+                );
+            }
+        }
+    }
+}
