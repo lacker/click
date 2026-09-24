@@ -892,6 +892,24 @@ fn validate_resource_definition<'a>(
         }
         return Ok(());
     }
+    if let Some(scope) =
+        resource_unmatched_body_scope(definition, |name| resource_definitions.get(name).copied())?
+    {
+        return validate_resource_definition(
+            &scope,
+            resource_definitions,
+            resources,
+            recursive_resources,
+            predicates,
+            contracts,
+            click_functions,
+            click_function_types,
+            predicate_definitions,
+            click_function_definitions,
+            predicate_environment,
+            click_function_environment,
+        );
+    }
     if let Some(view) = resource_body_fields_as_parameters(definition)? {
         return validate_resource_definition(
             &view,
@@ -2640,11 +2658,8 @@ fn reject_composite_resource_cycles(definitions: &[ResourceDefinition]) -> Resul
                         .into_iter()
                         .flat_map(|matched| &matched.arms)
                         .flat_map(|arm| &arm.body.contains)
-                        .filter_map(|resource| match resource {
-                            ResourceClause::Named { resource, .. } => {
-                                declared_composite_resource_name(resource).map(str::to_string)
-                            }
-                            _ => None,
+                        .filter_map(|resource| {
+                            declared_composite_resource_name(resource).map(str::to_string)
                         })
                         .filter(|dependency| dependency != definition.name()),
                 )

@@ -10,8 +10,10 @@ mod declaration_expansion;
 mod definition_validation;
 mod expression_analysis;
 mod type_validation;
-pub(in crate::surface) use algebraic_types::resource_match_arm_scopes;
 use algebraic_types::*;
+pub(in crate::surface) use algebraic_types::{
+    resource_match_arm_scopes, resource_unmatched_body_scope,
+};
 pub(super) use declaration_expansion::*;
 pub(super) use definition_validation::*;
 pub(super) use expression_analysis::*;

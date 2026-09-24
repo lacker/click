@@ -2646,6 +2646,10 @@ pub struct CCompositeResourceDefinition {
     /// storage the fact names, so such facts are not restored by recovery.
     pub(super) facts_claim_liveness: bool,
     pub(super) contains: Vec<CResourceSpec>,
+    /// Named child instances of the unmatched body. A matched definition
+    /// keeps its children in its arms instead. Each is of another family: an
+    /// unmatched body has no submodel to descend to.
+    pub(super) children: Vec<CResourceChildSpec>,
     pub(super) facts: Vec<SpecProposition>,
     /// Compiled fact index to original resource-body fact index. Predicate
     /// unfolding can produce two compiled facts for one source fact.
@@ -2685,9 +2689,21 @@ pub struct CResourceChildSpec {
     pub resource: String,
     pub binding: Variable,
     pub arguments: Vec<CExpression>,
-    /// Each field is an immediate constructor binding. The matched model
-    /// field must be a proper submodel of the same algebraic type.
-    pub field_bindings: Vec<usize>,
+    /// Where each of the child's fields comes from, in the child schema's
+    /// order. A same-family child's matched model field must be a proper
+    /// submodel: an immediate constructor binding of the same algebraic type.
+    pub field_bindings: Vec<CResourceChildField>,
+}
+
+/// The source of one field of a child instance a resource body declares.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CResourceChildField {
+    /// The selected constructor's binding at this index.
+    Constructor(usize),
+    /// The parent instance's own field at this index. The child's field then
+    /// equals the parent's, as a scalar model value does; it never makes a
+    /// same-family child a submodel.
+    Parent(usize),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

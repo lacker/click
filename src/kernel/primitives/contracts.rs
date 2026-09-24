@@ -1373,6 +1373,12 @@ impl CCompositeResourceDefinition {
         self.matched = body;
         self
     }
+
+    /// Named child instances of the unmatched body.
+    pub(crate) fn with_children(mut self, children: Vec<CResourceChildSpec>) -> Self {
+        self.children = children;
+        self
+    }
     pub fn new(
         name: impl Into<String>,
         parameters: Vec<CParameter>,
@@ -1394,6 +1400,7 @@ impl CCompositeResourceDefinition {
             counted_population: false,
             facts_claim_liveness: false,
             contains,
+            children: Vec::new(),
             facts,
             fact_source_indices,
             fact_source_spellings: Vec::new(),
@@ -1464,6 +1471,7 @@ impl CCompositeResourceDefinition {
             counted_population: true,
             facts_claim_liveness: false,
             contains,
+            children: Vec::new(),
             facts,
             fact_source_indices,
             fact_source_spellings: Vec::new(),

@@ -746,7 +746,7 @@ pub struct ResourceChildBody {
     resource: String,
     identity: Variable,
     arguments: Vec<ContractExpression>,
-    field_bindings: Vec<usize>,
+    field_bindings: Vec<crate::kernel::CResourceChildField>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

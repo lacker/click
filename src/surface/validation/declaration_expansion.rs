@@ -135,14 +135,18 @@ pub(in crate::surface) fn standard_library_function_block(
 /// nothing about it.
 fn matched_arm_child_slots(definition: &ResourceDefinition) -> BTreeMap<String, Option<String>> {
     let mut slots: BTreeMap<String, Option<String>> = BTreeMap::new();
-    let Some(matched) = definition
-        .composite_body()
-        .and_then(|body| body.matched.as_ref())
-    else {
+    let Some(body) = definition.composite_body() else {
         return slots;
     };
-    for arm in &matched.arms {
-        for clause in &arm.body.contains {
+    // An unmatched body's named children are its slots as well.
+    let bodies = std::iter::once(body).chain(
+        body.matched
+            .iter()
+            .flat_map(|matched| &matched.arms)
+            .map(|arm| &arm.body),
+    );
+    for body in bodies {
+        for clause in &body.contains {
             let ResourceClause::Named { binding, resource } = clause else {
                 continue;
             };

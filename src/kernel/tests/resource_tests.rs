@@ -470,14 +470,14 @@ fn recursive_child_fixture() -> (ResourceInstance, CCompositeResourceDefinition,
                         resource: "cell".into(),
                         binding: Variable(90),
                         arguments: vec![c_variable("lp")],
-                        field_bindings: vec![1],
+                        field_bindings: vec![CResourceChildField::Constructor(1)],
                     },
                     CResourceChildSpec {
                         name: "right".into(),
                         resource: "cell".into(),
                         binding: Variable(91),
                         arguments: vec![c_variable("rp")],
-                        field_bindings: vec![3],
+                        field_bindings: vec![CResourceChildField::Constructor(3)],
                     },
                 ],
             },
@@ -838,7 +838,8 @@ fn recursive_child_kernel_rejects_implicit_parent_handles() {
         rewrite_resource_instance(&opened, &instance, &definition, &assumptions, false).is_err()
     );
     let mut invalid = definition.clone();
-    invalid.matched.as_mut().unwrap().arms[1].children[0].field_bindings = vec![0];
+    invalid.matched.as_mut().unwrap().arms[1].children[0].field_bindings =
+        vec![CResourceChildField::Constructor(0)];
     assert!(
         crate::kernel::rewrite_resource_instance_selecting_children(
             &state,

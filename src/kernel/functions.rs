@@ -15141,10 +15141,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
                     .as_c_value()
                     .is_none_or(|value| value.c_type() != parameter.c_type())
             })
-        || definition
-            .contains
-            .iter()
-            .any(|body| body.family() != ResourceFamily::Memory || body.is_view())
+        || !instance_body_clauses_are_exchangeable(&definition.contains)
     {
         return Err(
             "instance fold/unfold requires a nonrecursive, witness-free memory body".into(),
@@ -15257,12 +15254,19 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             .map(|(name, identity)| (name.as_str(), *identity))
             .collect::<BTreeMap<_, _>>()
     });
-    if explicit_children.is_none() && selected.is_some_and(|arm| !arm.children.is_empty()) {
+    // The selected arm's children, or the unmatched body's.
+    let body_children = if definition.matched.is_some() {
+        selected.map_or(&[][..], |arm| arm.children.as_slice())
+    } else {
+        check_unmatched_instance_children(instance, definition, definitions)?;
+        definition.children.as_slice()
+    };
+    if explicit_children.is_none() && !body_children.is_empty() {
         return Err("recursive children require explicit independent child selections".into());
     }
     if let Some(children) = &explicit_children {
         let supplied = selected_children.unwrap();
-        let expected = selected.map_or(&[][..], |arm| arm.children.as_slice());
+        let expected = body_children;
         let identities = supplied
             .iter()
             .map(|(_, identity)| *identity)
@@ -15313,7 +15317,7 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     let child_assumptions = assumptions.clone().require_owned_expression_loads();
     let mut resource_bindings = BTreeMap::from([(Variable(u64::MAX), instance.identity)]);
     let mut introduced_children: Vec<ResourceInstance> = Vec::new();
-    for child in selected.into_iter().flat_map(|arm| &arm.children) {
+    for child in body_children {
         crate::instrumentation::record_deterministic_work(1);
         // The child's own definition supplies the parameter types its
         // arguments are coerced to and the schema its fields must satisfy.
@@ -15372,11 +15376,13 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
         let fields = child
             .field_bindings
             .iter()
-            .map(|index| {
-                constructor_fields
-                    .get(*index)
-                    .cloned()
-                    .ok_or("invalid child field binding")
+            .map(|source| {
+                match source {
+                    CResourceChildField::Constructor(index) => constructor_fields.get(*index),
+                    CResourceChildField::Parent(index) => instance.fields.get(*index),
+                }
+                .cloned()
+                .ok_or("invalid child field binding")
             })
             .collect::<Result<ResourceArguments, _>>()?;
         let identity =
@@ -15447,15 +15453,15 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
             )
             .map_err(|_| "instance body overlaps existing ownership")?;
     } else {
-        // Immediate memory was consumed before evaluating child arguments.
-        for fact in body
-            .facts()
-            .iter()
-            .filter(|fact| fact.memory_range().is_none())
-        {
+        // The immediate body was consumed before evaluating child arguments;
+        // only the selected children remain to be consumed.
+        for child in &introduced_children {
             next.resources = next
                 .resources
-                .without_fact_incrementally(fact, assumptions)
+                .without_fact_incrementally(
+                    &CResourceFact::own(CResource::Instance(child.clone())),
+                    assumptions,
+                )
                 .ok_or("fold requires ownership of the complete instance body")?;
         }
         next.resources = next
@@ -15964,6 +15970,78 @@ fn selected_instance_resource_load_values(
     values
 }
 
+/// Checks the named children of an unmatched instance body against their own
+/// definitions. Each is of another family, since an unmatched body has no
+/// submodel to descend to, and each field is the parent's field of the same
+/// type. The work is this body's children and their schemas.
+fn check_unmatched_instance_children(
+    instance: &ResourceInstance,
+    definition: &CCompositeResourceDefinition,
+    definitions: &[CCompositeResourceDefinition],
+) -> Result<(), &'static str> {
+    let mut names = BTreeSet::new();
+    let mut bindings = BTreeSet::new();
+    let reserved = definition
+        .parameters
+        .iter()
+        .map(|parameter| parameter.name())
+        .chain(
+            instance
+                .schema()
+                .fields()
+                .iter()
+                .map(|(name, _)| name.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+    for child in &definition.children {
+        crate::instrumentation::record_deterministic_work(1);
+        if child.resource == definition.name() {
+            return Err("an unmatched resource body cannot own a child of its own family");
+        }
+        let child_definition = child_composite_definition(definition, definitions, child)?;
+        let child_schema = child_definition
+            .instance_schema
+            .as_ref()
+            .ok_or("resource child requires a field-bearing definition")?;
+        if child.name.is_empty()
+            || reserved.contains(child.name.as_str())
+            || !names.insert(child.name.as_str())
+            || child.binding == Variable(u64::MAX)
+            || !bindings.insert(child.binding)
+            || child.arguments.len() != child_definition.parameters.len()
+            || child.field_bindings.len() != child_schema.fields().len()
+            || child_schema.fields().iter().zip(&child.field_bindings).any(
+                |((_, field_type), source)| match source {
+                    CResourceChildField::Parent(index) => {
+                        instance.schema().fields().get(*index).map(|(_, ty)| ty) != Some(field_type)
+                    }
+                    CResourceChildField::Constructor(_) => true,
+                },
+            )
+        {
+            return Err("invalid resource child schema");
+        }
+    }
+    Ok(())
+}
+
+/// Whether an instance body's unnamed clauses can move as a whole on fold and
+/// unfold: owned memory and owned, field-free declared resources. A declared
+/// resource stays folded inside the body, exactly as the parent's caller
+/// would hold it; a view or quantity is refused.
+fn instance_body_clauses_are_exchangeable(contains: &[CResourceSpec]) -> bool {
+    contains.iter().all(|body| {
+        !body.is_view()
+            && match body.family() {
+                ResourceFamily::Memory => true,
+                ResourceFamily::Composite | ResourceFamily::Token => {
+                    matches!(body.quantity(), CResourceQuantity::One)
+                }
+                ResourceFamily::Instance => false,
+            }
+    })
+}
+
 pub(in crate::kernel) fn selected_instance_match_arm<'a>(
     instance: &ResourceInstance,
     definition: &'a CCompositeResourceDefinition,
@@ -15976,6 +16054,7 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
         .ok_or("missing resource match body")?;
     if definition.condition.is_some()
         || !definition.contains.is_empty()
+        || !definition.children.is_empty()
         || !definition.facts.is_empty()
         || !body.algebraic_type.has_consistent_root_schema()
         || body.algebraic_type.rigid
@@ -16027,10 +16106,7 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
                     _ => variable.is_some(),
                 },
             )
-            || arm
-                .contains
-                .iter()
-                .any(|resource| resource.family() != ResourceFamily::Memory || resource.is_view())
+            || !instance_body_clauses_are_exchangeable(&arm.contains)
         {
             return Err("invalid resource match arm");
         }
@@ -16068,28 +16144,39 @@ pub(in crate::kernel) fn selected_instance_match_arm<'a>(
             {
                 return Err("invalid recursive child schema");
             }
-            for ((_, field_type), index) in child_schema.fields().iter().zip(&child.field_bindings)
+            for ((_, field_type), source) in child_schema.fields().iter().zip(&child.field_bindings)
             {
-                let expected = match field_type {
-                    ResourceFieldType::Integer => AlgebraicValueType::Integer,
-                    ResourceFieldType::C(ty) => AlgebraicValueType::C(*ty),
-                    ResourceFieldType::Algebraic(ty) => ty.value_type(),
+                let matches = match source {
+                    CResourceChildField::Constructor(index) => {
+                        let expected = match field_type {
+                            ResourceFieldType::Integer => AlgebraicValueType::Integer,
+                            ResourceFieldType::C(ty) => AlgebraicValueType::C(*ty),
+                            ResourceFieldType::Algebraic(ty) => ty.value_type(),
+                        };
+                        arm.binding_types.get(*index) == Some(&expected)
+                    }
+                    CResourceChildField::Parent(index) => {
+                        instance.schema().fields().get(*index).map(|(_, ty)| ty) == Some(field_type)
+                    }
                 };
-                if arm.binding_types.get(*index) != Some(&expected) {
+                if !matches {
                     return Err(
                         "recursive child fields must be immediate constructor bindings of the declared type",
                     );
                 }
             }
             // In particular, a same-family child's model is bound to a field
-            // of this constructor, never to the whole parent model. A child of
-            // another family has no such field; its own matched field is
-            // already checked above, against its own declared type.
+            // of this constructor, never to the whole parent model or to a
+            // parent field. A child of another family has no such field; its
+            // own matched field is already checked above, against its own
+            // declared type.
             if child_definition.name() == definition.name()
-                && arm
-                    .binding_types
-                    .get(child.field_bindings[body.field_index])
-                    != Some(&body.algebraic_type.value_type())
+                && !matches!(
+                    child.field_bindings[body.field_index],
+                    CResourceChildField::Constructor(index)
+                        if arm.binding_types.get(index)
+                            == Some(&body.algebraic_type.value_type())
+                )
             {
                 return Err("recursive child model must be a proper submodel");
             }

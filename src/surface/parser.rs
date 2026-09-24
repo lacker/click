@@ -1645,8 +1645,12 @@ impl Parser {
                 }
                 Some("owns") => {
                     self.position += 1;
-                    if self.match_nesting == 0 && self.peek_next() == Some(&Token::Colon) {
-                        return Err(self.error("named child resources currently require a constructor match arm"));
+                    if self.current_resource_fields.is_empty()
+                        && self.peek_next() == Some(&Token::Colon)
+                    {
+                        return Err(self.error(
+                            "a named child resource requires a field-bearing parent resource",
+                        ));
                     }
                     contains.push(self.parse_owned_resource_binding()?);
                     self.expect(Token::Semicolon)?;
