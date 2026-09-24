@@ -1632,6 +1632,7 @@ fn function_claim_holds_on_prepared_path(
             let expected_result =
                 crate::kernel::functions::evaluate_function_return_resource_context(
                     function,
+                    checked_required_resources,
                     entry_state,
                     post_state,
                     *index + 1,

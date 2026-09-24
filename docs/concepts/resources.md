@@ -226,6 +226,29 @@ transferred clause set opened by its definitions, so the caller needs no
 callee's own clauses cannot justify is refused at the callee's entry, before
 any call.
 
+A folded field-bearing instance supplies its sibling clauses the same way
+when its body is unconditional and unmatched. `arena_prefix_region(region)`
+carries the fields `start` and `end` and owns `object(region)`, so a contract
+that consumes `freed: arena_prefix_region(region)` may also consume
+`arena_prefix_state(region->arena)`: while the clauses are evaluated, the
+instance's body is evaluated once at its own fields and the cells it owns are
+published as views. Clause order does not matter, and an entry-snapshot
+clause returned at the exit is read through the same publication. A guarded
+body publishes nothing, since its case is a proof obligation rather than a
+premise; a matched body publishes the arm its premises decide, described
+under [Modeled bodies and arm selection](#modeled-bodies-and-arm-selection);
+and a body with existential witnesses publishes nothing. Only the section's
+own clauses publish; the rest of the frame the section is evaluated against
+is never opened for this purpose.
+
+The publication is read authority and nothing more. The instance stays folded,
+so a store to a cell it owns is refused until an explicit `unfold` moves the
+cell into the proof state, and a cell the body does not own is not published
+at all. The regressions are `mdtests/contract_owns_through_field_bearing_instance.md`
+(both clause orders), `mdtests/arena_prefix_free_reads_region_arena.md`,
+`mdtests/contract_field_bearing_instance_views_grant_no_write.md`, and
+`mdtests/contract_field_bearing_instance_views_only_owned_cells.md`.
+
 One checked resource transition serves every way a contract is applied: a
 direct call, a call through a function pointer under a named contract, an
 explicit execution theorem, and independent certification. The transition

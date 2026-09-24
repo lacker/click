@@ -2954,6 +2954,7 @@ fn execute_verified_function_applications_with_suspension(
             escrowed_owners(&transfer),
             &transfer.canonical_borrowed_owners,
             &transfer.borrowed_inputs,
+            &transfer_entry_clauses(&transfer),
             &entry_resource_state,
             &output_resource_state,
             name,
@@ -6213,6 +6214,7 @@ fn checked_access_mode_refinement_adapter(
         escrowed_owners(&transfer),
         &transfer.canonical_borrowed_owners,
         &transfer.borrowed_inputs,
+        &transfer_entry_clauses(&transfer),
         &caller,
         &post,
         "refinement",
@@ -13144,8 +13146,12 @@ fn prepare_contract_resource_transfer(
 /// even when the clause's address depends on a field the body writes. Every
 /// other returned resource is evaluated at `post_state`, where the result and
 /// the exit memory are visible.
+///
+/// `entry_clauses` are the contract's own clauses as checked at entry; see
+/// [`evaluate_contract_return_resource_context`].
 pub(super) fn evaluate_function_return_resource_context(
     function: &CFunction,
+    entry_clauses: &[CCheckedResourceFact],
     entry_state: &CState,
     post_state: &CState,
     count: usize,
@@ -13156,6 +13162,7 @@ pub(super) fn evaluate_function_return_resource_context(
         function.contract_interface(),
         &[],
         &[],
+        entry_clauses,
         entry_state,
         post_state,
         count,
@@ -13242,6 +13249,7 @@ mod entry_borrow_return_tests {
             function.contract_interface(),
             &[],
             &checked,
+            &[],
             &state,
             &state,
             2,
@@ -13257,10 +13265,16 @@ mod entry_borrow_return_tests {
     }
 }
 
+/// `entry_clauses` are the contract's own clauses as checked at entry, every
+/// role. They are the siblings whose folded field-bearing instances supply
+/// read authority to an entry-snapshot clause; nothing else in the entry
+/// frame is visited for that purpose.
+#[allow(clippy::too_many_arguments)]
 fn evaluate_contract_return_resource_context(
     interface: &CFunctionContractInterface,
     canonical_borrowed_owners: &[(CResourceFact, CResourceFact)],
     borrowed_inputs: &[CCheckedResourceFact],
+    entry_clauses: &[CCheckedResourceFact],
     entry_state: &CState,
     post_state: &CState,
     count: usize,
@@ -13332,12 +13346,25 @@ fn evaluate_contract_return_resource_context(
                     .declared_argument_snapshots()
                     .is_some_and(|snapshots| snapshots.contains(&CResourceSnapshot::Entry))
         }) {
-        opened_composite_read_views(
+        let mut views = opened_composite_read_views(
             entry_state.resources(),
             interface.composite_resource_definitions(),
             entry_state.memory(),
             assumptions,
-        )
+        );
+        // A folded field-bearing instance the contract's own clauses checked
+        // at entry supplies its unmatched body's cells the same way: the
+        // entry read is repeated through the clause set that justified it.
+        // Only the contract's own checked inputs are visited.
+        for checked in entry_clauses {
+            views.extend(unmatched_instance_body_views(
+                &checked.fact,
+                interface.composite_resource_definitions(),
+                entry_state,
+                assumptions,
+            ));
+        }
+        views
     } else {
         Vec::new()
     };
@@ -13477,6 +13504,17 @@ fn opened_composite_read_views(
         .collect()
 }
 
+/// The contract's own clauses a transfer checked at entry, lent and consumed
+/// alike: the siblings an entry-snapshot returned clause may read through.
+fn transfer_entry_clauses(transfer: &CFunctionResourceTransfer) -> Vec<CCheckedResourceFact> {
+    transfer
+        .borrowed_inputs
+        .iter()
+        .chain(&transfer.consumed_inputs)
+        .cloned()
+        .collect()
+}
+
 /// The owned facts a call's lend escrowed. They are not in the
 /// caller residual for the duration of the call, but recovery composes each
 /// one back, so a check on what the caller will hold has to read them.
@@ -13493,6 +13531,7 @@ fn evaluate_function_return_resources(
     caller_resources_after_requirements: &ResourceContext,
     escrowed_owners: &[CResourceFact],
     borrowed_inputs: &[CCheckedResourceFact],
+    entry_clauses: &[CCheckedResourceFact],
     entry_state: &CState,
     post_state: &CState,
     function: &CFunction,
@@ -13504,6 +13543,7 @@ fn evaluate_function_return_resources(
         escrowed_owners,
         &[],
         borrowed_inputs,
+        entry_clauses,
         entry_state,
         post_state,
         function.name(),
@@ -13519,6 +13559,7 @@ fn evaluate_contract_return_resources(
     escrowed_owners: &[CResourceFact],
     canonical_borrowed_owners: &[(CResourceFact, CResourceFact)],
     borrowed_inputs: &[CCheckedResourceFact],
+    entry_clauses: &[CCheckedResourceFact],
     entry_state: &CState,
     post_state: &CState,
     interface_name: &str,
@@ -13535,6 +13576,7 @@ fn evaluate_contract_return_resources(
                 interface,
                 canonical_borrowed_owners,
                 borrowed_inputs,
+                entry_clauses,
                 entry_state,
                 post_state,
                 interface.resource_ensures().len(),
@@ -17844,6 +17886,7 @@ pub(super) fn function_return_resources_definitionally_established(
         with_contract_argument_views(caller_state, function, &argument_values);
     let Ok(Ok(expected)) = evaluate_function_return_resource_context(
         function,
+        &[],
         &entry_resource_state,
         &post_state,
         function.resource_ensures().len(),
@@ -18381,7 +18424,7 @@ fn evaluate_resource_clauses_against_whole_section(
                     section_supply,
                     resource.clone(),
                     definitions,
-                    state.memory(),
+                    state,
                     assumptions,
                 );
                 section_supply = next_supply;
@@ -19159,7 +19202,7 @@ fn evaluate_resource_clause_with_dependencies(
 /// readable so a later clause's base load denotes, while every owned resource
 /// stays exactly where the clause set put it. This state is a scratch
 /// evaluation frame and is never the section's result.
-fn resource_clause_section_supply(
+pub(in crate::kernel) fn resource_clause_section_supply(
     state: &CState,
     supplied: &[CResourceFact],
     definitions: &[CCompositeResourceDefinition],
@@ -19176,6 +19219,18 @@ fn resource_clause_section_supply(
     // premises select, and nothing when they select none (D7). The arm stays
     // folded either way: only its read authority is published here.
     let mut views = instance_arm_views(&base, definitions, state, assumptions);
+    // A field-bearing instance one of this section's own clauses supplied
+    // publishes the cells its unconditional, unmatched body owns, the way a
+    // field-free composite and a decided arm do. Only the section's own
+    // clauses are visited, never the frame they are evaluated against.
+    for fact in supplied {
+        views.extend(unmatched_instance_body_views(
+            fact,
+            definitions,
+            state,
+            assumptions,
+        ));
+    }
     let Some(expanded) =
         expand_all_composite_resource_facts(&base, definitions, state.memory(), assumptions)
     else {
@@ -19362,7 +19417,8 @@ fn instance_arm_read_authority(
         let Some(arm) = body.arms.iter().find(|arm| &arm.variant == variant) else {
             return Vec::new();
         };
-        let Some(views) = instance_arm_memory_views(&evaluation, arm, assumptions) else {
+        let Some(views) = resource_clause_memory_views(&evaluation, &arm.contains, assumptions)
+        else {
             return Vec::new();
         };
         common = Some(match common {
@@ -19381,11 +19437,61 @@ fn instance_arm_read_authority(
     common.unwrap_or_default()
 }
 
-/// The cells one arm's own memory clauses own at `evaluation`, as views, or
-/// `None` when those clauses cannot be evaluated there.
-fn instance_arm_memory_views(
+/// The cells an unconditional, unmatched instance body owns, as views: the
+/// read authority a folded field-bearing instance supplies to the sibling
+/// clauses of the section that holds it.
+///
+/// This is the same publication a field-free composite's expansion and a
+/// decided match arm make. The body is evaluated at the instance's own
+/// fields and arguments, so `owns object(region)` in `arena_prefix_region`
+/// makes `region->arena` readable for a clause that names
+/// `arena_prefix_state(region->arena)`. Nothing is owned twice and nothing is
+/// opened: the instance stays folded, and only an explicit `unfold` moves its
+/// cells into the proof state. A view grants a read, never a write.
+///
+/// A matched body publishes through [`instance_arm_read_authority`] instead,
+/// a guarded body publishes nothing (its case is a proof obligation, not a
+/// premise), and a body with existential witnesses publishes nothing because
+/// a witness has no value until the body is opened.
+///
+/// Cost is one definition lookup by name and one evaluation of this one
+/// instance's own memory clauses, with no composite definitions in scope, so
+/// a body never re-enters this publication and nothing outside the instance
+/// is visited.
+fn unmatched_instance_body_views(
+    fact: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> Vec<CResourceFact> {
+    let CResource::Instance(instance) = fact.resource() else {
+        return Vec::new();
+    };
+    let Ok(index) =
+        definitions.binary_search_by(|definition| definition.name().cmp(instance.name()))
+    else {
+        return Vec::new();
+    };
+    let definition = &definitions[index];
+    if definition.matched.is_some()
+        || definition.condition.is_some()
+        || !definition.witnesses.is_empty()
+        || definition.contains.is_empty()
+    {
+        return Vec::new();
+    }
+    let Ok(evaluation) = instance_body_evaluation(state, instance, definition) else {
+        return Vec::new();
+    };
+    resource_clause_memory_views(&evaluation, &definition.contains, assumptions).unwrap_or_default()
+}
+
+/// The cells a body's own memory clauses own at `evaluation`, as views, or
+/// `None` when those clauses cannot be evaluated there. Shared by a match
+/// arm's clauses and an unmatched instance body's.
+fn resource_clause_memory_views(
     evaluation: &CState,
-    arm: &CResourceMatchArm,
+    contains: &[CResourceSpec],
     assumptions: &PureFactContext,
 ) -> Option<Vec<CResourceFact>> {
     crate::instrumentation::record_deterministic_work(1);
@@ -19396,7 +19502,7 @@ fn instance_arm_memory_views(
     let mut budget = ExecutionBudget::beside_live_state();
     let Ok(Ok(body_resources)) = evaluate_function_resource_context_with_normalization(
         evaluation,
-        &arm.contains,
+        contains,
         &[],
         &evaluation_assumptions,
         &mut budget,
@@ -20014,15 +20120,31 @@ fn resource_clause_supply_with_fact(
     mut supply: ResourceContext,
     fact: CResourceFact,
     definitions: &[CCompositeResourceDefinition],
-    memory: &CMemory,
+    state: &CState,
     assumptions: &PureFactContext,
 ) -> (ResourceContext, Vec<CResourceFact>) {
+    let memory = state.memory();
     let mut added = Vec::new();
     if !supply.facts().contains(&fact) {
         supply = supply.unchecked_with_fact(fact.clone());
         added.push(fact.clone());
     }
-    if definitions.is_empty() || !matches!(fact.resource(), CResource::Composite { .. }) {
+    if definitions.is_empty() {
+        return (supply, added);
+    }
+    if matches!(fact.resource(), CResource::Instance(_)) {
+        // A newly evaluated field-bearing instance publishes its unmatched
+        // body's cells exactly as the section supply does for the instances
+        // the first pass evaluated.
+        for view in unmatched_instance_body_views(&fact, definitions, state, assumptions) {
+            if !supply.facts().contains(&view) {
+                supply = supply.unchecked_with_fact(view.clone());
+                added.push(view);
+            }
+        }
+        return (supply, added);
+    }
+    if !matches!(fact.resource(), CResource::Composite { .. }) {
         return (supply, added);
     }
     let mut pending = VecDeque::from([fact]);
@@ -21406,6 +21528,7 @@ fn function_outcome_from_body_with_resource_transfer(
                 &caller_resources_after_requirements,
                 escrowed_owners(&transfer),
                 &transfer.borrowed_inputs,
+                &transfer_entry_clauses(&transfer),
                 &entry_resource_state,
                 &output_resource_state,
                 function,

@@ -1479,6 +1479,18 @@ range; match it and use a C-typed constructor binding instead. The negative regr
 `mdtests/resource_field_memory_endpoint_rejects_out_of_bounds_fold.md` and
 `mdtests/resource_field_memory_endpoint_unfold_rejects_other_endpoint.md`.
 
+In a contract, a folded field-bearing instance whose body is unconditional and
+unmatched makes the cells its body owns readable to the contract's other
+resource clauses, as a folded field-free composite does:
+`consumes freed: arena_prefix_region(region);` beside
+`consumes before: arena_prefix_state(region->arena);` reads `region->arena`
+through the `object(region)` the region's body owns, in either clause order.
+The cells are views only: writing one still needs an explicit `unfold`, and a
+cell the body does not own stays unreadable
+(`mdtests/contract_owns_through_field_bearing_instance.md`,
+`mdtests/contract_field_bearing_instance_views_grant_no_write.md`,
+`mdtests/contract_field_bearing_instance_views_only_owned_cells.md`).
+
 Unfolding consumes the instance, so its fields have nothing to read afterward:
 `before.prefix` is refused, and so is `old(before.prefix)` in a loop invariant,
 because a loop invariant reads `old(...)` at the loop's entry. The unfold

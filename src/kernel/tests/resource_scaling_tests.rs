@@ -359,3 +359,132 @@ fn field_endpoint_fold_and_unfold_ignore_unrelated_resources() {
     }
     assert_constant_plus_log_growth("field-endpoint fold and unfold", &samples, 16.0);
 }
+
+/// A field-bearing `window(p)` whose unconditional, unmatched body owns
+/// `cells` one-element ranges of `p`, the first starting at its own `start`
+/// field: the body shape whose cells a folded instance publishes as read
+/// authority to its sibling contract clauses.
+fn window_definitions(cells: u32) -> Vec<CCompositeResourceDefinition> {
+    let schema =
+        ResourceFieldSchema::new(vec![("start".into(), ResourceFieldType::C(CType::Int32))])
+            .unwrap();
+    let contains = (0..cells)
+        .map(|cell| {
+            CResourceSpec::owned_memory(CMemorySegment {
+                base: c_variable("p"),
+                start: if cell == 0 {
+                    c_variable("start")
+                } else {
+                    c_int32_literal(cell)
+                },
+                end: c_int32_literal(cell + 1),
+                element_width: 4,
+                guard: None,
+            })
+        })
+        .collect();
+    vec![
+        CCompositeResourceDefinition::new(
+            "window",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            contains,
+            vec![],
+        )
+        .with_instance_schema(Some(schema)),
+    ]
+}
+
+fn window_instance(block: u64, identity: u64) -> CResourceFact {
+    CResourceFact::own(CResource::Instance(
+        ResourceInstance::new(
+            Variable(identity),
+            "window".into(),
+            vec![CValue::pointer(heap_base(block)).into()].into(),
+            ResourceFieldSchema::new(vec![("start".into(), ResourceFieldType::C(CType::Int32))])
+                .unwrap(),
+            vec![int32(0).into()].into(),
+        )
+        .unwrap(),
+    ))
+}
+
+/// The views a section's own folded field-bearing instance publishes cost
+/// that instance's body: the frame the section is evaluated against may hold
+/// any number of unrelated instances of the same family, each with a body
+/// of its own, and none of them is evaluated.
+#[test]
+fn unmatched_instance_body_views_ignore_unrelated_instances() {
+    let definitions = window_definitions(4);
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let frame = ResourceContext::new().unchecked_with_facts((0..size).flat_map(|index| {
+            [
+                owned_range(heap_base(index as u64 + 1), 0, 4),
+                window_instance(index as u64 + 1, TARGET_HEAP + 1 + index as u64),
+            ]
+        }));
+        let state = CState::new().with_resource_context(frame);
+        let target = window_instance(TARGET_HEAP, 2 * TARGET_HEAP);
+        let assumptions = PureFactContext::new();
+        let (supply, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::functions::resource_clause_section_supply(
+                &state,
+                std::slice::from_ref(&target),
+                &definitions,
+                &assumptions,
+            )
+        });
+        let published = supply
+            .facts()
+            .iter()
+            .filter(|fact| {
+                matches!(fact, CResourceFact::View(CResource::Memory(range))
+                    if range.base().block == PointerBlock::Heap(TARGET_HEAP))
+            })
+            .count();
+        assert_eq!(published, 4, "the target body's four cells are published");
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("unmatched instance body views", &samples, 4.0);
+}
+
+/// The same publication grows with the instance's own body: one evaluation
+/// of each owned clause, and nothing more.
+#[test]
+fn unmatched_instance_body_views_are_linear_in_the_body() {
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let definitions = window_definitions(size as u32);
+        let state = CState::new();
+        let target = window_instance(TARGET_HEAP, 2 * TARGET_HEAP);
+        let assumptions = PureFactContext::new();
+        let (supply, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::functions::resource_clause_section_supply(
+                &state,
+                std::slice::from_ref(&target),
+                &definitions,
+                &assumptions,
+            )
+        });
+        let published = supply
+            .facts()
+            .iter()
+            .filter(|fact| matches!(fact, CResourceFact::View(CResource::Memory(_))))
+            .count();
+        assert_eq!(published, size, "every owned cell of the body is published");
+        samples.push((size, work));
+    }
+    eprintln!("unmatched instance body views by body size (N, units): {samples:?}");
+    let (smallest, base_work) = samples[0];
+    let per_clause = base_work as f64 / smallest as f64;
+    for (size, work) in &samples {
+        let allowed = 2.0 * per_clause * *size as f64 + 8.0;
+        assert!(
+            (*work as f64) <= allowed,
+            "a {size}-clause body charged {work} units, above {allowed:.1} (linear in the \
+             body): {samples:?}"
+        );
+    }
+}
