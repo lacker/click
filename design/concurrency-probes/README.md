@@ -134,7 +134,10 @@ structs; compound union member operations remain bounded refusals pending
 typed access and copy support. Pointer uses of the aligned typedef
 `__pthread_unwind_buf_t` now import; value storage still refuses until its
 alignment is represented in allocation and aggregate layout. The frozen import
-now reaches weak linkage on `__pthread_unwind_next` in `pthread.h:753`. GCC `const`,
+now reaches a member alignment attribute in GCC `stddef.h:426` while parsing
+`max_align_t`. Weak linkage, asm symbol labels, and returns-twice annotations
+import with their limits retained; calls needing symbol availability or a
+returns-twice control-flow model are refused. GCC `access`, `const`,
 `nonnull`, `noreturn`, and `deprecated` annotations and standard or GNU
 `restrict` syntax import without granting proof facts. The modeled proof remains separate
 from native runtime validation; importing these headers grants no pthread

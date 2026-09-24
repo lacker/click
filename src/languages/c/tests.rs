@@ -10737,6 +10737,92 @@ fn c0_struct_union_fields_are_copyable_by_value_without_flattening_overlap() {
 }
 
 #[test]
+fn c0_gnu_access_annotation_is_parsed_without_proof_authority() {
+    let declaration = "extern int32 record(void *ptr, int32 count, const char *name) __attribute__((__access__(__none__, 1), __access__(__read_only__, 3, 2)));";
+    syntax::validate_header(declaration, &source::ExpandedLineMap::empty())
+        .expect("well-formed access annotations should import");
+    for attribute in [
+        "__access__(bad, 1)",
+        "__access__(__none__, 0)",
+        "__access__(__none__, 1, 0)",
+    ] {
+        let source = format!("extern int32 record(void *ptr) __attribute__(({attribute}));");
+        assert!(
+            syntax::validate_header(&source, &source::ExpandedLineMap::empty()).is_err(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn c0_asm_labeled_returns_twice_declaration_preserves_link_target_and_refuses_use() {
+    let declaration =
+        "extern int32 jump(void) __asm__(\"\" \"__jump_impl\") __attribute__((__returns_twice__));";
+    let unit = syntax::parse_translation_unit_for_source(
+        declaration,
+        "jump.c",
+        &source::ExpandedLineMap::empty(),
+    )
+    .expect("asm label and returns-twice declaration should import");
+    assert_eq!(
+        unit.function_declarations["jump"].linkage_name(),
+        "__jump_impl"
+    );
+
+    for body in [
+        "int32 caller(void) { return jump(); }",
+        "int32 caller(void) { return jump != 0; }",
+    ] {
+        let error = syntax::parse_functions(&format!("{declaration} {body}"))
+            .expect_err("returns-twice use needs a control-flow model");
+        assert!(
+            error.message().contains("control-flow model"),
+            "{}",
+            error.message()
+        );
+    }
+
+    let error = syntax::parse_functions(
+        "extern int32 a(void) __asm__(\"same\"); extern int32 b(void) __asm__(\"same\");",
+    )
+    .expect_err("two C names may not silently get the same linked identity");
+    assert!(
+        error.message().contains("same linked symbol"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn c0_weak_function_declaration_requires_availability_before_use() {
+    let declaration = "extern int32 optional(void) __attribute__((__weak__));";
+    syntax::validate_header(declaration, &source::ExpandedLineMap::empty())
+        .expect("weak declaration should import");
+
+    for body in [
+        "int32 caller(void) { return optional(); }",
+        "int32 caller(void) { return optional != 0; }",
+    ] {
+        let error = syntax::parse_functions(&format!("{declaration} {body}"))
+            .expect_err("weak use needs symbol availability");
+        assert!(
+            error.message().contains("may be absent"),
+            "{}",
+            error.message()
+        );
+    }
+
+    let error =
+        syntax::parse_functions("int32 optional(void) __attribute__((__weak__)) { return 1; }")
+            .expect_err("weak definitions need explicit linkage semantics");
+    assert!(
+        error.message().contains("linkage model"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn c0_gnu_aligned_typedef_preserves_pointer_only_boundary() {
     let source = "typedef struct { int32 value; } buffer __attribute__((__aligned__)); \
                   int32 inspect(buffer *buf) { return buf->value; }";

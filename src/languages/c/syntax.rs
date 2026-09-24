@@ -6375,6 +6375,8 @@ pub(crate) struct C0FunctionHeader {
     /// instances of a shared header helper.
     name: String,
     internal_linkage: bool,
+    weak_linkage: bool,
+    returns_twice: bool,
     parameters: Vec<C0Parameter>,
 }
 
@@ -6404,6 +6406,9 @@ fn function_headers_compatible(left: &C0FunctionHeader, right: &C0FunctionHeader
         && left.return_struct_name == right.return_struct_name
         && left.return_pointer_struct_name == right.return_pointer_struct_name
         && left.internal_linkage == right.internal_linkage
+        && left.weak_linkage == right.weak_linkage
+        && left.returns_twice == right.returns_twice
+        && left.name == right.name
         && left.parameters.len() == right.parameters.len()
         && left
             .parameters
@@ -7079,18 +7084,39 @@ impl Parser {
     /// out of scope, and a name it does not know at all stay object references
     /// so they keep their ordinary diagnostics. Call positions never reach
     /// here, so `f(x)` remains a call.
-    fn bare_function_designator(&self, source_name: &str) -> Option<C0Expression> {
+    fn bare_function_designator(
+        &self,
+        source_name: &str,
+    ) -> Result<Option<C0Expression>, C0SyntaxError> {
         if self.out_of_scope_names.contains(source_name)
             || self
                 .variable_types
                 .contains_key(&self.resolve_name(source_name))
             || !self.function_declarations.contains_key(source_name)
         {
-            return None;
+            return Ok(None);
         }
-        Some(C0Expression::FunctionAddress(
+        if self
+            .function_declarations
+            .get(source_name)
+            .is_some_and(|header| header.weak_linkage)
+        {
+            return Err(self.error_here(format!(
+                "weak function `{source_name}` may be absent; function-address uses need an availability model"
+            )));
+        }
+        if self
+            .function_declarations
+            .get(source_name)
+            .is_some_and(|header| header.returns_twice)
+        {
+            return Err(self.error_here(format!(
+                "returns-twice function `{source_name}` needs a checked control-flow model"
+            )));
+        }
+        Ok(Some(C0Expression::FunctionAddress(
             self.resolve_function_name(source_name),
-        ))
+        )))
     }
 
     /// Records a parameter or local declaration in the innermost scope. A
@@ -7409,7 +7435,8 @@ impl Parser {
             } else {
                 false
             };
-            let has_always_inline_attribute = self.consume_function_attributes()?;
+            let (has_always_inline_attribute, prefix_weak, prefix_returns_twice) =
+                self.consume_function_attributes()?;
             if is_inline && !is_static {
                 return Err(self.error_here(
                     "inline function definitions require `static inline` or `static __always_inline` in this slice",
@@ -7433,14 +7460,23 @@ impl Parser {
                         .unwrap_or_else(|| "end of input".to_string())
                 )));
             }
-            let header = self.parse_function_header(is_static && is_inline)?;
-            let has_trailing_always_inline_attribute = self.consume_function_attributes()?;
+            let mut header = self.parse_function_header(is_static && is_inline)?;
+            self.consume_function_asm_label(&mut header)?;
+            let (has_trailing_always_inline_attribute, suffix_weak, suffix_returns_twice) =
+                self.consume_function_attributes()?;
+            header.weak_linkage = prefix_weak || suffix_weak;
+            header.returns_twice = prefix_returns_twice || suffix_returns_twice;
             if (has_always_inline_attribute || has_trailing_always_inline_attribute) && !is_static {
                 return Err(self.error_here(
                     "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
                 ));
             }
             if self.peek() == Some(&Token::LBrace) {
+                if header.weak_linkage || header.returns_twice {
+                    return Err(self.error_here(
+                        "weak or returns-twice function definitions need a control-flow and linkage model",
+                    ));
+                }
                 if is_extern {
                     return Err(self.error_here(
                         "`extern` function definitions are not supported; use `extern` only for prototypes",
@@ -7502,7 +7538,8 @@ impl Parser {
             } else {
                 false
             };
-            let has_always_inline_attribute = self.consume_function_attributes()?;
+            let (has_always_inline_attribute, prefix_weak, prefix_returns_twice) =
+                self.consume_function_attributes()?;
             if is_inline && !is_static {
                 return Err(self.error_here(
                     "inline function definitions in headers require `static inline` or `static __always_inline`",
@@ -7521,14 +7558,23 @@ impl Parser {
                         .unwrap_or_else(|| "end of input".to_string())
                 )));
             }
-            let header = self.parse_function_header(is_static && is_inline)?;
-            let has_trailing_always_inline_attribute = self.consume_function_attributes()?;
+            let mut header = self.parse_function_header(is_static && is_inline)?;
+            self.consume_function_asm_label(&mut header)?;
+            let (has_trailing_always_inline_attribute, suffix_weak, suffix_returns_twice) =
+                self.consume_function_attributes()?;
+            header.weak_linkage = prefix_weak || suffix_weak;
+            header.returns_twice = prefix_returns_twice || suffix_returns_twice;
             if (has_always_inline_attribute || has_trailing_always_inline_attribute) && !is_static {
                 return Err(self.error_here(
                     "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
                 ));
             }
             if self.peek() == Some(&Token::LBrace) {
+                if header.weak_linkage || header.returns_twice {
+                    return Err(self.error_here(
+                        "weak or returns-twice function definitions need a control-flow and linkage model",
+                    ));
+                }
                 if is_extern || !is_static || !is_inline {
                     self.pop_scope();
                     return Err(self.error_here(format!(
@@ -7560,9 +7606,19 @@ impl Parser {
         &mut self,
         internal_linkage: bool,
     ) -> Result<C0Function, C0SyntaxError> {
-        let prefix_inline = self.consume_function_attributes()?;
-        let header = self.parse_function_header(internal_linkage)?;
-        let suffix_inline = self.consume_function_attributes()?;
+        let (prefix_inline, prefix_weak, prefix_returns_twice) =
+            self.consume_function_attributes()?;
+        let mut header = self.parse_function_header(internal_linkage)?;
+        self.consume_function_asm_label(&mut header)?;
+        let (suffix_inline, suffix_weak, suffix_returns_twice) =
+            self.consume_function_attributes()?;
+        header.weak_linkage = prefix_weak || suffix_weak;
+        header.returns_twice = prefix_returns_twice || suffix_returns_twice;
+        if header.weak_linkage || header.returns_twice {
+            return Err(self.error_here(
+                "weak or returns-twice function definitions need a control-flow and linkage model",
+            ));
+        }
         if (prefix_inline || suffix_inline) && !internal_linkage {
             return Err(self.error_here(
                 "the GNU always-inline attribute requires `static inline` or `static __always_inline`",
@@ -7738,6 +7794,8 @@ impl Parser {
             source_name,
             name,
             internal_linkage,
+            weak_linkage: false,
+            returns_twice: false,
             parameters,
         })
     }
@@ -7749,8 +7807,10 @@ impl Parser {
     /// `leaf`, `const`, `nonnull`, `noreturn`, and `deprecated` are also accepted without using their
     /// restrictions as proof assumptions. Calls retain their ordinary checked
     /// contracts, including their ordinary argument obligations.
-    fn consume_function_attributes(&mut self) -> Result<bool, C0SyntaxError> {
+    fn consume_function_attributes(&mut self) -> Result<(bool, bool, bool), C0SyntaxError> {
         let mut always_inline = false;
+        let mut weak = false;
+        let mut returns_twice = false;
         while self.peek_ident() == Some("__attribute__") {
             self.position += 1;
             self.expect(Token::LParen)?;
@@ -7759,6 +7819,40 @@ impl Parser {
                 let attribute = self.expect_ident("GNU function attribute")?;
                 match attribute.as_str() {
                     "always_inline" | "__always_inline__" => always_inline = true,
+                    "weak" | "__weak__" => weak = true,
+                    "returns_twice" | "__returns_twice__" => returns_twice = true,
+                    "access" | "__access__" => {
+                        self.expect(Token::LParen)?;
+                        let mode = self.expect_ident("GNU access mode")?;
+                        if !matches!(
+                            mode.as_str(),
+                            "none" | "__none__" | "read_only" | "__read_only__"
+                                | "read_write" | "__read_write__" | "write_only"
+                                | "__write_only__"
+                        ) {
+                            return Err(self.error_at_previous(format!(
+                                "unsupported GNU access mode `{mode}`"
+                            )));
+                        }
+                        self.expect(Token::Comma)?;
+                        for argument in ["pointer", "size"] {
+                            let Some(Token::Number(index)) = self.next() else {
+                                return Err(self.error_at_previous(format!(
+                                    "GNU access {argument} index must be positive"
+                                )));
+                            };
+                            if index.parse::<u32>().ok().filter(|index| *index > 0).is_none() {
+                                return Err(self.error_at_previous(format!(
+                                    "GNU access {argument} index must be positive"
+                                )));
+                            }
+                            if self.peek() != Some(&Token::Comma) {
+                                break;
+                            }
+                            self.position += 1;
+                        }
+                        self.expect(Token::RParen)?;
+                    }
                     "nothrow" | "__nothrow__" | "leaf" | "__leaf__" | "const"
                     | "__const__" | "noreturn" | "__noreturn__" | "deprecated"
                     | "__deprecated__" => {},
@@ -7785,7 +7879,7 @@ impl Parser {
                         }
                     }
                     _ => return Err(self.error_at_previous(format!(
-                        "unsupported GNU function attribute `{attribute}`; only `always_inline`, `nothrow`, `leaf`, `const`, `nonnull`, `noreturn`, and `deprecated` are supported in this slice"
+                        "unsupported GNU function attribute `{attribute}`; only `always_inline`, `nothrow`, `leaf`, `const`, `nonnull`, `noreturn`, `deprecated`, `weak`, `returns_twice`, and `access` are supported in this slice"
                     ))),
                 }
                 if self.peek() != Some(&Token::Comma) {
@@ -7796,7 +7890,39 @@ impl Parser {
             self.expect(Token::RParen)?;
             self.expect(Token::RParen)?;
         }
-        Ok(always_inline)
+        Ok((always_inline, weak, returns_twice))
+    }
+
+    /// A declaration's GNU asm label changes the linked symbol, not its C
+    /// source spelling. Adjacent string literals are concatenated as in C.
+    fn consume_function_asm_label(
+        &mut self,
+        header: &mut C0FunctionHeader,
+    ) -> Result<(), C0SyntaxError> {
+        if self.peek_ident() != Some("__asm__") {
+            return Ok(());
+        }
+        if header.internal_linkage {
+            return Err(self.error_here("GNU asm labels on inline functions are not supported"));
+        }
+        self.position += 1;
+        self.expect(Token::LParen)?;
+        let mut bytes = Vec::new();
+        let mut count = 0;
+        while let Some(Token::StringLiteral(_)) = self.peek() {
+            let Some(Token::StringLiteral(piece)) = self.next() else {
+                unreachable!();
+            };
+            bytes.extend(piece);
+            count += 1;
+        }
+        if count == 0 || bytes.is_empty() || bytes.contains(&0) {
+            return Err(self.error_here("GNU function asm label needs a nonempty string"));
+        }
+        self.expect(Token::RParen)?;
+        header.name = String::from_utf8(bytes)
+            .map_err(|_| self.error_here("GNU function asm label must be UTF-8"))?;
+        Ok(())
     }
 
     /// Consume the one layout-affecting GNU attribute needed by the imported
@@ -7832,6 +7958,14 @@ impl Parser {
         header: &C0FunctionHeader,
         definition: bool,
     ) -> Result<(), C0SyntaxError> {
+        if let Some(previous_source) = self.function_source_names.get(&header.name)
+            && previous_source != &header.source_name
+        {
+            return Err(self.error_here(format!(
+                "functions `{previous_source}` and `{}` have the same linked symbol `{}`",
+                header.source_name, header.name
+            )));
+        }
         self.function_declaration_lines
             .entry(header.source_name.clone())
             .or_default()
@@ -16274,6 +16408,30 @@ impl Parser {
                             ));
                         }
                     };
+                    if self
+                        .function_declarations
+                        .get(&source_name)
+                        .is_some_and(|header| header.weak_linkage)
+                    {
+                        return Err(self.error_at_position(
+                            call_position,
+                            format!(
+                                "weak function `{source_name}` may be absent; calls need an availability model"
+                            ),
+                        ));
+                    }
+                    if self
+                        .function_declarations
+                        .get(&source_name)
+                        .is_some_and(|header| header.returns_twice)
+                    {
+                        return Err(self.error_at_position(
+                            call_position,
+                            format!(
+                                "returns-twice function `{source_name}` needs a checked control-flow model"
+                            ),
+                        ));
+                    }
                     let arguments = self.parse_call_arguments(Some(&source_name))?;
                     if let Some(result) = self.parse_kernel_primitive_expression(
                         &source_name,
@@ -17475,7 +17633,7 @@ impl Parser {
                     // different C source. The translation-unit linker
                     // resolves that name after each source is parsed.
                     Ok(C0Expression::Variable(self.resolve_name(&name)))
-                } else if let Some(address) = self.bare_function_designator(&name) {
+                } else if let Some(address) = self.bare_function_designator(&name)? {
                     Ok(address)
                 } else {
                     Ok(C0Expression::Variable(
