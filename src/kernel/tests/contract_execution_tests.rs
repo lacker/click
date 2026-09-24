@@ -3445,6 +3445,41 @@ fn effect_endpoint_allows_resource_allocation_bookkeeping() {
 }
 
 #[test]
+fn bool_range_fact_requires_a_structurally_normalized_bool() {
+    let variable = Bitvector32Term::Variable(Variable(1));
+    let normalized = bool_value(variable.clone());
+    let CValue::Bool(term) = &normalized else {
+        panic!("bool_value builds a `_Bool` value");
+    };
+    let equals = |constant| {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(term.clone()),
+                Box::new(Bitvector32Term::Constant(constant)),
+            ),
+            true,
+        )
+    };
+    assert_eq!(
+        c_bool_range_fact(&normalized),
+        Some(Proposition::Or(Box::new(equals(0)), Box::new(equals(1))))
+    );
+    // A bare term, an arm outside `{0, 1}`, a constant, and a non-`_Bool`
+    // value state nothing the term's shape does not prove.
+    assert_eq!(c_bool_range_fact(&CValue::Bool(variable.clone())), None);
+    assert_eq!(
+        c_bool_range_fact(&CValue::Bool(Bitvector32Term::if_then_else(
+            ConditionTerm::Variable(Variable(2)),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(2),
+        ))),
+        None
+    );
+    assert_eq!(c_bool_range_fact(&bool_value(5)), None);
+    assert_eq!(c_bool_range_fact(&int32(variable)), None);
+}
+
+#[test]
 fn contract_claim_rejects_caller_supplied_false_entry_fact() {
     let function = c_function(
         CType::Int32,

@@ -76,6 +76,47 @@ pub fn bool_value(bits: impl Into<Bitvector32Term>) -> CValue {
     ))
 }
 
+/// The range fact `value == 0 or value == 1` of a `_Bool` rvalue, when its
+/// term is structurally normalized.
+///
+/// A C `_Bool` object holds only `0` or `1`, and a `_Bool` value built by
+/// [`bool_value`] or by a symbolic `_Bool` load is a conditional whose arms
+/// are exactly those constants. Neither disjunct is provable alone, so without
+/// this fact a proof would need an explicit case split to state the type's
+/// own range. The fact is returned only when every leaf of the term is the
+/// constant `0` or `1`, so it is context-free true by construction and never
+/// trusts the `CValue::Bool` invariant. A constant has nothing left to state
+/// and yields `None`. The walk is bounded by the term's conditional spine.
+pub(crate) fn c_bool_range_fact(value: &CValue) -> Option<Proposition> {
+    fn leaves_are_zero_or_one(term: &Bitvector32Term) -> bool {
+        match term {
+            Bitvector32Term::Constant(0 | 1) => true,
+            Bitvector32Term::If {
+                then_term,
+                else_term,
+                ..
+            } => leaves_are_zero_or_one(then_term) && leaves_are_zero_or_one(else_term),
+            _ => false,
+        }
+    }
+    let CValue::Bool(term) = value else {
+        return None;
+    };
+    if !matches!(term, Bitvector32Term::If { .. }) || !leaves_are_zero_or_one(term) {
+        return None;
+    }
+    let equals = |constant| {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(term.clone()),
+                Box::new(Bitvector32Term::Constant(constant)),
+            ),
+            true,
+        )
+    };
+    Some(Proposition::Or(Box::new(equals(0)), Box::new(equals(1))))
+}
+
 pub fn int8(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::Int8(bits.into())
 }

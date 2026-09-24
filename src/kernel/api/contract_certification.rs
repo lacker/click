@@ -1458,6 +1458,17 @@ pub(super) fn c_function_contract_certification_assumptions(
             assumptions = assumptions.assume_proposition(fact.clone());
         }
     }
+    // A `_Bool` parameter holds `0` or `1`. Its entry value is a normalized
+    // conditional over those constants, so the range disjunction is
+    // context-free true; `c_bool_range_fact` checks that shape.
+    for (parameter, argument) in function.parameters().iter().zip(arguments) {
+        if parameter.c_type() == CType::Bool
+            && let CExpression::Value(value) = argument
+            && let Some(fact) = c_bool_range_fact(value)
+        {
+            assumptions = assumptions.assume_proposition(fact);
+        }
+    }
     let mut requirement_obligations = Vec::new();
     for (requirement_index, requirement) in function.contract_requires().iter().enumerate() {
         let lowering_assumptions = assumptions

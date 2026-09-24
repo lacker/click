@@ -225,11 +225,6 @@ impl<'a> Proof<'a> {
                 &current_state,
                 transition.pure_facts.assumptions(),
             );
-            if resolved_state.memory().has_pending_heap_allocation() {
-                return Err(self.step_error(
-                    "checked `branch` cannot yet own an unresolved heap-allocation outcome split",
-                ));
-            }
             arm_execution.core.frontier.next_statement_index = if take_then {
                 then_statement_index
             } else {

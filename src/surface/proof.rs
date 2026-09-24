@@ -1947,6 +1947,17 @@ pub(super) fn initial_claim_context(
     ))
 }
 
+/// The surface spelling `name == 0 or name == 1` of a `_Bool` parameter's
+/// range entry fact.
+fn bool_range_surface(name: &str) -> ClickProposition {
+    let equals = |constant: &str| ClickProposition::Comparison {
+        left: ContractExpression::CBinding(name.to_string()),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::IntegerLiteral(constant.to_string()),
+    };
+    ClickProposition::Or(Box::new(equals("0")), Box::new(equals("1")))
+}
+
 pub(super) fn initial_claim_context_with_caller_owner(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -2141,6 +2152,23 @@ pub(super) fn initial_claim_context_with_caller_owner(
         });
     }
     requirement_pure_facts.extend(population_facts);
+    // Each `_Bool` parameter's range, `flag == 0 or flag == 1`, is a
+    // derived entry fact the kernel certifies from the parameter's normalized
+    // value; without it a disjunction such as `result == 0 or result == 1`
+    // would need an explicit case split on the parameter. Its surface
+    // spelling is recorded below so a proof search can case on it.
+    let bool_range_facts = parsed_function
+        .parameters()
+        .iter()
+        .zip(&arguments)
+        .filter(|(parameter, _)| matches!(parameter.c_type(), syntax::C0Type::Bool))
+        .filter_map(|(parameter, argument)| match argument {
+            CExpression::Value(value) => crate::kernel::c_bool_range_fact(value)
+                .map(|fact| (bool_range_surface(parameter.name()), fact)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    requirement_pure_facts.extend(bool_range_facts.iter().map(|(_, fact)| fact.clone()));
     entry_fact_origins.resize(requirement_pure_facts.len(), EntryFactOrigin::Derived);
     // The lowerings of requirements that mention `defined(...)` at this
     // folded state; they are replaced at the definedness state below.
@@ -2181,6 +2209,9 @@ pub(super) fn initial_claim_context_with_caller_owner(
         .flatten()
         .collect::<Vec<_>>();
     let mut surface_propositions = SurfacePropositionMap::default();
+    for (surface, kernel) in &bool_range_facts {
+        surface_propositions.record_lowering(surface, kernel)?;
+    }
     for requirement in function_block.requires() {
         let surface = match requirement.inner() {
             Requirement::Proposition(proposition) => Some(proposition.clone()),
