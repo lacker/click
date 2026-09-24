@@ -813,6 +813,43 @@ impl PureFactContext {
         result
     }
 
+    /// The other terms exact equality facts join to `term`: its equality
+    /// class in the int32 equality graph, less `term` itself, in canonical
+    /// form. Empty when no equality fact mentions `term`.
+    ///
+    /// Work is the class the search reaches and the edges inside it, never
+    /// the whole fact set once the graph is built, so an index keyed by
+    /// syntactic endpoints can also look an endpoint up under the spellings
+    /// the premises make equal to it.
+    pub(in crate::kernel) fn bitvector_equality_class(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Vec<Bitvector32Term> {
+        let equality_index = self.bitvector_equality_index();
+        if equality_index.is_empty() {
+            return Vec::new();
+        }
+        let start = equality_graph_term_key(term);
+        if !equality_index.contains_key(&start) {
+            return Vec::new();
+        }
+        let mut seen = BTreeSet::from([start.clone()]);
+        let mut stack = vec![start.clone()];
+        while let Some(current) = stack.pop() {
+            crate::instrumentation::record_deterministic_work(1);
+            if let Some(neighbors) = equality_index.get(&current) {
+                for neighbor in neighbors.keys() {
+                    if seen.insert(neighbor.clone()) {
+                        stack.push(neighbor.clone());
+                    }
+                }
+            }
+        }
+        seen.remove(&start);
+        seen.remove(term);
+        seen.into_iter().collect()
+    }
+
     /// The equality-graph search behind [`Self::bitvector_terms_equal_from_facts`].
     /// This search is pure — it consults no fuel or depth guards — so both
     /// positive and negative results are memoizable by content identity.

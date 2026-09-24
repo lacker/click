@@ -3061,6 +3061,20 @@ fn synthesize_local_indexed_int32_load(
         let CValue::Pointer(base) = value else {
             return None;
         };
+        // `local[index]` is the C spelling only when the local is the base
+        // the address was formed from: the address is the local's own offset
+        // plus an index. Two unrelated pointers into one symbolic block (a
+        // struct-pointer local and an array it points to, both external)
+        // also have a numeric difference, but indexing the local by it names
+        // a different C expression, one that reads the local as an `int32`
+        // array and lowers to a different address term.
+        if pointer.block != base.block
+            || !(base.offset == PointerOffsetTerm::Constant(0)
+                || matches!(&pointer.offset, PointerOffsetTerm::Add(left, right)
+                    if left.as_ref() == &base.offset || right.as_ref() == &base.offset))
+        {
+            return None;
+        }
         let element_width = base.c_type().pointee_type()?.byte_width();
         let index = pointer.element_index_from_base_with_width(base, element_width)?;
         if index == Bitvector32Term::Constant(0) {

@@ -488,3 +488,82 @@ fn unmatched_instance_body_views_are_linear_in_the_body() {
         );
     }
 }
+
+fn variable_range(base: Pointer, start: Bitvector32Term, end: Bitvector32Term) -> CResourceFact {
+    CResourceFact::own_memory(CMemoryRange::new(base, start, end))
+}
+
+fn int32_equal(left: u64, right: u64) -> ConditionTerm {
+    ConditionTerm::Bitvector32Equal(
+        Box::new(Bitvector32Term::Variable(Variable(left))),
+        Box::new(Bitvector32Term::Variable(Variable(right))),
+    )
+}
+
+/// Two held ranges that abut only by a proved endpoint equality merge in
+/// normalization, and finding the partner costs the endpoint's equality
+/// class: unrelated equalities among other values add no work.
+#[test]
+fn joining_ranges_by_a_proved_endpoint_ignores_unrelated_equalities() {
+    let (end, start) = (3 * TARGET_HEAP, 3 * TARGET_HEAP + 1);
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let frame = ResourceContext::new().unchecked_with_facts([
+            variable_range(
+                heap_base(TARGET_HEAP),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Variable(Variable(end)),
+            ),
+            variable_range(
+                heap_base(TARGET_HEAP),
+                Bitvector32Term::Variable(Variable(start)),
+                Bitvector32Term::Constant(16),
+            ),
+        ]);
+        let assumptions = (0..size as u64).fold(
+            PureFactContext::new().assume_condition(int32_equal(end, start), true),
+            |facts, index| {
+                facts.assume_condition(
+                    int32_equal(4 * TARGET_HEAP + 2 * index, 4 * TARGET_HEAP + 2 * index + 1),
+                    true,
+                )
+            },
+        );
+        // The premise set's lazy indexes (the equality graph and the ones
+        // any normalization consults) are built once per premise set and
+        // shared by every later query. Warm them on an unrelated merge of
+        // identically spelled endpoints so the measurement below is the
+        // join alone.
+        let warm = ResourceContext::new().unchecked_with_facts([
+            variable_range(
+                heap_base(TARGET_HEAP + 1),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Variable(Variable(end)),
+            ),
+            variable_range(
+                heap_base(TARGET_HEAP + 1),
+                Bitvector32Term::Variable(Variable(end)),
+                Bitvector32Term::Constant(16),
+            ),
+        ]);
+        assert_eq!(warm.normalized(&assumptions).facts().len(), 1);
+        assert!(assumptions.bitvector_terms_equal_from_facts(
+            &Bitvector32Term::Variable(Variable(end)),
+            &Bitvector32Term::Variable(Variable(start)),
+        ));
+        let (normalized, work) = crate::instrumentation::measure_deterministic_work(|| {
+            frame.clone().normalized(&assumptions)
+        });
+        assert_eq!(
+            normalized.facts(),
+            &[variable_range(
+                heap_base(TARGET_HEAP),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(16),
+            )],
+            "the two ranges join into one"
+        );
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("joining by a proved endpoint", &samples, 4.0);
+}

@@ -1967,7 +1967,11 @@ particular syntactic spelling of that pointer.
 A call can pass a covered subrange, such as consuming `p[0..1]` from a caller
 that owns `p[0..2]`; Click keeps the residue and rejoins adjacent returned
 ranges. The same applies to symbolic ranges when the current facts prove the
-subrange is covered. Viewed and owned memory elements also make the covered
+subrange is covered. Two held ranges are adjacent when one ends where the
+other starts as written or by an exact equality premise, so `p[0..n]` and
+`p[m..4]` under `n == m` rejoin into `p[0..4]`; a gap between them is never
+bridged (`mdtests/fold_joins_ranges_abutting_by_proved_equality.md`,
+`mdtests/fold_join_needs_the_endpoint_equality.md`). Viewed and owned memory elements also make the covered
 range viewable for symbolic execution, so ordinary external reads and writes
 do not need a separate `viewable(...)` requirement for the same range.
 

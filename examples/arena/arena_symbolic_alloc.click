@@ -48,15 +48,11 @@ resource arena_prefix_state(arena: struct arena*) {
     );
 }
 
-resource arena_prefix_region(
-    arena: struct arena*,
-    region: struct region*
-) {
+resource arena_prefix_region(region: struct region*) {
     field start: int32;
     field end: int32;
     owns object(region);
-    owns arena->data[start..end];
-    fact region->arena == arena;
+    owns region->arena->data[start..end];
     fact region->start == start;
     fact region->end == end;
     fact 0 <= start;
@@ -77,7 +73,7 @@ resource arena_prefix_alloc_result(
         },
         ArenaPrefixAllocOutcome::Success(prefix, live, start, end) => {
             owns state: arena_prefix_state(arena);
-            owns allocated: arena_prefix_region(arena, region);
+            owns allocated: arena_prefix_region(region);
             fact state.prefix == prefix;
             fact state.live == live;
             fact allocated.start == start;
@@ -815,7 +811,7 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
     have result == 1 by {
         normalize();
     }
-    let allocated = fold(arena_prefix_region(arena, region), {
+    let allocated = fold(arena_prefix_region(region), {
         start: p, end: p + count
     });
     let state = fold(arena_prefix_state(arena), {
@@ -861,4 +857,393 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
     assumption();
     assumption();
     assumption();
+}
+
+verifying "arena_free.c";
+
+void arena_free(struct region* region) {
+    consumes freed: arena_prefix_region(region);
+    consumes before: arena_prefix_state(region->arena);
+    requires freed.end == before.prefix;
+    requires 1 <= before.live;
+    requires before.live - 1 <= freed.start;
+    produces object(region);
+    produces after: arena_prefix_state(region->arena);
+
+    ensures region->arena == old(region->arena);
+    ensures after.prefix == old(freed.start);
+    ensures after.live == old(before.live) - 1;
+} by {
+    let { partition: partition, prefix: p, live: n } = unfold(before);
+    let { start: s, end: e } = unfold(freed);
+    unfold(partition);
+    step();
+    step();
+    step();
+    step();
+    mark before_clear;
+    loop as clear_occupied {
+        decreases region->end - i;
+        invariant region->start <= i and i <= region->end;
+        invariant forall (k: int32) {
+            region->start <= k and k < i implies arena->occupied[k] == 0
+        };
+        owns arena->occupied[region->start..region->end];
+        initialize by {
+            have region->start < region->end by {
+                simp() using {
+                    region->start == s;
+                    region->end == e;
+                    s < e;
+                }
+            }
+            have i == region->start by {
+                simp();
+            }
+            have region->start <= i and i <= region->end by {
+                simp();
+            }
+            have forall (k: int32) {
+                region->start <= k and k < i implies
+                    arena->occupied[k] == 0
+            } by {
+                intro();
+                intro();
+                extract(region->start <= k);
+                extract(k < i);
+                have not (k < i) by {
+                    rewrite(i == region->start);
+                    arithmetic() using { region->start <= k; }
+                }
+                contradiction(k < i);
+            }
+        }
+        preserve by {
+            mark iteration;
+            have region->start == s by {
+                assumption();
+            }
+            have region->end == e by {
+                assumption();
+            }
+            have i + 1 <= region->end by {
+                apply(int32_increment_upper_bound(i, region->end)) using {
+                    i < region->end;
+                }
+            }
+            have region->start <= i + 1 by {
+                apply(int32_increment_lower_bound(
+                    i,
+                    region->start,
+                    region->end
+                )) using {
+                    region->start <= i;
+                    i < region->end;
+                }
+            }
+            have 0 <= region->start by {
+                rewrite(region->start == s);
+                assumption();
+            }
+            have 0 <= i by {
+                apply(int32_le_transitive(0, region->start, i)) using {
+                    0 <= region->start;
+                    region->start <= i;
+                }
+            }
+            have 0 <= region->end by {
+                arithmetic() using {
+                    0 <= i;
+                    i < region->end;
+                }
+            }
+            step();
+            step();
+            have 0 <= 0 - at(iteration, i) + region->end - 1 by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    0 <= region->end;
+                    at(iteration, i) < region->end;
+                }
+            }
+            have 0 - at(iteration, i) + region->end - 1
+                < 0 - at(iteration, i) + region->end by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    0 <= region->end;
+                    at(iteration, i) < region->end;
+                }
+            }
+            have i == at(iteration, i) + 1 by {
+                normalize();
+            }
+            have region->start <= i and i <= region->end by {
+                rewrite(i == at(iteration, i) + 1);
+                split();
+            }
+            have forall (k: int32) {
+                region->start <= k and k < i implies
+                    arena->occupied[k] == 0
+            } by {
+                intro();
+                intro();
+                extract(region->start <= k);
+                extract(k < i);
+                if k < at(iteration, i) {
+                    have k != at(iteration, i) by {
+                        apply(int32_lt_implies_neq(
+                            k,
+                            at(iteration, i)
+                        )) using {
+                            k < at(iteration, i);
+                        }
+                    }
+                    have at(iteration, arena->occupied[k]) == 0 by {
+                        instantiate(forall (j: int32) {
+                            at(iteration, region->start) <=
+                                at(iteration, j) and
+                                at(iteration, j) < at(iteration, i) implies
+                                at(iteration, arena->occupied[j]) ==
+                                    at(iteration, 0)
+                        }, k) using {
+                            region->start <= k;
+                            k < at(iteration, i);
+                        }
+                        assumption();
+                    }
+                    transport(
+                        at(iteration, arena->occupied[k]) == 0,
+                        arena->occupied[k] == 0
+                    ) using {
+                        at(iteration, arena->occupied[k]) == 0;
+                        region->start <= k;
+                        k < at(iteration, i);
+                        k != at(iteration, i);
+                    }
+                } else {
+                    have k < at(iteration, i) + 1 by {
+                        rewrite(i == at(iteration, i) + 1);
+                        assumption();
+                    }
+                    have k <= at(iteration, i) by {
+                        apply(int32_lt_successor_implies_le(
+                            k,
+                            at(iteration, i)
+                        )) using {
+                            k < at(iteration, i) + 1;
+                        }
+                    }
+                    have k == at(iteration, i) by {
+                        apply(int32_le_and_not_lt_implies_eq(
+                            k,
+                            at(iteration, i)
+                        )) using {
+                            k <= at(iteration, i);
+                            not (k < at(iteration, i));
+                        }
+                    }
+                    rewrite(k == at(iteration, i));
+                    normalize();
+                }
+            }
+            have region->end <= arena->capacity by {
+                simp();
+            }
+            have arena->capacity <= 536870911 by {
+                simp();
+            }
+            have 0 <= region->start by {
+                simp();
+            }
+            close_invariants by {
+                both {
+                    intro();
+                    intro();
+                    simp();
+                } and {
+                    both {
+                        intro();
+                        intro();
+                        instantiate(forall (k: int32) {
+                            region->start <= k and k < i implies
+                                arena->occupied[k] == 0
+                        }, __click_q0) using {
+                            region->start <= __click_q0 and __click_q0 < i;
+                        }
+                        transport(
+                            arena->occupied[__click_q0] == 0,
+                            viewable((load_int32_pointer(
+                                byte_offset(arena, 8)
+                            ) + __click_q0)[0..1])
+                        ) using {
+                            arena->occupied[__click_q0] == 0;
+                            region->start <= __click_q0 and __click_q0 < i;
+                            region->start <= i and i <= region->end;
+                            0 <= region->start;
+                            region->end <= arena->capacity;
+                            arena->capacity <= 536870911;
+                        }
+                    } and {
+                        both {
+                            intro();
+                            intro();
+                            assumption();
+                        } and {
+                            both {
+                                assumption();
+                            } and {
+                                assumption();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    have region->start == s by {
+        assumption();
+    }
+    have region->end == e by {
+        assumption();
+    }
+    have i == region->end by {
+        apply(int32_le_and_not_lt_implies_eq(i, region->end)) using {
+            i <= region->end;
+            not (i < region->end);
+        }
+    }
+    have s <= p by {
+        simp();
+    }
+    have forall (k: int32) {
+        0 <= k and k < s implies arena->occupied[k] == 1
+    } by {
+        intro();
+        intro();
+        extract(0 <= k);
+        extract(k < s);
+        have k < p by {
+            apply(int32_lt_le_transitive(k, s, p)) using {
+                k < s;
+                s <= p;
+            }
+        }
+        have at(before_clear, arena->occupied[k]) == 1 by {
+            instantiate(forall (j: int32) {
+                at(before_clear, 0) <= at(before_clear, j) and
+                    at(before_clear, j) < at(before_clear, p) implies
+                    at(before_clear, arena->occupied[j]) ==
+                        at(before_clear, 1)
+            }, k) using {
+                0 <= k;
+                k < p;
+            }
+            assumption();
+        }
+        have k < region->start by {
+            rewrite(region->start == s);
+            assumption();
+        }
+        transport(
+            at(before_clear, arena->occupied[k]) == 1,
+            arena->occupied[k] == 1
+        ) using {
+            at(before_clear, arena->occupied[k]) == 1;
+            0 <= k;
+            k < region->start;
+        }
+    }
+    have forall (k: int32) {
+        s <= k and k < arena->capacity implies arena->occupied[k] == 0
+    } by {
+        intro();
+        intro();
+        extract(s <= k);
+        extract(k < arena->capacity);
+        if k < e {
+            have region->start <= k by {
+                rewrite(region->start == s);
+                assumption();
+            }
+            have k < i by {
+                rewrite(i == region->end);
+                rewrite(region->end == e);
+                assumption();
+            }
+            instantiate(forall (j: int32) {
+                region->start <= j and j < i implies
+                    arena->occupied[j] == 0
+            }, k) using {
+                region->start <= k;
+                k < i;
+            }
+            assumption();
+        } else {
+            have e <= k by {
+                arithmetic() using { not (k < e); }
+            }
+            have e == p by {
+                assumption();
+            }
+            have p <= k by {
+                simp() using {
+                    e <= k;
+                    e == p;
+                }
+            }
+            have at(before_clear, arena->occupied[k]) == 0 by {
+                instantiate(forall (j: int32) {
+                    at(before_clear, p) <= at(before_clear, j) and
+                        at(before_clear, j) <
+                            at(before_clear, arena->capacity) implies
+                        at(before_clear, arena->occupied[j]) ==
+                            at(before_clear, 0)
+                }, k) using {
+                    p <= k;
+                    k < arena->capacity;
+                }
+                assumption();
+            }
+            have region->end <= k by {
+                simp() using {
+                    e <= k;
+                    region->end == e;
+                    i == region->end;
+                }
+            }
+            have 0 <= region->start by {
+                simp();
+            }
+            have region->start <= region->end by {
+                simp();
+            }
+            have arena->capacity <= 536870911 by {
+                simp();
+            }
+            transport(
+                at(before_clear, arena->occupied[k]) == 0,
+                arena->occupied[k] == 0
+            ) using {
+                at(before_clear, arena->occupied[k]) == 0;
+                region->end <= k;
+                k < arena->capacity;
+                arena->capacity <= 536870911;
+                0 <= region->start;
+                region->start <= region->end;
+            }
+        }
+    }
+    let partition = fold(arena_prefix_partition(
+        arena->data,
+        arena->occupied,
+        arena->capacity
+    ), {
+        prefix: s
+    });
+    step();
+    let after = fold(arena_prefix_state(arena), {
+        prefix: s, live: n - 1
+    }, { partition: partition });
+    execute();
+    simp();
 }
