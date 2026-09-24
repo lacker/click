@@ -531,8 +531,34 @@ pub(super) fn describe_missing_resource_fact(
     arguments: &[CExpression],
     execution_pure_facts: &[ExecutionPureFact],
 ) -> String {
+    let mut note = String::new();
+    if let CResource::Iterated(required_iterated) = required.resource()
+        && let Some(held) = resource_facts
+            .iter()
+            .find_map(|fact| match fact.resource() {
+                CResource::Iterated(held)
+                    if held.owner() == required_iterated.owner() && !held.holes().is_empty() =>
+                {
+                    Some(held)
+                }
+                _ => None,
+            })
+    {
+        note = format!(
+            "\n  note: the held iterated ownership of `{}` has index {} taken out, and at a fold it must hold exactly the elements whose guard is true; `give` each element back, or store a guard value that makes its guard false, before folding",
+            held.owner(),
+            held.holes()
+                .iter()
+                .map(|hole| format!(
+                    "`{}`",
+                    describe_bitvector_with_context(hole, parameters, arguments)
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     format!(
-        "missing resource fact `{}`\n  {}",
+        "missing resource fact `{}`{note}\n  {}",
         describe_resource_fact(required, parameters, arguments),
         describe_available_facts(
             pure_facts,
@@ -1028,10 +1054,63 @@ pub(super) fn describe_resource_fact(
             "views {}",
             format_declared_resource(name, resource_arguments, parameters, arguments)
         ),
+        CResourceFact::Own(CResource::Iterated(iterated), _)
+        | CResourceFact::View(CResource::Iterated(iterated)) => format!(
+            "{} {}",
+            if resource.is_own() { "owns" } else { "views" },
+            describe_iterated_memory(iterated, parameters, arguments)
+        ),
         CResourceFact::Own(CResource::Memory(_), _) | CResourceFact::View(CResource::Memory(_)) => {
             unreachable!("memory resources handled above")
         }
     }
+}
+
+/// One iterated guarded-ownership fact, spelled as the clause it came from:
+/// the bounded index, the guard, and the element range at that index, plus
+/// the indices currently taken out.
+pub(in crate::surface) fn describe_iterated_memory(
+    iterated: &crate::kernel::CIteratedMemory,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let index = Bitvector32Term::Variable(crate::kernel::Variable(u64::MAX - 7));
+    let element = iterated.element_range(&index);
+    let spelled_index = describe_bitvector_with_context(&index, parameters, arguments);
+    let element = format!(
+        "{}[{}..{}]",
+        describe_pointer(element.base(), parameters, arguments),
+        describe_bitvector_with_context(element.start(), parameters, arguments),
+        describe_bitvector_with_context(element.end(), parameters, arguments)
+    )
+    .replace(&spelled_index, "k");
+    let guard_base = describe_pointer(iterated.guard().base(), parameters, arguments);
+    let mut text = format!(
+        "forall k in {}..{} where {}[k] {} {}: {} (the iterated clause of `{}`)",
+        describe_bitvector_with_context(iterated.lower(), parameters, arguments),
+        describe_bitvector_with_context(iterated.upper(), parameters, arguments),
+        guard_base,
+        if iterated.guard().holds_when_equal() {
+            "=="
+        } else {
+            "!="
+        },
+        describe_bitvector_with_context(iterated.guard().value(), parameters, arguments),
+        element,
+        iterated.owner()
+    );
+    if !iterated.holes().is_empty() {
+        text.push_str(&format!(
+            ", with index {} taken out",
+            iterated
+                .holes()
+                .iter()
+                .map(|hole| describe_bitvector_with_context(hole, parameters, arguments))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    text
 }
 
 fn describe_c_resource(
@@ -1057,6 +1136,7 @@ fn describe_c_resource(
             name,
             arguments: resource_arguments,
         } => format_declared_resource(name, resource_arguments, parameters, arguments),
+        CResource::Iterated(iterated) => describe_iterated_memory(iterated, parameters, arguments),
     }
 }
 

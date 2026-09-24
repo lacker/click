@@ -935,6 +935,9 @@ fn collect_resource_clause_binding_names(resource: &ResourceClause, names: &mut 
                 collect_contract_expression_binding_names(argument, names);
             }
         }
+        ResourceClause::Iterated(clause) => {
+            collect_contract_segment_binding_names(&clause.element, names);
+        }
     }
 }
 
@@ -1243,6 +1246,7 @@ fn rewrite_resource_clause_exact(
         }
         ResourceClause::ViewMemory(segment) => (ResourceClause::ViewMemory(segment.clone()), false),
         ResourceClause::OwnMemory(segment) => (ResourceClause::OwnMemory(segment.clone()), false),
+        ResourceClause::Iterated(clause) => (ResourceClause::Iterated(clause.clone()), false),
         ResourceClause::MemoryAggregate { access, segments } => (
             ResourceClause::MemoryAggregate {
                 access: *access,
@@ -1687,6 +1691,7 @@ pub(in crate::surface) fn apply_contract_lets_to_resource_clause(
         ResourceClause::OwnMemory(segment) => Ok(ResourceClause::OwnMemory(
             apply_contract_lets_to_segment(segment, bindings)?,
         )),
+        ResourceClause::Iterated(clause) => Ok(ResourceClause::Iterated(clause)),
         ResourceClause::MemoryAggregate { access, segments } => {
             Ok(ResourceClause::MemoryAggregate {
                 access,

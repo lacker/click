@@ -237,6 +237,8 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "fold",
     "forall",
     "function",
+    "gather",
+    "give",
     "have",
     "if",
     "import",
@@ -284,6 +286,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "scale",
     "same_object",
     "satisfy",
+    "scatter",
     "separate",
     "simp",
     "sizeof",
@@ -294,6 +297,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "struct",
     "summarize",
     "symbolic_execute",
+    "take",
     "target",
     "trivial",
     "theorem",
@@ -340,6 +344,7 @@ pub const SURFACE_CLICK_FORMS: &[&str] = &[
     "function",
     "if-expression",
     "import",
+    "iterated-ownership",
     "implies",
     "let-where",
     "match-expression",
@@ -1222,6 +1227,53 @@ pub enum ResourceClause {
         arguments: Vec<ContractExpression>,
         parameter_types: Vec<C0Type>,
     },
+    /// `forall (k: int32) where lo <= k and k < hi { if g[k] == v { owns
+    /// base[..]; } }` in a resource body: iterated guarded ownership. Only a
+    /// resource body may contain one; see `lowering/iterated_lowering.rs`.
+    Iterated(Box<IteratedResourceClause>),
+}
+
+/// A proof step on iterated guarded ownership.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IteratedTactic {
+    /// `take(base[a..b]);` moves one element out of the iterated fact whose
+    /// elements live at `base`.
+    Take(ContractSegment),
+    /// `give(base[a..b]);` moves one element back.
+    Give(ContractSegment),
+    /// `gather(resource(...));` forms the named resource's iterated fact.
+    Gather(ResourceClause),
+    /// `scatter(resource(...));` dissolves it.
+    Scatter(ResourceClause),
+}
+
+impl IteratedTactic {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Take(_) => "take",
+            Self::Give(_) => "give",
+            Self::Gather(_) => "gather",
+            Self::Scatter(_) => "scatter",
+        }
+    }
+}
+
+/// One iterated guarded-ownership clause as written. The shape the kernel
+/// needs (index bounds, element stride and offsets, guard cell and value) is
+/// derived from these by [`crate::surface::lowering::iterated_clause_shape`],
+/// which validation runs once per definition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IteratedResourceClause {
+    /// The resource definition whose body declares the clause.
+    pub(crate) owner: String,
+    /// The index binder, as written.
+    pub(crate) binder: String,
+    /// The `where` proposition bounding the index.
+    pub(crate) range: ClickProposition,
+    /// The optional `if` guard selecting which indices are held.
+    pub(crate) guard: Option<ClickProposition>,
+    /// The element range at index `binder`.
+    pub(crate) element: ContractSegment,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1830,6 +1882,16 @@ fn collect_current_resource_clause_variables(
             for argument in arguments {
                 collect_current_contract_expression_variables(argument, names);
             }
+        }
+        ResourceClause::Iterated(clause) => {
+            let mut inner = BTreeSet::new();
+            collect_current_segment_variables(&clause.element, &mut inner);
+            collect_current_proposition_variables(&clause.range, &mut inner);
+            if let Some(guard) = &clause.guard {
+                collect_current_proposition_variables(guard, &mut inner);
+            }
+            inner.remove(&clause.binder);
+            names.extend(inner);
         }
     }
 }
@@ -3294,6 +3356,8 @@ pub enum ProofTactic {
     CallOutcomes(ProofCallOutcomes),
     Loop(StructuralClause),
     ObserveResource(ResourceClause),
+    /// `take`, `give`, `gather`, or `scatter` on iterated guarded ownership.
+    Iterated(IteratedTactic),
     ConstructResource(ResourceClause),
     Witness(ProofWitness),
     LetSatisfy(ProofLetSatisfy),
@@ -3452,6 +3516,7 @@ pub enum SimpleTactic {
     Instantiate,
     FoldResource,
     ConstructResource,
+    IteratedOwnership,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3560,6 +3625,26 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "fold-resource",
         syntax: "fold(resource)",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "take-element",
+        syntax: "take(base[a..b])",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "give-element",
+        syntax: "give(base[a..b])",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "gather-resource",
+        syntax: "gather(resource(args))",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "scatter-resource",
+        syntax: "scatter(resource(args))",
         class: "simple",
     },
     PublicTacticForm {
@@ -3843,6 +3928,8 @@ pub enum ProofStep {
         premises: Vec<ClickProposition>,
     },
     ObserveResource(ResourceClause),
+    /// `take`, `give`, `gather`, or `scatter` on iterated guarded ownership.
+    Iterated(IteratedTactic),
     ConstructResource(ResourceClause),
     Witness(ProofWitness),
     LetSatisfy(ProofLetSatisfy),
@@ -4203,6 +4290,7 @@ impl ProofStep {
                 premises: premises.clone(),
             },
             ProofTactic::ObserveResource(resource) => Self::ObserveResource(resource.clone()),
+            ProofTactic::Iterated(tactic) => Self::Iterated(tactic.clone()),
             ProofTactic::Witness(witness) => Self::Witness(witness.clone()),
             ProofTactic::LetSatisfy(binding) => Self::LetSatisfy(binding.clone()),
             ProofTactic::Choose(choice) => Self::Choose(choice.clone()),
@@ -4430,6 +4518,7 @@ impl ProofStep {
                 premises: premises.clone(),
             },
             Self::ObserveResource(resource) => ProofTactic::ObserveResource(resource.clone()),
+            Self::Iterated(tactic) => ProofTactic::Iterated(tactic.clone()),
             Self::Witness(witness) => ProofTactic::Witness(witness.clone()),
             Self::LetSatisfy(binding) => ProofTactic::LetSatisfy(binding.clone()),
             Self::Choose(choice) => ProofTactic::Choose(choice.clone()),
@@ -4622,6 +4711,7 @@ fn certificate_step_class(step: &ProofStep) -> TacticClass {
         }
         ProofStep::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
         ProofStep::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
+        ProofStep::Iterated(_) => TacticClass::Simple(SimpleTactic::IteratedOwnership),
         ProofStep::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
         ProofStep::ConstructResource(_) => TacticClass::Simple(SimpleTactic::ConstructResource),
         ProofStep::Induct { .. } => TacticClass::Simple(SimpleTactic::Induct),
@@ -4935,6 +5025,7 @@ impl ProofTactic {
             }
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
             Self::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
+            Self::Iterated(_) => TacticClass::Simple(SimpleTactic::IteratedOwnership),
             Self::Induct { .. } => TacticClass::Simple(SimpleTactic::Induct),
             Self::StructuralInduct { .. } => TacticClass::Control(ControlTactic::StructuralInduct),
             Self::ApplyInduction { .. } => TacticClass::Smart(SmartTacticKind::ApplyTheorem),
@@ -6771,6 +6862,12 @@ fn substitute_resource_clause_bindings(
         ResourceClause::ViewMemory(_)
         | ResourceClause::OwnMemory(_)
         | ResourceClause::MemoryAggregate { .. } => resource.clone(),
+        ResourceClause::Iterated(clause) => ResourceClause::Iterated(Box::new(
+            crate::surface::lowering::substitute_iterated_clause(
+                clause,
+                &crate::surface::lowering::ContractSubstitutions::new(substitutions),
+            )?,
+        )),
     })
 }
 

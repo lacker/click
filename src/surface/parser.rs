@@ -1567,6 +1567,15 @@ impl Parser {
                 for name in inserted {
                     self.current_contract_bindings.remove(&name);
                 }
+                if body
+                    .contains
+                    .iter()
+                    .any(|clause| matches!(clause, ResourceClause::Iterated(_)))
+                {
+                    return Err(self.error(
+                        "iterated ownership (`forall ... { owns ...; }`) is supported in an unmatched resource body, not inside a match arm",
+                    ));
+                }
                 if !body.fields.is_empty()
                     || body.guarded_by.is_some()
                     || body.matched.is_some()
@@ -1676,14 +1685,17 @@ impl Parser {
                     facts.push(self.parse_proposition()?);
                     self.expect(Token::Semicolon)?;
                 }
+                Some("forall") => {
+                    contains.push(self.parse_iterated_resource_clause(resource_name)?);
+                }
                 Some(name) => {
                     return Err(self.error(format!(
-                        "expected `contains`, `owns`, `views`, `fact`, or `let` in resource body, got `{name}`"
+                        "expected `contains`, `owns`, `views`, `fact`, `forall`, or `let` in resource body, got `{name}`"
                     )));
                 }
                 None => {
                     return Err(self.error(
-                        "expected `contains`, `owns`, `views`, `fact`, or `let` in resource body, got end of input",
+                        "expected `contains`, `owns`, `views`, `fact`, `forall`, or `let` in resource body, got end of input",
                     ));
                 }
             }
@@ -1742,6 +1754,109 @@ impl Parser {
             &field_name,
             &field,
         ))
+    }
+
+    /// `forall (k: int32) where <range> { [if <guard> {] owns <segment>; [}] }`
+    /// inside a resource body. The binder is a C `int32` name for the range,
+    /// the guard, and the element segment, and for nothing after the clause.
+    fn parse_iterated_resource_clause(
+        &mut self,
+        resource_name: &str,
+    ) -> Result<ResourceClause, ClickError> {
+        self.expect_ident_spelling("forall")?;
+        self.expect(Token::LParen)?;
+        let binder = self.expect_ident("iterated ownership index name")?;
+        self.expect(Token::Colon)?;
+        let (click_type, _) = self.parse_click_type()?;
+        if click_type != ClickType::C(C0Type::Int32) {
+            return Err(self.error(format!(
+                "iterated ownership index `{binder}` must have type `int32`"
+            )));
+        }
+        self.expect(Token::RParen)?;
+        if self.peek_ident() != Some("where") {
+            return Err(self.error(format!(
+                "iterated ownership needs a bounded index: write `forall ({binder}: int32) where lo <= {binder} and {binder} < hi {{ ... }}`"
+            )));
+        }
+        self.position += 1;
+        let integer_was_bound = self.current_integer_params.remove(&binder);
+        let integer_let_was_bound = self.current_integer_lets.remove(&binder);
+        let c_was_bound = self.current_contract_bindings.remove(&binder);
+        let parsed = (|| {
+            let range = self.parse_proposition()?;
+            self.expect(Token::LBrace)?;
+            let guard = if self.peek_ident() == Some("if") {
+                self.position += 1;
+                let guard = self.parse_proposition()?;
+                self.expect(Token::LBrace)?;
+                Some(guard)
+            } else {
+                None
+            };
+            let mut elements = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                match self.peek_ident() {
+                    Some("owns") => {
+                        self.position += 1;
+                        elements.push(self.parse_resource_target(ResourceAccessMode::Own)?);
+                        self.expect(Token::Semicolon)?;
+                    }
+                    Some(other) => {
+                        return Err(self.error(format!(
+                            "an iterated ownership clause holds `owns` element ranges only, got `{other}`"
+                        )));
+                    }
+                    None => {
+                        return Err(self.error(
+                            "an iterated ownership clause holds `owns` element ranges only",
+                        ));
+                    }
+                }
+            }
+            self.expect(Token::RBrace)?;
+            if guard.is_some() {
+                self.expect(Token::RBrace)?;
+            }
+            Ok((range, guard, elements))
+        })();
+        if integer_was_bound {
+            self.current_integer_params.insert(binder.clone());
+        }
+        if integer_let_was_bound {
+            self.current_integer_lets.insert(binder.clone());
+        }
+        if c_was_bound {
+            self.current_contract_bindings.insert(binder.clone());
+        }
+        let (range, guard, elements) = parsed?;
+        let [ResourceClause::OwnMemory(element)] = <[ResourceClause; 1]>::try_from(elements)
+            .map_err(|elements| {
+                self.error(format!(
+                    "an iterated ownership clause owns exactly one element range per index, found {}",
+                    elements.len()
+                ))
+            })?
+        else {
+            return Err(self.error(
+                "an iterated ownership clause owns one memory range `base[start..end]` per index",
+            ));
+        };
+        let clause = IteratedResourceClause {
+            owner: resource_name.to_string(),
+            binder,
+            range,
+            guard,
+            element,
+        };
+        if clause.guard.is_none() {
+            // Unconditional iterated ownership of one cell per index is the
+            // plain range; it lowers to exactly the clause `owns base[lo..hi]`.
+            return crate::surface::lowering::unguarded_iterated_clause_as_range(&clause)
+                .map(ResourceClause::OwnMemory)
+                .map_err(|message| self.error(message));
+        }
+        Ok(ResourceClause::Iterated(Box::new(clause)))
     }
 
     fn parse_composite_resource_contains_clause(&mut self) -> Result<ResourceClause, ClickError> {
@@ -5563,6 +5678,27 @@ impl Parser {
                         premises,
                     });
                 }
+            }
+            "take" | "give" => {
+                self.expect(Token::LParen)?;
+                let segment = self.parse_current_contract_segment()?;
+                self.expect(Token::RParen)?;
+                ProofTactic::Iterated(if name == "take" {
+                    IteratedTactic::Take(segment)
+                } else {
+                    IteratedTactic::Give(segment)
+                })
+            }
+            "gather" | "scatter" => {
+                self.expect(Token::LParen)?;
+                let resource =
+                    self.parse_declared_resource_call_with_access(ResourceAccessMode::Own)?;
+                self.expect(Token::RParen)?;
+                ProofTactic::Iterated(if name == "gather" {
+                    IteratedTactic::Gather(resource)
+                } else {
+                    IteratedTactic::Scatter(resource)
+                })
             }
             "observe" => {
                 self.expect(Token::LParen)?;

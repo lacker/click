@@ -597,6 +597,11 @@ impl Names {
                     self.c(e);
                 }
             }
+            CResourceTerm::Iterated(spec) => {
+                for e in spec.expressions_mut() {
+                    self.c(e);
+                }
+            }
         }
     }
 }

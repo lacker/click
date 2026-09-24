@@ -1058,6 +1058,153 @@ retired block's candidates and not the caller's whole frame); and the
 different pointer" with no proof, which selects a witness rather than proving
 anything.
 
+## Iterated guarded ownership
+
+This section is the design record for the resource-body clause
+
+```text
+forall (k: int32) where lo <= k and k < hi {
+    if g[k] == v { owns base[s * k + a..s * k + b]; }
+}
+```
+
+and the kernel fact it lowers to. It belongs here because the one hard
+question about it is a version question: the guard is read against the
+*current* guard cells, so the fact's meaning changes whenever those cells do,
+and the kernel has to know exactly which transitions may change them.
+
+### The fact
+
+`CResource::Iterated(CIteratedMemory)` (`src/kernel/primitives/iterated.rs`)
+carries the element base and width, the constant stride and offsets, the two
+index bounds, the guard (cell base, cell type, `==` or `!=`, compared value),
+and a short list of *holes*: indices about which the fact currently makes no
+claim. Its denotation in memory `M` is the separating conjunction, over every
+`k` in `lo..hi` that is not a hole, of `base[s * k + a..s * k + b]` when
+`g[k] OP v` holds in `M` and of nothing otherwise. The name of the declaring
+resource travels with the fact for diagnostics and takes no part in its
+identity, so two definitions that declare the same clause over the same cells
+denote one holding.
+
+The family is exact-match (`IteratedResourceAlgebra`): two facts are the same
+when every term is equal or proved equal, holes in order. It never splits or
+joins, and it grants no access — a load or store needs an element taken out
+as ordinary memory, so no memory authority check ever reads the fact.
+
+### The invariant
+
+At every fold of the declaring resource the fact has no holes, so it holds
+exactly the elements whose guard is true. While the resource is folded its
+guard cells are inside it (validation requires the body to own every guard
+cell it reads), so nobody can write them and the fact unfolds meaning what it
+meant when it was folded.
+
+While the fact is unfolded, every operation preserves its denotation:
+
+- `take` requires the index in range, its guard known true, and the index
+  provably different from every hole; it adds the index as a hole and
+  composes the element as owned memory. Before, the fact held the element;
+  after, the element is held outright and the fact claims nothing there.
+- `give` requires a hole at the index and its guard known true, consumes the
+  element, and removes the hole.
+- `gather` and `scatter` require every guard decided one way by a quantified
+  fact, which the kernel instantiates once at a reserved arbitrary index under
+  the range hypotheses. With every guard true the fact is the covering range;
+  with every guard false it is empty. `gather` also requires the guard cells
+  to be owned, so the formed fact is as stable as a declared one.
+
+### The guard-store rule
+
+A C store to a guard cell at index `j` is permitted exactly when the fact
+claims nothing at `j` before the store: `j` is out of range, `j` is a hole,
+the guard at `j` is known false, or the element at `j` is owned outright in
+the same context. The last case needs no guard fact: a valid resource context
+is a partition, so a context that owns the element cannot also hold it inside
+the fact, and the fact therefore claims nothing at `j` whatever the cell
+says. That is what lets the free protocol clear a flag with no fact about it.
+
+`plan_iterated_guard_store` (`src/kernel/iterated.rs`) runs in the statement
+evaluator before the write. It makes `j` a hole for the write itself — so the
+write provably changes nothing the fact claims — and afterwards removes the
+hole when `j` is out of range or the stored value makes the guard known false,
+since excluding an index and including it with a false guard denote the same
+thing. A store that makes the guard true leaves the hole open; the element
+must come back through `give` before the next fold. Any other store is
+refused: at an index whose guard is true and whose element was not taken out,
+the fact would silently gain or lose a cell.
+
+Soundness rests on every write to the guard cells being one of these
+permitted stores or a transition that drops the fact:
+
+- The statement evaluator is the C store path, and it calls the planner. The
+  memory transition it then makes is marked as checked
+  (`CState::set_memory_with_checked_stores`).
+- Every other memory transition goes through `CState::set_memory`, whose
+  `invalidate_iterated_facts` walks the derivation steps between the two
+  snapshots, visiting only the facts filed under each written block. An
+  unchecked store keeps a fact only when it provably misses the guard block
+  or names a hole structurally; a call's havoc that may write the guard
+  cells, a free, and an ended lifetime drop it. Dropping loses ownership,
+  which is sound; keeping a claim that may have changed is not.
+- A loop-head havoc keeps the fact. The head is a generalization, not a
+  write: a loop that inherits the fact runs every body store through the
+  planner, and its back edge compares the fact like any other resource. A
+  loop that declares its own resources executes its body without the frame's
+  facts, so no body store meets the planner; the loop rule drops from the
+  frame any fact whose guard cells the loop may write
+  (`frame_out_iterated_facts_written_by_loop`).
+- `free` refuses while a fact refers to the freed block, because the fact is
+  indexed under both of its blocks and `facts_that_may_refer_to_memory_block`
+  reads that index.
+
+### Queries
+
+"Does the fact hold element `j`?" (`iterated_holds_element`) answers from the
+index's range membership, the holes, and the guard cell at `j`: yes, no, or
+*may hold* when the guard is not decided. A store is refused on *may hold*.
+"Is the fact separate from this range?" (`iterated_separate_from_range`)
+answers yes only for a range in another block or outside the span of every
+element; it is the resource-separation prover's answer for an iterated
+resource and never claims separation for a range that may hold an element.
+Neither query reads more than one guard cell or the fact's own terms.
+
+### Certificates, expansion, and cost
+
+Each step is recorded as `CheckedExecutionEvent::IteratedStep`, which retains
+its input state and fact context; trace checking applies the kernel step again
+and compares the result, as it does for a lifetime end. The store rule lives
+in the statement evaluator, so re-executing a statement re-applies it.
+Expansion prints the steps as written.
+
+`take` and `give` read one fact, one guard cell, and the fact's holes; a
+store reads the facts filed under its block; unfolding and folding the
+declaring resource move one fact. The deterministic regressions in
+`src/kernel/tests/iterated_ownership_tests.rs` hold the index range at 64,
+256, 1024, and 4096 cells: taking one element costs 14 units at every size,
+unfolding the declaring resource 39, a separation query nothing measurable,
+and a loop claiming `M` elements costs 40 units per element (1275, 2555, 5115,
+and 10235 for 32 to 256). The one linear scan is `gather`'s and `scatter`'s
+instantiation of the quantified guard fact, which reads the context's
+quantified facts once per step, as other quantified matching does.
+
+### Decisions this slice made
+
+- The steps are named `take`, `give`, `gather`, and `scatter`. `take` and
+  `give` name the element range itself rather than an index, and find their
+  fact by the element base.
+- An unguarded clause must own the one-cell element `base[k..k + 1]` and
+  lowers to `owns base[lo..hi]`; any other unguarded element is refused with
+  that spelling.
+- Guards compare `int32` cells with `==` or `!=`; an iterated clause owns one
+  element range per index; a body declares at most one iterated clause, and
+  match arms, contracts, and loop headers declare none.
+- A call that may write the guard cells drops the fact rather than being
+  refused; the loss surfaces at the next fold.
+- When an instance folds, an owned memory clause whose range is provably
+  empty is satisfied by nothing. A body such as `owns data[start..next]`
+  must fold at `next == start`; before this slice that needed an empty fact
+  left over from an earlier split.
+
 ## What stays out
 
 Three things the tracker is deliberately not asked, because they are about

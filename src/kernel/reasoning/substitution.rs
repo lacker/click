@@ -1289,6 +1289,11 @@ fn collect_c_resource_spec_bound_variables(
                 collect_c_expression_bound_variables(argument, variables);
             }
         }
+        CResourceTerm::Iterated(spec) => {
+            for expression in spec.expressions() {
+                collect_c_expression_bound_variables(expression, variables);
+            }
+        }
     }
     if let CResourceQuantity::Count(quantity) = resource.quantity() {
         collect_c_expression_bound_variables(quantity, variables);
@@ -1309,6 +1314,11 @@ fn collect_c_resource_term_bound_variables(
         CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
             for argument in arguments {
                 collect_c_expression_bound_variables(argument, variables);
+            }
+        }
+        CResourceTerm::Iterated(spec) => {
+            for expression in spec.expressions() {
+                collect_c_expression_bound_variables(expression, variables);
             }
         }
     }
@@ -1412,6 +1422,14 @@ fn collect_resource_bound_variables(resource: &CResource, variables: &mut BTreeS
             collect_pointer_bound_variables(&range.base, variables);
             collect_bitvector_bound_variables(&range.start, variables);
             collect_bitvector_bound_variables(&range.end, variables);
+        }
+        CResource::Iterated(iterated) => {
+            for pointer in iterated.pointers() {
+                collect_pointer_bound_variables(pointer, variables);
+            }
+            for term in iterated.terms() {
+                collect_bitvector_bound_variables(term, variables);
+            }
         }
         CResource::Composite { arguments, .. } | CResource::Token { arguments, .. } => {
             for argument in arguments.iter() {
@@ -3760,6 +3778,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
         CResource::Memory(range) => CResource::Memory(
             substitute_bitvector_variable_in_c_memory_range(range, from, to),
         ),
+        CResource::Iterated(iterated) => CResource::iterated(iterated.map_terms(
+            |term| substitute_bitvector_variable(term, from, to),
+            |pointer| substitute_bitvector_variable_in_pointer(pointer, from, to),
+        )),
         CResource::Composite { name, arguments } => CResource::Composite {
             name: name.clone(),
             arguments: arguments
@@ -4029,6 +4051,11 @@ fn substitute_bitvector_variable_in_resource_term(
                 resource, from, to,
             )),
         },
+        CResourceTerm::Iterated(spec) => {
+            CResourceTerm::Iterated(Box::new(spec.map_expressions(|expression| {
+                substitute_bitvector_variable_in_c_expression(expression, from, to)
+            })))
+        }
         CResourceTerm::Memory(segment) => CResourceTerm::Memory(CMemorySegment {
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
@@ -6260,6 +6287,11 @@ fn substitute_pointer_variable_in_c_resource(
         CResource::Memory(range) => CResource::Memory(
             substitute_pointer_variable_in_c_memory_range(range, from, to),
         ),
+        CResource::Iterated(iterated) => {
+            CResource::iterated(iterated.map_terms(Bitvector32Term::clone, |pointer| {
+                substitute_pointer_variable_in_pointer(pointer, from, to)
+            }))
+        }
         CResource::Composite { name, arguments } => CResource::Composite {
             name: name.clone(),
             arguments: arguments
@@ -7418,6 +7450,11 @@ fn substitute_pointer_variable_in_resource_term(
                 resource, from, to,
             )),
         },
+        CResourceTerm::Iterated(spec) => {
+            CResourceTerm::Iterated(Box::new(spec.map_expressions(|expression| {
+                substitute_pointer_variable_in_c_expression(expression, from, to)
+            })))
+        }
         CResourceTerm::Memory(segment) => CResourceTerm::Memory(CMemorySegment {
             base: substitute_pointer_variable_in_c_expression(&segment.base, from, to),
             start: substitute_pointer_variable_in_c_expression(&segment.start, from, to),

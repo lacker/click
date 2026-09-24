@@ -1591,6 +1591,14 @@ pub(in crate::kernel) fn collect_c_resource_bitvector_variables(
             }
         }
         CResource::Memory(range) => collect_c_memory_range_bitvector_variables(range, variables),
+        CResource::Iterated(iterated) => {
+            for pointer in iterated.pointers() {
+                collect_pointer_bitvector_variables(pointer, variables);
+            }
+            for term in iterated.terms() {
+                collect_bitvector_variables(term, variables);
+            }
+        }
         CResource::Composite { arguments, .. } | CResource::Token { arguments, .. } => {
             for argument in arguments.iter() {
                 collect_algebraic_value_bitvector_variables(argument, variables);
@@ -1664,6 +1672,11 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
                 collect_spec_proposition_bitvector_variables(guard, variables);
             }
         }
+        CResourceTerm::Iterated(spec) => {
+            for expression in spec.expressions() {
+                collect_c_expression_bitvector_variables(expression, variables);
+            }
+        }
         CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
             for argument in arguments {
                 collect_c_expression_bitvector_variables(argument, variables);
@@ -1689,6 +1702,11 @@ fn collect_resource_term_bitvector_variables(
             collect_c_expression_bitvector_variables(&segment.end, variables);
             if let Some(guard) = segment.guard() {
                 collect_spec_proposition_bitvector_variables(guard, variables);
+            }
+        }
+        CResourceTerm::Iterated(spec) => {
+            for expression in spec.expressions() {
+                collect_c_expression_bitvector_variables(expression, variables);
             }
         }
         CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {

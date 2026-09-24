@@ -4816,6 +4816,17 @@ pub(super) fn prepare_loop_top_state(
     // models are the fresh ones an arbitrary visit carries.
     let (body_state, body_failures) =
         loop_body_resource_context(&head_state, &top_state, resource_specs, assumptions, budget)?;
+    // A declaring loop's body does not hold the frame's iterated ownership
+    // facts, so a guard cell it writes escapes the store rule; the frame
+    // loses any fact whose guard cells the loop may write.
+    let top_state = if resource_specs.is_empty() {
+        top_state
+    } else {
+        super::iterated::frame_out_iterated_facts_written_by_loop(
+            top_state,
+            loop_havoc_ranges.as_deref(),
+        )
+    };
     resource_failures.append(&mut rebound_failures);
     resource_failures.extend(body_failures);
     resource_failures.extend(havoc_loan_failure);
@@ -5556,7 +5567,10 @@ fn viewed_form_of_resource_fact(fact: &CResourceFact) -> Option<CResourceFact> {
         CResourceFact::Own(resource @ (CResource::Memory(_) | CResource::Composite { .. }), _) => {
             Some(CResourceFact::View(resource.clone()))
         }
-        CResourceFact::Own(CResource::Token { .. } | CResource::Instance(_), _) => None,
+        CResourceFact::Own(
+            CResource::Token { .. } | CResource::Instance(_) | CResource::Iterated(_),
+            _,
+        ) => None,
     }
 }
 

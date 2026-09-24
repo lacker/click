@@ -4287,6 +4287,7 @@ pub(in crate::kernel) fn proof_evidence_initial_state(
         CheckedExecutionEvent::AutomaticLifetimeEnd(end) => Some(end.before_state()),
         CheckedExecutionEvent::ResourceObservation(observation) => Some(observation.before_state()),
         CheckedExecutionEvent::ResourceRewrite(rewrite) => Some(rewrite.before_state()),
+        CheckedExecutionEvent::IteratedStep(step) => Some(step.before_state()),
         CheckedExecutionEvent::Statement(theorem) | CheckedExecutionEvent::Condition(theorem) => {
             match proof_evidence_conclusion(theorem) {
                 Proposition::CStatementVerifies { state, .. }
@@ -4344,7 +4345,8 @@ pub(in crate::kernel) fn proof_case_partitions_are_exhaustive(
                 | CheckedExecutionEvent::Context(_)
                 | CheckedExecutionEvent::AutomaticLifetimeEnd(_)
                 | CheckedExecutionEvent::ResourceObservation(_)
-                | CheckedExecutionEvent::ResourceRewrite(_) => {}
+                | CheckedExecutionEvent::ResourceRewrite(_)
+                | CheckedExecutionEvent::IteratedStep(_) => {}
             }
         }
         true
@@ -4670,7 +4672,7 @@ pub fn prove_owned_resource_count_lower_bound(
         CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
             (name, arguments)
         }
-        CResource::Memory(_) | CResource::Instance(_) => return None,
+        CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => return None,
     };
     let count = match state.counted_population(name, arguments) {
         Some(count) => count.clone(),
@@ -4740,6 +4742,7 @@ fn describe_contract_reuse_premise(premise: &Proposition) -> String {
             CResource::Composite { name, .. } | CResource::Token { name, .. } => name,
             CResource::Memory(_) => "memory",
             CResource::Instance(instance) => instance.name(),
+            CResource::Iterated(iterated) => iterated.owner(),
         }
     }
     match premise {

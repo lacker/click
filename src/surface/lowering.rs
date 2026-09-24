@@ -3,6 +3,8 @@ use super::*;
 mod annotations;
 mod contract_environment;
 mod contract_substitution;
+mod iterated_lowering;
+pub(super) use iterated_lowering::*;
 mod proposition_lowering;
 mod resource_lowering;
 pub(in crate::surface) use resource_lowering::{

@@ -24,6 +24,8 @@ pub(crate) use functions::rewrite_resource_instance_selecting_children;
 pub(crate) use functions::{
     InstantiatedCompositeResourceFacts, instantiate_composite_resource_facts,
 };
+mod iterated;
+pub(crate) use iterated::{IteratedStep, apply_iterated_step, plan_iterated_guard_store};
 // V0-V6 of the stable-view migration build the checked semantic spine before
 // V7 routes ordinary calls through it.
 #[allow(dead_code)]

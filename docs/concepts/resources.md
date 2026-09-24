@@ -611,6 +611,53 @@ important after reading a next pointer: if the context proves
 `node->next == tail`, ownership of `list(node->next)` is ownership of
 `list(tail)` as well.
 
+### Iterated guarded ownership
+
+A body can own one element per index of a bounded range, selected by a
+guard cell it owns. This is how an arena's occupancy map describes its free
+cells: the arena owns `occupied`, and owns `data[k]` exactly while
+`occupied[k] == 0`.
+
+<!-- verified-example: mdtests/iterated_ownership_declaration.md -->
+```click
+resource arena_cells(data: int32*, occupied: int32*, capacity: int32) {
+    owns occupied[0..capacity];
+    forall (k: int32) where 0 <= k and k < capacity {
+        if occupied[k] == 0 {
+            owns data[k..k + 1];
+        }
+    }
+}
+```
+
+The clause is a single resource fact, not `capacity` facts. The invariant it
+keeps is simple to state: at every fold, the fact holds exactly the elements
+whose guard is true in the current memory. Everything else follows from
+keeping that invariant with local steps.
+
+- `take(data[j..j + 1])` moves element `j` out while its guard is known true;
+  the fact then makes no claim about `j`, and the element is ordinary owned
+  memory that C can write.
+- A C store to a guard cell is allowed only where the fact claims nothing:
+  at an index taken out, whose guard is known false, or whose element the
+  context owns outright. Marking a taken-out cell occupied (`occupied[j] =
+  1`) closes the gap, because the guard is now false and the fact owes
+  nothing for `j`. Clearing a cell whose element the caller owns
+  (`occupied[j] = 0`) opens one, which `give(data[j..j + 1])` closes by moving
+  the element back.
+- `gather` and `scatter` convert between the fact and the range its elements
+  cover when a quantified fact decides every guard, which is what an
+  initializer that zeroes the map needs.
+
+No step visits the range. `take` reads one guard cell; a loop that claims a
+run of `M` cells does `M` such steps; folding and unfolding the declaring
+resource move one fact. Because the free cells are simply the cells whose
+flag is clear, freeing two regions and reusing them for a larger run needs no
+merge step (`mdtests/iterated_ownership_coalescing.md`). The language
+reference lists the declaration rules and the exact step conditions under
+[Iterated guarded
+ownership](../reference/language/index.md#iterated-guarded-ownership).
+
 ### Fields that choose cells
 
 A resource's fields are its model: a folded instance holds their values, fold
@@ -1043,6 +1090,10 @@ Click implements:
 - composite resources with explicit `unfold(resource)` and
   `fold(resource)` tactics, including composition over other declared
   resources,
+- iterated guarded ownership in composite bodies, one fact for a bounded
+  family of elements selected by owned guard cells, with checked `take`,
+  `give`, `gather`, and `scatter` steps and a store rule for the guard
+  cells,
 - one-step fact views for folded composite resources, plus
   `observe(resource)` tactics that explicitly record fact-view projection
   without exposing contained owned resource facts,

@@ -2062,6 +2062,20 @@ impl PureFactContext {
         if self.resource_separation_conflicts_with_equalities(left, right) {
             return false;
         }
+        // Iterated ownership is separate from a range its elements provably
+        // miss: another block, or outside the span of every element. One
+        // decision, whatever the index range's size; a range that might hold
+        // an element is never proved separate.
+        match (left, right) {
+            (CResource::Iterated(iterated), CResource::Memory(range))
+            | (CResource::Memory(range), CResource::Iterated(iterated)) => {
+                return crate::kernel::iterated::iterated_separate_from_range(
+                    iterated, range, self,
+                );
+            }
+            (CResource::Iterated(_), _) | (_, CResource::Iterated(_)) => return false,
+            _ => {}
+        }
         if let (CResource::Memory(left), CResource::Memory(right)) = (left, right)
             && left.base().blocks_proven_distinct(right.base())
         {

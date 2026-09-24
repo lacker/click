@@ -3508,10 +3508,18 @@ impl CState {
     /// Keeping this beside `with_memory` prevents evaluator paths that already
     /// own a mutable state from bypassing resource-observation invalidation.
     pub(crate) fn set_memory(&mut self, memory: CMemory) {
+        self.set_memory_with_checked_stores(memory, false);
+    }
+
+    /// [`Self::set_memory`] for the C store path, which has already applied
+    /// the iterated-ownership store rule (`plan_iterated_guard_store`) to its
+    /// one store. Every other transition keeps the conservative rule.
+    pub(crate) fn set_memory_with_checked_stores(&mut self, memory: CMemory, stores_checked: bool) {
         self.resources = self
             .resources
             .clone()
-            .invalidate_memory_support(&self.memory, &memory);
+            .invalidate_memory_support(&self.memory, &memory)
+            .invalidate_iterated_facts(&self.memory, &memory, stores_checked);
         self.loan_view_bindings = crate::kernel::loans::LoanViewBindings::from_state(
             self.resources.loan_dependency_state(),
         );

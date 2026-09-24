@@ -669,8 +669,47 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             } else {
                 (pointer.clone(), value.clone())
             };
+            // A store to a guard cell of an iterated ownership fact is
+            // permitted only where the fact claims nothing at that index
+            // (`crate::kernel::iterated`); the plan respells the fact so the
+            // write itself names a hole, and settles the hole afterwards.
+            let iterated_plan = match crate::kernel::plan_iterated_guard_store(
+                state,
+                &written_pointer,
+                &written_value,
+                &effective_assumptions,
+            ) {
+                Ok(plan) => plan,
+                Err(message) => {
+                    return Ok(vec![CStatementExecutionPath {
+                        loop_invariant_correspondence: Default::default(),
+                        outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                            message,
+                        )),
+                        facts,
+                        obligations,
+                        loan_evidence: empty_checked_loan_evidence_sequence(),
+                    }]);
+                }
+            };
             let before_memory = state.memory.clone();
             let mut state = state.clone();
+            if !iterated_plan.is_empty() {
+                match iterated_plan.before_store(state.resources().clone()) {
+                    Ok(resources) => state = state.with_resource_context(resources),
+                    Err(message) => {
+                        return Ok(vec![CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
+                            outcome: CStatementOutcome::RuntimeError(
+                                CRuntimeError::FunctionContract(message),
+                            ),
+                            facts,
+                            obligations,
+                            loan_evidence: empty_checked_loan_evidence_sequence(),
+                        }]);
+                    }
+                }
+            }
             let next_memory = state
                 .memory
                 .clone()
@@ -684,7 +723,23 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     written_value.clone(),
                     &effective_assumptions,
                 );
-            state.set_memory(next_memory);
+            state.set_memory_with_checked_stores(next_memory, true);
+            if !iterated_plan.is_empty() {
+                match iterated_plan.after_store(state.resources().clone()) {
+                    Ok(resources) => state = state.with_resource_context(resources),
+                    Err(message) => {
+                        return Ok(vec![CStatementExecutionPath {
+                            loop_invariant_correspondence: Default::default(),
+                            outcome: CStatementOutcome::RuntimeError(
+                                CRuntimeError::FunctionContract(message),
+                            ),
+                            facts,
+                            obligations,
+                            loan_evidence: empty_checked_loan_evidence_sequence(),
+                        }]);
+                    }
+                }
+            }
             if let Some(pending) = &state.pending_thread_create {
                 state.pending_thread_create = Some(pending.with_delta(
                     super::super::threads::PendingThreadMemoryDelta::Store {

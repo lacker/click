@@ -1446,6 +1446,95 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// `take`, `give`, `gather`, or `scatter`: one checked kernel step on
+    /// iterated guarded ownership. The kernel performs the step from the
+    /// running state; this reads only its operands.
+    pub(super) fn apply_execution_iterated_step(
+        &self,
+        tactic: &IteratedTactic,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let name = tactic.name();
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error(format!("`{name}` requires an execution-frontier proof")));
+        };
+        self.require_execution_frontier(&format!("`{name}`"))?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
+        if execution.core.frontier.is_at_function_exit() {
+            return Err(self.step_error(format!(
+                "`{name}` must run before execution reaches function exit"
+            )));
+        }
+        let state = &*execution.core.state;
+        let parameters = context.parsed_function.parameters();
+        let element =
+            |segment: &ContractSegment| -> Result<crate::kernel::CMemoryRange, ClickError> {
+                let lowered = lower_resource_clause_at_current_locals(
+                    &ResourceClause::OwnMemory(segment.clone()),
+                    parameters,
+                    context.arguments,
+                    state,
+                    None,
+                )?;
+                lowered
+                    .memory_own_range()
+                    .cloned()
+                    .ok_or_else(|| self.step_error(format!("`{name}` expects a memory range")))
+            };
+        let template = |resource: &ResourceClause| {
+            iterated_template_for_resource(
+                context.resource_environment,
+                resource,
+                name,
+                parameters,
+                context.arguments,
+                state,
+                context.claim_label,
+                context.tactic_index,
+            )
+        };
+        let step = match tactic {
+            IteratedTactic::Take(segment) => crate::kernel::IteratedStep::Take {
+                element: element(segment)?,
+            },
+            IteratedTactic::Give(segment) => crate::kernel::IteratedStep::Give {
+                element: element(segment)?,
+            },
+            IteratedTactic::Gather(resource) => crate::kernel::IteratedStep::Gather {
+                template: template(resource)?,
+            },
+            IteratedTactic::Scatter(resource) => crate::kernel::IteratedStep::Scatter {
+                template: template(resource)?,
+            },
+        };
+        let after = execution
+            .core
+            .record_iterated_step(self.facts(), step)
+            .map_err(|message| {
+                self.step_error(format!(
+                    "`{}` refused: {message}",
+                    crate::surface::printing::describe_iterated_tactic(tactic)
+                ))
+            })?;
+        execution.core.state = after.into();
+        let branch = self
+            .focused_branch()
+            .expect("an iterated ownership step requires an open goal")
+            .with_state(BranchState {
+                facts: self.facts().clone(),
+                unfolded_predicates: self.focused_branch_unfolds().clone(),
+                execution: Some(Arc::new(execution)),
+            });
+        Ok(CheckedFocusedTransition {
+            locals: self.state().locals().clone(),
+            branch: Some(branch),
+            added_facts: Vec::new(),
+            checked_facts: Vec::new(),
+        })
+    }
+
     pub(super) fn apply_execution_resource_observation(
         &self,
         resource: &ResourceClause,

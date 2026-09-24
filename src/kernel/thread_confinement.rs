@@ -68,7 +68,8 @@ pub(super) fn confined_resource_name<'a>(
         | CResourceFact::View(CResource::Token { name, .. }) => name.as_str(),
         CResourceFact::Own(CResource::Instance(instance), _)
         | CResourceFact::View(CResource::Instance(instance)) => instance.name.as_str(),
-        CResourceFact::Own(CResource::Memory(_), _) | CResourceFact::View(CResource::Memory(_)) => {
+        CResourceFact::Own(CResource::Memory(_) | CResource::Iterated(_), _)
+        | CResourceFact::View(CResource::Memory(_) | CResource::Iterated(_)) => {
             return None;
         }
     };

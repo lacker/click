@@ -881,6 +881,7 @@ impl<'a> Proof<'a> {
             ProofStep::ObserveResource(resource) => {
                 self.apply_execution_resource_observation(resource)
             }
+            ProofStep::Iterated(tactic) => self.apply_execution_iterated_step(tactic),
             ProofStep::Choose(choice) => self.apply_fixed_state_choose(choice),
             ProofStep::LetSatisfy(binding) => self.apply_let_satisfy(binding),
             ProofStep::Witness(witness) => self.apply_fixed_state_witness(witness),
