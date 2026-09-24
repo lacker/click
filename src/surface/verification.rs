@@ -3800,7 +3800,15 @@ fn verification_required_functions_with_blocks(
             continue;
         }
         if runtime == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
-            && matches!(name.as_str(), "pthread_create" | "pthread_join")
+            && matches!(
+                name.as_str(),
+                "pthread_create"
+                    | "pthread_join"
+                    | "pthread_mutex_init"
+                    | "pthread_mutex_lock"
+                    | "pthread_mutex_unlock"
+                    | "pthread_mutex_destroy"
+            )
         {
             continue;
         }
@@ -7880,6 +7888,31 @@ mod modeled_pthread_binding_tests {
             .unwrap();
         assert_eq!(binding.specification_version, 2);
         assert_eq!(binding.target, CTarget::X86_64LinuxUserspace);
+    }
+
+    #[test]
+    fn targeted_mutex_proof_uses_the_modeled_calls_without_c_definitions() {
+        let fixture = include_str!("../../mdtests/guarded_resource_mutex_flow.md");
+        let c = fixture
+            .split_once("```c filename=guarded_resource_mutex_flow.c\n")
+            .unwrap()
+            .1
+            .split_once("\n```")
+            .unwrap()
+            .0;
+        let click = fixture
+            .split_once("```click\n")
+            .unwrap()
+            .1
+            .split_once("\n```")
+            .unwrap()
+            .0;
+        verify_c0_sources_functions(
+            click,
+            &[("guarded_resource_mutex_flow.c", c)],
+            ["read_counter".to_string()],
+        )
+        .expect("a targeted proof should link modeled mutex calls");
     }
 
     #[test]
