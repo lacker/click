@@ -1071,3 +1071,30 @@ fn a_field_selected_memory_endpoint_audits_every_site() {
         }
     }
 }
+
+#[test]
+fn an_unfold_bound_scalar_field_audits_every_site() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/resource_unfold_binds_scalar_field.md");
+    let limit = Duration::from_secs(60);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let sites = inventory_sites(std::slice::from_ref(&path)).unwrap();
+    assert!(sites.len() >= 2, "{sites:?}");
+    let mut worker = AuditSessionWorker::start(&path, limit).unwrap();
+    for (index, site) in sites.iter().enumerate() {
+        if let Err(message) = audit_site(
+            site,
+            &mut worker,
+            limit,
+            limit,
+            Duration::from_secs(1),
+            index == 0,
+            deadline,
+        ) {
+            panic!(
+                "{}:{} should audit: {message}",
+                site.position.line, site.position.column
+            );
+        }
+    }
+}

@@ -118,16 +118,21 @@ lending the requested subrange and keeping the remainder usable, from the
 caller's own view by a reborrow, from an owned composite by a composite
 lend, and from a different owned composite or the caller's owned frontier
 when the viewed composite's checked expansion is covered piecewise and its
-facts hold at the call. A view of live caller-local storage with no explicit
-resource is backed by a checked local-storage loan. Its byte range must fit
-inside the live allocation. Checked entry storage includes fresh by-value
-aggregate parameter copies as well as the caller's original locals. The loan
-grants a callee share and a caller close
-right, but escrows no owned fact; closing it restores implicit access without
-adding an ownership resource. Read-only storage retains intrinsic read authority
-and is neither lent nor recovered. Cross-clause conflicts (an owned clause
-overlapping a viewed one, or an owned piece inside a viewed frontier) are
-refused at planning as proven overlaps.
+facts hold at the call. Coverage starts from the exact owner occurrence
+checked before reservations. If memory splitting assigns a fresh occurrence
+to a residual fragment, the planner accepts it only when the original owner
+uniquely supported the view and the residual is contained in that owner. It
+refuses any other equal-looking replacement. A view of live caller-local
+storage with
+no explicit resource is backed by a checked local-storage loan. Its byte
+range must fit inside the live allocation. Checked entry storage includes
+fresh by-value aggregate parameter copies as well as the caller's original
+locals. The loan grants a callee share and a caller close right, but escrows
+no owned fact; closing it restores implicit access without adding an ownership
+resource. Read-only storage retains intrinsic read authority and is neither
+lent nor recovered. Cross-clause conflicts (an owned clause overlapping a
+viewed one, or an owned piece inside a viewed frontier) are refused at
+planning as proven overlaps.
 
 A declared mutable effect is a consequence of the transferred authority.
 Each effect range is compared with the full checked view frontier; an effect

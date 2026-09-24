@@ -637,6 +637,56 @@ pub(in crate::surface) fn selected_resource_instance_arm(
     }
 }
 
+/// The body an unfold of an instance exposes when its resource does not match
+/// on a field. Such a body has one shape: its memory clauses name cells at the
+/// instance's arguments and its C-typed field values. Those fields are the
+/// scope's extra parameters, in field order, as a matched arm's C-typed
+/// constructor bindings are, because a memory clause may use a field as an
+/// endpoint. A guarded or witness-carrying body is not unconditionally one
+/// shape, and a field-free body is not an instance, so neither is selected.
+fn unmatched_instance_body(
+    definition: &ResourceDefinition,
+    body: &CompositeResourceBody,
+    instance: &ResourceInstance,
+) -> Option<SelectedInstanceArm> {
+    if body.condition.is_some() || !body.witnesses.is_empty() || definition.fields().is_empty() {
+        return None;
+    }
+    let mut parameters = definition.parameters.clone();
+    for field in definition.fields() {
+        if matches!(field.click_type(), ClickType::C(_)) {
+            parameters.push(FunctionParameter {
+                name: field.name().to_string(),
+                click_type: field.click_type().clone(),
+                struct_name: None,
+                function_pointer_signature: None,
+                constant: false,
+                pointee_constant: false,
+            });
+        }
+    }
+    let mut scope = body.clone();
+    scope.children = Vec::new();
+    scope.facts = Vec::new();
+    scope.contains.retain(|clause| {
+        matches!(
+            clause,
+            ResourceClause::OwnMemory(_)
+                | ResourceClause::ViewMemory(_)
+                | ResourceClause::MemoryAggregate { .. }
+        )
+    });
+    Some(SelectedInstanceArm {
+        arm: ResourceDefinition {
+            name: definition.name.clone(),
+            parameters,
+            composite_body: Some(scope),
+            field_schema: definition.field_schema.clone(),
+        },
+        bindings: instance.fields().to_vec(),
+    })
+}
+
 /// One arm scope together with what the selection proved its constructor
 /// bindings hold. The bindings are empty when no constructor is known, which
 /// is exactly when a memory clause written over a binding names no cell.
@@ -881,12 +931,24 @@ pub(in crate::surface) fn materialize_unfolded_instance_arm_cells(
     instance: &ResourceInstance,
     assumptions: &PureFactContext,
 ) -> CState {
-    let Some(selected) = selected_resource_instance_arm(
+    // An unfold consumes the instance and exposes its body, so an unmatched
+    // body is the one it exposes. Its cells are named here exactly as a
+    // selected arm's are; otherwise a C read of a cell the body owns, after
+    // any later write, mints a second load identity for it.
+    let selected = selected_resource_instance_arm(
         resource_environment,
         click_function_environment,
         instance,
         assumptions,
-    ) else {
+    )
+    .or_else(|| {
+        let definition = resource_environment.get(instance.name())?;
+        let body = definition.composite_body()?;
+        body.matched
+            .is_none()
+            .then(|| unmatched_instance_body(definition, body, instance))?
+    });
+    let Some(selected) = selected else {
         return state;
     };
     project_selected_instance_arm_cells(

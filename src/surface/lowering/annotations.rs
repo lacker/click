@@ -2345,7 +2345,13 @@ impl AnnotationLowerer<'_> {
             return Ok(Vec::new());
         };
         let mut components = Vec::with_capacity(measure.components().len());
-        for expression in measure.components() {
+        for (component_index, expression) in measure.components().iter().enumerate() {
+            // A component that names a proof-local binder was resolved to the
+            // value the binder stands for. It is no longer a C expression
+            // over this loop's state, so it is lowered as a pure component and
+            // named by its written spelling, which is what the termination
+            // plan reads from the same clause.
+            let written = measure.rewritten_component_source(component_index);
             // A measure is one expression the kernel reads at the iteration's
             // entry state and again at the back-edge state, and ranks the two
             // values against each other. A component that names a state of
@@ -2367,10 +2373,15 @@ impl AnnotationLowerer<'_> {
                     fixed.spelling()
                 )));
             }
-            if let Ok(c_expression) = resource_argument_to_c_expression(expression) {
+            if written.is_none()
+                && let Ok(c_expression) = resource_argument_to_c_expression(expression)
+            {
                 components.push(crate::kernel::CRankingComponent::CExpression(c_expression));
                 continue;
             }
+            let source = crate::surface::verification::termination_measure_source(
+                written.unwrap_or(expression),
+            );
             let context = SpecElaborationContext::for_loop_invariant(loop_index);
             // A measure whose declared type is `Integer` is lowered in the
             // Integer carrier, by the same rule that picks the carrier for an
@@ -2381,12 +2392,11 @@ impl AnnotationLowerer<'_> {
                     .lower_contract_integer_to_spec(expression, &context)
                     .map_err(|message| {
                         ClickError::new(format!(
-                            "loop {loop_index} `decreases` component `{}`: {message}",
-                            crate::surface::verification::termination_measure_source(expression)
+                            "loop {loop_index} `decreases` component `{source}`: {message}"
                         ))
                     })?;
                 components.push(crate::kernel::CRankingComponent::PureInteger {
-                    source: crate::surface::verification::termination_measure_source(expression),
+                    source,
                     expression: lowered,
                 });
                 continue;
@@ -2395,12 +2405,11 @@ impl AnnotationLowerer<'_> {
                 .lower_contract_expression_to_spec(expression, &context)
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "loop {loop_index} `decreases` component `{}`: {message}",
-                        crate::surface::verification::termination_measure_source(expression)
+                        "loop {loop_index} `decreases` component `{source}`: {message}"
                     ))
                 })?;
             components.push(crate::kernel::CRankingComponent::Pure {
-                source: crate::surface::verification::termination_measure_source(expression),
+                source,
                 expression: lowered,
             });
         }

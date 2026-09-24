@@ -28,6 +28,9 @@ struct DeclaredResourceScope {
     children: std::cell::RefCell<BTreeMap<Variable, String>>,
     /// Every other instance family seen in declaration order.
     instances: std::cell::RefCell<BTreeMap<Variable, String>>,
+    /// Names an unfold pattern bound to a scalar field's value. The parser
+    /// allocated them an instance identity before the field was known.
+    field_binders: std::cell::RefCell<BTreeSet<Variable>>,
 }
 
 impl DeclaredResourceScope {
@@ -60,6 +63,10 @@ impl DeclaredResourceScope {
                 .borrow_mut()
                 .insert(identity, name.to_string());
         }
+    }
+
+    fn record_field_binder(&self, identity: Variable) {
+        self.field_binders.borrow_mut().insert(identity);
     }
 
     fn record_child(&self, identity: Variable, name: &str) {
@@ -216,6 +223,7 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
         definitions: resource_definitions,
         children: Default::default(),
         instances: Default::default(),
+        field_binders: Default::default(),
     };
 
     file.resource_definitions = file
@@ -1013,10 +1021,32 @@ fn expand_declared_resource_clause(
                     .get(&parent)
                     .map(|info| info.child_slots.clone())
                     .unwrap_or_default();
+                let fields = resource_definitions
+                    .get(&parent)
+                    .map(|info| info.fields.clone())
+                    .unwrap_or_default();
                 for (slot, child, identity) in children.iter() {
+                    // An unfold pattern may also name a scalar field: the
+                    // binder is then a proof name for the field's folded
+                    // value, not a child instance.
+                    if let Some((_, field_type)) = fields.get(slot) {
+                        if construction {
+                            return Err(ClickError::new(format!(
+                                "`{slot}` is a field of `{parent}`, not a child slot; supply it in the fold's field map"
+                            )));
+                        }
+                        if !matches!(field_type, ClickType::C(_)) {
+                            return Err(ClickError::new(format!(
+                                "field `{slot}` of `{parent}` is not C-typed; an unfold pattern binds only C scalar and pointer fields, so read an algebraic field's payload with a proof `match` on `{}.{slot}` before the unfold",
+                                binding.name
+                            )));
+                        }
+                        resource_definitions.record_field_binder(*identity);
+                        continue;
+                    }
                     let Some(declared) = slots.get(slot) else {
                         return Err(ClickError::new(format!(
-                            "resource `{parent}` has no child slot `{slot}`"
+                            "resource `{parent}` has no child slot or field `{slot}`"
                         )));
                     };
                     let Some(declared) = declared else {
@@ -1580,6 +1610,16 @@ fn expand_declared_resource_expression_node(
 ) -> Result<ContractExpression, ClickError> {
     match expression {
         ContractExpression::ResourceField(mut access) => {
+            if resource_definitions
+                .field_binders
+                .borrow()
+                .contains(&access.identity)
+            {
+                return Err(ClickError::new(format!(
+                    "`{}` names the value of a resource field, not a resource instance",
+                    access.owner
+                )));
+            }
             if let Some(name) = resource_definitions.children.borrow().get(&access.identity) {
                 access.resource_name.clone_from(name);
             }

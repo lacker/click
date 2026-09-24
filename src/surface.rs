@@ -1145,15 +1145,33 @@ pub struct StructuralClause {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminationMeasure {
     components: Vec<ContractExpression>,
+    /// The components as written, when resolving a loop clause's proof
+    /// scope rewrote them. A proof-local name such as a `let { field: name }
+    /// = unfold(...)` binder is replaced by the value it names, but the
+    /// termination plan reads the written clause, so the loop head keeps the
+    /// written spelling to name the component by.
+    written: Option<Vec<Option<ContractExpression>>>,
 }
 
 impl TerminationMeasure {
     pub(crate) fn new(components: Vec<ContractExpression>) -> Self {
-        Self { components }
+        Self {
+            components,
+            written: None,
+        }
     }
 
     pub fn components(&self) -> &[ContractExpression] {
         &self.components
+    }
+
+    /// The written spelling of component `index` when resolving the proof
+    /// scope changed it.
+    pub(in crate::surface) fn rewritten_component_source(
+        &self,
+        index: usize,
+    ) -> Option<&ContractExpression> {
+        self.written.as_ref()?.get(index)?.as_ref()
     }
 }
 
@@ -6663,18 +6681,35 @@ impl StructuralClause {
             .map(|resource| substitute_resource_clause_bindings(resource, substitutions))
             .collect::<Result<Vec<_>, String>>()?;
         clause.decreases = match &self.decreases {
-            Some(measure) => Some(TerminationMeasure::new(
-                measure
-                    .components
-                    .iter()
-                    .map(|component| {
-                        crate::surface::lowering::substitute_contract_expression(
-                            component,
-                            substitutions,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, String>>()?,
-            )),
+            Some(measure) => {
+                let mut components = Vec::with_capacity(measure.components.len());
+                let mut written = Vec::with_capacity(measure.components.len());
+                for (index, component) in measure.components.iter().enumerate() {
+                    components.push(crate::surface::lowering::substitute_contract_expression(
+                        component,
+                        substitutions,
+                    )?);
+                    // Only a component that names a proof local changes
+                    // meaning; substitution may otherwise re-spell a C
+                    // fragment without changing what it reads.
+                    let names_scope =
+                        crate::surface::lowering::contract_expression_referenced_names(component)
+                            .iter()
+                            .any(|name| substitutions.contains_key(name));
+                    written.push(
+                        measure
+                            .written
+                            .as_ref()
+                            .and_then(|previous| previous[index].clone())
+                            .or_else(|| names_scope.then(|| component.clone())),
+                    );
+                }
+                let written = written.iter().any(Option::is_some).then_some(written);
+                Some(TerminationMeasure {
+                    components,
+                    written,
+                })
+            }
             None => None,
         };
         Ok(clause)

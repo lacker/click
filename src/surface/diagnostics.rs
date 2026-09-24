@@ -1290,7 +1290,7 @@ pub(super) fn describe_unheld_model_field_initializer(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Option<String> {
-    let access = unheld_model_field_access(initializer, state)?;
+    let access = unheld_model_field_access(initializer, state, false)?;
     // The instance identity a fold writes is the reader's binder, so the
     // registry's spelling is available here too; register it in case this
     // access is the first one lowered.
@@ -1315,6 +1315,7 @@ pub(super) fn describe_unheld_model_field_initializer(
 fn unheld_model_field_access<'a>(
     expression: &'a ContractExpression,
     state: &CState,
+    through_old: bool,
 ) -> Option<&'a ResourceFieldAccess> {
     let mut pending = vec![expression];
     while let Some(expression) = pending.pop() {
@@ -1328,6 +1329,10 @@ fn unheld_model_field_access<'a>(
                     return Some(access);
                 }
             }
+            // A loop invariant reads `old(..)` at the loop's entry, which is
+            // the state it is checked against, so there it is not a snapshot
+            // of its own.
+            ContractExpression::Old(inner) if through_old => pending.push(inner),
             ContractExpression::Old(_) | ContractExpression::At { .. } => {}
             ContractExpression::Negate(inner)
             | ContractExpression::BitwiseNot(inner)
@@ -1357,6 +1362,70 @@ fn unheld_model_field_access<'a>(
         }
     }
     None
+}
+
+/// The refusal for a proposition that reads a field of a resource instance
+/// `state` does not hold, usually because `unfold` consumed it. The field's
+/// folded value stays nameable: `let { field: name } = unfold(owner);` binds
+/// it, as a proof `match` arm binds a constructor payload.
+///
+/// `through_old` also reads fields under `old(..)`, for a loop invariant,
+/// whose `old(..)` names the loop's entry state rather than the function's.
+pub(in crate::surface) fn describe_consumed_instance_field_read(
+    proposition: &ClickProposition,
+    state: &CState,
+    through_old: bool,
+) -> Option<String> {
+    let mut pending = vec![proposition];
+    let mut expressions = Vec::new();
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            ClickProposition::Comparison { left, right, .. } => {
+                expressions.push(left);
+                expressions.push(right);
+            }
+            ClickProposition::FloatClassification { expression, .. }
+            | ClickProposition::Defined { expression } => expressions.push(expression),
+            ClickProposition::Not(inner)
+            | ClickProposition::ForAll { body: inner, .. }
+            | ClickProposition::Exists { body: inner, .. } => pending.push(inner),
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            ClickProposition::RangeAll {
+                start, end, body, ..
+            }
+            | ClickProposition::RangeAny {
+                start, end, body, ..
+            } => {
+                expressions.push(start);
+                expressions.push(end);
+                pending.push(body);
+            }
+            ClickProposition::PredicateCall { arguments, .. } => expressions.extend(arguments),
+            // A snapshot proposition reads its own state.
+            ClickProposition::At { .. }
+            | ClickProposition::Separate { .. }
+            | ClickProposition::Contains { .. }
+            | ClickProposition::Loadable { .. } => {}
+        }
+    }
+    let access = expressions
+        .into_iter()
+        .find_map(|expression| unheld_model_field_access(expression, state, through_old))?;
+    if !access.children.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "`{owner}.{field}` reads a field of `{owner}`, which is not held here; when \
+         `unfold({owner})` consumed it, name the field's folded value where the instance is \
+         unfolded with `let {{ {field}: name }} = unfold({owner});` and write `name` instead",
+        owner = access.owner,
+        field = access.field
+    ))
 }
 
 /// The explanation for two evaluated sides that read one address at two

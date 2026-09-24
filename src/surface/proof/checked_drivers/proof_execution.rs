@@ -1867,6 +1867,29 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
             ..
         } => {
             let proof = proof.with_execution_tactic_index(*index)?;
+            // An expanded C branch is the checked execution split it spells,
+            // exactly as in a function body: a decided branch keeps its
+            // infeasible arm empty, and reading that as a logical case split
+            // would run the continuation on the refuted C arm.
+            if let Some((then_steps, else_steps)) =
+                expanded_execution_if_steps(then_branch, else_branch)
+                && proof.frontier_is_execution_branch(condition)?
+            {
+                let advanced =
+                    proof.apply_expanded_execution_if(condition, &then_steps, &else_steps)?;
+                return advance_preservation_region(
+                    advanced,
+                    continuation,
+                    pending,
+                    expansion_capture,
+                    proof_site,
+                    owning_source_index,
+                    claim_label,
+                    leaves,
+                    refuted_match_paths,
+                    Some((*index, "if")),
+                );
+            }
             let (split, ids) = proof.split_preservation_case(condition, *index)?;
             let mut arm_pending: Vec<&InternalProofNode> = Vec::with_capacity(pending.len() + 1);
             arm_pending.push(continuation.as_ref());

@@ -378,7 +378,13 @@ The plan only says which loop to point at, and a rule is bound to its source
 loop by index and executable shape, a comparison that ignores the measure.
 Matching the measures on top of that turns a plan describing one measure and a
 certificate carrying another into a named refusal instead of a silent
-mismatch, so weakening it can cost a diagnostic and not a theorem. The
+mismatch, so weakening it can cost a diagnostic and not a theorem. A
+component that names a proof binder, such as a `let { field: name } =
+unfold(...)` name or a proof `match` payload, resolves at the loop head to the
+value the binder stands for, so the loop head carries it as a pure component
+under its written spelling while the plan, built from the same written clause
+before any proof runs, reads that spelling as a C expression; the check
+accepts a pure key whose spelling is the planned C expression's display. The
 address-escape refusal, the one place the plan's measure is read for more than
 identification, runs on the certified side for a pure component, where the
 lowered expression is available; a lowered form whose C variables cannot be

@@ -1991,6 +1991,64 @@ impl ResourceContext {
             .next()
     }
 
+    /// Whether another owned occurrence besides `excluded` directly supports
+    /// this fact. The lookup stays within the same indexed candidate frontier
+    /// as `directly_supporting_owned_entry` so provenance checks do not scan
+    /// unrelated resources.
+    pub(crate) fn has_other_directly_supporting_owned_entry(
+        &self,
+        required: &CResourceFact,
+        excluded: ResourceOccurrenceId,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        let supports_other = |entry: ResourceEntryId| {
+            let candidate = self.fact(entry);
+            if !resource_fact_entails(candidate, required, assumptions) {
+                return false;
+            }
+            let support = if candidate.is_own() {
+                Some(self.occurrence(entry))
+            } else {
+                self.storage
+                    .support_occurrence_by_projection
+                    .get(&entry)
+                    .copied()
+                    .filter(|support_occurrence| {
+                        self.storage
+                            .entry_by_occurrence
+                            .get(support_occurrence)
+                            .is_some_and(|support_entry| {
+                                self.storage.facts.get(support_entry)
+                                    == self.storage.supported_by.get(&entry)
+                                    && self.fact(*support_entry).is_own()
+                            })
+                    })
+            };
+            support.is_some_and(|support| support != excluded)
+        };
+
+        if let CResource::Memory(range) = required.resource()
+            && let Some(indexed) = self.concrete_memory_start_candidates(range, true)
+            && indexed.into_iter().any(&supports_other)
+        {
+            return true;
+        }
+        self.direct_match_candidate_positions(required)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .copied()
+            .any(supports_other)
+    }
+
+    pub(crate) fn owned_fact_for_occurrence(
+        &self,
+        occurrence: ResourceOccurrenceId,
+    ) -> Option<&CResourceFact> {
+        let entry = self.storage.entry_by_occurrence.get(&occurrence)?;
+        let fact = self.storage.facts.get(entry)?;
+        fact.is_own().then_some(fact)
+    }
+
     fn concrete_memory_start_candidates(
         &self,
         range: &CMemoryRange,

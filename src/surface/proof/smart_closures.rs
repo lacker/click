@@ -1192,18 +1192,9 @@ impl<'a> Proof<'a> {
         let mut budget = attempt::AttemptBudget::unbounded();
         let mut proof = self.clone();
         loop {
-            if let Some(closed) = attempt::try_steps(
-                &proof,
-                &mut budget,
-                [
-                    ProofStep::Normalize,
-                    ProofStep::Assumption,
-                    ProofStep::Split,
-                    ProofStep::Left,
-                    ProofStep::Right,
-                    ProofStep::Enumerate,
-                ],
-            )? {
+            if let Some(closed) =
+                attempt::try_steps(&proof, &mut budget, direct_logical_candidates(proof.goal()))?
+            {
                 scope.succeed();
                 return Ok(Some(closed));
             }
@@ -1211,6 +1202,83 @@ impl<'a> Proof<'a> {
                 Some(introduced) => proof = introduced,
                 None => return Ok(None),
             }
+        }
+    }
+
+    /// Extends [`Self::try_direct_logical_closure`] through the goal's
+    /// logical structure: a conjunction the direct candidates miss is split
+    /// with the checked `both` operation and each conjunct is closed by this
+    /// same closer, and `intro` may expose a conjunction to split. Only
+    /// direct logical candidates close a leaf, so the search never selects
+    /// premises, rewrites the goal, or instantiates ambient facts.
+    ///
+    /// Every move strictly removes one outer connective of the focused goal
+    /// (`both` splits one conjunction, `intro` removes one binder), so the
+    /// number of attempted candidates is linear in the goal's size. A miss
+    /// anywhere declines the whole candidate and leaves `self` unchanged; a
+    /// success is the explicit `both`/`intro`/direct-step sequence that
+    /// expansion prints.
+    fn try_direct_structural_closure(&self) -> Result<Option<Self>, ClickError> {
+        let mut scope = attempt::search_scope("direct structural closure");
+        let result = self.try_direct_structural_closure_inner()?;
+        if result.is_some() {
+            scope.succeed();
+        }
+        Ok(result)
+    }
+
+    /// A conjunction under implications or universals, every leaf of which
+    /// the direct candidates close, is closed before any premise-selecting,
+    /// rewriting, or instantiating strategy runs over the whole goal. Those
+    /// strategies scale with the ambient facts rather than with the goal,
+    /// and the implication closure that would eventually introduce the
+    /// binders first searches for a refutation of each antecedent. A bare
+    /// conjunction needs no such pass: it is split before those strategies
+    /// run, and each conjunct is offered to the direct candidates first.
+    fn try_direct_structural_closure_under_binders(&self) -> Result<Option<Self>, ClickError> {
+        if !conjunction_under_binders(self.goal()) {
+            return Ok(None);
+        }
+        crate::instrumentation::measure_operation(
+            "surface",
+            "simp closure",
+            "simp closure: direct structural",
+            || self.try_direct_structural_closure(),
+        )
+    }
+
+    fn try_direct_structural_closure_inner(&self) -> Result<Option<Self>, ClickError> {
+        check_verification_deadline()?;
+        let mut budget = attempt::AttemptBudget::unbounded();
+        if let Some(closed) =
+            attempt::try_steps(self, &mut budget, direct_logical_candidates(self.goal()))?
+        {
+            return Ok(Some(closed));
+        }
+        if matches!(self.goal(), Some(Proposition::And(_, _))) {
+            let Some((split_proof, split, ids)) =
+                attempt::candidate_outcome(self.split_focused_both())?
+            else {
+                return Ok(None);
+            };
+            let marker = split_proof.checkpoint();
+            let Some(left) = split_proof
+                .focus_branch(ids[0])?
+                .try_direct_structural_closure_inner()?
+            else {
+                return Ok(None);
+            };
+            let Some(right) = left
+                .focus_branch(ids[1])?
+                .try_direct_structural_closure_inner()?
+            else {
+                return Ok(None);
+            };
+            return attempt::candidate_outcome(right.join_focused_both(&marker, split, ids));
+        }
+        match attempt::candidate_outcome(self.apply_step(ProofStep::Intro))? {
+            Some(introduced) => introduced.try_direct_structural_closure_inner(),
+            None => Ok(None),
         }
     }
 
@@ -1225,6 +1293,10 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn try_simp_closure(&self) -> Result<Option<Self>, ClickError> {
         let mut scope = attempt::search_scope("simp closure");
         if let Some(proof) = self.try_direct_logical_closure()? {
+            scope.succeed();
+            return Ok(Some(proof));
+        }
+        if let Some(proof) = self.try_direct_structural_closure_under_binders()? {
             scope.succeed();
             return Ok(Some(proof));
         }
@@ -1277,6 +1349,10 @@ impl<'a> Proof<'a> {
     ) -> Result<Option<Self>, ClickError> {
         let mut scope = attempt::search_scope("simp closure with surfaces");
         if let Some(proof) = self.try_direct_logical_closure()? {
+            scope.succeed();
+            return Ok(Some(proof));
+        }
+        if let Some(proof) = self.try_direct_structural_closure_under_binders()? {
             scope.succeed();
             return Ok(Some(proof));
         }
@@ -1339,6 +1415,35 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(proof));
         }
+        // A written conjunction is split before any whole-goal derivation,
+        // rewrite, transport, or instantiation strategy below runs over it.
+        // Each of those costs work in the ambient facts per attempt, and on
+        // a conjunction chain the structural recursion would otherwise
+        // repeat them on every suffix of the chain before reaching its
+        // leaves, which is quadratic in the chain. Each conjunct still gets
+        // the complete closure, including these strategies, and the
+        // whole-goal strategies still run, unchanged, when the split misses.
+        let structural_conjunction_tried = if let Some(surface_goal) = self.surface_goal()
+            && matches!(surface_goal, ClickProposition::And(_, _))
+            && matches!(self.goal(), Some(Proposition::And(_, _)))
+        {
+            if let Some(structural) = crate::instrumentation::measure_operation(
+                "surface",
+                "simp closure",
+                "simp closure: structural",
+                || {
+                    self.try_structural_simp_closure_with_surfaces(
+                        surface_goal,
+                        introduced_surfaces,
+                    )
+                },
+            )? {
+                return Ok(Some(structural));
+            }
+            true
+        } else {
+            false
+        };
         // Retain the selected premises for the anchored fallbacks. The proof
         // is unchanged by a declined candidate, so repeating derivation
         // discovery here would perform the same search a second time.
@@ -1484,12 +1589,21 @@ impl<'a> Proof<'a> {
         // has associated the surface name `x` with its fresh kernel variable.
         // The recursive structural call retains that checked `Intro` step and
         // then discovers applications in the now-focused body goal.
-        if let Some(structural) = crate::instrumentation::measure_operation(
-            "surface",
-            "simp closure",
-            "simp closure: structural",
-            || self.try_structural_simp_closure_with_surfaces(&surface_goal, introduced_surfaces),
-        )? {
+        // A conjunction already missed the same structural closure above;
+        // no proof step has been applied since, so it would miss again.
+        if !structural_conjunction_tried
+            && let Some(structural) = crate::instrumentation::measure_operation(
+                "surface",
+                "simp closure",
+                "simp closure: structural",
+                || {
+                    self.try_structural_simp_closure_with_surfaces(
+                        &surface_goal,
+                        introduced_surfaces,
+                    )
+                },
+            )?
+        {
             return Ok(Some(structural));
         }
         if allow_function_unfold
@@ -6090,6 +6204,49 @@ fn entry_anchored_constructor_equality(
         .lower_surface_proposition_direct(&anchored, "entry-anchored premise form")
         .is_ok_and(|lowered| &lowered == equality)
         .then_some(anchored)
+}
+
+/// The direct logical closing steps, in their fixed order, whose kernel rule
+/// can match the goal's outer connective. `split` closes only a conjunction,
+/// `left` and `right` only a disjunction, and `enumerate` only a universal;
+/// on any other goal each is refused before it reads a fact, so omitting it
+/// changes no outcome and saves rendering the goal into a refusal once per
+/// candidate at every `intro` level.
+fn direct_logical_candidates(goal: Option<&Proposition>) -> Vec<ProofStep> {
+    let mut steps = vec![ProofStep::Normalize, ProofStep::Assumption];
+    match goal {
+        Some(Proposition::And(_, _)) => steps.push(ProofStep::Split),
+        Some(Proposition::Or(_, _)) => steps.extend([ProofStep::Left, ProofStep::Right]),
+        Some(Proposition::ForAll { .. }) => steps.push(ProofStep::Enumerate),
+        Some(_) => {}
+        // Without a proposition goal every candidate is refused alike; keep
+        // the complete list so the recorded refusals are unchanged.
+        None => steps.extend([
+            ProofStep::Split,
+            ProofStep::Left,
+            ProofStep::Right,
+            ProofStep::Enumerate,
+        ]),
+    }
+    steps
+}
+
+/// Whether the goal is one or more implications or universals over a
+/// conjunction, which the direct logical closer introduces but cannot split.
+fn conjunction_under_binders(goal: Option<&Proposition>) -> bool {
+    let mut current = match goal {
+        Some(Proposition::Implies(_, body) | Proposition::ForAll { body, .. }) => body.as_ref(),
+        _ => return false,
+    };
+    loop {
+        match current {
+            Proposition::And(_, _) => return true,
+            Proposition::Implies(_, body) | Proposition::ForAll { body, .. } => {
+                current = body.as_ref()
+            }
+            _ => return false,
+        }
+    }
 }
 
 /// The existential witness closer is reserved for the source-backed range

@@ -156,18 +156,63 @@ zeros the descriptor, and returns it. The focused
 `mdtests/arena_destroy_with_live_region.md` regression rejects destruction when
 the caller holds only a live-region resource.
 
-The use-after-free rejection already lives in
-`mdtests/arena_use_after_free.md`. Double free and overlapping live regions
-still need focused negative regressions.
+The use-after-free rejection lives in `mdtests/arena_use_after_free.md`. The
+live-region resource of the symbolic allocation now has focused negatives too:
+`mdtests/arena_prefix_region_double_free.md` refuses a second free of one
+region, and `mdtests/arena_prefix_regions_reject_overlap.md` refuses folding
+two regions over overlapping intervals.
 
-## Next chunk: parameterize the adjacent allocation
+The adjacent allocation is now parameterized, in
+`examples/arena/arena_symbolic_alloc.click`, against the fixed C. The state
+resource `arena_prefix_state` carries the occupied prefix and live count as
+plain `int32` fields; its `arena_prefix_partition` child selects the free data
+suffix `[prefix, capacity)` with the field as the range endpoint. The
+partition stays folded through the count-validation branches, is opened for
+the scan and mark loops, and is restored at the same prefix on every failure.
+Success returns the state at `prefix + count` and `live + 1` plus an
+`arena_prefix_region` owning exactly `[prefix, prefix + count)`; only the
+success/failure outcome is a `spec enum`. `click verify`, `click expand
+--claim`, `click audit`, and `click profile` agree on it.
 
-Return to `arena_alloc`: replace the fixed `[2, 4)` transition with one
-parameterized by a retained prefix model. Keep the occupancy partition folded
-through the count-validation branches, open it for the scan/mark loops, restore
-it on failure, and on success return the old live prefix, exactly
-`[prefix, prefix + count)`, and the updated suffix. Keep arbitrary holes,
-free/recombine, and the end-to-end pipeline out of that implementation chunk.
+Three general gaps were fixed on the way, each with its own regression:
+
+- `let { field: name } = unfold(instance)` binds a C-typed field's folded
+  value, so loop invariants and refolds can name it after the unfold
+  consumed the instance (`mdtests/resource_unfold_binds_scalar_field.md`,
+  `mdtests/resource_unfold_binds_children_and_fields.md`,
+  `mdtests/resource_unfold_field_binding_rejects_consumed_read.md`).
+- Unfolding an unmatched field-bearing body now names its cells as a matched
+  arm's are, so a loop that writes through a range the body owns keeps the
+  range's base load (`mdtests/resource_unfold_names_unmatched_body_cells.md`).
+- A decided C branch inside a loop body now expands to the checked execution
+  split it spells, so whole-claim expansion of a preservation proof verifies
+  (`mdtests/loop_preserve_decided_branch_expands.md`).
+
+## Next chunk: connect the symbolic region to free and the pipeline
+
+Give `arena_free` a contract over `arena_prefix_region` that returns the
+region's occupancy and data cells to the state it came from, and verify
+`arena_pipeline` over the symbolic transition. Returning a region that is not
+the last one allocated needs a partition with holes, which the prefix model
+cannot express; decide that representation against the fixed C before adding
+syntax. Keep arbitrary holes out of the first free chunk if the pipeline's
+reverse-order frees can be modeled as prefix shrinks.
+
+The first attempt is blocked at contract lowering, before any proof runs.
+The fixed `arena_free`, `arena_read`, and `arena_write` take only the region
+descriptor, so their contracts must name the arena as `region->arena`, and
+the live-region resource owns that descriptor. A field-bearing resource's
+folded cells are not read authority for sibling contract clauses, while a
+field-free composite's and a decided match arm's are, so
+`consumes before: arena_prefix_state(region->arena);` cannot be evaluated
+next to the region instance. The landed two-parameter
+`arena_prefix_region(arena, region)` is worse still: its own argument reads a
+cell it owns. Resource fields also cannot have a struct pointer type, so the
+arena cannot be carried as a field instead. The frontier is pinned by
+`mdtests/arena_prefix_free_reads_region_arena_frontier.md`. The intended fix
+publishes an unconditional unmatched field-bearing body's cells as read
+authority during section clause evaluation, symmetric with the other two
+forms; ownership still moves only on `unfold`.
 
 ## Violated invariant
 

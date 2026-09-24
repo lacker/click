@@ -51,9 +51,11 @@ Current projects:
   structural-termination work required by MVR; its sidecar currently imports
   the C without claiming those proofs.
 - `arena/` fixes the C0 implementation boundary for a first-fit allocator
-  whose regions will exercise user-defined suballocation and lifetime
-  ownership; its current sidecar is a parser-only scaffold tracked by the
-  arena resource-ownership issue.
+  whose regions exercise user-defined suballocation and lifetime ownership.
+  Its sidecars verify the empty-arena lifecycle, region reads, writes, and
+  free, and `arena_alloc` as one symbolic prefix transition whose occupied
+  prefix and live count are plain resource fields; the pipeline and
+  arbitrary free intervals are tracked by the arena resource-ownership issue.
 - `input-cursor/` verifies independently mutable cursors over a shared viewed
   input resource.
 - `jsonc-refcount/` verifies synthetic json-c-shaped field reads and writes on

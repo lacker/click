@@ -31,15 +31,35 @@ suffix `[count, capacity)` in the same outcome resource. This deliberately
 specialized contract establishes the first ownership-partition transition
 without pretending that arbitrary holes are modeled yet.
 
-`arena_second_alloc.click` verifies the pipeline's next allocation as a
-separate, equally explicit transition. Its input state describes the occupied
-prefix `[0, 2)` and owns the free data suffix `[2, capacity)` plus the complete
-occupancy map. The first live region can therefore remain framed in the
-caller. Failure restores that state and the caller-owned descriptor; success
-returns the new region `[2, 4)` and retains `[4, capacity)` for the arena. The
-contract is intentionally fixed to the pipeline's two-cell allocations: the
-prior endpoint is not a C parameter, and a resource field cannot currently be
-used as a memory-range endpoint.
+`arena_symbolic_alloc.click` verifies `arena_alloc` as one symbolic
+transition over a retained prefix. Its `arena_prefix_state` resource carries
+two plain fields, the occupied prefix `prefix` and the live count `live`, and
+owns the arena metadata plus an `arena_prefix_partition` child: the complete
+occupancy map, the free data suffix `[prefix, capacity)`, and the facts that
+every occupancy cell below `prefix` is 1 and every one from `prefix` on is 0.
+The field selects the endpoint of the owned suffix directly; no algebraic
+model or `match` is involved. For a symbolic `count`, invalid counts and a
+scan that finds no run of `count` free cells return failure with the state at
+the same fields and the caller-owned descriptor. Success returns the state at
+`prefix + count` and `live + 1` together with an `arena_prefix_region` that
+owns the descriptor and exactly `[prefix, prefix + count)`, and the contract
+states `region->start == old(before.prefix)`, `region->end == region->start +
+count`, and `arena->live_regions == old(before.live) + 1`. Only the
+success/failure outcome keeps a `spec enum`. The proof names the fields where
+it unfolds the state, `let { partition: partition, prefix: p, live: n } =
+unfold(before);`, so the scan loop's invariant, the mark loop, the transported
+occupancy facts, and every refold can say `p` and `n` after the state itself
+is consumed.
+
+`arena_second_alloc.click` verifies the pipeline's second allocation as a
+separate, fixed transition. Its input state describes the occupied prefix
+`[0, 2)`, owns the free data suffix `[2, capacity)` plus the complete
+occupancy map, and states the occupancy facts as requirements. Failure
+restores that state and the caller-owned descriptor; success returns the new
+region `[2, 4)` and retains `[4, capacity)` for the arena. Its resources are
+not the symbolic ones, so it is not literally an instance of the symbolic
+contract; it stays as the fixed instance check of the pipeline's second
+two-cell allocation.
 
 `arena_init` and `arena_destroy` now verify as an independent empty-arena
 lifecycle. Initialization returns the caller-owned descriptor on every path,
@@ -53,9 +73,8 @@ zeroed descriptor.
 contracts for `arena_init`, the specialized first-allocation form of
 `arena_alloc`, `arena_region_length`, `arena_read`, `arena_write`, `arena_free`,
 and `arena_destroy` over the lifecycle, `arena_region`, `arena_available`, and
-shared `arena_metadata` resources. The second specialized `arena_alloc`
-contract lives in `arena_second_alloc.click`. `arena_pipeline` remains
-unverified. The next ownership experiment is to make a resource-stored scalar
-usable as a stable memory-range endpoint, then replace these fixed boundaries
-with one symbolic prefix/suffix transition. Arbitrary free-interval
-collections remain later work.
+shared `arena_metadata` resources. The fixed second allocation lives in
+`arena_second_alloc.click` and the symbolic prefix transition in
+`arena_symbolic_alloc.click`. `arena_pipeline` remains unverified. The next
+ownership step is to connect the symbolic transition's region to `arena_free`
+and the pipeline; arbitrary free-interval collections remain later work.

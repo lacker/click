@@ -1454,6 +1454,107 @@ fn smart_ranked_loop_bundle_scales_near_linearly_with_unrelated_inequalities() {
     );
 }
 
+/// A loop whose one invariant declaration has `conjuncts` members, each an
+/// `int32` addition under a definedness guard. The back-edge bundle is those
+/// guards introduced over the member chain, beside the ranking pair; the body
+/// states every member, so each leaf closes by a direct step.
+fn guarded_member_bundle(conjuncts: usize) -> (String, String) {
+    let c_source = "int32 guarded_bundle(int32 n) {\n    int32 i = 0;\n\n    while (i < n) {\n        i = i + 1;\n    }\n    return i;\n}\n".to_string();
+    let members = (1..=conjuncts)
+        .map(|k| format!("(i <= n or {k} + i == 0)"))
+        .collect::<Vec<_>>()
+        .join(" and\n            ");
+    let facts = (1..=conjuncts)
+        .map(|k| format!("            have i <= n or {k} + i == 0 by {{ left(); }}\n"))
+        .collect::<String>();
+    let click_source = format!(
+        "verifying \"guarded_bundle.c\";\n\n\
+         int32 guarded_bundle(int32 n) {{\n\
+         \x20   requires 0 <= n;\n\
+         \x20   ensures result == n;\n\
+         }} by {{\n\
+         \x20   step();\n\
+         \x20   step();\n\
+         \x20   loop {{\n\
+         \x20       decreases n - i;\n\
+         \x20       invariant 0 <= i and i <= n;\n\
+         \x20       invariant {members};\n\
+         \x20       initialize by simp;\n\
+         \x20       preserve by {{\n\
+         \x20           mark iteration;\n\
+         \x20           have 0 <= at(iteration, i) by {{ simp(); }}\n\
+         \x20           step();\n\
+         \x20           have 0 <= i by {{ simp(); }}\n\
+         \x20           have i <= n by {{ simp(); }}\n\
+         \x20           have 0 <= i and i <= n by {{ split(); }}\n\
+         {facts}\
+         \x20           have 0 <= n - at(iteration, i) - 1 by {{\n\
+         \x20               arithmetic() using {{\n\
+         \x20                   0 <= at(iteration, i);\n\
+         \x20                   at(iteration, i) < at(iteration, n);\n\
+         \x20                   0 <= n;\n\
+         \x20               }}\n\
+         \x20           }}\n\
+         \x20           have n - at(iteration, i) - 1 < n - at(iteration, i) by {{\n\
+         \x20               arithmetic() using {{\n\
+         \x20                   0 <= at(iteration, i);\n\
+         \x20                   at(iteration, i) < at(iteration, n);\n\
+         \x20                   0 <= n;\n\
+         \x20               }}\n\
+         \x20           }}\n\
+         \x20           close_invariants();\n\
+         \x20       }}\n\
+         \x20   }}\n\
+         \x20   step();\n\
+         \x20   simp();\n\
+         }}\n"
+    );
+    (c_source, click_source)
+}
+
+/// `close_invariants()` closes a bundle whose conjuncts sit under guards with
+/// the direct logical steps alone, so its work follows the bundle's size.
+/// Before, the closer ran the premise-selecting and rewriting strategies over
+/// the whole bundle and every suffix of it first, and four guarded members
+/// already exhausted the smart budget.
+#[test]
+fn smart_guarded_member_bundle_scales_near_linearly_with_conjuncts() {
+    let samples = [2, 4, 8, 16]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = guarded_member_bundle(size);
+            let sources = [("guarded_bundle.c", c_source.as_str())];
+            let (verified, sample) =
+                scaling_sample(size, || verify_c0_sources(&click_source, &sources));
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} guarded-member bundle fixture failed: {}",
+                    error.message()
+                )
+            });
+            sample
+        })
+        .collect::<Vec<_>>();
+    assert_near_linear_scaling("guarded invariant members", &samples);
+    let closer = samples
+        .iter()
+        .map(|sample| ScalingSample {
+            size: sample.size,
+            work: sample
+                .named_work
+                .get("smart tactic `close_invariants`")
+                .copied()
+                .unwrap_or(0),
+            named_work: BTreeMap::new(),
+        })
+        .collect::<Vec<_>>();
+    assert!(closer.iter().all(|sample| sample.work > 0), "{closer:?}");
+    assert_near_linear_scaling("smart close_invariants over guarded members", &closer);
+    // Far below the smart budget of 2,000,000 units, which four members
+    // alone exhausted before the closer tried its direct steps first.
+    assert!(closer.last().unwrap().work < 20_000, "{closer:?}");
+}
+
 /// A caller with growing unrelated facts calling a callee whose precondition
 /// has logical structure.
 ///
