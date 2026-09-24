@@ -110,16 +110,35 @@ pub(crate) fn render_terminal_message_labeled(
     search_failures: &[ProofSearchFailure],
     labels: &mut render::SnapshotLabels,
 ) -> String {
+    render_diagnostic_labeled(Some(summary), diagnostic, search_failures, labels)
+}
+
+pub(crate) fn render_trace_context_labeled(
+    diagnostic: &ProofFailureDiagnostic,
+    search_failures: &[ProofSearchFailure],
+    labels: &mut render::SnapshotLabels,
+) -> String {
+    render_diagnostic_labeled(None, diagnostic, search_failures, labels)
+}
+
+fn render_diagnostic_labeled(
+    summary: Option<&str>,
+    diagnostic: &ProofFailureDiagnostic,
+    search_failures: &[ProofSearchFailure],
+    labels: &mut render::SnapshotLabels,
+) -> String {
     if let Some(state) = &diagnostic.state {
         state.register_names(labels);
     }
     // Keep the established summary as the first line. The richer context is
     // deliberately bounded and rendered only at this terminal boundary.
-    let mut rendered = summary.to_owned();
-    rendered.push_str("\n  stage: ");
-    rendered.push_str(&diagnostic.origin.stage);
-    rendered.push_str("\n  location: ");
-    rendered.push_str(&diagnostic.origin.location);
+    let mut rendered = summary.unwrap_or_default().to_owned();
+    if summary.is_some() {
+        rendered.push_str("\n  stage: ");
+        rendered.push_str(&diagnostic.origin.stage);
+        rendered.push_str("\n  location: ");
+        rendered.push_str(&diagnostic.origin.location);
+    }
     // One label map for the whole report. Rendering the goal and each premise
     // with a map of its own made `snapshot#1` mean a different memory on every
     // line, so a premise that reads exactly like the goal could be about
@@ -210,6 +229,16 @@ pub(crate) fn render_terminal_message_labeled(
         }
         rendered.truncate(end);
         rendered.push_str("\n… <proof diagnostic truncated>");
+    }
+    if summary.is_none() {
+        // The trace is a separate section after the ordinary CLI error. Keep
+        // its nested hierarchy, but remove the old report-wide indentation.
+        rendered = rendered
+            .trim_start_matches('\n')
+            .lines()
+            .map(|line| line.strip_prefix("  ").unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n");
     }
     rendered
 }

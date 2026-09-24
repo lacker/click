@@ -7253,6 +7253,42 @@ impl ClickError {
         report
     }
 
+    /// Trace context to append after the same source-facing error header used
+    /// by ordinary `click verify`. No repeated error classification or tactic
+    /// metadata belongs in this section.
+    pub fn trace_context_report(&self) -> Option<String> {
+        let diagnostic = self.diagnostic.as_ref()?;
+        if self.kind != ClickErrorKind::Proof || !proof_trace::enabled_for(&diagnostic.claim_label)
+        {
+            return None;
+        }
+        let mut labels = proof_diagnostics::render::SnapshotLabels::default();
+        let context = proof_diagnostics::render_trace_context_labeled(
+            diagnostic,
+            self.search_failures
+                .as_deref()
+                .map_or(&[][..], Vec::as_slice),
+            &mut labels,
+        );
+        let trace = diagnostic
+            .state
+            .as_ref()
+            .and_then(|state| state.proof_trace(&diagnostic.claim_label, &mut labels))
+            .map(|trace| {
+                trace
+                    .lines()
+                    .map(|line| line.strip_prefix("  ").unwrap_or(line))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            });
+        match (context.is_empty(), trace) {
+            (true, None) => None,
+            (true, Some(trace)) => Some(trace),
+            (false, None) => Some(context),
+            (false, Some(trace)) => Some(format!("{context}\n\n{trace}")),
+        }
+    }
+
     pub fn proof_source_tactic_path(&self) -> Option<&[usize]> {
         self.diagnostic
             .as_ref()?

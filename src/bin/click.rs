@@ -249,11 +249,20 @@ mod tests {
             sidecar.display().to_string(),
         ])
         .unwrap_err();
+        assert!(traced.starts_with("proof error:\n"), "{traced}");
+        assert!(traced.contains("\n\ntactic: step\n"), "{traced}");
+        assert!(traced.contains("\n  --> "), "{traced}");
+        assert!(
+            traced.contains("\n\nproof trace (checked steps on the failing path):"),
+            "{traced}"
+        );
         assert!(
             traced.contains("proof trace (checked steps on the failing path)"),
             "{traced}"
         );
         assert!(traced.contains("source tactic 0: step"), "{traced}");
+        assert!(!traced.contains("error kind:"), "{traced}");
+        assert!(!traced.contains("stage: proof step"), "{traced}");
         assert!(!traced.contains("To get a trace:"), "{traced}");
 
         fs::write(
@@ -335,7 +344,14 @@ mod tests {
             sidecar.display().to_string(),
         ])
         .unwrap_err();
-        assert!(traced.contains("stage: contract certification"), "{traced}");
+        assert!(
+            traced.starts_with("proof error in `parent_detach` during contract certification:"),
+            "{traced}"
+        );
+        assert!(
+            !traced.contains("stage: contract certification"),
+            "{traced}"
+        );
         assert!(
             traced.contains("goal: fact obj->refs == count(child_ref(obj));"),
             "{traced}"
@@ -385,7 +401,8 @@ mod tests {
         ])
         .unwrap_err();
         assert!(traced.contains("read of uninitialized storage"), "{traced}");
-        assert!(traced.contains("location: source tactic 1"), "{traced}");
+        assert!(traced.contains("step: source tactic 1"), "{traced}");
+        assert!(!traced.contains("error kind:"), "{traced}");
         assert!(traced.contains("source tactic 0: step"), "{traced}");
         assert!(
             traced.contains("C frontier: function entry -> C statement 2"),
@@ -451,7 +468,7 @@ int32 parent(int32 *a, int32 *visited, int32 cur) {
             report.contains("goal: exists (z: int32) { z == a[cur] }"),
             "{report}"
         );
-        assert!(report.contains("    r != 0"), "{report}");
+        assert!(report.contains("\n  r != 0"), "{report}");
         assert!(report.contains("fact + r == 1"), "{report}");
         assert!(
             report.contains("callee ensures (source template): result != 0 implies exists"),
