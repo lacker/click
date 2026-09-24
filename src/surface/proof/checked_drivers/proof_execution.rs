@@ -2244,6 +2244,7 @@ fn advance_focused_execution_arm<'a>(
     owning_source_index: usize,
 ) -> Result<Option<Proof<'a>>, ClickError> {
     for indexed in tactics {
+        proof = proof.at_source_tactic(indexed.source_index);
         if proof.is_at_function_exit() {
             if let Some(reason) = post_exit_execution_tactic_error(&indexed.tactic) {
                 return Err(proof

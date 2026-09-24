@@ -128,5 +128,5 @@ struct tree_node* rotate_left(struct tree_node* root) {
 ```
 
 ```expect
-fail: `rotate_left.contract` proof step source tactic 7 > have body tactic 4: `normalize` goal did not normalize to true
+fail: `rotate_left.contract` proof step source tactic 11 > have body tactic 4: `normalize` goal did not normalize to true
 ```

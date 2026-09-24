@@ -3144,6 +3144,22 @@ pub fn nested_tactic_source_position(
     Ok(position_at_offset(source, tokens[current].span.start))
 }
 
+/// Return the exact written tactic beginning at a diagnostic source position.
+/// The position is resolved by the same source mapper used for proof steps.
+pub fn tactic_source_at_position(
+    source: &str,
+    position: &SourcePosition,
+) -> Result<String, ClickError> {
+    let tokens = scan_source_tokens(source)?;
+    let offset = offset_at_position(source, position.line, position.column)?;
+    let start = tokens
+        .iter()
+        .position(|token| token.span.start == offset)
+        .ok_or_else(|| ClickError::new("could not locate source tactic"))?;
+    let end = tactic_end_token(&tokens, start, tokens.len())?;
+    Ok(source[tokens[start].span.start..tokens[end].span.end].to_string())
+}
+
 pub(super) fn position_at_offset(source: &str, offset: usize) -> SourcePosition {
     let prefix = &source[..offset];
     let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
@@ -3480,62 +3496,70 @@ fn direct_tactic_token_ranges(
     let mut ranges = Vec::new();
     let mut start = open + 1;
     while start < close {
-        let mut cursor = start;
-        let mut braces = 0_usize;
-        let mut parentheses = 0_usize;
-        let mut brackets = 0_usize;
-        let end = loop {
-            if cursor >= close {
-                return Err(ClickError::new(
-                    "unterminated tactic in selected source proof",
-                ));
-            }
-            match tokens[cursor].text.as_str() {
-                "{" => braces += 1,
-                "}" => {
-                    braces = braces.checked_sub(1).ok_or_else(|| {
-                        ClickError::new("unbalanced tactic block in selected source proof")
-                    })?;
-                    if braces == 0 && parentheses == 0 && brackets == 0 {
-                        let continuation = tokens.get(cursor + 1).map(|token| token.text.as_str());
-                        // A destructuring proof binding starts with a brace,
-                        // but its `}` is followed by `=` rather than ending
-                        // the tactic: `let { slot: child } = unfold(parent)`
-                        // and `let { binder: instance } = step(...)`.
-                        if !(matches!(continuation, Some("else" | "by" | "="))
-                            || (tokens[start].text == "both" && continuation == Some("and"))
-                            || (tokens[start].text == "match" && continuation == Some("{")))
-                        {
-                            let terminator = if continuation == Some(";") {
-                                cursor + 1
-                            } else {
-                                cursor
-                            };
-                            break terminator;
-                        }
-                    }
-                }
-                "(" => parentheses += 1,
-                ")" => {
-                    parentheses = parentheses.checked_sub(1).ok_or_else(|| {
-                        ClickError::new("unbalanced tactic call in selected source proof")
-                    })?;
-                }
-                "[" => brackets += 1,
-                "]" => {
-                    brackets = brackets.checked_sub(1).ok_or_else(|| {
-                        ClickError::new("unbalanced tactic index in selected source proof")
-                    })?;
-                }
-                ";" if braces == 0 && parentheses == 0 && brackets == 0 => break cursor,
-                _ => {}
-            }
-            cursor += 1;
-        };
+        let end = tactic_end_token(tokens, start, close)?;
         ranges.push(start..end + 1);
         start = end + 1;
     }
     Ok(ranges)
+}
+
+fn tactic_end_token(
+    tokens: &[SourceToken],
+    start: usize,
+    close: usize,
+) -> Result<usize, ClickError> {
+    let mut cursor = start;
+    let mut braces = 0_usize;
+    let mut parentheses = 0_usize;
+    let mut brackets = 0_usize;
+    loop {
+        if cursor >= close {
+            return Err(ClickError::new(
+                "unterminated tactic in selected source proof",
+            ));
+        }
+        match tokens[cursor].text.as_str() {
+            "{" => braces += 1,
+            "}" => {
+                braces = braces.checked_sub(1).ok_or_else(|| {
+                    ClickError::new("unbalanced tactic block in selected source proof")
+                })?;
+                if braces == 0 && parentheses == 0 && brackets == 0 {
+                    let continuation = tokens.get(cursor + 1).map(|token| token.text.as_str());
+                    // A destructuring proof binding starts with a brace,
+                    // but its `}` is followed by `=` rather than ending
+                    // the tactic: `let { slot: child } = unfold(parent)`
+                    // and `let { binder: instance } = step(...)`.
+                    if !(matches!(continuation, Some("else" | "by" | "="))
+                        || (tokens[start].text == "both" && continuation == Some("and"))
+                        || (tokens[start].text == "match" && continuation == Some("{")))
+                    {
+                        let terminator = if continuation == Some(";") {
+                            cursor + 1
+                        } else {
+                            cursor
+                        };
+                        return Ok(terminator);
+                    }
+                }
+            }
+            "(" => parentheses += 1,
+            ")" => {
+                parentheses = parentheses.checked_sub(1).ok_or_else(|| {
+                    ClickError::new("unbalanced tactic call in selected source proof")
+                })?;
+            }
+            "[" => brackets += 1,
+            "]" => {
+                brackets = brackets.checked_sub(1).ok_or_else(|| {
+                    ClickError::new("unbalanced tactic index in selected source proof")
+                })?;
+            }
+            ";" if braces == 0 && parentheses == 0 && brackets == 0 => return Ok(cursor),
+            _ => {}
+        }
+        cursor += 1;
+    }
 }
 
 fn find_if_branch_blocks(

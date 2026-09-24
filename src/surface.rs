@@ -123,7 +123,7 @@ pub use expansion::{
     expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
     map_verifying_source_paths, nested_tactic_source_position, selected_c_target,
     selected_project_c_target, selected_project_thread_runtime, selected_thread_runtime,
-    verifying_source_paths,
+    tactic_source_at_position, verifying_source_paths,
 };
 use expansion::{
     ExpansionCapture, ProofSite, VerificationTarget, verification_target_at,
