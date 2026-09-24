@@ -564,6 +564,12 @@ read as an observation supported by whatever holds that memory, and folding a
 unit places no hold. Lending a unit of a bodyless token population leaves the
 remaining units usable.
 
+A resource body may place `guarded_by object->mutex;` after any field
+declarations to identify the C mutex intended to guard the whole body. This
+spelling is reserved while the checked mutex protocol is being implemented:
+verification refuses the declaration rather than treating it as an ordinary
+resource or assuming that an unmodeled lock protects its facts.
+
 A contract clause speaks about parameters, so `consumes t: tree_at(root);`
 names the tree at the entry argument. These tactics are not contract clauses:
 they name the state the execution has reached. After `root = root->left` a

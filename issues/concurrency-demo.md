@@ -52,6 +52,9 @@ The mutex counter, release/acquire publication, and native pthread binding
 remain open. [The probe record](../design/concurrency-probes/README.md)
 describes the selected source and profile; [the binding design](../design/concurrency-probes/pthread-binding-design.md)
 records the existing create/join rule and trust boundary.
+The resource-body spelling `guarded_by counter->mutex;` is reserved for the
+mutex invariant. Verification currently refuses such a declaration until a
+checked mutex protocol gives it meaning.
 
 ## Remaining work
 
