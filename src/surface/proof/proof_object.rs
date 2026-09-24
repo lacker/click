@@ -1894,7 +1894,7 @@ impl<'a> Proof<'a> {
     ) -> Result<ProofCertificate, ClickError> {
         if !Arc::ptr_eq(&self.context, &checkpoint.context) {
             return Err(
-                self.step_error("certificate validationpoint belongs to a different proof context")
+                self.step_error("certificate checkpoint belongs to a different proof context")
             );
         }
         self.certificate_after_node(Some(&checkpoint.node))

@@ -417,6 +417,33 @@ fn proof_cases_after_c_branch_expand_and_reverify() {
     }
 }
 
+#[test]
+fn branch_continuation_match_expands_and_reverifies() {
+    for relative in [
+        "mdtests/branch_continuation_nested_match.md",
+        "mdtests/branch_continuation_top_level_match.md",
+    ] {
+        let (click_source, c_sources) = mdtest_sources(relative);
+        let c_sources = c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        verify_c0_sources(&click_source, &c_sources)
+            .unwrap_or_else(|error| panic!("`{relative}` should verify: {}", error.message()));
+        let expanded = expand_c0_claim_source(&click_source, &c_sources, "f", CProofClaim::Grouped)
+            .unwrap_or_else(|error| panic!("`{relative}` should expand: {}", error.message()));
+        let claim = &expanded[expanded.find("int32 f(").expect("claim proof")..];
+        assert!(!claim.contains("execute()"), "{expanded}");
+        assert!(!claim.contains("simp()"), "{expanded}");
+        if let Err(error) = verify_c0_sources(&expanded, &c_sources) {
+            panic!(
+                "the expanded `{relative}` should re-verify: {}\n{expanded}",
+                error.message()
+            );
+        }
+    }
+}
+
 /// Expands the smart tactic that starts at `anchor` (plus `skip` bytes) in
 /// an mdtest's Click source and re-verifies the rewrite.
 fn expand_mdtest_site_and_reverify(relative: &str, anchor: &str, skip: usize) -> String {
