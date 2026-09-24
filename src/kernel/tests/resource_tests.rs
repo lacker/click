@@ -6554,11 +6554,14 @@ fn frame_check_opens_owned_composites_one_level_and_charges_per_head() {
         .collect::<Vec<_>>();
     eprintln!("one-level frame query samples: {samples:?}");
     // Two heads at every depth, so the work is a constant per query; a walk
-    // into the nested levels would add work at each doubling.
-    let works = samples.iter().map(|(_, work)| *work).collect::<Vec<_>>();
-    let (low, high) = (works.iter().min().unwrap(), works.iter().max().unwrap());
+    // into the nested levels would add work at each doubling. Depth one is
+    // the one shape that differs: its head opens straight onto the frontier
+    // `cell`, so it compares that member's address with the havoced range,
+    // a few charged `exact_signed_constant` lookups the folded deeper levels
+    // never make. It is the ceiling, not the floor.
+    let (_, shallowest) = samples[0];
     assert!(
-        high - low <= 4,
+        samples.iter().all(|(_, work)| *work <= shallowest + 4),
         "frame query work grew with nesting depth: {samples:?}"
     );
 }

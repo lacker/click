@@ -592,7 +592,9 @@ So a rule that wants a *number* asks `signed_bitvector_constant`, which is the
 one blessed reader for the signed value of a constant `int32` term, or
 `exact_signed_constant` where a recorded exact equality may name that value
 instead — it is `signed_bitvector_constant` plus one hop through the condition
-facts, and nothing else may be asked in its place.
+facts, and nothing else may be asked in its place. The hop is a keyed lookup
+in `exact_constant_equalities`, which files each true equality with a
+constant side under its other side, not a scan of the condition facts.
 `concrete_memory_range_bounds` is the reader for a whole constant range: it
 composes both endpoints and the base offset into signed byte bounds, and a
 rule comparing two constant ranges should ask it rather than scale endpoints

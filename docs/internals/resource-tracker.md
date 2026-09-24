@@ -402,7 +402,7 @@ edge exists. Each decides the same abstract question as the matching arm of
 | `loan_preserving_havoc_keeps_cell` | disagrees | Preserved-block membership **or** bytes `LoanLedger::permits_memory_access` refuses a write through. An ownership question, with fail-open polarity, and no pointer-alias reasoning at all — a loop body or a joined branch arm may write through any pointer it can reach, so separation has nothing to decide. The width it asks the ledger about is the wider of the cell's value and the widest typed overlay recorded there (`union_overlay_widths`), and an unknown width fails closed. |
 | `CMemory::with_loop_memory_havoc_preserving_loans`, `CMemory::with_interface_memory_havoc_preserving_loans` | disagrees | The loop head and the interface join, which both ask `loan_preserving_havoc_keeps_cell`. Neither records an edge, so no rule covers either; what used to be the same retain written twice is now one function asked twice. |
 | `CMemory::forget_zeroed_allocations_written_by` | disagrees | The other half of a call's write set: it drops the zeroed reading of every allocation the declared ranges may reach, because "reads as zero where unwritten" is a claim about contents that an unseen write invalidates exactly as it invalidates a stored cell. It drops the status for the whole allocation rather than narrowing it to a prefix, since a write set bounds where a callee may store and not where it did. The rule has no arm for it: a zeroed reading is not a resource the tracker names. |
-| `CMemory::without_possible_aliasing_cells` | disagrees | A store's own eager drop, and the one site on this list that shares the rule's byte question: the address ladder is conjoined with `access_byte_overlap`, exactly as the rule's `Store` arm conjoins it, so a ladder that proves two addresses differ may stand in for byte separation only where the gap it establishes clears both accesses. The ladder itself is `pointers_proven_distinct_for_memory_resolution`, **or** `pointers_proven_disjoint_by_explicit_range_for_memory_resolution`, **or** `pointers_directly_disjoint_by_range`, **or** `owned_composition_store_separated_evidence`. The two range rungs are the cross-base pairs offset reasoning cannot decide and the byte question answers `Unknown` for; they are a range-index scan the rule's hot `Store` arm must not pay for. The last is shared with the rule's `Store` arm and the two transport sites, and it has to be here too: a cell this function drops is lost to every later route, because the two snapshots then differ at the read's own address. |
+| `CMemory::without_possible_aliasing_cells` | disagrees | A store's own eager drop, and the one site on this list that shares the rule's byte question: the address ladder is conjoined with `access_byte_overlap`, exactly as the rule's `Store` arm conjoins it, so a ladder that proves two addresses differ may stand in for byte separation only where the gap it establishes clears both accesses. Ahead of the ladder, and before `access_byte_overlap`, it asks ownership through the composition base index (`PureFactContext::access_owned_apart_from_store`, below); a cell ownership does not place goes down the ladder unchanged. The ladder itself is `pointers_proven_distinct_for_memory_resolution`, **or** `pointers_proven_disjoint_by_explicit_range_for_memory_resolution`, **or** `pointers_directly_disjoint_by_range`, **or** `owned_composition_store_separated_evidence`. The two range rungs are the cross-base pairs offset reasoning cannot decide and the byte question answers `Unknown` for; they are a range-index scan the rule's hot `Store` arm must not pay for. The last is shared with the rule's `Store` arm and the two transport sites, and it has to be here too: a cell this function drops is lost to every later route, because the two snapshots then differ at the read's own address. |
 | `CMemory::without_field_cells` | disagrees | Same-block equality and a constant byte interval. Across blocks it removes too little, which for a copy is the safe direction; a completeness difference only. |
 | `heap_allocation_may_contain_pointer`, `CMemory::freed_heap_allocation_may_contain` | disagrees | `base.block != pointer.block` answers "not contained", which is fail-open on a spelling. The rule's `HeapFreed` arm is two separation ladders instead. Reaching it needs a freed allocation whose base block is not proven distinct from a live cell's block. The second is the same test over every deallocated allocation, and it is what the zeroed drop, the availability check below and contract certification all read, so the spelling is at least in one place. |
 | loop frame assembly `src/kernel/loops.rs`, `collect_loop_effect_check_obligations`, the multi-exit join | disagrees | Each reinstates or drops cells against the loop's *stated* effect summaries rather than a recorded edge, with a hardcoded `local:` skip. |
@@ -800,6 +800,32 @@ stays off this path, which is what the comment on
 
 Cost: an emptiness gate first, then two block-bucket lookups per composition
 held, no pair materialization and no expansion.
+
+`CMemory::without_possible_aliasing_cells` also asks the same law *first*, in
+an indexed form. Every pointer parameter shares the one `ExternalArgument`
+block, so neither `AliasCandidates` nor the block-pair separation index
+narrows a store through one parameter, and every cached cell of every other
+parameter reaches the ladder, where the range rungs fail slowly: each failing
+search walks the composition's projected pairs, which grow with the square of
+the owned objects. So the store computes once which owned members hold its
+written bytes (`PureFactContext::owned_store_footprint`), and each cached cell
+then asks whether a *different* member of one of those compositions holds all
+of its bytes (`access_owned_apart_from_store`). Both lookups go through each
+composition's `memory_by_base` index under the additive base spellings of the
+address (`p`, `p + f`, `p + i·w` and their left spines), never a block
+bucket, and membership is the structural route only — base, or base plus
+one displacement — with the two endpoint bounds proved; the whole access must
+fit, not just its first element. The guards are the ones above: the two
+addresses must not be proven equal, and ranges whose base spellings were
+later proven equal must not overlap. A cell the rung does not place goes
+down the ladder unchanged, so a miss costs time and never a decision.
+`a_store_beside_owned_parameter_fields_is_linear_in_the_cached_cells`
+(`src/kernel/tests/memory_scaling_tests.rs`) is the regression: 96, 160,
+288, 544 units at 4, 8, 16, 32 cached parameter fields, where the ladder
+alone charged 376, 1508, 8732, 60940.
+`a_store_through_one_parameter_forgets_another_unless_ownership_separates_them`
+and `a_cell_straddling_two_owned_members_is_not_separated_from_either`
+(`src/kernel/tests/memory_reasoning_tests.rs`) are its attack set.
 `stores_beside_many_owned_ranges_scale_near_linearly`
 (`src/surface/tests/scaling_tests.rs`) is the deterministic regression: the
 query's own work over 2/4/8/16 stores is 9, 11, 15, 23 units.

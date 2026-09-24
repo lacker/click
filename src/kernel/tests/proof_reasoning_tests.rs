@@ -1026,6 +1026,80 @@ fn equality_graph_queries_share_one_condition_fact_index_build() {
     );
 }
 
+/// `exact_signed_constant` answers from an index keyed by the term, so what
+/// it examines does not grow with the unrelated condition facts beside the
+/// one that pins the term. It used to scan every condition fact, uncharged,
+/// on each range-membership and offset-equality query that asked it.
+#[test]
+fn exact_signed_constant_is_a_keyed_lookup_among_unrelated_facts() {
+    use crate::kernel::assumptions::exact_signed_constant;
+
+    let pinned = Bitvector32Term::Variable(Variable(230_000));
+    let reversed = Bitvector32Term::Variable(Variable(230_001));
+    let wide = Bitvector32Term::Variable(Variable(230_002));
+    let unpinned = Bitvector32Term::Variable(Variable(230_003));
+    let mut samples = Vec::new();
+    for size in [64_u32, 128, 256, 512] {
+        let mut assumptions = PureFactContext::new();
+        for index in 0..size {
+            let other = Bitvector32Term::Variable(Variable(231_000 + u64::from(index)));
+            // Unrelated constant equalities, unrelated order facts, and
+            // facts that mention the queried terms without pinning them.
+            assumptions = assumptions
+                .assume_condition(
+                    ConditionTerm::equal(other.clone(), Bitvector32Term::Constant(index)),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_less_than(pinned.clone(), other.clone()),
+                    true,
+                )
+                .assume_condition(ConditionTerm::equal(unpinned.clone(), other), false);
+        }
+        assumptions = assumptions
+            .assume_condition(
+                ConditionTerm::equal(pinned.clone(), Bitvector32Term::Constant(7)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Constant(-3_i32 as u32)),
+                    Box::new(reversed.clone()),
+                ),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::Bitvector64Equal(
+                    Box::new(wide.clone()),
+                    Box::new(Bitvector32Term::Int64Constant(1 << 40)),
+                ),
+                true,
+            );
+        PureFactContext::reset_exact_constant_fact_visits();
+        let (answers, work) = crate::instrumentation::measure_deterministic_work(|| {
+            [&pinned, &reversed, &wide, &unpinned]
+                .map(|term| exact_signed_constant(term, &assumptions))
+        });
+        assert_eq!(answers, [Some(7), Some(-3), Some(1 << 40), None]);
+        let visits = PureFactContext::exact_constant_fact_visits();
+        assert_eq!(
+            visits, 3,
+            "each pinned term reads its own entry and nothing else at {size} facts"
+        );
+        samples.push((size, work));
+        // Withdrawing the pinning fact withdraws its entry.
+        let forgotten = assumptions.without_exact_fact(&Proposition::ConditionIs(
+            ConditionTerm::equal(pinned.clone(), Bitvector32Term::Constant(7)),
+            true,
+        ));
+        assert_eq!(exact_signed_constant(&pinned, &forgotten), None);
+    }
+    assert!(
+        samples.iter().all(|(_, work)| *work == samples[0].1),
+        "exact_signed_constant work must not grow with unrelated facts: {samples:?}"
+    );
+}
+
 #[test]
 fn closed_forall_cache_accepts_only_kernel_proved_facts() {
     let variable = Variable(91_000);

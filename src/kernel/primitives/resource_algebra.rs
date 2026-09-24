@@ -2492,6 +2492,32 @@ impl ResourceContext {
             })
     }
 
+    /// The owned memory members of this composition whose range base is
+    /// exactly `base`, as their entries and ranges.
+    ///
+    /// Read from the base index: logarithmic in the composition to position,
+    /// then the members returned. Unlike a block bucket, the answer does not
+    /// grow with the other objects the composition owns in the same block,
+    /// which for `ExternalArgument` is every object reached from a parameter.
+    pub(in crate::kernel) fn owned_memory_members_with_base<'a>(
+        &'a self,
+        base: &Pointer,
+    ) -> impl Iterator<Item = (u64, &'a CMemoryRange)> + 'a {
+        crate::instrumentation::record_deterministic_work(1);
+        self.storage
+            .index
+            .memory_by_base
+            .get(base)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter_map(|entry| {
+                crate::instrumentation::record_deterministic_work(1);
+                self.fact(*entry)
+                    .memory_own_range()
+                    .map(|range| (*entry, range))
+            })
+    }
+
     /// The owned memory fact of this composition that structurally contains
     /// `pointer`, as its entry and its own range.
     pub(in crate::kernel) fn owned_memory_member_containing_pointer(
