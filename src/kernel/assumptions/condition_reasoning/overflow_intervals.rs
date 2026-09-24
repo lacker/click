@@ -161,6 +161,20 @@ impl PureFactContext {
                 }
                 self.signed_addition_interval_nonoverflow(left, right)
             }
+            ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
+                crate::kernel::primitives::int64_add_interval_fits(
+                    self.int64_interval(left),
+                    self.int64_interval(right),
+                )
+                .then_some(false)
+            }
+            ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
+                crate::kernel::primitives::int64_subtract_interval_fits(
+                    self.int64_interval(left),
+                    self.int64_interval(right),
+                )
+                .then_some(false)
+            }
             ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
                 if right.as_ref() == &Bitvector32Term::Constant(0)
                     || left.as_ref() == &Bitvector32Term::Constant(0)
@@ -302,6 +316,53 @@ impl PureFactContext {
                 let upper = left_upper.checked_add(right_upper)?;
                 (lower >= i64::from(i32::MIN) && upper <= i64::from(i32::MAX)).then_some(false)
             })
+    }
+
+    /// The range of an `int64` term: its width range from the root
+    /// constructor, narrowed by the constant `int64` order bounds indexed
+    /// under the term or its canonical alias. These are keyed lookups on the
+    /// queried term only, never a scan of the context. A term with neither a
+    /// width range nor an indexed bound on both sides has no interval.
+    fn int64_interval(&self, term: &Bitvector32Term) -> Option<(i64, i64)> {
+        let (mut lower, mut upper) = term.int64_width_interval().unwrap_or((i64::MIN, i64::MAX));
+        let canonical = crate::kernel::eval::canonical_term(term);
+        let keys = if canonical == *term {
+            vec![term]
+        } else {
+            vec![term, &canonical]
+        };
+        for key in keys {
+            let Some(bounds) = self.int64_signed_order_bounds.get(key) else {
+                continue;
+            };
+            for (_, other, strict, is_upper) in bounds.keys() {
+                let Some(value) = other.int64_as_const() else {
+                    continue;
+                };
+                if *is_upper {
+                    // `term < value` or `term <= value`.
+                    let Some(value) = (if *strict {
+                        value.checked_sub(1)
+                    } else {
+                        Some(value)
+                    }) else {
+                        continue;
+                    };
+                    upper = upper.min(value);
+                } else {
+                    // `value < term` or `value <= term`.
+                    let Some(value) = (if *strict {
+                        value.checked_add(1)
+                    } else {
+                        Some(value)
+                    }) else {
+                        continue;
+                    };
+                    lower = lower.max(value);
+                }
+            }
+        }
+        (lower <= upper && (lower != i64::MIN || upper != i64::MAX)).then_some((lower, upper))
     }
 
     fn signed_multiplication_interval_nonoverflow(
@@ -810,5 +871,135 @@ mod tests {
             )),
             None
         );
+    }
+
+    #[test]
+    fn widened_32_bit_operands_cannot_overflow_int64_addition() {
+        let t = Bitvector32Term::int64_from_uint32(Bitvector32Term::Variable(Variable(94_001)));
+        let x = Bitvector32Term::int64_from_32(Bitvector32Term::Variable(Variable(94_002)));
+        let wide = Bitvector32Term::Variable(Variable(94_003));
+
+        // The widening constructors alone range both operands.
+        assert_eq!(
+            ConditionTerm::int64_signed_add_overflows(t.clone(), x.clone()),
+            ConditionTerm::Constant(false)
+        );
+        assert_eq!(
+            ConditionTerm::int64_signed_subtract_overflows(t.clone(), x.clone()),
+            ConditionTerm::Constant(false)
+        );
+        assert_eq!(
+            ConditionTerm::int64_signed_subtract_overflows(x.clone(), t.clone()),
+            ConditionTerm::Constant(false)
+        );
+        // A width range does not fit next to a constant at the int64 edge.
+        let max = Bitvector32Term::Int64Constant(i64::MAX);
+        assert!(matches!(
+            ConditionTerm::int64_signed_add_overflows(t.clone(), max.clone()),
+            ConditionTerm::Bitvector64SignedAddOverflows(_, _)
+        ));
+        assert!(matches!(
+            ConditionTerm::int64_signed_add_overflows(x.clone(), max),
+            ConditionTerm::Bitvector64SignedAddOverflows(_, _)
+        ));
+        // An int64 atom has no width range of its own.
+        let unbounded = ConditionTerm::int64_signed_add_overflows(wide, t);
+        assert!(matches!(
+            unbounded,
+            ConditionTerm::Bitvector64SignedAddOverflows(_, _)
+        ));
+        assert_eq!(PureFactContext::new().decide(&unbounded), None);
+    }
+
+    #[test]
+    fn int64_order_bounds_decide_addition_and_subtraction_overflow() {
+        let a = Bitvector32Term::Variable(Variable(95_001));
+        let b = Bitvector32Term::Variable(Variable(95_002));
+        let constant = Bitvector32Term::Int64Constant;
+        let half = 1i64 << 62;
+        let bounded = |a_lower: i64, a_upper: i64, b_lower: i64, b_upper: i64| {
+            PureFactContext::new()
+                .assume_condition(
+                    ConditionTerm::int64_signed_less_equal(constant(a_lower), a.clone()),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::int64_signed_less_equal(a.clone(), constant(a_upper)),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::int64_signed_less_equal(constant(b_lower), b.clone()),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::int64_signed_less_equal(b.clone(), constant(b_upper)),
+                    true,
+                )
+        };
+        let add = ConditionTerm::int64_signed_add_overflows(a.clone(), b.clone());
+        let subtract = ConditionTerm::int64_signed_subtract_overflows(a.clone(), b.clone());
+
+        assert_eq!(bounded(0, 1000, 0, 1000).decide(&add), Some(false));
+        // The exact int64 edge still fits; one past it does not.
+        assert_eq!(
+            bounded(-half, half - 1, -half, half).decide(&subtract),
+            Some(false)
+        );
+        assert_eq!(bounded(-half, half, -half, half).decide(&subtract), None);
+        assert_eq!(bounded(0, half, 0, half).decide(&add), None);
+        assert_eq!(bounded(0, half - 1, 0, half).decide(&add), Some(false));
+
+        // Upper bounds alone leave a negative overflow reachable.
+        let upper_only = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::int64_signed_less_equal(a.clone(), constant(1000)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::int64_signed_less_equal(b.clone(), constant(1000)),
+                true,
+            );
+        assert_eq!(upper_only.decide(&add), None);
+
+        // A false strict order is the reversed non-strict order: `!(a < 0)`
+        // is `0 <= a`, and `!(1000 < a)` is `a <= 1000`.
+        let negated = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::int64_signed_less_than(a.clone(), constant(0)),
+                false,
+            )
+            .assume_condition(
+                ConditionTerm::int64_signed_less_than(constant(1000), a.clone()),
+                false,
+            )
+            .assume_condition(
+                ConditionTerm::int64_signed_greater_equal(b.clone(), constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::int64_signed_greater_than(constant(1001), b.clone()),
+                true,
+            );
+        assert_eq!(negated.decide(&add), Some(false));
+
+        // Int32 order facts about the same term never bound it as an int64.
+        let int32_bounded = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), a.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(a.clone(), Bitvector32Term::Constant(1000)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), b.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(b.clone(), Bitvector32Term::Constant(1000)),
+                true,
+            );
+        assert_eq!(int32_bounded.decide(&add), None);
     }
 }

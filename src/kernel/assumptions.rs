@@ -2549,9 +2549,28 @@ impl PureFactContext {
     }
 
     fn adjust_signed_order_bound(&mut self, condition: &ConditionTerm, value: bool, insert: bool) {
-        let Some((left, right, strict)) = condition_as_order_fact(condition, value) else {
-            return;
-        };
+        if let Some((left, right, strict)) = condition_as_order_fact(condition, value) {
+            let mut index = std::mem::take(&mut self.signed_order_bounds);
+            Self::adjust_order_bound_index(&mut index, left, right, strict, insert);
+            self.signed_order_bounds = index;
+        } else if let Some((left, right, strict)) = condition_as_int64_order_fact(condition, value)
+        {
+            let mut index = std::mem::take(&mut self.int64_signed_order_bounds);
+            Self::adjust_order_bound_index(&mut index, left, right, strict, insert);
+            self.int64_signed_order_bounds = index;
+        }
+    }
+
+    fn adjust_order_bound_index(
+        index: &mut crate::persistent::PersistentMap<
+            Bitvector32Term,
+            crate::persistent::PersistentMap<(Bitvector32Term, Bitvector32Term, bool, bool), usize>,
+        >,
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+        strict: bool,
+        insert: bool,
+    ) {
         // Each endpoint is indexed under the term the fact wrote and, when
         // it differs, under its canonical form as an alias: a bound recorded
         // through one term answers a lookup through any equal term. Every
@@ -2570,11 +2589,7 @@ impl PureFactContext {
             entries.push((right_alias, (right, left, strict, false)));
         }
         for (endpoint, bound) in entries {
-            let mut bounds = self
-                .signed_order_bounds
-                .get(&endpoint)
-                .cloned()
-                .unwrap_or_default();
+            let mut bounds = index.get(&endpoint).cloned().unwrap_or_default();
             let count = bounds.get(&bound).copied().unwrap_or(0);
             if insert {
                 bounds = bounds.with_inserted(bound, count + 1);
@@ -2583,10 +2598,10 @@ impl PureFactContext {
             } else {
                 bounds = bounds.with_inserted(bound, count - 1);
             }
-            self.signed_order_bounds = if bounds.is_empty() {
-                self.signed_order_bounds.without_key(&endpoint)
+            *index = if bounds.is_empty() {
+                index.without_key(&endpoint)
             } else {
-                self.signed_order_bounds.with_inserted(endpoint, bounds)
+                index.with_inserted(endpoint, bounds)
             };
         }
     }
@@ -2826,6 +2841,7 @@ impl PureFactContext {
 
     pub(super) fn rebuild_signed_order_bounds(&mut self) {
         self.signed_order_bounds = crate::persistent::PersistentMap::default();
+        self.int64_signed_order_bounds = crate::persistent::PersistentMap::default();
         let facts = self
             .condition_facts
             .iter()
@@ -3810,6 +3826,9 @@ impl PureFactContext {
             && self
                 .signed_order_bounds
                 .shares_root_with(&other.signed_order_bounds)
+            && self
+                .int64_signed_order_bounds
+                .shares_root_with(&other.int64_signed_order_bounds)
             && std::sync::Arc::ptr_eq(
                 &self.memory_load_condition_facts,
                 &other.memory_load_condition_facts,

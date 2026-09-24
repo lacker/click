@@ -48,6 +48,9 @@ pub(super) use derivations::*;
 pub(crate) use memory_state::resource_context_has_symbolic_range_read;
 pub use memory_state::value_independent_click_memory;
 pub(super) use resource_algebra::*;
+pub(in crate::kernel) use term_operations::{
+    int64_add_interval_fits, int64_subtract_interval_fits,
+};
 
 pub(super) const C_POINTER_BYTE_WIDTH: u32 = 8;
 
@@ -7007,6 +7010,13 @@ pub struct PureFactContext {
     /// found through the alias can still cite the exact fact. Counts
     /// preserve equivalent condition terms when one source fact is replaced.
     pub(super) signed_order_bounds: crate::persistent::PersistentMap<
+        Bitvector32Term,
+        crate::persistent::PersistentMap<(Bitvector32Term, Bitvector32Term, bool, bool), usize>,
+    >,
+    /// The `int64` counterpart of `signed_order_bounds`, maintained by the
+    /// same insert and remove path over `Bitvector64Signed*` order facts. It
+    /// is kept separate so an `int64` bound is never read as an int32 one.
+    pub(super) int64_signed_order_bounds: crate::persistent::PersistentMap<
         Bitvector32Term,
         crate::persistent::PersistentMap<(Bitvector32Term, Bitvector32Term, bool, bool), usize>,
     >,

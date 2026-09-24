@@ -33,6 +33,33 @@ pub(in crate::kernel) fn condition_as_order_fact(
     }
 }
 
+/// The `int64` counterpart of [`condition_as_order_fact`]: a signed 64-bit
+/// order fact as `(lower, upper, strict)`. The endpoints are 64-bit terms, so
+/// callers must keep these bounds apart from int32 ones.
+pub(in crate::kernel) fn condition_as_int64_order_fact(
+    condition: &ConditionTerm,
+    value: bool,
+) -> Option<(Bitvector32Term, Bitvector32Term, bool)> {
+    let (left, right, lower_first, strict) = match condition {
+        ConditionTerm::Bitvector64SignedLessThan(left, right) => (left, right, true, true),
+        ConditionTerm::Bitvector64SignedLessEqual(left, right) => (left, right, true, false),
+        ConditionTerm::Bitvector64SignedGreaterThan(left, right) => (left, right, false, true),
+        ConditionTerm::Bitvector64SignedGreaterEqual(left, right) => (left, right, false, false),
+        _ => return None,
+    };
+    let (lower, upper) = if lower_first {
+        (left.as_ref().clone(), right.as_ref().clone())
+    } else {
+        (right.as_ref().clone(), left.as_ref().clone())
+    };
+    // A false order fact is the reversed order with the opposite strictness.
+    Some(if value {
+        (lower, upper, strict)
+    } else {
+        (upper, lower, !strict)
+    })
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FiniteForAllRange {
     pub(crate) lower: i64,
