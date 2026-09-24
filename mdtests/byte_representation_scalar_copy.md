@@ -13,7 +13,7 @@ cell and a typed field copy now establish the same observation.
 This is the direct-copy half of the
 [byte-representation demo](../../issues/byte-representation-demo.md). The
 intermediate untyped buffer in
-[`design/byte-representation/rep_copy.c`](../../design/byte-representation/rep_copy.c)
+[`examples/byte-representation/rep_copy.c`](../examples/byte-representation/rep_copy.c)
 and the pointer-provenance negatives remain open.
 
 ```c filename=scalar_memcpy.c

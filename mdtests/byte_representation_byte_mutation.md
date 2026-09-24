@@ -1,7 +1,7 @@
 # A defined byte mutation proves the changed observation
 
 This is the frozen `rep_copy.c` round trip
-(`design/byte-representation/rep_copy.c`) with one defined byte write between
+(`examples/byte-representation/rep_copy.c`) with one defined byte write between
 the two copies: `buf[0] = 1;` overwrites the low byte of the copied `tag`.
 Under the target's little-endian byte order the kernel updates the typed
 `unsigned int` cell at buffer offset 0 in place,

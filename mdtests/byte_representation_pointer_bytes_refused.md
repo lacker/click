@@ -1,7 +1,7 @@
 # A byte of a copied pointer is not readable
 
 This is the frozen `rep_copy.c` round trip
-(`design/byte-representation/rep_copy.c`) cut after its first `memcpy`, reading
+(`examples/byte-representation/rep_copy.c`) cut after its first `memcpy`, reading
 `buf[8]`: the first byte of the copied `target` pointer. The representation
 copy planted that field as a typed pointer cell at buffer offset 8, and a
 pointer's bytes are opaque. The byte view of integer cells covers integer

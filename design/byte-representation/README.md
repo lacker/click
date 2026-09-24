@@ -3,7 +3,7 @@
 This is the source-selection checkpoint for the P1
 [byte-representation demo](../../issues/byte-representation-demo.md), not a
 Click verification example yet. The synthetic
-[`rep_copy.c`](rep_copy.c) is ordinary C11 source fixed before its
+[`rep_copy.c`](../../examples/byte-representation/rep_copy.c) is ordinary C11 source fixed before its
 representation-copy rules are written. It stays here until Click can verify
 it; adding an unproved directory under `examples/` would make the normal
 example gate fail. The source-integrity test in `tests/examples.rs` pins its

@@ -2,7 +2,7 @@
 
 This is the import/load checkpoint for the P1
 [byte-representation demo](../../issues/byte-representation-demo.md). The C
-below is `design/byte-representation/rep_copy.c`, byte for byte: a live `int`
+below is `examples/byte-representation/rep_copy.c`, byte for byte: a live `int`
 pointee, a source record, a 16-byte buffer, and a distinct destination
 record, with `memcpy` roundtripping all `sizeof(struct record)` bytes through
 `(unsigned char *)(void *)` casts. The sidecar states the intended
