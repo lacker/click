@@ -308,8 +308,8 @@ partition and transfer, shared readers across contexts, shared and exclusive
 reborrows, a returned field loan, a mutex handle with an invariant-owned
 payload and one guard, and a thread-local cell confined to its context.
 These are checks of the abstraction boundaries for later threading and Rust
-work, not verified concurrency: scheduling, atomics, Rust's alias rules,
-exclusive production reborrows and C thread APIs remain outside this checkpoint.
+work, not verified mutex or atomic C operations: scheduling, atomics, Rust's
+alias rules, and exclusive production reborrows remain outside this checkpoint.
 
 ## Regression map
 
