@@ -158,6 +158,64 @@ impl<K: Ord, V: PartialEq> SnapshotMap<K, V> {
         })
     }
 
+    /// Whether `self == other`, for two maps each derived from `base` by
+    /// persistent updates, comparing the two changes from `base` instead of
+    /// the maps.
+    ///
+    /// Two maps derived from one base share every subtree neither update
+    /// touched, so each diff walks only the changed paths (see
+    /// [`Self::diff`]), and the comparison costs the changes rather than the
+    /// maps: this is what a re-derived snapshot pays to be recognized as an
+    /// earlier child of the same base. Equal changes from one base mean equal
+    /// maps whatever the maps share, so the answer never depends on sharing;
+    /// only the cost does. Charges one unit per compared change, plus the
+    /// depth of the tree for each walk's descent.
+    pub(crate) fn eq_relative_to(&self, other: &Self, base: &Self) -> bool {
+        if self.map.ptr_eq(&other.map) {
+            return true;
+        }
+        if self.hash != other.hash || self.map.len() != other.map.len() {
+            return false;
+        }
+        crate::instrumentation::record_deterministic_work(
+            2 * (usize::BITS - base.map.len().leading_zeros()) as usize,
+        );
+        let mut left = base.map.diff(&self.map);
+        let mut right = base.map.diff(&other.map);
+        loop {
+            let (left, right) = match (left.next(), right.next()) {
+                (None, None) => return true,
+                (Some(left), Some(right)) => (left, right),
+                _ => return false,
+            };
+            crate::instrumentation::record_deterministic_work(1);
+            let same = match (left, right) {
+                (
+                    imbl::ordmap::DiffItem::Remove(left, _),
+                    imbl::ordmap::DiffItem::Remove(right, _),
+                ) => left == right,
+                (
+                    imbl::ordmap::DiffItem::Add(left_key, left_value),
+                    imbl::ordmap::DiffItem::Add(right_key, right_value),
+                )
+                | (
+                    imbl::ordmap::DiffItem::Update {
+                        new: (left_key, left_value),
+                        ..
+                    },
+                    imbl::ordmap::DiffItem::Update {
+                        new: (right_key, right_value),
+                        ..
+                    },
+                ) => left_key == right_key && left_value == right_value,
+                _ => false,
+            };
+            if !same {
+                return false;
+            }
+        }
+    }
+
     /// Whether `self` is exactly `before` with the entries at `removed` taken
     /// out. `removed` must be ascending keys of `before`. Walks only the
     /// paths the two maps do not share (see [`Self::diff`]).
@@ -413,6 +471,42 @@ impl<K: Ord> SnapshotSet<K> {
                 (Some(_), None) => difference.extend(left.next()),
                 (None, Some(_)) => difference.extend(right.next()),
                 (None, None) => return difference,
+            }
+        }
+    }
+}
+
+impl<K: Ord> SnapshotSet<K> {
+    /// Whether `self == other`, for two sets each derived from `base`; see
+    /// [`SnapshotMap::eq_relative_to`].
+    pub(crate) fn eq_relative_to(&self, other: &Self, base: &Self) -> bool {
+        if self.set.ptr_eq(&other.set) {
+            return true;
+        }
+        if self.hash != other.hash || self.set.len() != other.set.len() {
+            return false;
+        }
+        crate::instrumentation::record_deterministic_work(
+            2 * (usize::BITS - base.set.len().leading_zeros()) as usize,
+        );
+        let mut left = base.set.diff(&self.set);
+        let mut right = base.set.diff(&other.set);
+        loop {
+            let (left, right) = match (left.next(), right.next()) {
+                (None, None) => return true,
+                (Some(left), Some(right)) => (left, right),
+                _ => return false,
+            };
+            crate::instrumentation::record_deterministic_work(1);
+            let same = match (left, right) {
+                (imbl::ordset::DiffItem::Add(left), imbl::ordset::DiffItem::Add(right))
+                | (imbl::ordset::DiffItem::Remove(left), imbl::ordset::DiffItem::Remove(right)) => {
+                    left == right
+                }
+                _ => false,
+            };
+            if !same {
+                return false;
             }
         }
     }

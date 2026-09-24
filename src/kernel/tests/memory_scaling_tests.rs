@@ -138,9 +138,18 @@ fn equal_content_reached_by_different_routes_interns_to_one_id() {
         let backward = base
             .store(second, scaling_value(2))
             .store(first, scaling_value(1));
+        // Recording the second route's last store found the first route's
+        // snapshot and handed back its storage: equal snapshots carried by
+        // execution share roots, so facts embedding them compare in O(1).
+        assert!(
+            forward.same_storage_roots(&backward),
+            "a derivation that reaches interned content must carry the canonical storage"
+        );
+        // The same content behind storage no derivation produced.
+        let backward = backward.with_fresh_storage_roots();
         assert!(
             !forward.same_storage_roots(&backward),
-            "the two routes must build separate storage for this test to mean anything"
+            "the fresh roots must be separate storage for this test to mean anything"
         );
         let forward_id = intern_c_memory_ref(&forward).arena_id();
         let backward_id = intern_c_memory_ref(&backward).arena_id();
@@ -160,6 +169,73 @@ fn equal_content_reached_by_different_routes_interns_to_one_id() {
         rehits.iter().all(|(_, work)| *work == 0),
         "re-interning a structurally deduplicated snapshot must be a shallow hit: {rehits:?}"
     );
+}
+
+/// A statement executed twice from one base (planned, then checked) derives
+/// the same snapshot twice. The second derivation is recognized as the base's
+/// recorded child by comparing only what each changed from the base, and it
+/// hands back the child's storage, so facts built from either execution
+/// compare by root identity.
+#[test]
+fn rederiving_a_store_from_one_base_is_logarithmic_and_shares_storage() {
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let base = memory_with_unrelated_cells(size);
+        let first = base
+            .clone()
+            .store(scaling_cell("rederived", 0), scaling_value(size));
+        let (second, work) = crate::instrumentation::measure_deterministic_work(|| {
+            base.clone()
+                .store(scaling_cell("rederived", 0), scaling_value(size))
+        });
+        assert!(
+            first.same_storage_roots(&second),
+            "the second derivation must carry the first one's storage at size {size}"
+        );
+        samples.push((size, work));
+    }
+    eprintln!("re-deriving one store beside N unrelated cells (N, units): {samples:?}");
+    let (smallest, base_work) = samples[0];
+    for (size, work) in &samples {
+        let allowed = base_work as f64 + 8.0 * (log2(*size) - log2(smallest));
+        assert!(
+            (*work as f64) <= allowed,
+            "re-deriving one store beside {size} unrelated cells charged {work} units, \
+             above {allowed:.1} (constant plus 8·log2 growth): {samples:?}"
+        );
+    }
+}
+
+/// Normalizing a resource context visits, for each allocation token, only
+/// the tokens that could name the same block: tokens anchored in distinct
+/// heap blocks never merge, so they are not paired.
+#[test]
+fn normalizing_allocation_tokens_in_distinct_heap_blocks_is_linear() {
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let resources = (0..size as u64).fold(ResourceContext::new(), |resources, identity| {
+            resources.unchecked_with_fact(CResourceFact::own_allocation(heap_cell(identity, 0), 4))
+        });
+        let assumptions = PureFactContext::new();
+        let (normalized, work) = crate::instrumentation::measure_deterministic_work(|| {
+            resources.normalized(&assumptions)
+        });
+        assert_eq!(normalized.facts().len(), size);
+        samples.push((size, work));
+    }
+    eprintln!("normalizing N allocation tokens (N, units): {samples:?}");
+    for pair in samples.windows(2) {
+        let [(small, small_work), (large, large_work)] = pair else {
+            unreachable!()
+        };
+        assert!(
+            *large_work <= small_work * (large / small) + 16,
+            "normalization work grew from {small_work} to {large_work} units between \
+             {small} and {large} tokens, faster than linear: {samples:?}"
+        );
+    }
 }
 
 // Operations on one heap allocation beside `N` unrelated live allocations.

@@ -2760,6 +2760,10 @@ mod checked_proposition_index_tests {
         };
         let small = context(8);
         let large = context(2_048);
+        // The index keys the facts once, on first use; the selection itself
+        // must not depend on how many there were.
+        small.build_stated_proposition_index();
+        large.build_stated_proposition_index();
         let (_, small_work) = crate::instrumentation::measure_deterministic_work(|| {
             exactly_selected_spec_proposition_path(&paths, &small)
         });

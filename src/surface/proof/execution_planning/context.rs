@@ -1405,11 +1405,9 @@ mod tests {
 
         // A freshly allocated, structurally equal memory is a different epoch.
         // Its contents and block spelling must not make an old registered load
-        // eligible for a retry at the wrong frontier.
-        let other = memory
-            .memory()
-            .clone()
-            .with_block("static:test:values#static0", 16);
+        // eligible for a retry at the wrong frontier. (A derivation would hand
+        // back the arena's canonical storage, so build the roots directly.)
+        let other = memory.memory().with_fresh_storage_roots();
         let other_snapshot = crate::kernel::CMemorySnapshotIdentity::of(&other);
         assert_ne!(source_snapshot, other_snapshot);
         assert!(

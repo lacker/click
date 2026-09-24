@@ -52,6 +52,22 @@ structural hit registers the caller's roots too, and the arena pins them so
 the addresses cannot be reused by other content; asking again for the same
 snapshot is then a pointer-identity hit with no comparison.
 
+Execution carries the arena's canonical storage forward. A producer interns
+its input as the edge's base and continues from the base's stored instance
+(`intern_derivation_base`), and `record_c_memory_derivation` replaces the
+result with the stored instance of its content, an O(1) handle clone, so
+every snapshot a path carries, and every fact, term, or certified store built
+from it, is the instance the arena holds. Equal snapshots therefore share
+their roots, and facts that embed them compare by root identity rather than
+entry by entry; the recorded edges are unchanged. Because every result is
+derived from its base's canonical storage, a statement executed twice from
+one state (planned, then checked) is recognized as the base's recorded child
+before any structural lookup: the arena indexes each base's recorded children
+by content hash, and `CMemory::eq_relative_to` compares the two results'
+changes from the base (`SnapshotMap::eq_relative_to`, which diffs against the
+base and so walks only the changed paths). The answer is exact whatever the
+snapshots share; only the cost depends on the sharing.
+
 The arena is per thread and per verification. Interning dedups by content and
 keeps the first derivation recorded for an id, so two verifications sharing
 one arena would let the second inherit the first's edges for any snapshot

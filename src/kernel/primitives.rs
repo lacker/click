@@ -3711,6 +3711,47 @@ impl CMemory {
         });
     }
 
+    /// Whether `self == other`, for two snapshots each derived from `base`'s
+    /// storage, comparing only what each changed from `base` (see
+    /// [`SnapshotMap::eq_relative_to`]). Exact whatever the snapshots share;
+    /// the cost is the changed paths when both were derived from `base`.
+    pub(super) fn eq_relative_to(&self, other: &Self, base: &Self) -> bool {
+        if c_memory_content_hash(self) != c_memory_content_hash(other) {
+            return false;
+        }
+        (std::sync::Arc::ptr_eq(&self.blocks, &other.blocks)
+            || self.blocks.eq_relative_to(&other.blocks, &base.blocks))
+            && (std::sync::Arc::ptr_eq(&self.cells, &other.cells)
+                || self.cells.eq_relative_to(&other.cells, &base.cells))
+            && (std::sync::Arc::ptr_eq(&self.union_cells, &other.union_cells)
+                || self
+                    .union_cells
+                    .eq_relative_to(&other.union_cells, &base.union_cells))
+            && (std::sync::Arc::ptr_eq(&self.forgotten, &other.forgotten)
+                || (self.forgotten.forgotten_from == other.forgotten.forgotten_from
+                    && self.forgotten.ended_local_blocks.eq_relative_to(
+                        &other.forgotten.ended_local_blocks,
+                        &base.forgotten.ended_local_blocks,
+                    )))
+            && (std::sync::Arc::ptr_eq(&self.heap, &other.heap)
+                || self.heap.eq_relative_to(&other.heap, &base.heap))
+    }
+
+    /// The same content behind freshly allocated storage roots, so it is not
+    /// the stored snapshot by [`Self::same_storage_roots`]. Tests use it to
+    /// stand for an equal snapshot reached without going through a
+    /// derivation, which would hand back the arena's canonical instance.
+    #[cfg(test)]
+    pub(crate) fn with_fresh_storage_roots(&self) -> Self {
+        Self {
+            blocks: std::sync::Arc::new((*self.blocks).clone()),
+            cells: std::sync::Arc::new((*self.cells).clone()),
+            union_cells: std::sync::Arc::new((*self.union_cells).clone()),
+            forgotten: std::sync::Arc::new((*self.forgotten).clone()),
+            heap: std::sync::Arc::new((*self.heap).clone()),
+        }
+    }
+
     /// Whether two snapshots are the same stored snapshot, by the storage
     /// roots alone. This is the O(1) half of a diagnostic label's identity:
     /// a report that must show "same memory" compares contents when this
@@ -3869,6 +3910,41 @@ pub(super) struct CHeapMemory {
 }
 
 impl CHeapMemory {
+    /// Equality of two heap states derived from `base`; see
+    /// [`SnapshotMap::eq_relative_to`].
+    fn eq_relative_to(&self, other: &Self, base: &Self) -> bool {
+        self.live_allocations
+            .eq_relative_to(&other.live_allocations, &base.live_allocations)
+            && self.deallocated_allocations.eq_relative_to(
+                &other.deallocated_allocations,
+                &base.deallocated_allocations,
+            )
+            && self
+                .pending_allocations
+                .eq_relative_to(&other.pending_allocations, &base.pending_allocations)
+            && self.uninitialized_allocations.eq_relative_to(
+                &other.uninitialized_allocations,
+                &base.uninitialized_allocations,
+            )
+            && self
+                .initialized_cells
+                .eq_relative_to(&other.initialized_cells, &base.initialized_cells)
+            && self
+                .zeroed_allocations
+                .eq_relative_to(&other.zeroed_allocations, &base.zeroed_allocations)
+            && self.zeroed_prefix_allocations.eq_relative_to(
+                &other.zeroed_prefix_allocations,
+                &base.zeroed_prefix_allocations,
+            )
+            && self.zeroed_pending_allocations.eq_relative_to(
+                &other.zeroed_pending_allocations,
+                &base.zeroed_pending_allocations,
+            )
+            && self
+                .pending_reallocations
+                .eq_relative_to(&other.pending_reallocations, &base.pending_reallocations)
+    }
+
     /// Whether two heap states have the same allocation lifetime and shape.
     ///
     /// Typed initialization metadata is deliberately excluded: it describes
@@ -4293,6 +4369,11 @@ struct CMemoryArena {
     /// an O(1) handle clone.
     shallow_pins: Vec<CMemory>,
     memories: Vec<std::sync::Arc<CMemory>>,
+    /// The recorded children of each base, by the child's content hash: a
+    /// derivation re-run from the same base (planning and then checking one
+    /// statement, say) is recognized here by comparing its changes from the
+    /// base, instead of its whole content, before the structural lookup.
+    derived_children: std::collections::HashMap<(u32, u64), Vec<u32>>,
     /// Indexed by arena id; `None` for entry states and for any snapshot
     /// whose first interning did not come from a recorded edge.
     derivations: Vec<Option<std::sync::Arc<CMemoryDerivation>>>,
@@ -4348,6 +4429,20 @@ pub(super) fn c_memory_derivation_generation() -> u64 {
     C_MEMORY_DERIVATION_GENERATION.with(std::cell::Cell::get)
 }
 
+/// Interns `memory` as the base of a derivation about to be applied to it,
+/// and replaces it with the arena's canonical storage for that content (an
+/// O(1) handle clone). Every recorded result is therefore derived from its
+/// base's canonical storage and shares every unchanged subtree with it, which
+/// is what lets [`record_c_memory_derivation`] compare a re-derived result
+/// against an earlier child of the same base along the changed paths only.
+pub(crate) fn intern_derivation_base(memory: &mut CMemory) -> SharedCMemory {
+    let base = intern_c_memory_ref(memory);
+    if !memory.same_storage_roots(base.memory()) {
+        *memory = base.memory().clone();
+    }
+    base
+}
+
 /// Records that `result` is `derivation` applied to its base, unless
 /// `result` already carries a derivation.
 ///
@@ -4362,9 +4457,24 @@ pub(super) fn c_memory_derivation_generation() -> u64 {
 /// back pair (the second result re-interns to the earlier node and keeps
 /// that node's older derivation). Callers may rely on any walk over `base`
 /// terminating; a hop cap still depth-gates them, per conventions.md.
-pub(crate) fn record_c_memory_derivation(result: &CMemory, derivation: CMemoryDerivation) {
+///
+/// `result` is replaced by the arena's canonical instance of its content, an
+/// O(1) handle clone. The edge recorded is the same either way; carrying the
+/// canonical instance forward means every later snapshot derived from this
+/// one shares storage roots with whatever the arena already holds, so facts
+/// and terms that embed equal snapshots compare by root identity.
+pub(crate) fn record_c_memory_derivation(result: &mut CMemory, derivation: CMemoryDerivation) {
+    if let Some(child) = recorded_child_matching(result, derivation.base()) {
+        // Already this base's recorded child: its derivation slot is filled,
+        // so recording would change nothing but the storage handed back.
+        *result = child;
+        return;
+    }
     // Interning borrows the arena, so it has to finish before the write.
     let derived = intern_c_memory_ref(result);
+    if !result.same_storage_roots(derived.memory()) {
+        *result = derived.memory().clone();
+    }
     C_MEMORY_ARENA.with(|arena| {
         let mut arena = arena.borrow_mut();
         if arena.0 != derived.arena || arena.0 != derivation.base().arena {
@@ -4392,9 +4502,41 @@ pub(crate) fn record_c_memory_derivation(result: &CMemory, derivation: CMemoryDe
             );
             return;
         }
+        let base_id = derivation.base().id;
         *slot = Some(std::sync::Arc::new(derivation));
+        arena
+            .derived_children
+            .entry((base_id, derived.content_hash))
+            .or_default()
+            .push(derived.id);
         C_MEMORY_DERIVATION_GENERATION.with(|generation| generation.set(generation.get() + 1));
     });
+}
+
+/// The canonical storage of a recorded child of `base` equal to `result`,
+/// when there is one.
+///
+/// `result` was derived from `base`'s canonical storage
+/// ([`intern_derivation_base`]) and so was every recorded child, so both share
+/// all of `base` that their updates did not touch and the comparison walks
+/// only the changed paths. The answer is exact either way.
+fn recorded_child_matching(result: &CMemory, base: &SharedCMemory) -> Option<CMemory> {
+    let content_hash = c_memory_content_hash(result);
+    C_MEMORY_ARENA.with(|arena| {
+        let arena = arena.borrow();
+        if arena.0 != base.arena {
+            return None;
+        }
+        let arena = &arena.1;
+        let children = arena.derived_children.get(&(base.id, content_hash))?;
+        crate::instrumentation::record_deterministic_work(1);
+        children.iter().find_map(|child| {
+            let stored = &arena.memories[*child as usize];
+            result
+                .eq_relative_to(stored, base.memory())
+                .then(|| stored.as_ref().clone())
+        })
+    })
 }
 
 fn c_memory_content_hash(memory: &CMemory) -> u64 {
@@ -4816,6 +4958,10 @@ pub(super) struct ResourceContextIndex {
     /// without scanning every resource in an aliased block.
     pub(super) memory_by_base: PersistentMap<Pointer, ResourceEntryIds>,
     pub(super) owned_memory_by_block: PersistentMap<PointerBlock, ResourceEntryIds>,
+    /// The blocks holding two or more owned memory ranges. Only those can
+    /// contribute same-block separation candidates, so projecting a
+    /// composition's pairs visits these blocks and not one per allocation.
+    pub(super) shared_owned_memory_blocks: PersistentMap<PointerBlock, ()>,
     pub(super) memory_starts:
         PersistentMap<(PointerBlock, bool, Bitvector32Term), ResourceEntryIds>,
     pub(super) memory_ends: PersistentMap<(PointerBlock, bool, Bitvector32Term), ResourceEntryIds>,
@@ -6803,10 +6949,9 @@ pub struct PureFactContext {
     /// Alpha/load identity index for propositions that may be stated as a
     /// call requirement.  The key retains memory epochs and canonicalizes
     /// only binders; the persistent buckets keep updates local to one key.
-    pub(super) stated_proposition_index: crate::persistent::PersistentMap<
-        crate::kernel::proof::PropositionIdentityKey,
-        crate::persistent::PersistentSet<Proposition>,
-    >,
+    /// A context built in bulk from a fact list defers the keys until the
+    /// index is first asked for (see `StatedPropositionIndex`).
+    pub(super) stated_proposition_index: super::assumptions::StatedPropositionIndex,
     /// Nominal function-contract witnesses keyed by the exact pointer value.
     /// This keeps indirect-call lookup proportional to contracts explicitly
     /// known for that pointer, never to project-wide declarations.

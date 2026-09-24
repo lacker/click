@@ -1512,9 +1512,9 @@ impl CMemory {
             std::sync::Arc::make_mut(&mut self.blocks).insert(block, CBlock::new(size));
             return self;
         }
-        let base = intern_c_memory_ref(&self);
+        let base = intern_derivation_base(&mut self);
         std::sync::Arc::make_mut(&mut self.blocks).insert(block.clone(), CBlock::new(size));
-        record_c_memory_derivation(&self, CMemoryDerivation::BlockDeclared { base, block });
+        record_c_memory_derivation(&mut self, CMemoryDerivation::BlockDeclared { base, block });
         self
     }
 
@@ -1537,9 +1537,9 @@ impl CMemory {
         size: u32,
     ) -> Self {
         let block = block.into();
-        let base = intern_c_memory_ref(&self);
+        let base = intern_derivation_base(&mut self);
         std::sync::Arc::make_mut(&mut self.blocks).insert(block.clone(), CBlock::read_only(size));
-        record_c_memory_derivation(&self, CMemoryDerivation::BlockDeclared { base, block });
+        record_c_memory_derivation(&mut self, CMemoryDerivation::BlockDeclared { base, block });
         self
     }
 
@@ -1566,7 +1566,7 @@ impl CMemory {
         }
 
         let mut memory = self.clone();
-        let base = intern_c_memory_ref(&memory);
+        let base = intern_derivation_base(&mut memory);
         std::sync::Arc::make_mut(&mut memory.blocks).remove(block);
         // Only the retired block's own cells go: one key range each.
         let own = AliasCandidates::only_block(block);
@@ -1578,7 +1578,7 @@ impl CMemory {
             .ended_local_blocks
             .insert(block.clone());
         record_c_memory_derivation(
-            &memory,
+            &mut memory,
             CMemoryDerivation::LocalLifetimeEnded {
                 base,
                 block: block.clone(),
@@ -1626,7 +1626,7 @@ impl CMemory {
                 },
             );
         };
-        let base = Some(intern_c_memory_ref(&self));
+        let base = Some(intern_derivation_base(&mut self));
         if pointer.block != PointerBlock::ExternalArgument {
             std::sync::Arc::make_mut(&mut self.blocks).remove(&pointer.block);
         }
@@ -1661,7 +1661,7 @@ impl CMemory {
         });
         if let Some(base) = base {
             record_c_memory_derivation(
-                &self,
+                &mut self,
                 CMemoryDerivation::HeapFreed {
                     base,
                     allocation_base: pointer.clone(),
@@ -1811,13 +1811,13 @@ impl CMemory {
             Some(existing) if existing != &bytes => None,
             Some(_) => Some(self),
             None => {
-                let prior = Some(intern_c_memory_ref(&self));
+                let prior = Some(intern_derivation_base(&mut self));
                 std::sync::Arc::make_mut(&mut self.heap)
                     .live_allocations
                     .insert(base, bytes);
                 if let Some(prior) = prior {
                     record_c_memory_derivation(
-                        &self,
+                        &mut self,
                         CMemoryDerivation::ContractAllocationClaimsChanged { base: prior },
                     );
                 }
@@ -1838,7 +1838,7 @@ impl CMemory {
         bytes: &Bitvector32Term,
         assumptions: &PureFactContext,
     ) -> Self {
-        let prior = intern_c_memory_ref(&self);
+        let prior = intern_derivation_base(&mut self);
         let mut retired_blocks = BTreeSet::from([base.block.clone()]);
         for alias in assumptions.exact_pointer_aliases(base) {
             if !alias.block.proven_distinct(&base.block) {
@@ -1891,7 +1891,7 @@ impl CMemory {
         // an older empty snapshot and drop this safety-critical edge.
         self.mark_forgotten_from(&prior);
         record_c_memory_derivation(
-            &self,
+            &mut self,
             CMemoryDerivation::ContractAllocationRetired {
                 base: prior,
                 allocation_base: base.clone(),
@@ -1907,7 +1907,7 @@ impl CMemory {
         bytes: Bitvector32Term,
         zeroed: bool,
     ) -> Self {
-        let prior = Some(intern_c_memory_ref(&self));
+        let prior = Some(intern_derivation_base(&mut self));
         std::sync::Arc::make_mut(&mut self.heap)
             .pending_allocations
             .insert(base.clone(), bytes.clone());
@@ -1918,7 +1918,7 @@ impl CMemory {
         }
         if let Some(prior) = prior {
             record_c_memory_derivation(
-                &self,
+                &mut self,
                 CMemoryDerivation::HeapAllocationPending {
                     base: prior,
                     allocation_base: base,
@@ -1977,7 +1977,7 @@ impl CMemory {
         base: &Pointer,
         succeeds: bool,
     ) -> Option<(Self, Bitvector32Term, Pointer)> {
-        let prior = Some(intern_c_memory_ref(&self));
+        let prior = Some(intern_derivation_base(&mut self));
         let bytes = std::sync::Arc::make_mut(&mut self.heap)
             .pending_allocations
             .remove(base)?;
@@ -2014,7 +2014,7 @@ impl CMemory {
             }
             if let Some(prior) = prior {
                 record_c_memory_derivation(
-                    &self,
+                    &mut self,
                     CMemoryDerivation::HeapAllocated {
                         base: prior,
                         block: resolved_base.block.clone(),
@@ -2088,7 +2088,7 @@ impl CMemory {
         // reads do not observe stale pre-loop values. A checked footprint is
         // retained on the derivation edge for disjoint-load transport; the
         // marker block still distinguishes this havoc from ordinary memory.
-        let base = Some(intern_c_memory_ref(&self));
+        let base = Some(intern_derivation_base(&mut self));
         // Whole-map by design, unlike the per-access rules that visit only
         // `AliasCandidates`: the body may write through any pointer it can
         // reach, so every cell is a candidate. The work is the cells dropped
@@ -2110,7 +2110,7 @@ impl CMemory {
         );
         if let Some(base) = base {
             record_c_memory_derivation(
-                &self,
+                &mut self,
                 CMemoryDerivation::LoopHavoc {
                     base,
                     variable,
@@ -2320,7 +2320,7 @@ impl CMemory {
         mutable_ranges: &[CMemoryRange],
         assumptions: &PureFactContext,
     ) -> Self {
-        let base = Some(intern_c_memory_ref(&self));
+        let base = Some(intern_derivation_base(&mut self));
         call_havoc_candidates(mutable_ranges)
             .retain_map(std::sync::Arc::make_mut(&mut self.cells), |pointer, _| {
                 call_havoc_keeps_cell(pointer, mutable_ranges, assumptions)
@@ -2341,7 +2341,7 @@ impl CMemory {
         );
         if let Some(base) = base {
             record_c_memory_derivation(
-                &self,
+                &mut self,
                 CMemoryDerivation::CallHavoc {
                     base,
                     variable,
@@ -2458,10 +2458,10 @@ impl CMemory {
                 return self;
             }
         }
-        let base = intern_c_memory_ref(&self);
+        let base = intern_derivation_base(&mut self);
         std::sync::Arc::make_mut(&mut self.cells).insert(pointer.clone(), value.clone());
         record_c_memory_derivation(
-            &self,
+            &mut self,
             CMemoryDerivation::Store {
                 base,
                 pointer,
@@ -2486,7 +2486,7 @@ impl CMemory {
         if !self.union_cells.is_empty() {
             self = self.without_possible_aliasing_cells(&pointer, value.byte_width(), context);
         }
-        let base = intern_c_memory_ref(&self);
+        let base = intern_derivation_base(&mut self);
         std::sync::Arc::make_mut(&mut self.cells).insert(pointer.clone(), value.clone());
         if self.is_live_heap_address(&pointer, context) {
             std::sync::Arc::make_mut(&mut self.heap)
@@ -2499,7 +2499,7 @@ impl CMemory {
             self.remove_union_views_at(&pointer);
         }
         record_c_memory_derivation(
-            &self,
+            &mut self,
             CMemoryDerivation::Store {
                 base,
                 pointer,
@@ -2768,8 +2768,8 @@ impl CMemory {
         // Computed once for the whole scan; the cells it is compared against
         // are the same-block ones, so the write's own atoms never change.
         let written = crate::kernel::reasoning::StoreByteInterval::of(&normalized_pointer, bytes);
-        let base = Some(intern_c_memory_ref(self));
         let mut memory = self.clone();
+        let base = Some(intern_derivation_base(&mut memory));
         // Whether any cell went for the *aliasing* reason rather than because
         // this store overwrites every one of its bytes. An overwritten cell
         // is stale, not forgotten: the store about to run replaces exactly
@@ -2952,7 +2952,7 @@ impl CMemory {
                     "a forget that lost knowledge landed on an older snapshot"
                 );
             }
-            record_c_memory_derivation(&memory, CMemoryDerivation::CellsForgotten { base });
+            record_c_memory_derivation(&mut memory, CMemoryDerivation::CellsForgotten { base });
         }
         memory
     }

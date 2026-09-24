@@ -161,7 +161,12 @@ The complexity contract implies several design constraints:
   avoid.
 - Fact stores need exact indexes plus theory-specific secondary indexes. For
   example, condition, quantified, memory/viewability, and resource facts must
-  be discoverable without scanning all proposition kinds.
+  be discoverable without scanning all proposition kinds. An index whose key
+  is expensive may be deferred to its first query when each fact change is
+  still keyed at most once: a fact context's stated-proposition index records
+  its changes on a persistent chain, and a query keys only the suffix no
+  earlier query on a shared ancestor built, so contexts a planner rebuilds
+  from fact lists and never asks cost no keys at all.
 - Derived relations such as contradiction, order reachability, resource
   coverage, and separation should be maintained incrementally or queried from
   indexed base facts.

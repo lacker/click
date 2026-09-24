@@ -481,7 +481,9 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     // caller holding the unreduced snapshot ask how many bytes this load
     // reads instead of assuming the widest scalar.
     record_load_access_width(&memory, &pointer, value_type.byte_width());
-    let reduction_base = Some(intern_c_memory_ref(&memory));
+    let reduction_base = Some(crate::kernel::primitives::intern_derivation_base(
+        &mut memory,
+    ));
     let cells_before_reduction = memory.cells.len();
     let load_bytes = value_type.byte_width();
     crate::instrumentation::measure_operation(
@@ -548,7 +550,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     if let Some(base) = reduction_base
         && memory.cells.len() != cells_before_reduction
     {
-        record_c_memory_derivation(&memory, CMemoryDerivation::CellsForgotten { base });
+        record_c_memory_derivation(&mut memory, CMemoryDerivation::CellsForgotten { base });
     }
 
     if pointer.has_symbolic_block() && has_external_read_resource {
