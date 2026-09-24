@@ -1685,8 +1685,8 @@ pub(super) fn c_function_contract_certification_assumptions(
     .ok_or_else(|| {
         "could not evaluate the tracked populations of the contract entry resources".to_string()
     })?;
-    for proposition in population_facts {
-        assumptions = assumptions.assume_proposition(proposition);
+    for fact in population_facts {
+        assumptions = assumptions.assume_proposition(fact.proposition);
     }
     let expanded_required_resources = expand_all_composite_resource_facts(
         &required_resources,

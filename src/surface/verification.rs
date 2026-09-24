@@ -6994,6 +6994,12 @@ pub(in crate::surface) fn composite_resource_definitions(
             }
             .with_witnesses(witnesses)
             .with_fact_source_indices(fact_source_indices)
+            .with_fact_source_spellings(
+                body.facts()
+                    .iter()
+                    .map(crate::surface::printing::source_click_proposition)
+                    .collect(),
+            )
             .with_liveness_facts(facts_claim_liveness)
             .with_resource_match_body(matched)
             .with_matched_recursion(matched_recursive)

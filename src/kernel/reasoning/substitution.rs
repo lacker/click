@@ -4334,6 +4334,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
         .map(|definition| CCompositeResourceDefinition {
             instance_schema: definition.instance_schema.clone(),
             fact_source_indices: definition.fact_source_indices.clone(),
+            fact_source_spellings: definition.fact_source_spellings.clone(),
             name: definition.name.clone(),
             parameters: definition.parameters.clone(),
             witnesses: definition.witnesses.clone(),
@@ -7705,6 +7706,7 @@ fn substitute_pointer_variable_in_c_function(
         .map(|definition| CCompositeResourceDefinition {
             instance_schema: definition.instance_schema.clone(),
             fact_source_indices: definition.fact_source_indices.clone(),
+            fact_source_spellings: definition.fact_source_spellings.clone(),
             name: definition.name.clone(),
             parameters: definition.parameters.clone(),
             witnesses: definition.witnesses.clone(),

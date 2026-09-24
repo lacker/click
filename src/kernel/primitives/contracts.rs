@@ -1396,6 +1396,7 @@ impl CCompositeResourceDefinition {
             contains,
             facts,
             fact_source_indices,
+            fact_source_spellings: Vec::new(),
         }
     }
 
@@ -1407,6 +1408,17 @@ impl CCompositeResourceDefinition {
     pub(crate) fn with_fact_source_indices(mut self, indices: Vec<usize>) -> Self {
         self.fact_source_indices = indices;
         self
+    }
+
+    pub(crate) fn with_fact_source_spellings(mut self, spellings: Vec<String>) -> Self {
+        self.fact_source_spellings = spellings;
+        self
+    }
+
+    pub(crate) fn fact_source_spelling(&self, compiled_index: usize) -> Option<&str> {
+        self.fact_source_index(compiled_index)
+            .and_then(|index| self.fact_source_spellings.get(index))
+            .map(String::as_str)
     }
 
     pub(crate) fn fact_source_index(&self, compiled_index: usize) -> Option<usize> {
@@ -1454,6 +1466,7 @@ impl CCompositeResourceDefinition {
             contains,
             facts,
             fact_source_indices,
+            fact_source_spellings: Vec::new(),
         }
     }
 

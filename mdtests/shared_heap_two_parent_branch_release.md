@@ -213,5 +213,5 @@ void caller(struct parent* first, struct parent* second, struct child* kid) {
 ```
 
 ```expect
-fail: resource population invariant
+fail: could not prove `fact obj->refs == count(child_ref(obj));` of resource `child_ref`
 ```

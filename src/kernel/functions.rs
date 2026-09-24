@@ -2785,6 +2785,7 @@ fn execute_verified_function_applications_with_suspension(
             &argument_values,
             &effective_assumptions,
             true,
+            "after call to",
             budget,
         )? {
             Ok(transition) => transition,
@@ -13989,6 +13990,7 @@ fn apply_counted_population_transitions(
         argument_values,
         assumptions,
         reestablish_invariants,
+        "at return from",
         budget,
     )
 }
@@ -14001,6 +14003,7 @@ fn apply_counted_population_transitions_with_interface(
     argument_values: &[CValue],
     assumptions: &PureFactContext,
     reestablish_invariants: bool,
+    transition_site: &str,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CCountedPopulationTransition, CRuntimeError>> {
     let Some(mut entry_state) =
@@ -14385,7 +14388,11 @@ fn apply_counted_population_transitions_with_interface(
             "could not evaluate resource population postcondition".to_string(),
         )));
     };
-    for proposition in population_facts {
+    for EvaluatedResourcePopulationFact {
+        proposition,
+        source_fact,
+    } in population_facts
+    {
         if let Proposition::ConditionIs(
             ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
             true,
@@ -14402,11 +14409,18 @@ fn apply_counted_population_transitions_with_interface(
         // routes. Anything else is a genuine verification condition for a
         // Surface tactic, not something for lowering to prove here.
         if !transition_guaranteed_facts.contains(&proposition) {
+            let context = match source_fact {
+                Some(source) => format!(
+                    "resource population invariant {transition_site} `{}`: {source}",
+                    storage.map(CFunction::name).unwrap_or("the call")
+                ),
+                None => "resource population invariant".to_string(),
+            };
             add_required_proof_obligation_with_context(
                 &mut transition.postcondition_obligations,
                 assumptions,
                 proposition,
-                Some("resource population invariant"),
+                Some(&context),
                 None,
             );
         }
@@ -16919,13 +16933,18 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
     Some((expanded, propositions))
 }
 
+pub(super) struct EvaluatedResourcePopulationFact {
+    pub(super) proposition: Proposition,
+    pub(super) source_fact: Option<String>,
+}
+
 pub(super) fn evaluate_resource_population_fact_propositions(
     context: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     state: &CState,
     assumptions: &PureFactContext,
     include_ordinary: bool,
-) -> Option<Vec<Proposition>> {
+) -> Option<Vec<EvaluatedResourcePopulationFact>> {
     let mut populations = BTreeMap::<(String, ResourceArguments), Option<Bitvector32Term>>::new();
     for fact in context.facts() {
         let (name, arguments) = match fact.resource() {
@@ -16970,13 +16989,16 @@ pub(super) fn evaluate_resource_population_fact_propositions(
         if let (Some(population_count), Some(visible_quantity)) =
             (population_count, visible_quantity)
         {
-            propositions.push(Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedGreaterEqual(
-                    Box::new(population_count.clone()),
-                    Box::new(visible_quantity),
+            propositions.push(EvaluatedResourcePopulationFact {
+                proposition: Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedGreaterEqual(
+                        Box::new(population_count.clone()),
+                        Box::new(visible_quantity),
+                    ),
+                    true,
                 ),
-                true,
-            ));
+                source_fact: None,
+            });
         }
         // Resource expansion checks ownership relations, but a composite's
         // declared pure facts must also be checked from the kernel-side body
@@ -17109,11 +17131,11 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             }
         }
         let mut fact_assumptions = assumptions.clone();
-        let mut pending = definition.facts().iter().collect::<Vec<_>>();
+        let mut pending = definition.facts().iter().enumerate().collect::<Vec<_>>();
         while !pending.is_empty() {
             let mut next_pending = Vec::new();
             let mut made_progress = false;
-            for population_fact in pending {
+            for (fact_index, population_fact) in pending {
                 let evaluation_assumptions = fact_assumptions
                     .clone()
                     .allow_symbolic_contract_loads()
@@ -17132,7 +17154,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                     return None;
                 };
                 let [path] = paths.as_slice() else {
-                    next_pending.push(population_fact);
+                    next_pending.push((fact_index, population_fact));
                     continue;
                 };
                 if !path.obligations.iter().all(|obligation| {
@@ -17164,22 +17186,37 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                         )
                     })
                 }) {
-                    next_pending.push(population_fact);
+                    next_pending.push((fact_index, population_fact));
                     continue;
                 }
                 for obligation in &path.obligations {
                     fact_assumptions =
                         fact_assumptions.assume_proposition(obligation.proposition().clone());
                 }
+                let source_fact = definition
+                    .fact_source_spelling(fact_index)
+                    .map(|spelling| format!("{name}: fact {spelling};"));
                 for path_fact in &path.facts {
                     let proposition = path_fact.proposition().clone();
-                    if !propositions.contains(&proposition) {
-                        propositions.push(proposition.clone());
+                    if !propositions
+                        .iter()
+                        .any(|fact| fact.proposition == proposition)
+                    {
+                        propositions.push(EvaluatedResourcePopulationFact {
+                            proposition: proposition.clone(),
+                            source_fact: source_fact.clone(),
+                        });
                     }
                     fact_assumptions = fact_assumptions.assume_proposition(proposition);
                 }
-                if !propositions.contains(&path.proposition) {
-                    propositions.push(path.proposition.clone());
+                if !propositions
+                    .iter()
+                    .any(|fact| fact.proposition == path.proposition)
+                {
+                    propositions.push(EvaluatedResourcePopulationFact {
+                        proposition: path.proposition.clone(),
+                        source_fact,
+                    });
                 }
                 fact_assumptions = fact_assumptions.assume_proposition(path.proposition.clone());
                 made_progress = true;

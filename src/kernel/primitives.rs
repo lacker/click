@@ -2575,6 +2575,8 @@ pub struct CCompositeResourceDefinition {
     /// Compiled fact index to original resource-body fact index. Predicate
     /// unfolding can produce two compiled facts for one source fact.
     pub(super) fact_source_indices: Vec<usize>,
+    /// Source spellings are diagnostic metadata. They never justify a fact.
+    pub(super) fact_source_spellings: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

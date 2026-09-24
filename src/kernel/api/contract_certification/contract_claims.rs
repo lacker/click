@@ -956,7 +956,9 @@ fn prepare_function_claim_path(
     ) else {
         return Err("the counted population facts cannot be evaluated".to_string());
     };
-    assumptions = assumptions_with_propositions(&assumptions, &population_facts);
+    for fact in population_facts {
+        assumptions = assumptions.assume_proposition(fact.proposition);
+    }
     let deferred_body_outcome = if deferred_contract_exit {
         match outcome {
             CFunctionOutcome::Return { value, state } => {
@@ -1053,9 +1055,8 @@ fn prepare_function_claim_path(
                 && !forall_loadable_covered_by_fact(&assumptions, obligation.proposition())
         }) {
             return Err(format!(
-                "the divergent verification path has an unproved condition: {:?} ({})",
-                obligation.proposition(),
-                obligation.context().unwrap_or("no context")
+                "the divergent verification path has an unproved condition: {}",
+                unproved_path_obligation_message(obligation)
             ));
         }
         return Ok(CertifiedFunctionClaimPath {
@@ -1178,9 +1179,8 @@ fn prepare_function_claim_path(
         !proved
     }) {
         return Err(format!(
-            "the execution path has an unproved verification condition: {:?} ({})",
-            obligation.proposition(),
-            obligation.context().unwrap_or("no context")
+            "the execution path has an unproved verification condition: {}",
+            unproved_path_obligation_message(obligation)
         ));
     }
 
@@ -1206,6 +1206,24 @@ fn post_execution_population_obligation(obligation: &ProofObligation) -> bool {
     matches!(
         obligation.context(),
         Some("resource population remains nonempty" | "resource population body is active")
+    )
+}
+
+fn unproved_path_obligation_message(obligation: &ProofObligation) -> String {
+    if let Some((site, fact)) = obligation
+        .context()
+        .and_then(|context| context.strip_prefix("resource population invariant "))
+        .and_then(|context| context.split_once(": "))
+    {
+        if let Some((resource, body)) = fact.split_once(": fact ") {
+            return format!("could not prove `fact {body}` of resource `{resource}` {site}");
+        }
+        return format!("could not prove the declared resource fact {site}: `{fact}`");
+    }
+    format!(
+        "{:?} ({})",
+        obligation.proposition(),
+        obligation.context().unwrap_or("no context")
     )
 }
 

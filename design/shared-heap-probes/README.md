@@ -72,15 +72,14 @@ separation condition between the parent link cell and child payload, the
 proof also carries the guarded payload equality across `p->kid = 0`.
 
 The next blocker is contract certification, independent of that equality:
-adding `requires separate(memory(&p->kid), memory(p->kid->payload))` and even
-the tautological `ensures old(p->kid) == old(p->kid)` to the frozen
-`parent_detach` makes exact symbolic execution report an unproved
-`resource population invariant` at the nested `child_release` transition.
-With the separation requirement but no pure `ensures`, the same helper body
-verifies. A focused regression should add that trivial postcondition to a
-branch-on-count release caller, require the disjoint parent link and child
-payload, and expect certification to pass. Repair this certification boundary
-before adding the guarded detach guarantee and proving `out == payload`.
+adding even the tautological `ensures old(p->kid) == old(p->kid)` to the
+frozen `parent_detach` makes exact symbolic execution report that it cannot
+prove `child_ref`'s declared refcount fact at return from `parent_detach`.
+This occurs after the nested `child_release` call; the same helper body
+verifies without the pure `ensures`. A focused regression should add that
+trivial postcondition to a branch-on-count release caller and expect
+certification to pass. Repair this certification boundary before adding the
+guarded detach guarantee and proving `out == payload`.
 
 An indexed `child_ref(obj, payload)` resource was also tested; its contract
 cannot choose `payload` by reading `obj->payload` before ownership is granted,
