@@ -42,8 +42,8 @@ create/join authority transitions against a trusted modeled pthread
 specification; it has **not** established that a native Linux or macOS
 pthread library matches that specification. The compiler-import path locks a
 real Ubuntu GCC/glibc artifact for the frozen source, but header parsing
-currently stops at the GNU __const__ function attribute in
-/usr/include/time.h:80. Importing declarations by itself would not validate
+currently stops at an anonymous union typedef in
+bits/atomic_wide_counter.h:26. Importing declarations by itself would not validate
 runtime behavior.
 
 The mutex counter, release/acquire publication, and native pthread binding

@@ -7687,8 +7687,9 @@ impl Parser {
     /// whether the existing always-inline linkage restriction applies.
     /// `nothrow` adds no proof facts: C0 has no exception semantics, and the
     /// annotation says nothing about termination, memory effects, or safety.
-    /// `leaf` is also accepted without using its cross-unit callback restriction
-    /// as a proof assumption. Calls retain their ordinary checked contracts.
+    /// `leaf`, `const`, and `nonnull` are also accepted without using their
+    /// restrictions as proof assumptions. Calls retain their ordinary checked
+    /// contracts, including their ordinary argument obligations.
     fn consume_function_attributes(&mut self) -> Result<bool, C0SyntaxError> {
         let mut always_inline = false;
         while self.peek_ident() == Some("__attribute__") {
@@ -7699,9 +7700,32 @@ impl Parser {
                 let attribute = self.expect_ident("GNU function attribute")?;
                 match attribute.as_str() {
                     "always_inline" | "__always_inline__" => always_inline = true,
-                    "nothrow" | "__nothrow__" | "leaf" | "__leaf__" => {},
+                    "nothrow" | "__nothrow__" | "leaf" | "__leaf__" | "const"
+                    | "__const__" => {},
+                    "nonnull" | "__nonnull__" => {
+                        if self.peek() == Some(&Token::LParen) {
+                            self.position += 1;
+                            loop {
+                                let Some(Token::Number(index)) = self.next() else {
+                                    return Err(self.error_at_previous(
+                                        "GNU nonnull attribute requires positive parameter indices",
+                                    ));
+                                };
+                                if index.parse::<u32>().ok().filter(|index| *index > 0).is_none() {
+                                    return Err(self.error_at_previous(
+                                        "GNU nonnull attribute requires positive parameter indices",
+                                    ));
+                                }
+                                if self.peek() != Some(&Token::Comma) {
+                                    break;
+                                }
+                                self.position += 1;
+                            }
+                            self.expect(Token::RParen)?;
+                        }
+                    }
                     _ => return Err(self.error_at_previous(format!(
-                        "unsupported GNU function attribute `{attribute}`; only `always_inline`, `nothrow`, and `leaf` are supported in this slice"
+                        "unsupported GNU function attribute `{attribute}`; only `always_inline`, `nothrow`, `leaf`, `const`, and `nonnull` are supported in this slice"
                     ))),
                 }
                 if self.peek() != Some(&Token::Comma) {
@@ -9957,13 +9981,16 @@ impl Parser {
             if base_constant {
                 pointee_constant = true;
             }
-            if self.peek_ident() == Some("const") {
+            loop {
+                match self.peek_ident() {
+                    Some("const") => object_constant = true,
+                    Some("volatile") => volatile_levels |= 1,
+                    // Restrict constrains aliases used by a valid C program.
+                    // Click never infers ownership or separation from it.
+                    Some("restrict" | "__restrict" | "__restrict__") => {}
+                    _ => break,
+                }
                 self.position += 1;
-                object_constant = true;
-            }
-            if self.peek_ident() == Some("volatile") {
-                self.position += 1;
-                volatile_levels |= 1;
             }
             saw_pointer = true;
             if parsed.union_name.is_some() {

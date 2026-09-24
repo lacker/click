@@ -129,8 +129,12 @@ committed as a locked fixture and loaded in the Mac gate without GCC or Linux
 headers. Bare `struct sigevent;` forward declarations now parse without
 inventing a layout. Fixed pointer arrays in structs now import, including the
 member in `bits/types/__locale_t.h:30`. The next bounded refusal is the GNU
-`__const__` function attribute at `/usr/include/time.h:80`. The modeled proof remains separate from native runtime
-validation; importing these headers grants no pthread semantics.
+anonymous union typedef in `bits/atomic_wide_counter.h:26`. The importer now
+accepts GNU `const` and `nonnull` function annotations and the standard and
+GNU spellings of `restrict` on pointer declarators. These annotations grant no
+purity, nonnull, or separation proof facts. The modeled proof remains separate
+from native runtime validation; importing these headers grants no pthread
+semantics.
 
 The compiler-backed regression uses the host GCC/header installation and locks
 those actual inputs. This run does not establish the selected Debian GCC
