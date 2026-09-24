@@ -2426,6 +2426,7 @@ impl CType {
                     | CType::Float64PointerPointer
                     | CType::Float32Array(_)
                     | CType::Float64Array(_)
+                    | CType::PointerArray(_, _)
                     | CType::VoidPointerPointer => {
                         return None;
                     }
@@ -2518,6 +2519,7 @@ impl CType {
             | Self::Float64PointerPointer
             | Self::Float32Array(_)
             | Self::Float64Array(_) => None,
+            Self::PointerArray(_, _) => None,
         }
     }
 
@@ -2557,6 +2559,7 @@ impl CType {
             Self::Int8Array(_) => 1,
             Self::Int16Array(_) | Self::UInt16Array(_) => 2,
             Self::Int64Array(_) | Self::UInt64Array(_) | Self::Float64Array(_) => 8,
+            Self::PointerArray(_, _) => 8,
             scalar => scalar.byte_width().min(C_POINTER_BYTE_WIDTH),
         }
     }
@@ -2606,6 +2609,7 @@ impl CType {
             Self::Int64Array(length) | Self::UInt64Array(length) => length.saturating_mul(8),
             Self::Float32Array(length) => length.saturating_mul(4),
             Self::Float64Array(length) => length.saturating_mul(8),
+            Self::PointerArray(_, length) => length.saturating_mul(C_POINTER_BYTE_WIDTH),
         }
     }
 
@@ -2632,6 +2636,7 @@ impl CType {
             Self::Float64Pointer => Some(Self::Float64),
             Self::Float32PointerPointer => Some(Self::Float32Pointer),
             Self::Float64PointerPointer => Some(Self::Float64Pointer),
+            Self::PointerArray(element, _) => Some(element.pointer_type()),
             _ => None,
         }
     }

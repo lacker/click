@@ -136,6 +136,7 @@ fn scalar_or_pointer(c_type: C0Type) -> bool {
         | C0Type::Float64PointerPointer
         | C0Type::FunctionPointer(_) => true,
         C0Type::Int8Array(_) => false,
+        C0Type::PointerArray(_, _) => false,
         C0Type::Void
         | C0Type::CharArray(_)
         | C0Type::Int32Array(_)

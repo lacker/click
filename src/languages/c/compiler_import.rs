@@ -2052,8 +2052,11 @@ mod tests {
             Err(error) => error.message().to_string(),
         };
         assert!(error.len() < 4096, "unbounded import diagnostic: {error}");
-        assert!(error.contains("/bits/types/__locale_t.h:30"), "{error}");
-        assert!(error.contains("inline scalar arrays in structs"), "{error}");
+        assert!(error.contains("/usr/include/time.h:80"), "{error}");
+        assert!(
+            error.contains("unsupported GNU function attribute `__const__`"),
+            "{error}"
+        );
         assert!(!error.contains("unknown struct declaration `sigevent`"));
     }
 

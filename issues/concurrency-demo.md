@@ -33,8 +33,9 @@ release/acquire publication remain open parts of this issue.
 
 A committed Ubuntu GCC 13/glibc 2.39 import of the frozen C source now loads
 offline on macOS. The parser accepts the first real-header forward declaration,
-`struct sigevent;`, and its next bounded refusal is an inline array of
-struct pointers in `bits/types/__locale_t.h:30`. This is import progress, not
+`struct sigevent;` and the inline pointer array in `bits/types/__locale_t.h:30`.
+Its next bounded refusal is the GNU `__const__` function attribute at
+`/usr/include/time.h:80`. This is import progress, not
 native pthread binding validation.
 
 ## Historical handoff: 2026-09-22
@@ -148,8 +149,8 @@ and hostile regressions, expand and reverify a successful proof fragment,
 and use `scripts/check.sh` as the gate.
 
 Real-header import remains an independent production-binding task. The bounded
-Linux regression now stops at the inline pointer array in
-`/usr/include/x86_64-linux-gnu/bits/types/__locale_t.h:30`. Keep that
+Linux regression now stops at the GNU `__const__` function attribute in
+`/usr/include/time.h:80`. Keep that
 regression and the opened headers unchanged. A later Linux binding may
 finish full header import or use a separately designed, checked declaration projection; either route
 must establish exact declaration, ABI, and runtime identity before making a

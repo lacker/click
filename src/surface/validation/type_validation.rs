@@ -2190,6 +2190,9 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::Float32PointerPointer => "float**".to_string(),
         C0Type::Float64PointerPointer => "double**".to_string(),
         C0Type::FunctionPointer(signature) => format!("function-pointer({signature})"),
+        C0Type::PointerArray(element, length) => {
+            format!("{}[{length}]", element.decayed_type_spelling())
+        }
     }
 }
 
@@ -2709,7 +2712,8 @@ fn infer_c_expression_type(
             | CType::Int64Array(_)
             | CType::UInt64Array(_)
             | CType::Float32Array(_)
-            | CType::Float64Array(_) => None,
+            | CType::Float64Array(_)
+            | CType::PointerArray(_, _) => None,
         },
         CExpression::Conditional {
             condition,
@@ -2820,6 +2824,7 @@ fn infer_c_expression_type(
             CType::UInt64Array(length) => C0Type::UInt64Array(*length),
             CType::Float32Array(length) => C0Type::Float32Array(*length),
             CType::Float64Array(length) => C0Type::Float64Array(*length),
+            CType::PointerArray(element, length) => C0Type::PointerArray(*element, *length),
         }),
         CExpression::Index(base, _) => {
             infer_c_expression_type(base, variables).and_then(pointer_element_type)

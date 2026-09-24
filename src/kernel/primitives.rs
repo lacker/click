@@ -707,6 +707,78 @@ pub enum CType {
     UInt64Array(u32),
     Float32Array(u32),
     Float64Array(u32),
+    /// Fixed array of object-pointer cells. The element kind remains typed;
+    /// an incomplete struct tag is tracked by the C frontend, not erased to
+    /// integer storage.
+    PointerArray(CPointerArrayElement, u32),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CPointerArrayElement {
+    Void,
+    Char,
+    Int8,
+    Int16,
+    Int32,
+    UInt8,
+    UInt16,
+    UInt32,
+    Int64,
+    UInt64,
+    Float32,
+    Float64,
+}
+
+impl CPointerArrayElement {
+    pub fn from_pointer_type(c_type: CType) -> Option<Self> {
+        Some(match c_type {
+            CType::VoidPointer => Self::Void,
+            CType::Int8Pointer => Self::Int8,
+            CType::Int16Pointer => Self::Int16,
+            CType::Int32Pointer => Self::Int32,
+            CType::UInt8Pointer => Self::UInt8,
+            CType::UInt16Pointer => Self::UInt16,
+            CType::UInt32Pointer => Self::UInt32,
+            CType::Int64Pointer => Self::Int64,
+            CType::UInt64Pointer => Self::UInt64,
+            CType::Float32Pointer => Self::Float32,
+            CType::Float64Pointer => Self::Float64,
+            _ => return None,
+        })
+    }
+
+    pub fn pointer_type(self) -> CType {
+        match self {
+            Self::Void => CType::VoidPointer,
+            Self::Char => CType::UInt8Pointer,
+            Self::Int8 => CType::Int8Pointer,
+            Self::Int16 => CType::Int16Pointer,
+            Self::Int32 => CType::Int32Pointer,
+            Self::UInt8 => CType::UInt8Pointer,
+            Self::UInt16 => CType::UInt16Pointer,
+            Self::UInt32 => CType::UInt32Pointer,
+            Self::Int64 => CType::Int64Pointer,
+            Self::UInt64 => CType::UInt64Pointer,
+            Self::Float32 => CType::Float32Pointer,
+            Self::Float64 => CType::Float64Pointer,
+        }
+    }
+
+    pub fn decayed_type_spelling(self) -> &'static str {
+        match self {
+            Self::Void => "void**",
+            Self::Char | Self::UInt8 => "uint8**",
+            Self::Int8 => "int8**",
+            Self::Int16 => "int16**",
+            Self::Int32 => "int32**",
+            Self::UInt16 => "uint16**",
+            Self::UInt32 => "uint32**",
+            Self::Int64 => "int64**",
+            Self::UInt64 => "uint64**",
+            Self::Float32 => "float32**",
+            Self::Float64 => "float64**",
+        }
+    }
 }
 
 /// Exact packed callback type identity. Byte alignment keeps the common C type

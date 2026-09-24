@@ -1,6 +1,106 @@
 use super::*;
 
 #[test]
+fn struct_pointer_arrays_keep_element_types_layout_and_incomplete_tags() {
+    let unit = syntax::parse_translation_unit_for_source(
+        "struct opaque; \
+         struct slots { int *values[2]; const char *labels[2]; \
+                        struct opaque *hidden[3]; int tail; }; \
+         int read(struct slots *p, int *value) { \
+             p->values[1] = value; return *p->values[1]; \
+         }",
+        "pointer_arrays.c",
+        &source::ExpandedLineMap::empty(),
+    )
+    .expect("pointer array fields and indexed access must parse");
+    let layout = &unit.structs["slots"];
+    assert_eq!(layout.size_bytes(), 64);
+    assert_eq!(layout.field("values").unwrap().offset_bytes(), 0);
+    assert_eq!(layout.field("values").unwrap().byte_width(), 16);
+    assert_eq!(layout.field("labels").unwrap().offset_bytes(), 16);
+    assert_eq!(layout.field("hidden").unwrap().offset_bytes(), 32);
+    assert_eq!(
+        layout.field("hidden").unwrap().struct_name(),
+        Some("opaque")
+    );
+    assert_eq!(layout.field("tail").unwrap().offset_bytes(), 56);
+    assert!(matches!(
+        layout.field("values").unwrap().c_type(),
+        syntax::C0Type::PointerArray(crate::kernel::CPointerArrayElement::Int32, 2)
+    ));
+}
+
+#[test]
+fn struct_pointer_arrays_reject_wrong_elements_and_incomplete_dereferences() {
+    for (source, expected) in [
+        (
+            "struct slots { int *values[2]; }; \
+             int bad(struct slots *p, char *value) { \
+                 p->values[0] = value; return 0; \
+             }",
+            "pointer",
+        ),
+        (
+            "struct opaque; struct slots { struct opaque *values[2]; }; \
+             int bad(struct slots *p) { return p->values[0]->field; }",
+            "incomplete struct",
+        ),
+    ] {
+        let error = match syntax::parse_translation_unit_for_source(
+            source,
+            "bad.c",
+            &source::ExpandedLineMap::empty(),
+        ) {
+            Ok(_) => panic!("invalid pointer-array use must be refused: {source}"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn global_and_static_pointer_arrays_preserve_address_initializers() {
+    let functions = syntax::parse_functions(
+        "int target; int *global_slots[2] = {&target, 0}; \
+         int read(void) { static int *local_slots[2] = {&target, 0}; \
+                          return global_slots[0] == local_slots[0]; }",
+    )
+    .expect("pointer arrays with static addresses should parse");
+    let function = functions[0].to_kernel_function();
+    assert_eq!(function.global_arrays().len(), 1);
+    assert_eq!(function.static_arrays().len(), 1);
+    for values in [
+        function.global_arrays()[0].initial_values(),
+        function.static_arrays()[0].initial_values(),
+    ] {
+        assert!(
+            matches!(&values[0], crate::kernel::CValue::Pointer(pointer) if !pointer.is_null())
+        );
+        assert!(matches!(&values[1], crate::kernel::CValue::Pointer(pointer) if pointer.is_null()));
+    }
+}
+
+#[test]
+fn pointer_arrays_reject_unmodeled_pointer_depth_without_panicking() {
+    for source in [
+        "int **slots[2]; int read(void) { return 0; }",
+        "int read(void) { static int **slots[2]; return 0; }",
+        "int read(void) { int **slots[2]; return 0; }",
+        "struct slots { int **values[2]; };",
+    ] {
+        assert!(
+            syntax::parse_translation_unit_for_source(
+                source,
+                "pointer_depth.c",
+                &source::ExpandedLineMap::empty(),
+            )
+            .is_err(),
+            "unsupported pointer depth should report a syntax error: {source}"
+        );
+    }
+}
+
+#[test]
 fn file_scope_struct_forward_declarations_keep_incomplete_types_incomplete() {
     let unit = syntax::parse_translation_unit_for_source(
         "struct opaque; struct opaque; int accepts(struct opaque *value); \

@@ -223,6 +223,7 @@ pub(super) fn c0_type_from_kernel(c_type: CType) -> C0Type {
         CType::UInt64Array(length) => C0Type::UInt64Array(length),
         CType::Float32Array(length) => C0Type::Float32Array(length),
         CType::Float64Array(length) => C0Type::Float64Array(length),
+        CType::PointerArray(element, length) => C0Type::PointerArray(element, length),
     }
 }
 

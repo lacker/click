@@ -205,8 +205,8 @@ impl CGlobalArray {
                     | CType::UInt32
                     | CType::Int64
                     | CType::UInt64
-            ),
-            "C global arrays currently support scalar integer element types only"
+            ) || element_type.is_pointer(),
+            "C global arrays require supported scalar or pointer elements"
         );
         assert!(length > 0, "C global arrays must have positive length");
         assert_eq!(
@@ -501,8 +501,8 @@ impl CStaticArray {
                     | CType::UInt32
                     | CType::Int64
                     | CType::UInt64
-            ),
-            "C static local arrays currently support scalar integer element types only"
+            ) || element_type.is_pointer(),
+            "C static local arrays require supported scalar or pointer elements"
         );
         assert!(
             length > 0,

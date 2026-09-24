@@ -12,8 +12,9 @@ context. Native runtime validation remains separate work.
 Implementation checkpoint: the [probe record](README.md#compiler-import-checkpoint)
 records completion of the user-space compiler-import foundation and successive
 real-header fixes through pointer-to-const struct fields (`d3aa4cd8`). The
-current Linux parser boundary is the inline pointer array in
-`bits/types/__locale_t.h:30`; bare `struct sigevent;` now parses. The
+current Linux parser boundary is the GNU `__const__` function attribute in
+`/usr/include/time.h:80`; bare `struct sigevent;` and the inline pointer
+array in `bits/types/__locale_t.h:30` now parse. The
 [issue handoff](../../issues/concurrency-demo.md#resume-here-2026-09-22-handoff)
 starts with an explicit, Mac-runnable modeled binding. The real-header gap
 remains for later native runtime validation.
