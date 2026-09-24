@@ -7953,6 +7953,75 @@ impl Parser {
         Ok(Some(8))
     }
 
+    fn consume_field_alignment_attribute(&mut self) -> Result<Option<u32>, C0SyntaxError> {
+        if self.peek_ident() != Some("__attribute__") {
+            return Ok(None);
+        }
+        self.position += 1;
+        self.expect(Token::LParen)?;
+        self.expect(Token::LParen)?;
+        let attribute = self.expect_ident("GNU field attribute")?;
+        if attribute != "aligned" && attribute != "__aligned__" {
+            return Err(
+                self.error_at_previous(format!("unsupported GNU field attribute `{attribute}`"))
+            );
+        }
+        self.expect(Token::LParen)?;
+        let alignment = match self.peek_ident() {
+            Some("__alignof__" | "__alignof" | "_Alignof" | "sizeof") => {
+                let operation = self.expect_ident("alignment operator")?;
+                self.expect(Token::LParen)?;
+                let parsed = self.parse_type()?;
+                self.expect(Token::RParen)?;
+                if let Some(name) = parsed.struct_name.as_deref()
+                    && !parsed.c_type.is_pointer()
+                {
+                    let layout = self.structs.get(name).ok_or_else(|| {
+                        self.error_here(format!("unknown struct declaration `{name}`"))
+                    })?;
+                    if operation == "sizeof" {
+                        layout.size_bytes()
+                    } else {
+                        layout.alignment_bytes()
+                    }
+                } else if let Some(name) = parsed.union_name.as_deref()
+                    && !parsed.c_type.is_pointer()
+                {
+                    let layout = self.unions.get(name).ok_or_else(|| {
+                        self.error_here(format!("unknown union declaration `{name}`"))
+                    })?;
+                    if operation == "sizeof" {
+                        layout.size_bytes()
+                    } else {
+                        layout.alignment_bytes()
+                    }
+                } else if operation == "sizeof" {
+                    self.abi.size_and_alignment(parsed.c_type).0
+                } else {
+                    self.abi.size_and_alignment(parsed.c_type).1
+                }
+            }
+            _ => {
+                let expression = self.parse_expression()?;
+                let value = evaluate_static_integer_expression(&expression).map_err(|_| {
+                    self.error_here("GNU field alignment must be an integer constant")
+                })?;
+                match value {
+                    StaticIntegerValue::Signed { value, .. } => u32::try_from(value),
+                    StaticIntegerValue::Unsigned { value, .. } => u32::try_from(value),
+                }
+                .map_err(|_| self.error_here("GNU field alignment is out of range"))?
+            }
+        };
+        self.expect(Token::RParen)?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::RParen)?;
+        if alignment == 0 || !alignment.is_power_of_two() {
+            return Err(self.error_here("GNU field alignment must be a positive power of two"));
+        }
+        Ok(Some(alignment))
+    }
+
     fn register_function_declaration(
         &mut self,
         header: &C0FunctionHeader,
@@ -9305,11 +9374,14 @@ impl Parser {
                 let (
                     c_type,
                     field_size,
-                    field_alignment,
+                    mut field_alignment,
                     field_struct_name,
                     array_element_width,
                     array_shape,
                 ) = self.parse_struct_field_declarator(&field_type, &name)?;
+                if let Some(attribute_alignment) = self.consume_field_alignment_attribute()? {
+                    field_alignment = field_alignment.max(attribute_alignment);
+                }
                 if fields
                     .insert(
                         field_name.clone(),
@@ -9384,7 +9456,10 @@ impl Parser {
             if let Some((field_name, c_type, function_pointer_signature)) =
                 self.parse_function_pointer_declarator(field_type.clone())?
             {
-                let (field_size, field_alignment) = self.abi.size_and_alignment(c_type);
+                let (field_size, mut field_alignment) = self.abi.size_and_alignment(c_type);
+                if let Some(attribute_alignment) = self.consume_field_alignment_attribute()? {
+                    field_alignment = field_alignment.max(attribute_alignment);
+                }
                 offset_bytes = align_up(offset_bytes, field_alignment).ok_or_else(|| {
                     self.error_here(format!("struct `{name}` layout is too large"))
                 })?;
@@ -9421,11 +9496,14 @@ impl Parser {
                 let (
                     c_type,
                     field_size,
-                    field_alignment,
+                    mut field_alignment,
                     field_struct_name,
                     array_element_width,
                     array_shape,
                 ) = self.parse_struct_field_declarator(&field_type, &name)?;
+                if let Some(attribute_alignment) = self.consume_field_alignment_attribute()? {
+                    field_alignment = field_alignment.max(attribute_alignment);
+                }
                 offset_bytes = align_up(offset_bytes, field_alignment).ok_or_else(|| {
                     self.error_here(format!("struct `{name}` layout is too large"))
                 })?;

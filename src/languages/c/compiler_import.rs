@@ -2053,11 +2053,11 @@ mod tests {
         };
         assert!(error.len() < 4096, "unbounded import diagnostic: {error}");
         assert!(
-            error.contains("/usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h:426"),
+            error.contains("/usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h:427"),
             "{error}"
         );
         assert!(
-            error.contains("expected `;`, got identifier `__attribute__`"),
+            error.contains("unsupported C type `long double`"),
             "{error}"
         );
         assert!(!error.contains("unknown struct declaration `sigevent`"));

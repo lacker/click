@@ -42,8 +42,8 @@ create/join authority transitions against a trusted modeled pthread
 specification; it has **not** established that a native Linux or macOS
 pthread library matches that specification. The compiler-import path locks a
 real Ubuntu GCC/glibc artifact for the frozen source, but header parsing
-currently stops at a member alignment attribute in GCC `stddef.h:426` while
-parsing `max_align_t`.
+currently stops at the `long double` member of `max_align_t` in GCC
+`stddef.h:427`.
 Importing declarations by itself would not validate
 runtime behavior.
 

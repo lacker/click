@@ -10737,6 +10737,37 @@ fn c0_struct_union_fields_are_copyable_by_value_without_flattening_overlap() {
 }
 
 #[test]
+fn c0_gnu_field_alignment_changes_aggregate_layout() {
+    let unit = syntax::parse_translation_unit_for_source(
+        "struct aligned { char pad; int32 value __attribute__((aligned(16))); char tail; }; \
+         union overlay { int32 value __attribute__((__aligned__(__alignof__(long long)))); char bytes[3]; };",
+        "aligned.c",
+        &source::ExpandedLineMap::empty(),
+    )
+    .expect("field alignment should be parsed into ABI layouts");
+    let layout = &unit.structs["aligned"];
+    assert_eq!(layout.field("value").unwrap().offset_bytes(), 16);
+    assert_eq!(layout.alignment_bytes(), 16);
+    assert_eq!(layout.size_bytes(), 32);
+    let overlay = &unit.unions["overlay"];
+    assert_eq!(overlay.alignment_bytes(), 8);
+    assert_eq!(overlay.size_bytes(), 8);
+
+    for alignment in ["0", "3"] {
+        let source =
+            format!("struct bad {{ int32 value __attribute__((aligned({alignment}))); }};");
+        assert!(
+            syntax::parse_translation_unit_for_source(
+                &source,
+                "bad.c",
+                &source::ExpandedLineMap::empty(),
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn c0_gnu_access_annotation_is_parsed_without_proof_authority() {
     let declaration = "extern int32 record(void *ptr, int32 count, const char *name) __attribute__((__access__(__none__, 1), __access__(__read_only__, 3, 2)));";
     syntax::validate_header(declaration, &source::ExpandedLineMap::empty())
