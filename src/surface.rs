@@ -5783,7 +5783,11 @@ pub struct VerifiedCTheorem {
     pub specification: CFunctionSpecification,
     pub theorem: Theorem,
     pub concrete_loop_execution: bool,
-    pub(crate) checked_execution: CCheckedFunctionExecution,
+    /// Shared by every theorem one proof issued: a grouped proof issues one
+    /// theorem per path and claim over the same checked execution, so the
+    /// `Arc` both avoids a per-theorem copy of every path and gives
+    /// finalization an exact identity to visit that execution once.
+    pub(crate) checked_execution: std::sync::Arc<CCheckedFunctionExecution>,
     /// Exact proposition authority issued by the completed kernel proof and
     /// bound to this theorem's function path. Resource and effect claims keep
     /// their dedicated finalization checks instead.

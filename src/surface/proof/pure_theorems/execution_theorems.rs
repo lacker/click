@@ -340,9 +340,9 @@ pub(super) fn verify_execution_theorem(
             checked_entry_state: None,
         }),
     )?;
-    let artifacts = verified
-        .iter()
-        .map(|v| v.checked_execution.clone())
+    let artifacts = crate::surface::verification::distinct_checked_executions(&verified)
+        .into_iter()
+        .map(|execution| CCheckedFunctionExecution::clone(execution))
         .collect::<Vec<_>>();
     let execution =
         prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems(

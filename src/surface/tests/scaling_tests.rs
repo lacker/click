@@ -2257,16 +2257,19 @@ fn roundtrip_sample_on_this_thread(unrelated: usize, extra_copies: usize) -> Sca
 ///
 /// Every sample runs on its own thread after one warm-up verification, so no
 /// sample pays the once-per-process standard-library setup. Measured
-/// marginals on 2026-09-23: 3232, 3276, 3336, and 3488 units (and 3752 at 32
-/// allocations, too slow for a debug-build unit test). Before snapshot
+/// marginals on 2026-09-23: 3226, 3268, 3324, and 3468 units. They were
+/// 3232, 3276, 3336, and 3488 (and 3752 at 32 allocations, too slow for a
+/// debug-build unit test) while whole-function finalization still visited
+/// the grouped proof's shared execution once per path theorem. Before snapshot
 /// sharing they were about 33,000 at N = 8 and 58,000 at N = 16: every later
 /// free compared the copy's facts, whose embedded snapshots were equal but
 /// separately stored, entry by entry. Before resource validity read only
 /// indexed candidates they were 3236, 3288, 3364, and 3548: each call's
 /// ensured-resource composition swept every block the caller owned.
 ///
-/// This guards those collapses; it is not the logarithmic contract. The
-/// remaining growth, about 18 units per unrelated allocation, is mostly the
+/// This guards those collapses; it is not the logarithmic contract, which
+/// the expanded proof meets (see the next test). The remaining growth, about
+/// 17 units per unrelated allocation, is mostly the
 /// smart `execute` planner's condition-premise search over its listed pure
 /// facts and that search's simp checkpoints (about 12 per allocation); the
 /// rest is re-derived snapshot comparison relative to a base and more
@@ -2303,4 +2306,211 @@ fn roundtrip_extra_copy_stays_nearly_flat_beside_unrelated_allocations() {
         marginal.iter().all(|work| *work <= allowed),
         "one extra memcpy grew with unrelated allocations beyond {allowed}: {marginal:?}"
     );
+}
+
+/// The largest unrelated-allocation count whose expanded round trip fits the
+/// checked proof drivers' nesting bound: every null check becomes one nested
+/// proof `if`, and the round trip adds four of its own to the eleven allowed.
+const EXPANDED_ROUNDTRIP_MAX_UNRELATED: usize = 7;
+
+/// Expands the round trip's `execute(); simp();` proof beside `unrelated`
+/// allocations to explicit simple tactics, outside the measurement, and
+/// returns the C source length with the expanded proof's verification work.
+fn expanded_roundtrip_sample(unrelated: usize, extra_copies: usize) -> (usize, ScalingSample) {
+    std::thread::Builder::new()
+        .name(format!("expanded-roundtrip-{unrelated}-{extra_copies}"))
+        .stack_size(64 << 20)
+        .spawn(move || {
+            let c = roundtrip_with_unrelated_allocations(unrelated, extra_copies);
+            let sources = [("rep_copy.c", c.as_str())];
+            let expanded =
+                expand_c0_claim_source(ROUNDTRIP_CLICK, &sources, "f", CProofClaim::Grouped)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "round trip beside {unrelated} allocations with {extra_copies} extra copies should expand: {}",
+                            error.message()
+                        )
+                    });
+            assert!(!expanded.contains("execute()"), "{expanded}");
+            assert!(!expanded.contains("simp()"), "{expanded}");
+            let (verified, sample) =
+                scaling_sample(unrelated, || verify_c0_sources(&expanded, &sources));
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "expanded round trip beside {unrelated} allocations with {extra_copies} extra copies failed: {}\n{expanded}",
+                    error.message()
+                )
+            });
+            (c.len(), sample)
+        })
+        .expect("spawn a sample thread")
+        .join()
+        .expect("sample thread")
+}
+
+/// Samples the expanded round trip at `sizes`, each with and without the
+/// extra copy, every one on its own thread after one warm-up verification.
+fn expanded_roundtrip_samples(sizes: &[usize]) -> Vec<[(usize, ScalingSample); 2]> {
+    assert!(
+        sizes
+            .iter()
+            .all(|size| *size <= EXPANDED_ROUNDTRIP_MAX_UNRELATED)
+    );
+    let _ = roundtrip_sample(1, 0);
+    let handles = sizes
+        .iter()
+        .map(|&size| {
+            [0, 1].map(|extra| {
+                std::thread::Builder::new()
+                    .name(format!("expanded-roundtrip-driver-{size}-{extra}"))
+                    .spawn(move || expanded_roundtrip_sample(size, extra))
+                    .expect("spawn a sample driver")
+            })
+        })
+        .collect::<Vec<_>>();
+    handles
+        .into_iter()
+        .map(|pair| pair.map(|handle| handle.join().expect("sample driver")))
+        .collect()
+}
+
+/// One extra fixed `memcpy` in the frozen byte-representation round trip,
+/// under its expanded proof of explicit simple tactics, costs at most a
+/// logarithm more beside 1, 2, 4, or 7 unrelated live heap allocations.
+///
+/// This is the contract the smart test above does not meet: both variants'
+/// `execute(); simp();` proofs are expanded outside the measurement, and only
+/// the two expanded proofs' verification is compared. Seven allocations is
+/// the largest family member the checked proof drivers' nesting bound admits
+/// (see [`EXPANDED_ROUNDTRIP_MAX_UNRELATED`]). Measured marginals on
+/// 2026-09-23 for 1 through 7 allocations: 912, 912, 912, 912, 916, 920, and
+/// 920 units. The only growth is two `CMemory::eq_relative_to` comparisons
+/// at each path's end (`proof completion`, re-deriving the memory without
+/// the function's local block), whose persistent-map walk deepens with the
+/// heap. Before finalization visited a grouped proof's shared execution once,
+/// the marginals were 917, 918, 919, 920, 925, 930, and 931, one more unit
+/// per allocation: the extra copy's composition carrier was re-inserted into
+/// a fresh fact context once per theorem, and a grouped proof issues one
+/// theorem per path.
+#[test]
+fn expanded_roundtrip_extra_copy_is_logarithmic_beside_unrelated_allocations() {
+    const SIZES: [usize; 4] = [1, 2, 4, EXPANDED_ROUNDTRIP_MAX_UNRELATED];
+    let marginal = expanded_roundtrip_samples(&SIZES)
+        .iter()
+        .map(|[(_, without), (_, with)]| with.work as i64 - without.work as i64)
+        .collect::<Vec<_>>();
+    eprintln!("expanded extra-copy marginal work beside {SIZES:?} allocations: {marginal:?}");
+    assert!(marginal[0] > 0, "{marginal:?}");
+    for (size, work) in SIZES.iter().zip(&marginal) {
+        // Four units per doubling of the unrelated allocations; the measured
+        // curve rises eight units by seven allocations, and a single unit
+        // per allocation would exceed this by seven.
+        let allowed = marginal[0] as f64 + 4.0 * (*size as f64 / SIZES[0] as f64).log2();
+        assert!(
+            *work as f64 <= allowed,
+            "one extra memcpy under the expanded proof grew beyond {allowed} beside {size} allocations: {marginal:?}"
+        );
+    }
+}
+
+/// The whole expanded round trip costs deterministic work per C source byte
+/// that grows at most logarithmically in the source beside 1, 2, 4, or 7
+/// unrelated allocations.
+///
+/// The source is quadratic in the allocations, since every failure path
+/// frees the earlier ones, and so is the checked path structure: each
+/// failure path steps its own frees. Measured on 2026-09-23 for 1 through 7
+/// allocations: 8449, 10068, 11842, 13779, 15885, 18154, and 20590 units over
+/// 1193, 1389, 1603, 1835, 2085, 2353, and 2639 bytes, or 7.08, 7.25, 7.39,
+/// 7.51, 7.62, 7.72, and 7.80 units per byte. The rise per doubling of the
+/// source falls from 0.76 to 0.52 units per byte as the quadratic terms,
+/// about 82 units against 9 bytes per squared allocation, take over.
+#[test]
+fn expanded_roundtrip_work_per_source_byte_is_logarithmic() {
+    const SIZES: [usize; 4] = [1, 2, 4, EXPANDED_ROUNDTRIP_MAX_UNRELATED];
+    let samples = expanded_roundtrip_samples(&SIZES);
+    let per_byte = samples
+        .iter()
+        .map(|[(bytes, without), _]| (*bytes, without.work, without.work as f64 / *bytes as f64))
+        .collect::<Vec<_>>();
+    eprintln!(
+        "expanded round trip (bytes, work, work per byte) beside {SIZES:?} allocations: {per_byte:?}"
+    );
+    let (first_bytes, _, first_ratio) = per_byte[0];
+    assert!(first_ratio > 0.0, "{per_byte:?}");
+    for (size, (bytes, _, ratio)) in SIZES.iter().zip(&per_byte) {
+        // One unit per byte per doubling of the source.
+        let allowed = first_ratio + (*bytes as f64 / first_bytes as f64).log2();
+        assert!(
+            *ratio <= allowed,
+            "expanded round trip work per source byte grew beyond {allowed:.3} beside {size} allocations: {per_byte:?}; named work: {}",
+            named_growth_diagnostic(
+                &samples
+                    .iter()
+                    .map(|[(_, without), _]| without.clone())
+                    .collect::<Vec<_>>()
+            )
+        );
+    }
+}
+
+/// C source with one checked allocation and `returns` early returns after it,
+/// so `returns + 2` paths each carry the same few resource facts.
+fn early_return_fan_out(returns: usize) -> String {
+    let mut c = String::from(
+        "void *malloc(unsigned long size);\nvoid free(void *ptr);\n\nint g(int a) {\n    int *p = malloc(sizeof(int));\n    if (p == 0) {\n        return -1;\n    }\n    *p = a;\n    free(p);\n",
+    );
+    for index in 0..returns {
+        c.push_str(&format!(
+            "    if (a == {index}) {{\n        return {index};\n    }}\n"
+        ));
+    }
+    c.push_str("    return -1;\n}\n");
+    c
+}
+
+/// Whole-function finalization reads each path of a grouped proof's checked
+/// execution once, however many paths the proof issues theorems for.
+///
+/// A grouped proof issues one theorem per path and claim, all over one
+/// shared execution. The implicit empty-effect check used to walk every path
+/// of that execution once per theorem, rebuilding each path's fact context
+/// each time, so its work was quadratic in the path count. Measured
+/// `implicit empty effect check` work on 2026-09-23 at 4, 8, 16, and 32 early
+/// returns: 5, 9, 17, and 33 units, one per composition carrier inserted into
+/// a path's fact context. Visiting the execution once per theorem measured
+/// 30, 90, 306, and 1122.
+#[test]
+fn grouped_proof_finalization_reads_each_path_once() {
+    std::thread::Builder::new()
+        .name("grouped-finalization-fan-out".into())
+        .stack_size(64 << 20)
+        .spawn(|| {
+            let _ = roundtrip_sample(1, 0);
+            const CHECK: &str = "operation `implicit empty effect check`";
+            let click = "verifying \"fan_out.c\";\n\nint g(int a) {\n    ensures result == a or result == -1;\n} by {\n    execute();\n    simp();\n}\n";
+            let samples = [4, 8, 16, 32]
+                .map(|returns| {
+                    let c = early_return_fan_out(returns);
+                    let (verified, sample) = scaling_sample(returns, || {
+                        verify_c0_sources(click, &[("fan_out.c", c.as_str())])
+                    });
+                    verified.unwrap_or_else(|error| {
+                        panic!("fan-out of {returns} returns failed: {}", error.message())
+                    });
+                    ScalingSample {
+                        size: returns,
+                        work: *sample.named_work.get(CHECK).unwrap_or_else(|| {
+                            panic!("fan-out did not reach the implicit empty-effect check: {sample:?}")
+                        }),
+                        named_work: BTreeMap::new(),
+                    }
+                })
+                .to_vec();
+            eprintln!("implicit empty-effect check work: {samples:?}");
+            assert_near_linear_scaling("implicit empty-effect check over paths", &samples);
+        })
+        .expect("spawn the fan-out thread")
+        .join()
+        .expect("fan-out thread");
 }

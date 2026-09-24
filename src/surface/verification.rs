@@ -2700,6 +2700,7 @@ fn verify_c0_sources_with_context(
                 function_block.signature().name(),
             ))
             .or_default();
+        let checked_executions = distinct_checked_executions(&function_verified);
         for rule in function_verified
             .iter()
             .flat_map(|theorem| theorem.frontier_loop_rules.iter())
@@ -2882,8 +2883,8 @@ fn verify_c0_sources_with_context(
             // path facts describe body/post states and must not bootstrap an
             // entry-dependent pointer or range.
             let entry_assumptions = assumptions_from_propositions(&certification_facts);
-            let has_any_storage_effect = function_verified.iter().any(|verified| {
-                verified.checked_execution.paths().iter().any(|path| {
+            let has_any_storage_effect = checked_executions.iter().any(|execution| {
+                execution.paths().iter().any(|path| {
                     crate::kernel::memory_effect_write_pointers(path.effect_facts())
                         .iter()
                         .any(|pointer| {
@@ -2958,8 +2959,13 @@ fn verify_c0_sources_with_context(
             } else {
                 None
             };
-            for verified in &function_verified {
-                for (path_index, path) in verified.checked_execution.paths().iter().enumerate() {
+            let _check_timing = instrumentation::OperationTiming::new(
+                function_block.signature.name(),
+                "finalization",
+                "storage write footprint check",
+            );
+            for execution in &checked_executions {
+                for (path_index, path) in execution.paths().iter().enumerate() {
                     let Proposition::CFunctionVerifies { outcome, .. } =
                         implication_body(path.theorem().proposition())
                     else {
@@ -3022,8 +3028,13 @@ fn verify_c0_sources_with_context(
                     function_block.signature.name()
                 )));
             }
-            for verified in &function_verified {
-                for (path_index, path) in verified.checked_execution.paths().iter().enumerate() {
+            let _check_timing = instrumentation::OperationTiming::new(
+                function_block.signature.name(),
+                "finalization",
+                "implicit empty effect check",
+            );
+            for execution in &checked_executions {
+                for (path_index, path) in execution.paths().iter().enumerate() {
                     let Proposition::CFunctionVerifies { outcome, .. } =
                         implication_body(path.theorem().proposition())
                     else {
@@ -3081,9 +3092,9 @@ fn verify_c0_sources_with_context(
                     "contract certification",
                     "contract symbolic execution",
                     || {
-                        let checked_artifacts = function_verified
+                        let checked_artifacts = checked_executions
                             .iter()
-                            .map(|verified| verified.checked_execution.clone())
+                            .map(|execution| CCheckedFunctionExecution::clone(execution))
                             .collect::<Vec<_>>();
                         // The entry state and arguments outlive the call: a
                         // refusal below names the unauthorized entry premise
@@ -7395,6 +7406,25 @@ pub(in crate::surface) fn implication_body(proposition: &Proposition) -> &Propos
         Proposition::Implies(_, body) => implication_body(body),
         _ => proposition,
     }
+}
+
+/// Each distinct checked execution behind `verified`, in first-use order.
+///
+/// A grouped proof issues one theorem per path and claim, all sharing one
+/// execution. Finalization checks that read every path of an execution visit
+/// it once here instead of once per theorem, which would multiply their work
+/// by the number of paths. Identity is the shared allocation, so the lookup
+/// never compares executions structurally; two equal executions from
+/// separate proofs are merely both checked.
+pub(in crate::surface) fn distinct_checked_executions(
+    verified: &[VerifiedCTheorem],
+) -> Vec<&Arc<CCheckedFunctionExecution>> {
+    let mut seen = BTreeSet::new();
+    verified
+        .iter()
+        .map(|verified| &verified.checked_execution)
+        .filter(|execution| seen.insert(Arc::as_ptr(execution)))
+        .collect()
 }
 
 pub(in crate::surface) fn assumptions_from_propositions(
