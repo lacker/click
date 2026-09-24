@@ -7479,6 +7479,7 @@ impl Parser {
                 pointer: Box::new(pointer),
                 field_type: field.c_type,
                 union_name: union_name.clone(),
+                pointee_constant: field.pointee_constant,
             }));
         }
         Ok(None)
@@ -7608,7 +7609,7 @@ impl Parser {
         };
         Ok(ResolvedField {
             c_type: field.c_type(),
-            pointee_constant: false,
+            pointee_constant: field.pointee_is_constant(),
             struct_name: None,
             union_name: None,
             function_pointer_signature: None,

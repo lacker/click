@@ -1518,6 +1518,7 @@ pub struct C0Parameter {
     constant: bool,
     pointee_constant: bool,
     struct_name: Option<String>,
+    union_name: Option<String>,
     struct_layout: Option<C0StructLayout>,
     /// The layout of the pointee when the parameter is a pointer to a struct,
     /// so `object(p)` resources can type the object's cells field by field.
@@ -1732,7 +1733,12 @@ pub struct C0UnionLayout {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0UnionField {
     c_type: C0Type,
+    pointee_constant: bool,
     enum_name: Option<String>,
+    struct_name: Option<String>,
+    union_name: Option<String>,
+    array_element_width: Option<u32>,
+    array_shape: Option<Vec<u32>>,
     offset_bytes: u32,
     byte_width: u32,
 }
@@ -2385,6 +2391,7 @@ pub enum C0Expression {
         pointer: Box<C0Expression>,
         field_type: C0Type,
         union_name: String,
+        pointee_constant: bool,
     },
     /// Address of an embedded union. Union members overlap at offset zero and
     /// are selected as typed scalar loads; the union itself has no runtime
@@ -3419,6 +3426,10 @@ impl C0UnionField {
         self.c_type
     }
 
+    pub fn pointee_is_constant(&self) -> bool {
+        self.pointee_constant
+    }
+
     pub fn enum_name(&self) -> Option<&str> {
         self.enum_name.as_deref()
     }
@@ -3429,6 +3440,29 @@ impl C0UnionField {
 
     pub fn byte_width(&self) -> u32 {
         self.byte_width
+    }
+
+    pub fn struct_name(&self) -> Option<&str> {
+        self.struct_name.as_deref()
+    }
+
+    pub fn array_shape(&self) -> Option<&[u32]> {
+        self.array_shape.as_deref()
+    }
+
+    fn kernel_copyable(&self) -> bool {
+        self.struct_name.is_none()
+            && self.union_name.is_none()
+            && self.array_element_width.is_none()
+            && matches!(
+                self.c_type,
+                C0Type::Int32
+                    | C0Type::UInt8
+                    | C0Type::Int32Pointer
+                    | C0Type::UInt8Pointer
+                    | C0Type::Int32PointerPointer
+                    | C0Type::UInt8PointerPointer
+            )
     }
 }
 
@@ -3484,6 +3518,7 @@ impl C0Parameter {
             constant: false,
             pointee_constant: false,
             struct_name,
+            union_name: None,
             struct_layout: None,
             pointee_struct_layout: None,
             function_pointer_signature: None,
@@ -3527,6 +3562,10 @@ impl C0Parameter {
 
     pub fn struct_name(&self) -> Option<&str> {
         self.struct_name.as_deref()
+    }
+
+    pub fn union_name(&self) -> Option<&str> {
+        self.union_name.as_deref()
     }
 
     pub fn struct_layout(&self) -> Option<&C0StructLayout> {
@@ -6370,6 +6409,7 @@ fn function_headers_compatible(left: &C0FunctionHeader, right: &C0FunctionHeader
                 left.c_type == right.c_type
                     && left.pointee_is_constant() == right.pointee_is_constant()
                     && left.struct_name == right.struct_name
+                    && left.union_name == right.union_name
                     && left.function_pointer_signature == right.function_pointer_signature
                     && left.array_element_width == right.array_element_width
             })
@@ -6736,6 +6776,9 @@ impl Parser {
     fn expression_pointee_is_constant(&self, expression: &C0Expression) -> bool {
         match expression {
             C0Expression::Field {
+                pointee_constant, ..
+            }
+            | C0Expression::UnionField {
                 pointee_constant, ..
             } => *pointee_constant,
             C0Expression::Assignment {
@@ -7157,7 +7200,19 @@ impl Parser {
             self.error_here(format!("unknown struct declaration `{struct_name}`"))
         })?;
         for field in layout.fields.values() {
-            if field.union_name.is_some() {
+            if let Some(union_name) = field.union_name.as_deref() {
+                let union_layout = self.unions.get(union_name).ok_or_else(|| {
+                    self.error_here(format!("unknown union declaration `{union_name}`"))
+                })?;
+                if union_layout
+                    .fields
+                    .values()
+                    .any(|member| !member.kernel_copyable())
+                {
+                    return Err(self.error_here(format!(
+                        "struct-by-value union `{union_name}` contains members whose typed copy is not yet supported"
+                    )));
+                }
                 continue;
             }
             if let Some(nested_name) = field.struct_name.as_deref()
@@ -7687,7 +7742,7 @@ impl Parser {
     /// whether the existing always-inline linkage restriction applies.
     /// `nothrow` adds no proof facts: C0 has no exception semantics, and the
     /// annotation says nothing about termination, memory effects, or safety.
-    /// `leaf`, `const`, and `nonnull` are also accepted without using their
+    /// `leaf`, `const`, `nonnull`, `noreturn`, and `deprecated` are also accepted without using their
     /// restrictions as proof assumptions. Calls retain their ordinary checked
     /// contracts, including their ordinary argument obligations.
     fn consume_function_attributes(&mut self) -> Result<bool, C0SyntaxError> {
@@ -7701,7 +7756,8 @@ impl Parser {
                 match attribute.as_str() {
                     "always_inline" | "__always_inline__" => always_inline = true,
                     "nothrow" | "__nothrow__" | "leaf" | "__leaf__" | "const"
-                    | "__const__" => {},
+                    | "__const__" | "noreturn" | "__noreturn__" | "deprecated"
+                    | "__deprecated__" => {},
                     "nonnull" | "__nonnull__" => {
                         if self.peek() == Some(&Token::LParen) {
                             self.position += 1;
@@ -7725,7 +7781,7 @@ impl Parser {
                         }
                     }
                     _ => return Err(self.error_at_previous(format!(
-                        "unsupported GNU function attribute `{attribute}`; only `always_inline`, `nothrow`, `leaf`, `const`, and `nonnull` are supported in this slice"
+                        "unsupported GNU function attribute `{attribute}`; only `always_inline`, `nothrow`, `leaf`, `const`, `nonnull`, `noreturn`, and `deprecated` are supported in this slice"
                     ))),
                 }
                 if self.peek() != Some(&Token::Comma) {
@@ -7841,7 +7897,10 @@ impl Parser {
                 // the ordinary complete-type checks rather than inventing one.
                 self.position += 2;
                 self.expect(Token::Semicolon)?;
-            } else if self.peek_ident() == Some("enum") && self.peek_n(2) == Some(&Token::LBrace) {
+            } else if self.peek_ident() == Some("enum")
+                && (self.peek_n(1) == Some(&Token::LBrace)
+                    || self.peek_n(2) == Some(&Token::LBrace))
+            {
                 self.parse_enum_declaration()?;
             } else if self.peek_ident() == Some("union") && self.peek_n(2) == Some(&Token::LBrace) {
                 self.parse_union_declaration()?;
@@ -8949,8 +9008,23 @@ impl Parser {
 
     fn parse_typedef_declaration(&mut self) -> Result<(), C0SyntaxError> {
         self.expect_ident_spelling("typedef")?;
-        let parsed_type = self.parse_type_with_anonymous_struct(true)?;
+        let mut parsed_type = self.parse_type_with_anonymous_struct(true)?;
         let alias = self.expect_ident("typedef name")?;
+        if self.peek() == Some(&Token::LBracket) {
+            self.position += 1;
+            let length = self.parse_struct_array_length()?;
+            self.expect(Token::RBracket)?;
+            if self.peek() == Some(&Token::LBracket) {
+                return Err(
+                    self.error_here("multidimensional typedef arrays are not supported yet")
+                );
+            }
+            if parsed_type.struct_name.is_some() || parsed_type.union_name.is_some() {
+                return Err(self.error_here("aggregate typedef arrays are not supported yet"));
+            }
+            parsed_type.c_type = array_type_for_element(parsed_type.c_type, length)
+                .ok_or_else(|| self.error_here("typedef array element type is unsupported"))?;
+        }
         self.expect(Token::Semicolon)?;
         if self.typedefs.insert(alias.clone(), parsed_type).is_some() {
             return Err(self.error_at_previous(format!("duplicate typedef `{alias}`")));
@@ -8960,7 +9034,15 @@ impl Parser {
 
     fn parse_enum_declaration(&mut self) -> Result<(), C0SyntaxError> {
         self.expect_ident_spelling("enum")?;
-        let name = self.expect_ident("enum name")?;
+        let name = if self.peek() == Some(&Token::LBrace) {
+            format!(
+                "#anonymous-enum:{}:{}",
+                self.source_identity.as_deref().unwrap_or("source"),
+                self.position
+            )
+        } else {
+            self.expect_ident("enum name")?
+        };
         if self.enums.contains_key(&name) {
             return Err(self.error_at_previous(format!("duplicate enum declaration `{name}`")));
         }
@@ -9019,37 +9101,33 @@ impl Parser {
     }
 
     fn parse_enum_value(&mut self, enum_name: &str) -> Result<i32, C0SyntaxError> {
-        let negative = if self.peek() == Some(&Token::Minus) {
-            self.position += 1;
-            true
-        } else {
-            false
-        };
-        let Some(Token::Number(number)) = self.next() else {
-            return Err(
-                self.error_here(format!("enum `{enum_name}` values must be int32 literals"))
-            );
-        };
-        let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
-            self.error_at_previous(format!("invalid enum value `{number}`: {reason}"))
+        let expression = self.parse_expression()?;
+        let value = evaluate_static_integer_expression(&expression).map_err(|_| {
+            self.error_here(format!(
+                "enum `{enum_name}` value must be an int32 constant expression"
+            ))
         })?;
-        let signed = if negative {
-            -(i64::try_from(magnitude).map_err(|_| {
-                self.error_at_previous(format!("enum value `-{number}` is outside the int32 range"))
-            })?)
-        } else {
-            i64::try_from(magnitude).map_err(|_| {
-                self.error_at_previous(format!("enum value `{number}` is outside the int32 range"))
-            })?
-        };
-        i32::try_from(signed).map_err(|_| {
-            self.error_at_previous(format!("enum value `{number}` is outside the int32 range"))
+        match value {
+            StaticIntegerValue::Signed { value, .. } => i32::try_from(value),
+            StaticIntegerValue::Unsigned { value, .. } => i32::try_from(value),
+        }
+        .map_err(|_| {
+            self.error_here(format!(
+                "enum `{enum_name}` value is outside the int32 range"
+            ))
         })
     }
 
     fn parse_union_declaration(&mut self) -> Result<(), C0SyntaxError> {
         self.expect_ident_spelling("union")?;
         let name = self.expect_ident("union name")?;
+        self.parse_union_body(name)?;
+        self.expect(Token::Semicolon)
+    }
+
+    // Named declarations and anonymous typedefs share the same ABI layout.
+    // The caller consumes the declarator and its trailing semicolon.
+    fn parse_union_body(&mut self, name: String) -> Result<(), C0SyntaxError> {
         if self.unions.contains_key(&name) {
             return Err(self.error_at_previous(format!("duplicate union declaration `{name}`")));
         }
@@ -9062,19 +9140,37 @@ impl Parser {
             if self.peek().is_none() {
                 return Err(self.error_here("expected union field or `}`, got end of input"));
             }
-            let field_type = self.parse_type()?;
+            // GNU __extension__ suppresses a compiler diagnostic for the
+            // following declaration without changing its type or layout.
+            if self.peek_ident() == Some("__extension__") {
+                self.position += 1;
+            }
+            let field_type = self.parse_type_with_anonymous_struct(true)?;
             loop {
                 let field_name = self.expect_ident("union field name")?;
-                let (c_type, field_size, field_alignment) =
-                    self.parse_union_field_declarator(&field_type, &name)?;
+                let (
+                    c_type,
+                    field_size,
+                    field_alignment,
+                    field_struct_name,
+                    array_element_width,
+                    array_shape,
+                ) = self.parse_struct_field_declarator(&field_type, &name)?;
                 if fields
                     .insert(
                         field_name.clone(),
                         C0UnionField {
                             c_type,
+                            pointee_constant: field_type.pointee_constant,
                             enum_name: (c_type == field_type.c_type)
                                 .then(|| field_type.enum_name.clone())
                                 .flatten(),
+                            struct_name: field_struct_name,
+                            union_name: (c_type == field_type.c_type)
+                                .then(|| field_type.union_name.clone())
+                                .flatten(),
+                            array_element_width,
+                            array_shape,
                             offset_bytes: 0,
                             byte_width: field_size,
                         },
@@ -9095,7 +9191,6 @@ impl Parser {
         }
 
         self.expect(Token::RBrace)?;
-        self.expect(Token::Semicolon)?;
         if fields.is_empty() {
             return Err(self.error_here("union declarations must contain at least one field"));
         }
@@ -9110,57 +9205,6 @@ impl Parser {
             },
         );
         Ok(())
-    }
-
-    fn parse_union_field_declarator(
-        &mut self,
-        base_type: &ParsedType,
-        union_name: &str,
-    ) -> Result<(C0Type, u32, u32), C0SyntaxError> {
-        if base_type.is_volatile {
-            return Err(self.error_here(
-                "the small volatile model does not support volatile struct or union fields",
-            ));
-        }
-        if base_type.is_constant || base_type.pointee_constant {
-            return Err(self.error_here(
-                "const-qualified struct or union fields are not supported in this slice",
-            ));
-        }
-        if base_type.struct_name.is_some() || base_type.union_name.is_some() {
-            return Err(self.error_here(format!(
-                "union `{union_name}` fields may not contain embedded structs or unions"
-            )));
-        }
-        if base_type.enum_name.is_some()
-            && (base_type.c_type != C0Type::Int32 || self.peek() == Some(&Token::LBracket))
-        {
-            return Err(self.error_here(format!(
-                "union `{union_name}` enum members must be scalar int32 values"
-            )));
-        }
-        if self.peek() == Some(&Token::LBracket) {
-            return Err(self.error_here(format!("union `{union_name}` members may not be arrays")));
-        }
-        let c_type = base_type.c_type;
-        if !matches!(
-            c_type,
-            C0Type::Int32
-                | C0Type::Char
-                | C0Type::UInt8
-                | C0Type::Int32Pointer
-                | C0Type::CharPointer
-                | C0Type::UInt8Pointer
-                | C0Type::Int32PointerPointer
-                | C0Type::CharPointerPointer
-                | C0Type::UInt8PointerPointer
-        ) {
-            return Err(self.error_here(format!(
-                "union `{union_name}` members currently support int32, uint8, and pointer fields"
-            )));
-        }
-        let (field_size, field_alignment) = self.abi.size_and_alignment(c_type);
-        Ok((c_type, field_size, field_alignment))
     }
 
     fn parse_struct_declaration(&mut self) -> Result<(), C0SyntaxError> {
@@ -9407,6 +9451,7 @@ impl Parser {
                 || !matches!(
                     base_type.c_type,
                     C0Type::Int32
+                        | C0Type::UInt32
                         | C0Type::Int64
                         | C0Type::UInt64
                         | C0Type::Char
@@ -9416,7 +9461,7 @@ impl Parser {
                 ) && pointer_array_element(base_type.c_type).is_none()
             {
                 return Err(self.error_here(
-                    "inline scalar arrays in structs currently support int32, int64, uint64, uint8, float, and double elements",
+                    "inline scalar arrays in structs currently support int32, uint32, int64, uint64, uint8, float, and double elements",
                 ));
             }
             let mut dimensions = Vec::new();
@@ -9436,6 +9481,7 @@ impl Parser {
             let array_shape = (dimensions.len() > 1).then_some(dimensions);
             let c_type = match base_type.c_type {
                 C0Type::Int32 => C0Type::Int32Array(element_count),
+                C0Type::UInt32 => C0Type::UInt32Array(element_count),
                 C0Type::Int64 => C0Type::Int64Array(element_count),
                 C0Type::UInt64 => C0Type::UInt64Array(element_count),
                 C0Type::Char => C0Type::CharArray(element_count),
@@ -9479,6 +9525,7 @@ impl Parser {
                     | C0Type::Float32PointerPointer
                     | C0Type::Float64PointerPointer
                     | C0Type::Int32Array(_)
+                    | C0Type::UInt32Array(_)
                     | C0Type::Int64Array(_)
                     | C0Type::UInt64Array(_)
                     | C0Type::CharArray(_)
@@ -9493,7 +9540,7 @@ impl Parser {
             )));
         }
         let (field_size, field_alignment) = match c_type {
-            C0Type::Int32Array(length) => (
+            C0Type::Int32Array(length) | C0Type::UInt32Array(length) => (
                 length.checked_mul(4).ok_or_else(|| {
                     self.error_here(format!("struct `{struct_name}` layout is too large"))
                 })?,
@@ -9568,9 +9615,9 @@ impl Parser {
 
         loop {
             let parsed_type = self.parse_type()?;
-            if parsed_type.union_name.is_some() {
+            if parsed_type.union_name.is_some() && !parsed_type.c_type.is_pointer() {
                 return Err(self.error_here(
-                    "tagged union parameters are not supported; use a pointer to the containing struct",
+                    "union value parameters are not supported; pass a pointer to the union",
                 ));
             }
             if parsed_type.enum_name.is_some() {
@@ -9602,6 +9649,7 @@ impl Parser {
                     pointee_struct_layout: None,
                     function_pointer_signature: Some(signature),
                     struct_name: None,
+                    union_name: None,
                     array_element_width: None,
                 });
                 if self.peek() != Some(&Token::Comma) {
@@ -9652,6 +9700,9 @@ impl Parser {
                 .as_ref()
                 .map(struct_value_type)
                 .unwrap_or(self.parse_parameter_array_suffix(parsed_type.c_type)?);
+            if parsed_type.union_name.is_some() && array_parameter {
+                return Err(self.error_here("arrays of union parameters are not supported yet"));
+            }
             let object_volatile = parsed_type.object_is_volatile();
             let pointee_volatile = parsed_type.pointee_is_volatile();
             let object_constant = parsed_type.is_constant && !array_parameter;
@@ -9694,6 +9745,7 @@ impl Parser {
                             .flatten(),
                         function_pointer_signature: None,
                         struct_name,
+                        union_name: None,
                         array_element_width: None,
                     });
                     if self.peek() != Some(&Token::Comma) {
@@ -9729,6 +9781,7 @@ impl Parser {
                         pointee_struct_layout: None,
                         function_pointer_signature: None,
                         struct_name,
+                        union_name: None,
                         array_element_width: Some(element_width),
                     });
                     if self.peek() != Some(&Token::Comma) {
@@ -9752,6 +9805,7 @@ impl Parser {
                 pointee_struct_layout: None,
                 function_pointer_signature: None,
                 struct_name,
+                union_name: parsed_type.union_name,
                 array_element_width: None,
             });
 
@@ -9806,7 +9860,11 @@ impl Parser {
                         self.parse_struct_body(name.clone())?;
                         name
                     } else {
-                        self.expect_ident("struct name")?
+                        let name = self.expect_ident("struct name")?;
+                        if allow_anonymous_struct && self.peek() == Some(&Token::LBrace) {
+                            self.parse_struct_body(name.clone())?;
+                        }
+                        name
                     },
                 ),
                 enum_name: None,
@@ -9825,12 +9883,26 @@ impl Parser {
                 struct_name: None,
                 enum_name: None,
                 union_name: {
-                    let union_name = self.expect_ident("union name")?;
-                    if !self.unions.contains_key(&union_name) {
-                        return Err(
-                            self.error_here(format!("unknown union declaration `{union_name}`"))
-                        );
-                    }
+                    let union_name =
+                        if allow_anonymous_struct && self.peek() == Some(&Token::LBrace) {
+                            let name = format!(
+                                "#anonymous-union:{}:{}",
+                                self.source_identity.as_deref().unwrap_or("source"),
+                                self.position
+                            );
+                            self.parse_union_body(name.clone())?;
+                            name
+                        } else {
+                            let name = self.expect_ident("union name")?;
+                            if allow_anonymous_struct && self.peek() == Some(&Token::LBrace) {
+                                self.parse_union_body(name.clone())?;
+                            } else if !self.unions.contains_key(&name) {
+                                return Err(
+                                    self.error_here(format!("unknown union declaration `{name}`"))
+                                );
+                            }
+                            name
+                        };
                     Some(union_name)
                 },
                 is_volatile: false,
@@ -9908,6 +9980,7 @@ impl Parser {
                 }
                 C0Type::Int8 => C0Type::Int8Pointer,
                 C0Type::Int16 => C0Type::Int16Pointer,
+                C0Type::Int32 if parsed.union_name.is_some() && !saw_pointer => C0Type::VoidPointer,
                 C0Type::Int32 => C0Type::Int32Pointer,
                 C0Type::Char => C0Type::CharPointer,
                 C0Type::UInt8 => C0Type::UInt8Pointer,
@@ -9993,9 +10066,9 @@ impl Parser {
                 self.position += 1;
             }
             saw_pointer = true;
-            if parsed.union_name.is_some() {
+            if parsed.union_name.is_some() && pointer_depth > 1 {
                 return Err(
-                    self.error_at_previous("pointers to union values are not supported yet")
+                    self.error_at_previous("pointer depth beyond `union *` is not supported yet")
                 );
             }
             if parsed.enum_name.is_some() && c_type != C0Type::Int32 {
@@ -10114,9 +10187,11 @@ impl Parser {
                     ));
                 }
                 if parsed_type.c_type == C0Type::Void {
-                    return Err(
-                        self.error_here("function-pointer parameters cannot have type `void`")
-                    );
+                    if parameters.is_empty() && self.peek() == Some(&Token::RParen) {
+                        break;
+                    }
+                    return Err(self
+                        .error_here("`void` must be the sole unnamed function-pointer parameter"));
                 }
                 let parameter_type = self.parse_parameter_array_suffix(parsed_type.c_type)?;
                 if parsed_type.struct_name.is_some() && parsed_type.c_type == C0Type::Int32 {
@@ -15016,6 +15091,7 @@ impl Parser {
                 pointer,
                 field_type,
                 union_name,
+                pointee_constant,
             } => {
                 let (prefix, pointer) = self.lower_expression_calls(*pointer)?;
                 Ok((
@@ -15024,6 +15100,7 @@ impl Parser {
                         pointer: Box::new(pointer),
                         field_type,
                         union_name,
+                        pointee_constant,
                     },
                 ))
             }
@@ -16437,6 +16514,7 @@ impl Parser {
                             pointer: Box::new(pointer),
                             field_type,
                             union_name,
+                            pointee_constant,
                         }
                     } else {
                         field_expression(
@@ -17165,6 +17243,24 @@ impl Parser {
             let field = layout.fields.get(field_name).ok_or_else(|| {
                 self.error_here(format!("union `{union_name}` has no member `{field_name}`"))
             })?;
+            if field.struct_name.is_some()
+                || field.union_name.is_some()
+                || matches!(
+                    field.c_type,
+                    C0Type::Int32Array(_)
+                        | C0Type::Int64Array(_)
+                        | C0Type::UInt64Array(_)
+                        | C0Type::CharArray(_)
+                        | C0Type::UInt8Array(_)
+                        | C0Type::Float32Array(_)
+                        | C0Type::Float64Array(_)
+                        | C0Type::PointerArray(_, _)
+                )
+            {
+                return Err(self.error_here(format!(
+                    "union `{union_name}` member `{field_name}` has a parsed ABI layout but compound member access is not yet supported"
+                )));
+            }
             return Ok((
                 offset_field_pointer(base.clone(), field.offset_bytes),
                 field.c_type,
@@ -17172,7 +17268,7 @@ impl Parser {
                 None,
                 None,
                 None,
-                false,
+                field.pointee_constant,
             ));
         }
         Err(self.error_here(format!(

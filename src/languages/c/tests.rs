@@ -5265,6 +5265,126 @@ fn c0_tagged_union_layout_overlaps_members_and_preserves_member_types() {
 }
 
 #[test]
+fn c0_anonymous_union_typedef_preserves_embedded_struct_and_array_abi() {
+    let source = r#"
+        typedef union {
+            __extension__ unsigned long long int word;
+            struct { unsigned int low; unsigned int high; } halves;
+        } counter;
+        typedef union {
+            char bytes[40];
+            long int align;
+        } mutex_bits;
+        struct holder { int tag; counter value; mutex_bits mutex; };
+        int tag(struct holder *p) { return p->tag; }
+    "#;
+    let function = syntax::parse_function(source).expect("anonymous unions should retain layout");
+    let counter = function
+        .unions()
+        .values()
+        .find(|layout| layout.field("word").is_some())
+        .expect("counter union layout");
+    assert_eq!((counter.size_bytes(), counter.alignment_bytes()), (8, 8));
+    assert_eq!(counter.field("word").unwrap().byte_width(), 8);
+    assert_eq!(counter.field("halves").unwrap().byte_width(), 8);
+    assert!(counter.field("halves").unwrap().struct_name().is_some());
+    let mutex = function
+        .unions()
+        .values()
+        .find(|layout| layout.field("bytes").is_some())
+        .expect("mutex union layout");
+    assert_eq!((mutex.size_bytes(), mutex.alignment_bytes()), (40, 8));
+    assert_eq!(mutex.field("bytes").unwrap().byte_width(), 40);
+    let holder = function.structs().get("holder").unwrap();
+    assert_eq!(holder.field("value").unwrap().offset_bytes(), 8);
+    assert_eq!(holder.field("mutex").unwrap().offset_bytes(), 16);
+    assert_eq!(holder.size_bytes(), 56);
+}
+
+#[test]
+fn c0_scalar_array_typedef_retains_length_and_struct_layout() {
+    let function = syntax::parse_function(
+        "typedef long int words[8]; struct holder { words data; int tail; }; \
+         int tail(struct holder *p) { return p->tail; }",
+    )
+    .expect("scalar array typedef should retain its declared ABI extent");
+    let holder = function.structs().get("holder").unwrap();
+    assert_eq!(holder.field("data").unwrap().byte_width(), 64);
+    assert_eq!(holder.field("tail").unwrap().offset_bytes(), 64);
+    assert_eq!((holder.size_bytes(), holder.alignment_bytes()), (72, 8));
+    assert!(syntax::parse_functions("typedef int grid[2][3];").is_err());
+}
+
+#[test]
+fn c0_anonymous_enum_constants_support_aliases_and_arithmetic() {
+    let function = syntax::parse_function(
+        "enum { FIRST = 2, SECOND = FIRST, THIRD = SECOND + 1 }; \
+         int result(void) { return THIRD; }",
+    )
+    .expect("anonymous enum constants should remain available to C expressions");
+    let values = function
+        .enums()
+        .iter()
+        .find(|(name, _)| name.starts_with("#anonymous-enum:"))
+        .map(|(_, definition)| definition.values())
+        .expect("anonymous enum identity");
+    assert_eq!(values.get("FIRST"), Some(&2));
+    assert_eq!(values.get("SECOND"), Some(&2));
+    assert_eq!(values.get("THIRD"), Some(&3));
+}
+
+#[test]
+fn c0_compound_union_access_and_by_value_copy_refuse_until_modeled() {
+    let declarations = r#"
+        typedef union {
+            unsigned long long int word;
+            struct { unsigned int low; unsigned int high; } halves;
+        } counter;
+        struct holder { counter value; };
+    "#;
+    let access = format!(
+        "{declarations} unsigned int low(struct holder *p) {{ return p->value.halves.low; }}"
+    );
+    let error = syntax::parse_function(&access).unwrap_err().to_string();
+    assert!(
+        error.contains("compound member access is not yet supported"),
+        "{error}"
+    );
+    let copy = format!(
+        "{declarations} unsigned long long int word(struct holder h) {{ return h.value.word; }}"
+    );
+    let error = syntax::parse_function(&copy).unwrap_err().to_string();
+    assert!(error.contains("typed copy is not yet supported"), "{error}");
+}
+
+#[test]
+fn c0_union_pointer_parameters_keep_nominal_declaration_identity() {
+    let declarations = r#"
+        typedef union { int value; char bytes[4]; } first;
+        typedef union { int value; char bytes[4]; } second;
+    "#;
+    let functions = syntax::parse_functions(&format!(
+        "{declarations} extern int use(first *p); int use(first *p) {{ return 0; }}"
+    ))
+    .expect("a union pointer is a valid opaque function parameter");
+    let function = functions
+        .iter()
+        .find(|function| function.name() == "use")
+        .unwrap();
+    assert_eq!(
+        function.parameters()[0].c_type(),
+        syntax::C0Type::VoidPointer
+    );
+    assert!(function.parameters()[0].union_name().is_some());
+    let error = syntax::parse_functions(&format!(
+        "{declarations} extern int use(first *p); extern int use(second *p);"
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("conflicting declarations"), "{error}");
+}
+
+#[test]
 fn c0_tagged_union_member_writes_are_rejected() {
     let error = syntax::parse_function(
         r#"
@@ -5356,6 +5476,7 @@ fn c0_tagged_union_member_addresses_preserve_member_type_and_offset() {
         pointer,
         field_type: syntax::C0Type::Int32,
         union_name,
+        ..
     } = target.as_ref()
     else {
         panic!("scalar union member address should target the typed union member")
@@ -10616,6 +10737,24 @@ fn c0_struct_union_fields_are_copyable_by_value_without_flattening_overlap() {
 }
 
 #[test]
+fn c0_function_pointer_void_parameter_list_is_empty() {
+    let function =
+        syntax::parse_function("int32 run(void (*callback)(void)) { callback(); return 0; }")
+            .expect("a sole void denotes an empty callback parameter list");
+    let signature = function.parameters()[0]
+        .function_pointer_signature()
+        .expect("callback signature");
+    assert!(signature.parameters().is_empty());
+
+    for source in [
+        "int32 run(void (*callback)(void, int32)) { return 0; }",
+        "int32 run(void (*callback)(int32, void)) { return 0; }",
+    ] {
+        assert!(syntax::parse_function(source).is_err());
+    }
+}
+
+#[test]
 fn c0_function_pointers_preserve_signature_and_dispatch_callback() {
     let callback =
         syntax::parse_function("int32 compare(int32 left, int32 right) { return left - right; }")
@@ -12317,23 +12456,43 @@ fn c0_nonnull_function_attributes_accept_parameter_indices_without_granting_owne
 }
 
 #[test]
+fn c0_noreturn_declarations_parse_without_changing_checked_call_rules() {
+    for attribute in ["noreturn", "__noreturn__"] {
+        let declaration = format!("extern void stop(void) __attribute__(({attribute}));");
+        syntax::validate_header(&declaration, &source::ExpandedLineMap::empty()).unwrap();
+        syntax::parse_functions(&format!("{declaration} int answer(void) {{ return 1; }}"))
+            .unwrap();
+    }
+}
+
+#[test]
+fn c0_deprecated_function_attributes_preserve_ordinary_prototypes() {
+    for attribute in ["deprecated", "__deprecated__"] {
+        let declaration = format!("extern int old_api(void) __attribute__(({attribute}));");
+        syntax::validate_header(&declaration, &source::ExpandedLineMap::empty()).unwrap();
+        syntax::parse_functions(&format!("{declaration} int answer(void) {{ return 1; }}"))
+            .unwrap();
+    }
+}
+
+#[test]
 fn c0_nothrow_leaf_const_and_nonnull_attributes_do_not_hide_unsupported_attributes_or_linkage() {
     for source in [
-        "int f(void) __attribute__((leaf, noreturn));",
+        "int f(void) __attribute__((leaf, cold));",
         "int f(void) __attribute__((leaf)) __attribute__((aligned(8)));",
         "int f(void) __attribute__((leaf, always_inline));",
         "int f(void) __attribute__((always_inline, leaf));",
         "int f(void) __attribute__((leaf(1)));",
         "int f(void) __attribute__((leaf,));",
         "int f(void) __attribute__((leaf);",
-        "int f(void) __attribute__((nothrow, noreturn));",
+        "int f(void) __attribute__((nothrow, cold));",
         "int f(void) __attribute__((nothrow)) __attribute__((aligned(8)));",
         "int f(void) __attribute__((nothrow, always_inline));",
         "int f(void) __attribute__((always_inline, nothrow));",
         "int f(void) __attribute__((nothrow(1)));",
         "int f(void) __attribute__((nothrow,));",
         "int f(void) __attribute__((nothrow);",
-        "int f(void) __attribute__((__const__, noreturn));",
+        "int f(void) __attribute__((__const__, cold));",
         "int f(void) __attribute__((__const__(1)));",
         "int f(void) __attribute__((nonnull(0)));",
         "int f(void) __attribute__((nonnull(x)));",
@@ -12450,12 +12609,18 @@ fn c0_const_pointer_fields_keep_deeper_qualifiers_out_of_scope() {
         "struct holder { char *const text; };",
         "struct holder { const int value; };",
         "struct holder { const char **text; };",
-        "union holder { const char *text; };",
     ] {
         let error =
             syntax::validate_header(source, &source::ExpandedLineMap::empty()).expect_err(source);
         assert!(error.message().contains("const"), "{}", error.message());
     }
+}
+
+#[test]
+fn c0_union_pointer_member_preserves_pointee_constness() {
+    let source = "union holder { const char *text; }; struct wrap { union holder h; }; char *bad(struct wrap *w) { return w->h.text; }";
+    let error = syntax::parse_functions(source).expect_err("implicit const removal must fail");
+    assert!(error.message().contains("const"), "{}", error.message());
 }
 
 #[test]

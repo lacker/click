@@ -128,11 +128,13 @@ The unchanged probe's Ubuntu GCC 13/glibc 2.39 preprocessed artifact is now
 committed as a locked fixture and loaded in the Mac gate without GCC or Linux
 headers. Bare `struct sigevent;` forward declarations now parse without
 inventing a layout. Fixed pointer arrays in structs now import, including the
-member in `bits/types/__locale_t.h:30`. The next bounded refusal is the GNU
-anonymous union typedef in `bits/atomic_wide_counter.h:26`. The importer now
-accepts GNU `const` and `nonnull` function annotations and the standard and
-GNU spellings of `restrict` on pointer declarators. These annotations grant no
-purity, nonnull, or separation proof facts. The modeled proof remains separate
+member in `bits/types/__locale_t.h:30`. Anonymous and inline tagged union
+typedefs now retain their complete member layout, including arrays and nested
+structs; compound union member operations remain bounded refusals pending
+typed access and copy support. The frozen import now reaches the alignment
+attribute on `__pthread_unwind_buf_t` in `pthread.h:548`. GCC `const`,
+`nonnull`, `noreturn`, and `deprecated` annotations and standard or GNU
+`restrict` syntax import without granting proof facts. The modeled proof remains separate
 from native runtime validation; importing these headers grants no pthread
 semantics.
 
