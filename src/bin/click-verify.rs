@@ -336,7 +336,7 @@ fn verify_changed(
             } else {
                 verify_c0_project_functions(&project, &refs, selected.clone())
             }
-            .map_err(|error| proof_error_report(&error, &sidecar, true, &project, &inputs, 0))
+            .map_err(|error| proof_error_report(&error, &sidecar, false, &project, &inputs, 0))
         })?;
         print_external_dependencies(&dependencies, &verified_theorems);
         if full_rebuild
@@ -393,33 +393,33 @@ fn shell_word(value: &str) -> String {
 fn proof_error_report(
     error: &ClickError,
     sidecar: &Path,
-    suggest_trace: bool,
+    show_trace: bool,
     project: &ClickProject,
     inputs: &CInput,
     line_offset: usize,
 ) -> String {
-    let (mut report, mut context) = if suggest_trace {
-        error.concise_report_parts()
-    } else {
-        (error.report(), Vec::new())
-    };
-    if suggest_trace {
-        if let Some(source) = project.entry_source()
-            && let Some(position) = proof_source_position(error, project, inputs, source)
-            && let Some(excerpt) = source_excerpt(sidecar, source, &position, line_offset)
-        {
-            context.push(excerpt);
-        }
-        if let Some(location) = error.proof_step_location() {
-            context.push(format!("step: {location}"));
-        }
-        if !context.is_empty() {
-            report.push_str("\n\n");
-            report.push_str(&context.join("\n"));
-        }
+    let (mut report, mut context) = error.concise_report_parts();
+    if let Some(source) = project.entry_source()
+        && let Some(position) = proof_source_position(error, project, inputs, source)
+        && let Some(excerpt) = source_excerpt(sidecar, source, &position, line_offset)
+    {
+        context.push(excerpt);
     }
-    if suggest_trace
-        && error.kind() == ClickErrorKind::Proof
+    if let Some(location) = error.proof_step_location() {
+        context.push(format!("step: {location}"));
+    }
+    if !context.is_empty() {
+        report.push_str("\n\n");
+        report.push_str(&context.join("\n"));
+    }
+    if show_trace {
+        if let Some(trace) = error.trace_context_report() {
+            report.push_str("\n\n");
+            report.push_str(&trace);
+        }
+        return report;
+    }
+    if error.kind() == ClickErrorKind::Proof
         && let Some(function) = error
             .proof_claim_label()
             .and_then(|claim| claim.split_once('.'))
@@ -943,7 +943,7 @@ fn verify_file(
             proof_error_report(
                 &error,
                 click_path,
-                trace_proof.is_none(),
+                trace_proof.is_some(),
                 &project,
                 &inputs,
                 line_offset,
@@ -1047,7 +1047,7 @@ fn verify_location(
             }
         };
         result.map_err(|error| {
-            proof_error_report(&error, click_path, true, &project, &inputs, line_offset)
+            proof_error_report(&error, click_path, false, &project, &inputs, line_offset)
         })
     })?;
     print_external_dependencies(&dependencies, &verified);
