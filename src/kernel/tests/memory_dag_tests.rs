@@ -148,6 +148,43 @@ fn checked_load_equality_capture_retains_and_rechecks_the_exact_query() {
     assert!(equalities[0].checks(&assumptions));
 }
 
+/// A load variable's origin is first-seen per verified function. A name the
+/// naming cache returned from an earlier function must not carry that
+/// function's origin into the next one: the later function's transport would
+/// walk the earlier function's DAG history, so its cost would depend on what
+/// was verified before it in the same session.
+#[test]
+fn a_new_load_origin_epoch_retires_cached_origins() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(733)), 4),
+    };
+    let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("arg-memory", 32));
+    let load = Bitvector32Term::MemoryLoad(memory.clone(), Box::new(pointer.clone()));
+    crate::kernel::eval::begin_load_origin_epoch();
+    let (variable, _) =
+        crate::kernel::eval::load_variable_for_term(&load).expect("a load term has a name");
+    assert_eq!(
+        crate::kernel::eval::registered_load_origin_for_variable(&variable),
+        Some((memory.clone(), pointer.clone()))
+    );
+    crate::kernel::eval::begin_load_origin_epoch();
+    assert_eq!(
+        crate::kernel::eval::registered_load_origin_for_variable(&variable),
+        None,
+        "an origin minted by an earlier function must not answer in this one"
+    );
+    let (renamed, _) =
+        crate::kernel::eval::load_variable_for_term(&load).expect("a load term has a name");
+    assert_eq!(renamed, variable, "ids stay session-wide");
+    assert_eq!(
+        crate::kernel::eval::registered_load_origin_for_variable(&variable),
+        Some((memory, pointer)),
+        "naming the load in the new epoch records its origin afresh"
+    );
+}
+
 #[test]
 fn origin_load_equality_retains_singleton_index_bounds() {
     let index = Bitvector32Term::Variable(Variable(710));
