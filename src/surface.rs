@@ -7172,13 +7172,30 @@ impl ClickError {
                 diagnostic.reason.as_str()
             });
         let reason = reason.split("\nproof context:").next().unwrap_or(reason);
-        let (mut report, reason) = if self.kind == ClickErrorKind::Proof
+        let (mut report, reason, certification_obligation) = if self.kind == ClickErrorKind::Proof
             && let Some(rest) = reason.strip_prefix("could not certify contract for `")
             && let Some((function, detail)) = rest.split_once("`: ")
         {
-            (format!("proof error in `{function}`:"), detail)
+            let obligation = detail
+                .strip_prefix(
+                    "exact symbolic execution did not establish every contract claim; execution path ",
+                )
+                .and_then(|rest| {
+                    rest.split_once(
+                        " is invalid: the execution path has an unproved verification condition: ",
+                    )
+                })
+                .and_then(|(index, obligation)| {
+                    (!index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit()))
+                        .then_some(obligation)
+                });
+            (
+                format!("proof error in `{function}` during contract certification:"),
+                obligation.unwrap_or(detail),
+                obligation.is_some(),
+            )
         } else {
-            (format!("{}:", self.kind.label()), reason)
+            (format!("{}:", self.kind.label()), reason, false)
         };
         for segment in concise_error_segments(reason) {
             for line in segment
@@ -7198,7 +7215,9 @@ impl ClickError {
             && let Some(state) = diagnostic.state.as_ref()
         {
             let source_goal = state.source_goal();
-            if let Some(goal) = &source_goal {
+            if let Some(goal) = &source_goal
+                && !certification_obligation
+            {
                 context.push(format!("goal: {goal}"));
             }
             if self.failed_tactic == Some("assumption()")
@@ -7239,7 +7258,8 @@ impl ClickError {
     }
 
     pub fn proof_step_location(&self) -> Option<&str> {
-        Some(&self.diagnostic.as_ref()?.origin.location)
+        let origin = &self.diagnostic.as_ref()?.origin;
+        (origin.stage != "contract certification").then_some(origin.location.as_str())
     }
 
     pub fn kind(&self) -> ClickErrorKind {

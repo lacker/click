@@ -78,6 +78,7 @@ struct Arguments {
 fn main() {
     if let Err(message) = entry() {
         if message.starts_with("proof error:")
+            || message.starts_with("proof error in `")
             || message.starts_with("syntax error:")
             || message.starts_with("type error:")
             || message.starts_with("internal error:")

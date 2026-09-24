@@ -28,6 +28,7 @@ commands:\n  \
 fn main() {
     if let Err(message) = entry(env::args().skip(1)) {
         if message.starts_with("proof error:")
+            || message.starts_with("proof error in `")
             || message.starts_with("syntax error:")
             || message.starts_with("type error:")
             || message.starts_with("internal error:")
@@ -310,16 +311,15 @@ mod tests {
 
         let plain = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(
-            plain.starts_with("proof error in `parent_detach`:\n"),
+            plain.starts_with("proof error in `parent_detach` during contract certification:\n"),
             "{plain}"
         );
         assert!(!plain.contains("could not certify contract for"), "{plain}");
-        let (failure, context_and_trace) = plain.split_once("\n\ngoal: ").expect(&plain);
-        assert!(failure.contains("could not prove `fact obj->refs == count(child_ref(obj));`"));
-        let (context, trace) = context_and_trace
-            .split_once("\n\nTo get a trace:\n  ")
-            .expect(&plain);
-        assert!(context.contains("\nstep: execution path 0"), "{plain}");
+        let (failure, trace) = plain.split_once("\n\nTo get a trace:\n  ").expect(&plain);
+        assert_eq!(
+            failure,
+            "proof error in `parent_detach` during contract certification:\n  could not prove `fact obj->refs == count(child_ref(obj));` of resource `child_ref` at return from `parent_detach`"
+        );
         assert!(
             trace
                 == format!(
