@@ -51,7 +51,8 @@ Integer cells keep their values, and pointer cells keep their allocation
 identity. Padding bytes carry no typed cell, so nothing is claimed about them,
 and whole-struct byte equality is never proved. A partial cell, a symbolic
 length, an unaligned destination, or an untyped source establishes nothing
-typed.
+typed. The durable semantics are in
+[Byte representation](../../docs/internals/byte-representation.md).
 
 The negatives live in `mdtests/byte_representation_*.md`: out-of-bounds,
 overlapping, incomplete, read-only, and borrowed-destination copies; a byte
