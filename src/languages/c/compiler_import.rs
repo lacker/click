@@ -2052,11 +2052,11 @@ mod tests {
             Err(error) => error.message().to_string(),
         };
         assert!(error.len() < 4096, "unbounded import diagnostic: {error}");
-        assert!(error.contains("/usr/include/time.h:80"), "{error}");
         assert!(
-            error.contains("unsupported GNU function attribute `__const__`"),
+            error.contains("/usr/include/x86_64-linux-gnu/bits/atomic_wide_counter.h:26"),
             "{error}"
         );
+        assert!(error.contains("expected union name, got `{`"), "{error}");
         assert!(!error.contains("unknown struct declaration `sigevent`"));
     }
 
