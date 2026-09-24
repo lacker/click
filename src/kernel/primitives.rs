@@ -7010,6 +7010,15 @@ pub struct PureFactContext {
         crate::persistent::PersistentMap<Bitvector32Term, ConditionTerm>,
     >,
     pub(super) condition_facts: crate::persistent::PersistentMap<ConditionTerm, bool>,
+    /// True `Bitvector32Equal` and `Bitvector64Equal` facts that pin a term
+    /// to a constant, keyed by that term and carrying, per fact, the constant
+    /// it names. Derived incrementally from `condition_facts`; ordered by
+    /// fact so the first entry is the one a scan of `condition_facts` in its
+    /// own order would find (`exact_signed_constant`).
+    pub(super) exact_constant_equalities: crate::persistent::PersistentMap<
+        Bitvector32Term,
+        crate::persistent::PersistentMap<ConditionTerm, i64>,
+    >,
     /// What an exact fact says about the null-ness of a pointer, keyed by
     /// that pointer's offset term and carrying the block the fact named
     /// together with the fact itself. Derived incrementally from

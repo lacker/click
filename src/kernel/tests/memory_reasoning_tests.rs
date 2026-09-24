@@ -6205,3 +6205,139 @@ fn memory_resolution_requires_the_loaded_cell_width() {
         None
     );
 }
+
+/// A store forgets every cached cell it might alias, and ownership keeps
+/// only the cells a composition owns through a *different* member than the
+/// written bytes. Two pointer parameters share the `ExternalArgument` block
+/// and may alias unless something says otherwise; each context below says
+/// less than that, and each must forget the cell. The last one says it, and
+/// only it keeps the cell.
+#[test]
+fn a_store_through_one_parameter_forgets_another_unless_ownership_separates_them() {
+    let parameter = |id: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(id)), 4),
+    };
+    let p = parameter(98_001);
+    let q = parameter(98_002);
+    let q_field = q.offset_by_elements(Bitvector32Term::Constant(1), 4);
+    let memory = CMemory::new().store(q_field.clone(), int32(5));
+    let survives = |assumptions: &PureFactContext| {
+        memory
+            .clone()
+            .without_possible_aliasing_cells(&p, 4, assumptions)
+            .has_known_cell_at(&q_field)
+    };
+    let compose = |facts: Vec<CResourceFact>| {
+        PureFactContext::new().assume_proposition(Proposition::CResourceComposition(
+            facts
+                .into_iter()
+                .fold(ResourceContext::new(), ResourceContext::unchecked_with_fact),
+        ))
+    };
+
+    assert!(
+        !survives(&PureFactContext::new()),
+        "two parameters with no distinctness known may alias"
+    );
+    // The written object is owned; the cached one is in no member.
+    assert!(
+        !survives(&compose(vec![
+            own_memory_fact(p.clone(), 0, 2),
+            own_memory_fact(parameter(98_003), 0, 2),
+        ])),
+        "a cell outside every owned member inherits nothing from the composition"
+    );
+    // An owner beside a view is not two owners: the view may observe the
+    // owned bytes themselves.
+    assert!(
+        !survives(&compose(vec![
+            own_memory_fact(p.clone(), 0, 2),
+            view_memory_fact(q.clone(), 0, 2),
+        ])),
+        "a viewed object is not separated from an owned one"
+    );
+    // One member holding both addresses is no partition between them.
+    let shared_member = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(98_004)), 4),
+    };
+    let i = Bitvector32Term::Variable(Variable(98_005));
+    let j = Bitvector32Term::Variable(Variable(98_006));
+    let element_i = shared_member.offset_by_elements(i.clone(), 4);
+    let element_j = shared_member.offset_by_elements(j.clone(), 4);
+    let in_bounds = compose(vec![own_memory_fact(
+        shared_member.clone(),
+        0,
+        Bitvector32Term::Variable(Variable(98_007)),
+    )])
+    .assume_condition(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), i.clone()),
+        true,
+    )
+    .assume_condition(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), j.clone()),
+        true,
+    )
+    .assume_condition(
+        ConditionTerm::signed_less_than(i, Bitvector32Term::Variable(Variable(98_007))),
+        true,
+    )
+    .assume_condition(
+        ConditionTerm::signed_less_than(j, Bitvector32Term::Variable(Variable(98_007))),
+        true,
+    );
+    assert!(
+        !CMemory::new()
+            .store(element_j.clone(), int32(5))
+            .without_possible_aliasing_cells(&element_i, 4, &in_bounds)
+            .has_known_cell_at(&element_j),
+        "two elements of one owned member may be the same element"
+    );
+
+    // Both objects owned, through two members: the partition keeps the cell.
+    assert!(
+        survives(&compose(vec![
+            own_memory_fact(p.clone(), 0, 2),
+            own_memory_fact(q.clone(), 0, 2),
+        ])),
+        "two owned members of one composition hold disjoint bytes"
+    );
+}
+
+/// Ownership places a whole access, not its first element. Two owned
+/// members split one object into words; an eight-byte cell that starts in
+/// the lower word also covers the upper one, which the store writes, so no
+/// member holds the cell and the partition says nothing about it.
+#[test]
+fn a_cell_straddling_two_owned_members_is_not_separated_from_either() {
+    let object = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(98_101)), 4),
+    };
+    let upper = object.offset_by_elements(Bitvector32Term::Constant(1), 4);
+    let words = PureFactContext::new().assume_proposition(Proposition::CResourceComposition(
+        [
+            own_memory_fact(object.clone(), 0, 1),
+            own_memory_fact(object.clone(), 1, 2),
+        ]
+        .into_iter()
+        .fold(ResourceContext::new(), ResourceContext::unchecked_with_fact),
+    ));
+    let footprint = words.owned_store_footprint(&upper, 4);
+    assert!(
+        !words.access_owned_apart_from_store(&footprint, &upper, &object, 8),
+        "an eight-byte access at the lower word reaches the upper word"
+    );
+    assert!(
+        !CMemory::new()
+            .store(object.clone(), int64(9))
+            .without_possible_aliasing_cells(&upper, 4, &words)
+            .has_known_cell_at(&object),
+        "the store forgets the straddling cell"
+    );
+    assert!(
+        words.access_owned_apart_from_store(&footprint, &upper, &object, 4),
+        "a four-byte access at the lower word stays in its own member"
+    );
+}

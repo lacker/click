@@ -468,3 +468,147 @@ fn one_heap_load_is_logarithmic_in_unrelated_allocations() {
     assert_constant_plus_log_growth("one load of a known heap cell", &known, 16.0);
     assert_constant_plus_log_growth("one load of an unknown heap cell", &unknown, 16.0);
 }
+
+/// Every pointer parameter lives in the one `ExternalArgument` block, so
+/// neither the alias-candidate ranges nor the block-pair separation index
+/// narrow a store through one parameter: each cached field of every other
+/// parameter is a candidate. `count` parameter objects each have one cached
+/// field, and the store goes through a borrowed field-bearing region (its
+/// header object and its data range are two more owned members of the same
+/// composition, like `examples/arena`'s `arena_write`).
+fn owned_parameter_objects_and_a_region_store(
+    count: usize,
+) -> (CMemory, PureFactContext, Pointer, Vec<Pointer>) {
+    let parameter = |id: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(id)), 4),
+    };
+    let objects = (0..count)
+        .map(|index| parameter(97_000 + index as u64))
+        .collect::<Vec<_>>();
+    let region = parameter(97_900);
+    let data = parameter(97_901);
+    let length = Bitvector32Term::Variable(Variable(97_902));
+    let index = Bitvector32Term::Variable(Variable(97_903));
+    let field = |object: &Pointer| object.offset_by_elements(Bitvector32Term::Constant(1), 4);
+    let mut cells = objects.iter().map(field).collect::<Vec<_>>();
+    cells.push(field(&region));
+    let memory = cells
+        .iter()
+        .enumerate()
+        .fold(CMemory::new(), |memory, (value, cell)| {
+            memory.store(cell.clone(), scaling_value(value))
+        });
+    let object_range = |base: &Pointer, elements: u32| {
+        CMemoryRange::new(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(elements),
+        )
+    };
+    let composition = objects
+        .iter()
+        .map(|object| CResourceFact::own_memory(object_range(object, 2)))
+        .chain([
+            CResourceFact::own_memory(object_range(&region, 3)),
+            CResourceFact::own_memory(CMemoryRange::new(
+                data.clone(),
+                Bitvector32Term::Constant(0),
+                length.clone(),
+            )),
+        ])
+        .fold(ResourceContext::new(), ResourceContext::unchecked_with_fact);
+    let assumptions = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_than(index.clone(), length), true)
+        .assume_proposition(Proposition::CResourceComposition(composition));
+    let write = data.offset_by_elements(index, 4);
+    (memory, assumptions, write, cells)
+}
+
+/// A store through a borrowed region beside `N` cached fields of other owned
+/// parameter objects. Ownership separates every one of them, and it is
+/// asked first through each composition's base index, so the store pays a
+/// small constant per cached cell (visiting it at all is the alias-candidate
+/// walk) and never the pure-fact distinctness ladder, whose failing searches
+/// cost work in every separation fact of the block. Measured: 96, 160, 288
+/// and 544 units at 4, 8, 16 and 32 cells (16 per cell). Before ownership
+/// was asked first, the ladder charged 376, 1508, 8732 and 60940: each
+/// failing search walked the composition's pairwise separations, which grow
+/// with the square of the owned objects.
+#[test]
+fn a_store_beside_owned_parameter_fields_is_linear_in_the_cached_cells() {
+    let mut samples = Vec::new();
+    for count in [4, 8, 16, 32] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (memory, assumptions, write, cells) = owned_parameter_objects_and_a_region_store(count);
+        let (stored, work) = crate::instrumentation::measure_deterministic_work(|| {
+            memory.without_possible_aliasing_cells(&write, 4, &assumptions)
+        });
+        for cell in &cells {
+            assert!(
+                stored.has_known_cell_at(cell),
+                "ownership separates {cell:?} from the store at {write:?}"
+            );
+        }
+        samples.push((count, work));
+    }
+    eprintln!("region store beside N owned parameter fields (N, units): {samples:?}");
+    for (count, work) in &samples {
+        assert!(
+            *work <= 20 * count + 100,
+            "a store beside {count} owned parameter fields charged {work} units, \
+             above 20·N + 100: {samples:?}"
+        );
+    }
+    for pair in samples.windows(2) {
+        let [(small, small_work), (large, large_work)] = pair else {
+            unreachable!()
+        };
+        let ratio = *large_work as f64 / *small_work as f64;
+        assert!(
+            ratio <= 2.25,
+            "store work grew by {ratio:.2} from {small} to {large} cached cells, \
+             above linear: {samples:?}"
+        );
+    }
+}
+
+/// The comparison the `ExternalArgument` family is measured against: the
+/// same number of cached fields, all in one heap object, beside a store into
+/// another field of it. Constant offsets in one block decide every pair on
+/// the first rung: 22, 42, 82 and 162 units at 4, 8, 16 and 32 cells.
+#[test]
+fn a_store_beside_fields_of_one_heap_object_is_linear_in_the_cached_cells() {
+    let mut samples = Vec::new();
+    for count in [4, 8, 16, 32] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let cells = (0..count)
+            .map(|index| heap_cell(3, 4 * index as i64))
+            .collect::<Vec<_>>();
+        let memory = cells
+            .iter()
+            .enumerate()
+            .fold(CMemory::new(), |memory, (value, cell)| {
+                memory.store(cell.clone(), scaling_value(value))
+            });
+        let write = heap_cell(3, 4 * count as i64);
+        let (stored, work) = crate::instrumentation::measure_deterministic_work(|| {
+            memory.without_possible_aliasing_cells(&write, 4, &PureFactContext::new())
+        });
+        for cell in &cells {
+            assert!(stored.has_known_cell_at(cell));
+        }
+        samples.push((count, work));
+    }
+    eprintln!("heap store beside N fields of its own object (N, units): {samples:?}");
+    for (count, work) in &samples {
+        assert!(
+            *work <= 8 * count + 32,
+            "a heap store beside {count} fields charged {work} units: {samples:?}"
+        );
+    }
+}

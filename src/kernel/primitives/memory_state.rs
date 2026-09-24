@@ -2880,6 +2880,14 @@ impl CMemory {
         // proven distinct on the first rung), so only the candidates are
         // asked.
         let candidates = AliasCandidates::of_block(&normalized_pointer.block);
+        // Ownership first. A cell that a resource composition owns through a
+        // different member than the written bytes is kept by the partition
+        // law, whichever rung below would have found that out; asking it
+        // first, through the composition's base index, spares such cells the
+        // pure-fact distinctness ladder, whose failing searches cost work in
+        // every separation fact of the block. Cells ownership does not place
+        // go down the ladder unchanged.
+        let owned_footprint = assumptions.owned_store_footprint(&normalized_pointer, bytes);
         candidates.retain_map(std::sync::Arc::make_mut(&mut memory.cells), |cell_pointer, cell_value| {
             let normalized_cell_pointer = Pointer {
                 block: cell_pointer.block.clone(),
@@ -2900,6 +2908,14 @@ impl CMemory {
                     written.overwrites_completely(&normalized_cell_pointer, cell_value)
                 });
                 return false;
+            }
+            if assumptions.access_owned_apart_from_store(
+                &owned_footprint,
+                &normalized_pointer,
+                &normalized_cell_pointer,
+                crate::kernel::reasoning::cell_access_byte_width(cell_value),
+            ) {
+                return true;
             }
             let address_inequality_separates_bytes = crate::kernel::reasoning::access_byte_overlap(
                 &normalized_cell_pointer,
@@ -2966,6 +2982,14 @@ impl CMemory {
                         written.overwrites_typed_completely(&normalized_cell_pointer, *cell_type)
                     });
                     return false;
+                }
+                if assumptions.access_owned_apart_from_store(
+                    &owned_footprint,
+                    &normalized_pointer,
+                    &normalized_cell_pointer,
+                    cell_type.byte_width().max(1),
+                ) {
+                    return true;
                 }
                 // A union view has no value to read a width from, so it stands in
                 // the width of the type it is keyed by — the access it records.

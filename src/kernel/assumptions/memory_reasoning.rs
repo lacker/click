@@ -1062,6 +1062,140 @@ impl PureFactContext {
 
     /// Decides separation from indexed facts plus range membership, without
     /// invoking the composition-backed derived-separation search.
+    /// The owned members of this context's resource compositions that hold
+    /// every byte of an access of `bytes` at `write`, computed once per store
+    /// so that [`Self::access_owned_apart_from_store`] can ask each cached
+    /// cell a constant number of indexed questions.
+    ///
+    /// Members are found through each composition's base index under the
+    /// additive base spellings of `write` (see [`additive_base_spellings`]),
+    /// never by walking a block bucket: every object a parameter reaches
+    /// shares the one `ExternalArgument` block, so a bucket walk would visit
+    /// every owned object in the function for each cell.
+    pub(in crate::kernel) fn owned_store_footprint(
+        &self,
+        write: &Pointer,
+        bytes: u32,
+    ) -> OwnedStoreFootprint<'_> {
+        let mut members = Vec::new();
+        if self.resource_compositions.is_empty() {
+            return OwnedStoreFootprint { members };
+        }
+        let spellings = additive_base_spellings(write);
+        // Compositions of one context commonly restate one member (a
+        // composite's unfolding beside the context it was unfolded in), and
+        // the containment proof depends only on the range: prove each
+        // distinct range once.
+        let mut decided = BTreeMap::<&CMemoryRange, bool>::new();
+        for resources in self.resource_compositions.iter() {
+            crate::instrumentation::record_deterministic_work(1);
+            for base in &spellings {
+                for (entry, range) in resources.owned_memory_members_with_base(base) {
+                    let contains = *decided
+                        .entry(range)
+                        .or_insert_with(|| self.access_within_memory_range(write, bytes, range));
+                    if contains {
+                        members.push((resources, entry, range));
+                    }
+                }
+            }
+        }
+        OwnedStoreFootprint { members }
+    }
+
+    /// Whether ownership alone keeps an access of `bytes` at `pointer` off a
+    /// store's written bytes: some composition owns the write through one
+    /// member and every byte of this access through a different one.
+    ///
+    /// This is the partition law of a valid composition, the one
+    /// [`crate::kernel::memory_provenance::owned_composition_store_separated_evidence`]
+    /// and the projected pairs in `composition_separation_facts` already
+    /// apply; only the route to the two members differs. Both memberships
+    /// are full, assumption-checked containments of the whole access, not
+    /// of its first element, and the same guards apply: the two addresses
+    /// must not be proven equal, and ranges whose distinct base spellings
+    /// were later proven equal must not overlap. Lookup is by base, so the
+    /// question costs what the two accesses spell and the members they name,
+    /// independent of the other objects owned in the block.
+    pub(in crate::kernel) fn access_owned_apart_from_store(
+        &self,
+        footprint: &OwnedStoreFootprint<'_>,
+        write: &Pointer,
+        pointer: &Pointer,
+        bytes: u32,
+    ) -> bool {
+        if footprint.members.is_empty() {
+            return false;
+        }
+        let spellings = additive_base_spellings(pointer);
+        let separated = footprint
+            .members
+            .iter()
+            .find(|(resources, write_entry, write_range)| {
+                spellings.iter().any(|base| {
+                    resources
+                        .owned_memory_members_with_base(base)
+                        .any(|(entry, range)| {
+                            entry != *write_entry
+                                && self.access_within_memory_range(pointer, bytes, range)
+                                && !self
+                                    .memory_ranges_overlap_after_base_equality(write_range, range)
+                        })
+                })
+            });
+        let Some((resources, _, _)) = separated else {
+            return false;
+        };
+        if self.pointers_proven_equal_ignoring_memory_separation(pointer, write) {
+            return false;
+        }
+        record_implicit_reasoning_provenance(
+            self,
+            &Proposition::CResourceComposition((*resources).clone()),
+        );
+        true
+    }
+
+    /// Whether every byte of an access of `bytes` at `pointer` lies in
+    /// `range`: its first element and, for an access wider than one element,
+    /// its last. Element membership places `pointer` exactly on an element
+    /// boundary, so the elements in between are in the range as well.
+    ///
+    /// Membership is read structurally: `pointer` must be the range's base
+    /// itself or that base plus one displacement, the direct route of
+    /// [`Self::pointer_in_range_with_width`], and only the two endpoint
+    /// bounds are then proved. The other routes there compare offsets that
+    /// are *not* syntactically related, and on a miss that comparison is a
+    /// failing distinctness search, which is exactly the cost this rung
+    /// exists to avoid; a pointer spelled some other way leaves the
+    /// decision to the caller's full ladder.
+    fn access_within_memory_range(
+        &self,
+        pointer: &Pointer,
+        bytes: u32,
+        range: &CMemoryRange,
+    ) -> bool {
+        let width = range.element_width();
+        if width == 0 {
+            return false;
+        }
+        let contains = |pointer: &Pointer| {
+            structural_element_index(pointer, range.base(), width, self).is_some_and(|index| {
+                self.proves_range_bound(ConditionTerm::signed_less_equal(
+                    range.start().clone(),
+                    index.clone(),
+                )) && self
+                    .proves_range_bound(ConditionTerm::signed_less_than(index, range.end().clone()))
+            })
+        };
+        let elements = bytes.max(1).div_ceil(width);
+        contains(pointer)
+            && (elements == 1
+                || contains(
+                    &pointer.offset_by_elements(Bitvector32Term::Constant(elements - 1), width),
+                ))
+    }
+
     pub(in crate::kernel) fn pointers_directly_disjoint_by_range(
         &self,
         left: &Pointer,
@@ -1617,6 +1751,15 @@ impl PureFactContext {
         None
     }
 
+    /// One endpoint bound of a range-membership question, by the exact
+    /// routes first and the decision procedure last.
+    fn proves_range_bound(&self, condition: ConditionTerm) -> bool {
+        self.exact_condition_value(&condition) == Some(true)
+            || self.exact_ordering_modulo_canonical_atoms(&condition)
+            || self.nonnegative_successor_by_exact_facts(&condition)
+            || self.decide(&condition) == Some(true)
+    }
+
     fn pointer_in_range_with_width(
         &self,
         pointer: &Pointer,
@@ -1660,12 +1803,7 @@ impl PureFactContext {
         {
             return true;
         }
-        let proves = |condition: ConditionTerm| {
-            self.exact_condition_value(&condition) == Some(true)
-                || self.exact_ordering_modulo_canonical_atoms(&condition)
-                || self.nonnegative_successor_by_exact_facts(&condition)
-                || self.decide(&condition) == Some(true)
-        };
+        let proves = |condition: ConditionTerm| self.proves_range_bound(condition);
         let range_base = base.offset_by_elements(start.clone(), element_width);
         if let Some(index) =
             self.pointer_element_index_from_base_with_width(pointer, &range_base, element_width)
@@ -3079,4 +3217,58 @@ impl PureFactContext {
             },
         )
     }
+}
+
+/// The owned members that contain a store's written bytes; see
+/// [`PureFactContext::owned_store_footprint`].
+pub(in crate::kernel) struct OwnedStoreFootprint<'a> {
+    members: Vec<(&'a ResourceContext, u64, &'a CMemoryRange)>,
+}
+
+/// The element index of `pointer` from `base` when `pointer` is `base`
+/// itself or `base` plus one displacement: the syntactic branches of the
+/// proof-aware index, with no offset comparison that could fail slowly.
+fn structural_element_index(
+    pointer: &Pointer,
+    base: &Pointer,
+    element_width: u32,
+    assumptions: &PureFactContext,
+) -> Option<Bitvector32Term> {
+    crate::instrumentation::record_deterministic_work(1);
+    if pointer.block != base.block {
+        return None;
+    }
+    if pointer.offset == base.offset {
+        return Some(Bitvector32Term::Constant(0));
+    }
+    let PointerOffsetTerm::Add(left, right) = &pointer.offset else {
+        return None;
+    };
+    if left.as_ref() != &base.offset {
+        return None;
+    }
+    element_index_from_offset_with_facts(right, element_width, assumptions)
+}
+
+/// The bases an owned range could be stated over for an access at `pointer`:
+/// the pointer itself and each left operand down its offset's additive spine.
+///
+/// Pointer arithmetic and member access both build `Add(base, displacement)`
+/// (`PointerOffsetTerm::add`), so `p->f` is `Add(p, f)`, `p[i]` is
+/// `Add(p, i·w)`, and `p->a[i]` is `Add(Add(p, a), i·w)`: the spine walks back
+/// through every one of them. A range stated over a base spelled some other
+/// way is simply not found here; the caller then asks its full ladder, so a
+/// miss costs time and never a decision. Linear in the offset's size.
+fn additive_base_spellings(pointer: &Pointer) -> Vec<Pointer> {
+    let mut spellings = vec![pointer.clone()];
+    let mut offset = &pointer.offset;
+    while let PointerOffsetTerm::Add(left, _) = offset {
+        crate::instrumentation::record_deterministic_work(1);
+        spellings.push(Pointer {
+            block: pointer.block.clone(),
+            offset: left.as_ref().clone(),
+        });
+        offset = left;
+    }
+    spellings
 }
