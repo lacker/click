@@ -397,7 +397,7 @@ edge exists. Each decides the same abstract question as the matching arm of
 
 | Site | Class | Why it differs |
 | --- | --- | --- |
-| `call_havoc_keeps_cell` `src/kernel/primitives/memory_state.rs` | disagrees | Keeps a cell on `local:` **or** `ranges_proven_disjoint_from_pointer`. The rule's `CallHavoc` arm has neither the `local:` disjunct nor the plain variant: it reads typed range evidence and the `_for_frame` expansion, which looks through composite definitions. Weaker in one direction, stronger in the other. The `local:` disjunct is sound only because a call's checked write set can never be based in a `local:` block — a write set is the callee's owned ranges resolved at the call site, and passing `&t` to a callee that owns `t[0..1]` is refused for want of `owns local:t@0[0..1]`, which is what enforces it today. |
+| `call_havoc_keeps_cell` `src/kernel/primitives/memory_state.rs` | disagrees | For ordinary cells, keeps a cell only when plain `ranges_proven_disjoint_from_pointer` proves the declared write set cannot reach it. A local cell whose block has a differently spelled write-range base is retained only when the pointer-equality graph does not resolve that base to the cell; this catches assumed aliases while preserving direct same-block construction transitions. The rule's `CallHavoc` arm uses typed range evidence and the `_for_frame` expansion, which looks through composite definitions, so the two remain weaker in different cases. |
 | `CMemory::with_call_memory_havoc`, `CMemory::matches_call_memory_havoc_result` | disagrees | The producer that applies a call's write set and the checker that re-derives what it would have written. Both now ask `call_havoc_keeps_cell`, so the retain rule is one function: the checker has to stay identical to the producer, not to the rule, and sharing the function is what makes that structural instead of remembered. |
 | `loan_preserving_havoc_keeps_cell` | disagrees | Preserved-block membership **or** bytes `LoanLedger::permits_memory_access` refuses a write through. An ownership question, with fail-open polarity, and no pointer-alias reasoning at all — a loop body or a joined branch arm may write through any pointer it can reach, so separation has nothing to decide. The width it asks the ledger about is the wider of the cell's value and the widest typed overlay recorded there (`union_overlay_widths`), and an unknown width fails closed. |
 | `CMemory::with_loop_memory_havoc_preserving_loans`, `CMemory::with_interface_memory_havoc_preserving_loans` | disagrees | The loop head and the interface join, which both ask `loan_preserving_havoc_keeps_cell`. Neither records an edge, so no rule covers either; what used to be the same retain written twice is now one function asked twice. |
@@ -992,7 +992,10 @@ comparisons in `src/surface/diagnostics.rs` all compare block identities
 without deciding staleness. Two carry a residual risk worth naming:
 `may_refer_to_memory_block` compares a block by spelling before the proof-based
 allocation-separation check runs, so a caller resource spelled differently from
-a retired allocation is skipped rather than refused; and the
+a retired allocation is skipped rather than refused (the call rule draws the
+same selection from the resource indexes, through
+`ResourceContext::facts_that_may_refer_to_memory_block`, so its cost is the
+retired block's candidates and not the caller's whole frame); and the
 `held_child_witness` filter accepts `own.block != pointer.block` as "a
 different pointer" with no proof, which selects a witness rather than proving
 anything.
@@ -1033,11 +1036,11 @@ the final answer there is open.
   not the two saved states the answer needs.
 - **From the map above** — the two duplicated retain closures are one function
   each now, `call_havoc_keeps_cell` and `loan_preserving_havoc_keeps_cell`, so
-  a producer and the checker that re-derives it can no longer drift apart by an
-  edit to one of them. What the map still calls *disagrees* is the difference
-  that is left: `call_havoc_keeps_cell` keeps a cell on a `local:` spelling or
-  plain range disjointness, while the rule's `CallHavoc` arm reads typed range
-  evidence and the `_for_frame` expansion. That one is a behaviour change
-  rather than a refactor, so it needs a regression in each direction — a
-  program the eager half keeps and the rule would not, and one the other way
-  round — before either side moves.
+  a producer and the checker that re-derives it can no longer drift apart by
+  an edit to one of them. `call_havoc_keeps_cell` now requires range-disjointness
+  evidence when a local cell has a differently spelled range base; direct
+  same-block construction transitions retain their existing behavior, while an
+  assumed-equal alternate spelling drops the cached cell.
+  The remaining *disagrees* entry is the difference between plain range
+  disjointness and the rule's typed range evidence plus `_for_frame` composite
+  expansion.
