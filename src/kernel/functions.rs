@@ -2742,6 +2742,12 @@ fn execute_verified_function_applications_with_suspension(
         // built once, here, so the population transition and the returned
         // resources agree on its fresh fields.
         let mut produced_instances = BTreeMap::new();
+        // A produced instance's arguments are read at the return, where the
+        // contract's own input instances still address the cells their
+        // unmatched bodies owned (`produces after: state(region->arena)`
+        // beside a consumed region). The views are the contract's inputs
+        // only, and they are computed once, when some instance is produced.
+        let mut produced_argument_state: Option<CState> = None;
         for resource in interface.resource_ensures() {
             let Some(identity) = resource.instance_identity() else {
                 continue;
@@ -2765,8 +2771,30 @@ fn execute_verified_function_applications_with_suspension(
             let Some(instance_resource) = resource.instance_resource_spec() else {
                 continue;
             };
+            let argument_state = produced_argument_state.get_or_insert_with(|| {
+                let views = transfer
+                    .callee_resources
+                    .facts()
+                    .iter()
+                    .flat_map(|fact| {
+                        unmatched_instance_body_views(
+                            fact,
+                            interface.composite_resource_definitions(),
+                            &post_state,
+                            &effective_assumptions,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                if views.is_empty() {
+                    post_state.clone()
+                } else {
+                    post_state.clone().with_resource_context(
+                        post_state.resources().clone().unchecked_with_facts(views),
+                    )
+                }
+            });
             let (name, arguments) = match evaluate_function_resource_spec(
-                &post_state,
+                argument_state,
                 &instance_resource,
                 &effective_assumptions,
                 budget,
@@ -3553,18 +3581,24 @@ fn prepare_verified_function_call<'a>(
         assumptions_with_path_context(assumptions, &arguments_path.facts, &argument_obligations);
     if let Some(application) = resource_application {
         entry_state.resource_bindings = Some(application.bindings.clone());
-        for parameter in application.parameters.iter() {
-            if let Err(error) =
-                evaluate_function_resource_spec(&entry_state, parameter, &path_assumptions, budget)?
-            {
-                return Ok(Err(CFunctionPath {
-                    outcome: CFunctionOutcome::RuntimeError(error),
-                    facts: arguments_path.facts,
-                    obligations: argument_obligations,
+        // The bound instances are clauses of one contract, so they are
+        // addressed as one section: an instance whose argument loads a cell
+        // a sibling's unmatched body owns reads it through that sibling.
+        if let Err(error) = evaluate_resource_clauses_against_whole_section(
+            &entry_state,
+            &entry_state,
+            &application.parameters,
+            contract_interface.composite_resource_definitions(),
+            &path_assumptions,
+            budget,
+        )? {
+            return Ok(Err(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(error),
+                facts: arguments_path.facts,
+                obligations: argument_obligations,
 
-                    loan_evidence: empty_checked_loan_evidence_sequence(),
-                }));
-            }
+                loan_evidence: empty_checked_loan_evidence_sequence(),
+            }));
         }
     }
     let mut facts = arguments_path.facts;

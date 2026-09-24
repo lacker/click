@@ -255,7 +255,8 @@ are decided, so a loop head does not read through a folded field-bearing
 instance. The regressions are
 `mdtests/contract_owns_through_field_bearing_instance.md` (both clause
 orders), `mdtests/contract_returns_field_bearing_sibling.md` (both clause
-orders), `mdtests/contract_postcondition_reads_through_field_bearing_instance.md`,
+orders), `mdtests/call_through_field_bearing_sibling.md` (a caller applying
+such a contract), `mdtests/contract_postcondition_reads_through_field_bearing_instance.md`,
 `mdtests/arena_prefix_free_reads_region_arena.md`,
 `mdtests/contract_field_bearing_instance_views_grant_no_write.md`, and
 `mdtests/contract_field_bearing_instance_views_only_owned_cells.md`.
