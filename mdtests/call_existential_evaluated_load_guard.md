@@ -5,7 +5,9 @@ the call. Because the call may write the separate `b` range, the caller uses
 `before_call` to name that evaluation snapshot. Click can prove the indexed
 read was defined there, but spelling the existential with `at(...)` inserts
 that viewability condition *inside* the quantifier. The call-produced fact has
-the same body without that guard, so exact citation currently fails.
+the same body without that guard, so exact citation currently fails. Unlike a
+tautological path witness, this goal depends on the child's unknown result;
+`Path::Here` cannot establish it independently of the call guarantee.
 
 The missing *call-site proof route* is existential strengthening by a
 binder-independent fact: from `V` and `exists path { P(path) }`, derive
@@ -25,17 +27,20 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
 ```click
 verifying "call_existential_evaluated_load_guard.c";
 
-spec enum Path { Here }
+spec enum Path { Here, There }
 
 function pick(x: int32, path: Path) -> int32 {
-    match path { Path::Here => x }
+    match path {
+        Path::Here => x,
+        Path::There => x + 1
+    }
 }
 
 extern int32 child(int32 *a, int32 *b, int32 n, int32 x) {
     views a[0..n];
     owns b[0..1];
     requires separate(memory(a[0..n]), memory(b[0..1]));
-    ensures exists (path: Path) { pick(x, path) == x };
+    ensures exists (path: Path) { pick(x, path) == result };
 }
 
 int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
@@ -50,7 +55,7 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
     let r = step(child(a, b, n, a[i]), {});
     have defined(at(before_call, a[i])) by { simp(); }
     have exists (path: Path) {
-        pick(at(before_call, a[i]), path) == at(before_call, a[i])
+        pick(at(before_call, a[i]), path) == r
     } by {
         assumption();
     }
