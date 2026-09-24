@@ -198,6 +198,22 @@ cannot express; decide that representation against the fixed C before adding
 syntax. Keep arbitrary holes out of the first free chunk if the pipeline's
 reverse-order frees can be modeled as prefix shrinks.
 
+The first attempt is blocked at contract lowering, before any proof runs.
+The fixed `arena_free`, `arena_read`, and `arena_write` take only the region
+descriptor, so their contracts must name the arena as `region->arena`, and
+the live-region resource owns that descriptor. A field-bearing resource's
+folded cells are not read authority for sibling contract clauses, while a
+field-free composite's and a decided match arm's are, so
+`consumes before: arena_prefix_state(region->arena);` cannot be evaluated
+next to the region instance. The landed two-parameter
+`arena_prefix_region(arena, region)` is worse still: its own argument reads a
+cell it owns. Resource fields also cannot have a struct pointer type, so the
+arena cannot be carried as a field instead. The frontier is pinned by
+`mdtests/arena_prefix_free_reads_region_arena_frontier.md`. The intended fix
+publishes an unconditional unmatched field-bearing body's cells as read
+authority during section clause evaluation, symmetric with the other two
+forms; ownership still moves only on `unfold`.
+
 ## Violated invariant
 
 Click should be able to verify an allocator built in ordinary C from one
