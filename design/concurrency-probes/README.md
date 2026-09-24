@@ -131,8 +131,10 @@ inventing a layout. Fixed pointer arrays in structs now import, including the
 member in `bits/types/__locale_t.h:30`. Anonymous and inline tagged union
 typedefs now retain their complete member layout, including arrays and nested
 structs; compound union member operations remain bounded refusals pending
-typed access and copy support. The frozen import now reaches the alignment
-attribute on `__pthread_unwind_buf_t` in `pthread.h:548`. GCC `const`,
+typed access and copy support. Pointer uses of the aligned typedef
+`__pthread_unwind_buf_t` now import; value storage still refuses until its
+alignment is represented in allocation and aggregate layout. The frozen import
+now reaches weak linkage on `__pthread_unwind_next` in `pthread.h:753`. GCC `const`,
 `nonnull`, `noreturn`, and `deprecated` annotations and standard or GNU
 `restrict` syntax import without granting proof facts. The modeled proof remains separate
 from native runtime validation; importing these headers grants no pthread

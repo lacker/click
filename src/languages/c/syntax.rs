@@ -1610,6 +1610,10 @@ impl C0FunctionPointerSignature {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParsedType {
     c_type: C0Type,
+    /// A GNU `aligned` typedef changes the alignment of values of this alias.
+    /// Pointer uses are safe to import; value storage is refused until that
+    /// alignment is represented in allocations and aggregate layouts.
+    aligned_typedef: bool,
     struct_name: Option<String>,
     enum_name: Option<String>,
     union_name: Option<String>,
@@ -9025,6 +9029,22 @@ impl Parser {
             parsed_type.c_type = array_type_for_element(parsed_type.c_type, length)
                 .ok_or_else(|| self.error_here("typedef array element type is unsupported"))?;
         }
+        if self.peek_ident() == Some("__attribute__") {
+            self.position += 1;
+            self.expect(Token::LParen)?;
+            self.expect(Token::LParen)?;
+            let attribute = self.expect_ident("GNU typedef attribute")?;
+            if attribute != "aligned" && attribute != "__aligned__" {
+                return Err(self.error_at_previous(format!(
+                    "unsupported GNU typedef attribute `{attribute}`"
+                )));
+            }
+            // The argument-free spelling requests the target's maximum useful
+            // alignment. Do not guess its numeric value from the host ABI.
+            self.expect(Token::RParen)?;
+            self.expect(Token::RParen)?;
+            parsed_type.aligned_typedef = true;
+        }
         self.expect(Token::Semicolon)?;
         if self.typedefs.insert(alias.clone(), parsed_type).is_some() {
             return Err(self.error_at_previous(format!("duplicate typedef `{alias}`")));
@@ -9846,6 +9866,7 @@ impl Parser {
                 // placeholder so `typedef struct S S_t;` can later become
                 // `struct S*` when the declarator supplies `*`.
                 c_type: C0Type::Int32,
+                aligned_typedef: false,
                 struct_name: Some(
                     if allow_anonymous_struct && self.peek() == Some(&Token::LBrace) {
                         // Anonymous types have nominal identity per declaration,
@@ -9880,6 +9901,7 @@ impl Parser {
                 // on the parsed type while using an int32 placeholder for
                 // the address-backed member-selection path.
                 c_type: C0Type::Int32,
+                aligned_typedef: false,
                 struct_name: None,
                 enum_name: None,
                 union_name: {
@@ -9913,6 +9935,7 @@ impl Parser {
             },
             Some(Token::Ident(name)) if name == "enum" => ParsedType {
                 c_type: C0Type::Int32,
+                aligned_typedef: false,
                 struct_name: None,
                 union_name: None,
                 enum_name: {
@@ -10075,8 +10098,14 @@ impl Parser {
                 return Err(self.error_at_previous("pointers to enum values are not supported"));
             }
         }
+        if parsed.aligned_typedef && !saw_pointer {
+            return Err(self.error_here(
+                "GNU aligned typedef values need modeled object alignment; pointer uses are supported",
+            ));
+        }
         Ok(ParsedType {
             c_type,
+            aligned_typedef: false,
             struct_name: parsed.struct_name,
             enum_name: parsed.enum_name,
             union_name: parsed.union_name,
@@ -10141,6 +10170,7 @@ impl Parser {
         };
         Ok(ParsedType {
             c_type,
+            aligned_typedef: false,
             struct_name,
             enum_name: None,
             union_name: None,
@@ -10311,6 +10341,7 @@ impl Parser {
         };
         Ok(ParsedType {
             c_type,
+            aligned_typedef: false,
             struct_name: None,
             enum_name: None,
             union_name: None,

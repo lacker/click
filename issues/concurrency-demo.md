@@ -42,7 +42,7 @@ create/join authority transitions against a trusted modeled pthread
 specification; it has **not** established that a native Linux or macOS
 pthread library matches that specification. The compiler-import path locks a
 real Ubuntu GCC/glibc artifact for the frozen source, but header parsing
-currently stops at an alignment attribute on a typedef in `pthread.h:548`.
+currently stops at weak linkage on `__pthread_unwind_next` in `pthread.h:753`.
 Importing declarations by itself would not validate
 runtime behavior.
 

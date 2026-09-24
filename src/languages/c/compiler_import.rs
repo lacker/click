@@ -2052,9 +2052,9 @@ mod tests {
             Err(error) => error.message().to_string(),
         };
         assert!(error.len() < 4096, "unbounded import diagnostic: {error}");
-        assert!(error.contains("/usr/include/pthread.h:548"), "{error}");
+        assert!(error.contains("/usr/include/pthread.h:753"), "{error}");
         assert!(
-            error.contains("expected `;`, got identifier `__attribute__`"),
+            error.contains("unsupported GNU function attribute `__weak__`"),
             "{error}"
         );
         assert!(!error.contains("unknown struct declaration `sigevent`"));

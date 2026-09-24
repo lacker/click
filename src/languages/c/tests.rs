@@ -10737,6 +10737,26 @@ fn c0_struct_union_fields_are_copyable_by_value_without_flattening_overlap() {
 }
 
 #[test]
+fn c0_gnu_aligned_typedef_preserves_pointer_only_boundary() {
+    let source = "typedef struct { int32 value; } buffer __attribute__((__aligned__)); \
+                  int32 inspect(buffer *buf) { return buf->value; }";
+    syntax::parse_functions(source).expect("pointer to aligned typedef may be imported");
+
+    for declaration in [
+        "buffer value;",
+        "struct outer { buffer value; };",
+        "int32 inspect(buffer value) { return 0; }",
+    ] {
+        let source = format!(
+            "typedef struct {{ int32 value; }} buffer __attribute__((__aligned__)); {declaration}"
+        );
+        let error = syntax::parse_functions(&source)
+            .expect_err("aligned typedef object needs modeled alignment");
+        assert!(error.message().contains("alignment"), "{}", error.message());
+    }
+}
+
+#[test]
 fn c0_function_pointer_void_parameter_list_is_empty() {
     let function =
         syntax::parse_function("int32 run(void (*callback)(void)) { callback(); return 0; }")
