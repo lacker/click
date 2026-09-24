@@ -56,8 +56,9 @@ refused too:
 - `<`, `<=`, `>`, and `>=`;
 - pointer subtraction and adding or subtracting an integer offset;
 - testing its truth in `if`, a loop condition, `?:`, `!`, `&&`, or `||`;
-- converting it to an integer by a cast, or to `_Bool` by a cast or an
-  assignment.
+- converting it to an integer by a cast, or to `_Bool` by a cast, an
+  assignment, a `return` from a `_Bool` function, or passing it as an
+  argument to a `_Bool` parameter.
 
 The diagnostic names the freed allocation, for example
 `use of a pointer into freed allocation heap-allocation:1000000`.
@@ -76,8 +77,9 @@ is refused in the same way. A symbolic pointer the verifier cannot tie to a
 freed block keeps its ordinary meaning.
 
 Only operations on the value are uses. Reading the pointer out of a variable
-or a structure field, storing it, passing it to a call, and a
-pointer-to-pointer cast all move the value without using it. A different
+or a structure field, storing it, passing it to a pointer parameter,
+returning it from a pointer-returning function, and a pointer-to-pointer cast
+all move the value without using it. A different
 live pointer is unaffected, so testing it against null is still fine. The
 common idioms therefore verify:
 

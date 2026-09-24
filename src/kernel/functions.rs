@@ -1236,6 +1236,21 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
+        if let Some(undefined_behavior) = freed_pointer_argument_conversion(
+            state,
+            function.contract_interface(),
+            &arguments_path.values,
+            &path_assumptions,
+        ) {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::UndefinedBehavior(undefined_behavior),
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
+            });
+            continue;
+        }
         let Some((argument_values, argument_obligations)) = coerce_c_function_arguments(
             function,
             &arguments_path.values,
@@ -1537,6 +1552,21 @@ pub(super) fn execute_c_function_verification_paths(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
+        if let Some(undefined_behavior) = freed_pointer_argument_conversion(
+            state,
+            function.contract_interface(),
+            &arguments_path.values,
+            &path_assumptions,
+        ) {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::UndefinedBehavior(undefined_behavior),
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
+            });
+            continue;
+        }
         let Some((argument_values, argument_obligations)) = coerce_c_function_arguments(
             function,
             &arguments_path.values,
@@ -1891,6 +1921,21 @@ pub(super) fn execute_c_function_call_paths(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
+        if let Some(undefined_behavior) = freed_pointer_argument_conversion(
+            caller_state,
+            function.contract_interface(),
+            &arguments_path.values,
+            &path_assumptions,
+        ) {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::UndefinedBehavior(undefined_behavior),
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+
+                loan_evidence: empty_checked_loan_evidence_sequence(),
+            });
+            continue;
+        }
         let Some((argument_values, argument_obligations)) = coerce_c_function_arguments(
             function,
             &arguments_path.values,
@@ -3431,6 +3476,20 @@ fn prepare_verified_function_call<'a>(
         &arguments_path.facts,
         &arguments_path.obligations,
     );
+    if let Some(undefined_behavior) = freed_pointer_argument_conversion(
+        caller_state,
+        contract_interface,
+        &arguments_path.values,
+        &path_assumptions,
+    ) {
+        return Ok(Err(CFunctionPath {
+            outcome: CFunctionOutcome::UndefinedBehavior(undefined_behavior),
+            facts: arguments_path.facts,
+            obligations: arguments_path.obligations,
+
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        }));
+    }
     let Some((argument_values, argument_obligations)) = coerce_c_contract_arguments(
         contract_interface,
         &arguments_path.values,
@@ -9488,6 +9547,52 @@ fn materialize_aggregate_return(
     ));
     state.next_local_frame = frame.saturating_add(1);
     Some(CValue::typed_pointer(destination, function.return_type()))
+}
+
+/// The undefined behavior of the implicit conversion a `return` performs when
+/// it converts a pointer into a freed allocation to a non-pointer return type
+/// such as `_Bool`; see [`freed_pointer_use`]. Returning the pointer from a
+/// pointer-returning function only moves it and is not refused. `state` is the
+/// state at the `return`.
+fn freed_pointer_return_conversion(
+    state: &CState,
+    function: &CFunction,
+    value: &CValue,
+    assumptions: &PureFactContext,
+) -> Option<CUndefinedBehavior> {
+    let return_type = function.return_type();
+    if return_type == CType::Void
+        || return_type.is_pointer()
+        || function.return_aggregate_layout().is_some()
+        || state.memory().heap_has_no_deallocations()
+    {
+        return None;
+    }
+    freed_pointer_use(state, value, assumptions)
+}
+
+/// The undefined behavior of the implicit conversion a call performs when it
+/// passes a pointer into a freed allocation to a non-pointer parameter such as
+/// `_Bool`; see [`freed_pointer_use`]. Passing the pointer to a pointer
+/// parameter only moves it and is not refused. `state` is the caller state the
+/// arguments were evaluated in.
+fn freed_pointer_argument_conversion(
+    state: &CState,
+    interface: &CFunctionContractInterface,
+    values: &[CValue],
+    assumptions: &PureFactContext,
+) -> Option<CUndefinedBehavior> {
+    if state.memory().heap_has_no_deallocations() {
+        return None;
+    }
+    interface
+        .parameters()
+        .iter()
+        .zip(values)
+        .filter(|(parameter, _)| {
+            parameter.aggregate_layout().is_none() && !parameter.c_type().is_pointer()
+        })
+        .find_map(|(_, value)| freed_pointer_use(state, value, assumptions))
 }
 
 fn coerce_function_return_value(
@@ -20975,6 +21080,14 @@ fn function_outcome_from_body_with_population_transition(
             None,
         ));
     };
+    if let Some(undefined_behavior) =
+        freed_pointer_return_conversion(&state, function, &value, assumptions)
+    {
+        return Ok((
+            CFunctionOutcome::UndefinedBehavior(undefined_behavior),
+            obligations,
+        ));
+    }
     let Some(value) = coerce_function_return_value(value, function, &mut obligations, assumptions)
     else {
         return Ok((
@@ -21055,6 +21168,15 @@ fn function_outcome_from_body_with_resource_transfer(
         );
         return Ok((outcome, obligations, None));
     };
+    if let Some(undefined_behavior) =
+        freed_pointer_return_conversion(&state, function, &value, assumptions)
+    {
+        return Ok((
+            CFunctionOutcome::UndefinedBehavior(undefined_behavior),
+            obligations,
+            None,
+        ));
+    }
     let Some(value) = coerce_function_return_value(value, function, &mut obligations, assumptions)
     else {
         return Ok((
@@ -21571,6 +21693,14 @@ pub(super) fn function_outcome_from_body(
 ) -> (CFunctionOutcome, Vec<ProofObligation>) {
     match outcome {
         CStatementOutcome::Return { value, mut state } => {
+            if let Some(undefined_behavior) =
+                freed_pointer_return_conversion(&state, function, &value, assumptions)
+            {
+                return (
+                    CFunctionOutcome::UndefinedBehavior(undefined_behavior),
+                    obligations,
+                );
+            }
             let Some(value) =
                 coerce_function_return_value(value, function, &mut obligations, assumptions)
             else {
