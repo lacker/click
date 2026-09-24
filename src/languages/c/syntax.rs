@@ -1610,6 +1610,9 @@ impl C0FunctionPointerSignature {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParsedType {
     c_type: C0Type,
+    /// A distinct x86-64 extended-precision object. The current kernel
+    /// transports its 16-byte storage as opaque bytes; it is never a binary64.
+    long_double: bool,
     /// A GNU `aligned` typedef changes the alignment of values of this alias.
     /// Pointer uses are safe to import; value storage is refused until that
     /// alignment is represented in allocations and aggregate layouts.
@@ -1737,6 +1740,7 @@ pub struct C0UnionLayout {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0UnionField {
     c_type: C0Type,
+    long_double: bool,
     pointee_constant: bool,
     enum_name: Option<String>,
     struct_name: Option<String>,
@@ -1750,6 +1754,7 @@ pub struct C0UnionField {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0StructField {
     c_type: C0Type,
+    long_double: bool,
     pointee_constant: bool,
     struct_name: Option<String>,
     enum_name: Option<String>,
@@ -3306,6 +3311,7 @@ impl C0StructLayout {
                     name.clone(),
                     C0StructField {
                         c_type,
+                        long_double: false,
                         pointee_constant: false,
                         struct_name: None,
                         enum_name: None,
@@ -3430,6 +3436,10 @@ impl C0UnionField {
         self.c_type
     }
 
+    pub fn is_long_double(&self) -> bool {
+        self.long_double
+    }
+
     pub fn pointee_is_constant(&self) -> bool {
         self.pointee_constant
     }
@@ -3471,6 +3481,10 @@ impl C0UnionField {
 }
 
 impl C0StructField {
+    pub fn is_long_double(&self) -> bool {
+        self.long_double
+    }
+
     pub fn pointee_is_constant(&self) -> bool {
         self.pointee_constant
     }
@@ -7971,7 +7985,7 @@ impl Parser {
             Some("__alignof__" | "__alignof" | "_Alignof" | "sizeof") => {
                 let operation = self.expect_ident("alignment operator")?;
                 self.expect(Token::LParen)?;
-                let parsed = self.parse_type()?;
+                let parsed = self.parse_type_with_anonymous_struct(false, true)?;
                 self.expect(Token::RParen)?;
                 if let Some(name) = parsed.struct_name.as_deref()
                     && !parsed.c_type.is_pointer()
@@ -7995,6 +8009,8 @@ impl Parser {
                     } else {
                         layout.alignment_bytes()
                     }
+                } else if parsed.long_double {
+                    16
                 } else if operation == "sizeof" {
                     self.abi.size_and_alignment(parsed.c_type).0
                 } else {
@@ -9215,7 +9231,7 @@ impl Parser {
 
     fn parse_typedef_declaration(&mut self) -> Result<(), C0SyntaxError> {
         self.expect_ident_spelling("typedef")?;
-        let mut parsed_type = self.parse_type_with_anonymous_struct(true)?;
+        let mut parsed_type = self.parse_type_with_anonymous_struct(true, true)?;
         let alias = self.expect_ident("typedef name")?;
         if self.peek() == Some(&Token::LBracket) {
             self.position += 1;
@@ -9368,7 +9384,7 @@ impl Parser {
             if self.peek_ident() == Some("__extension__") {
                 self.position += 1;
             }
-            let field_type = self.parse_type_with_anonymous_struct(true)?;
+            let field_type = self.parse_type_with_anonymous_struct(true, true)?;
             loop {
                 let field_name = self.expect_ident("union field name")?;
                 let (
@@ -9387,6 +9403,7 @@ impl Parser {
                         field_name.clone(),
                         C0UnionField {
                             c_type,
+                            long_double: field_type.long_double,
                             pointee_constant: field_type.pointee_constant,
                             enum_name: (c_type == field_type.c_type)
                                 .then(|| field_type.enum_name.clone())
@@ -9452,7 +9469,7 @@ impl Parser {
             if self.peek().is_none() {
                 return Err(self.error_here("expected struct field or `}`, got end of input"));
             }
-            let field_type = self.parse_type()?;
+            let field_type = self.parse_type_with_anonymous_struct(false, true)?;
             if let Some((field_name, c_type, function_pointer_signature)) =
                 self.parse_function_pointer_declarator(field_type.clone())?
             {
@@ -9468,6 +9485,7 @@ impl Parser {
                         field_name.clone(),
                         C0StructField {
                             c_type,
+                            long_double: false,
                             pointee_constant: false,
                             struct_name: None,
                             enum_name: None,
@@ -9512,6 +9530,7 @@ impl Parser {
                         field_name.clone(),
                         C0StructField {
                             c_type,
+                            long_double: field_type.long_double,
                             pointee_constant: field_type.pointee_constant,
                             struct_name: field_struct_name,
                             enum_name: (c_type == field_type.c_type)
@@ -9591,6 +9610,19 @@ impl Parser {
         ),
         C0SyntaxError,
     > {
+        if base_type.long_double {
+            if base_type.is_volatile || base_type.is_constant {
+                return Err(
+                    self.error_here("qualified long double fields need a typed value model")
+                );
+            }
+            if self.peek() == Some(&Token::LBracket) {
+                return Err(
+                    self.error_here("arrays of long double values need a typed value model")
+                );
+            }
+            return Ok((C0Type::UInt8Array(16), 16, 16, None, None, None));
+        }
         if base_type.is_volatile {
             return Err(self.error_here(
                 "the small volatile model does not support volatile struct or union fields",
@@ -10049,12 +10081,13 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<ParsedType, C0SyntaxError> {
-        self.parse_type_with_anonymous_struct(false)
+        self.parse_type_with_anonymous_struct(false, false)
     }
 
     fn parse_type_with_anonymous_struct(
         &mut self,
         allow_anonymous_struct: bool,
+        allow_long_double_layout: bool,
     ) -> Result<ParsedType, C0SyntaxError> {
         let is_constant = if self.peek_ident() == Some("const") {
             self.position += 1;
@@ -10078,6 +10111,7 @@ impl Parser {
                 // placeholder so `typedef struct S S_t;` can later become
                 // `struct S*` when the declarator supplies `*`.
                 c_type: C0Type::Int32,
+                long_double: false,
                 aligned_typedef: false,
                 struct_name: Some(
                     if allow_anonymous_struct && self.peek() == Some(&Token::LBrace) {
@@ -10113,6 +10147,7 @@ impl Parser {
                 // on the parsed type while using an int32 placeholder for
                 // the address-backed member-selection path.
                 c_type: C0Type::Int32,
+                long_double: false,
                 aligned_typedef: false,
                 struct_name: None,
                 enum_name: None,
@@ -10147,6 +10182,7 @@ impl Parser {
             },
             Some(Token::Ident(name)) if name == "enum" => ParsedType {
                 c_type: C0Type::Int32,
+                long_double: false,
                 aligned_typedef: false,
                 struct_name: None,
                 union_name: None,
@@ -10315,8 +10351,14 @@ impl Parser {
                 "GNU aligned typedef values need modeled object alignment; pointer uses are supported",
             ));
         }
+        if parsed.long_double && !allow_long_double_layout {
+            return Err(
+                self.error_here("long double value operations need an extended-precision model")
+            );
+        }
         Ok(ParsedType {
             c_type,
+            long_double: parsed.long_double,
             aligned_typedef: false,
             struct_name: parsed.struct_name,
             enum_name: parsed.enum_name,
@@ -10382,6 +10424,7 @@ impl Parser {
         };
         Ok(ParsedType {
             c_type,
+            long_double: false,
             aligned_typedef: false,
             struct_name,
             enum_name: None,
@@ -10510,6 +10553,24 @@ impl Parser {
     }
 
     fn parse_named_type(&mut self, name: String) -> Result<ParsedType, C0SyntaxError> {
+        if name == "long" && self.peek_ident() == Some("double") {
+            self.position += 1;
+            return Ok(ParsedType {
+                // The byte-array slot is a layout placeholder only. The
+                // `long_double` marker prevents array or binary64 operations.
+                c_type: C0Type::UInt8Array(16),
+                long_double: true,
+                aligned_typedef: false,
+                struct_name: None,
+                enum_name: None,
+                union_name: None,
+                is_volatile: false,
+                volatile_levels: 0,
+                is_constant: false,
+                pointee_constant: false,
+                pointer_depth: 0,
+            });
+        }
         let integer = crate::languages::c::integer_specifiers::parse(
             std::iter::once(name.as_str()).chain(self.tokens[self.position..].iter().map_while(
                 |token| match token {
@@ -10553,6 +10614,7 @@ impl Parser {
         };
         Ok(ParsedType {
             c_type,
+            long_double: false,
             aligned_typedef: false,
             struct_name: None,
             enum_name: None,
@@ -17493,6 +17555,11 @@ impl Parser {
                     "struct `{struct_name}` has no field `{field_name}`"
                 ))
             })?;
+            if field.long_double {
+                return Err(self.error_here(
+                    "long double member value operations need an extended-precision model",
+                ));
+            }
             return Ok((
                 offset_field_pointer(base.clone(), field.offset_bytes),
                 field.c_type,
@@ -17510,6 +17577,11 @@ impl Parser {
             let field = layout.fields.get(field_name).ok_or_else(|| {
                 self.error_here(format!("union `{union_name}` has no member `{field_name}`"))
             })?;
+            if field.long_double {
+                return Err(self.error_here(
+                    "long double member value operations need an extended-precision model",
+                ));
+            }
             if field.struct_name.is_some()
                 || field.union_name.is_some()
                 || matches!(
@@ -17603,6 +17675,11 @@ impl Parser {
                 "struct `{struct_name}` has no field `{field_name}`"
             ))
         })?;
+        if field.long_double {
+            return Err(self.error_here(
+                "long double member value operations need an extended-precision model",
+            ));
+        }
         Ok((
             offset_field_pointer(element_pointer, field.offset_bytes),
             field.c_type,
@@ -17664,7 +17741,7 @@ impl Parser {
                     .size_bytes;
                 return Ok(C0Expression::SizeOfUnion { name, bytes });
             }
-            let parsed_type = self.parse_type()?;
+            let parsed_type = self.parse_type_with_anonymous_struct(false, true)?;
             self.expect(Token::RParen)?;
             if parsed_type.c_type == C0Type::Void {
                 return Err(self.error_at_previous("`sizeof(void)` is not supported"));
