@@ -55,6 +55,11 @@ records the existing create/join rule and trust boundary.
 The resource-body spelling `guarded_by counter->mutex;` is reserved for the
 mutex invariant. Verification currently refuses such a declaration until a
 checked mutex protocol gives it meaning.
+An internal kernel transition now escrows one folded exclusive resource,
+grants it with a unique guard on acquire, and requires the restored folded
+instance on release. It is not reachable from C calls yet: mutex initialization,
+guarded-definition binding, call outcomes, and shared-memory publication still
+need checked rules.
 
 ## Remaining work
 

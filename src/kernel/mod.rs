@@ -43,6 +43,8 @@ pub use loans::{
 mod loops;
 mod memory_provenance;
 pub(crate) mod model_fields;
+#[allow(dead_code)]
+mod mutexes;
 mod nat_integer;
 pub(crate) use nat_integer::{check_nat_integer_law, is_conversion_nat_type};
 mod primitives;
