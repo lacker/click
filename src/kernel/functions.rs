@@ -9270,16 +9270,21 @@ fn refuse_retiring_a_lent_allocation(
 /// for one context). So when an owned memory fact the caller lent covers
 /// every byte of the allocation, each owned memory fact the caller kept is
 /// disjoint from that allocation by construction and cannot refer to it after
-/// the free. That is the only kept fact the partition speaks for: a kept view,
-/// a kept composite, or any kept fact when the lent owners do not cover the
-/// whole allocation, still needs a separation the path facts prove (a stated
-/// `separate(memory(..), memory(..))` that contains both sides, distinct
-/// blocks, disjoint constant intervals, or one context's own composition).
+/// the free. A kept view over exactly the bytes of a kept owned memory fact
+/// (the view a caller holds of an object it also owns, such as a descriptor
+/// whose cells a callee published as read authority) names only those owned
+/// bytes, so it is disjoint from the allocation for the same reason. That is
+/// all the partition speaks for: any other kept view, a kept composite, or any
+/// kept fact when the lent owners do not cover the whole allocation, still
+/// needs a separation the path facts prove (a stated `separate(memory(..),
+/// memory(..))` that contains both sides, distinct blocks, disjoint constant
+/// intervals, or one context's own composition).
 ///
 /// Only the kept facts that can name the retired block are visited, from the
 /// context's indexes, and the lent coverage is decided at most once from the
-/// lent facts in that block, so the work does not grow with unrelated kept
-/// resources.
+/// lent facts in that block. A view's owner is found by one exact lookup of
+/// the same range owned once, never by a scan, so the work does not grow with
+/// unrelated kept resources.
 pub(in crate::kernel) fn caller_resource_left_stale_by_retirement<'a>(
     lent: &ResourceContext,
     kept: &'a ResourceContext,
@@ -9289,8 +9294,15 @@ pub(in crate::kernel) fn caller_resource_left_stale_by_retirement<'a>(
 ) -> Option<&'a CResourceFact> {
     let mut lent_owners_cover_allocation = None;
     for resource in kept.facts_that_may_refer_to_memory_block(&base.block) {
-        if resource.memory_own_range().is_some()
+        let owned_by_the_caller = resource.memory_own_range().is_some()
             && resource.has_proven_positive_quantity(assumptions)
+            || resource.memory_view_range().is_some_and(|range| {
+                crate::instrumentation::record_deterministic_work(1);
+                kept.contains_exact_representation(&CResourceFact::own(CResource::Memory(
+                    range.clone(),
+                )))
+            });
+        if owned_by_the_caller
             && *lent_owners_cover_allocation.get_or_insert_with(|| {
                 lent_owned_memory_covers_allocation(lent, base, bytes, assumptions)
             })
@@ -15151,7 +15163,14 @@ fn lower_selected_resource_body_clauses(
             algebraic_bindings,
             budget,
         )
-        .map_err(|_| "could not evaluate instance body fact")?;
+        .map_err(|limit| match limit {
+            // A deadline is the budget, not a property of the body: say so
+            // rather than suggest the fact cannot be evaluated at all.
+            ExecutionLimit::Deadline => {
+                "evaluating an instance body fact exhausted the verification budget"
+            }
+            _ => "could not evaluate instance body fact",
+        })?;
         let path = crate::kernel::api::exactly_selected_spec_proposition_path(&paths, &context)
             .ok_or("instance body fact needs an unsupported conditional proof")?;
         // An undischarged pure undefined-behavior condition (unchecked
@@ -18558,12 +18577,21 @@ fn evaluate_resource_clauses_against_whole_section(
             }
         }
     }
-    let mut section_supply =
-        resource_clause_section_supply(state, &supplied, definitions, assumptions);
+    // The section's supply exists only to wake a clause the first pass left
+    // waiting. When every active clause already evaluated, building it would
+    // expand every composite the frame holds for authority nothing reads.
+    let any_clause_waits =
+        (0..resources.len()).any(|index| active[index] && evaluated[index].is_none());
+    let mut section_supply = if any_clause_waits {
+        resource_clause_section_supply(state, &supplied, definitions, assumptions)
+    } else {
+        ResourceContext::new()
+    };
     let mut pending = VecDeque::new();
     let mut queued = vec![false; resources.len()];
     for index in 0..resources.len() {
-        if evaluated[index].is_none()
+        if any_clause_waits
+            && evaluated[index].is_none()
             && dependencies[index]
                 .iter()
                 .any(|dependency| section_supply.satisfies_fact(dependency, assumptions))

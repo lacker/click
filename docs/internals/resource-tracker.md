@@ -230,10 +230,12 @@ caller keeps would make a post-call reading retire the wrong object. A kept
 owned memory fact then needs no written separation from the retired
 allocation when one owned memory fact the caller lent covers the allocation's
 whole byte range: the two were held at once, and owned memory is exclusive
-within one valid composition. A kept view, a kept composite, or any kept fact
-when no lent owner covers the allocation still needs a separation the path
-facts prove (`caller_resource_left_stale_by_retirement` in
-`src/kernel/functions.rs`).
+within one valid composition. The same holds for a kept view of exactly the
+bytes of a kept owned range (the view a caller holds of a descriptor a callee
+returned), found by one exact lookup of that owner. Any other kept view, a
+kept composite, or any kept fact when no lent owner covers the allocation
+still needs a separation the path facts prove
+(`caller_resource_left_stale_by_retirement` in `src/kernel/functions.rs`).
 
 Reading at entry makes every consume/produce of an allocation-bearing
 composite whose continuity the contract leaves open record a retirement right

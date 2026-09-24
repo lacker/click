@@ -733,3 +733,80 @@ fn consecutive_reallocating_calls_cost_the_same_each() {
         );
     }
 }
+
+/// The retirement check admits a kept view of exactly the bytes of a kept
+/// owned range by one exact lookup, when the lent owners cover the retired
+/// allocation: the caller's own object is disjoint from what it lent, so the
+/// view it holds of that object is too. This is the view `examples/arena`'s
+/// pipeline keeps of a region descriptor that `arena_free` returned, beside
+/// the `arena_destroy` that frees the backing arrays; the general separation
+/// search it used to take cost millions of units there. A view without that
+/// owner, or with lent owners that do not cover the allocation, still needs a
+/// proved separation.
+#[test]
+fn retirement_admits_a_view_of_a_kept_owned_range() {
+    let external = |variable: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+            byte_width: 4,
+        },
+    };
+    let int32_range = |base: &Pointer, end: u32| {
+        CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(end),
+            4,
+        )
+    };
+    let data = external(5_300_000);
+    let descriptor = external(5_300_001);
+    let bytes = Bitvector32Term::Constant(8);
+    let assumptions = PureFactContext::new();
+    let lent = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_memory(int32_range(&data, 2)));
+    let view = CResourceFact::view_memory(int32_range(&descriptor, 3));
+    let owned_and_viewed = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_memory(int32_range(&descriptor, 3)))
+        .unchecked_with_fact(view.clone());
+    let (stale, work) = crate::instrumentation::measure_deterministic_work(|| {
+        crate::kernel::functions::caller_resource_left_stale_by_retirement(
+            &lent,
+            &owned_and_viewed,
+            &data,
+            &bytes,
+            &assumptions,
+        )
+        .cloned()
+    });
+    assert_eq!(stale, None, "the view names only bytes the caller owns");
+    assert!(
+        work <= 64,
+        "the view's owner is one lookup, not a search: {work} units"
+    );
+
+    let viewed_only = ResourceContext::new().unchecked_with_fact(view.clone());
+    assert_eq!(
+        crate::kernel::functions::caller_resource_left_stale_by_retirement(
+            &lent,
+            &viewed_only,
+            &data,
+            &bytes,
+            &assumptions,
+        ),
+        Some(&view),
+        "a view the caller does not own may alias the retired allocation"
+    );
+    assert!(
+        crate::kernel::functions::caller_resource_left_stale_by_retirement(
+            &ResourceContext::new(),
+            &owned_and_viewed,
+            &data,
+            &bytes,
+            &assumptions,
+        )
+        .is_some(),
+        "without lent owners covering the allocation, the kept object needs a separation"
+    );
+}
