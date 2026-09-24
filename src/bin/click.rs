@@ -194,7 +194,11 @@ mod tests {
         fs::write(&sidecar, source).unwrap();
 
         let plain = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
-        assert!(plain.starts_with("proof error:"), "{plain}");
+        assert!(
+            plain.starts_with("proof error in `parent_detach`:\n"),
+            "{plain}"
+        );
+        assert!(!plain.contains("could not certify contract for"), "{plain}");
         let (failure, context_and_trace) = plain.split_once("\n\ngoal: ").expect(&plain);
         assert!(failure.contains("could not prove `fact obj->refs == count(child_ref(obj));`"));
         let (context, trace) = context_and_trace

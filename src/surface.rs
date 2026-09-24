@@ -7161,7 +7161,14 @@ impl ClickError {
                 diagnostic.reason.as_str()
             });
         let reason = reason.split("\nproof context:").next().unwrap_or(reason);
-        let mut report = format!("{}:", self.kind.label());
+        let (mut report, reason) = if self.kind == ClickErrorKind::Proof
+            && let Some(rest) = reason.strip_prefix("could not certify contract for `")
+            && let Some((function, detail)) = rest.split_once("`: ")
+        {
+            (format!("proof error in `{function}`:"), detail)
+        } else {
+            (format!("{}:", self.kind.label()), reason)
+        };
         for segment in concise_error_segments(reason) {
             for line in segment
                 .lines()
