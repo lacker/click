@@ -570,6 +570,31 @@ important after reading a next pointer: if the context proves
 `node->next == tail`, ownership of `list(node->next)` is ownership of
 `list(tail)` as well.
 
+### Fields that choose cells
+
+A resource's fields are its model: a folded instance holds their values, fold
+proposes new ones, and unfold publishes the ones it held. Because that value
+does not move while the instance is folded, a C-typed field may choose which
+cells the body owns, exactly as a C expression over the parameters would:
+
+<!-- verified-example: mdtests/resource_field_memory_endpoint.md -->
+```click
+resource zero_suffix(data: int32*, capacity: int32) {
+    field start: int32;
+    owns data[start..capacity];
+    fact 0 <= start;
+    fact start <= capacity;
+    fact forall (k: int32) {
+        start <= k and k < capacity implies data[k] == 0
+    };
+}
+```
+
+Unfolding an instance whose `start` is `s` owns `data[s..capacity]`; folding
+with `{ start: s + 1 }` asks for `data[s + 1..capacity]` and checks the facts at
+`s + 1`. No algebraic model or `match` is needed for a value that is just a
+number; keep those for models with genuinely different shapes.
+
 ### Modeled bodies and arm selection
 
 A body may instead branch on one algebraic field, so which cells the resource

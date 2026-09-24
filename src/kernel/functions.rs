@@ -16287,6 +16287,24 @@ fn instance_body_evaluation(
         Variable(u64::MAX),
         instance.identity,
     )])));
+    // A C-typed field is stable model data of this instance, so the body may
+    // name it wherever it may name a matched constructor payload: as a memory
+    // endpoint or a child argument. The binding is the instance's own field
+    // value, proposed on fold and published on unfold. Parameters are bound
+    // afterwards and keep their own names; the surface refuses a field that
+    // shares one. The work is this instance's own schema.
+    for ((name, _), value) in instance
+        .schema()
+        .fields()
+        .iter()
+        .zip(instance.fields.iter())
+    {
+        if let AlgebraicValue::C(value) = value {
+            evaluation
+                .locals
+                .set_typed(name.clone(), value.clone(), value.c_type());
+        }
+    }
     for (parameter, value) in definition.parameters.iter().zip(instance.arguments.iter()) {
         let value = value
             .as_c_value()

@@ -7100,12 +7100,18 @@ impl Parser {
         }
         self.expect(Token::LBracket)?;
         let start_expression = self.parse_contract_expression()?;
-        let mut start = contract_expression_as_c_fragment(&start_expression)
-            .ok_or_else(|| self.error("memory segment start must be a current C expression"))?;
+        let mut start = resource_body_c_fragment(&start_expression).ok_or_else(|| {
+            self.error(
+                "memory segment start must be a current C expression or a scalar field of the resource being defined",
+            )
+        })?;
         self.expect(Token::DotDot)?;
         let end_expression = self.parse_contract_expression()?;
-        let mut end = contract_expression_as_c_fragment(&end_expression)
-            .ok_or_else(|| self.error("memory segment end must be a current C expression"))?;
+        let mut end = resource_body_c_fragment(&end_expression).ok_or_else(|| {
+            self.error(
+                "memory segment end must be a current C expression or a scalar field of the resource being defined",
+            )
+        })?;
         self.expect(Token::RBracket)?;
         if let Some(offset) = scalar_range_offset {
             start = CExpression::Add(Box::new(offset.clone()), Box::new(start));

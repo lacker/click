@@ -1453,6 +1453,32 @@ field value; use an entry snapshot when that is the intended model.
 An ordinary C call transports constructed resources through the explicit
 binder map described under "Calls that transport named instances".
 
+A C-typed field is stable model data while its instance is folded, so the
+body may use it wherever it may use a C expression over the parameters: as a
+memory-range endpoint, and as a child's argument. Folding takes the endpoint
+from the proposed field value and checks the body facts against it; unfolding
+publishes the range at the folded field's value:
+
+<!-- verified-example: mdtests/resource_field_memory_endpoint.md -->
+```click
+resource zero_suffix(data: int32*, capacity: int32) {
+    field start: int32;
+    owns data[start..capacity];
+    fact 0 <= start;
+    fact start <= capacity;
+    fact forall (k: int32) {
+        start <= k and k < capacity implies data[k] == 0
+    };
+}
+```
+
+`let after = fold(zero_suffix(data, capacity), { start: old(before.start) + 1 })`
+refolds the suffix one cell later, leaving the first cell with the caller. A
+field of an algebraic or `Integer` type has no C value and cannot select a
+range; match it and use a C-typed constructor binding instead. The negative regressions are
+`mdtests/resource_field_memory_endpoint_rejects_out_of_bounds_fold.md` and
+`mdtests/resource_field_memory_endpoint_unfold_rejects_other_endpoint.md`.
+
 Guarded and constructor-matched memory-only bodies support explicit construction
 and field updates with the same `let c = fold(...)` syntax. No earlier unfold
 is required. Guarded bodies support the

@@ -892,6 +892,22 @@ fn validate_resource_definition<'a>(
         }
         return Ok(());
     }
+    if let Some(view) = resource_body_fields_as_parameters(definition)? {
+        return validate_resource_definition(
+            &view,
+            resource_definitions,
+            resources,
+            recursive_resources,
+            predicates,
+            contracts,
+            click_functions,
+            click_function_types,
+            predicate_definitions,
+            click_function_definitions,
+            predicate_environment,
+            click_function_environment,
+        );
+    }
     let mut variables = definition
         .parameters()
         .iter()
@@ -1020,6 +1036,63 @@ fn validate_resource_definition<'a>(
         prior_facts.push(fact);
     }
     Ok(())
+}
+
+/// The body of a field-bearing resource as definition validation reads it:
+/// each C-typed field becomes a parameter, and every use of that field in
+/// the body's facts and guard is spelled as that parameter. The kernel binds
+/// a field by name exactly so while it folds or unfolds an instance, which is
+/// how a memory endpoint or child argument names it; a matched constructor
+/// payload is validated the same way (`resource_match_arm_scopes`). `None`
+/// when the body has no C-typed field. A field that shares a parameter's name
+/// is refused when the field schema is checked, and is left alone here.
+fn resource_body_fields_as_parameters(
+    definition: &ResourceDefinition,
+) -> Result<Option<ResourceDefinition>, ClickError> {
+    let Some(body) = definition.composite_body() else {
+        return Ok(None);
+    };
+    let (scalar, other): (Vec<_>, Vec<_>) = body.fields.iter().cloned().partition(|field| {
+        matches!(field.click_type, ClickType::C(_))
+            && !definition
+                .parameters()
+                .iter()
+                .any(|parameter| parameter.name() == field.name())
+    });
+    if scalar.is_empty() {
+        return Ok(None);
+    }
+    let no_values = BTreeMap::new();
+    let substitutions = ContractSubstitutions::with_body_fields_as_c_names(&no_values);
+    let mut parameters = definition.parameters.clone();
+    parameters.extend(scalar.iter().map(|field| FunctionParameter {
+        name: field.name.clone(),
+        click_type: field.click_type.clone(),
+        struct_name: None,
+        function_pointer_signature: None,
+        constant: false,
+        pointee_constant: false,
+    }));
+    let mut view = body.clone();
+    view.fields = other;
+    view.condition = body
+        .condition
+        .as_ref()
+        .map(|condition| substitute_click_proposition_in(condition, &substitutions))
+        .transpose()
+        .map_err(ClickError::new)?;
+    view.facts = body
+        .facts
+        .iter()
+        .map(|fact| substitute_click_proposition_in(fact, &substitutions))
+        .collect::<Result<_, _>>()
+        .map_err(ClickError::new)?;
+    Ok(Some(ResourceDefinition {
+        name: definition.name.clone(),
+        parameters,
+        composite_body: Some(view),
+        field_schema: definition.field_schema.clone(),
+    }))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

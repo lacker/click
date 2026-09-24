@@ -15144,3 +15144,46 @@ fn local_job_views_expand_and_reverify_without_ownership_annotations() {
     assert!(!click.contains("simp();"), "{click}");
     verify_c0_sources(&click, &sources).expect("expanded local job must independently reverify");
 }
+
+#[test]
+fn a_field_selected_memory_endpoint_expands_and_reverifies() {
+    // A scalar resource field selects the start of an owned range. The
+    // closing `simp()` of each proof reads facts the unfold published at the
+    // field's folded value and the fold proposed at a new one; each expands
+    // to explicit steps that verify on their own.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/resource_field_memory_endpoint.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("the fixture has a click block");
+    let sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let keep = click_source
+        .find("simp();")
+        .expect("`keep` closes with a smart simp");
+    let claim = click_source
+        .rfind("simp();")
+        .expect("`claim` closes with a smart simp");
+    assert_ne!(keep, claim);
+    for offset in [keep, claim] {
+        let position = expansion::position_at_offset(click_source, offset);
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+                .expect("the closing simp should expand");
+        assert!(
+            !expanded[offset..].starts_with("simp();"),
+            "the smart simp should be replaced: {expanded}"
+        );
+        verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+            panic!("the expanded closing simp should reverify: {error:?}\n{expanded}")
+        });
+    }
+}
