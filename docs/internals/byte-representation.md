@@ -46,8 +46,8 @@ things stay separate:
 
 - **Storage lifetime.** A block is live from its allocation until `free` or
   scope exit. A pointer's value does not extend it.
-- **Initialized representation.** Only a stored or copied cell is
-  initialized. Fresh `malloc` bytes and padding have no cell.
+- **Initialized representation.** Only a stored, copied, or `calloc`-zeroed
+  cell is initialized. Fresh `malloc` bytes and padding have no cell.
 - **Typed load validity.** A load of type `T` reads a cell only when the cell
   holds a `T` value of the load's width, or, for a one-byte load, through the
   byte view below. Anything else is refused as a load that does not fit the
