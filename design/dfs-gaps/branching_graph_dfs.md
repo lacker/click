@@ -51,3 +51,26 @@ reading `owner->len` from a folded owned composite. A special recursive or
 matched-resource refusal would need its own current reduction before changing
 the verifier. This graph example uses flat arrays, so that route is not its
 first blocker.
+
+## Reachability attempt (2026-09-23)
+
+Adding `ensures result != 0 implies exists (path: Path) {
+walk(left, right, cur, path) == to }` to the unchanged DFS reaches the first
+recursive-success branch. The direct `cur == to` return proves the claim with
+`Path::Here`. For the left call, `let left_result = step(dfs(..., left[cur],
+to), {});` and the following C branch establish `left_result != 0`, and the
+trace shows that the callee produced the reachability guarantee. However, the
+trace reports that the two call-produced checked facts have no exact
+caller-side Click spelling. A current-state `left[cur]` is not the argument
+evaluated before the call. Spelling it `at(before_left_call, left[cur])` puts a
+historical `viewable(left[cur])` guard *inside* the existential. `assumption`,
+`extract`, and `let (rest: Path) satisfy { ... };` then all reject that stated
+existential as unavailable. The right recursive branch has not been reached.
+
+This is the same call-site evaluated-load existential gap isolated by
+`mdtests/call_existential_evaluated_load_guard.md`, not a need to change the C
+or invent a path witness. The needed general proof rule is to use a checked
+call-produced existential together with a binder-independent, already-proved
+historical viewability fact, so the caller can open the witness in surface
+Click. Keep the negative minimal regression until that rule has a checked
+positive test; then resume the DFS claim from the left-success branch.

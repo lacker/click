@@ -162,6 +162,15 @@ claim is not a general current limitation;
 guard reading a folded owned composite. Re-reduce any particular recursive
 resource refusal before treating it as a verifier defect.
 
+The 2026-09-23 reachability attempt reached the left recursive-success
+branch: `Path::Here` proves the direct-success return, but the recursive
+callee's existential cannot yet be opened in caller-side Click when its `cur`
+argument was evaluated as `left[cur]` before the call. The precise trace and
+proof attempts are recorded in `design/dfs-gaps/branching_graph_dfs.md`; the
+minimal negative regression is
+`mdtests/call_existential_evaluated_load_guard.md`. This is a call-site
+existential/viewability proof-language gap, not a missing C path witness.
+
 ## Acceptance
 
 Termination, memory safety, and success-path reachability of the unmodified C
