@@ -2624,6 +2624,7 @@ pub struct CPredicateUnfolding {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CCompositeResourceDefinition {
     pub(super) instance_schema: Option<ResourceFieldSchema>,
+    pub(super) guarded_by: Option<CMutexGuardDeclaration>,
     pub(super) matched: Option<CResourceMatchBody>,
     pub(super) name: String,
     pub(super) parameters: Vec<CParameter>,
@@ -2659,6 +2660,15 @@ pub struct CCompositeResourceDefinition {
     pub(super) fact_source_indices: Vec<usize>,
     /// Source spellings are diagnostic metadata. They never justify a fact.
     pub(super) fact_source_spellings: Vec<String>,
+}
+
+/// The direct C struct member named by a resource body's `guarded_by` clause.
+/// Parsing and declaration validation check its pthread type and ABI. The
+/// parameter index and byte offset make guard matching independent of names.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CMutexGuardDeclaration {
+    pub parameter_index: usize,
+    pub field_offset_bytes: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2792,6 +2802,9 @@ pub struct CExecutionEnvironment {
     /// ordinary external function contract is never a substitute.
     pub(super) modeled_pthread_binding:
         Option<crate::languages::c::thread_runtime::ModeledPthreadBinding>,
+    /// Resource-definition metadata for selected modeled mutex calls. Named
+    /// lookup avoids scanning unrelated project definitions at each call.
+    pub(super) modeled_mutex_guards: std::sync::Arc<BTreeMap<String, CMutexGuardDeclaration>>,
     /// The selected target's byte order. It decides whether a one-byte C
     /// access inside a wider integer cell reads or updates that cell's
     /// representation; see `crate::kernel::eval::byte_view`.
@@ -2831,6 +2844,7 @@ impl std::fmt::Debug for CExecutionEnvironment {
                 &self.verified_function_termination_rules,
             )
             .field("modeled_pthread_binding", &self.modeled_pthread_binding)
+            .field("modeled_mutex_guards", &self.modeled_mutex_guards)
             .field("byte_order", &self.byte_order)
             .field("verified_loop_rules", &self.verified_loop_rules)
             .field("recursion_anchor", &self.recursion_anchor)
@@ -2853,6 +2867,7 @@ impl PartialEq for CExecutionEnvironment {
             && self.verified_function_rules == other.verified_function_rules
             && self.verified_function_termination_rules == other.verified_function_termination_rules
             && self.modeled_pthread_binding == other.modeled_pthread_binding
+            && self.modeled_mutex_guards == other.modeled_mutex_guards
             && self.byte_order == other.byte_order
             && self.verified_loop_rules == other.verified_loop_rules
             && self.recursion_anchor == other.recursion_anchor
@@ -4791,6 +4806,9 @@ pub struct CState {
     /// Live child completion rights travel with the C path through ordinary
     /// statements. `None` is the canonical state before any thread operation.
     pub(super) thread_ledger: Option<super::threads::ThreadLedger>,
+    /// Initialized mutex invariants and live guards on this C path. `None`
+    /// denotes the canonical state before the first mutex operation.
+    pub(super) mutex_ledger: Option<super::mutexes::MutexLedger>,
     /// One unresolved modeled pthread creation. The visible state carries
     /// only authority safe in either outcome; this record selects the exact
     /// checked delta when a C condition establishes the returned status.
@@ -6244,10 +6262,12 @@ pub enum Term {
     Sequence(SequenceTerm),
     Algebraic(AlgebraicTerm),
     CExpressionOutcome(CExpressionOutcome),
-    CStatementOutcome(CStatementOutcome),
-    CFunctionOutcome(CFunctionOutcome),
+    // Outcomes carry CState. Keep them out of Term's inline size so cloning
+    // a deep pure proposition does not spend stack on unused C variants.
+    CStatementOutcome(Box<CStatementOutcome>),
+    CFunctionOutcome(Box<CFunctionOutcome>),
     CMemory(CMemory),
-    CState(CState),
+    CState(Box<CState>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -6297,13 +6317,14 @@ pub enum Proposition {
     },
     CFunctionSatisfiesSpecification {
         function: CFunction,
-        specification: CFunctionSpecification,
+        // Large C payloads stay out of every pure proposition clone frame.
+        specification: Box<CFunctionSpecification>,
     },
     /// The specification describes one allowed return branch and makes no
     /// claim that the branch is reachable or that the function terminates.
     CFunctionPartiallySatisfiesSpecification {
         function: CFunction,
-        specification: CFunctionSpecification,
+        specification: Box<CFunctionSpecification>,
     },
     CMemoryLoads {
         memory: CMemory,

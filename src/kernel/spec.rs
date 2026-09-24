@@ -5292,7 +5292,7 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
         introductions: Vec::new(),
         proposition: Proposition::Predicate {
             name: name.to_string(),
-            arguments: vec![Term::CState(predicate_state)],
+            arguments: vec![Term::CState(Box::new(predicate_state))],
         },
         facts: Vec::new(),
         obligations: Vec::new(),

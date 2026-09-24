@@ -2132,12 +2132,12 @@ pub fn prove_c_function_satisfies_specification_from_symbolic_path(
     let conclusion = if verifies {
         Proposition::CFunctionPartiallySatisfiesSpecification {
             function,
-            specification,
+            specification: Box::new(specification),
         }
     } else {
         Proposition::CFunctionSatisfiesSpecification {
             function,
-            specification,
+            specification: Box::new(specification),
         }
     };
     let proposition = requires

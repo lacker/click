@@ -48,18 +48,18 @@ trusted modeled pthread runtime. The proof records the locked import identity
 and remains conditional on that runtime specification; it does not validate
 native runtime behavior.
 
-The mutex counter, release/acquire publication, and native pthread binding
-remain open. [The probe record](../design/concurrency-probes/README.md)
+The concurrent mutex counter, release/acquire publication, and native pthread
+binding remain open. [The probe record](../design/concurrency-probes/README.md)
 describes the selected source and profile; [the binding design](../design/concurrency-probes/pthread-binding-design.md)
 records the existing create/join rule and trust boundary.
-The resource-body spelling `guarded_by counter->mutex;` is reserved for the
-mutex invariant. Verification currently refuses such a declaration until a
-checked mutex protocol gives it meaning.
-An internal kernel transition now escrows one folded exclusive resource,
-grants it with a unique guard on acquire, and requires the restored folded
-instance on release. It is not reachable from C calls yet: mutex initialization,
-guarded-definition binding, call outcomes, and shared-memory publication still
-need checked rules.
+The resource-body spelling `guarded_by counter->mutex;` now binds a folded,
+exclusive instance to a typed `pthread_mutex_t` member. A single C path can
+initialize that mutex with an explicit resource selection, lock to retrieve
+the resource, restore it before unlock, and destroy the mutex to recover it.
+The [C proof fixture](../mdtests/guarded_resource_mutex_flow.md) exercises
+this flow and rejects a wrong mutex and an unfolded unlock. The runtime model
+assumes these valid calls succeed. Worker sharing and interference rules are
+still needed before this proves the concurrent counter.
 
 ## Remaining work
 

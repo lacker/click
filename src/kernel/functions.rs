@@ -3242,6 +3242,7 @@ fn execute_verified_function_applications_with_suspension(
         return_state.loan_participant = return_participant;
         return_state = return_state.with_loan_view_bindings(return_view_bindings);
         return_state.thread_ledger = post_state.thread_ledger.clone();
+        return_state.mutex_ledger = post_state.mutex_ledger.clone();
         return_state.counted_populations = post_state.counted_populations;
         return_state.next_local_frame = post_state.next_local_frame;
         return_state.next_local_lifetime = post_state.next_local_lifetime;
@@ -21770,6 +21771,7 @@ fn function_outcome_from_body_with_resource_transfer(
     return_state.loan_participant = return_participant;
     return_state = return_state.with_loan_view_bindings(return_view_bindings);
     return_state.thread_ledger = state.thread_ledger.clone();
+    return_state.mutex_ledger = state.mutex_ledger.clone();
     return_state.counted_populations = state.counted_populations;
     return_state.next_local_frame = state.next_local_frame;
     return_state.next_local_lifetime = state.next_local_lifetime;
@@ -22182,6 +22184,7 @@ pub(super) fn function_outcome_from_body(
                 .with_loan_ledger(state.loan_ledger().cloned())
                 .with_loan_participant(state.loan_participant());
             caller_state.thread_ledger = state.thread_ledger.clone();
+            caller_state.mutex_ledger = state.mutex_ledger.clone();
             if return_resources.is_none() {
                 caller_state.instance_field_scope = state.instance_field_scope;
             }
@@ -22215,6 +22218,7 @@ pub(super) fn function_outcome_from_body(
                 end_function_body_automatic_lifetimes(&state, function, caller_state.memory(), None)
             });
             caller_state.thread_ledger = state.thread_ledger.clone();
+            caller_state.mutex_ledger = state.mutex_ledger.clone();
             if function.has_inline_body() {
                 let memory = caller_state.memory.clone();
                 caller_state.sync_scalar_locals_from_memory(&memory);

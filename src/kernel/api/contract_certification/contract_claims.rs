@@ -22,7 +22,7 @@ pub(crate) fn c_checked_function_proposition_with_reason(
         | Proposition::CFunctionPartiallySatisfiesSpecification {
             function: proved_function,
             specification: proved_specification,
-        } if proved_function == function && proved_specification == specification => {}
+        } if proved_function == function && proved_specification.as_ref() == specification => {}
         _ => {
             return Err(
                 "the completion theorem does not certify the requested specification".to_string(),
@@ -2237,7 +2237,7 @@ pub(crate) fn completion_key(proposition: &Proposition) -> Proposition {
         Proposition::Predicate { name, arguments } => {
             let mut arguments = arguments.clone();
             if let Some(Term::CState(state)) = arguments.first_mut() {
-                *state = CState::new();
+                **state = CState::new();
             }
             Proposition::Predicate {
                 name: name.clone(),

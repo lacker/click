@@ -2898,7 +2898,7 @@ mod tests {
             )
             .with_fact(Proposition::Predicate {
                 name: "invariant".into(),
-                arguments: vec![Term::CState(CState::new())],
+                arguments: vec![Term::CState(Box::new(CState::new()))],
             });
             let core = ExecutionProofCore::at_entry(
                 CState::new(),

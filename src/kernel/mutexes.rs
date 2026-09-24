@@ -8,6 +8,9 @@
 //! The C binding still has to validate the declaration, pointer, status,
 //! and initialization before a pthread call can use these transitions.
 
+use std::cmp::Ordering as CmpOrdering;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::persistent::PersistentMap;
@@ -25,10 +28,20 @@ enum MutexEntry {
 
 /// A proof-path snapshot. Updates touch only the selected mutex's persistent
 /// map path, not unrelated mutexes or resources.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(super) struct MutexContext {
     state: CState,
-    mutexes: PersistentMap<Pointer, MutexEntry>,
+}
+
+#[derive(Clone)]
+pub(super) struct MutexLedger {
+    storage: Arc<MutexLedgerStorage>,
+}
+
+struct MutexLedgerStorage {
+    identity: u64,
+    entries: PersistentMap<Pointer, MutexEntry>,
+    locked_count: usize,
 }
 
 /// An acquisition identity. The private fields cannot be synthesized from a
@@ -39,15 +52,17 @@ pub(super) struct MutexGuard {
 }
 
 impl MutexContext {
-    pub(super) fn new(state: CState) -> Self {
-        Self {
-            state,
-            mutexes: PersistentMap::default(),
-        }
+    pub(super) fn new(mut state: CState) -> Self {
+        state.mutex_ledger.get_or_insert_with(MutexLedger::new);
+        Self { state }
     }
 
     pub(super) fn state(&self) -> &CState {
         &self.state
+    }
+
+    pub(super) fn into_state(self) -> CState {
+        self.state
     }
 
     /// Deposit one folded, exclusive instance into an initialized mutex.
@@ -59,7 +74,8 @@ impl MutexContext {
         invariant: CResourceFact,
         assumptions: &PureFactContext,
     ) -> Result<Self, &'static str> {
-        if self.mutexes.get(&mutex).is_some() {
+        let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
+        if ledger.get(&mutex).is_some() {
             return Err("mutex already has an invariant");
         }
         if !matches!(
@@ -95,12 +111,8 @@ impl MutexContext {
             .ok_or("mutex invariant cannot be moved to escrow")?;
         let mut state = self.state.clone();
         state.resources = resources;
-        Ok(Self {
-            state,
-            mutexes: self
-                .mutexes
-                .with_inserted(mutex, MutexEntry::Unlocked(invariant)),
-        })
+        state.mutex_ledger = Some(ledger.with_inserted(mutex, MutexEntry::Unlocked(invariant)));
+        Ok(Self { state })
     }
 
     pub(super) fn acquire(
@@ -108,7 +120,8 @@ impl MutexContext {
         mutex: &Pointer,
         assumptions: &PureFactContext,
     ) -> Result<(Self, MutexGuard), &'static str> {
-        let invariant = match self.mutexes.get(mutex) {
+        let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
+        let invariant = match ledger.get(mutex) {
             Some(MutexEntry::Unlocked(invariant)) => invariant.clone(),
             Some(MutexEntry::Locked { .. }) => return Err("mutex is already guarded"),
             None => return Err("mutex has no published invariant"),
@@ -123,18 +136,78 @@ impl MutexContext {
         let epoch = NEXT_EPOCH.fetch_add(1, Ordering::Relaxed);
         let mut state = self.state.clone();
         state.resources = resources;
+        state.mutex_ledger =
+            Some(ledger.with_inserted(mutex.clone(), MutexEntry::Locked { invariant, epoch }));
         Ok((
-            Self {
-                state,
-                mutexes: self
-                    .mutexes
-                    .with_inserted(mutex.clone(), MutexEntry::Locked { invariant, epoch }),
-            },
+            Self { state },
             MutexGuard {
                 mutex: mutex.clone(),
                 epoch,
             },
         ))
+    }
+
+    pub(super) fn acquire_current(
+        &self,
+        mutex: &Pointer,
+        assumptions: &PureFactContext,
+    ) -> Result<Self, &'static str> {
+        self.acquire(mutex, assumptions).map(|(context, _)| context)
+    }
+
+    pub(super) fn release_current(
+        &self,
+        mutex: &Pointer,
+        assumptions: &PureFactContext,
+    ) -> Result<Self, &'static str> {
+        let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
+        let (previous, epoch) = match ledger.get(mutex) {
+            Some(MutexEntry::Locked { invariant, epoch }) => (invariant, *epoch),
+            _ => return Err("mutex is not held by this C path"),
+        };
+        let restored = match previous {
+            CResourceFact::Own(CResource::Instance(instance), _) => {
+                let current = self
+                    .state
+                    .resources
+                    .owned_instance(instance.identity())
+                    .ok_or("mutex invariant must be folded before unlock")?;
+                CResourceFact::own(CResource::Instance(current.clone()))
+            }
+            _ => previous.clone(),
+        };
+        self.release(
+            MutexGuard {
+                mutex: mutex.clone(),
+                epoch,
+            },
+            restored,
+            assumptions,
+        )
+    }
+
+    pub(super) fn destroy(
+        &self,
+        mutex: &Pointer,
+        assumptions: &PureFactContext,
+    ) -> Result<Self, &'static str> {
+        let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
+        let invariant = match ledger.get(mutex) {
+            Some(MutexEntry::Unlocked(invariant)) => invariant.clone(),
+            Some(MutexEntry::Locked { .. }) => return Err("cannot destroy a held mutex"),
+            None => return Err("mutex has no published invariant"),
+        };
+        let resources = self
+            .state
+            .resources
+            .clone()
+            .try_compose_with_fact(invariant, assumptions)
+            .map_err(|_| "destroyed mutex invariant conflicts with current authority")?;
+        let mut state = self.state.clone();
+        state.resources = resources;
+        let next = ledger.without(mutex);
+        state.mutex_ledger = next.has_any_mutex().then_some(next);
+        Ok(Self { state })
     }
 
     pub(super) fn release(
@@ -143,7 +216,8 @@ impl MutexContext {
         restored: CResourceFact,
         assumptions: &PureFactContext,
     ) -> Result<Self, &'static str> {
-        let previous = match self.mutexes.get(&guard.mutex) {
+        let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
+        let previous = match ledger.get(&guard.mutex) {
             Some(MutexEntry::Locked { invariant, epoch }) if *epoch == guard.epoch => invariant,
             _ => return Err("mutex guard does not match the current holder"),
         };
@@ -174,12 +248,98 @@ impl MutexContext {
             .ok_or("mutex invariant cannot be returned to escrow")?;
         let mut state = self.state.clone();
         state.resources = resources;
-        Ok(Self {
-            state,
-            mutexes: self
-                .mutexes
-                .with_inserted(guard.mutex, MutexEntry::Unlocked(restored)),
-        })
+        state.mutex_ledger =
+            Some(ledger.with_inserted(guard.mutex, MutexEntry::Unlocked(restored)));
+        Ok(Self { state })
+    }
+}
+
+impl MutexLedger {
+    fn fresh_identity() -> u64 {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn new() -> Self {
+        Self {
+            storage: Arc::new(MutexLedgerStorage {
+                identity: Self::fresh_identity(),
+                entries: PersistentMap::default(),
+                locked_count: 0,
+            }),
+        }
+    }
+
+    fn get(&self, mutex: &Pointer) -> Option<&MutexEntry> {
+        self.storage.entries.get(mutex)
+    }
+
+    fn with_inserted(&self, mutex: Pointer, entry: MutexEntry) -> Self {
+        let was_locked = matches!(self.get(&mutex), Some(MutexEntry::Locked { .. }));
+        let now_locked = matches!(entry, MutexEntry::Locked { .. });
+        Self {
+            storage: Arc::new(MutexLedgerStorage {
+                identity: Self::fresh_identity(),
+                entries: self.storage.entries.with_inserted(mutex, entry),
+                locked_count: self.storage.locked_count + usize::from(now_locked)
+                    - usize::from(was_locked),
+            }),
+        }
+    }
+
+    fn without(&self, mutex: &Pointer) -> Self {
+        let was_locked = matches!(self.get(mutex), Some(MutexEntry::Locked { .. }));
+        Self {
+            storage: Arc::new(MutexLedgerStorage {
+                identity: Self::fresh_identity(),
+                entries: self.storage.entries.without_key(mutex),
+                locked_count: self.storage.locked_count - usize::from(was_locked),
+            }),
+        }
+    }
+
+    pub(super) fn has_locked_guard(&self) -> bool {
+        self.storage.locked_count != 0
+    }
+
+    pub(super) fn has_any_mutex(&self) -> bool {
+        !self.storage.entries.is_empty()
+    }
+}
+
+impl std::fmt::Debug for MutexLedger {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MutexLedger")
+            .field("identity", &self.storage.identity)
+            .field("count", &self.storage.entries.len())
+            .finish()
+    }
+}
+
+impl PartialEq for MutexLedger {
+    fn eq(&self, other: &Self) -> bool {
+        self.storage.identity == other.storage.identity
+    }
+}
+
+impl Eq for MutexLedger {}
+
+impl Hash for MutexLedger {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.storage.identity.hash(state);
+    }
+}
+
+impl PartialOrd for MutexLedger {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for MutexLedger {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        self.storage.identity.cmp(&other.storage.identity)
     }
 }
 
@@ -339,5 +499,33 @@ mod tests {
             published.publish(mutex, fact, &assumptions).err(),
             Some("mutex already has an invariant")
         );
+    }
+
+    #[test]
+    fn c_path_lock_unlock_destroy_returns_the_folded_resource() {
+        let assumptions = PureFactContext::new();
+        let fact = invariant(1, 0);
+        let mutex = mutex(0);
+        let initialized = context(fact.clone())
+            .publish(mutex.clone(), fact.clone(), &assumptions)
+            .unwrap();
+        assert_eq!(
+            initialized.release_current(&mutex, &assumptions).err(),
+            Some("mutex is not held by this C path")
+        );
+        let holding = initialized.acquire_current(&mutex, &assumptions).unwrap();
+        assert_eq!(
+            holding.destroy(&mutex, &assumptions).err(),
+            Some("cannot destroy a held mutex")
+        );
+        let released = holding.release_current(&mutex, &assumptions).unwrap();
+        let destroyed = released.destroy(&mutex, &assumptions).unwrap();
+        assert!(
+            destroyed
+                .state()
+                .resources
+                .satisfies_fact(&fact, &assumptions)
+        );
+        assert!(destroyed.state().mutex_ledger.is_none());
     }
 }

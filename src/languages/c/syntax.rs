@@ -6416,25 +6416,55 @@ impl C0FunctionHeader {
         function_headers_compatible(self, other)
     }
 
-    /// The modeled create rule accepts only null attributes. The real glibc
-    /// header names a complete union here, while Click's declaration-only
-    /// projection names an incomplete struct. Both are passed as a pointer;
-    /// no attributes object is read by this modeled operation.
+    /// The modeled create and mutex-init rules accept only null attributes.
+    /// The real glibc header names complete unions where the projection uses
+    /// opaque attributes and a layout-compatible mutex union. Normalize only
+    /// those checked pointer parameters; all other signature details must
+    /// still match the selected model.
     pub(crate) fn compatible_with_modeled_pthread(&self, expected: &Self) -> bool {
-        if self.source_name != "pthread_create" {
-            return self.compatible_with(expected);
-        }
-        let Some(attributes) = self.parameters.get(1) else {
-            return false;
-        };
-        if attributes.c_type != C0Type::VoidPointer
-            || attributes.union_name.as_deref() != Some("pthread_attr_t")
-            || !attributes.pointee_constant
-        {
-            return false;
-        }
         let mut normalized = self.clone();
-        normalized.parameters[1] = expected.parameters[1].clone();
+        match self.source_name.as_str() {
+            "pthread_create" => {
+                let Some(attributes) = self.parameters.get(1) else {
+                    return false;
+                };
+                if attributes.c_type != C0Type::VoidPointer
+                    || attributes.union_name.as_deref() != Some("pthread_attr_t")
+                    || !attributes.pointee_constant
+                {
+                    return false;
+                }
+                normalized.parameters[1] = expected.parameters[1].clone();
+            }
+            "pthread_mutex_init"
+            | "pthread_mutex_lock"
+            | "pthread_mutex_unlock"
+            | "pthread_mutex_destroy" => {
+                let Some(mutex) = self.parameters.first() else {
+                    return false;
+                };
+                if mutex.c_type != C0Type::VoidPointer
+                    || mutex.union_name.is_none()
+                    || mutex.pointee_constant
+                {
+                    return false;
+                }
+                normalized.parameters[0] = expected.parameters[0].clone();
+                if self.source_name == "pthread_mutex_init" {
+                    let Some(attributes) = self.parameters.get(1) else {
+                        return false;
+                    };
+                    if attributes.c_type != C0Type::VoidPointer
+                        || attributes.union_name.is_none()
+                        || !attributes.pointee_constant
+                    {
+                        return false;
+                    }
+                    normalized.parameters[1] = expected.parameters[1].clone();
+                }
+            }
+            _ => return self.compatible_with(expected),
+        }
         function_headers_compatible(&normalized, expected)
     }
 }

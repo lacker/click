@@ -2364,7 +2364,7 @@ fn surface_synthesis_omits_a_predicates_hidden_resource_state_argument() {
     let proposition = Proposition::Predicate {
         name: "valid_pool".to_string(),
         arguments: vec![
-            Term::CState(CState::new()),
+            Term::CState(Box::new(CState::new())),
             Term::CValue(CValue::pointer(pool.clone())),
         ],
     };

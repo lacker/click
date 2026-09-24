@@ -1361,6 +1361,15 @@ impl CPredicateUnfolding {
 }
 
 impl CCompositeResourceDefinition {
+    pub(crate) fn with_mutex_guard(mut self, guarded_by: Option<CMutexGuardDeclaration>) -> Self {
+        self.guarded_by = guarded_by;
+        self
+    }
+
+    pub(crate) fn mutex_guard(&self) -> Option<&CMutexGuardDeclaration> {
+        self.guarded_by.as_ref()
+    }
+
     pub(crate) fn with_instance_schema(mut self, schema: Option<ResourceFieldSchema>) -> Self {
         self.instance_schema = schema;
         self
@@ -1393,6 +1402,7 @@ impl CCompositeResourceDefinition {
         let fact_source_indices = (0..facts.len()).collect();
         Self {
             instance_schema: None,
+            guarded_by: None,
             matched: None,
             name: name.into(),
             parameters,
@@ -1466,6 +1476,7 @@ impl CCompositeResourceDefinition {
         let thread_confined = condition.is_some() || !contains.is_empty() || !facts.is_empty();
         Self {
             instance_schema: None,
+            guarded_by: None,
             matched: None,
             name: name.into(),
             parameters,
@@ -2378,6 +2389,14 @@ impl CExecutionEnvironment {
         binding: Option<crate::languages::c::thread_runtime::ModeledPthreadBinding>,
     ) -> Self {
         self.modeled_pthread_binding = binding;
+        self
+    }
+
+    pub(crate) fn with_modeled_mutex_guards(
+        mut self,
+        guards: BTreeMap<String, CMutexGuardDeclaration>,
+    ) -> Self {
+        self.modeled_mutex_guards = std::sync::Arc::new(guards);
         self
     }
 

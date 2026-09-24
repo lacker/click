@@ -5928,7 +5928,7 @@ pub fn prove_c_function_satisfies_specification_with_environment(
     let proposition = requires.iter().rev().fold(
         Proposition::CFunctionSatisfiesSpecification {
             function,
-            specification,
+            specification: Box::new(specification),
         },
         |body, requirement| Proposition::Implies(Box::new(requirement.clone()), Box::new(body)),
     );

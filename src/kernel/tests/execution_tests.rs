@@ -851,7 +851,7 @@ fn concrete_function_specification_is_native_theorem() {
         theorem.proposition(),
         &Proposition::CFunctionSatisfiesSpecification {
             function,
-            specification
+            specification: Box::new(specification)
         }
     );
 }
@@ -889,7 +889,7 @@ fn symbolic_function_specification_uses_requirements_as_execution_pure_facts() {
             Box::new(Proposition::ConditionIs(condition, true)),
             Box::new(Proposition::CFunctionSatisfiesSpecification {
                 function,
-                specification
+                specification: Box::new(specification)
             }),
         )
     );

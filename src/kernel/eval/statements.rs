@@ -2134,6 +2134,19 @@ fn live_thread_return_refusal() -> CStatementOutcome {
     ))
 }
 
+fn has_live_mutex(state: &CState) -> bool {
+    state
+        .mutex_ledger
+        .as_ref()
+        .is_some_and(super::super::mutexes::MutexLedger::has_any_mutex)
+}
+
+fn live_mutex_return_refusal() -> CStatementOutcome {
+    CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
+        "a function cannot return with an initialized modeled mutex; destroy it first".to_string(),
+    ))
+}
+
 fn execute_c_return_expression_paths(
     state: &CState,
     expression: &CExpression,
@@ -2176,6 +2189,8 @@ fn execute_c_return_expression_paths(
                     };
                     let outcome = if has_live_thread_completion(&resolved_state) {
                         live_thread_return_refusal()
+                    } else if has_live_mutex(&resolved_state) {
+                        live_mutex_return_refusal()
                     } else if resolved_state.memory.has_pending_heap_allocation() {
                         CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
                     } else {
@@ -2197,6 +2212,8 @@ fn execute_c_return_expression_paths(
             CExpressionOutcome::Value(value) => {
                 let outcome = if has_live_thread_completion(state) {
                     live_thread_return_refusal()
+                } else if has_live_mutex(state) {
+                    live_mutex_return_refusal()
                 } else if state.memory.has_pending_heap_allocation() {
                     CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
                 } else {
@@ -2816,6 +2833,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
         CStatement::Return(CExpression::Value(CValue::Void)) => {
             let outcome = if has_live_thread_completion(state) {
                 live_thread_return_refusal()
+            } else if has_live_mutex(state) {
+                live_mutex_return_refusal()
             } else if state.memory.has_pending_heap_allocation() {
                 CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
             } else {
@@ -2843,6 +2862,8 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                     CExpressionOutcome::Value(value @ CValue::Int32(_)) => {
                         if has_live_thread_completion(state) {
                             live_thread_return_refusal()
+                        } else if has_live_mutex(state) {
+                            live_mutex_return_refusal()
                         } else {
                             CStatementOutcome::Throw {
                                 value,

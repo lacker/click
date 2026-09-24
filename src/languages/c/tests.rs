@@ -219,6 +219,39 @@ fn pthread_projection_is_not_a_kernel_header() {
 }
 
 #[test]
+fn modeled_pthread_mutex_field_has_the_selected_layout_and_call_types() {
+    let sources = std::collections::BTreeMap::from([(
+        "mutex.c",
+        "#include <pthread.h>\nstruct cell { pthread_mutex_t mu; int value; };\nint bump(struct cell *c) { pthread_mutex_init(&c->mu, 0); pthread_mutex_lock(&c->mu); c->value = c->value + 1; pthread_mutex_unlock(&c->mu); pthread_mutex_destroy(&c->mu); return c->value; }\n",
+    )]);
+    let expanded = source::expand_includes_for_target(
+        "mutex.c",
+        &sources,
+        target::CTarget::X86_64LinuxUserspace,
+    )
+    .unwrap();
+    let unit = syntax::parse_translation_unit_for_source(
+        expanded.source(),
+        "mutex.c",
+        expanded.line_map(),
+    )
+    .expect("ordinary mutex field and calls must parse");
+    let cell = &unit.structs["cell"];
+    assert_eq!(cell.field("mu").unwrap().offset_bytes(), 0);
+    assert_eq!(cell.field("mu").unwrap().byte_width(), 40);
+    assert_eq!(cell.field("value").unwrap().offset_bytes(), 40);
+    assert_eq!(cell.size_bytes(), 48);
+    for name in [
+        "pthread_mutex_init",
+        "pthread_mutex_lock",
+        "pthread_mutex_unlock",
+        "pthread_mutex_destroy",
+    ] {
+        assert!(unit.function_declarations.contains_key(name), "{name}");
+    }
+}
+
+#[test]
 fn direct_forward_goto_lowers_to_an_indexed_kernel_target() {
     let function =
         syntax::parse_function("int32 f(void) { int32 x; goto done; x = 9; done: return x; }")
@@ -9959,7 +9992,7 @@ fn c0_clamp_demo_proves_symbolic_branch_specifications() {
         let expected = requires.iter().rev().fold(
             crate::kernel::Proposition::CFunctionSatisfiesSpecification {
                 function: function.clone(),
-                specification: specification.clone(),
+                specification: Box::new(specification.clone()),
             },
             |body, requirement| {
                 crate::kernel::Proposition::Implies(Box::new(requirement.clone()), Box::new(body))

@@ -592,7 +592,7 @@ fn function_contract_lookup_ignores_unrelated_pointer_facts() {
         Proposition::Predicate {
             name: CFunctionContract::predicate_name_for(name),
             arguments: vec![
-                Term::CState(CState::new()),
+                Term::CState(Box::new(CState::new())),
                 Term::CValue(CValue::typed_pointer(
                     pointer,
                     CType::FunctionPointer(CallbackSignature::from_encoded(90_000)),

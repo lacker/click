@@ -3393,6 +3393,7 @@ impl CState {
             && self.loan_participant == other.loan_participant
             && self.loan_view_bindings == other.loan_view_bindings
             && self.thread_ledger == other.thread_ledger
+            && self.mutex_ledger == other.mutex_ledger
             && self.pending_thread_create == other.pending_thread_create
             && (std::sync::Arc::ptr_eq(&self.counted_populations, &other.counted_populations)
                 || (self.counted_populations.is_empty() && other.counted_populations.is_empty()))

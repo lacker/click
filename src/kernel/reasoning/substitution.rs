@@ -420,22 +420,22 @@ pub(crate) fn substitute_bitvector_variable_in_proposition(
             specification,
         } => Proposition::CFunctionSatisfiesSpecification {
             function: substitute_bitvector_variable_in_c_function(function, from, to),
-            specification: substitute_bitvector_variable_in_c_function_specification(
+            specification: Box::new(substitute_bitvector_variable_in_c_function_specification(
                 specification,
                 from,
                 to,
-            ),
+            )),
         },
         Proposition::CFunctionPartiallySatisfiesSpecification {
             function,
             specification,
         } => Proposition::CFunctionPartiallySatisfiesSpecification {
             function: substitute_bitvector_variable_in_c_function(function, from, to),
-            specification: substitute_bitvector_variable_in_c_function_specification(
+            specification: Box::new(substitute_bitvector_variable_in_c_function_specification(
                 specification,
                 from,
                 to,
-            ),
+            )),
         },
         Proposition::CMemoryLoads {
             memory,
@@ -1761,18 +1761,18 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_term(
         Term::CExpressionOutcome(outcome) => Term::CExpressionOutcome(
             substitute_bitvector_variable_in_c_expression_outcome(outcome, from, to),
         ),
-        Term::CStatementOutcome(outcome) => Term::CStatementOutcome(
+        Term::CStatementOutcome(outcome) => Term::CStatementOutcome(Box::new(
             substitute_bitvector_variable_in_c_statement_outcome(outcome, from, to),
-        ),
-        Term::CFunctionOutcome(outcome) => Term::CFunctionOutcome(
+        )),
+        Term::CFunctionOutcome(outcome) => Term::CFunctionOutcome(Box::new(
             substitute_bitvector_variable_in_c_function_outcome(outcome, from, to),
-        ),
+        )),
         Term::CMemory(memory) => {
             Term::CMemory(substitute_bitvector_variable_in_memory(memory, from, to))
         }
-        Term::CState(state) => {
-            Term::CState(substitute_bitvector_variable_in_c_state(state, from, to))
-        }
+        Term::CState(state) => Term::CState(Box::new(substitute_bitvector_variable_in_c_state(
+            state, from, to,
+        ))),
     }
 }
 
@@ -3667,6 +3667,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
         loan_participant: state.loan_participant,
         loan_view_bindings: state.loan_view_bindings.clone(),
         thread_ledger: state.thread_ledger.clone(),
+        mutex_ledger: state.mutex_ledger.clone(),
         pending_thread_create: state.pending_thread_create.as_ref().map(|pending| {
             pending.map_terms(
                 |status| substitute_bitvector_variable(status, from, to),
@@ -3854,6 +3855,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
         .iter()
         .map(|definition| CCompositeResourceDefinition {
             instance_schema: definition.instance_schema.clone(),
+            guarded_by: definition.guarded_by.clone(),
             thread_confined: definition.thread_confined,
             fact_source_indices: definition.fact_source_indices.clone(),
             fact_source_spellings: definition.fact_source_spellings.clone(),
@@ -5206,22 +5208,22 @@ pub(crate) fn substitute_pointer_variable_in_proposition(
             specification,
         } => Proposition::CFunctionSatisfiesSpecification {
             function: substitute_pointer_variable_in_c_function(function, from, to),
-            specification: substitute_pointer_variable_in_c_function_specification(
+            specification: Box::new(substitute_pointer_variable_in_c_function_specification(
                 specification,
                 from,
                 to,
-            ),
+            )),
         },
         Proposition::CFunctionPartiallySatisfiesSpecification {
             function,
             specification,
         } => Proposition::CFunctionPartiallySatisfiesSpecification {
             function: substitute_pointer_variable_in_c_function(function, from, to),
-            specification: substitute_pointer_variable_in_c_function_specification(
+            specification: Box::new(substitute_pointer_variable_in_c_function_specification(
                 specification,
                 from,
                 to,
-            ),
+            )),
         },
         Proposition::CMemoryLoads {
             memory,
@@ -5403,18 +5405,18 @@ fn substitute_pointer_variable_in_term(term: &Term, from: Variable, to: &Pointer
         Term::CExpressionOutcome(outcome) => Term::CExpressionOutcome(
             substitute_pointer_variable_in_c_expression_outcome(outcome, from, to),
         ),
-        Term::CStatementOutcome(outcome) => Term::CStatementOutcome(
+        Term::CStatementOutcome(outcome) => Term::CStatementOutcome(Box::new(
             substitute_pointer_variable_in_c_statement_outcome(outcome, from, to),
-        ),
-        Term::CFunctionOutcome(outcome) => Term::CFunctionOutcome(
+        )),
+        Term::CFunctionOutcome(outcome) => Term::CFunctionOutcome(Box::new(
             substitute_pointer_variable_in_c_function_outcome(outcome, from, to),
-        ),
+        )),
         Term::CMemory(memory) => {
             Term::CMemory(substitute_pointer_variable_in_memory(memory, from, to))
         }
-        Term::CState(state) => {
-            Term::CState(substitute_pointer_variable_in_c_state(state, from, to))
-        }
+        Term::CState(state) => Term::CState(Box::new(substitute_pointer_variable_in_c_state(
+            state, from, to,
+        ))),
     }
 }
 
@@ -6172,6 +6174,7 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
         loan_participant: state.loan_participant,
         loan_view_bindings: state.loan_view_bindings.clone(),
         thread_ledger: state.thread_ledger.clone(),
+        mutex_ledger: state.mutex_ledger.clone(),
         pending_thread_create: state.pending_thread_create.as_ref().map(|pending| {
             pending.map_terms(
                 Clone::clone,
@@ -7241,6 +7244,7 @@ fn substitute_pointer_variable_in_c_function(
         .iter()
         .map(|definition| CCompositeResourceDefinition {
             instance_schema: definition.instance_schema.clone(),
+            guarded_by: definition.guarded_by.clone(),
             thread_confined: definition.thread_confined,
             fact_source_indices: definition.fact_source_indices.clone(),
             fact_source_spellings: definition.fact_source_spellings.clone(),

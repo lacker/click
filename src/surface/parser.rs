@@ -1515,10 +1515,7 @@ impl Parser {
         }
         let guarded_by = if self.peek_ident() == Some("guarded_by") {
             self.position += 1;
-            let mutex = self.parse_current_contract_segment()?;
-            if !matches!(mutex.surface, ContractSegmentSurface::Field { .. }) {
-                return Err(self.error("`guarded_by` requires one C field place"));
-            }
+            let mutex = self.parse_guarded_by_mutex_field()?;
             self.expect(Token::Semicolon)?;
             Some(mutex)
         } else {
@@ -1710,6 +1707,41 @@ impl Parser {
             facts,
             witnesses,
         })
+    }
+
+    fn parse_guarded_by_mutex_field(&mut self) -> Result<ContractSegment, ClickError> {
+        let parameter = self.expect_ident("resource's struct pointer parameter")?;
+        self.expect(Token::Arrow)?;
+        let field_name = self.expect_ident("pthread mutex field")?;
+        let struct_name = self.current_struct_params.get(&parameter).ok_or_else(|| {
+            self.error(format!(
+                "`guarded_by {parameter}->{field_name}` requires a struct pointer parameter"
+            ))
+        })?;
+        let field = self.resolve_struct_field_metadata(struct_name, &field_name)?;
+        let Some(union_name) = field.union_name.as_deref() else {
+            return Err(self.error("`guarded_by` requires a `pthread_mutex_t` field"));
+        };
+        let Some(layout) = self.union_layouts.get(union_name) else {
+            return Err(self.error("`guarded_by` mutex type has no imported layout"));
+        };
+        if !matches!(union_name, "__click_pthread_mutex" | "pthread_mutex_t")
+            || layout.size_bytes() != 40
+            || layout.alignment_bytes() != 8
+            || field.byte_width != 40
+            || !field.offset_bytes.is_multiple_of(8)
+        {
+            return Err(self
+                .error("`guarded_by` requires a 40-byte, 8-byte-aligned `pthread_mutex_t` field"));
+        }
+        Ok(Self::field_segment_from_metadata(
+            CExpression::Variable(parameter.clone()),
+            Some(ContractExpression::CFragment(CExpression::Variable(
+                parameter,
+            ))),
+            &field_name,
+            &field,
+        ))
     }
 
     fn parse_composite_resource_contains_clause(&mut self) -> Result<ResourceClause, ClickError> {
@@ -3411,6 +3443,31 @@ impl Parser {
             self.expect(Token::Colon)?;
             let instance = self.expect_ident("caller resource instance")?;
             crate::instrumentation::record_deterministic_work(1);
+            if callee == "pthread_mutex_init" {
+                if binder != "invariant" {
+                    return Err(
+                        self.error("`pthread_mutex_init` call map requires `invariant: instance`")
+                    );
+                }
+                if !bound.insert(binder.clone()) {
+                    return Err(self.error("duplicate `invariant` in the mutex init call map"));
+                }
+                let Some((identity, _)) = self.current_resource_bindings.get(&instance).cloned()
+                else {
+                    return Err(self.error(format!("unknown resource instance `{instance}`")));
+                };
+                binders.push(CallBinderBinding {
+                    binder,
+                    binder_identity: Variable(u64::MAX - 1),
+                    instance,
+                    identity,
+                });
+                if self.peek() != Some(&Token::Comma) {
+                    break;
+                }
+                self.position += 1;
+                continue;
+            }
             let Some(declaration) = declared.get(&binder) else {
                 return Err(self.error(format!(
                     "`{callee}` declares no resource instance binder `{binder}`"
@@ -3451,6 +3508,9 @@ impl Parser {
             self.position += 1;
         }
         self.expect(Token::RBrace)?;
+        if callee == "pthread_mutex_init" && !bound.contains("invariant") {
+            return Err(self.error("`pthread_mutex_init` call map requires `invariant: instance`"));
+        }
         if let Some((missing, _)) = declared.iter().find(|(name, entry)| {
             entry.kind == CalleeResourceBinderKind::Supplied && !bound.contains(*name)
         }) {

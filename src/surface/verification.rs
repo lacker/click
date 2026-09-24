@@ -2314,6 +2314,25 @@ fn verify_c0_sources_with_context(
             &click_function_environment,
             &resource_environment,
         )?;
+        let modeled_mutex_guards = if selected_thread_runtime
+            == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
+        {
+            composite_resource_definitions(
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+            )?
+            .into_iter()
+            .filter_map(|definition| {
+                definition
+                    .mutex_guard()
+                    .cloned()
+                    .map(|guard| (definition.name().to_string(), guard))
+            })
+            .collect()
+        } else {
+            BTreeMap::new()
+        };
         let mut function_environment = initial_function_environment
             .unwrap_or(built_function_environment)
             .with_modeled_pthread_binding(
@@ -2321,6 +2340,7 @@ fn verify_c0_sources_with_context(
                     == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread)
                     .then(|| c_sources.modeled_pthread_binding()),
             )
+            .with_modeled_mutex_guards(modeled_mutex_guards)
             .with_byte_order(selected_target.byte_order());
         // Contracts are declaration interfaces. A selected function receives
         // every well-formed callee contract as a scoped assumption, while its
@@ -2532,8 +2552,14 @@ fn verify_c0_sources_with_context(
                     .map(|name| executing_function_name(&termination_kernel_names, name))
                     .filter(|name| !declared_diverging.contains(name))
                     .collect::<BTreeSet<_>>();
-                assumed_terminating
-                    .extend(["pthread_create".to_string(), "pthread_join".to_string()]);
+                assumed_terminating.extend([
+                    "pthread_create".to_string(),
+                    "pthread_join".to_string(),
+                    "pthread_mutex_init".to_string(),
+                    "pthread_mutex_lock".to_string(),
+                    "pthread_mutex_unlock".to_string(),
+                    "pthread_mutex_destroy".to_string(),
+                ]);
                 let preliminary = c_verified_function_termination_rules(
                     &partial_rules,
                     &termination_plans,
@@ -3433,7 +3459,14 @@ fn verify_c0_sources_with_context(
     if selected_thread_runtime
         == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread
     {
-        assumed_terminating.extend(["pthread_create".to_string(), "pthread_join".to_string()]);
+        assumed_terminating.extend([
+            "pthread_create".to_string(),
+            "pthread_join".to_string(),
+            "pthread_mutex_init".to_string(),
+            "pthread_mutex_lock".to_string(),
+            "pthread_mutex_unlock".to_string(),
+            "pthread_mutex_destroy".to_string(),
+        ]);
     }
     let CTerminationVerdicts {
         rules: termination_rules,
@@ -6239,7 +6272,14 @@ fn validate_modeled_pthread_binding(
 
     let mut found_pthread = BTreeSet::new();
     for (source_path, unit) in units {
-        for name in ["pthread_create", "pthread_join"] {
+        for name in [
+            "pthread_create",
+            "pthread_join",
+            "pthread_mutex_init",
+            "pthread_mutex_lock",
+            "pthread_mutex_unlock",
+            "pthread_mutex_destroy",
+        ] {
             if unit.shadowed_pthread_names.contains(name) {
                 return Err(ClickError::new(format!(
                     "modeled-pthread binding refuses local shadowing of `{name}` in `{source_path}`"
@@ -6293,7 +6333,7 @@ fn validate_modeled_pthread_binding(
             validate_modeled_pthread_calls(function.body(), source_path)?;
         }
     }
-    if found_pthread.len() != 2 {
+    if found_pthread.len() != 6 {
         return Err(ClickError::new(
             "modeled-pthread binding requires selected `<pthread.h>` declarations",
         ));
@@ -6336,6 +6376,18 @@ fn validate_modeled_pthread_calls(
             "pthread_join" if arguments.len() != 2 || !is_null(&arguments[1]) => {
                 return Err(ClickError::new(format!(
                     "modeled-pthread `pthread_join` in `{source_path}` requires a null result slot"
+                )));
+            }
+            "pthread_mutex_init" if arguments.len() != 2 || !is_null(&arguments[1]) => {
+                return Err(ClickError::new(format!(
+                    "modeled-pthread `pthread_mutex_init` in `{source_path}` requires null attributes"
+                )));
+            }
+            "pthread_mutex_lock" | "pthread_mutex_unlock" | "pthread_mutex_destroy"
+                if arguments.len() != 1 =>
+            {
+                return Err(ClickError::new(format!(
+                    "modeled-pthread `{function_name}` in `{source_path}` requires one mutex argument"
                 )));
             }
             _ => {}
@@ -6880,6 +6932,39 @@ pub(in crate::surface) fn composite_resource_definitions(
         let Some(body) = definition.composite_body() else {
             continue;
         };
+        let guarded_by = body
+            .guarded_by()
+            .map(|guard| {
+                let CExpression::Variable(parameter) = &guard.base else {
+                    return Err(ClickError::new(
+                        "`guarded_by` requires a direct resource parameter",
+                    ));
+                };
+                let parameter_index = definition
+                    .parameters()
+                    .iter()
+                    .position(|candidate| candidate.name() == parameter)
+                    .ok_or_else(|| ClickError::new("`guarded_by` names no resource parameter"))?;
+                let CExpression::Value(crate::kernel::CValue::Int32(
+                    crate::kernel::Bitvector32Term::Constant(start),
+                )) = &guard.start
+                else {
+                    return Err(ClickError::new(
+                        "`guarded_by` requires a fixed member offset",
+                    ));
+                };
+                let width = guard
+                    .field_element_width()
+                    .ok_or_else(|| ClickError::new("`guarded_by` has no member width"))?;
+                let field_offset_bytes = start
+                    .checked_mul(width)
+                    .ok_or_else(|| ClickError::new("`guarded_by` member offset overflows"))?;
+                Ok(crate::kernel::CMutexGuardDeclaration {
+                    parameter_index,
+                    field_offset_bytes,
+                })
+            })
+            .transpose()?;
         // The body's memory clauses take their element widths from the
         // definition's own parameters and field types, as contract clauses
         // do, so a `uint64` field is one 8-byte element on both sides of
@@ -7098,7 +7183,8 @@ pub(in crate::surface) fn composite_resource_definitions(
             .with_resource_match_body(matched)
             .with_children(lower_resource_body_children(body)?)
             .with_matched_recursion(matched_recursive)
-            .with_instance_schema(definition.field_schema().cloned()),
+            .with_instance_schema(definition.field_schema().cloned())
+            .with_mutex_guard(guarded_by),
         );
     }
     Ok(definitions)
@@ -7792,7 +7878,7 @@ mod modeled_pthread_binding_tests {
             .modeled_pthread_binding
             .as_ref()
             .unwrap();
-        assert_eq!(binding.specification_version, 1);
+        assert_eq!(binding.specification_version, 2);
         assert_eq!(binding.target, CTarget::X86_64LinuxUserspace);
     }
 

@@ -1667,7 +1667,7 @@ fn collect_term_memory_loads(
                 Ok(())
             }
         },
-        Term::CStatementOutcome(outcome) => match outcome {
+        Term::CStatementOutcome(outcome) => match outcome.as_ref() {
             CStatementOutcome::Normal(state)
             | CStatementOutcome::Break(state)
             | CStatementOutcome::Continue(state)
@@ -1684,7 +1684,7 @@ fn collect_term_memory_loads(
             | CStatementOutcome::UndefinedBehavior(_)
             | CStatementOutcome::RuntimeError(_) => Ok(()),
         },
-        Term::CFunctionOutcome(outcome) => match outcome {
+        Term::CFunctionOutcome(outcome) => match outcome.as_ref() {
             CFunctionOutcome::Return { value, state }
             | CFunctionOutcome::Throw { value, state } => {
                 let _ = state;
