@@ -182,6 +182,18 @@ fn concurrency_fork_join_source_is_frozen() {
 }
 
 #[test]
+fn concurrency_mutex_counter_source_is_frozen() {
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("design/concurrency-probes/mutex_counter.c");
+    let bytes = fs::read(&source).expect("the frozen mutex counter C source exists");
+    assert_eq!(
+        hex_digest(sha256(&bytes)),
+        "8bc4121624978882c13c2736ccc93097f2c7065e4e8d2cb9bfa9066a6170fa2c",
+        "the mutex counter proof must use the selected C source unchanged"
+    );
+}
+
+#[test]
 fn byte_representation_source_is_frozen() {
     let source =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/byte-representation/rep_copy.c");

@@ -49,7 +49,9 @@ and remains conditional on that runtime specification; it does not validate
 native runtime behavior.
 
 The concurrent mutex counter, release/acquire publication, and native pthread
-binding remain open. [The probe record](../design/concurrency-probes/README.md)
+binding remain open. The [mutex counter C source](../design/concurrency-probes/mutex_counter.c)
+is now frozen; its [shared-protocol design](../design/concurrency-probes/mutex-shared-protocol.md)
+records the required authority rules. [The probe record](../design/concurrency-probes/README.md)
 describes the selected source and profile; [the binding design](../design/concurrency-probes/pthread-binding-design.md)
 records the existing create/join rule and trust boundary.
 The resource-body spelling `guarded_by counter->mutex;` now binds a folded,
@@ -82,8 +84,8 @@ artifact identity.
 
 ### Mutex-protected counter
 
-Freeze a small ordinary C program before adding its sidecar. Two workers each
-increment the same ordinary counter once under one mutex. Starting from zero,
+The C program is frozen before its sidecar. Two workers each increment the
+same ordinary counter once under one mutex. Starting from zero,
 prove the final count is exactly two after both joins and that all counter
 accesses are protected.
 
