@@ -244,6 +244,15 @@ impl ResourceContextIndex {
                     block.clone(),
                     entry,
                 );
+                if result
+                    .owned_memory_by_block
+                    .get(&block)
+                    .is_some_and(|entries| entries.len() >= 2)
+                {
+                    result.shared_owned_memory_blocks = result
+                        .shared_owned_memory_blocks
+                        .with_inserted(block.clone(), ());
+                }
             }
             result.memory_starts = insert_resource_index_entry(
                 &result.memory_starts,
@@ -307,6 +316,14 @@ impl ResourceContextIndex {
             if mode {
                 result.owned_memory_by_block =
                     remove_resource_index_entry(&result.owned_memory_by_block, &block, entry);
+                if !result
+                    .owned_memory_by_block
+                    .get(&block)
+                    .is_some_and(|entries| entries.len() >= 2)
+                {
+                    result.shared_owned_memory_blocks =
+                        result.shared_owned_memory_blocks.without_key(&block);
+                }
             }
             result.memory_starts = remove_resource_index_entry(
                 &result.memory_starts,
@@ -2429,22 +2446,32 @@ impl ResourceContext {
     /// constructors alone and blocks whose ranges all share one concrete
     /// base. These are exactly the pair propositions the composition used to
     /// materialize eagerly, now projected on demand.
+    ///
+    /// A block with one owned range has no pair, so only the blocks the index
+    /// records as holding two or more are visited, each in entry order.
     pub(in crate::kernel) fn same_block_separation_candidates(
         &self,
     ) -> Vec<(Proposition, CMemoryRange, CMemoryRange)> {
-        let mut by_block = BTreeMap::<PointerBlock, Vec<&CMemoryRange>>::new();
-        for fact in self.iter() {
-            let Some(range) = fact.memory_own_range() else {
-                continue;
-            };
-            crate::instrumentation::record_deterministic_work(1);
-            by_block
-                .entry(range.base().block.clone())
-                .or_default()
-                .push(range);
-        }
+        crate::instrumentation::record_deterministic_work(1);
+        let by_block = self
+            .storage
+            .index
+            .shared_owned_memory_blocks
+            .keys()
+            .map(|block| {
+                self.storage
+                    .index
+                    .owned_memory_by_block
+                    .get(block)
+                    .into_iter()
+                    .flat_map(ResourceEntryIds::iter)
+                    .filter_map(|entry| self.fact(*entry).memory_own_range())
+                    .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
         let mut entries = Vec::new();
-        for owned in by_block.values() {
+        for owned in &by_block {
             let one_concrete_base = owned.first().is_some_and(|first| {
                 owned.iter().all(|range| {
                     range.base() == first.base()
@@ -4194,6 +4221,12 @@ enum ResourceNormalizationKey {
     Instance(Variable),
     Resource(CResource),
     ExactShape(ResourceFamily, String, usize),
+    /// A token or composite whose first argument is a pointer into a block
+    /// proven distinct from every block but itself and a symbolic one.
+    ExactShapeAnchored(ResourceFamily, String, usize, PointerBlock),
+    /// Every anchored token or composite of one shape, for the unanchored
+    /// facts that may still name the same block.
+    ExactShapeAnchoredAll(ResourceFamily, String, usize),
     MemoryStart(PointerBlock, bool, Bitvector32Term),
     MemoryEnd(PointerBlock, bool, Bitvector32Term),
 }
@@ -4245,11 +4278,23 @@ impl ResourceNormalizationIndex {
                 ));
             }
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
-                keys.push(ResourceNormalizationKey::ExactShape(
-                    fact.family(),
-                    name.clone(),
-                    arguments.len(),
-                ));
+                let shape = (fact.family(), name.clone(), arguments.len());
+                match normalization_anchor(arguments) {
+                    Some(block) => {
+                        keys.push(ResourceNormalizationKey::ExactShapeAnchored(
+                            shape.0,
+                            shape.1.clone(),
+                            shape.2,
+                            block.clone(),
+                        ));
+                        keys.push(ResourceNormalizationKey::ExactShapeAnchoredAll(
+                            shape.0, shape.1, shape.2,
+                        ));
+                    }
+                    None => keys.push(ResourceNormalizationKey::ExactShape(
+                        shape.0, shape.1, shape.2,
+                    )),
+                }
             }
         }
         keys
@@ -4288,11 +4333,29 @@ impl ResourceNormalizationIndex {
                 ));
             }
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
+                // Two facts of one shape merge only when their arguments are
+                // proven equal, and a pointer is never proven equal to one in
+                // a block proven distinct from its own. So an anchored fact
+                // meets the facts anchored in its own block and the
+                // unanchored ones; an unanchored fact meets every fact of its
+                // shape.
+                let shape = (fact.family(), name.clone(), arguments.len());
                 keys.push(ResourceNormalizationKey::ExactShape(
-                    fact.family(),
-                    name.clone(),
-                    arguments.len(),
+                    shape.0,
+                    shape.1.clone(),
+                    shape.2,
                 ));
+                match normalization_anchor(arguments) {
+                    Some(block) => keys.push(ResourceNormalizationKey::ExactShapeAnchored(
+                        shape.0,
+                        shape.1,
+                        shape.2,
+                        block.clone(),
+                    )),
+                    None => keys.push(ResourceNormalizationKey::ExactShapeAnchoredAll(
+                        shape.0, shape.1, shape.2,
+                    )),
+                }
             }
         }
         let mut candidates = BTreeSet::new();
@@ -4302,6 +4365,26 @@ impl ResourceNormalizationIndex {
             }
         }
         candidates.into_iter().collect()
+    }
+}
+
+/// The block of a token or composite's first argument when that argument is
+/// a pointer into a heap or temporary block. `PointerBlock::proven_distinct`
+/// separates such a block from every block except itself and a symbolic one,
+/// with no assumption able to override it, so two facts anchored in
+/// different blocks can never have their first arguments proven equal and
+/// never normalize together.
+fn normalization_anchor(arguments: &[AlgebraicValue]) -> Option<&PointerBlock> {
+    match arguments.first() {
+        Some(AlgebraicValue::C(CValue::Pointer(pointer)))
+            if matches!(
+                pointer.pointer().block,
+                PointerBlock::Heap(_) | PointerBlock::Temporary(_)
+            ) =>
+        {
+            Some(&pointer.pointer().block)
+        }
+        _ => None,
     }
 }
 

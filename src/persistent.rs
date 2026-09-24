@@ -185,8 +185,10 @@ impl<'a, K: Ord, V> IntoIterator for &'a PersistentMap<K, V> {
 }
 
 impl<K: Ord + PartialEq, V: PartialEq> PartialEq for PersistentMap<K, V> {
+    /// O(1) for maps sharing a root (a clone, or a context compared with
+    /// itself through a fact-context memo); elementwise otherwise.
     fn eq(&self, other: &Self) -> bool {
-        self.len == other.len && self.iter().eq(other.iter())
+        self.len == other.len && (self.shares_root_with(other) || self.iter().eq(other.iter()))
     }
 }
 

@@ -554,6 +554,162 @@ pub(super) fn inside_condition_decision() -> bool {
     CONDITION_DECISIONS_IN_PROGRESS.with(|in_progress| !in_progress.borrow().is_empty())
 }
 
+type StatedIndexMap = crate::persistent::PersistentMap<
+    crate::kernel::proof::PropositionIdentityKey,
+    crate::persistent::PersistentSet<Proposition>,
+>;
+
+fn adjust_stated_index(
+    index: &StatedIndexMap,
+    key: crate::kernel::proof::PropositionIdentityKey,
+    proposition: &Proposition,
+    insert: bool,
+) -> StatedIndexMap {
+    let bucket = index.get(&key).cloned().unwrap_or_default();
+    let bucket = if insert {
+        bucket.with_value(proposition.clone())
+    } else {
+        bucket.without_value(proposition)
+    };
+    if bucket.is_empty() {
+        index.without_key(&key)
+    } else {
+        index.with_inserted(key, bucket)
+    }
+}
+
+/// A context's index of stated propositions by alpha/load identity key.
+///
+/// A context starts `Deferred`: each fact change appends one node to a
+/// persistent chain without computing a key. A query builds every unbuilt
+/// node from the nearest built ancestor down and records each node's index
+/// on it, so a sibling sharing the chain later builds only its own suffix:
+/// every fact change is keyed at most once however many contexts derive from
+/// it, and never when no context asks. Contexts rebuilt from scratch
+/// (`retain`/`clear`) are `Built` and maintained eagerly, as before.
+#[derive(Clone)]
+pub(crate) enum StatedPropositionIndex {
+    Built(StatedIndexMap),
+    Deferred(std::sync::Arc<DeferredStatedIndexNode>),
+}
+
+impl Default for StatedPropositionIndex {
+    fn default() -> Self {
+        Self::deferred_empty()
+    }
+}
+
+impl std::fmt::Debug for StatedPropositionIndex {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Built(index) => formatter.debug_tuple("Built").field(&index.len()).finish(),
+            Self::Deferred(_) => formatter.write_str("Deferred"),
+        }
+    }
+}
+
+impl StatedPropositionIndex {
+    fn deferred_empty() -> Self {
+        Self::Deferred(std::sync::Arc::new(DeferredStatedIndexNode {
+            parent: std::sync::Mutex::new(None),
+            adjustment: None,
+            built: std::sync::OnceLock::from(StatedIndexMap::default()),
+        }))
+    }
+
+    #[cfg(test)]
+    fn shares_storage_with(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Built(left), Self::Built(right)) => left.shares_root_with(right),
+            (Self::Deferred(left), Self::Deferred(right)) => std::sync::Arc::ptr_eq(left, right),
+            _ => false,
+        }
+    }
+}
+
+pub(crate) struct DeferredStatedIndexNode {
+    /// The index this node's adjustment applies to, released once this node
+    /// is built. The root has none and is built empty.
+    parent: std::sync::Mutex<Option<std::sync::Arc<DeferredStatedIndexNode>>>,
+    adjustment: Option<(Proposition, bool)>,
+    built: std::sync::OnceLock<StatedIndexMap>,
+}
+
+impl DeferredStatedIndexNode {
+    fn parent(&self) -> Option<std::sync::Arc<DeferredStatedIndexNode>> {
+        self.parent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Builds this node's index, and every unbuilt ancestor's, iteratively.
+    /// `None` when a key walk stops at an exhausted budget: nothing partial is
+    /// recorded, since an entry a later removal could not retract would make
+    /// a removed fact look stated.
+    fn force(self: &std::sync::Arc<Self>) -> Option<&StatedIndexMap> {
+        if let Some(index) = self.built.get() {
+            return Some(index);
+        }
+        let mut unbuilt = vec![self.clone()];
+        let mut index = loop {
+            let parent = unbuilt
+                .last()
+                .and_then(|node| node.parent())
+                .expect("an unbuilt node keeps its parent");
+            match parent.built.get() {
+                Some(index) => break index.clone(),
+                None => unbuilt.push(parent),
+            }
+        };
+        for node in unbuilt.iter().rev() {
+            if let Some((proposition, insert)) = &node.adjustment {
+                match crate::kernel::proof::proposition_identity_key(proposition) {
+                    Some(key) => {
+                        index = adjust_stated_index(&index, key, proposition, *insert);
+                    }
+                    None if crate::instrumentation::deadline_exceeded_with_work(0) => {
+                        return None;
+                    }
+                    None => {}
+                }
+            }
+            let _ = node.built.set(index.clone());
+            // Built nodes answer from their own index; the history above them
+            // is no longer needed by anything that holds this node.
+            node.parent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+        }
+        self.built.get()
+    }
+}
+
+impl Drop for DeferredStatedIndexNode {
+    /// Unlinks the chain iteratively, so dropping a context built from a
+    /// long fact list cannot overflow the stack.
+    fn drop(&mut self) {
+        let mut parent = self
+            .parent
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        while let Some(node) = parent {
+            match std::sync::Arc::try_unwrap(node) {
+                Ok(mut node) => {
+                    parent = node
+                        .parent
+                        .get_mut()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .take();
+                }
+                Err(_) => break,
+            }
+        }
+    }
+}
+
 thread_local! {
     static INCOMPLETE_REASONING_EPOCH: Cell<u64> = const { Cell::new(0) };
     static DECIDE_MEMO: RefCell<std::collections::HashMap<(u64, ConditionTerm), Option<bool>>> =
@@ -2872,6 +3028,29 @@ impl PureFactContext {
     }
 
     fn adjust_stated_proposition_index(&mut self, proposition: &Proposition, insert: bool) {
+        let index = match &self.stated_proposition_index {
+            StatedPropositionIndex::Built(index) => index,
+            // A fact the key builder declines by shape never enters the
+            // index, so it needs no node (and no copy of a deep chain).
+            StatedPropositionIndex::Deferred(_)
+                if crate::kernel::proof::proposition_identity_key_declines_shape(proposition) =>
+            {
+                return;
+            }
+            StatedPropositionIndex::Deferred(node) => {
+                self.stated_proposition_index = StatedPropositionIndex::Deferred(
+                    std::sync::Arc::new(DeferredStatedIndexNode {
+                        parent: std::sync::Mutex::new(Some(node.clone())),
+                        adjustment: Some((
+                            crate::kernel::clone_proposition_iteratively(proposition),
+                            insert,
+                        )),
+                        built: std::sync::OnceLock::new(),
+                    }),
+                );
+                return;
+            }
+        };
         let Some(key) = crate::kernel::proof::proposition_identity_key(proposition) else {
             // A checked key walk may stop at an exhausted tactic budget after
             // the source fact map has already changed. Drop the whole derived
@@ -2879,38 +3058,21 @@ impl PureFactContext {
             // while retaining an old entry could make a removed fact appear
             // available. The next insertion/rebuild repopulates it.
             if crate::instrumentation::deadline_exceeded_with_work(0) {
-                self.stated_proposition_index = crate::persistent::PersistentMap::default();
+                self.stated_proposition_index = StatedPropositionIndex::default();
             }
             return;
         };
-        let bucket = self
-            .stated_proposition_index
-            .get(&key)
-            .cloned()
-            .unwrap_or_default();
-        let bucket = if insert {
-            bucket.with_value(proposition.clone())
-        } else {
-            bucket.without_value(proposition)
-        };
-        self.stated_proposition_index = if bucket.is_empty() {
-            self.stated_proposition_index.without_key(&key)
-        } else {
-            self.stated_proposition_index.with_inserted(key, bucket)
-        };
+        let index = adjust_stated_index(index, key, proposition, insert);
+        self.stated_proposition_index = StatedPropositionIndex::Built(index);
     }
 
     fn rebuild_stated_proposition_index(&mut self) {
-        let mut index: crate::persistent::PersistentMap<
-            crate::kernel::proof::PropositionIdentityKey,
-            crate::persistent::PersistentSet<Proposition>,
-        > = crate::persistent::PersistentMap::default();
+        let mut index = StatedIndexMap::default();
         let mut add = |proposition: &Proposition| {
             let Some(key) = crate::kernel::proof::proposition_identity_key(proposition) else {
                 return;
             };
-            let bucket = index.get(&key).cloned().unwrap_or_default();
-            index = index.with_inserted(key, bucket.with_value(proposition.clone()));
+            index = adjust_stated_index(&index, key, proposition, true);
         };
         for (condition, value) in self.condition_facts.iter() {
             add(&Proposition::ConditionIs(condition.clone(), *value));
@@ -2918,7 +3080,25 @@ impl PureFactContext {
         for proposition in self.prop_facts.iter() {
             add(proposition);
         }
-        self.stated_proposition_index = index;
+        self.stated_proposition_index = StatedPropositionIndex::Built(index);
+    }
+
+    /// Builds a deferred stated-proposition index now, as the first query
+    /// would. Tests that measure the query itself call it so the one-time
+    /// keying of the facts assumed since the last query is not counted
+    /// against the lookup.
+    #[cfg(test)]
+    pub(crate) fn build_stated_proposition_index(&self) {
+        let _ = self.stated_proposition_index();
+    }
+
+    /// The stated-proposition index, or `None` when a deferred index could
+    /// not be completed within the active budget.
+    fn stated_proposition_index(&self) -> Option<&StatedIndexMap> {
+        match &self.stated_proposition_index {
+            StatedPropositionIndex::Built(index) => Some(index),
+            StatedPropositionIndex::Deferred(node) => node.force(),
+        }
     }
 
     pub(super) fn clear_proposition_facts(&mut self) {
@@ -3632,7 +3812,7 @@ impl PureFactContext {
             && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
             && self
                 .stated_proposition_index
-                .shares_root_with(&other.stated_proposition_index)
+                .shares_storage_with(&other.stated_proposition_index)
             && std::sync::Arc::ptr_eq(
                 &self.function_contract_facts,
                 &other.function_contract_facts,
@@ -3968,7 +4148,9 @@ impl PureFactContext {
             return self.states_required_goal(&canonical);
         }
         if let Some(key) = crate::kernel::proof::proposition_identity_key(goal)
-            && let Some(bucket) = self.stated_proposition_index.get(&key)
+            && let Some(bucket) = self
+                .stated_proposition_index()
+                .and_then(|index| index.get(&key))
             && let Some(candidate) = bucket.iter().next()
         {
             // The key narrows the lookup to one identity bucket; retain the
@@ -6013,6 +6195,8 @@ mod stated_requirement_tests {
                 true,
             ));
         }
+        small.build_stated_proposition_index();
+        large.build_stated_proposition_index();
         let (_, small_work) = crate::instrumentation::measure_deterministic_work(|| {
             small.states_required_goal(&goal)
         });
@@ -6034,6 +6218,7 @@ mod stated_requirement_tests {
                 context = context
                     .assume_proposition(requirement(50_000 + index as u64, "same-sort-unrelated"));
             }
+            context.build_stated_proposition_index();
             let (available, measured) = crate::instrumentation::measure_deterministic_work(|| {
                 context.states_required_goal(&goal)
             });
@@ -6044,6 +6229,45 @@ mod stated_requirement_tests {
             work.windows(2).all(|pair| pair[0] == pair[1]),
             "stated-query work scanned same-sort facts: {work:?}"
         );
+    }
+
+    /// The stated index keys each fact change once, when a query first
+    /// needs it: never for a context nobody asks, and only its own suffix for
+    /// a sibling that shares an already built prefix.
+    #[test]
+    fn stated_index_keys_each_fact_once_and_only_when_asked() {
+        let goal = requirement(45_000, "goal");
+        let mut base = PureFactContext::new().assume_proposition(goal.clone());
+        for index in 0..64 {
+            base = base.assume_proposition(requirement(46_000 + index, "unrelated"));
+        }
+        let key_work = |context: &PureFactContext| {
+            crate::instrumentation::measure_deterministic_work(|| {
+                context.build_stated_proposition_index()
+            })
+            .1
+        };
+        let left = base.clone().assume_proposition(requirement(47_000, "left"));
+        let right = base
+            .clone()
+            .assume_proposition(requirement(47_001, "right"));
+        let (_, unasked) = crate::instrumentation::measure_deterministic_work(|| {
+            base.clone()
+                .assume_proposition(requirement(47_002, "unasked"))
+        });
+        let first = key_work(&left);
+        let sibling = key_work(&right);
+        let again = key_work(&left);
+        assert!(
+            unasked < sibling,
+            "assuming a fact computed a key: {unasked} vs one key {sibling}"
+        );
+        assert!(
+            first > 32 * sibling,
+            "the first query keys the shared prefix: {first} vs {sibling}"
+        );
+        assert_eq!(again, 0, "a built index is not rebuilt");
+        assert!(left.states_required_goal(&goal) && right.states_required_goal(&goal));
     }
 
     #[test]

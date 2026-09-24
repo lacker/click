@@ -2149,3 +2149,153 @@ fn stores_beside_many_owned_ranges_scale_near_linearly() {
         .collect::<Vec<_>>();
     assert_near_linear_scaling("composition-owned store separation", &query);
 }
+
+/// The frozen byte-representation round trip
+/// (`mdtests/byte_representation_roundtrip.md`) beside `unrelated` live heap
+/// allocations, each null-checked with every failure path freeing the earlier
+/// ones, written once, and freed at the end. `extra_copies` repeats the fixed
+/// second `memcpy`.
+fn roundtrip_with_unrelated_allocations(unrelated: usize, extra_copies: usize) -> String {
+    let mut c = String::from(
+        "void *malloc(unsigned long size);\nvoid free(void *ptr);\nvoid *memcpy(void *dest, const void *src, unsigned long n);\n\nstruct record {\n    unsigned int tag;\n    int *target;\n};\n\nint f(void) {\n",
+    );
+    for index in 0..unrelated {
+        c.push_str(&format!(
+            "    int *u{index} = malloc(sizeof(int));\n    if (u{index} == 0) {{\n"
+        ));
+        for previous in 0..index {
+            c.push_str(&format!("        free(u{previous});\n"));
+        }
+        c.push_str(&format!(
+            "        return -1;\n    }}\n    *u{index} = {index};\n"
+        ));
+    }
+    let cleanup = (0..unrelated)
+        .map(|index| format!("        free(u{index});\n"))
+        .collect::<String>();
+    c.push_str(
+        &"    int *pointee = malloc(sizeof(int));
+    if (pointee == 0) {
+        return -1;
+    }
+    struct record *src = malloc(sizeof(struct record));
+    if (src == 0) {
+        free(pointee);
+        return -1;
+    }
+    unsigned char *buf = malloc(16);
+    if (buf == 0) {
+        free(pointee);
+        free(src);
+        return -1;
+    }
+    struct record *dst = malloc(sizeof(struct record));
+    if (dst == 0) {
+        free(pointee);
+        free(src);
+        free(buf);
+        return -1;
+    }
+    *pointee = 7;
+    src->tag = 11u;
+    src->target = pointee;
+    memcpy(buf, (unsigned char *)(void *)src, sizeof(struct record));
+    memcpy((unsigned char *)(void *)dst, buf, sizeof(struct record));
+"
+        .replace(
+            "        return -1;\n",
+            &format!("{cleanup}        return -1;\n"),
+        ),
+    );
+    for _ in 0..extra_copies {
+        c.push_str("    memcpy((unsigned char *)(void *)dst, buf, sizeof(struct record));\n");
+    }
+    c.push_str(
+        "    int out = dst->tag + *dst->target;
+    free(pointee);
+    free(src);
+    free(buf);
+    free(dst);
+",
+    );
+    for index in 0..unrelated {
+        c.push_str(&format!("    free(u{index});\n"));
+    }
+    c.push_str("    return out;\n}\n");
+    c
+}
+
+const ROUNDTRIP_CLICK: &str = "verifying \"rep_copy.c\";\n\nint f() {\n    ensures result == 18 or result == -1;\n} by {\n    execute();\n    simp();\n}\n";
+
+fn roundtrip_sample(unrelated: usize, extra_copies: usize) -> ScalingSample {
+    std::thread::Builder::new()
+        .name(format!("roundtrip-{unrelated}-{extra_copies}"))
+        .stack_size(64 << 20)
+        .spawn(move || roundtrip_sample_on_this_thread(unrelated, extra_copies))
+        .expect("spawn a sample thread")
+        .join()
+        .expect("sample thread")
+}
+
+fn roundtrip_sample_on_this_thread(unrelated: usize, extra_copies: usize) -> ScalingSample {
+    let c = roundtrip_with_unrelated_allocations(unrelated, extra_copies);
+    let (verified, sample) = scaling_sample(unrelated, || {
+        verify_c0_sources(ROUNDTRIP_CLICK, &[("rep_copy.c", c.as_str())])
+    });
+    verified.unwrap_or_else(|error| {
+        panic!(
+            "round trip beside {unrelated} allocations with {extra_copies} extra copies failed: {}",
+            error.message()
+        )
+    });
+    sample
+}
+
+/// One extra fixed `memcpy` in the frozen byte-representation round trip
+/// costs nearly the same deterministic work beside 2, 4, 8, or 16 unrelated
+/// live heap allocations.
+///
+/// Every sample runs on its own thread after one warm-up verification, so no
+/// sample pays the once-per-process standard-library setup. Measured
+/// marginals on 2026-09-23: 3236, 3288, 3364, and 3548 units (and 3876 and
+/// 4476 at 32 and 64 allocations, too slow for a debug-build unit test).
+/// Before snapshot sharing they were about 33,000 at N = 8 and 58,000 at
+/// N = 16: every later free compared the copy's facts, whose embedded
+/// snapshots were equal but separately stored, entry by entry.
+///
+/// This guards that collapse; it is not the logarithmic contract. The
+/// remaining growth is roughly ten units per unrelated allocation — the
+/// execute planner's per-step rebuilding of fact contexts from fact lists
+/// and re-execution of the frontier tail, and whole-context resource
+/// validity at each call — and it doubles with each doubling of N.
+#[test]
+fn roundtrip_extra_copy_stays_nearly_flat_beside_unrelated_allocations() {
+    const SIZES: [usize; 4] = [2, 4, 8, 16];
+    let _ = roundtrip_sample(1, 0);
+    let handles = SIZES
+        .iter()
+        .flat_map(|&size| [(size, 0), (size, 1)])
+        .map(|(size, extra)| {
+            std::thread::Builder::new()
+                .name(format!("roundtrip-{size}-{extra}"))
+                .stack_size(64 << 20)
+                .spawn(move || roundtrip_sample_on_this_thread(size, extra).work)
+                .expect("spawn a sample thread")
+        })
+        .collect::<Vec<_>>();
+    let work = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("sample thread"))
+        .collect::<Vec<_>>();
+    let marginal = work
+        .chunks(2)
+        .map(|pair| pair[1] as i64 - pair[0] as i64)
+        .collect::<Vec<_>>();
+    eprintln!("extra-copy marginal work beside {SIZES:?} allocations: {marginal:?}");
+    assert!(marginal[0] > 0, "{marginal:?}");
+    let allowed = marginal[0] + marginal[0] / 4;
+    assert!(
+        marginal.iter().all(|work| *work <= allowed),
+        "one extra memcpy grew with unrelated allocations beyond {allowed}: {marginal:?}"
+    );
+}

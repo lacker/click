@@ -2451,6 +2451,13 @@ fn proposition_identity_key_with_raw_load_flag(
     ))
 }
 
+/// Whether [`proposition_identity_key`] declines `proposition` by shape
+/// alone, before any work: a source-shaped implication chain too deep for
+/// the alpha-key builder.
+pub(crate) fn proposition_identity_key_declines_shape(proposition: &Proposition) -> bool {
+    implication_chain_depth(proposition) > 128
+}
+
 fn implication_chain_depth(proposition: &Proposition) -> usize {
     let mut depth = 0;
     let mut current = proposition;

@@ -320,7 +320,20 @@ one store beside a growing number of unrelated cells, interning a one-store
 derivative of an interned snapshot, and deduplication of equal content reached
 by different routes. The same file bounds by a constant plus a logarithm the
 work of one C store, one call havoc and its checker, one free, and one typed
-load into a heap block beside a growing number of unrelated live allocations.
+load into a heap block beside a growing number of unrelated live allocations,
+and re-deriving one store from the same base (a statement planned and then
+checked) beside a growing number of unrelated cells, which must also hand back
+the first derivation's storage. Normalizing allocation tokens in distinct heap
+blocks must stay linear in the tokens.
+
+End to end, `roundtrip_extra_copy_stays_nearly_flat_beside_unrelated_allocations`
+in `src/surface/tests/scaling_tests.rs` verifies the frozen byte-representation
+round trip beside 2, 4, 8, and 16 unrelated live heap allocations, with and
+without one extra fixed `memcpy`, and bounds the extra copy's marginal work by
+a quarter above its smallest value. It guards the collapse of the quadratic
+fact comparison at every free; it is not the logarithmic contract, which the
+smart `execute` planner does not yet meet (its test comment names the
+remaining linear terms).
 
 Rust library tests and both fixture gates enforce deterministic tactic-work
 budgets but do not inherit production time limits. Tests specifically about
