@@ -1422,9 +1422,16 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(anchored));
         }
-        if let Some(rewritten) = self.try_indexed_goal_equality_rewrite_closure_excluding(
-            exclude_exact_goal,
-            allow_function_unfold,
+        if let Some(rewritten) = crate::instrumentation::measure_operation(
+            "surface",
+            "simp closure",
+            "simp closure: indexed goal equality rewrite",
+            || {
+                self.try_indexed_goal_equality_rewrite_closure_excluding(
+                    exclude_exact_goal,
+                    allow_function_unfold,
+                )
+            },
         ) {
             return Ok(Some(rewritten));
         }
@@ -1477,9 +1484,12 @@ impl<'a> Proof<'a> {
         // has associated the surface name `x` with its fresh kernel variable.
         // The recursive structural call retains that checked `Intro` step and
         // then discovers applications in the now-focused body goal.
-        if let Some(structural) =
-            self.try_structural_simp_closure_with_surfaces(&surface_goal, introduced_surfaces)?
-        {
+        if let Some(structural) = crate::instrumentation::measure_operation(
+            "surface",
+            "simp closure",
+            "simp closure: structural",
+            || self.try_structural_simp_closure_with_surfaces(&surface_goal, introduced_surfaces),
+        )? {
             return Ok(Some(structural));
         }
         if allow_function_unfold
