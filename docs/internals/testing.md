@@ -146,8 +146,10 @@ while normal returns bypass the handler and a throw from the handler escapes.
 The binding must be fresh, so it cannot replace an existing local. A separate
 C++ importer fixture locks one source `try`/`catch (int name)` over a modular
 helper call and checks ordinary verification, expansion/reverification, audit,
-and rejection of a false result claim. The importer still rejects object
-unwinding and unsupported handler forms. A signed-64 predicate fixture retains a direct `CAmount` typedef
+and rejection of a false result claim. A focused importer regression checks that
+function-scope destructors are emitted before rethrowing both explicit throws
+and exceptions from call-initialized locals. Exceptional mutable postconditions
+remain outside this profile. A signed-64 predicate fixture retains a direct `CAmount` typedef
 identity, imports `const CAmount&`, the implicit
 promotion of zero, signed `>=`, and a `bool` result, then verifies an exact
 all-input contract offline. Its false zero-boundary contract fails, while

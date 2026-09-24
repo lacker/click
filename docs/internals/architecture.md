@@ -124,19 +124,23 @@ The C++ exporter uses Clang's typed AST and checked source CFG to identify the
 throw, handler, payload, and constructed objects. It emits destructor calls as
 ordinary checked kernel steps, in reverse construction order, and retains the
 constructed prefix when a later declaration follows a potentially throwing
-call. ABI landing pads and runtime exception behavior are trust-boundary
-inputs, not proof evidence. The supported slice permits at most two
-destructible objects in the selected cleanup scope; throwing constructors or
-destructors, rethrow and inherited handlers, `setjmp`/`longjmp`, and general
-backward or irreducible edges remain outside it.
+call. Function-scope destructor chains also run before an escaping call or
+explicit throw crosses the function boundary, including when a potentially
+throwing call initializes a local. ABI landing pads and runtime exception
+behavior are trust-boundary inputs, not proof evidence. The supported slice
+permits at most two destructible objects in the selected cleanup scope;
+throwing constructors or destructors, rethrow and inherited handlers,
+`setjmp`/`longjmp`, and general backward or irreducible edges remain outside
+it.
 
 The [resource tracker](resource-tracker.md) is the single kernel authority for
 whether a mutable resource is the same at two proof points. Cleanup proofs use
 that answer to frame destructor stores and to distinguish a real mutation from
 an unshown fact; it does not grant ownership or recover a resource on its own.
 The semantic regressions are `mdtests/cpp_two_guard_unwind.md`,
-`mdtests/cpp_guard_unwind_before_second.md`, and the hostile proof checks in
-`tests/cpp_import.rs`. The deterministic
+`mdtests/cpp_guard_unwind_before_second.md`, and
+`scalar_int32_profile_emits_function_scope_cleanup_edges_for_escaping_throws`
+in `tests/cpp_import.rs`. The deterministic
 scaling regression
 `exceptional_cleanup_edges_scale_near_linearly_with_unrelated_context` in
 `src/surface/tests/scaling_tests.rs` covers cleanup-edge counts 2, 4, 8, and
