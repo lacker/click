@@ -406,15 +406,23 @@ impl<'a> Proof<'a> {
                     context.click_function_environment,
                 )
                 .map_err(|message| {
-                    match unassigned_local_read_by(&surface, &execution.core.state) {
-                        Some(local) => self.step_error(format!(
+                    if let Some(local) = unassigned_local_read_by(&surface, &execution.core.state) {
+                        return self.step_error(format!(
                             "could not lower {description}: local `{local}` has no value at this \
                              frontier; the execution has not run its assignment yet"
-                        )),
-                        None => {
-                            self.step_error(format!("could not lower {description}: {message}"))
-                        }
+                        ));
                     }
+                    if let Some(refusal) =
+                        crate::surface::diagnostics::describe_consumed_instance_field_read(
+                            &surface,
+                            &execution.core.state,
+                            false,
+                        )
+                    {
+                        return self
+                            .step_error(format!("could not lower {description}: {refusal}"));
+                    }
+                    self.step_error(format!("could not lower {description}: {message}"))
                 })
             }
         }
@@ -547,15 +555,23 @@ impl<'a> Proof<'a> {
                     context.click_function_environment,
                 )
                 .map_err(|message| {
-                    match unassigned_local_read_by(&surface, &execution.core.state) {
-                        Some(local) => self.step_error(format!(
+                    if let Some(local) = unassigned_local_read_by(&surface, &execution.core.state) {
+                        return self.step_error(format!(
                             "could not lower {description}: local `{local}` has no value at this \
                              frontier; the execution has not run its assignment yet"
-                        )),
-                        None => {
-                            self.step_error(format!("could not lower {description}: {message}"))
-                        }
+                        ));
                     }
+                    if let Some(refusal) =
+                        crate::surface::diagnostics::describe_consumed_instance_field_read(
+                            &surface,
+                            &execution.core.state,
+                            false,
+                        )
+                    {
+                        return self
+                            .step_error(format!("could not lower {description}: {refusal}"));
+                    }
+                    self.step_error(format!("could not lower {description}: {message}"))
                 })
             }
         }

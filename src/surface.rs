@@ -1145,15 +1145,34 @@ pub struct StructuralClause {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminationMeasure {
     components: Vec<ContractExpression>,
+    /// The components as written, when resolving a loop clause's proof
+    /// scope rewrote them. A proof-local name such as a `let { field: name }
+    /// = unfold(...)` binder is replaced by the value it names, but the
+    /// termination plan reads the written clause, so the loop head keeps the
+    /// written spelling to name the component by.
+    written: Option<Vec<ContractExpression>>,
 }
 
 impl TerminationMeasure {
     pub(crate) fn new(components: Vec<ContractExpression>) -> Self {
-        Self { components }
+        Self {
+            components,
+            written: None,
+        }
     }
 
     pub fn components(&self) -> &[ContractExpression] {
         &self.components
+    }
+
+    /// The written spelling of component `index` when resolving the proof
+    /// scope changed it.
+    pub(in crate::surface) fn rewritten_component_source(
+        &self,
+        index: usize,
+    ) -> Option<&ContractExpression> {
+        let written = self.written.as_ref()?.get(index)?;
+        (Some(written) != self.components.get(index)).then_some(written)
     }
 }
 
@@ -6663,8 +6682,8 @@ impl StructuralClause {
             .map(|resource| substitute_resource_clause_bindings(resource, substitutions))
             .collect::<Result<Vec<_>, String>>()?;
         clause.decreases = match &self.decreases {
-            Some(measure) => Some(TerminationMeasure::new(
-                measure
+            Some(measure) => {
+                let components = measure
                     .components
                     .iter()
                     .map(|component| {
@@ -6673,8 +6692,18 @@ impl StructuralClause {
                             substitutions,
                         )
                     })
-                    .collect::<Result<Vec<_>, String>>()?,
-            )),
+                    .collect::<Result<Vec<_>, String>>()?;
+                let written = (components != measure.components).then(|| {
+                    measure
+                        .written
+                        .clone()
+                        .unwrap_or_else(|| measure.components.clone())
+                });
+                Some(TerminationMeasure {
+                    components,
+                    written,
+                })
+            }
             None => None,
         };
         Ok(clause)

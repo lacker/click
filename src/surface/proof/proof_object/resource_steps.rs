@@ -143,12 +143,29 @@ impl<'a> Proof<'a> {
             .composite_resource_definition(instance.name())
             .ok_or_else(|| self.step_error("resource instance has no registered body"))?;
         let selected = CResourceFact::own(CResource::Instance(instance.clone()));
+        // `let { field: name } = unfold(instance)` names the folded value of a
+        // scalar field, as a matched constructor payload names its value. The
+        // instance is consumed by this unfold, so the binder is the only
+        // spelling of that value for the rest of the proof.
+        let locals = if unfold {
+            self.bind_unfolded_instance_fields(binding, instance, &execution)?
+        } else {
+            self.state().locals().clone()
+        };
         let selected_children = binding
             .child_bindings
             .as_ref()
             .map(|children| {
                 children
                     .iter()
+                    .filter(|(slot, _, _)| {
+                        !unfold
+                            || !instance
+                                .schema()
+                                .fields()
+                                .iter()
+                                .any(|(field, _)| field == slot)
+                    })
                     .map(|(slot, name, identity)| {
                         let identity = if unfold {
                             *identity
@@ -293,11 +310,69 @@ impl<'a> Proof<'a> {
             })
         };
         Ok(CheckedFocusedTransition {
-            locals: self.state().locals().clone(),
+            locals,
             branch: Some(updated_branch),
             added_facts: added.clone(),
             checked_facts: added,
         })
+    }
+
+    /// The proof locals after `let { field: name, ... } = unfold(instance)`
+    /// binds each named C-typed field of `instance` to its folded C value,
+    /// which lowers exactly as a matched constructor payload does.
+    fn bind_unfolded_instance_fields(
+        &self,
+        binding: &ResourceInstanceBinding,
+        instance: &crate::kernel::ResourceInstance,
+        execution: &ExecutionProofState,
+    ) -> Result<ProofLocals, ClickError> {
+        let mut locals = self.state().locals().clone();
+        let Some(children) = binding.child_bindings.as_ref() else {
+            return Ok(locals);
+        };
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(locals);
+        };
+        for (slot, name, _) in children.iter() {
+            let Some(index) = instance
+                .schema()
+                .fields()
+                .iter()
+                .position(|(field, _)| field == slot)
+            else {
+                continue;
+            };
+            if name == "result"
+                || locals.values.contains_key(name)
+                || locals.integer_values.contains_key(name)
+                || execution.core.state.locals().contains_name(name)
+                || context
+                    .parsed_function
+                    .parameters()
+                    .iter()
+                    .any(|parameter| parameter.name() == name)
+            {
+                return Err(
+                    self.step_error(format!("unfold field binding `{name}` is already in scope"))
+                );
+            }
+            match &instance.fields()[index] {
+                AlgebraicValue::C(value) => {
+                    locals.values = locals.values.with_inserted(
+                        name.clone(),
+                        ContractExpression::CFragment(CExpression::Value(value.clone())),
+                    );
+                }
+                // Declaration expansion admits only C-typed field binders.
+                AlgebraicValue::Integer(_) | AlgebraicValue::Algebraic(_) => {
+                    return Err(self.step_error(format!(
+                        "field `{slot}` of `{}` is not C-typed; an unfold pattern binds only C scalar and pointer fields",
+                        instance.name()
+                    )));
+                }
+            }
+        }
+        Ok(locals)
     }
 
     pub(super) fn apply_function_unfold(

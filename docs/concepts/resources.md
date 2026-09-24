@@ -595,6 +595,16 @@ with `{ start: s + 1 }` asks for `data[s + 1..capacity]` and checks the facts at
 `s + 1`. No algebraic model or `match` is needed for a value that is just a
 number; keep those for models with genuinely different shapes.
 
+`unfold` gives the instance up, so after it the field has no instance to be
+read from. The unfold pattern keeps the value by name, as a `match` arm keeps a
+payload: `let { start: s } = unfold(before);` binds `s` to the value the
+folded instance held. That name is ordinary proof data for the rest of the
+function, which matters most in a loop: a loop invariant reads `old(...)` at
+the loop's entry, where `before` is already consumed, so the invariant has to
+say `s`. One pattern may name child slots and fields together; see
+`mdtests/resource_unfold_binds_scalar_field.md` and
+`mdtests/resource_unfold_binds_children_and_fields.md`.
+
 ### Modeled bodies and arm selection
 
 A body may instead branch on one algebraic field, so which cells the resource
@@ -670,7 +680,8 @@ has the same repair: say what you want kept.
 - **`unfold` and the `fold` that answers it.** `unfold(c)` gives the instance up,
   so at the `fold` below it `c.rank` names no model at all — there is no
   instance of that identity to read. Name the value it had where it still
-  existed: `let c = fold(Cell(), { rank: old(c.rank) });`.
+  existed: `let c = fold(Cell(), { rank: old(c.rank) });`, or bind it at the
+  unfold, `let { rank: r } = unfold(c);`, and write `r`.
 
 The same holds for a counted population. A contract's `produces` or `consumes`
 moves `count(R(a))`, and the transition relates the two counts, so an `ensures`

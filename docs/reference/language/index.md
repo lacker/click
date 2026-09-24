@@ -1479,6 +1479,29 @@ range; match it and use a C-typed constructor binding instead. The negative regr
 `mdtests/resource_field_memory_endpoint_rejects_out_of_bounds_fold.md` and
 `mdtests/resource_field_memory_endpoint_unfold_rejects_other_endpoint.md`.
 
+Unfolding consumes the instance, so its fields have nothing to read afterward:
+`before.prefix` is refused, and so is `old(before.prefix)` in a loop invariant,
+because a loop invariant reads `old(...)` at the loop's entry. The unfold
+pattern names a C-typed field's folded value instead, exactly as a proof
+`match` arm names a constructor payload:
+
+<!-- verified-example: mdtests/resource_unfold_binds_scalar_field.md -->
+```click
+let { prefix: p } = unfold(before);
+```
+
+`p` is a plain proof value for the rest of the function. Later `have`s, loop
+invariants and `decreases` measures, fold field maps such as
+`fold(claimed_prefix(data, occupied, capacity), { prefix: p + 1 })`, and the
+closing contract claims may all name it. One pattern may mix child slots and
+fields, `let { marks: m, prefix: p, free: f, live: n } = unfold(state)`
+(`mdtests/resource_unfold_binds_children_and_fields.md`). A binder must be a
+fresh name that is not a C parameter or local in scope. Only C-typed fields
+bind this way; an algebraic or `Integer` field is refused, and a proof `match`
+on the field before the unfold names its payload. Expansion and audit print
+the pattern as written. The refusal for reading the consumed field is
+`mdtests/resource_unfold_field_binding_rejects_consumed_read.md`.
+
 Guarded and constructor-matched memory-only bodies support explicit construction
 and field updates with the same `let c = fold(...)` syntax. No earlier unfold
 is required. Guarded bodies support the

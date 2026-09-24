@@ -15187,3 +15187,38 @@ fn a_field_selected_memory_endpoint_expands_and_reverifies() {
         });
     }
 }
+
+#[test]
+fn an_unfold_bound_scalar_field_expands_and_reverifies() {
+    // `let { prefix: p } = unfold(before)` names the folded field value that
+    // the scan loop's invariant and measure, the post-loop facts, and the
+    // refold read after the instance is consumed. The whole claim expands to
+    // explicit steps that keep the binding pattern and verify on their own.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/resource_unfold_binds_scalar_field.md");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .expect("the fixture has a click block");
+    let sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let expanded = expand_c0_claim_source_by_label(click_source, &sources, "claim.contract")
+        .expect("the claim should expand");
+    assert!(
+        expanded.contains("let { prefix: p } = unfold(before);"),
+        "the expansion should keep the field binding: {expanded}"
+    );
+    assert!(
+        !expanded.contains("simp();") && !expanded.contains("close_invariants();"),
+        "every smart site should be replaced: {expanded}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .unwrap_or_else(|error| panic!("the expansion should reverify: {error:?}\n{expanded}"));
+}

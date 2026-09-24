@@ -2362,6 +2362,38 @@ pub(super) fn c_ranking_measures_display(measures: &[CRankingComponent]) -> Stri
     join_measure_components(measures.iter().map(c_ranking_measure_display))
 }
 
+/// Whether a certified loop measure and the plan's measure name one
+/// declaration. They are equal keys, except that a component naming a proof
+/// binder (a proof `match` payload or a `let { field: name } = unfold(...)`
+/// name) resolves at the loop head to the value it stands for and is carried
+/// as a pure component under its written spelling, while the plan, built from
+/// the written clause before any proof runs, reads that spelling as C. As the
+/// `CRankingMeasureKey` documentation explains, this comparison identifies a
+/// declaration; the termination evidence is the certified back-edge bundle.
+fn loop_measures_name_same_declaration(
+    certified: &CLoopTerminationMeasure,
+    planned: &CLoopTerminationMeasure,
+) -> bool {
+    match (certified, planned) {
+        (
+            CLoopTerminationMeasure::Ranking(certified),
+            CLoopTerminationMeasure::Ranking(planned),
+        ) => {
+            certified.len() == planned.len()
+                && certified.iter().zip(planned).all(|(certified, planned)| {
+                    match (certified, planned) {
+                        (
+                            CRankingMeasureKey::Pure(source),
+                            CRankingMeasureKey::CExpression(written),
+                        ) => *source == termination_measure_display(written),
+                        (certified, planned) => certified == planned,
+                    }
+                })
+        }
+        (certified, planned) => certified == planned,
+    }
+}
+
 /// The display form of one loop's declared measure, for plan diagnostics.
 fn loop_termination_measure_display(measure: &CLoopTerminationMeasure) -> String {
     match measure {
@@ -2947,7 +2979,7 @@ fn check_loops(
                 )));
             }
             match certified.get(&index) {
-                Some(checked) if checked == measures => Ok(()),
+                Some(checked) if loop_measures_name_same_declaration(checked, measures) => Ok(()),
                 Some(checked) => Err(error(format!(
                     "loop {index} in `{function_name}` was certified for `{}`, not the planned `{}`",
                     loop_termination_measure_display(checked),

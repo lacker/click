@@ -355,14 +355,25 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
         &assumptions_from_propositions(&context.pure_facts),
     )
     .map_err(|message| {
-        ClickError::new(match fresh_loop_binder_name(environment.function_block, clause) {
-            Some(name) => format!(
+        if let Some(name) = fresh_loop_binder_name(environment.function_block, clause) {
+            return ClickError::new(format!(
                 "`{claim_label}`: loop binder `{name}` is not an enclosing contract binder, so an \
                  invariant that reads it has nothing to read at loop entry; reuse the enclosing \
                  binder's name, whose instance the loop takes over"
-            ),
-            None => format!("`{claim_label}`: {message}"),
-        })
+            ));
+        }
+        if let Some(refusal) = invariant_items.iter().find_map(|item| {
+            crate::surface::diagnostics::describe_consumed_instance_field_read(
+                item.proposition(),
+                &context.state,
+                true,
+            )
+        }) {
+            return ClickError::new(format!(
+                "`{claim_label}` loop {loop_index} invariant: {refusal}"
+            ));
+        }
+        ClickError::new(format!("`{claim_label}`: {message}"))
     })?;
     if entry_goals.declarations().len() != invariant_items.len() {
         return Err(ClickError::new(format!(
