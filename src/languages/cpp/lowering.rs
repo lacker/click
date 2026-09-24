@@ -109,7 +109,7 @@ fn lower_function(import: &PreparedCppImport, source: &CppFunction) -> Result<CF
             CppExceptionBehavior::ScalarInt32
         ),
     };
-    let body = context.lower_sequence(&source.body)?;
+    let body = context.lower_function_body(&source.body)?;
     let return_type = match &source.function_kind {
         CppFunctionKind::Free if is_mutable_int32(&source.return_type) => CType::Int32,
         CppFunctionKind::Free
@@ -184,6 +184,36 @@ struct LoweringContext<'a> {
 }
 
 impl LoweringContext<'_> {
+    /// Lowers the function body with its function-scope cleanup prefix on each
+    /// operation that can propagate an exception. Return statements already
+    /// carry their complete cleanup chain; this prefix is for calls and throws
+    /// that escape the frame before a return is reached.
+    fn lower_function_body(&mut self, statements: &[CppStatement]) -> Result<CStatement, String> {
+        let function_cleanups = match statements.last() {
+            Some(CppStatement::Return { cleanups, .. }) => cleanups.as_slice(),
+            _ => &[],
+        };
+        let mut active = Vec::new();
+        let mut lowered = None;
+        for statement in statements {
+            let current = self.lower_statement_with_cleanups(statement, &active)?;
+            lowered = Some(match lowered {
+                Some(previous) => c_seq(previous, current),
+                None => current,
+            });
+            if let CppStatement::Declare { local, .. } = statement
+                && let Some(cleanup) = function_cleanups.iter().find(|cleanup| match cleanup {
+                    CppCleanup::Destructor { object, .. } => {
+                        object.declaration_id == local.declaration_id && object.name == local.name
+                    }
+                })
+            {
+                active.push(cleanup.clone());
+            }
+        }
+        Ok(lowered.unwrap_or_else(c_skip))
+    }
+
     fn lower_sequence(&mut self, statements: &[CppStatement]) -> Result<CStatement, String> {
         let mut statements = statements
             .iter()
@@ -410,7 +440,7 @@ impl LoweringContext<'_> {
     /// Lowers a cleanup scope whose constructed-object set can differ by
     /// exceptional path. The ordinary scope shape has all declarations before
     /// the first potentially throwing operation, so it can use one checked
-    /// cleanup edge around the live tail. Once a call or throw precedes a later
+    /// cleanup edge around the live tail. Once a potentially throwing operation or initializer precedes a later
     /// declaration, that edge would incorrectly destroy an object that has not
     /// been constructed yet. Keep the active cleanup prefix while lowering
     /// each statement instead.
@@ -453,6 +483,13 @@ impl LoweringContext<'_> {
         active: &[CppCleanup],
     ) -> Result<CStatement, String> {
         match statement {
+            CppStatement::Declare {
+                initializer: CppInitializer::Call { .. },
+                ..
+            } => {
+                let declaration = self.lower_statement(statement)?;
+                self.lower_throwing_statement(declaration, active)
+            }
             CppStatement::Call {
                 callee, arguments, ..
             } => {
@@ -917,6 +954,10 @@ fn scope_needs_path_sensitive_unwind(statements: &[CppStatement], cleanups: &[Cp
 fn statement_may_throw(statement: &CppStatement) -> bool {
     match statement {
         CppStatement::Call { .. } | CppStatement::Throw { .. } => true,
+        CppStatement::Declare {
+            initializer: CppInitializer::Call { .. },
+            ..
+        } => true,
         CppStatement::If {
             then_branch,
             else_branch,

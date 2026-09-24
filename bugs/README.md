@@ -6,6 +6,4 @@ for the roadmap. Each file states the violated invariant, a small intended
 regression, and acceptance criteria. An accepted bug is deleted here when its
 fix, regression coverage, and documentation land.
 
-- [The annotation quantifier counter is raised into other producers' bands](quantifier-counter-rises-into-other-producers.md) — statically confirmed
-- [The interface join erases a deallocation one arm performed](interface-join-erases-one-arm-deallocation.md) — machine-confirmed
-- [An uncaught cpp throw skips every enclosing destructor](cpp-throw-skips-enclosing-destructors.md) — statically confirmed
+No open bug reports remain.
