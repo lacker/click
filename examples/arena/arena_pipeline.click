@@ -1,62 +1,8 @@
+import "shared/arena_resources.click";
+
 spec enum ArenaPrefixAllocOutcome {
     Failure(int32, int32),
     Success(int32, int32, int32, int32),
-}
-
-resource arena_prefix_partition(
-    data: int32*,
-    occupied: int32*,
-    capacity: int32
-) {
-    field prefix: int32;
-    owns occupied[0..capacity];
-    owns data[prefix..capacity];
-    fact 0 <= prefix;
-    fact prefix <= capacity;
-    fact forall (k: int32) {
-        0 <= k and k < prefix implies occupied[k] == 1
-    };
-    fact forall (k: int32) {
-        prefix <= k and k < capacity implies occupied[k] == 0
-    };
-}
-
-resource arena_prefix_state(arena: struct arena*) {
-    field prefix: int32;
-    field live: int32;
-    owns &arena->data;
-    owns &arena->occupied;
-    owns arena->capacity;
-    owns arena->live_regions;
-    owns partition: arena_prefix_partition(
-        arena->data,
-        arena->occupied,
-        arena->capacity
-    );
-    fact partition.prefix == prefix;
-    fact arena->capacity <= 536870911;
-    fact arena->live_regions == live;
-    fact 0 <= live;
-    fact live <= prefix;
-    fact separate(
-        memory(object(arena)),
-        memory(arena->data[0..arena->capacity])
-    );
-    fact separate(
-        memory(object(arena)),
-        memory(arena->occupied[0..arena->capacity])
-    );
-}
-
-resource arena_prefix_region(region: struct region*) {
-    field start: int32;
-    field end: int32;
-    owns object(region);
-    owns region->arena->data[start..end];
-    fact region->start == start;
-    fact region->end == end;
-    fact 0 <= start;
-    fact start < end;
 }
 
 resource arena_prefix_alloc_result(
@@ -80,6 +26,244 @@ resource arena_prefix_alloc_result(
             fact allocated.end == end;
         },
     }
+}
+
+verifying "arena_init.c";
+
+int32 arena_init(struct arena* arena, int32 capacity) {
+    consumes object(arena);
+    produces arena_init_result(arena, result);
+    produces arena_initialized_access(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        result
+    );
+
+    ensures result == 0 or result == 1;
+    ensures forall (k: int32) {
+        result == 1 and 0 <= k and k < arena->capacity implies
+            arena->occupied[k] == 0
+    };
+} by {
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    branch {
+        then {
+            step();
+            fold(arena_initialized_storage(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                result
+            ));
+            fold(arena_initialized_access(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                result
+            ));
+            fold(arena_init_result(arena, result));
+            simp();
+        }
+        else {}
+    }
+    branch {
+        then {
+            step();
+            fold(arena_initialized_storage(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                result
+            ));
+            fold(arena_initialized_access(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                result
+            ));
+            fold(arena_init_result(arena, result));
+            simp();
+        }
+        else {}
+    }
+    step();
+    branch {
+        then {
+            step();
+            fold(arena_initialized_storage(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                result
+            ));
+            fold(arena_initialized_access(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                result
+            ));
+            fold(arena_init_result(arena, result));
+            simp();
+        }
+        else {}
+    }
+    step();
+    branch {
+        then {
+            step();
+            step();
+            fold(arena_initialized_storage(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                result
+            ));
+            fold(arena_initialized_access(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                result
+            ));
+            fold(arena_init_result(arena, result));
+            simp();
+        }
+        else {}
+    }
+    have 1 <= capacity by {
+        arithmetic() using {
+            not (capacity <= 0);
+        }
+    }
+    have capacity <= 536870911 by {
+        arithmetic() using {
+            not (capacity > 536870911);
+        }
+    }
+    step();
+    loop as initialize_occupied {
+        decreases capacity - i;
+        invariant 0 <= i and i <= capacity;
+        invariant forall (k: int32) {
+            0 <= k and k < i implies occupied[k] == 0
+        };
+        owns occupied[0..capacity];
+
+        initialize by simp;
+        preserve by {
+            mark iteration;
+            step();
+            step();
+            have 0 <= capacity - at(iteration, i) - 1 by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    at(iteration, i) < capacity;
+                    1 <= capacity;
+                    capacity <= 536870911;
+                }
+            }
+            have capacity - at(iteration, i) - 1 < capacity - at(iteration, i) by {
+                arithmetic() using {
+                    0 <= at(iteration, i);
+                    at(iteration, i) < capacity;
+                    1 <= capacity;
+                    capacity <= 536870911;
+                }
+            }
+            simp();
+        }
+    }
+    have i == capacity by {
+        apply(int32_le_and_not_lt_implies_eq(i, capacity)) using {
+            i <= capacity;
+            not (i < capacity);
+        }
+        assumption();
+    }
+    have forall (k: int32) {
+        0 <= k and k < capacity implies occupied[k] == 0
+    } by {
+        intro();
+        intro();
+        extract(0 <= k);
+        extract(k < capacity);
+        instantiate(forall (j: int32) {
+            0 <= j and j < i implies occupied[j] == 0
+        }, k) using {
+            0 <= k;
+            k < capacity;
+            i == capacity;
+        }
+        assumption();
+    }
+    step();
+    step();
+    step();
+    have forall (k: int32) {
+        0 <= k and k < arena->capacity implies arena->occupied[k] == 0
+    } by {
+        intro();
+        intro();
+        extract(0 <= k);
+        extract(k < arena->capacity);
+        have k < capacity by {
+            assumption();
+        }
+        instantiate(forall (j: int32) {
+            0 <= j and j < capacity implies occupied[j] == 0
+        }, k) using {
+            0 <= k;
+            k < capacity;
+        }
+        assumption();
+    }
+    step();
+    have result == 1 by {
+        normalize();
+    }
+    have result == 0 or result == 1 by {
+        right();
+    }
+    have forall (k: int32) {
+        result == 1 and 0 <= k and k < arena->capacity implies
+            arena->occupied[k] == 0
+    } by {
+        intro();
+        intro();
+        extract(result == 1);
+        extract(0 <= k);
+        extract(k < arena->capacity);
+        instantiate(forall (j: int32) {
+            0 <= j and j < arena->capacity implies arena->occupied[j] == 0
+        }, k) using {
+            0 <= k;
+            k < arena->capacity;
+        }
+        assumption();
+    }
+    fold(arena_initialized_storage(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        result
+    ));
+    fold(arena_initialized_access(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        result
+    ));
+    fold(arena_init_result(arena, result));
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
 
 verifying "arena_alloc.c";
@@ -1369,3 +1553,33 @@ int32 arena_read(struct region* region, int32 index) {
     }, { partition: partition });
     simp();
 }
+
+verifying "arena_destroy.c";
+
+void arena_destroy(struct arena* arena) {
+    consumes arena_empty(arena);
+    produces object(arena);
+
+    ensures arena->data == 0;
+    ensures arena->occupied == 0;
+    ensures arena->capacity == 0;
+    ensures arena->live_regions == 0;
+} by {
+    unfold(arena_empty(arena));
+    unfold(arena_initialized_storage(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        1
+    ));
+    unfold(arena_initialized_access(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        1
+    ));
+    execute();
+    simp();
+}
+
+verifying "arena_pipeline.c";

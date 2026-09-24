@@ -163,7 +163,7 @@ region, and `mdtests/arena_prefix_regions_reject_overlap.md` refuses folding
 two regions over overlapping intervals.
 
 The adjacent allocation is now parameterized, in
-`examples/arena/arena_symbolic_alloc.click`, against the fixed C. The state
+`examples/arena/arena_pipeline.click` (formerly `arena_symbolic_alloc.click`), against the fixed C. The state
 resource `arena_prefix_state` carries the occupied prefix and live count as
 plain `int32` fields; its `arena_prefix_partition` child selects the free data
 suffix `[prefix, capacity)` with the field as the range endpoint. The
@@ -190,7 +190,7 @@ Three general gaps were fixed on the way, each with its own regression:
 
 ## Prefix free, reads, and writes
 
-`examples/arena/arena_symbolic_alloc.click` now verifies the fixed
+`examples/arena/arena_pipeline.click` (formerly `arena_symbolic_alloc.click`) now verifies the fixed
 `arena_free`, `arena_read`, and `arena_write` over the prefix resources, beside
 the symbolic `arena_alloc`. `arena_prefix_region(region)` takes the descriptor
 alone and reaches the arena as `region->arena`; resource fields cannot have a
@@ -230,51 +230,59 @@ What made these expressible, each with its own regression:
 
 ## Next chunk: the pipeline
 
-`arena_pipeline` remains unverified. A proof against the contracts above was
-worked out outside the gate and got this far:
+The sidecar layout is in place. `examples/arena/shared/arena_resources.click`
+holds the lifecycle and prefix resources; `examples/arena/arena_pipeline.click`
+proves `arena_init`, the symbolic `arena_alloc`, the prefix-shrink
+`arena_free`, `arena_write`, `arena_read`, and `arena_destroy` (the lifecycle
+proofs moved out of `arena.click`) and declares `arena_pipeline.c`. The store
+cost that used to depend on the lifecycle proofs being verified first in the
+same sidecar is gone: the sidecar verifies in about the same time as before.
 
-- Initialization converts to the prefix state with checked folds: unfold
-  `arena_init_result` and `arena_initialized_access`, unfold and refold
-  `arena_initialized_storage` to expose `1 <= capacity <= 536870911`, prove the
-  two separations while the backing ranges are visible, fold the partition at
-  prefix 0 and the state at `prefix == 0, live == 0`. The storage composite
-  stays folded beside the state and is what `arena_empty` needs again.
-- Both allocations, their failure branches (the second one freeing `first` as a
-  prefix shrink), the writes of 11 and 22, both reads, the value `33`, the
-  reverse-order frees, the combined allocation of 4 from prefix 0, and its
-  write of `value` all step through the binder maps. Each borrowed call gives
-  the region and state fresh fields, so the proof carries them with a `mark`
-  before the call and `have x == at(mark, x)` after it; `simp` does not chain
-  the call's field equality with an earlier `have` by itself. The value read
-  back from the combined region at index 3 did not yet close the same way.
-- Converting the final state back to `arena_empty` folds. The
-  `arena_destroy` call was refused on every path because the call rule could
-  not show that a kept owned descriptor lies outside an allocation the callee
-  frees; that kernel gap is closed
-  (`mdtests/call_retires_allocation_beside_unrelated_owner.md`,
-  `mdtests/arena_destroy_beside_region_descriptors.md`), and the pipeline has
-  not been re-run against it since.
+`arena_pipeline` itself is still unverified. A proof against these contracts
+now checks every step on every path, but not fast enough to land:
 
-Two tooling findings from that work need their own fixes before the pipeline
-lands:
+- Initialization converts to `arena_prefix_state` at `prefix == 0, live == 0`
+  with checked folds as described before (unfold the result, access, and
+  storage; refold storage at `1`; prove the two separations; fold the
+  partition and state). Every path back to `arena_destroy` converts with
+  `unfold(state)`, `unfold(partition)`, `fold(arena_initialized_access(..., 1))`,
+  `fold(arena_empty(arena))`. Resources cannot be transformed by a theorem, so
+  these are inline folds on each of the four destroy paths.
+- Every borrowed call's fresh fields are carried with `mark` before the call
+  and `have x == at(mark, x)`, `have at(mark, x) == c`, and a `simp() using`
+  of the two after it.
+- The allocation's `region->start == old(before.prefix)` has no caller
+  spelling, so `simp` cannot use it; `extract(combined->start == at(a3,
+  s4.prefix))` can. `defined(combined->start + 3)`, which the write and read
+  postconditions at index 3 are guarded by, needs the descriptor's cells
+  readable: unfold the state and then the region, `rewrite` and `normalize`,
+  refold both. With that, the value read back at index 3 is `33`.
+- A smart `simp` for `value == 33` ran 12 seconds (33 seconds when it failed
+  on a nearby goal) in `simp closure: indexed goal equality rewrite` before
+  its real-time limit stopped it; `simp() using` the three equalities is
+  immediate. The rewrite loop has no deadline checkpoint of its own.
 
-- The store in `arena_write` costs about 126,000 deterministic units alone,
-  and over 2,000,000 (its smart budget; 500,000 as a simple `step`) when the
-  `arena_init` or `arena_destroy` proof is verified earlier in the same
-  sidecar. The work is in pointer distinctness over explicit ranges
-  ("explicit range: recursive candidates", "range membership: offset
-  equality"), so a proof's cost depends on unrelated proofs verified before
-  it. Placing `arena_init` and `arena_destroy` after the region functions
-  avoids it but only hides it; reduce it first.
-- `arena_init`'s quantified postcondition over `occupied` has no caller-side
-  spelling, so `instantiate` cannot name it; `simp` proves the restated
-  quantifier.
+Three kernel costs found on the way are fixed, each with a regression:
+the retirement check admits a kept view of a kept owned descriptor by exact
+lookup (`retirement_admits_a_view_of_a_kept_owned_range`), a contract section
+whose clauses all evaluate on the first pass no longer expands the caller's
+frame (`first_pass_resource_section_does_not_expand_the_frame`), and nested
+lower-bound searches read indexed bounds instead of rescanning every order
+fact (`lower_bound_search_ignores_unrelated_facts`).
 
-The planned sidecar restructuring (lifecycle resources in a resources-only
-file imported by `arena.click` and the pipeline sidecar, with the `arena_init`
-and `arena_destroy` proofs moved beside the pipeline) is deferred until the
-destroy call is admitted, since only the pipeline needs it and moving the
-proofs ahead of the region functions trips the cost blowup above.
+What still blocks landing it is cost, not a missing rule. With those fixes the
+whole unit takes about 28 seconds, and the second allocation's failure path
+fails its final claim closing when the smart closer passes its 2 s limit. A
+`perf` profile puts most of the remaining time in resource-composition
+validity (`pair_validity_error` asking `memory_ranges_proven_overlapping` for
+each pair of owned ranges in the one `ExternalArgument` block every parameter
+and backing array lives in, which recurses through explicit-separation range
+containment into `pointers_proven_equal_for_memory_resolution` and the cell
+scan in `stored_value_at_equal_pointer`) and in `has_condition_fact`, which
+compares a condition with every ambient fact proof-aware. Both grow with the
+pipeline's accumulated facts and ranges. A deterministic multi-size
+regression for each (owned ranges in one symbolic block; condition facts
+over loads) is the next step, before the pipeline is retried.
 
 ## Open design question: frees out of allocation order
 
