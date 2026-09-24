@@ -100,10 +100,9 @@ Specification and proof:
 
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 
-## P2: after launch (26)
+## P2: after launch (25)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
-- [Refuse expansions that exceed the checked nesting limit](expand-emits-unverifiable-rewrite-at-nesting-limit.md)
 - [Reject `result` inside entry snapshots](result-accepted-in-entry-snapshots.md)
 - [Lower a dependent composite argument in every tactic position](dependent-composite-argument-in-tactics.md)
 

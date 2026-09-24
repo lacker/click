@@ -261,7 +261,10 @@ pub fn expand_c0_claim_source(
     let target = position_at_offset(click_source, edit.selector());
     let verified = verify_c0_sources_at(click_source, c_sources, target.line, target.column)?;
     let theorem = select_expansion_theorem(&verified, function_name, claim)?;
-    let replacement = theorem.expanded_proof_source()?;
+    let replacement = checked_claim_expansion_source(
+        theorem,
+        function_block.grouped_proof().is_some() || claim == CProofClaim::Grouped,
+    )?;
     let span = edit.span();
     let replacement = indent_replacement(click_source, span.start, &replacement);
     let replacement = match edit {
@@ -311,7 +314,10 @@ fn expand_c0_project_claim_source(
     let target = position_at_offset(click_source, edit.selector());
     let verified = verify_c0_project_at(project, c_sources, target.line, target.column)?;
     let theorem = select_expansion_theorem(&verified, function_name, claim)?;
-    let replacement = theorem.expanded_proof_source()?;
+    let replacement = checked_claim_expansion_source(
+        theorem,
+        function_block.grouped_proof().is_some() || claim == CProofClaim::Grouped,
+    )?;
     let span = edit.span();
     let replacement = indent_replacement(click_source, span.start, &replacement);
     let replacement = match edit {
@@ -359,7 +365,10 @@ fn expand_c0_prepared_project_claim_source(
     let target = position_at_offset(click_source, edit.selector());
     let verified = verify_c0_prepared_project_at(project, imports, target.line, target.column)?;
     let theorem = select_expansion_theorem(&verified, function_name, claim)?;
-    let replacement = theorem.expanded_proof_source()?;
+    let replacement = checked_claim_expansion_source(
+        theorem,
+        function_block.grouped_proof().is_some() || claim == CProofClaim::Grouped,
+    )?;
     let span = edit.span();
     let replacement = indent_replacement(click_source, span.start, &replacement);
     let replacement = match edit {
@@ -406,7 +415,10 @@ fn expand_c0_prepared_claim_source(
     let verified =
         verify_c0_prepared_sources_at(click_source, imports, target.line, target.column)?;
     let theorem = select_expansion_theorem(&verified, function_name, claim)?;
-    let replacement = theorem.expanded_proof_source()?;
+    let replacement = checked_claim_expansion_source(
+        theorem,
+        function_block.grouped_proof().is_some() || claim == CProofClaim::Grouped,
+    )?;
     let span = edit.span();
     let replacement = indent_replacement(click_source, span.start, &replacement);
     let replacement = match edit {
@@ -770,7 +782,10 @@ fn expand_cpp_prepared_claim_source_context(
         None => verify_cpp_prepared_sources_at(click_source, import, target.line, target.column)?,
     };
     let theorem = select_expansion_theorem(&verified, function_name, claim)?;
-    let replacement = theorem.expanded_proof_source()?;
+    let replacement = checked_claim_expansion_source(
+        theorem,
+        function_block.grouped_proof().is_some() || claim == CProofClaim::Grouped,
+    )?;
     let span = edit.span();
     let replacement = indent_replacement(click_source, span.start, &replacement);
     let replacement = match edit {
@@ -1828,6 +1843,35 @@ fn rewrite_verified_pure_theorem(
     expanded.push_str(&replacement);
     expanded.push_str(&click_source[span.end..]);
     Ok(expanded)
+}
+
+/// The explicit proof that replaces a whole claim proof. The rewrite is
+/// refused before it is emitted when its regions nest past the bound the
+/// checked drivers accept, with the diagnostic verification would give it.
+fn checked_claim_expansion_source(
+    theorem: &VerifiedCTheorem,
+    grouped: bool,
+) -> Result<String, ClickError> {
+    let certificate = theorem.expanded_proof_certificate()?;
+    let function_name = theorem.function_block.signature().name();
+    let proof_label = match &theorem.claim {
+        _ if grouped => format!("{function_name}.contract"),
+        VerifiedClaim::Ensure { index, clause } => match clause.name() {
+            Some(name) => format!("{function_name}.{name}"),
+            None => format!("{function_name}.ensures_{index}"),
+        },
+        VerifiedClaim::ExceptionalEnsure { index, clause } => match clause.name() {
+            Some(name) => format!("{function_name}.{name}"),
+            None => format!("{function_name}.exceptional_ensures_{index}"),
+        },
+    };
+    if let Some(error) = super::proof::proof_region_nesting_bound_error(
+        &proof_label,
+        &certificate.to_proof_tactics(),
+    ) {
+        return Err(error);
+    }
+    Ok(super::printing::format_proof_certificate(&certificate))
 }
 
 fn select_expansion_theorem<'a>(

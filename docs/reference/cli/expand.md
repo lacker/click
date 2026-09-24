@@ -96,6 +96,11 @@ selection, expansion extraction, rewritten proof verification, the
 deadline, or file output fails. In-place output uses an adjacent temporary file
 and an atomic rename after all checks pass.
 
+A claim expansion whose explicit proof would nest `match`, `branch`, and proof
+`if` regions past the checked drivers' bound of eleven is refused before it is
+rewritten, with the diagnostic verification gives such a proof: move an inner
+region into a contracted helper, or prove part of it in a `have`.
+
 ## Examples
 
 Write one expansion to standard output:

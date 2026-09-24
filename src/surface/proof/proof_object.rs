@@ -777,6 +777,41 @@ impl ProofExecutionView<'_> {
             )
     }
 
+    /// Selects the leaf of a retained surface certificate that one checked
+    /// outcome reaches, following each terminal surface `if` the way
+    /// [`append_surface_step_to_leaves`] does. Decisions are the same typed
+    /// split provenance [`Self::surface_branch_path`] reads.
+    pub(super) fn surface_step_branch_path(
+        &self,
+        path_index: usize,
+        steps: &[ProofStep],
+    ) -> Option<Vec<bool>> {
+        let mut decisions = self
+            .outcome_provenance
+            .get(path_index)?
+            .branch_decisions
+            .iter();
+        let mut path = Vec::new();
+        let mut current = steps;
+        while let Some(ProofStep::If {
+            condition,
+            then_proof,
+            else_proof,
+        }) = current.last()
+        {
+            let selected_then = decisions
+                .find(|decision| decision.condition == *condition)?
+                .value;
+            path.push(selected_then);
+            current = if selected_then {
+                then_proof.steps()
+            } else {
+                else_proof.steps()
+            };
+        }
+        Some(path)
+    }
+
     /// The proof-level case decisions recorded on one outcome path, in
     /// decision order: each is a surface condition and the arm taken.
     /// Selects the retained surface branch skeleton for one checked outcome.

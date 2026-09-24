@@ -114,6 +114,39 @@ fn synthesize_post_execution_paths(
     synthesize_surface_alternatives(paths)
 }
 
+/// Serialize deferred proof cases separately inside each leaf of the retained
+/// C-execution surface. A proof-level case split applies after execution, so
+/// two outcomes that take one proof arm from different C branches may need
+/// different closers; the C branch already separates them, and no proof-level
+/// condition exists to split them again. Each leaf receives the proof cases
+/// synthesized from exactly the outcomes that reach it.
+fn append_post_execution_paths_by_surface_leaf(
+    steps: &mut Vec<ProofStep>,
+    tactics: &[Vec<ProofTactic>],
+    closers: &[Vec<ProofTactic>],
+    choices: &[Vec<SurfacePathChoice>],
+    mut branch_path: impl FnMut(usize) -> Option<Vec<bool>>,
+) -> Result<(), String> {
+    let mut groups = std::collections::BTreeMap::<Vec<bool>, Vec<usize>>::new();
+    for index in 0..tactics.len() {
+        let branch_path = branch_path(index)
+            .ok_or_else(|| "an outcome has no retained surface branch path".to_string())?;
+        groups.entry(branch_path).or_default().push(index);
+    }
+    fn select<T: Clone>(source: &[T], members: &[usize]) -> Vec<T> {
+        members.iter().map(|index| source[*index].clone()).collect()
+    }
+    for (branch_path, members) in groups {
+        let suffix = synthesize_post_execution_paths(
+            &select(tactics, &members),
+            &select(closers, &members),
+            &select(choices, &members),
+        )?;
+        append_surface_steps_at_step_branch_path(steps, &branch_path, suffix)?;
+    }
+    Ok(())
+}
+
 /// Selects the complete-proof route for supported top-level composite scopes
 /// and execution branches. Tactics before, between, and after structures
 /// remain linear; a scope body may also contain the checked C-branch forms
@@ -184,6 +217,22 @@ fn proof_region_nesting_depth(tactics: &[ProofTactic]) -> usize {
         .unwrap_or(0)
 }
 
+/// The diagnostic for a proof whose written regions nest past the bound the
+/// checked drivers accept, or `None` within the bound. Verification reports
+/// it when the drivers decline such a proof; expansion refuses a rewrite with
+/// the same diagnostic before emitting it.
+pub(in crate::surface) fn proof_region_nesting_bound_error(
+    proof_label: &str,
+    tactics: &[ProofTactic],
+) -> Option<ClickError> {
+    let nesting = proof_region_nesting_depth(tactics);
+    (nesting > MAX_CHECKED_PROOF_REGION_NESTING).then(|| {
+        ClickError::new(format!(
+            "`{proof_label}`: this proof nests {nesting} execution regions; the checked proof drivers support at most {MAX_CHECKED_PROOF_REGION_NESTING}. Move an inner `match`, `branch`, or proof `if` into a contracted helper, or prove part of it in a `have`."
+        ))
+    })
+}
+
 fn diagnostic_claim_label(function_name: &str, claim: &FunctionClaimRef<'_>) -> String {
     let label = function_claim_label(function_name, claim);
     match claim.clause().ensure() {
@@ -216,11 +265,8 @@ fn unsupported_proof_shape(
     // driver topology to users.
     let _ = take_driver_declines();
     let depth_declined = take_region_depth_decline();
-    let nesting = proof_region_nesting_depth(tactics);
-    if nesting > MAX_CHECKED_PROOF_REGION_NESTING {
-        return ClickError::new(format!(
-            "`{proof_label}`: this proof nests {nesting} execution regions; the checked proof drivers support at most {MAX_CHECKED_PROOF_REGION_NESTING}. Move an inner `match`, `branch`, or proof `if` into a contracted helper, or prove part of it in a `have`."
-        ));
+    if let Some(error) = proof_region_nesting_bound_error(proof_label, tactics) {
+        return error;
     }
     if depth_declined {
         // The written nesting is within the bound, so the depth the driver
@@ -1786,6 +1832,7 @@ pub(super) fn finish_ordered_proof<'a>(
         let mut surface_grouped_closers_by_path = Vec::with_capacity(execution.paths().len());
         let mut surface_post_tactics_by_path = Vec::with_capacity(execution.paths().len());
         let mut surface_post_choices_by_path = Vec::with_capacity(execution.paths().len());
+        let mut surface_post_path_indices = Vec::with_capacity(execution.paths().len());
         let mut deferred_capture_tactics_by_path = Vec::with_capacity(execution.paths().len());
         let mut deferred_capture_branches_by_path = Vec::with_capacity(execution.paths().len());
         // Whether the implicit exact closer of a single-claim proof would
@@ -4526,6 +4573,7 @@ pub(super) fn finish_ordered_proof<'a>(
                         surface_post_choices.push(choice);
                     }
                     surface_post_choices_by_path.push(surface_post_choices);
+                    surface_post_path_indices.push(path_index);
                     surface_post_tactics_by_path.push(path_surface_post_tactics);
                     let implicitly_closable = path_deferred_capture_tactics.is_empty()
                         || (!require_explicit_closers
@@ -4599,7 +4647,27 @@ pub(super) fn finish_ordered_proof<'a>(
                             append_surface_step_to_leaves(&mut expanded.steps, step);
                         }
                     }
-                    Err(message) => expanded.block(message),
+                    // Outcomes that share a proof arm but not a C branch
+                    // cannot share one suffix after the C `if`; place the
+                    // proof cases inside each C leaf instead.
+                    Err(message) => {
+                        let mut by_leaf = expanded.steps.clone();
+                        match append_post_execution_paths_by_surface_leaf(
+                            &mut by_leaf,
+                            &surface_post_tactics_by_path,
+                            &surface_grouped_closers_by_path,
+                            &surface_post_choices_by_path,
+                            |index| {
+                                direct_view.surface_step_branch_path(
+                                    surface_post_path_indices[index],
+                                    &retained_surface.steps,
+                                )
+                            },
+                        ) {
+                            Ok(()) => expanded.steps = by_leaf,
+                            Err(_) => expanded.block(message),
+                        }
+                    }
                 }
             } else {
                 if surface_post_tactics_by_path

@@ -1006,6 +1006,41 @@ pub(super) fn append_surface_tactics_by_leaf(
     }
 }
 
+/// Appends a suffix at the one leaf of a surface certificate selected by
+/// `branch_path`, following each terminal surface `if` outermost first. The
+/// leaf takes the suffix the way [`append_surface_step_to_leaves`] would.
+pub(super) fn append_surface_steps_at_step_branch_path(
+    steps: &mut Vec<ProofStep>,
+    branch_path: &[bool],
+    suffix: Vec<ProofStep>,
+) -> Result<(), String> {
+    let mut current = steps;
+    for selected_then in branch_path {
+        let Some(ProofStep::If {
+            then_proof,
+            else_proof,
+            ..
+        }) = current.last_mut()
+        else {
+            return Err(
+                "execution path selects more surface branches than the certificate has".to_string(),
+            );
+        };
+        current = if *selected_then {
+            then_proof.steps_mut()
+        } else {
+            else_proof.steps_mut()
+        };
+    }
+    if matches!(current.last(), Some(ProofStep::If { .. })) {
+        return Err("execution path stops before its surface branch leaf".to_string());
+    }
+    for step in suffix {
+        append_surface_step_to_leaves(current, step);
+    }
+    Ok(())
+}
+
 /// Appends one context's post-execution surface tactics as a flat top-level
 /// suffix. A proof-branch context records its branch decision as a
 /// [`SurfacePathChoice`]; the tactics it runs after that decision belong after
