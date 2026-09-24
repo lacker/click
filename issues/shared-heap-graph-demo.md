@@ -1,351 +1,111 @@
-# P1: Shared heap graph demo
+# P1: Shared heap graph and resource invariants
 
-## Objective and violated invariant
+## Next task: settle the invariant semantics
 
-Requested on 2026-09-15 as a before-launch architecture milestone. Verify a
-small sequential C lifecycle in which two independently managed parent objects
-retain the same heap child. The pointer graph and the ownership accounting
-must compose without duplicating the child's storage or freeing it while a
-remaining parent can access it.
+The next task is a **design decision**, not another proof-script tweak. Click
+needs a precise rule for when a counted resource's declared facts hold, when a
+proof may temporarily open that invariant, and which other execution contexts
+may observe the resource while it is open. The rule must support both:
 
-The [refcount example](../examples/refcount/README.md) already checks a single
-object's reference-count lifecycle, including final release. This milestone
-tests composition of references inside other owned objects. It is not another
-isolated counter demo. Rbtree remains the main launch demo.
+1. A sequential, non-thread-safe reference-counted child with ordinary C
+   `int32 refs`, as in the frozen probe below.
+2. A genuinely thread-safe reference-counted child, using an explicit lock or
+   atomic protocol and safe final reclamation. A sequential proof must not
+   silently become a concurrent proof.
 
-## Intended regression
+Decide and document these points before changing contract certification:
 
-Use a child with a payload and a reference count, and two separately allocated
-parents containing pointers to that child. Each parent owns one logical child
-reference. Attach/retain the child to both parents, release any temporary
-creator reference, destroy one parent, read the payload through the surviving
-parent, then destroy the remaining parent. Prove the payload read is valid and
-has its specified value, and that final release frees the child exactly once.
+- Is a population-wide `fact` required at every C statement, or at defined
+  closed-state boundaries? If temporary violation is allowed, what checked
+  authority excludes other observers, and what operation must restore it?
+- What does holding one `child_ref(obj)` unit let a thread observe while other
+  units exist? The current resource body owns the child's allocation and
+  object once for the population; it does not describe synchronization.
+- At which exact transition does `consumes child_ref(obj)` change the logical
+  population count? Distinguish transfer of a unit into a callee, consumption
+  by a verified call, and certification of the enclosing function's net
+  contract effect.
+- What evidence about the population invariant is recorded at that transition,
+  and how is it carried across later, demonstrably disjoint C writes and
+  memory snapshots? Final certification must check the actual returned
+  resource state without assuming an unproved invariant.
+- How would the concurrent version protect the C counter, payload access, and
+  final free? State the selected memory/synchronization model and the
+  relationship to the [P1 concurrency demo](concurrency-demo.md) and
+  [broader atomics issue](concurrency-and-atomics.md).
 
-Both destruction orders must verify. The final state discharges all parent and
-child allocation obligations. Account for ordinary allocation failures and
-partially constructed parents: failure must preserve the resources still held
-by the caller and release only successfully acquired temporary resources.
+A rule that accepts a resource merely because its unit is absent at return is
+insufficient: the remaining population may still exist, and `obj->refs` must
+agree with its logical count. Conversely, reconstructing a transition at a fresh
+snapshot should not lose already checked evidence from the consuming call.
 
-Choose small ordinary C and freeze it before sidecar development. A synthetic
-diamond-shaped graph is acceptable when identified as such. Do not clone the
-shared child, replace sharing with a tree, split a normal branch-on-count
-release routine into proof-selected final/nonfinal C entry points, or add
-proof-only branches and locals to make verification pass.
+## Frozen program and current evidence
 
-## Required modular model
+[`design/shared-heap-probes/shared_parent.c`](../design/shared-heap-probes/shared_parent.c)
+is the fixed sequential C regression. It has two independently allocated
+parents sharing one child, one branch-on-count `child_release`, both parent
+removal orders, allocation-failure cleanup, a read through the surviving
+parent, and exact final deallocation. Do not reshape this C to suit the proof.
+[`shared_parent.click`](../design/shared-heap-probes/shared_parent.click) verifies
+all six modular helper bodies against those bytes. A scratch caller proof
+advanced through both detaches and parent frees; its remaining success-path
+claim was `out == payload`. The complete lifecycle sidecar is not yet in the
+normal gate.
 
-- Build on ordinary composite resources and counted reference populations.
-  The child's allocation and payload are owned once for the population; each
-  parent carries a conserved reference capability, not another copy of the
-  underlying allocation or exclusive memory resource.
-- Give retain/release and parent creation/destruction body-independent
-  contracts. A parent operation may use the reference it owns without exposing
-  or consuming references held by unrelated parents.
-- A pointer value alone does not create a logical reference. Copying an owning
-  parent descriptor does not duplicate its capability. Incrementing the C count
-  must correspond to a checked logical change, with overflow excluded.
-- Final release requires evidence that no references remain; an equality in a
-  local memory snapshot cannot replace population conservation. Restore the
-  correct remaining resources on every nonfinal path.
-- Use a generic resource/protocol construction rather than a kernel rule
-  specific to two parents, this struct layout, or a particular release order.
-  Shared references can be packaged and transported through modular calls.
+The present certification reducer adds only
+`ensures old(p->kid) == old(p->kid);` to `parent_detach`. That tautology makes
+contract certification report an unproved
+`fact obj->refs == count(child_ref(obj));` of `child_ref` at return. The trace
+shows a matching fact at one memory snapshot and the required fact at another;
+`p->kid = 0` follows the verified `child_release(kid)` call. The unmodified
+helper verifies. A proposition that changes no contract meaning should not
+change whether the resource transition is certified.
 
-## Negative regressions
+Code inspection found a specific authority boundary to audit:
+`apply_outcome_contract_resources` calls the kernel transition and discards its
+returned proof obligations. A path can record `checked_resource_transition =
+true` while retaining a `resource population invariant` obligation. The
+resource-claim certification shortcut reuses the checked transition, while an
+additional pure claim prepares the path and encounters that obligation. Do not
+remove the obligation or extend the shortcut until a negative regression shows
+that incorrect C counter updates remain rejected. The exact proof failure may
+also need sound transport of the post-call fact across the later parent-link
+store; investigate that under the invariant semantics chosen above.
 
-- Omit a retain when attaching the second parent: its claimed reference cannot
-  be constructed and the later lifecycle must not verify.
-- Drop the first parent and free the child while the other parent's reference
-  remains: reject the free and any claimed final-release proof.
-- Duplicate a parent/reference resource by folding, copying, branch joining,
-  or a produced call postcondition: reject the extra authority.
-- Double-release a reference or dereference after final release: reject using
-  the exact missing capability or retired allocation identity.
-- A failing parent creation must not consume another parent's reference or
-  publish ownership of uninitialized parent fields.
+The existing [resource documentation](../docs/concepts/resources.md) says a
+population body belongs to the population as a whole and that retain/release
+must preserve it. Its `open(resource) { ... }` proof scope restores the body at
+scope exit. The frozen probe uses ordinary non-atomic C, and Click's selected
+pthread model does not yet establish a concurrent shared-heap protocol.
 
-## Acceptance criteria, scaling, and dependencies
+## Required positive and negative regressions
 
-- The original two-parent lifecycle, both destruction orders, allocation
-  failure paths, and modular helper bodies verify through ordinary Click.
-  The surviving parent read and exact final deallocation are proved, not
-  assumed in an unverified release contract.
-- All negative regressions fail for their intended local reasons. Preserve
-  existing refcount, borrowing, arena, and tree regressions.
-- Any resource-language extension is general, kernel-checked, and documented
-  with conservation laws. Reuse existing population machinery if sufficient;
-  first reduce a failure before proposing a new ownership-collection primitive.
-- Verify, expand/reverify, profile, and audit agree on the original C using
-  the shared bounded engine. Record source provenance and supported profile.
-- Add deterministic scaling regressions at four or more sizes: increase the
-  number of parents sharing a child, then increase unrelated live graph
-  resources around a fixed retain/release. Local updates must not traverse all
-  incoming pointers, all holders, or every graph node. Destruction of a whole
-  graph may pay for the nodes and edges it actually releases, as specified by
-  the [efficiency contract](../docs/internals/verification-efficiency.md).
-- Positive and negative fixtures join the normal gate; `scripts/check.sh`
-  passes. Delete this issue and its list entry once implementation,
-  regressions, and durable documentation land.
+- Verify the unchanged sequential helper contracts and both complete caller
+  lifecycles, including allocation failures, surviving-parent payload reads,
+  and exact final free.
+- Add the tautological-ensure reducer to the normal gate. It must have the same
+  resource verdict as the helper without that ensure.
+- Reject a release that removes a logical reference without the required C
+  counter update, a missing retain, duplicate units, a premature free, a
+  double release, and a read after final release.
+- Preserve the invariant across a disjoint parent-link write using checked
+  memory/resource evidence; reject transport when that write may alias the
+  child's counter or payload.
+- Specify and exercise a thread-safe reference-count design under an explicit
+  supported synchronization model. Reject an unsynchronized plain-`int32`
+  shared counter and unsafe final reclamation. This may depend on work in the
+  linked concurrency issues; record the dependency rather than treating the
+  sequential fixture as a concurrency proof.
+- Keep the resource rules general to counted populations and independent
+  parents, not this struct layout or two-parent count. Add deterministic
+  scaling checks for more parents and unrelated live graph resources, as
+  required by the [efficiency contract](../docs/internals/verification-efficiency.md).
 
-This uses sequential ownership and does not depend on concurrency, C++, goto,
-or completion of the arena example. Coordinate general resource changes with
-[arena ownership](arena-resource-ownership.md) and
-[resource algebra extensions](resource-algebra-extensions.md). Cyclic garbage
-collection, weak references, concurrent reference counting, shared mutable
-payload protocols, and arbitrary cyclic-graph proofs remain deferred. The
-small diamond establishes sharing, not cycle reclamation. Follow `AGENTS.md`
-when proof tooling exposes a blocker.
+## Completion criteria
 
-## Current status, 2026-09-23
-
-This issue remains open. The frozen C source is unchanged and the normal gate
-passes, but there is still no passing sidecar for the full lifecycle. The
-folded-parent child-reference lookup now passes in a focused heap-parent
-regression; the frozen two-parent program still needs its complete sidecar.
-
-Verified and landed:
-
-- `mdtests/child_release_branch_on_count.md` proves the exact branch-on-count
-  `child_release`, including the nonempty counted-population obligation on
-  the decrement path.
-- `mdtests/parent_attach_call_frame.md` proves the attach shape: storing the
-  parent link, calling a disjoint retain helper, folding the parent resource,
-  and reading through the surviving link.
-- `mdtests/shared_heap_detach_old_resource_handoff.md` proves the minimal
-  detach handoff with `produces child_ref(old(p->kid))`. Its old-pointer
-  lookup is resolved from checked entry-memory evidence, and it no longer
-  fails with the stale `child_ref(null@0)` diagnostic.
-- `mdtests/shared_heap_detach_leak_diagnostic.md` covers the negative case and
-  names both the leaked allocation and the counted resource holding it.
-- The call/frame transport and surface diagnostics are covered by the normal
-  `scripts/check.sh` gate.
-- `mdtests/shared_heap_two_parent_caller.md` now composes two attaches, the
-  first detach, a read through the surviving parent, and the final detach.
-  This clears the earlier caller-side named-resource transport blocker.
-- `mdtests/shared_heap_two_parent_branch_release_positive.md` composes the
-  same two-parent sequence with the exact branch-on-count release. The caller
-  starts with one creator reference, both attaches retain, the creator and
-  first parent release, the second parent reads, and final detach releases.
-  The checked counted-resource transition already carries the count change;
-  `parent_detach` does not need a pure postcondition that reloads `p->kid`
-  after the C body clears it.
-- A proof-only unfold after a modular call no longer mutates heap-cell
-  initialization metadata as if it were a C store. The new kernel regression
-  ensures naming a fresh uninitialized heap cell cannot make it readable.
-- `mdtests/shared_heap_one_heap_parent.md` now verifies the focused heap-parent
-  boundary: attach returns a folded `Linked(kid)` parent, the creator releases
-  its reference, and detach consumes `child_ref(p->kid)` and frees both heap
-  objects. The evaluator resolves that argument only from the exact bound,
-  owned parent arm's equality and memory ownership. The ordinary resource
-  transfer still requires the actual `child_ref(kid)` unit. Missing-retain,
-  wrong-child, and missing-child-reference fixtures reject those claims.
-- `design/shared-heap-probes/shared_parent.click` verifies all six modular
-  helper bodies directly against the unchanged frozen C source.
-
-Still failing to compose:
-
-- The exact frozen `design/shared-heap-probes/shared_parent.c` diamond has
-  two allocation-failure paths and two destruction orders, but no passing
-  sidecar yet. A previous scratch proof certified all six helper bodies,
-  handled all three null checks in `run_first_destroyed`, composed both
-  `parent_attach` calls, and released the creator reference. It previously
-  failed at the subsequent `parent_detach(first)`:
-
-  ```click
-  let { link: first_link } = step(parent_attach(first, kid), {});
-  let { link: second_link } = step(parent_attach(second, kid), {});
-  step(child_release(kid), {});
-  let first_out = step(parent_detach(first), { link: first_link });
-  ```
-
-  The focused heap-parent regression clears this `UninitializedRead` and
-  proves exact final release. A new scratch proof of the frozen caller passed
-  its first detach, then stopped at the surviving parent's payload read:
-  `int32 out = parent_read_payload(second)` lowers to a declaration followed
-  by a call assignment. The plain declaration step reaches the call without
-  named binder transport, while `step(parent_read_payload(second),
-  { link: second_link })` is rejected before the declaration. The full frozen
-  sidecar still needs both destruction orders and the surviving read. The
-  existing contract syntax expresses the handoff; this is a source-step and
-  certificate boundary, not evidence for new contract syntax.
-- The separate minimal reducer
-  `mdtests/shared_heap_two_parent_branch_release.md` fails while certifying
-  `parent_detach` because it asks for a redundant pure count postcondition
-  through the field the C body clears. The positive counterpart shows this
-  postcondition is unnecessary for the reduced lifecycle. Do not add guarded
-  postconditions or a new population-lifetime rule on the strength of that
-  failing reducer alone.
-- The frozen caller's second destruction order, allocation-failure proof
-  fixtures, negative caller regressions, and deterministic scaling fixtures
-  remain before this issue can close.
-
-## Completed chunk, 2026-09-21: retain initialization through call havoc
-
-The false undefined-behavior boundary is now fixed in the memory model. A
-verified call may invalidate a cached scalar value because its write footprint
-is mutable, but it must not turn a cell that was already initialized back into
-fresh uninitialized storage. Heap memory now carries bounded typed-cell
-initialization metadata separately from cached values; call and interface
-havoc preserve it, joins intersect it, stores establish it, and frees remove
-it. Typed scalar loads consult that metadata only after the ordinary concrete
-cell and established-fact routes.
-
-The kernel regression
-`call_havoc_preserves_initialization_of_a_heap_scalar` covers the exact
-transition: malloc, store, mutable call havoc, then a typed read. Existing
-heap, resource, and shared-parent fixtures remain green. This removes the
-first `UninitializedRead` symptom in the shared-heap reduction; the exact
-frozen diamond still needs to be rerun and its next genuine proof obligation
-recorded before the issue can close.
-
-## Completed chunk, 2026-09-18: one branch-on-count release
-
-The reduced blocker is the single `child_release` in the frozen
-`design/shared-heap-probes/shared_parent.c` (`if refs == 1 free else
-decrement`). It is now covered by
-`mdtests/child_release_branch_on_count.md`: the counted population is kept
-symbolic from its `field == count(pop)` invariant, and the non-final path
-proves the post-transition obligation explicitly with
-`have count(child_ref(obj)) != 0`.
-
-The implementation deliberately defers that nonempty-population obligation
-until result-aware post-execution facts are available. Allocation coverage is
-still granted only when the live counted population body actually contains
-the allocation; a stale ghost count or a proof-retained unit cannot suppress
-the final-path free requirement.
-
-The leak error names counted families and suggests proving
-`count(...) != 0`.
-
-## Completed chunk, 2026-09-18: disjoint-call load transport
-
-The focused `parent_attach_call_frame` regression also verifies the formerly
-blocked shape where `parent_attach` stores `p->kid`, calls `child_retain(kid)`,
-and only then folds `parent(p)`. The pointer-valued `p->kid` fact is recovered
-from the checked memory-DAG call frame because the retain call excludes that
-cell. Calls that may write the field do not receive this transport.
-
-The remaining composition work is at the caller boundary: transport the
-initialized parent-link resource into `parent_detach`, preserve the surviving
-`child_ref` across `p->kid = 0`, and then wire both destruction orders,
-allocation-failure paths, and the negative regressions from the frozen probe.
-
-## Historical minimal detach reduction, 2026-09-18
-
-The detach blocker is now reduced independently of the branch-on-count
-release. The following split-release source is only a reducer; it is not a
-replacement for the frozen `child_release` body.
-
-```c
-struct child {
-    int32 refs;
-    int32 payload;
-};
-
-struct parent {
-    struct child* kid;
-};
-
-void child_release_nonfinal(struct child* obj) {
-    obj->refs = obj->refs - 1;
-}
-
-void parent_detach(struct parent* p) {
-    struct child* kid = p->kid;
-    child_release_nonfinal(kid);
-    p->kid = 0;
-}
-```
-
-The complete Click reduction is:
-
-```click
-spec enum ParentLink {
-    Empty,
-    Linked(struct child*),
-}
-
-resource child_ref(obj: struct child*) {
-    contains allocation(obj, sizeof(struct child));
-    owns object(obj);
-    fact obj->refs == count(child_ref(obj));
-}
-
-resource parent(p: struct parent*) {
-    field link: ParentLink;
-    match link {
-        ParentLink::Empty => {},
-        ParentLink::Linked(kid) => {
-            owns p->kid;
-            fact p->kid == kid;
-            fact kid != 0;
-        },
-    }
-}
-
-verifying "shared_heap_detach_repro.c";
-
-void child_release_nonfinal(struct child* obj) {
-    requires 1 < obj->refs;
-    owns child_ref(obj);
-    consumes child_ref(obj);
-} by {
-    open(child_ref(obj)) {
-        execute();
-    }
-    simp();
-}
-
-void parent_detach(struct parent* p) {
-    consumes link: parent(p);
-    requires link.link != ParentLink::Empty;
-    owns child_ref(p->kid);
-    consumes child_ref(p->kid);
-    produces child_ref(p->kid);
-    produces out: parent(p);
-} by {
-    match link.link {
-        ParentLink::Empty => {
-            contradiction(link.link == ParentLink::Empty);
-        },
-        ParentLink::Linked(kid) => {
-            unfold(link);
-            execute();
-            let out = fold(parent(p), { link: ParentLink::Empty });
-            simp();
-        },
-    }
-}
-```
-
-The original first failing proof step was the post-state/resource check for
-`parent_detach`, not the `child_release_nonfinal` call. With only
-`consumes child_ref(p->kid)`, the call fails immediately because the
-non-final release contract needs two units: one `owns` unit for the surviving
-population and one unit to consume. Adding the `owns` clause lets the call
-execute, but function exit reports:
-
-```text
-live allocation obligation was neither returned nor freed: `owns allocation(p->kid, 8)`;
-held by owns child_ref(p->kid)
-```
-
-The corrected handoff is `produces child_ref(old(p->kid))`. The surface
-The corrected handoff is `produces child_ref(old(p->kid))`. The surface
-resource check now resolves that entry-state pointer from checked viewability
-evidence, so the old `missing resource fact owns child_ref(null@0)` failure is
-gone. The following diagnostic records the original allocation-lifetime
-failure that motivated the fix:
-
-```text
-could not prove `produces child_ref(old(p->kid))`: live allocation obligation
-was neither returned nor freed: `owns allocation(p->kid, 8)`; held by owns
-child_ref(p->kid)
-```
-
-The diagnostic now identifies the exact live allocation and the owning
-`child_ref` population, and renders the recovered pointer in this leak path
-using surface Click syntax rather than an internal pointer expression. The
-minimal reducer is now a historical explanation of the original failure; the
-current blocker is the caller-side resource transport described above.
+Publish the invariant/observation/transition semantics first. Then repair the
+kernel and certification boundary with focused positive and negative fixtures;
+verify, expand/reverify, profile, and audit the frozen source; and pass
+`scripts/check.sh`. Delete this issue and its list entry only after the design,
+implementation, regressions, and full lifecycle proof land. Preserve the
+frozen C and use Click contracts, tactics, or kernel rules for proof work.
