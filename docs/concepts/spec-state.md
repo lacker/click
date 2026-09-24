@@ -52,10 +52,10 @@ Click already has a few spec-only mechanisms:
   complete statement-state snapshots recorded by deterministic proof
   execution, including memory and C local values. Their second argument may be
   an expression or a complete proposition such as `viewable(p[0..n])`.
-- labels give names to requirements and guarantees.
+- labels identify guarantee claims.
 - predicates package abstract facts.
 - `let ... where` introduces immutable witnesses in proposition clauses.
-- `choose` introduces proof-local names from existential requirements.
+- `let (...) satisfy` introduces proof-local names from established existentials.
 - `witness` supplies proof-local values for existential goals.
 - `views p[lo..hi]` and `owns p[lo..hi]` introduce resource facts for external
   memory accesses.
@@ -87,7 +87,7 @@ classical predicate facts.
 The implemented specification layer has three kinds of state:
 
 1. immutable specification terms, predicates, labels, and snapshots;
-2. proof-local witnesses introduced by `choose` and supplied by `witness`; and
+2. proof-local witnesses introduced by `let (...) satisfy` and supplied by `witness`; and
 3. a resource context containing viewed, owned, allocation, abstract, and
    composite resource facts.
 

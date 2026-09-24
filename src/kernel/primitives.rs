@@ -4779,6 +4779,16 @@ pub struct ResourceContext {
 }
 
 impl ResourceContext {
+    /// True only for the constant-work empty semantic form. Mutation ancestry
+    /// and next-entry counters are intentionally omitted, as in `PartialEq`.
+    pub(crate) fn is_pristine_semantically_empty(&self) -> bool {
+        self.storage.facts.is_empty()
+            && self.storage.supported_by.is_empty()
+            && self.storage.support_occurrence_by_projection.is_empty()
+            && self.storage.expansions_by_support_entry.is_empty()
+            && self.loan_dependencies.map.is_empty()
+    }
+
     /// Return a live dependency for an exact occurrence.  The occurrence
     /// lookup is checked against this context so stale sidecar entries can
     /// never authorize a rewritten or removed resource.

@@ -904,6 +904,7 @@ impl<'a> Proof<'a> {
                 self.apply_execution_resource_observation(resource)
             }
             ProofStep::Choose(choice) => self.apply_fixed_state_choose(choice),
+            ProofStep::LetSatisfy(binding) => self.apply_let_satisfy(binding),
             ProofStep::Witness(witness) => self.apply_fixed_state_witness(witness),
             ProofStep::Rewrite(equality) => self.apply_rewrite(equality),
             _ => {

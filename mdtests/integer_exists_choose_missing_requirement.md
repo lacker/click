@@ -1,10 +1,10 @@
-# Integer choose rejects an unavailable requirement
+# Existential elimination rejects an unavailable fact
 
 ```click
 theorem integer_exists_choose_missing_requirement() {
     requires exists (z: Integer) { z == z };
     ensures exists (k: Integer) { k == k } by {
-        choose(candidate from requirement 1);
+        let (candidate: Integer) satisfy { candidate != candidate };
         witness(k = candidate);
         assumption();
     }
@@ -12,5 +12,5 @@ theorem integer_exists_choose_missing_requirement() {
 ```
 
 ```expect
-fail: out of range
+fail: available fact
 ```

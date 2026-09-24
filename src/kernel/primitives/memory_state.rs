@@ -3236,6 +3236,44 @@ impl CMemory {
 }
 
 impl CState {
+    /// O(1), fail-closed comparison of the non-memory part of a predicate's
+    /// state argument. The caller has already checked exact interned memory
+    /// identity. Independently built empty environments are equivalent, but
+    /// nonempty environments must share persistent storage.
+    pub(crate) fn shares_non_memory_storage_with(&self, other: &Self) -> bool {
+        fn same_or_empty_map<K, V>(
+            left: &std::sync::Arc<std::collections::BTreeMap<K, V>>,
+            right: &std::sync::Arc<std::collections::BTreeMap<K, V>>,
+        ) -> bool {
+            std::sync::Arc::ptr_eq(left, right) || (left.is_empty() && right.is_empty())
+        }
+        let same_or_empty_resources = |left: &ResourceContext, right: &ResourceContext| {
+            (std::sync::Arc::ptr_eq(&left.storage, &right.storage)
+                && std::sync::Arc::ptr_eq(&left.loan_dependencies, &right.loan_dependencies))
+                || (left.is_pristine_semantically_empty() && right.is_pristine_semantically_empty())
+        };
+        let same_bindings = match (&self.resource_bindings, &other.resource_bindings) {
+            (None, None) => true,
+            (Some(left), Some(right)) => same_or_empty_map(left, right),
+            _ => false,
+        };
+        same_bindings
+            && same_or_empty_map(&self.locals.bindings, &other.locals.bindings)
+            && same_or_empty_map(&self.locals.slots, &other.locals.slots)
+            && same_or_empty_resources(&self.instance_field_scope, &other.instance_field_scope)
+            && same_or_empty_resources(&self.resources, &other.resources)
+            && self.loan_ledger == other.loan_ledger
+            && self.loan_participant == other.loan_participant
+            && self.loan_view_bindings == other.loan_view_bindings
+            && self.thread_ledger == other.thread_ledger
+            && self.pending_thread_create == other.pending_thread_create
+            && (std::sync::Arc::ptr_eq(&self.counted_populations, &other.counted_populations)
+                || (self.counted_populations.is_empty() && other.counted_populations.is_empty()))
+            && self.next_local_frame == other.next_local_frame
+            && self.next_local_lifetime == other.next_local_lifetime
+            && self.enclosing_frame_holds_locals == other.enclosing_frame_holds_locals
+    }
+
     pub(crate) fn resource_instance_at_path(
         &self,
         identity: Variable,

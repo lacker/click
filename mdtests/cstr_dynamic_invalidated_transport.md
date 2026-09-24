@@ -13,8 +13,8 @@ int32 read_terminator(uint8 bytes[], int32 known_len) {
 verifying "cstr_dynamic_invalidated_transport.c";
 
 int32 read_terminator(uint8 bytes[], int32 known_len) {
-    requires input: cstr_readable(bytes);
-    requires input_len: cstr_readable_len(bytes, known_len);
+    requires cstr_readable(bytes);
+    requires cstr_readable_len(bytes, known_len);
     requires 0 <= known_len;
     requires known_len < 2147483647;
     requires viewable(bytes[0..known_len + 1]);

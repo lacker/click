@@ -591,10 +591,6 @@ id = "language.word.cases"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
-id = "language.word.choose"
-path = "reference/language/grammar.md#word-index"
-
-[[item]]
 id = "language.word.close_invariants"
 path = "reference/language/grammar.md#word-index"
 
@@ -726,10 +722,6 @@ path = "reference/language/grammar.md#word-index"
 id = "language.word.forall"
 path = "reference/language/grammar.md#word-index"
 
-
-[[item]]
-id = "language.word.from"
-path = "reference/language/grammar.md#word-index"
 
 [[item]]
 id = "language.word.function"
@@ -870,10 +862,6 @@ id = "language.word.read"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
-id = "language.word.requirement"
-path = "reference/language/grammar.md#word-index"
-
-[[item]]
 id = "language.word.requires"
 path = "reference/language/grammar.md#word-index"
 
@@ -891,6 +879,10 @@ path = "reference/language/grammar.md#word-index"
 
 [[item]]
 id = "language.word.same_object"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.satisfy"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
@@ -1397,7 +1389,7 @@ id = "tactic.witness"
 path = "reference/tactics/index.md#proposition-reasoning"
 
 [[item]]
-id = "tactic.choose"
+id = "tactic.let satisfy"
 path = "reference/tactics/index.md#proposition-reasoning"
 
 
@@ -1558,7 +1550,7 @@ path = "reference/tactics/index.md#resources-and-snapshots"
 id = "tactic-form.witness"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
-id = "tactic-form.choose"
+id = "tactic-form.let-satisfy"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.assumption"

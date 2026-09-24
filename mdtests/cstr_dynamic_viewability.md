@@ -12,7 +12,7 @@ int32 read_terminator(uint8 bytes[]) {
 verifying "cstr_dynamic_loadability.c";
 
 int32 read_terminator(uint8 bytes[]) {
-    requires input: cstr_readable(bytes);
+    requires cstr_readable(bytes);
     ensures result >= 0;
 } by {
     unfold(cstr_readable);

@@ -50,7 +50,7 @@ documentation inventory keep the following accepted words synchronized.
 | `contains`, `fact`, `field`, `if` | Composite-resource members, pure field declarations, and optional resource guard. `if` also forms expressions and proof splits. |
 | `read`, `write`, `object`, `memory`, `of`, `count` | Memory-resource forms, quantified resources, and resource-population expressions. |
 | `and`, `or`, `implies`, `not`, `in` | Proposition connectives and sequence membership. `and`, `or`, and `implies` have increasing precedence except right-associative `implies`; `in` has comparison precedence. |
-| `forall`, `exists` | Universal and existential quantifiers. |
+| `forall`, `exists` | Universal and existential quantifiers; `exists (x: T, y: U) { P }` binds multiple variables. |
 | `all`, `any`, `fold` | Range proposition and expression methods. |
 | `defined`, `viewable`, `same_object`, `separate`, `aligned` | Definedness, readable-memory, pointer-provenance, resource-separation, and pointer-alignment propositions. |
 | `old`, `at`, `c` | Snapshot selection and embedded C-fragment forms. |
@@ -60,7 +60,7 @@ documentation inventory keep the following accepted words synchronized.
 | `mark`, `step`, `execute`, `execute_until` | Execution tactics. |
 | `unfold`, `fold`, `observe`, `construct`, `open` | Predicate and resource tactics. |
 | `apply`, `have`, `if`, `cases`, `both`, `branch`, `outcomes`, `loop` | Theorem application and structural proof tactics. |
-| `witness`, `choose`, `from`, `requirement` | Existential evidence and fact selection. |
+| `witness`, `let`, `satisfy` | Existential introduction and elimination. |
 | `assumption`, `extract`, `normalize`, `intro`, `split`, `left`, `right`, `enumerate`, `contradiction` | Explicit proposition tactics. |
 | `arithmetic_certificate` | Starts the typed arithmetic-certificate envelope. The canonical mathematical family is `arithmetic_certificate { ... }`; checked machine families are `arithmetic_certificate signed_int32 { ... }` and `arithmetic_certificate special { ... }`. `integer_certificate { ... }` remains a parser-only legacy alias for the mathematical family. |
 | `signed_int32` | Selects the public checked signed-machine arithmetic-certificate family. |

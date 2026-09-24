@@ -34,7 +34,7 @@ int32 count_to(int32 n) diverges {
         initialize by { simp(); }
         preserve by {
             step();
-            choose(previous from invariant 0);
+            let (previous: Nat) satisfy { previous == previous };
             apply(nat_reflexive(previous));
             have exists (fuel: Nat) { fuel == fuel } by {
                 witness(fuel = Nat::Succ(previous));

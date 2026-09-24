@@ -942,7 +942,7 @@ fn parses_void_c_function_contracts_without_a_result_binding() {
 fn parses_pure_theorem_definition() {
     let source = r#"
             theorem preserves_nonnegative(x: int32) {
-                requires input_nonnegative: x >= 0;
+                requires x >= 0;
                 ensures output_nonnegative: x >= 0 by auto;
             }
         "#;
@@ -963,7 +963,7 @@ fn parses_pure_theorem_definition() {
         }]
     );
     assert_eq!(theorem.requires().len(), 1);
-    assert_eq!(theorem.requires()[0].label(), Some("input_nonnegative"));
+    assert_eq!(theorem.requires()[0].label(), None);
     assert_eq!(theorem.ensures().len(), 1);
     assert_eq!(theorem.ensures()[0].name(), Some("output_nonnegative"));
 }

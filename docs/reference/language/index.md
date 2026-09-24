@@ -590,7 +590,7 @@ have exists (k: int32) { k == result } by {
 simp();
 ```
 
-The scoped proof may use `choose` and `witness`. Its established proposition is
+The scoped proof may use `let ... satisfy` and `witness`. Its established proposition is
 added to every completed execution path, so later `simp()` can use it to close
 the matching postcondition without applying those existential steps to other
 contract claims.
@@ -1159,7 +1159,7 @@ Supported structural requirements:
 
 <!-- verified-example: mdtests/pointer_range_segment_syntax.md -->
 ```click
-requires input_nonnegative: n >= 0;
+requires n >= 0;
 requires viewable(p[0..n]);
 requires viewable((p + 1)[0..1]);
 requires separate(memory(dst[0..n]), memory(src[0..n]));
@@ -1169,9 +1169,9 @@ views p[0..1];
 consumes p[0..1];
 ```
 
-Requirement labels use the same `label:` spelling as `ensures` labels. Labels
-are optional, but they are the preferred way for proof scripts to refer to a
-specific precondition, for example `choose(k from requirement has_k);`.
+`requires` clauses have no fact labels. `ensures` labels still identify
+postcondition claims. To open an available existential precondition, spell its
+proposition with `let (...) satisfy { ... };`.
 
 `viewable(base[start..end])` and `memory(base[start..end])` use half-open
 `int32` element ranges. The byte count is derived from the base pointer's

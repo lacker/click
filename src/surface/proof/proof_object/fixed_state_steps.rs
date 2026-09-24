@@ -781,6 +781,249 @@ impl<'a> Proof<'a> {
         Ok(transition)
     }
 
+    pub(super) fn apply_let_satisfy(
+        &self,
+        binding: &ProofLetSatisfy,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        if binding.bindings.is_empty() {
+            return Err(self.step_error("`let (...) satisfy` needs at least one binding"));
+        }
+        for (name, _) in &binding.bindings {
+            if name == "result"
+                || self.state().locals().values.contains_key(name)
+                || self.state().locals().integer_values.get(name).is_some()
+                || self.state().locals().algebraic_values.get(name).is_some()
+                || match self.context.as_ref() {
+                    ProofContext::Pure(context) => {
+                        context.theorem_context.values.contains_key(name)
+                            || context.theorem_context.integer_values.get(name).is_some()
+                    }
+                    ProofContext::FixedState(context) => {
+                        context.state.locals().contains_name(name)
+                            || context
+                                .parameters
+                                .iter()
+                                .any(|parameter| parameter.name() == name)
+                    }
+                    ProofContext::Execution(context) => {
+                        context
+                            .parsed_function
+                            .parameters()
+                            .iter()
+                            .any(|parameter| parameter.name() == name)
+                            || self.execution().is_some_and(|execution| {
+                                execution.core.state.locals().contains_name(name)
+                            })
+                    }
+                }
+            {
+                return Err(self.step_error(format!("`{name}` is already in scope")));
+            }
+        }
+        let source = self.lower_surface_proposition(&binding.proposition, "let-satisfy source")?;
+        let opened = self
+            .state
+            .check_exists_bindings(
+                &source,
+                binding.bindings.len(),
+                Variable(self.state().locals().next_choice_variable),
+            )
+            .map_err(|error| match error {
+                PropositionCloseError::IntegerChoiceSourceUnavailable => self.step_error(
+                    "`let (...) satisfy` needs this exact existential to be an available fact; prove it with `have` first",
+                ),
+                PropositionCloseError::IntegerChoiceWrongSort => self.step_error(
+                    "`let (...) satisfy` has more binders than the available existential, or an unsupported binder type",
+                ),
+                PropositionCloseError::IntegerChoiceFresheningExhausted => {
+                    self.step_error("`let (...) satisfy` could not allocate fresh bindings")
+                }
+                _ => self.step_error("could not open the stated existential"),
+            })?;
+        let mut locals = self.state().locals().clone();
+        let mut facts = self.facts().clone();
+        let mut added = Vec::new();
+        let mut checked = Vec::new();
+        let first_opened = opened.first().cloned();
+        for ((name, _), (fact, variable, sort)) in binding.bindings.iter().zip(opened) {
+            match sort {
+                Sort::Integer => {
+                    locals.integer_values = locals.integer_values.with_inserted(
+                        name.clone(),
+                        crate::kernel::SpecIntegerExpression::Term(
+                            crate::kernel::IntegerTerm::var(variable),
+                        ),
+                    );
+                }
+                Sort::CInt32 => {
+                    locals.values = locals.values.with_inserted(
+                        name.clone(),
+                        ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                            Bitvector32Term::Variable(variable),
+                        ))),
+                    );
+                }
+                Sort::CPointer(c_type) => {
+                    let pointer = if matches!(c_type, CType::FunctionPointer(_)) {
+                        Pointer::symbolic_function(variable)
+                    } else {
+                        Pointer::symbolic(variable)
+                    };
+                    locals.values = locals.values.with_inserted(
+                        name.clone(),
+                        ContractExpression::CFragment(CExpression::Value(CValue::typed_pointer(
+                            pointer, c_type,
+                        ))),
+                    );
+                }
+                Sort::Algebraic(algebraic_type) => {
+                    locals.values = locals
+                        .values
+                        .with_inserted(name.clone(), ContractExpression::Binding(name.clone()));
+                    locals.algebraic_values = locals.algebraic_values.with_inserted(
+                        name.clone(),
+                        crate::kernel::SpecAlgebraicExpression {
+                            algebraic_type,
+                            node: crate::kernel::SpecAlgebraicExpressionNode::Variable(variable),
+                        },
+                    );
+                }
+                _ => unreachable!("kernel rejected unsupported existential sort"),
+            }
+            locals.next_choice_variable = variable.0.saturating_add(1);
+            if !facts.contains_top_level(&fact) {
+                added.push(fact.clone());
+            }
+            facts = facts.with_kernel_checked_fact(fact.clone());
+            checked.push(fact);
+        }
+        let mut transition = self.checked_fact_transition(locals, facts, false, added, checked);
+        if let Some((chosen_body, variable, sort @ (Sort::CInt32 | Sort::CPointer(_)))) =
+            first_opened
+            && let Some(projection) =
+                self.build_existential_projection(binding, &chosen_body, variable, &sort)?
+            && let Some(branch) = transition.branch.as_mut()
+            && let Some(execution) = branch.state.execution.as_deref()
+        {
+            let mut execution = execution.clone();
+            execution.presentation.existential_projection = Some(projection);
+            branch.state.execution = Some(Arc::new(execution));
+        }
+        Ok(transition)
+    }
+
+    fn build_existential_projection(
+        &self,
+        binding: &ProofLetSatisfy,
+        chosen_body: &Proposition,
+        chosen_variable: Variable,
+        sort: &Sort,
+    ) -> Result<Option<ExistentialProjection>, ClickError> {
+        let entry_selector = SnapshotSelector::ProgramPoint(ProgramPointRef {
+            region: CodeRegionRef::Function,
+            kind: ProgramPointKind::Entry,
+        });
+        if !matches!(&binding.proposition, ClickProposition::At { selector, .. } if *selector == entry_selector)
+        {
+            return Ok(None);
+        }
+        let Some(context) = self.execution_context() else {
+            return Ok(None);
+        };
+        let Some(entry_state) = context.constants.function_entry_state.as_ref() else {
+            return Ok(None);
+        };
+        let Some(view) = self
+            .execution_proposition_fixed_state_view()
+            .or_else(|| self.execution_frontier_fixed_state_view())
+        else {
+            return Ok(None);
+        };
+        let (name, _) = &binding.bindings[0];
+        let chosen = match sort {
+            Sort::CInt32 => CValue::Int32(Bitvector32Term::Variable(chosen_variable)),
+            Sort::CPointer(c_type) => {
+                let pointer = if matches!(c_type, CType::FunctionPointer(_)) {
+                    Pointer::symbolic_function(chosen_variable)
+                } else {
+                    Pointer::symbolic(chosen_variable)
+                };
+                CValue::typed_pointer(pointer, *c_type)
+            }
+            _ => return Ok(None),
+        };
+        let bound_names = BTreeMap::from([(chosen_variable, name.clone())]);
+        let mut pending = vec![(chosen_body.clone(), Vec::new())];
+        let mut leaves = Vec::new();
+        let mut work = 0usize;
+        while let Some((proposition, path)) = pending.pop() {
+            check_verification_deadline()?;
+            work = work.saturating_add(1);
+            if work > MAX_CHOSEN_PROJECTION_WORK {
+                return Err(self.step_error(
+                    "opened existential body is too large to retain a bounded source projection",
+                ));
+            }
+            match proposition {
+                Proposition::And(left, right) => {
+                    let mut right_path = path.clone();
+                    right_path.push(1);
+                    pending.push((*right, right_path));
+                    let mut left_path = path;
+                    left_path.push(0);
+                    pending.push((*left, left_path));
+                }
+                leaf => {
+                    let Some(surface) = crate::surface::proof::surface_synthesis::synthesize_source_projection_proposition_with_bound_variable_names(
+                        &leaf,
+                        view.parameters,
+                        view.arguments,
+                        entry_state,
+                        &bound_names,
+                    ) else {
+                        continue;
+                    };
+                    let surface = surface_at_snapshot(&surface, &entry_selector)?;
+                    let validation_surface = substitute_click_proposition(
+                        &surface,
+                        &BTreeMap::from([(
+                            name.clone(),
+                            ContractExpression::CFragment(CExpression::Value(chosen.clone())),
+                        )]),
+                    )
+                    .map_err(|message| self.step_error(message))?;
+                    let lowered = lower_fixed_state_proposition_with_assumptions(
+                        &validation_surface,
+                        self.facts().assumptions(),
+                        view.parameters,
+                        view.arguments,
+                        view.pre_state,
+                        view.pre_state,
+                        None,
+                        view.recorded_snapshots,
+                        view.predicate_environment,
+                        view.click_function_environment,
+                    )
+                    .map_err(|message| self.step_error(message))?;
+                    if lowered == leaf {
+                        leaves.push(ExistentialProjectionLeaf {
+                            connective_path: path,
+                            surface,
+                            kernel: leaf,
+                        });
+                    }
+                }
+            }
+        }
+        Ok((!leaves.is_empty()).then_some(ExistentialProjection {
+            chosen_body: chosen_body.clone(),
+            chosen_name: name.clone(),
+            chosen_variable,
+            source_snapshot: crate::kernel::CMemorySnapshotIdentity::of(entry_state.memory()),
+            leaves,
+        }))
+    }
+
     fn apply_fixed_state_invariant_choose(
         &self,
         choice: &ProofChoice,
@@ -2093,6 +2336,9 @@ impl<'a> Proof<'a> {
         &self,
         surface: &ClickProposition,
     ) -> Result<Option<Proposition>, ClickError> {
+        if let Some(leaf) = self.existential_projection_for_extract(surface)? {
+            return Ok(Some(leaf));
+        }
         let Some(Obligation::Proposition(_)) = self.focused_obligation() else {
             return Ok(None);
         };
@@ -2200,6 +2446,63 @@ impl<'a> Proof<'a> {
         ) else {
             return Ok(None);
         };
+        Ok(Some(leaf.kernel.clone()))
+    }
+
+    fn existential_projection_for_extract(
+        &self,
+        surface: &ClickProposition,
+    ) -> Result<Option<Proposition>, ClickError> {
+        if !matches!(self.focused_obligation(), Some(Obligation::Proposition(_))) {
+            return Ok(None);
+        }
+        let Some(projection) = self
+            .execution()
+            .and_then(|execution| execution.presentation.existential_projection.as_ref())
+        else {
+            return Ok(None);
+        };
+        let Some(entry_state) = self
+            .execution_context()
+            .and_then(|context| context.constants.function_entry_state.as_ref())
+        else {
+            return Ok(None);
+        };
+        if projection.source_snapshot
+            != crate::kernel::CMemorySnapshotIdentity::of(entry_state.memory())
+            || !self.facts().contains_top_level(&projection.chosen_body)
+        {
+            return Ok(None);
+        }
+        let Some(binding) = self.local_binding(&projection.chosen_name) else {
+            return Ok(None);
+        };
+        let binding_is_chosen = match binding {
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(variable),
+            ))) => *variable == projection.chosen_variable,
+            ContractExpression::CFragment(CExpression::Value(CValue::Pointer(pointer))) => {
+                pointer.pointer().offset == PointerOffsetTerm::Variable(projection.chosen_variable)
+            }
+            _ => false,
+        };
+        if !binding_is_chosen {
+            return Ok(None);
+        }
+        let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+        let mut matches = projection
+            .leaves
+            .iter()
+            .filter(|leaf| leaf.surface == surface);
+        let Some(leaf) = matches.next() else {
+            return Ok(None);
+        };
+        if matches.next().is_some()
+            || proposition_at_connective_path(&projection.chosen_body, &leaf.connective_path)
+                != Some(&leaf.kernel)
+        {
+            return Ok(None);
+        }
         Ok(Some(leaf.kernel.clone()))
     }
 

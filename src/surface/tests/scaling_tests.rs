@@ -876,9 +876,15 @@ fn targeted_simple_verification_does_not_verify_unrelated_theorems() {
         .collect::<Vec<_>>();
 
     assert_near_linear_scaling("target with unrelated theorems", &samples);
+    // Whole-source parsing is correctly linear in the unrelated declarations;
+    // the selected proof work, not that parse cost, must be independent of them.
+    // Comparing total work was accidentally sensitive to whether another test
+    // had already initialized the stdlib before this sample's first size.
     assert!(
-        samples.last().unwrap().work <= samples.first().unwrap().work.saturating_mul(2),
-        "target work should be insensitive to unrelated theorems: {samples:?}"
+        samples
+            .iter()
+            .all(|sample| sample.named_work == samples[0].named_work),
+        "selected proof work should be insensitive to unrelated theorems: {samples:?}"
     );
 }
 

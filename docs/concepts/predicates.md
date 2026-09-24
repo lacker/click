@@ -48,13 +48,13 @@ predicate has_zero(p: int32[], n: int32) {
 
 int32 find_zero(int32 p[], int32 n) {
     requires viewable(p[0..n]);
-    requires present: has_zero(p, n);
+    requires has_zero(p, n);
     ...
 }
 ```
 
 If a proof needs the body of `has_zero`, unfold it and then use the resulting
-facts. Existential bodies may need `choose`.
+facts. An available existential body can be opened with `let (...) satisfy`.
 
 ## When to define A predicate
 

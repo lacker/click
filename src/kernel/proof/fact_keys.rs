@@ -578,6 +578,10 @@ enum AlphaPropositionKey {
     EqualBitvector(AlphaBitvectorKey, AlphaBitvectorKey),
     EqualAlgebraic(AlphaAlgebraicKey, AlphaAlgebraicKey),
     Condition(AlphaConditionKey, bool),
+    Predicate {
+        name: String,
+        arguments: Vec<AlphaPredicateArgumentKey>,
+    },
     CMemoryLoadable {
         memory: AlphaSnapshotKey,
         base: AlphaPointerKey,
@@ -589,6 +593,18 @@ enum AlphaPropositionKey {
     Implies(Box<Self>, Box<Self>),
     ForAll(Sort, Box<Self>),
     Exists(Sort, Box<Self>),
+}
+
+/// A predicate argument's bounded selector key. A `CState` uses its memory
+/// identity to narrow the bucket; the final quantified-fact comparison also
+/// checks its non-memory storage without copying the whole state into a key.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+enum AlphaPredicateArgumentKey {
+    StateMemory(AlphaSnapshotKey),
+    Memory(AlphaSnapshotKey),
+    Value(AlphaCValueKey),
+    Integer(AlphaIntegerKey),
+    Algebraic(AlphaAlgebraicKey),
 }
 
 #[derive(Clone)]
@@ -2479,7 +2495,9 @@ pub(crate) fn propositions_are_alpha_equal(left: &Proposition, right: &Propositi
         proposition_identity_key(left),
         proposition_identity_key(right),
     ) {
-        (Some(left), Some(right)) => left == right,
+        (Some(left_key), Some(right_key)) => {
+            left_key == right_key && predicate_states_share_storage(left, right)
+        }
         // A pair of unsupported propositions must not compare equal merely
         // because both key walks declined to represent them. They are equal
         // when they are the same proposition up to the numbering of their
@@ -3017,6 +3035,43 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
             alpha_condition_key_with_bindings::<ALLOW_LOADS>(condition, bindings, next_binder)?,
             *value,
         ),
+        Proposition::Predicate { name, arguments } => AlphaPropositionKey::Predicate {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| {
+                    alpha_work_checkpoint(bindings, 1)?;
+                    Some(match argument {
+                        Term::CState(state) => {
+                            AlphaPredicateArgumentKey::StateMemory(AlphaSnapshotKey::new(
+                                &crate::kernel::intern_c_memory_ref(state.memory()),
+                            ))
+                        }
+                        Term::CMemory(memory) => AlphaPredicateArgumentKey::Memory(
+                            AlphaSnapshotKey::new(&crate::kernel::intern_c_memory_ref(memory)),
+                        ),
+                        Term::CValue(value) => {
+                            AlphaPredicateArgumentKey::Value(alpha_c_value_key_with_bindings::<
+                                ALLOW_LOADS,
+                            >(
+                                value, bindings, next_binder
+                            )?)
+                        }
+                        Term::Integer(value) => AlphaPredicateArgumentKey::Integer(
+                            alpha_integer_key_with_bindings(value, bindings, next_binder)?,
+                        ),
+                        Term::Algebraic(value) => AlphaPredicateArgumentKey::Algebraic(
+                            alpha_algebraic_key_with_bindings::<ALLOW_LOADS>(
+                                value,
+                                bindings,
+                                next_binder,
+                            )?,
+                        ),
+                        _ => return None,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?,
+        },
         Proposition::CMemoryLoadable {
             memory,
             base,
@@ -3197,7 +3252,52 @@ pub(crate) fn snapshot_quantified_alpha_equivalent(
     if crate::instrumentation::deadline_exceeded_with_work(left_work.saturating_add(right_work)) {
         return Some(false);
     }
-    Some(left_key == right_key)
+    Some(left_key == right_key && predicate_states_share_storage(left, right))
+}
+
+/// The alpha key checks a predicate's state memory through exact interning.
+/// Recheck its non-memory state before treating key equality as fact
+/// equivalence. Shared persistent storage and independently built empty
+/// environments compare in O(1); other constructions fail closed.
+pub(crate) fn predicate_states_share_storage(left: &Proposition, right: &Proposition) -> bool {
+    let mut pending = vec![(left, right)];
+    while let Some((left, right)) = pending.pop() {
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            return false;
+        }
+        match (left, right) {
+            (Proposition::And(a, b), Proposition::And(c, d))
+            | (Proposition::Or(a, b), Proposition::Or(c, d))
+            | (Proposition::Implies(a, b), Proposition::Implies(c, d)) => {
+                pending.push((a, c));
+                pending.push((b, d));
+            }
+            (Proposition::ForAll { body: a, .. }, Proposition::ForAll { body: b, .. })
+            | (Proposition::Exists { body: a, .. }, Proposition::Exists { body: b, .. })
+            | (Proposition::Not(a), Proposition::Not(b)) => pending.push((a, b)),
+            (
+                Proposition::Predicate { arguments: a, .. },
+                Proposition::Predicate { arguments: b, .. },
+            ) => {
+                if a.len() != b.len() {
+                    return false;
+                }
+                for (a, b) in a.iter().zip(b) {
+                    match (a, b) {
+                        (Term::CState(a), Term::CState(b)) => {
+                            if !a.shares_non_memory_storage_with(b) {
+                                return false;
+                            }
+                        }
+                        (Term::CState(_), _) | (_, Term::CState(_)) => return false,
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 fn checked_proposition_contains_memory_loadability(proposition: &Proposition) -> Result<bool, ()> {

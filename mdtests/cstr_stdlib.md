@@ -26,8 +26,8 @@ verifying "plain_cstr.c";
 int32 cstr_stdlib(uint8 p[], int32 len, int32 max) {
     requires viewable(p[0..len + 1]);
     requires viewable(p[0..max]);
-    requires exact: cstr_len(p, len);
-    requires bounded: cstr_bounded(p, max);
+    requires cstr_len(p, len);
+    requires cstr_bounded(p, max);
 
     ensures exact_length_nonnegative: 0 <= len by {
         execute();
@@ -55,14 +55,16 @@ int32 cstr_stdlib(uint8 p[], int32 len, int32 max) {
 }
 
 int32 plain_cstr(uint8 p[]) {
-    requires input_is_cstr: cstr(p);
+    requires cstr(p);
 
     ensures exposes_ghost_length: exists (len: int32) {
         cstr_len(p, len)
     } by {
         execute();
         unfold(cstr);
-        choose(found_len from requirement input_is_cstr);
+        let (found_len: int32) satisfy {
+            at(function.entry, cstr_len(p, found_len))
+        };
         witness(len = found_len);
         simp();
     }

@@ -1401,11 +1401,13 @@ fn expanded_uint8_facts_print_as_parseable_typed_literals() {
     let click_source = r#"verifying "contains.c";
 int32 contains(uint8 p[], int32 n) {
     requires viewable(p[0..n]);
-    requires has_x: bytes_contains(p, 0, n, 'x');
+    requires bytes_contains(p, 0, n, 'x');
     ensures bytes_contains(p, 0, n, 'x') by {
         execute();
         unfold(bytes_contains);
-        choose(found from requirement has_x);
+        let (found: int32) satisfy {
+            0 <= found and found < n and p[found] == 'x'
+        };
         witness(k = found);
         simp();
     }
@@ -1559,7 +1561,7 @@ fn expanded_post_execution_apply_retains_its_facts_for_the_closer() {
     let click_source = r#"verifying "inspect.c";
 int32 inspect(uint8 p[], int32 len) {
     requires viewable(p[0..len + 1]);
-    requires exact: cstr_len(p, len);
+    requires cstr_len(p, len);
     ensures 0 <= len by {
         execute();
         apply(cstr_len_nonnegative(p, len));

@@ -272,10 +272,10 @@ theorem unmarked_point_update(
     requires j < hi;
     requires a[j] == 0;
     requires b[j] != 0;
-    requires below: forall (k: int32) {
+    requires forall (k: int32) {
         lo <= k and k < j implies a[k] == b[k]
     };
-    requires above: forall (k: int32) {
+    requires forall (k: int32) {
         j < k and k < n implies a[k] == b[k]
     };
     ensures unmarked(b, lo, hi) == unmarked(a, lo, hi) - 1 by {
@@ -437,7 +437,7 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
         initialize by { simp(); }
         preserve by {
             mark iter;
-            choose(previous from invariant 3);
+            let (previous: Nat) satisfy { walk(next, from, previous) == cur };
             have 0 <= 0 by { simp(); }
             have n <= n by { simp(); }
             have 0 <= n by { arithmetic() using { 0 <= cur; cur < n; } }

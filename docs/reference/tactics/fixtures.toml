@@ -168,9 +168,9 @@ path = "mdtests/witness_and_choose.md"
 needle = "witness(k = 0);"
 
 [[form]]
-id = "choose"
-path = "mdtests/witness_and_choose.md"
-needle = "choose(k from requirement has_k);"
+id = "let-satisfy"
+path = "mdtests/integer_exists_choose.md"
+needle = "let (candidate: Integer) satisfy { candidate == candidate };"
 
 [[form]]
 id = "assumption"

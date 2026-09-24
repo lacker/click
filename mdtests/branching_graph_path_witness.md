@@ -34,11 +34,13 @@ theorem right_path(left: int32[], right: int32[], from: int32, rest: Path) {
 }
 
 theorem prepend_left(left: int32[], right: int32[], from: int32, to: int32) {
-    requires child: exists (path: Path) {
+    requires exists (path: Path) {
         walk(left, right, left[from], path) == to
     };
     ensures exists (path: Path) { walk(left, right, from, path) == to } by {
-        choose(rest from requirement 0);
+        let (rest: Path) satisfy {
+            walk(left, right, left[from], rest) == to
+        };
         witness(path = Path::Left(rest));
         unfold(walk(left, right, from, Path::Left(rest)));
         assumption();
@@ -46,11 +48,13 @@ theorem prepend_left(left: int32[], right: int32[], from: int32, to: int32) {
 }
 
 theorem prepend_right(left: int32[], right: int32[], from: int32, to: int32) {
-    requires child: exists (path: Path) {
+    requires exists (path: Path) {
         walk(left, right, right[from], path) == to
     };
     ensures exists (path: Path) { walk(left, right, from, path) == to } by {
-        choose(rest from requirement 0);
+        let (rest: Path) satisfy {
+            walk(left, right, right[from], rest) == to
+        };
         witness(path = Path::Right(rest));
         unfold(walk(left, right, from, Path::Right(rest)));
         assumption();

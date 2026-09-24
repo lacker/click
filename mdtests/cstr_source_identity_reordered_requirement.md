@@ -16,10 +16,10 @@ int32 read_terminator(uint8 haystack[], int32 known_len) {
 verifying "cstr_source_identity_reordered_requirement.c";
 
 int32 read_terminator(uint8 haystack[], int32 known_len) {
-    requires nonnegative: 0 <= known_len;
-    requires successor: defined(known_len + 1);
-    requires unrelated: viewable(haystack[0..known_len + 1]);
-    requires input: cstr_readable(haystack);
+    requires 0 <= known_len;
+    requires defined(known_len + 1);
+    requires viewable(haystack[0..known_len + 1]);
+    requires cstr_readable(haystack);
     views haystack[0..known_len + 1];
     ensures result >= 0;
 } by {

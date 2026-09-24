@@ -19,7 +19,7 @@ use num_bigint::BigInt;
 use num_traits::{Signed, ToPrimitive, Zero};
 use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
 
-const MAX_DIRECT_CALLER_CHOICE_NAMES: usize = 4096;
+const MAX_DIRECT_CALLER_BINDING_NAMES: usize = 4096;
 
 fn collect_signed_surface_terms<'a>(
     expression: &'a ContractExpression,
@@ -5878,47 +5878,83 @@ impl<'a> Proof<'a> {
         &self,
         selection: &CallerRequirementSelection,
     ) -> Result<Option<Self>, ClickError> {
-        let mut proof = self.clone();
-        let choice_name = (0..MAX_DIRECT_CALLER_CHOICE_NAMES)
-            .map(|suffix| {
-                if suffix == 0 {
-                    format!("__click_choice_{}", selection.source_id.outer_ordinal)
-                } else {
-                    format!(
-                        "__click_choice_{}_{}",
-                        selection.source_id.outer_ordinal, suffix
-                    )
-                }
-            })
-            .find(|candidate| {
-                self.local_binding(candidate).is_none()
-                    && self.execution().is_none_or(|execution| {
-                        !execution.core.state.locals().contains_name(candidate)
-                    })
-            });
-        let Some(choice_name) = choice_name else {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
             return Ok(None);
         };
-        let Some(chosen) =
-            attempt::candidate_outcome(proof.apply_step(ProofStep::Choose(ProofChoice {
+        let unfolded = unfold_structural_invariant_proposition(
+            context.predicate_environment,
+            &selection.source_proposition,
+            &self.active_unfolded_predicates(),
+        )
+        .map_err(|message| self.step_error(message))?;
+        let ClickProposition::Exists {
+            click_type,
+            name: source_name,
+            body,
+            ..
+        } = unfolded
+        else {
+            return Ok(None);
+        };
+        let candidate_names = std::iter::once(source_name.clone()).chain(
+            (0..MAX_DIRECT_CALLER_BINDING_NAMES).map(|suffix| {
+                format!(
+                    "{}_witness_{}_{suffix}",
+                    source_name, selection.source_id.outer_ordinal
+                )
+            }),
+        );
+        let Some(choice_name) = candidate_names.into_iter().find(|candidate| {
+            self.local_binding(candidate).is_none()
+                && !context
+                    .parsed_function
+                    .parameters()
+                    .iter()
+                    .any(|parameter| parameter.name() == candidate)
+                && self
+                    .execution()
+                    .is_none_or(|execution| !execution.core.state.locals().contains_name(candidate))
+        }) else {
+            return Ok(None);
+        };
+        let replacement = match &click_type {
+            ClickType::Integer | ClickType::Algebraic(_) => {
+                ContractExpression::Binding(choice_name.clone())
+            }
+            ClickType::C(_) => {
+                ContractExpression::CFragment(CExpression::Variable(choice_name.clone()))
+            }
+            ClickType::Parameter(_) => return Ok(None),
+        };
+        let body =
+            substitute_click_proposition(&body, &BTreeMap::from([(source_name, replacement)]))
+                .map_err(|message| self.step_error(message))?;
+        let source = ClickProposition::At {
+            selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+                region: CodeRegionRef::Function,
+                kind: ProgramPointKind::Entry,
+            }),
+            proposition: Box::new(ClickProposition::Exists {
+                click_type: click_type.clone(),
                 name: choice_name.clone(),
-                source: ProofFactSource::Requirement(selection.source_id.outer_ordinal),
+                written_name: None,
+                body: Box::new(body),
+            }),
+        };
+        let Some(chosen) =
+            attempt::candidate_outcome(self.apply_step(ProofStep::LetSatisfy(ProofLetSatisfy {
+                bindings: vec![(choice_name.clone(), click_type)],
+                proposition: source,
             })))?
         else {
             return Ok(None);
         };
         let Some(projection) = chosen
             .execution()
-            .and_then(|execution| execution.presentation.chosen_projection.as_ref())
+            .and_then(|execution| execution.presentation.existential_projection.as_ref())
         else {
             return Ok(None);
         };
-        if projection.source_id != selection.source_id
-            || projection.principal_fact_index != selection.principal_fact_index
-            || projection.source_proposition != selection.source_proposition
-        {
-            return Ok(None);
-        }
         if chosen.focused_discharged() {
             return Ok(Some(chosen));
         }
@@ -5942,7 +5978,7 @@ impl<'a> Proof<'a> {
         else {
             return Ok(None);
         };
-        proof = witnessed;
+        let mut proof = witnessed;
         for source in &source_leaves {
             let Some(extracted) =
                 attempt::candidate_outcome(proof.apply_step(ProofStep::Extract(source.clone())))?

@@ -2612,6 +2612,44 @@ pub(super) fn finish_ordered_proof<'a>(
                                     ProofTactic::Choose(choice.clone()),
                                 );
                             }
+                            PostExecutionTactic::LetSatisfy(binding) => {
+                                let (claim_index, surface_goal, proof) =
+                                    match existence_proof.take() {
+                                        Some(active) => active,
+                                        None => begin_outcome_existence_proof(
+                                            outcome_proof.as_ref().ok_or_else(|| {
+                                                ClickError::new(format!(
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for `let satisfy` is unavailable"
+                                                ))
+                                            })?,
+                                            function,
+                                            pre_state,
+                                            arguments,
+                                            &outcome,
+                                            claims,
+                                            &closures,
+                                            &rewrite_claim_equalities,
+                                            &unfolded_predicates,
+                                        )?,
+                                    };
+                                let proof = proof
+                                    .refresh_outcome_from(required_outcome(&outcome_proof)?)?
+                                    .apply_step(ProofStep::LetSatisfy(binding.clone()))?;
+                                existence_proof = Some((claim_index, surface_goal, proof));
+                                record_post_execution_surface_tactic(
+                                    deferred.surface_recorded,
+                                    &mut path_surface_post_tactics,
+                                    &mut path_deferred_capture_tactics,
+                                    proof_execution
+                                        .presentation
+                                        .expansion
+                                        .deferred_tactic_capture
+                                        .as_ref(),
+                                    post_execution_index,
+                                    *tactic_index,
+                                    ProofTactic::LetSatisfy(binding.clone()),
+                                );
+                            }
                             PostExecutionTactic::Witness(witness) => {
                                 let (claim_index, surface_goal, proof) =
                                     match existence_proof.take() {

@@ -1,4 +1,4 @@
-# Witness and choose tactics
+# Witness and existential elimination
 
 ```c filename=witness_and_choose.c
 int32 witness_zero(int32 n) {
@@ -26,16 +26,16 @@ int32 witness_zero(int32 n) {
 }
 
 int32 choose_requirement(int32 x) {
-    requires has_k: exists (k: int32) { k == x };
-    ensures found_again_by_index: exists (j: int32) { j == x } by {
+    requires exists (k: int32) { k == x };
+    ensures found_again_first: exists (j: int32) { j == x } by {
         execute();
-        choose(k from requirement 0);
+        let (k: int32) satisfy { k == x };
         witness(j = k);
         simp();
     }
-    ensures found_again_by_label: exists (j: int32) { j == x } by {
+    ensures found_again_second: exists (j: int32) { j == x } by {
         execute();
-        choose(k from requirement has_k);
+        let (k: int32) satisfy { k == x };
         witness(j = k);
         simp();
     }

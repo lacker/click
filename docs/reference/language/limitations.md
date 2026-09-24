@@ -298,16 +298,16 @@ lowering concept for parameters written as `int32 p[]`, `int32* p`,
 
 ## Existentials need explicit facts
 
-`exists (k: int32) { ... }` is supported, and symbolic `(lo..hi).any(...)`
-lowers to a bounded existential. Proof scripts can prove existential goals
-with `witness(k = expression);` and can open direct existential preconditions
-with `choose(k from requirement N);`. If an explicitly unfolded predicate
-requirement lowers to an existential, `choose` can open that requirement too.
+`exists (k: int32) { ... }` and multiple-binder forms such as
+`exists (x: int32, y: int32) { ... }` are supported. Symbolic
+`(lo..hi).any(...)` lowers to a bounded existential. Proof scripts prove an
+existential goal with `witness(k = expression);`. To open an already established
+existential fact, write `let (k: int32) satisfy { ... };`; the same form accepts
+multiple typed bindings. A predicate requirement can be unfolded first.
 
-The remaining limitations are automation and source selection: `auto` does not
-synthesize witnesses, and `choose` currently selects only `requires` clauses by
-label or zero-based requirement index. Concrete `.any` ranges still unroll to
-finite disjunctions.
+`auto` does not synthesize witnesses. `let ... satisfy` requires the exact
+existential to be available; use `have` to establish it if necessary. Concrete
+`.any` ranges still unroll to finite disjunctions.
 
 ## Folds are partly supported
 

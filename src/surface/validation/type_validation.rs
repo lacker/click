@@ -1961,6 +1961,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Rewrite(_)
             | ProofTactic::InstantiateUsing { .. }
             | ProofTactic::Witness(_)
+            | ProofTactic::LetSatisfy(_)
             | ProofTactic::Choose(_)
             | ProofTactic::Simp
             // `transport(P, Q) using { ... }` names its source, its target,
@@ -2058,6 +2059,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Loop(_) => "loop",
         ProofTactic::ObserveResource(_) => "observe",
         ProofTactic::Witness(_) => "witness",
+        ProofTactic::LetSatisfy(_) => "let satisfy",
         ProofTactic::Sorry => "sorry",
         ProofTactic::Choose(_) => "choose",
         ProofTactic::Assumption => "assumption",

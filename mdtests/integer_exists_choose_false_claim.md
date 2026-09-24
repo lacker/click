@@ -1,10 +1,10 @@
-# Integer choose does not fabricate a false existential claim
+# Integer let-satisfy does not fabricate a false existential claim
 
 ```click
 theorem integer_exists_choose_false_claim() {
     requires exists (z: Integer) { z == z };
     ensures exists (k: Integer) { k != k } by {
-        choose(candidate from requirement 0);
+        let (candidate: Integer) satisfy { candidate == candidate };
         witness(k = candidate);
         assumption();
     }

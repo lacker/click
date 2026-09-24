@@ -688,6 +688,9 @@ fn tactic_inventory_matches_canonical_surface_names() {
             names.insert(name.to_string());
         }
     }
+    // A retired spelling can remain in the internal proof-object enum while
+    // the public parser and inventory no longer expose it.
+    names.retain(|name| !RETIRED_TACTICS.contains(&name.as_str()));
     let documented = inventory_ids("tactic.");
     let active = documented
         .into_iter()
@@ -884,6 +887,7 @@ fn every_tactic_form_has_a_checked_positive_fixture() {
 }
 
 const RETIRED_TACTICS: &[&str] = &[
+    "choose",
     "conjunction",
     "apply_loop_summary",
     "summarize",

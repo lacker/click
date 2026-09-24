@@ -404,6 +404,7 @@ pub(in crate::surface::proof) fn explicit_linear_step(tactic: &ProofTactic) -> O
             premises: premises.clone(),
         }),
         ProofTactic::Witness(witness) => Some(ProofStep::Witness(witness.clone())),
+        ProofTactic::LetSatisfy(binding) => Some(ProofStep::LetSatisfy(binding.clone())),
         ProofTactic::Choose(choice) => Some(ProofStep::Choose(choice.clone())),
         ProofTactic::Assumption => Some(ProofStep::Assumption),
         ProofTactic::Extract(proposition) => Some(ProofStep::Extract(proposition.clone())),
@@ -476,6 +477,7 @@ impl CheckedFocusedTransition {
         {
             let mut execution = execution.clone();
             execution.presentation.chosen_projection = None;
+            execution.presentation.existential_projection = None;
             branch.state.execution = Some(Arc::new(execution));
         }
     }
@@ -610,6 +612,27 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
     /// presentation-only provenance: the kernel's exact conjunct index remains
     /// the authority for extraction.
     pub(in crate::surface::proof) chosen_projection: Option<ChosenProjection>,
+    /// A surface-stated existential can retain spellings of its checked body
+    /// leaves without referring to a numbered contract requirement.
+    pub(in crate::surface::proof) existential_projection: Option<ExistentialProjection>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::surface::proof) struct ExistentialProjection {
+    /// The checked body fact, not a numbered source clause, authorizes later
+    /// proper-conjunct extraction.
+    pub(in crate::surface::proof) chosen_body: Proposition,
+    pub(in crate::surface::proof) chosen_name: String,
+    pub(in crate::surface::proof) chosen_variable: crate::kernel::Variable,
+    pub(in crate::surface::proof) source_snapshot: crate::kernel::CMemorySnapshotIdentity,
+    pub(in crate::surface::proof) leaves: Vec<ExistentialProjectionLeaf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::surface::proof) struct ExistentialProjectionLeaf {
+    pub(in crate::surface::proof) connective_path: Vec<usize>,
+    pub(in crate::surface::proof) surface: ClickProposition,
+    pub(in crate::surface::proof) kernel: Proposition,
 }
 
 /// Surface spellings for the checked leaves of a selected existential body.
@@ -716,6 +739,7 @@ impl ExecutionProofState {
                 generated_load_source_resolutions: PersistentMap::default(),
                 generated_load_source_events: PersistentSequence::default(),
                 chosen_projection: None,
+                existential_projection: None,
             },
         )
     }
@@ -2013,6 +2037,7 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::Extract(_) => "extract",
         ProofStep::Contradiction(_) => "contradiction",
         ProofStep::Witness(_) => "witness",
+        ProofStep::LetSatisfy(_) => "let satisfy",
         ProofStep::Choose(_) => "choose",
         ProofStep::UnfoldPredicate(_)
         | ProofStep::UnfoldFunction(_)

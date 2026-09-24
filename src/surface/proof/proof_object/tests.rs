@@ -3000,17 +3000,17 @@ fn fixed_state_choose_uses_indexed_requirement_and_persistent_local_bindings() {
     let click_file = crate::surface::parse(
         r#"
             int32 choose_source(int32 x) {
-                requires source: exists (k: int32) { k == x };
+                requires exists (k: int32) { k == x };
                 ensures result == x by { assumption(); }
             }
         "#,
     )
-    .expect("labeled existential requirement should parse");
+    .expect("existential requirement should parse");
     let function_block = &click_file.function_blocks()[0];
     assert_eq!(
         function_block.requirement_label_indices().get("source"),
-        Some(&0),
-        "the parser should build the requirement-label index once"
+        None,
+        "requirements no longer have source labels"
     );
     let parsed_function = syntax::parse_function("int32 choose_source(int32 x) { return x; }")
         .expect("test function should parse");
@@ -3085,7 +3085,7 @@ fn fixed_state_choose_uses_indexed_requirement_and_persistent_local_bindings() {
 
         let choice = ProofChoice {
             name: "candidate".to_string(),
-            source: ProofFactSource::RequirementLabel("source".to_string()),
+            source: ProofFactSource::Requirement(0),
         };
         let before = fact_node_allocations();
         let chosen = root
@@ -9093,7 +9093,7 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
                 exists (k: int32) { k == x and k >= 0 }
             }
             int32 identity(int32 x) {
-                requires source: selected(x);
+                requires selected(x);
                 ensures result == x;
             }
         "#,
@@ -9181,7 +9181,7 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
         .body()
         .apply_step(ProofStep::Choose(ProofChoice {
             name: "candidate".to_string(),
-            source: ProofFactSource::RequirementLabel("source".to_string()),
+            source: ProofFactSource::Requirement(0),
         }))
         .expect("choose should use the checked unfolded existential");
     let projection = chosen
@@ -9271,7 +9271,7 @@ fn choose_projection_walk_is_deterministic_across_selected_body_sizes() {
     let click_file = crate::surface::parse(
         r#"
             int32 identity(int32 x) {
-                requires source: exists (k: int32) { k == x };
+                requires exists (k: int32) { k == x };
                 ensures result == x;
             }
         "#,
@@ -9379,7 +9379,7 @@ fn choose_projection_walk_is_deterministic_across_selected_body_sizes() {
         let chosen = root
             .apply_step(ProofStep::Choose(ProofChoice {
                 name: "candidate".to_string(),
-                source: ProofFactSource::RequirementLabel("source".to_string()),
+                source: ProofFactSource::Requirement(0),
             }))
             .expect("the selected existential should check");
         let leaves = chosen

@@ -298,10 +298,10 @@ theorem unmarked_point_update(
     requires j < hi;
     requires a[j] == 0;
     requires b[j] != 0;
-    requires below: forall (k: int32) {
+    requires forall (k: int32) {
         lo <= k and k < j implies a[k] == b[k]
     };
-    requires above: forall (k: int32) {
+    requires forall (k: int32) {
         j < k and k < n implies a[k] == b[k]
     };
     ensures unmarked(b, lo, hi) == unmarked(a, lo, hi) - 1 by {

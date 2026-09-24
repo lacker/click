@@ -11,9 +11,10 @@ tautological path witness, this goal depends on the child's unknown result;
 
 The missing *call-site proof route* is existential strengthening by a
 binder-independent fact: from `V` and `exists path { P(path) }`, derive
-`exists path { V and P(path) }`. Click can do this with `choose` when the
-existential is an entry requirement, but cannot choose from this call-produced
-fact. A future positive regression should use that fact and the proved
+`exists path { V and P(path) }`. `let (...) satisfy` can open an established
+existential, including one produced by a call, but the proof still needs to
+combine its instantiated body with the historical viewability fact. A future
+positive regression should use that fact and the proved
 historical viewability, without assuming the witness or rewriting the C call.
 
 ```c filename=call_existential_evaluated_load_guard.c

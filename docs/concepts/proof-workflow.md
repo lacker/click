@@ -160,7 +160,7 @@ control flow.
   into this form.
 - `have proposition by { ... }`: run a scoped fixed-state proof and add its proposition
   to the current pure facts. The nested proof accepts
-  `unfold`, `apply`, `choose`, `witness`, `simp`, nested `have`, and proof-level
+  `unfold`, `apply`, `let ... satisfy`, `witness`, `simp`, nested `have`, and proof-level
   `if` case analysis; it cannot execute C or transform resources. Both `if`
   branches prove the local proposition, after which the surrounding proof
   continues. After execution reaches function exit, Click proves the `have`
@@ -173,10 +173,10 @@ control flow.
 - `observe(resource);`: project one view step from a held composite resource
   fact. This exposes immediate pure facts and viewed immediate contained
   resource facts without exposing owned contained resource facts.
-- `choose(k from requirement name);`: open a named existential precondition,
-  introducing proof-local int32 value `k`.
-- `choose(k from requirement N);`: the same operation by zero-based requirement
-  index. Prefer labels for durable scripts.
+- `let (k: int32) satisfy { P(k) };`: open the exact available existential
+  `exists (k: int32) { P(k) }`, introducing `k` and its body as proof facts.
+  Multiple typed bindings are allowed. The existential must already be
+  established; use `have` first when it is not.
 - `witness(k = expression);`: prove the current existential goal by substituting
   the given int32 expression for binder `k`.
 - `assumption();`: close a goal already present as the same semantic fact; it
@@ -349,33 +349,33 @@ ensures found: (0..n).any(|k| { k == result }) by {
 }
 ```
 
-`choose` is existential elimination for facts that are already assumed. The
-current source forms are intentionally narrow: `requirement name` means a
-`requires name: ...;` label, while `requirement N` means the Nth written
-`requires` clause. The selected source must lower to an existential
-proposition, either directly or after an explicit `unfold(predicate);` step.
+`let ... satisfy` eliminates an already available existential. It names the
+bound values and states the body of the existential; it does not select a
+contract clause by name or position, and it does not prove the existential.
 
-<!-- verified-example: mdtests/grouped_function_proof.md -->
+<!-- verified-example: mdtests/integer_exists_choose.md -->
 ```click
-requires has_k: exists (k: int32) { k == x };
-ensures again: exists (j: int32) { j == x } by {
-    execute();
-    choose(k from requirement has_k);
-    witness(j = k);
-    simp();
+requires exists (x: Integer, y: Integer) { x == y };
+ensures exists (a: Integer, b: Integer) { a == b } by {
+    let (left: Integer, right: Integer) satisfy { left == right };
+    witness(a = left);
+    witness(b = right);
+    assumption();
 }
 ```
 
 For a predicate requirement that hides an existential, unfold the predicate
 first:
 
-<!-- verified-example: mdtests/grouped_function_proof.md -->
+<!-- verified-example: mdtests/byte_slice_range_predicates.md -->
 ```click
-requires has_x: bytes_contains(p, 0, n, 'x');
-ensures again: bytes_contains(p, 0, n, 'x') by {
+requires bytes_contains(p, 0, n, 'x');
+ensures opened_contains: bytes_contains(p, 0, n, 'x') by {
     execute();
     unfold(bytes_contains);
-    choose(found from requirement has_x);
+    let (found: int32) satisfy {
+        0 <= found and found < n and p[found] == 'x'
+    };
     witness(k = found);
     simp();
 }

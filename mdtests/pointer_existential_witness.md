@@ -14,10 +14,10 @@ int32 pointer_existential_witness(int32* p) {
 verifying "pointer_existential_witness.c";
 
 int32 pointer_existential_witness(int32* p) {
-    requires has_pointer: exists (q: int32*) { q == p };
+    requires exists (q: int32*) { q == p };
     ensures preserves_pointer: exists (r: int32*) { r == p } by {
         execute();
-        choose(q from requirement has_pointer);
+        let (q: int32*) satisfy { q == p };
         witness(r = q);
         simp();
     }

@@ -5,7 +5,7 @@ does not follow from the explicitly listed premises.
 
 ```click
 theorem bounded_value(value: int32, limit: int32) {
-    requires bounded: forall (k: int32) {
+    requires forall (k: int32) {
         0 <= k and k < limit implies k <= value
     };
 

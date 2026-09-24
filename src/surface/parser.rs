@@ -331,6 +331,12 @@ fn reduce_contract_binary_expression(
     values.push(constructor(Box::new(left), Box::new(right)));
 }
 
+struct ProofLetParserRestore {
+    name: String,
+    was_integer_let: bool,
+    was_contract_binding: bool,
+}
+
 struct Parser {
     source_aliases: BTreeMap<String, String>,
     qualified_objects: Option<BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>>,
@@ -395,6 +401,11 @@ struct Parser {
     current_arm_binding_types: BTreeMap<String, AlgebraicFieldType>,
     current_integer_params: BTreeSet<String>,
     current_integer_lets: BTreeSet<String>,
+    /// Names introduced by `let (...) satisfy` in this proof block only.
+    /// Nested `have` and branch blocks start a new lexical binder scope;
+    /// semantic freshness is checked again by the proof object.
+    current_proof_let_names: BTreeSet<String>,
+    proof_let_restores: Vec<ProofLetParserRestore>,
     integer_literal_context: bool,
     /// Instance binders declared by each C function block already parsed,
     /// keyed by function name. A call step reads exactly the entry for its
@@ -665,6 +676,8 @@ impl Parser {
             current_arm_binding_types: BTreeMap::new(),
             current_integer_params: BTreeSet::new(),
             current_integer_lets: BTreeSet::new(),
+            current_proof_let_names: BTreeSet::new(),
+            proof_let_restores: Vec::new(),
             callee_resource_binders: BTreeMap::new(),
             in_contract_definition: false,
             integer_literal_context: false,
@@ -3225,15 +3238,11 @@ impl Parser {
 
     fn parse_requirement(&mut self) -> Result<Requirement, ClickError> {
         self.expect_ident_spelling("requires")?;
-        let label = if matches!(self.peek(), Some(Token::Ident(_)))
-            && self.peek_next() == Some(&Token::Colon)
-        {
-            let label = self.expect_ident("requirement label")?;
-            self.expect(Token::Colon)?;
-            Some(label)
-        } else {
-            None
-        };
+        if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_next() == Some(&Token::Colon) {
+            return Err(
+                self.error("named `requires` facts were removed; write `requires proposition;`")
+            );
+        }
         let requirement = match (self.peek_ident(), self.peek_next()) {
             (Some("viewable"), Some(Token::LParen)) => self.parse_loadable_requirement()?,
             (Some("loadable"), Some(Token::LParen)) => {
@@ -3248,14 +3257,7 @@ impl Parser {
         if !matches!(requirement, Requirement::Proposition(_)) {
             self.expect(Token::Semicolon)?;
         }
-        Ok(if let Some(label) = label {
-            Requirement::Labeled {
-                label,
-                requirement: Box::new(requirement),
-            }
-        } else {
-            requirement
-        })
+        Ok(requirement)
     }
 
     fn parse_loadable_requirement(&mut self) -> Result<Requirement, ClickError> {
@@ -4249,6 +4251,7 @@ impl Parser {
         }
 
         let mut scopes = Vec::new();
+        let mut scope_groups = Vec::new();
         let mut operands = Vec::new();
         let mut operators = Vec::new();
         let mut expect_operand = true;
@@ -4290,65 +4293,74 @@ impl Parser {
                     }
                     self.position += 1;
                     self.expect(Token::LParen)?;
-                    let name = self.expect_ident(if forall {
-                        "forall variable name"
-                    } else {
-                        "exists variable name"
-                    })?;
-                    if is_c_type_keyword(&name) {
-                        return Err(self.error(
-                            "Click-native binders use `name: type`, for example `forall (k: int32)`",
-                        ));
-                    }
-                    self.expect(Token::Colon)?;
-                    let (click_type, parsed_type) = self.parse_click_type()?;
-                    if let Some(parsed_type) = &parsed_type
-                        && parsed_type.struct_name.is_some()
-                        && !parsed_type.struct_pointer
-                    {
-                        return Err(self.error("only pointer-to-struct types are supported"));
+                    let mut group_len = 0;
+                    loop {
+                        let name = self.expect_ident(if forall {
+                            "forall variable name"
+                        } else {
+                            "exists variable name"
+                        })?;
+                        if is_c_type_keyword(&name) {
+                            return Err(self.error(
+                                "Click-native binders use `name: type`, for example `exists (k: int32)`",
+                            ));
+                        }
+                        self.expect(Token::Colon)?;
+                        let (click_type, parsed_type) = self.parse_click_type()?;
+                        if let Some(parsed_type) = &parsed_type
+                            && parsed_type.struct_name.is_some()
+                            && !parsed_type.struct_pointer
+                        {
+                            return Err(self.error("only pointer-to-struct types are supported"));
+                        }
+                        let previous_integer_context = self.integer_literal_context;
+                        let integer_was_bound = self.current_integer_params.contains(&name);
+                        let integer_let_was_bound = self.current_integer_lets.contains(&name);
+                        let c_was_bound = self.current_contract_bindings.contains(&name);
+                        match &click_type {
+                            ClickType::Integer => {
+                                self.current_contract_bindings.remove(&name);
+                                self.current_integer_params.insert(name.clone());
+                                self.integer_literal_context = true;
+                            }
+                            ClickType::C(_) => {
+                                self.current_integer_params.remove(&name);
+                                self.current_integer_lets.remove(&name);
+                                self.current_contract_bindings.remove(&name);
+                                self.integer_literal_context = false;
+                            }
+                            ClickType::Algebraic(_) => {
+                                self.current_integer_params.remove(&name);
+                                self.current_integer_lets.remove(&name);
+                                self.current_contract_bindings.insert(name.clone());
+                                self.integer_literal_context = false;
+                            }
+                            ClickType::Parameter(_) => {
+                                return Err(self.error(
+                                    "quantifier type must be a concrete C, Integer, or algebraic type",
+                                ));
+                            }
+                        }
+                        scopes.push(Scope {
+                            forall,
+                            click_type,
+                            name,
+                            negations: if group_len == 0 { negations } else { 0 },
+                            previous_integer_context,
+                            integer_was_bound,
+                            integer_let_was_bound,
+                            c_was_bound,
+                        });
+                        operators.push(Operator::Scope);
+                        group_len += 1;
+                        if self.peek() != Some(&Token::Comma) {
+                            break;
+                        }
+                        self.position += 1;
                     }
                     self.expect(Token::RParen)?;
                     self.expect(Token::LBrace)?;
-                    let previous_integer_context = self.integer_literal_context;
-                    let integer_was_bound = self.current_integer_params.contains(&name);
-                    let integer_let_was_bound = self.current_integer_lets.contains(&name);
-                    let c_was_bound = self.current_contract_bindings.contains(&name);
-                    match &click_type {
-                        ClickType::Integer => {
-                            self.current_contract_bindings.remove(&name);
-                            self.current_integer_params.insert(name.clone());
-                            self.integer_literal_context = true;
-                        }
-                        ClickType::C(_) => {
-                            self.current_integer_params.remove(&name);
-                            self.current_integer_lets.remove(&name);
-                            self.current_contract_bindings.remove(&name);
-                            self.integer_literal_context = false;
-                        }
-                        ClickType::Algebraic(_) => {
-                            self.current_integer_params.remove(&name);
-                            self.current_integer_lets.remove(&name);
-                            self.current_contract_bindings.insert(name.clone());
-                            self.integer_literal_context = false;
-                        }
-                        ClickType::Parameter(_) => {
-                            return Err(self.error(
-                                "quantifier type must be a concrete C, Integer, or algebraic type",
-                            ));
-                        }
-                    }
-                    scopes.push(Scope {
-                        forall,
-                        click_type,
-                        name,
-                        negations,
-                        previous_integer_context,
-                        integer_was_bound,
-                        integer_let_was_bound,
-                        c_was_bound,
-                    });
-                    operators.push(Operator::Scope);
+                    scope_groups.push(group_len);
                     continue;
                 }
                 let mut operand = self.parse_proposition_atom()?;
@@ -4386,52 +4398,57 @@ impl Parser {
 
             if self.peek() == Some(&Token::RBrace) {
                 self.position += 1;
-                loop {
-                    let operator = operators
-                        .pop()
-                        .ok_or_else(|| self.error("quantifier body closed without a scope"))?;
-                    if matches!(operator, Operator::Scope) {
-                        break;
+                let group_len = scope_groups
+                    .pop()
+                    .ok_or_else(|| self.error("quantifier body closed without a scope"))?;
+                for _ in 0..group_len {
+                    loop {
+                        let operator = operators
+                            .pop()
+                            .ok_or_else(|| self.error("quantifier body closed without a scope"))?;
+                        if matches!(operator, Operator::Scope) {
+                            break;
+                        }
+                        reduce(operator, &mut operands);
                     }
-                    reduce(operator, &mut operands);
-                }
-                let scope = scopes.pop().expect("quantifier scope marker has a scope");
-                self.integer_literal_context = scope.previous_integer_context;
-                if scope.integer_was_bound {
-                    self.current_integer_params.insert(scope.name.clone());
-                } else {
-                    self.current_integer_params.remove(&scope.name);
-                }
-                if scope.integer_let_was_bound {
-                    self.current_integer_lets.insert(scope.name.clone());
-                } else {
-                    self.current_integer_lets.remove(&scope.name);
-                }
-                if scope.c_was_bound {
-                    self.current_contract_bindings.insert(scope.name.clone());
-                } else {
-                    self.current_contract_bindings.remove(&scope.name);
-                }
-                let body = operands.pop().expect("quantifier body operand");
-                let mut quantifier = if scope.forall {
-                    ClickProposition::ForAll {
-                        click_type: scope.click_type,
-                        name: scope.name,
-                        written_name: None,
-                        body: Box::new(body),
+                    let scope = scopes.pop().expect("quantifier scope marker has a scope");
+                    self.integer_literal_context = scope.previous_integer_context;
+                    if scope.integer_was_bound {
+                        self.current_integer_params.insert(scope.name.clone());
+                    } else {
+                        self.current_integer_params.remove(&scope.name);
                     }
-                } else {
-                    ClickProposition::Exists {
-                        click_type: scope.click_type,
-                        name: scope.name,
-                        written_name: None,
-                        body: Box::new(body),
+                    if scope.integer_let_was_bound {
+                        self.current_integer_lets.insert(scope.name.clone());
+                    } else {
+                        self.current_integer_lets.remove(&scope.name);
                     }
-                };
-                for _ in 0..scope.negations {
-                    quantifier = ClickProposition::Not(Box::new(quantifier));
+                    if scope.c_was_bound {
+                        self.current_contract_bindings.insert(scope.name.clone());
+                    } else {
+                        self.current_contract_bindings.remove(&scope.name);
+                    }
+                    let body = operands.pop().expect("quantifier body operand");
+                    let mut quantifier = if scope.forall {
+                        ClickProposition::ForAll {
+                            click_type: scope.click_type,
+                            name: scope.name,
+                            written_name: None,
+                            body: Box::new(body),
+                        }
+                    } else {
+                        ClickProposition::Exists {
+                            click_type: scope.click_type,
+                            name: scope.name,
+                            written_name: None,
+                            body: Box::new(body),
+                        }
+                    };
+                    for _ in 0..scope.negations {
+                        quantifier = ClickProposition::Not(Box::new(quantifier));
+                    }
+                    operands.push(quantifier);
                 }
-                operands.push(quantifier);
                 if scopes.is_empty() {
                     return Ok(operands.pop().expect("quantifier chain root"));
                 }
@@ -4554,6 +4571,34 @@ impl Parser {
 
     fn parse_by_clause(&mut self) -> Result<SourceProof, ClickError> {
         self.expect_ident_spelling("by")?;
+        let let_checkpoint = self.proof_let_restores.len();
+        let previous_proof_let_names = std::mem::take(&mut self.current_proof_let_names);
+        let result = self.parse_by_clause_body();
+        self.restore_proof_let_bindings(let_checkpoint);
+        self.current_proof_let_names = previous_proof_let_names;
+        result
+    }
+
+    fn restore_proof_let_bindings(&mut self, checkpoint: usize) {
+        while self.proof_let_restores.len() > checkpoint {
+            let restore = self
+                .proof_let_restores
+                .pop()
+                .expect("restore above checkpoint");
+            if restore.was_integer_let {
+                self.current_integer_lets.insert(restore.name.clone());
+            } else {
+                self.current_integer_lets.remove(&restore.name);
+            }
+            if restore.was_contract_binding {
+                self.current_contract_bindings.insert(restore.name);
+            } else {
+                self.current_contract_bindings.remove(&restore.name);
+            }
+        }
+    }
+
+    fn parse_by_clause_body(&mut self) -> Result<SourceProof, ClickError> {
         if self.peek() == Some(&Token::LBrace) {
             self.position += 1;
             let proof = match self.peek() {
@@ -4707,6 +4752,9 @@ impl Parser {
         let name = self.expect_ident("tactic")?;
         match name.as_str() {
             "let" => {
+                if self.peek() == Some(&Token::LParen) {
+                    return self.parse_let_satisfy();
+                }
                 let output = self.parse_let_output_pattern()?;
                 self.expect(Token::Equal)?;
                 if self.peek_ident() == Some("step") {
@@ -4841,6 +4889,99 @@ impl Parser {
             }
             _ => self.parse_other_proof_tactic(name),
         }
+    }
+
+    fn parse_let_satisfy(&mut self) -> Result<ProofTactic, ClickError> {
+        self.expect(Token::LParen)?;
+        let mut bindings = Vec::new();
+        loop {
+            let name = self.expect_ident("existential binding name")?;
+            if is_c_type_keyword(&name)
+                || self.current_proof_let_names.contains(&name)
+                || bindings.iter().any(|(bound, _)| bound == &name)
+            {
+                return Err(self.error(format!("`{name}` is already in scope")));
+            }
+            self.expect(Token::Colon)?;
+            let (click_type, parsed_type) = self.parse_click_type()?;
+            if parsed_type
+                .as_ref()
+                .is_some_and(|parsed| parsed.struct_name.is_some() && !parsed.struct_pointer)
+            {
+                return Err(self.error("only pointer-to-struct types are supported"));
+            }
+            if matches!(click_type, ClickType::Parameter(_)) {
+                return Err(self.error(
+                    "existential binding type must be a concrete C, Integer, or algebraic type",
+                ));
+            }
+            bindings.push((name, click_type));
+            if self.peek() != Some(&Token::Comma) {
+                break;
+            }
+            self.position += 1;
+        }
+        self.expect(Token::RParen)?;
+        self.expect_ident_spelling("satisfy")?;
+        self.expect(Token::LBrace)?;
+        let previous_integer_context = self.integer_literal_context;
+        for (name, click_type) in &bindings {
+            self.proof_let_restores.push(ProofLetParserRestore {
+                name: name.clone(),
+                was_integer_let: self.current_integer_lets.contains(name),
+                was_contract_binding: self.current_contract_bindings.contains(name),
+            });
+            match click_type {
+                ClickType::Integer => {
+                    self.current_contract_bindings.remove(name);
+                    self.current_integer_lets.insert(name.clone());
+                    self.integer_literal_context = true;
+                }
+                ClickType::C(_) | ClickType::Algebraic(_) => {
+                    self.current_integer_lets.remove(name);
+                    self.current_contract_bindings.insert(name.clone());
+                    self.integer_literal_context = false;
+                }
+                ClickType::Parameter(_) => unreachable!("rejected above"),
+            }
+        }
+        let body = self.parse_proposition()?;
+        self.expect(Token::RBrace)?;
+        self.expect(Token::Semicolon)?;
+        self.integer_literal_context = previous_integer_context;
+        self.current_proof_let_names
+            .extend(bindings.iter().map(|(name, _)| name.clone()));
+        // The snapshot is independent of the newly bound variables, so
+        // `exists x. at(S, P(x))` is stated at the source as
+        // `at(S, exists x. P(x))`. This preserves the exact fact identity of
+        // an existential recorded at a past program point.
+        let (snapshot, body) = match body {
+            ClickProposition::At {
+                selector,
+                proposition,
+            } => (Some(selector), *proposition),
+            body => (None, body),
+        };
+        let proposition = bindings
+            .iter()
+            .rev()
+            .fold(body, |body, (name, click_type)| ClickProposition::Exists {
+                click_type: click_type.clone(),
+                name: name.clone(),
+                written_name: None,
+                body: Box::new(body),
+            });
+        let proposition = match snapshot {
+            Some(selector) => ClickProposition::At {
+                selector,
+                proposition: Box::new(proposition),
+            },
+            None => proposition,
+        };
+        Ok(ProofTactic::LetSatisfy(ProofLetSatisfy {
+            bindings,
+            proposition,
+        }))
     }
 
     #[inline(never)]
@@ -5372,12 +5513,9 @@ impl Parser {
                 ProofTactic::Witness(ProofWitness { name, value })
             }
             "choose" => {
-                self.expect(Token::LParen)?;
-                let name = self.expect_ident("chosen variable name")?;
-                self.expect_ident_spelling("from")?;
-                let source = self.parse_proof_fact_source()?;
-                self.expect(Token::RParen)?;
-                ProofTactic::Choose(ProofChoice { name, source })
+                return Err(self.error(
+                    "`choose` was removed; write `let (name: Type) satisfy { proposition };` after proving that existential",
+                ));
             }
             "assumption" => {
                 self.expect_empty_tactic_args(&name)?;
@@ -5618,11 +5756,18 @@ impl Parser {
     }
 
     fn parse_tactics_until_rbrace(&mut self) -> Result<Vec<ProofTactic>, ClickError> {
-        let mut tactics = Vec::new();
-        while self.peek() != Some(&Token::RBrace) {
-            tactics.push(self.parse_proof_tactic()?);
-        }
-        Ok(tactics)
+        let let_checkpoint = self.proof_let_restores.len();
+        let previous_proof_let_names = std::mem::take(&mut self.current_proof_let_names);
+        let result = (|| {
+            let mut tactics = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                tactics.push(self.parse_proof_tactic()?);
+            }
+            Ok(tactics)
+        })();
+        self.restore_proof_let_bindings(let_checkpoint);
+        self.current_proof_let_names = previous_proof_let_names;
+        result
     }
 
     fn parse_theorem_application(&mut self) -> Result<TheoremApplication, ClickError> {
@@ -6332,43 +6477,6 @@ impl Parser {
         Ok(ProofTactic::ArithmeticCertificate(
             ArithmeticCertificate::integer(IntegerCertificate { nodes, conclusion }),
         ))
-    }
-
-    fn parse_proof_fact_source(&mut self) -> Result<ProofFactSource, ClickError> {
-        match self.next() {
-            Some(Token::Ident(kind)) if kind == "requirement" => match self.next() {
-                Some(Token::Number(index)) => {
-                    let index = usize::try_from(index)
-                        .map_err(|_| self.error("requirement index does not fit in usize"))?;
-                    Ok(ProofFactSource::Requirement(index))
-                }
-                Some(Token::Ident(label)) => Ok(ProofFactSource::RequirementLabel(label)),
-                Some(token) => Err(self.error(format!(
-                    "expected requirement index or label, got {token:?}"
-                ))),
-                None => Err(self.error("expected requirement index or label, got end of input")),
-            },
-            Some(Token::Ident(kind)) if kind == "invariant" => match self.next() {
-                Some(Token::Number(index)) => {
-                    let index = usize::try_from(index)
-                        .map_err(|_| self.error("invariant index does not fit in usize"))?;
-                    Ok(ProofFactSource::Invariant(index))
-                }
-                Some(token) => Err(self.error(format!(
-                    "expected invariant index, got {token:?}"
-                ))),
-                None => Err(self.error("expected invariant index, got end of input")),
-            },
-            Some(Token::Ident(kind)) => Err(self.error(format!(
-                "expected proof fact source `requirement N`, `requirement name`, or `invariant N`, got `{kind}`"
-            ))),
-            Some(token) => Err(self.error(format!(
-                "expected proof fact source `requirement N`, `requirement name`, or `invariant N`, got {token:?}"
-            ))),
-            None => Err(self.error(
-                "expected proof fact source `requirement N` or `invariant N`, got end of input",
-            )),
-        }
     }
 
     fn parse_code_region_ref(&mut self) -> Result<CodeRegionRef, ClickError> {

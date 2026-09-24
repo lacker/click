@@ -534,6 +534,43 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 format_fact_source(&choice.source)
             ),
         ),
+        ProofTactic::LetSatisfy(binding) => {
+            let bindings = binding
+                .bindings
+                .iter()
+                .map(|(name, click_type)| {
+                    format!("{name}: {}", validation::describe_click_type(click_type))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let (snapshot, mut body) = match &binding.proposition {
+                ClickProposition::At {
+                    selector,
+                    proposition,
+                } => (Some(selector), proposition.as_ref()),
+                proposition => (None, proposition),
+            };
+            for _ in &binding.bindings {
+                let ClickProposition::Exists { body: inner, .. } = body else {
+                    unreachable!("let-satisfy source contains its declared binders")
+                };
+                body = inner;
+            }
+            let body = if let Some(selector) = snapshot {
+                format!(
+                    "at({}, {})",
+                    describe_snapshot_selector(selector),
+                    source_click_proposition(body)
+                )
+            } else {
+                source_click_proposition(body)
+            };
+            line(
+                output,
+                &prefix,
+                &format!("let ({bindings}) satisfy {{ {body} }};"),
+            );
+        }
         ProofTactic::Assumption => line(output, &prefix, "assumption();"),
         ProofTactic::Extract(proposition) => line(
             output,

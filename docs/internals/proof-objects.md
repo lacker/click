@@ -456,7 +456,7 @@ Three standing rules keep the boundary where the 2026-09 cleanup left it.
   emits the proposition as an obligation. One that must choose among
   candidates the kernel itself enumerates lowers the choice as a finite
   disjunction so `left`/`right` pick it and expansion prints it; open
-  choices use the existing `instantiate`, `witness`, `choose`, `rewrite`,
+  choices use the existing `instantiate`, `witness`, `let ... satisfy`, `rewrite`,
   and `transport` spellings.
 - **Retained evidence names premises, never a context.** A derivation leaf
   carries the propositions it cites, and its check rebuilds a context from

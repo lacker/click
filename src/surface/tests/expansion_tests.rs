@@ -110,10 +110,10 @@ fn reordered_cstr_requirement_expands_without_planning_and_reverifies() {
         verifying "source_identity.c";
 
         int32 read_terminator(uint8 haystack[], int32 known_len) {
-            requires nonnegative: 0 <= known_len;
-            requires successor: defined(known_len + 1);
-            requires unrelated: viewable(haystack[0..known_len + 1]);
-            requires input: cstr_readable(haystack);
+            requires 0 <= known_len;
+            requires defined(known_len + 1);
+            requires viewable(haystack[0..known_len + 1]);
+            requires cstr_readable(haystack);
             views haystack[0..known_len + 1];
             ensures result >= 0;
         } by {
@@ -153,8 +153,8 @@ fn reordered_cstr_requirement_expands_without_planning_and_reverifies() {
     )
     .expect("the source-identity retry should expand into source");
     assert!(
-        expanded_source.contains("choose(__click_choice_3 from requirement 3)"),
-        "the expansion should select the exact nonzero caller source ordinal: {expanded_source}"
+        expanded_source.contains("let (len: int32) satisfy { at(function.entry,"),
+        "the expansion should state the established entry existential: {expanded_source}"
     );
     assert!(
         expanded_source.contains("extract(at(function.entry, viewable(haystack[0.."),
@@ -456,7 +456,7 @@ theorem integer_forall_logical_simp() {
 theorem integer_exists_choose() {
     requires exists (z: Integer) { z == z };
     ensures chosen: exists (k: Integer) { k == k } by {
-        choose(candidate from requirement 0);
+        let (candidate: Integer) satisfy { candidate == candidate };
         witness(k = candidate);
         assumption();
     }
@@ -484,7 +484,7 @@ theorem integer_exists_choose() {
             assert!(expanded.contains("both {"), "{label}: {expanded}");
         } else {
             assert!(
-                expanded.contains("choose(candidate from requirement 0);"),
+                expanded.contains("let (candidate: Integer) satisfy { candidate == candidate };"),
                 "{label}: {expanded}"
             );
             assert!(
@@ -503,13 +503,15 @@ fn integer_existential_keeps_definedness_under_one_witness() {
     let source = r#"
 theorem guarded_integer_exists(value: int32) {
     requires defined(value + 1);
-    requires candidate: exists (z: Integer) {
+    requires exists (z: Integer) {
         z == to_integer(if value > 0 { value } else { value + 1 })
     };
     ensures branched: exists (k: Integer) {
         k == to_integer(if value > 0 { value } else { value + 1 })
     } by {
-        choose(candidate from requirement 1);
+        let (candidate: Integer) satisfy {
+            candidate == to_integer(if value > 0 { value } else { value + 1 })
+        };
         witness(k = candidate);
         assumption();
     }
@@ -2286,7 +2288,7 @@ fn grouped_post_execution_closers_use_independent_checked_proofs() {
         verifying "identity.c";
 
         int32 identity(int32 x) {
-            requires selected: x == 0;
+            requires x == 0;
             ensures retained: x == 0;
             ensures reflexive: result == result;
         } by {
@@ -2321,7 +2323,7 @@ fn post_execution_rewrite_retains_its_checked_proof_step() {
         verifying "identity.c";
 
         int32 identity(int32 x) {
-            requires zero: x == 0;
+            requires x == 0;
             ensures successor: x + 1 == 1;
         } by {
             execute();
@@ -2432,7 +2434,7 @@ fn grouped_post_execution_simp_applies_planned_steps_once_through_proof() {
         verifying "identity.c";
 
         int32 identity(int32 x) {
-            requires zero: x == 0;
+            requires x == 0;
             ensures successor: x + 1 == 1;
         } by {
             execute();
@@ -2887,10 +2889,10 @@ fn post_execution_choose_and_witness_share_the_retained_outcome_proof() {
         verifying "identity.c";
 
         int32 identity(int32 x) {
-            requires has_k: exists (k: int32) { k == x };
+            requires exists (k: int32) { k == x };
             ensures exists (j: int32) { j == result } by {
                 execute();
-                choose(k from requirement has_k);
+                let (k: int32) satisfy { k == x };
                 witness(j = k);
                 simp();
             }
@@ -2928,7 +2930,7 @@ fn post_execution_choose_and_witness_share_the_retained_outcome_proof() {
     )
     .expect("the retained choose/witness Proof should serialize");
     assert!(
-        expanded.contains("choose(k from requirement has_k);"),
+        expanded.contains("let (k: int32) satisfy { k == x };"),
         "{expanded}"
     );
     assert!(expanded.contains("witness(j = k);"), "{expanded}");
@@ -10658,7 +10660,7 @@ fn quantified_outcome_simp_keeps_its_binder_on_the_checked_goal() {
             verifying "bounded.c";
 
             int32 bounded(int32 value) {
-                requires wide: forall (k: int32) {
+                requires forall (k: int32) {
                     0 <= k and k < 3 implies k <= value
                 };
                 ensures narrow: forall (k: int32) {
@@ -12062,7 +12064,7 @@ fn outcome_simp_instantiates_an_unfolded_byte_predicate_on_the_checked_proof() {
 
         int32 byte_prefix(uint8 p[], int32 n) {
             requires viewable(p[0..3]);
-            requires no_y: bytes_all_not_eq(p, 0, 3, 'y');
+            requires bytes_all_not_eq(p, 0, 3, 'y');
             ensures p[1] != 'y' by {
                 execute();
                 unfold(bytes_all_not_eq);

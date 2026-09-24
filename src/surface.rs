@@ -199,7 +199,6 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "c",
     "calculate",
     "cases",
-    "choose",
     "close_invariants",
     "conjunction",
     "construct",
@@ -237,7 +236,6 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "field",
     "fold",
     "forall",
-    "from",
     "function",
     "have",
     "if",
@@ -278,7 +276,6 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "premise",
     "produces",
     "read",
-    "requirement",
     "requires",
     "resource",
     "rewrite",
@@ -286,6 +283,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "reverse",
     "scale",
     "same_object",
+    "satisfy",
     "separate",
     "simp",
     "sizeof",
@@ -1003,8 +1001,8 @@ pub struct FunctionBlock {
     /// Empty when the block was built without a source (tests), in which
     /// case each requirement counts as its own clause.
     requirement_source_clauses: Vec<usize>,
-    /// Parsed once so a simple `choose(... from requirement label)` step does
-    /// not linearly rescan every function requirement.
+    /// Legacy label index for internal proof-object compatibility. Surface
+    /// `requires` clauses no longer accept labels.
     requirement_label_indices: BTreeMap<String, usize>,
     decreases: Option<CFunctionDecrease>,
     structural_clauses: Vec<StructuralClause>,
@@ -3278,6 +3276,7 @@ pub enum ProofTactic {
     ObserveResource(ResourceClause),
     ConstructResource(ResourceClause),
     Witness(ProofWitness),
+    LetSatisfy(ProofLetSatisfy),
     Choose(ProofChoice),
     Assumption,
     Extract(ClickProposition),
@@ -3415,6 +3414,7 @@ pub enum SimpleTactic {
     ApplyInduction,
     ApplyTheorem,
     Witness,
+    LetSatisfy,
     Choose,
     Assumption,
     Extract,
@@ -3633,8 +3633,8 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
         class: "simple",
     },
     PublicTacticForm {
-        id: "choose",
-        syntax: "choose(name from requirement(label))",
+        id: "let-satisfy",
+        syntax: "let (name: Type, ...) satisfy { P }",
         class: "simple",
     },
     PublicTacticForm {
@@ -3825,6 +3825,7 @@ pub enum ProofStep {
     ObserveResource(ResourceClause),
     ConstructResource(ResourceClause),
     Witness(ProofWitness),
+    LetSatisfy(ProofLetSatisfy),
     Choose(ProofChoice),
     Assumption,
     Extract(ClickProposition),
@@ -4183,6 +4184,7 @@ impl ProofStep {
             },
             ProofTactic::ObserveResource(resource) => Self::ObserveResource(resource.clone()),
             ProofTactic::Witness(witness) => Self::Witness(witness.clone()),
+            ProofTactic::LetSatisfy(binding) => Self::LetSatisfy(binding.clone()),
             ProofTactic::Choose(choice) => Self::Choose(choice.clone()),
             ProofTactic::Assumption => Self::Assumption,
             ProofTactic::Extract(proposition) => Self::Extract(proposition.clone()),
@@ -4409,6 +4411,7 @@ impl ProofStep {
             },
             Self::ObserveResource(resource) => ProofTactic::ObserveResource(resource.clone()),
             Self::Witness(witness) => ProofTactic::Witness(witness.clone()),
+            Self::LetSatisfy(binding) => ProofTactic::LetSatisfy(binding.clone()),
             Self::Choose(choice) => ProofTactic::Choose(choice.clone()),
             Self::Assumption => ProofTactic::Assumption,
             Self::Extract(proposition) => ProofTactic::Extract(proposition.clone()),
@@ -4605,6 +4608,7 @@ fn certificate_step_class(step: &ProofStep) -> TacticClass {
         ProofStep::ApplyInduction { .. } => TacticClass::Simple(SimpleTactic::ApplyInduction),
         ProofStep::ApplyTheoremUsing { .. } => TacticClass::Simple(SimpleTactic::ApplyTheorem),
         ProofStep::Witness(_) => TacticClass::Simple(SimpleTactic::Witness),
+        ProofStep::LetSatisfy(_) => TacticClass::Simple(SimpleTactic::LetSatisfy),
         ProofStep::Choose(_) => TacticClass::Simple(SimpleTactic::Choose),
         ProofStep::Assumption => TacticClass::Simple(SimpleTactic::Assumption),
         ProofStep::Extract(_) => TacticClass::Simple(SimpleTactic::Extract),
@@ -4918,6 +4922,7 @@ impl ProofTactic {
             Self::ApplyTheorem(_) => TacticClass::Smart(SmartTacticKind::ApplyTheorem),
             Self::ApplyTheoremUsing { .. } => TacticClass::Simple(SimpleTactic::ApplyTheorem),
             Self::Witness(_) => TacticClass::Simple(SimpleTactic::Witness),
+            Self::LetSatisfy(_) => TacticClass::Simple(SimpleTactic::LetSatisfy),
             Self::Choose(_) => TacticClass::Simple(SimpleTactic::Choose),
             Self::Assumption => TacticClass::Simple(SimpleTactic::Assumption),
             Self::Extract(_) => TacticClass::Simple(SimpleTactic::Extract),
@@ -5364,6 +5369,12 @@ pub enum ProgramPointKind {
 pub struct ProofWitness {
     name: String,
     value: ContractExpression,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofLetSatisfy {
+    bindings: Vec<(String, ClickType)>,
+    proposition: ClickProposition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

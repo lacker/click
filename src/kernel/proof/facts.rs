@@ -2619,6 +2619,47 @@ mod integer_equality_fact_index_tests {
     }
 
     #[test]
+    fn quantified_predicate_alpha_lookup_checks_state_after_memory_bucket() {
+        let predicate = |name: &str, binder: Variable, state: CState| Proposition::Exists {
+            name: name.to_string(),
+            var: binder,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::Predicate {
+                name: "sample".to_string(),
+                arguments: vec![
+                    Term::CState(state),
+                    Term::CValue(CValue::Int32(Bitvector32Term::Variable(binder))),
+                ],
+            }),
+        };
+        let state = CState::new().with_local("x", CValue::Int32(Bitvector32Term::Constant(7)));
+        let available = predicate("first", Variable(300_001), state.clone());
+        let renamed = predicate("second", Variable(300_002), state.clone());
+        let independently_empty = predicate("second", Variable(300_002), CState::new());
+        let empty = predicate("first", Variable(300_001), CState::new());
+        let changed_state = predicate(
+            "second",
+            Variable(300_002),
+            state.with_local("x", CValue::Int32(Bitvector32Term::Constant(8))),
+        );
+        assert_eq!(
+            quantified_equivalence_index_key(&available),
+            quantified_equivalence_index_key(&renamed)
+        );
+        assert_eq!(
+            quantified_equivalence_index_key(&available),
+            quantified_equivalence_index_key(&changed_state),
+            "the memory-only bucket must leave the final state check to the matcher"
+        );
+        assert!(quantified_binder_equivalent(&available, &renamed));
+        assert!(quantified_binder_equivalent(&empty, &independently_empty));
+        assert!(!quantified_binder_equivalent(&available, &changed_state));
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&available));
+        assert_eq!(facts.matching_quantified_fact(&renamed), Some(available));
+        assert!(facts.matching_quantified_fact(&changed_state).is_none());
+    }
+
+    #[test]
     fn implication_extract_renames_existential_but_keeps_snapshot_and_antecedent() {
         let block = "implication-existential-viewable";
         let memory = CMemory::new().with_block(block, 32);

@@ -228,7 +228,10 @@ fn checked_execution_arm_tactics_end(
             && !closes_loop_invariants(&indexed.tactic)
             && !matches!(
                 indexed.tactic,
-                ProofTactic::ApplyTheorem(_) | ProofTactic::Transport { .. } | ProofTactic::Have(_)
+                ProofTactic::ApplyTheorem(_)
+                    | ProofTactic::Transport { .. }
+                    | ProofTactic::Have(_)
+                    | ProofTactic::LetSatisfy(_)
             )
         {
             if may_exit && flat_post_execution_tactic(&indexed.tactic).is_some() {
@@ -498,7 +501,7 @@ fn checked_execution_region_contains_source_at(
 fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
     linear_execution_proof_step(tactic).is_some()
         || closes_loop_invariants(tactic)
-        || matches!(tactic, ProofTactic::Choose(_))
+        || matches!(tactic, ProofTactic::Choose(_) | ProofTactic::LetSatisfy(_))
         || matches!(
             tactic,
             ProofTactic::Step
@@ -562,6 +565,7 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
             premises: Some(premises.clone()),
         }),
         ProofTactic::Choose(choice) => Some(PostExecutionTactic::Choose(choice.clone())),
+        ProofTactic::LetSatisfy(binding) => Some(PostExecutionTactic::LetSatisfy(binding.clone())),
         ProofTactic::Witness(witness) => Some(PostExecutionTactic::Witness(witness.clone())),
         ProofTactic::Intro => Some(PostExecutionTactic::Intro),
         ProofTactic::Assumption => Some(PostExecutionTactic::Assumption),
@@ -743,6 +747,8 @@ fn advance_checked_linear_continuation<'a>(
             proof.apply_close_invariants_body(body)?
         } else if let ProofTactic::Choose(choice) = &indexed.tactic {
             proof.apply_step_at(ProofStep::Choose(choice.clone()), indexed.source_index)?
+        } else if let ProofTactic::LetSatisfy(binding) = &indexed.tactic {
+            proof.apply_step_at(ProofStep::LetSatisfy(binding.clone()), indexed.source_index)?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             let Some(applied) = proof.try_theorem_application(application)? else {
                 return decline();
@@ -2242,6 +2248,8 @@ fn advance_focused_execution_arm<'a>(
             proof.apply_close_invariants_body(body)?
         } else if let ProofTactic::Choose(choice) = &indexed.tactic {
             proof.apply_step_at(ProofStep::Choose(choice.clone()), indexed.source_index)?
+        } else if let ProofTactic::LetSatisfy(binding) = &indexed.tactic {
+            proof.apply_step_at(ProofStep::LetSatisfy(binding.clone()), indexed.source_index)?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             if proof.is_at_function_exit() {
                 // Exit applications need one fixed-state proof per concrete

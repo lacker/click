@@ -565,36 +565,30 @@ fn parses_proof_if_tactic() {
 fn parses_existential_proof_tactics() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { execute(); choose(k from requirement has_k); witness(j = k + 1); simp(); }",
+        "by { execute(); let (k: int32) satisfy { k == k }; witness(j = k + 1); simp(); }",
     );
     let file = parse(&source).expect("existential explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
+    let tactics = ensure.proof().tactics().expect("expected tactics");
+    assert!(matches!(tactics[0], ProofTactic::SmartExecute));
+    assert!(matches!(&tactics[1], ProofTactic::LetSatisfy(binding)
+        if binding.bindings == [("k".to_string(), ClickType::C(C0Type::Int32))]));
     assert_eq!(
-        ensure.proof().tactics(),
-        Some(
-            [
-                ProofTactic::SmartExecute,
-                ProofTactic::Choose(ProofChoice {
-                    name: "k".to_string(),
-                    source: ProofFactSource::RequirementLabel("has_k".to_string()),
-                }),
-                ProofTactic::Witness(ProofWitness {
-                    name: "j".to_string(),
-                    value: ContractExpression::Add(
-                        Box::new(current_var("k")),
-                        Box::new(current_int(1)),
-                    ),
-                }),
-                ProofTactic::Simp,
-            ]
-            .as_slice()
-        )
+        tactics[2],
+        ProofTactic::Witness(ProofWitness {
+            name: "j".to_string(),
+            value: ContractExpression::Add(
+                Box::new(ContractExpression::Binding("k".to_string())),
+                Box::new(current_int(1)),
+            ),
+        })
     );
+    assert!(matches!(tactics[3], ProofTactic::Simp));
 }
 
 #[test]
-fn parses_labeled_requirement() {
+fn rejects_named_requirement() {
     let source = r#"
             verifying "id.c";
 
@@ -603,14 +597,28 @@ fn parses_labeled_requirement() {
                 ensures result == x by auto;
             }
         "#;
-    let file = parse(source).expect("labeled requirement should parse");
-    let requirement = &file.function_blocks()[0].requires()[0];
+    let error = parse(source).expect_err("named requirements are no longer accepted");
+    assert!(
+        error
+            .message()
+            .contains("named `requires` facts were removed")
+    );
+}
 
-    assert_eq!(requirement.label(), Some("has_x"));
-    assert!(matches!(
-        requirement.inner(),
-        Requirement::Proposition(ClickProposition::Exists { .. })
-    ));
+#[test]
+fn rejects_retired_choose_tactic() {
+    let source = r#"
+        theorem old_elimination() {
+            requires exists (k: Integer) { k == k };
+            ensures exists (x: Integer) { x == x } by {
+                choose(candidate from requirement 0);
+                witness(x = candidate);
+                assumption();
+            }
+        }
+    "#;
+    let error = parse(source).expect_err("choose is no longer surface syntax");
+    assert!(error.message().contains("`choose` was removed"));
 }
 
 #[test]
@@ -1439,11 +1447,11 @@ fn mid_execution_choose_witness_simp_retains_the_checked_proof_path() {
             verifying "choose_witness.c";
 
             int32 choose_witness(int32 x) {
-                requires has_k: exists (k: int32) { k == x };
+                requires exists (k: int32) { k == x };
                 ensures result == x;
             } by {
                 have exists (j: int32) { j == x } by {
-                    choose(k from requirement has_k);
+                    let (k: int32) satisfy { k == x };
                     witness(j = k);
                     simp();
                 }
@@ -1499,7 +1507,7 @@ fn mid_execution_choose_witness_simp_retains_the_checked_proof_path() {
         matches!(
             body.as_slice(),
             [
-                ProofTactic::Choose(_),
+                ProofTactic::LetSatisfy(_),
                 ProofTactic::Witness(_),
                 ProofTactic::Assumption
             ]
@@ -1698,7 +1706,7 @@ fn instantiate_specializes_a_universal_fact_at_an_explicit_value() {
         verifying "pick.c";
 
         int32 pick(int32 value) {
-            requires bounded: forall (k: int32) {
+            requires forall (k: int32) {
                 0 <= k and k < 3 implies k <= value
             };
             ensures two_le: 2 <= value;
@@ -1729,7 +1737,7 @@ fn outcome_instantiate_uses_the_checked_proof_path() {
         verifying "pick.c";
 
         int32 pick(int32 value) {
-            requires bounded: forall (k: int32) {
+            requires forall (k: int32) {
                 0 <= k and k < 3 implies k <= value
             };
             ensures two_le: 2 <= value;
@@ -1770,8 +1778,8 @@ fn instantiate_does_not_discharge_guards_from_ambient_facts() {
         verifying "pick.c";
 
         int32 pick(int32 value, int32 n) {
-            requires wide: n >= 3;
-            requires bounded: forall (k: int32) {
+            requires n >= 3;
+            requires forall (k: int32) {
                 0 <= k and k < n implies k <= value
             };
             ensures two_le: 2 <= value;
@@ -1809,7 +1817,7 @@ fn constant_bound_weakenings_lower_to_named_theorem_chains() {
         verifying "keep.c";
 
         int32 keep(int32 n) {
-            requires small: n <= 10;
+            requires n <= 10;
             ensures under_twenty: n < 20;
             ensures next_under_fifteen: n + 1 <= 15;
         } by {
@@ -1833,7 +1841,7 @@ fn cases_eliminates_a_disjunctive_premise() {
         verifying "keep_small.c";
 
         int32 keep_small(int32 x) {
-            requires small: x == 1 or x == 2;
+            requires x == 1 or x == 2;
             ensures identity: result == x;
         } by {
             execute();
@@ -1865,7 +1873,7 @@ fn cases_requires_its_exact_disjunction_as_an_available_fact() {
         verifying "keep_small.c";
 
         int32 keep_small(int32 x) {
-            requires small: x == 1 or x == 2;
+            requires x == 1 or x == 2;
             ensures identity: result == x;
         } by {
             execute();
@@ -1906,7 +1914,7 @@ fn cases_checks_each_branch_under_exactly_its_own_disjunct() {
         verifying "keep_small.c";
 
         int32 keep_small(int32 x) {
-            requires small: x == 1 or x == 2;
+            requires x == 1 or x == 2;
             ensures identity: result == x;
         } by {
             execute();
@@ -1938,7 +1946,7 @@ fn cases_checks_each_branch_under_exactly_its_own_disjunct() {
 fn pure_cases_certificate_uses_checked_proof_branches() {
     let click_source = r#"
         theorem retain_sign_case(x: int32) {
-            requires sign: x <= 0 or x > 0;
+            requires x <= 0 or x > 0;
 
             ensures x <= 0 or x > 0 by {
                 cases (x <= 0 or x > 0) {
@@ -1976,7 +1984,7 @@ fn pure_if_certificate_uses_checked_proof_branches() {
 fn pure_have_certificate_uses_checked_proof_scope() {
     let click_source = r#"
         theorem retain_zero(x: int32) {
-            requires zero: x == 0;
+            requires x == 0;
 
             ensures x == 0 by {
                 have x == 0 by {
@@ -2021,7 +2029,7 @@ fn smart_pure_have_theorem_search_retains_the_checked_scope_body_directly() {
         }
 
         theorem retain_zero_smart(x: int32) {
-            requires zero: x == 0;
+            requires x == 0;
 
             ensures x == 0 by {
                 have x == 0 by {
@@ -2077,7 +2085,7 @@ fn smart_fixed_state_nested_have_theorem_search_retains_checked_scopes() {
         verifying "keep.c";
 
         int32 keep(int32 x) {
-            requires zero: x == 0;
+            requires x == 0;
             ensures result == 0;
         } by {
             have x == 0 by {
@@ -2167,8 +2175,8 @@ fn leading_logical_have_decomposition_stays_on_one_proof() {
         verifying "logical_haves.c";
 
         int32 logical_haves(int32 x, int32 y) {
-            requires pair: x == 0 and y == 0;
-            requires sign: x <= 0 or x > 0;
+            requires x == 0 and y == 0;
+            requires x <= 0 or x > 0;
             ensures result == x;
         } by {
             have x == 0 by {
@@ -2268,8 +2276,8 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
         verifying "universal_haves.c";
 
         int32 universal_haves(int32 x) {
-            requires small: x <= 5;
-            requires bounded: forall (k: int32) {
+            requires x <= 5;
+            requires forall (k: int32) {
                 0 <= k and k < 2 implies k <= x
             };
             ensures result == x;
@@ -2395,10 +2403,10 @@ fn grouped_top_level_existential_operations_verify_without_fallback() {
                 verifying "identity.c";
 
                 int32 identity(int32 x) {
-                    requires has_k: exists (k: int32) { k == x };
+                    requires exists (k: int32) { k == x };
                     ensures result == x;
                 } by {
-                    choose(k from requirement has_k);
+                    let (k: int32) satisfy { k == x };
                     execute();
                     simp();
                 }
@@ -2464,7 +2472,7 @@ fn smart_pure_if_retains_checked_arm_proofs_directly() {
 fn smart_pure_cases_retains_checked_arm_proofs_directly() {
     let click_source = r#"
         theorem retain_sign_case_smart(x: int32) {
-            requires sign: x <= 0 or x > 0;
+            requires x <= 0 or x > 0;
 
             ensures x <= 0 or x > 0 by {
                 cases (x <= 0 or x > 0) {
@@ -2491,7 +2499,7 @@ fn fixed_state_have_cases_certificate_uses_checked_proof_branches() {
         verifying "keep.c";
 
         int32 keep(int32 x) {
-            requires sign: x <= 0 or x > 0;
+            requires x <= 0 or x > 0;
             ensures sign: x <= 0 or x > 0;
         } by {
             execute();
@@ -2596,8 +2604,8 @@ fn leading_universal_contradiction_scope_stays_on_proof() {
         verifying "impossible_universal.c";
 
         int32 impossible_universal(int32 x) {
-            requires zero: x == 0;
-            requires nonzero: x != 0;
+            requires x == 0;
+            requires x != 0;
             ensures result == x;
         } by {
             have forall (k: int32) { k == k } by {
@@ -2626,7 +2634,7 @@ fn enumerate_closes_a_constant_bounded_universal_goal() {
         verifying "keep.c";
 
         int32 keep(int32 x) {
-            requires small: x <= 5;
+            requires x <= 5;
             ensures bounded: forall (k: int32) { 0 <= k and k < 2 implies x <= 5 };
         } by {
             execute();
@@ -2657,7 +2665,7 @@ fn enumerate_requires_each_in_range_instance_as_an_available_fact() {
         verifying "keep.c";
 
         int32 keep(int32 x) {
-            requires low: 1 <= x;
+            requires 1 <= x;
             ensures bounded: forall (k: int32) { 0 <= k and k < 2 implies k <= x };
         } by {
             execute();
@@ -2693,7 +2701,7 @@ fn enumerate_requires_a_constant_bounded_universal_goal() {
         verifying "keep.c";
 
         int32 keep(int32 x) {
-            requires small: x <= 5;
+            requires x <= 5;
             ensures bounded: forall (k: int32) { 0 <= k and k < x implies x <= 5 };
         } by {
             execute();

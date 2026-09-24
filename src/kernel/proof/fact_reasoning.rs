@@ -665,11 +665,12 @@ pub(crate) fn quantified_binder_equivalent(left: &Proposition, right: &Propositi
     // A supported structural mismatch is definitive; do not substitute or
     // search to turn it into an equivalence. Loads and unsupported fragments
     // retain the existing one-binder, memory-aware structural check below.
-    if let (Some(left), Some(right)) = (
+    if let (Some(left_key), Some(right_key)) = (
         super::fact_keys::memory_free_quantified_key(left),
         super::fact_keys::memory_free_quantified_key(right),
     ) {
-        return left == right;
+        return left_key == right_key
+            && super::fact_keys::predicate_states_share_storage(left, right);
     }
     match (left, right) {
         (

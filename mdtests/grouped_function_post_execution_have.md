@@ -1,7 +1,7 @@
 # Grouped proof facts after execution
 
 `have` can establish a pure fact after execution reaches function exit. Its
-scoped pure proof may choose an existential assumption and provide existential
+scoped pure proof may open an existential assumption and provide existential
 witnesses without applying those goal-specific steps to the other contract
 claims.
 
@@ -33,7 +33,7 @@ verifying "grouped_post_have_branch.c";
 verifying "grouped_current_have.c";
 
 int32 identity(int32 x) {
-    requires has_k: exists (k: int32) { k == x };
+    requires exists (k: int32) { k == x };
     ensures result == x;
     ensures result_witness: exists (j: int32) { j == result };
     ensures chosen_witness: exists (j: int32) { j == x };
@@ -44,7 +44,7 @@ int32 identity(int32 x) {
         simp();
     }
     have exists (j: int32) { j == x } by {
-        choose(k from requirement has_k);
+        let (k: int32) satisfy { k == x };
         witness(j = k);
         simp();
     }

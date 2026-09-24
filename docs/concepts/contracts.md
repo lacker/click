@@ -81,14 +81,15 @@ Resource facts are carried separately from pure facts.
 [Resources and memory permissions](resources.md) covers transfer through
 function calls and the distinction between viewability and authority.
 
-Requirements can be labeled:
+Requirements are written without fact labels:
 
 <!-- verified-example: mdtests/contract_let_bindings.md -->
 ```click
-requires positive: x > 0;
+requires x > 0;
 ```
 
-Labels are useful when a proof script needs to refer to a specific fact.
+To use an existential requirement in a proof, state its proposition in
+`let (...) satisfy { ... };` after it is available.
 
 ## Guarantees
 
@@ -128,7 +129,8 @@ Guarantees can also be labeled:
 ensures incremented: result == x + 1 by auto;
 ```
 
-Labels make diagnostics easier to read and make proof scripts more durable.
+Guarantee labels identify postcondition claims in diagnostics and proof scripts;
+they do not name facts.
 
 A guarantee also decides whether a function can be passed where a named
 callback contract is required. Click checks behavioral refinement: the named

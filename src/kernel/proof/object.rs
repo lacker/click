@@ -736,6 +736,116 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         Ok((fact, variable))
     }
 
+    /// Opens exactly the stated, available existential. Each binder adds a
+    /// fresh variable and its instantiated body; no requirement index or
+    /// search for an implied existential is involved.
+    pub(crate) fn check_exists_bindings(
+        &self,
+        source: &Proposition,
+        count: usize,
+        hint: Variable,
+    ) -> Result<Vec<(Proposition, Variable, Sort)>, PropositionCloseError> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(PropositionCloseError::NotProposition)?;
+        let facts = &branch.state.facts;
+        // Lowering a written binder gives it a different internal identity
+        // from an otherwise identical established fact. Select the retained
+        // fact through the kernel's indexed, alpha-checked quantified lookup;
+        // do not loosen the older index-addressed `choose` rule above.
+        let available = if facts.contains_top_level(source) {
+            source.clone()
+        } else {
+            facts
+                .matching_quantified_fact(source)
+                .ok_or(PropositionCloseError::IntegerChoiceSourceUnavailable)?
+        };
+        let goal_variables = match &branch.obligation {
+            ProofObligation::Proposition(goal) => {
+                crate::kernel::proposition_variables(goal.proposition())
+            }
+            ProofObligation::Frontier(_) | ProofObligation::FunctionOutcome(_) => {
+                Default::default()
+            }
+        };
+        let mut current = available;
+        let mut next = hint;
+        let mut selected = std::collections::BTreeSet::new();
+        let mut opened = Vec::with_capacity(count);
+        for _ in 0..count {
+            let Proposition::Exists {
+                var, sort, body, ..
+            } = current
+            else {
+                return Err(PropositionCloseError::IntegerChoiceWrongSort);
+            };
+            if !matches!(
+                sort,
+                Sort::Integer | Sort::CInt32 | Sort::CPointer(_) | Sort::Algebraic(_)
+            ) {
+                return Err(PropositionCloseError::IntegerChoiceWrongSort);
+            }
+            let body_variables = crate::kernel::proposition_variables(&body);
+            while facts.reserves_variable(next)
+                || goal_variables.contains(&next)
+                || body_variables.contains(&next)
+                || selected.contains(&next)
+            {
+                next = Variable(
+                    next.0
+                        .checked_add(1)
+                        .ok_or(PropositionCloseError::IntegerChoiceFresheningExhausted)?,
+                );
+            }
+            let chosen = next;
+            selected.insert(chosen);
+            current = match &sort {
+                Sort::Integer => {
+                    super::super::reasoning::substitute_integer_variable_in_pure_proposition(
+                        &body,
+                        var,
+                        &crate::kernel::IntegerTerm::var(chosen),
+                    )
+                    .map_err(|_| PropositionCloseError::IntegerChoiceFresheningExhausted)?
+                }
+                Sort::CInt32 => crate::kernel::substitute_int32_variable_in_proposition(
+                    &body,
+                    var,
+                    crate::kernel::Bitvector32Term::Variable(chosen),
+                ),
+                Sort::CPointer(c_type) => {
+                    let pointer = if matches!(c_type, crate::kernel::CType::FunctionPointer(_)) {
+                        crate::kernel::Pointer::symbolic_function(chosen)
+                    } else {
+                        crate::kernel::Pointer::symbolic(chosen)
+                    };
+                    crate::kernel::substitute_pointer_variable_in_proposition(&body, var, &pointer)
+                }
+                Sort::Algebraic(algebraic_type) => {
+                    super::super::reasoning::substitute_algebraic_variable_in_proposition(
+                        &body,
+                        var,
+                        &crate::kernel::AlgebraicTerm {
+                            algebraic_type: algebraic_type.clone(),
+                            node: crate::kernel::AlgebraicTermNode::Variable(chosen),
+                        },
+                    )
+                }
+                _ => unreachable!("checked above"),
+            };
+            opened.push((current.clone(), chosen, sort));
+            next = Variable(
+                chosen
+                    .0
+                    .checked_add(1)
+                    .ok_or(PropositionCloseError::IntegerChoiceFresheningExhausted)?,
+            );
+        }
+        Ok(opened)
+    }
+
     pub(crate) fn apply_normalize_using(
         &self,
         premises: &[Proposition],
