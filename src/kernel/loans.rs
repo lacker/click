@@ -2629,6 +2629,30 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
             else {
                 return Err(StableViewPlanError::ConflictingRequirement(selected));
             };
+            if support != origin_support {
+                // A memory split gives residual ranges fresh occurrence ids.
+                // Reconcile that change only when the pre-reservation owner
+                // uniquely supported this cluster and the selected residual
+                // is itself a fragment of that owner. Otherwise an equal-
+                // looking occurrence could replace the checked backing.
+                let residual_is_unique_memory_fragment = caller_resources
+                    .owned_fact_for_occurrence(origin_support)
+                    .filter(|origin| matches!(origin.resource(), CResource::Memory(_)))
+                    .is_some_and(|origin| {
+                        matches!(owned.resource(), CResource::Memory(_))
+                            && !caller_resources.has_other_directly_supporting_owned_entry(
+                                &selected,
+                                origin_support,
+                                assumptions,
+                            )
+                            && ResourceContext::new()
+                                .unchecked_with_fact(origin.clone())
+                                .satisfies_fact(&owned, assumptions)
+                    });
+                if !residual_is_unique_memory_fragment {
+                    return Err(StableViewPlanError::ConflictingRequirement(selected));
+                }
+            }
             let suspended_owned_reader =
                 split_reborrowed_views && selected.memory_own_range().is_some();
             let opening = if suspended_owned_reader {
@@ -7957,6 +7981,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ordinary_view_refuses_equal_looking_replacement_after_ownership_reservation() {
+        let assumptions = PureFactContext::new();
+        let token = CResource::Token {
+            name: "unit".into(),
+            arguments: Vec::new().into(),
+        };
+        let owner = CResourceFact::own(token.clone());
+        let caller = ResourceContext::new().unchecked_with_facts([owner.clone(), owner.clone()]);
+        let mut consume = checked(owner);
+        consume.role = CResourceTransferRole::Consume;
+        let view = CResourceFact::View(token);
+        let (ledger, caller_participant, callee_participant) = participants();
+
+        let error = plan_stable_view_transfer(
+            &caller,
+            &[consume, checked(view)],
+            &assumptions,
+            &ledger,
+            caller_participant,
+            callee_participant,
+        )
+        .expect_err("the view must not switch to an equal-looking owner occurrence");
+
+        assert!(
+            matches!(error, StableViewPlanError::ConflictingRequirement(_)),
+            "{error:?}"
+        );
+    }
+
     /// Step 7: a loan a produced borrowing composite escapes through is not
     /// recovered at return; the caller keeps the escrow lent, holds the
     /// loan through the composite's binding, and recovers the owner only
@@ -8602,6 +8656,34 @@ mod tests {
         assert_eq!(bound(&left), vec![read.fact.clone()]);
         assert_eq!(bound(&left), bound(&right));
         assert_eq!(left.memory_effects, right.memory_effects);
+
+        let reverse_write = CCheckedResourceFact {
+            fact: memory(0, 4, true),
+            role: CResourceTransferRole::Consume,
+            snapshot: CResourceSnapshot::Entry,
+            clause_position: None,
+            section_index: None,
+        };
+        let reverse_view = checked(memory(6, 8, false));
+        let reverse = plan_stable_view_transfer(
+            &caller_resources,
+            &[reverse_write.clone(), reverse_view.clone()],
+            &assumptions,
+            &ledger,
+            caller,
+            callee,
+        )
+        .expect("a residual fragment of the unique owner retains its provenance");
+        assert!(
+            reverse
+                .callee_resources
+                .satisfies_fact(&reverse_write.fact, &assumptions)
+        );
+        assert!(
+            reverse
+                .callee_resources
+                .satisfies_fact(&reverse_view.fact, &assumptions)
+        );
     }
 
     #[test]
