@@ -120,9 +120,9 @@ mod tests {
         .unwrap();
         let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(error.starts_with("proof error:"), "{error}");
-        assert!(error.contains("tactic: step"), "{error}");
+        assert!(error.contains("\n\ntactic: step"), "{error}");
         assert!(
-            error.contains("trace: click verify --trace-proof f "),
+            error.contains("\n\nTo get a trace:\n  click verify --trace-proof f "),
             "{error}"
         );
 
@@ -138,7 +138,7 @@ mod tests {
             "{traced}"
         );
         assert!(traced.contains("source tactic 0: step"), "{traced}");
-        assert!(!traced.contains("trace: click verify"), "{traced}");
+        assert!(!traced.contains("To get a trace:"), "{traced}");
 
         fs::write(
             directory.join("f.c"),
@@ -195,8 +195,18 @@ mod tests {
 
         let plain = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(plain.starts_with("proof error:"), "{plain}");
+        let (failure, context_and_trace) = plain.split_once("\n\ngoal: ").expect(&plain);
+        assert!(failure.contains("could not prove `fact obj->refs == count(child_ref(obj));`"));
+        let (context, trace) = context_and_trace
+            .split_once("\n\nTo get a trace:\n  ")
+            .expect(&plain);
+        assert!(context.contains("\nstep: execution path 0"), "{plain}");
         assert!(
-            plain.contains("trace: click verify --trace-proof parent_detach "),
+            trace
+                == format!(
+                    "click verify --trace-proof parent_detach {}",
+                    sidecar.display()
+                ),
             "{plain}"
         );
         let traced = entry([
@@ -245,7 +255,7 @@ mod tests {
         let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(error.starts_with("proof error:"), "{error}");
         assert!(
-            error.contains("trace: click verify --trace-proof f "),
+            error.contains("\n\nTo get a trace:\n  click verify --trace-proof f "),
             "{error}"
         );
         let traced = entry([
@@ -524,7 +534,7 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
         fs::write(&sidecar, "verifying \"f.c\"; int32 read(").unwrap();
         let syntax = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(syntax.starts_with("syntax error:"), "{syntax}");
-        assert!(!syntax.contains("trace: click verify"), "{syntax}");
+        assert!(!syntax.contains("To get a trace:"), "{syntax}");
 
         fs::write(
             &sidecar,
@@ -533,7 +543,7 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
         .unwrap();
         let type_error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(type_error.starts_with("type error:"), "{type_error}");
-        assert!(!type_error.contains("trace: click verify"), "{type_error}");
+        assert!(!type_error.contains("To get a trace:"), "{type_error}");
         fs::remove_dir_all(directory).unwrap();
     }
 

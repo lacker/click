@@ -413,22 +413,24 @@ fn proof_error_report(
     project: &ClickProject,
     inputs: &CInput,
 ) -> String {
-    let mut report = if suggest_trace {
-        error.concise_report()
+    let (mut report, mut context) = if suggest_trace {
+        error.concise_report_parts()
     } else {
-        error.report()
+        (error.report(), Vec::new())
     };
     if suggest_trace {
         if let Some(source) = project.entry_source()
             && let Some(position) = proof_source_position(error, project, inputs, source)
             && let Some(excerpt) = source_excerpt(sidecar, source, &position)
         {
-            report.push('\n');
-            report.push_str(&excerpt);
+            context.push(excerpt);
         }
         if let Some(location) = error.proof_step_location() {
-            report.push_str("\n  step: ");
-            report.push_str(location);
+            context.push(format!("step: {location}"));
+        }
+        if !context.is_empty() {
+            report.push_str("\n\n");
+            report.push_str(&context.join("\n"));
         }
     }
     if suggest_trace
@@ -438,7 +440,7 @@ fn proof_error_report(
             .and_then(|claim| claim.split_once('.'))
     {
         report.push_str(&format!(
-            "\n  trace: click verify --trace-proof {} {}",
+            "\n\nTo get a trace:\n  click verify --trace-proof {} {}",
             shell_word(function.0),
             shell_word(&sidecar.display().to_string())
         ));
