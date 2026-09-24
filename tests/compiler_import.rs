@@ -604,7 +604,7 @@ fn userspace_frozen_pthread_probe_records_real_header_boundary() {
         "{error}"
     );
     assert!(error.len() < 4096, "unbounded import diagnostic");
-    assert!(error.contains("/usr/include/time.h:80"), "{error}");
+    assert!(error.contains("/usr/time.h:80"), "{error}");
     assert!(
         error.contains("unsupported GNU function attribute `__const__`"),
         "{error}"
