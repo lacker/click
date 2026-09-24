@@ -103,6 +103,62 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
+    /// A bare sidecar name has an empty `Path::parent`, which is not a
+    /// directory. Every subcommand must resolve it against the current
+    /// directory exactly as it resolves `./f.click`.
+    ///
+    /// This test changes the process working directory, which every other
+    /// test sharing the process would observe. It therefore runs only under
+    /// nextest's process-per-test mode, which `scripts/check.sh` always uses;
+    /// the directory is restored before any assertion can unwind.
+    #[test]
+    fn every_cli_tool_accepts_a_bare_sidecar_name() {
+        if std::env::var("NEXTEST_EXECUTION_MODE").as_deref() != Ok("process-per-test") {
+            eprintln!("skipped: changing the working directory needs nextest process isolation");
+            return;
+        }
+        let directory =
+            std::env::temp_dir().join(format!("click-bare-sidecar-name-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("f.c"), "int32 f() { return 1; }\n").unwrap();
+        fs::write(
+            directory.join("f.click"),
+            "verifying \"f.c\";\nint32 f() { ensures result == 1 by auto; }\n",
+        )
+        .unwrap();
+        let original = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&directory).unwrap();
+        let arguments = |words: &[&str]| {
+            words
+                .iter()
+                .map(|word| word.to_string())
+                .collect::<Vec<_>>()
+        };
+        let results = [
+            entry(arguments(&["verify", "f.click"])),
+            entry(arguments(&["verify", "f.click:2:13"])),
+            entry(arguments(&["profile", "f.click"])),
+            entry(arguments(&[
+                "expand",
+                "--claim",
+                "f.ensures_0",
+                "--output",
+                "expanded.click",
+                "f.click",
+            ])),
+            entry(arguments(&["audit", "--claim", "f.ensures_0", "f.click"])),
+            entry(arguments(&["verify", "expanded.click"])),
+        ];
+        std::env::set_current_dir(original).unwrap();
+        fs::remove_dir_all(&directory).unwrap();
+        for result in results {
+            result.unwrap();
+        }
+    }
+
     #[test]
     fn verify_names_the_failed_simple_tactic() {
         let directory =

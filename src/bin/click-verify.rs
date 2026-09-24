@@ -8,8 +8,9 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use click::cli::{
-    CInput, DEFAULT_VERIFY_TIME_LIMIT, load_sidecar_inputs, looks_like_source_location,
-    parse_duration, parse_source_location, select_sidecars, source_refs,
+    CInput, DEFAULT_VERIFY_TIME_LIMIT, containing_directory, load_sidecar_inputs,
+    looks_like_source_location, parse_duration, parse_source_location, select_sidecars,
+    source_refs,
 };
 use click::languages::c::source as c_source;
 use click::languages::c::target::CTarget;
@@ -142,7 +143,7 @@ fn run(arguments: Arguments) -> Result<(), String> {
         verify_file(
             path,
             arguments.time_limit,
-            path.parent(),
+            Some(containing_directory(path)),
             arguments.trace_proof.as_deref(),
         )
     }
@@ -537,7 +538,7 @@ fn git_repo_root(path: &Path) -> Result<PathBuf, String> {
     let anchor = if path.is_dir() {
         path
     } else {
-        path.parent().unwrap_or_else(|| Path::new("."))
+        containing_directory(path)
     };
     let output = Command::new("git")
         .args([
@@ -794,7 +795,7 @@ fn load_baseline_sidecar(
     let Some(click_source) = git_show(repo, revision, click_path)? else {
         return Ok(None);
     };
-    let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = containing_directory(click_path);
     let Some(sources) = load_baseline_sources(parent, &click_source, |source_path| {
         git_show(repo, revision, source_path)
     })?
@@ -977,7 +978,8 @@ fn verify_location(
     column: usize,
     time_limit: Duration,
 ) -> Result<(), String> {
-    let (_click_source, project, inputs) = load_sidecar_inputs(click_path, click_path.parent())?;
+    let (_click_source, project, inputs) =
+        load_sidecar_inputs(click_path, Some(containing_directory(click_path)))?;
     let dependencies = match &inputs {
         CInput::Bundle(sources) => {
             c0_project_external_dependencies(&project, &source_refs(sources))
