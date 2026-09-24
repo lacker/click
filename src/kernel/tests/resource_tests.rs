@@ -7123,3 +7123,70 @@ mod residue_bounds {
         );
     }
 }
+
+/// A contract section whose clauses all evaluate on the first pass needs no
+/// read authority from the frame, so evaluating it does not expand the
+/// composites the frame holds. In `examples/arena`'s pipeline the call rule
+/// read `arena_destroy`'s `produces object(arena)` this way and expanded every
+/// arena resource the caller held, which cost 45 million units once the frame
+/// carried two allocations' worth of history.
+#[test]
+fn first_pass_resource_section_does_not_expand_the_frame() {
+    let pointer = |index: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::Variable(Variable(915_000 + index)),
+            4,
+        ),
+    };
+    let cell = CCompositeResourceDefinition::new(
+        "cell",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        None,
+        false,
+        vec![CResourceSpec::owned_memory(CMemorySegment {
+            base: c_variable("p"),
+            start: c_int32_literal(0),
+            end: c_int32_literal(1),
+            element_width: 4,
+            guard: None,
+        })],
+        Vec::new(),
+    );
+    let produced = CResourceSpec::owned_memory(CMemorySegment {
+        base: CExpression::Value(CValue::pointer(pointer(0))),
+        start: c_int32_literal(0),
+        end: c_int32_literal(1),
+        element_width: 4,
+        guard: None,
+    });
+    let samples = [4_u64, 16, 64]
+        .into_iter()
+        .map(|held| {
+            let frame = ResourceContext::new().unchecked_with_facts((1..=held).map(|index| {
+                CResourceFact::own_composite(
+                    "cell".to_string(),
+                    vec![CValue::pointer(pointer(index))],
+                )
+            }));
+            let state = CState::new().with_resource_context(frame);
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                crate::kernel::functions::evaluate_function_resource_context(
+                    &state,
+                    std::slice::from_ref(&produced),
+                    std::slice::from_ref(&cell),
+                    &PureFactContext::new(),
+                    &mut ExecutionBudget::default(),
+                )
+                .expect("the section stays inside its budget")
+            });
+            assert!(result.is_ok(), "{held} held cells: {result:?}");
+            (held, work)
+        })
+        .collect::<Vec<_>>();
+    let base_work = samples[0].1;
+    assert!(
+        samples.iter().all(|(_, work)| *work == base_work),
+        "evaluating a first-pass section grew with the frame's composites: {samples:?}"
+    );
+}

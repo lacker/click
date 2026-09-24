@@ -52,11 +52,13 @@ Current projects:
   the C without claiming those proofs.
 - `arena/` fixes the C0 implementation boundary for a first-fit allocator
   whose regions exercise user-defined suballocation and lifetime ownership.
-  Its sidecars verify the empty-arena lifecycle, region reads, writes, and
-  free, and `arena_alloc`, `arena_free`, `arena_read`, and `arena_write` as
-  symbolic transitions over an occupied prefix and live count held in plain
-  resource fields; the pipeline and arbitrary free intervals are tracked by
-  the arena resource-ownership issue.
+  `arena_pipeline.click` verifies the empty-arena lifecycle and
+  `arena_alloc`, `arena_free`, `arena_read`, and `arena_write` as symbolic
+  transitions over an occupied prefix and live count held in plain resource
+  fields, over resources shared through `shared/arena_resources.click`;
+  `arena.click` keeps the fixed-interval region model. The pipeline proof
+  itself and arbitrary free intervals are tracked by the arena
+  resource-ownership issue.
 - `input-cursor/` verifies independently mutable cursors over a shared viewed
   input resource.
 - `jsonc-refcount/` verifies synthetic json-c-shaped field reads and writes on

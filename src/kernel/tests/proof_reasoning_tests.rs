@@ -7500,3 +7500,70 @@ fn range_fold_alpha_identity_equates_nested_folds_under_renamed_binders() {
     );
     assert!(!assumptions.range_fold_terms_alpha_equivalent(&left, &inner_item_instead));
 }
+
+/// A lower-bound search compares its term with the ambient order facts at
+/// most once, at the outermost search; the searches its recursive `decide`
+/// calls start read only the bounds recorded at their own term
+/// (`signed_order_bounds`). It used to rescan every fact at every level of
+/// the recursion, so its work was the fact count to the power of the chain
+/// depth; in `examples/arena`'s pipeline one loadability check spent 96
+/// seconds there.
+#[test]
+fn lower_bound_search_ignores_unrelated_facts() {
+    let bounded = Bitvector32Term::Variable(Variable(97_500));
+    let middle = Bitvector32Term::Variable(Variable(97_501));
+    let inner = Bitvector32Term::Variable(Variable(97_502));
+    let zero = Bitvector32Term::Constant(0);
+    let samples = [16, 64, 256]
+        .into_iter()
+        .map(|size| {
+            // `bounded >= middle >= inner >= 1`: the searches must recurse
+            // through `middle` and `inner` to reach the constant.
+            let mut assumptions = PureFactContext::new()
+                .assume_condition(
+                    ConditionTerm::signed_greater_equal(bounded.clone(), middle.clone()),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_greater_equal(middle.clone(), inner.clone()),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_greater_equal(
+                        inner.clone(),
+                        Bitvector32Term::Constant(1),
+                    ),
+                    true,
+                );
+            for index in 0..size {
+                let unrelated = Bitvector32Term::Variable(Variable(97_600 + index as u64));
+                assumptions = assumptions
+                    .assume_condition(
+                        ConditionTerm::signed_greater_equal(unrelated.clone(), zero.clone()),
+                        true,
+                    )
+                    .assume_condition(
+                        ConditionTerm::signed_less_equal(
+                            unrelated,
+                            Bitvector32Term::Constant(1_000),
+                        ),
+                        true,
+                    );
+            }
+            PureFactContext::reset_lower_bound_candidate_visits();
+            let found = assumptions.has_lower_bound_at_or_above(&bounded, &zero)
+                && assumptions.has_lower_bound_above(&bounded, &zero);
+            assert!(found, "size {size}: the recorded chain was not found");
+            let facts = assumptions.condition_facts.len();
+            (facts, PureFactContext::lower_bound_candidate_visits())
+        })
+        .collect::<Vec<_>>();
+    // Two searches, each scanning the order facts once at its outermost level
+    // and reading only indexed entries below it.
+    assert!(
+        samples
+            .iter()
+            .all(|(facts, visits)| *visits <= 2 * facts + 16),
+        "a nested lower-bound search rescanned the fact set: {samples:?}"
+    );
+}
