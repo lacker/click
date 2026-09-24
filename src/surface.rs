@@ -35,7 +35,7 @@ use crate::kernel::{
     c_function_termination_plan, c_if, c_loop_invariants_hold_at_entry,
     c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect,
     c_resources_directly_match, c_seq, c_termination_height_plan, c_typed_pointer_value,
-    c_unverified_function_contract_claims_with_checked_propositions,
+    c_unverified_function_contract_claims_diagnostic,
     c_verified_function_contract_claims_with_checked_propositions, c_verified_function_rule,
     c_verified_function_termination_rules, c_while_with_invariant_and_effect_checks,
     certify_int32_above_one_predecessor_is_at_least_one,
@@ -5794,7 +5794,11 @@ pub struct VerifiedCTheorem {
     pub specification: CFunctionSpecification,
     pub theorem: Theorem,
     pub concrete_loop_execution: bool,
-    pub(crate) checked_execution: CCheckedFunctionExecution,
+    /// Shared by every theorem one proof issued: a grouped proof issues one
+    /// theorem per path and claim over the same checked execution, so the
+    /// `Arc` both avoids a per-theorem copy of every path and gives
+    /// finalization an exact identity to visit that execution once.
+    pub(crate) checked_execution: std::sync::Arc<CCheckedFunctionExecution>,
     /// Exact proposition authority issued by the completed kernel proof and
     /// bound to this theorem's function path. Resource and effect claims keep
     /// their dedicated finalization checks instead.
@@ -7157,10 +7161,10 @@ impl ClickError {
         report
     }
 
-    /// A source-facing verification failure. The full `report()` retains
-    /// bounded kernel premises and search context for `--trace-proof`; the
-    /// ordinary CLI starts with the failed check and its Click goal.
-    pub fn concise_report(&self) -> String {
+    /// The failure and its supporting context for an ordinary CLI report.
+    /// Keeping these separate lets the CLI put source excerpts and trace
+    /// instructions in their own readable sections.
+    pub fn concise_report_parts(&self) -> (String, Vec<String>) {
         let reason = self
             .diagnostic
             .as_ref()
@@ -7168,7 +7172,14 @@ impl ClickError {
                 diagnostic.reason.as_str()
             });
         let reason = reason.split("\nproof context:").next().unwrap_or(reason);
-        let mut report = format!("{}:", self.kind.label());
+        let (mut report, reason) = if self.kind == ClickErrorKind::Proof
+            && let Some(rest) = reason.strip_prefix("could not certify contract for `")
+            && let Some((function, detail)) = rest.split_once("`: ")
+        {
+            (format!("proof error in `{function}`:"), detail)
+        } else {
+            (format!("{}:", self.kind.label()), reason)
+        };
         for segment in concise_error_segments(reason) {
             for line in segment
                 .lines()
@@ -7179,17 +7190,16 @@ impl ClickError {
                 report.push_str(line);
             }
         }
+        let mut context = Vec::new();
         if let Some(tactic) = self.failed_tactic {
-            report.push_str("\n  tactic: ");
-            report.push_str(tactic);
+            context.push(format!("tactic: {tactic}"));
         }
         if let Some(diagnostic) = &self.diagnostic
             && let Some(state) = diagnostic.state.as_ref()
         {
             let source_goal = state.source_goal();
             if let Some(goal) = &source_goal {
-                report.push_str("\n  goal: ");
-                report.push_str(goal);
+                context.push(format!("goal: {goal}"));
             }
             if self.failed_tactic == Some("assumption()")
                 && matches!(state.kernel_goal(), Some(Proposition::Exists { .. }))
@@ -7201,10 +7211,21 @@ impl ClickError {
                     .map(|(name, _)| name.trim())
                     .filter(|name| !name.is_empty())
                     .unwrap_or("name");
-                report.push_str(&format!(
-                    "\n  help: choose a witness with `witness({binder} = <value>);`, then prove its body"
+                context.push(format!(
+                    "help: choose a witness with `witness({binder} = <value>);`, then prove its body"
                 ));
             }
+        }
+        (report, context)
+    }
+
+    /// A source-facing verification failure. The full `report()` retains
+    /// bounded kernel premises and search context for `--trace-proof`.
+    pub fn concise_report(&self) -> String {
+        let (mut report, context) = self.concise_report_parts();
+        if !context.is_empty() {
+            report.push_str("\n\n");
+            report.push_str(&context.join("\n"));
         }
         report
     }

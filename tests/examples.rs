@@ -182,9 +182,9 @@ fn concurrency_fork_join_source_is_frozen() {
 }
 
 #[test]
-fn byte_representation_source_is_fixed_before_byte_rules() {
+fn byte_representation_source_is_frozen() {
     let source =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("design/byte-representation/rep_copy.c");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/byte-representation/rep_copy.c");
     let bytes = fs::read(&source).expect("the frozen byte-representation C source exists");
     assert_eq!(
         hex_digest(sha256(&bytes)),

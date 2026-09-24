@@ -3925,6 +3925,20 @@ pub(in crate::kernel) fn declare_local(
             );
             return Ok(state);
         }
+        CType::PointerArray(element, length) => {
+            state.set_memory(state.memory.clone().with_block(
+                pointer.block.clone(),
+                length.saturating_mul(C_POINTER_BYTE_WIDTH),
+            ));
+            state.locals.set_array_object_at_with_constant(
+                name.to_string(),
+                element.pointer_type(),
+                length,
+                pointer,
+                constant,
+            );
+            return Ok(state);
+        }
     };
     state.set_memory(
         state

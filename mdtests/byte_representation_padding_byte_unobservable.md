@@ -1,19 +1,19 @@
-# A byte of a copied pointer is not readable
+# A padding byte of a copied record is not observable
 
 This is the frozen `rep_copy.c` round trip
-(`examples/byte-representation/rep_copy.c`) cut after its first `memcpy`, reading
-`buf[8]`: the first byte of the copied `target` pointer. The representation
-copy planted that field as a typed pointer cell at buffer offset 8, and a
-pointer's bytes are opaque. The byte view of integer cells covers integer
-cells only, so the one-byte load at the pointer cell's own address is refused
-as a load that does not fit the cell's value. Nothing is guessed about the
-address's bytes, which is what keeps a pointer rebuilt from bytes refused.
-The contract is irrelevant; execution stops at the load.
+(`examples/byte-representation/rep_copy.c`) cut after its first `memcpy`,
+reading `buf[4]`: the first of the four padding bytes between the four-byte
+`tag` at offset 0 and the eight-byte `target` at offset 8. The representation
+copy moves typed cells, and padding has no cell, so the buffer holds nothing
+at offset 4 and the byte load is refused as a read of uninitialized storage.
 
-Companion: `byte_representation_pointer_byte_write_refused.md` refuses the
-write direction.
+C11 gives padding bytes unspecified values. Click assigns them none: the read
+is refused rather than returning an invented or arbitrary byte, so no proof
+can depend on a padding byte's value, and nothing about a whole record's
+bytes, padding included, follows from equality of its fields. The contract is irrelevant;
+execution stops at the load.
 
-```c filename=pointer_byte_read.c
+```c filename=padding_byte_read.c
 void *malloc(unsigned long size);
 void free(void *ptr);
 void *memcpy(void *dest, const void *src, unsigned long n);
@@ -50,7 +50,7 @@ int f(void) {
     src->tag = 11u;
     src->target = pointee;
     memcpy(buf, (unsigned char *)(void *)src, sizeof(struct record));
-    int out = buf[8];
+    int out = buf[4];
     free(pointee);
     free(src);
     free(buf);
@@ -60,7 +60,7 @@ int f(void) {
 ```
 
 ```click
-verifying "pointer_byte_read.c";
+verifying "padding_byte_read.c";
 
 int f() {
     ensures result == 0 or result == -1;
@@ -71,5 +71,5 @@ int f() {
 ```
 
 ```expect
-fail: a 1-byte load at `heap-allocation:1000002@8` did not fit the cell's value
+fail: read of uninitialized storage
 ```

@@ -2987,6 +2987,7 @@ pub(in crate::kernel) fn symbolic_load_value(
         | CType::UInt64Array(_)
         | CType::Float32Array(_)
         | CType::Float64Array(_) => None,
+        CType::PointerArray(_, _) => None,
     }
 }
 

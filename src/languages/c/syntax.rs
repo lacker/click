@@ -568,22 +568,18 @@ impl C0GlobalArray {
         self.initializer.as_deref()
     }
 
-    pub(crate) fn to_kernel_global_array(&self) -> Option<crate::kernel::CGlobalArray> {
-        let initializer = self.initializer.as_ref()?;
-        let values = initializer
-            .iter()
-            .map(|value| kernel_integer_literal_value(self.element_type, value))
-            .collect::<Option<Vec<_>>>()?;
-        Some(
-            crate::kernel::CGlobalArray::new_with_kernel_name(
-                self.name.clone(),
-                self.kernel_name.clone(),
-                self.element_type.to_kernel_type(),
-                self.length(),
-                values,
-            )
-            .with_constant(self.is_constant()),
+    fn to_kernel_global_array_with_values(
+        &self,
+        values: Vec<crate::kernel::CValue>,
+    ) -> crate::kernel::CGlobalArray {
+        crate::kernel::CGlobalArray::new_with_kernel_name(
+            self.name.clone(),
+            self.kernel_name.clone(),
+            self.element_type.to_kernel_type(),
+            self.length(),
+            values,
         )
+        .with_constant(self.is_constant())
     }
 }
 
@@ -885,6 +881,9 @@ impl C0GlobalAggregate {
 }
 
 fn array_type_for_element(element_type: C0Type, length: u32) -> Option<C0Type> {
+    if let Some(pointer_element) = pointer_array_element(element_type) {
+        return Some(C0Type::PointerArray(pointer_element, length));
+    }
     Some(match element_type {
         C0Type::Int8 => C0Type::Int8Array(length),
         C0Type::Int16 => C0Type::Int16Array(length),
@@ -899,6 +898,43 @@ fn array_type_for_element(element_type: C0Type, length: u32) -> Option<C0Type> {
         C0Type::Float64 => C0Type::Float64Array(length),
         _ => return None,
     })
+}
+
+fn pointer_array_element(c_type: C0Type) -> Option<crate::kernel::CPointerArrayElement> {
+    use crate::kernel::CPointerArrayElement as Element;
+    Some(match c_type {
+        C0Type::VoidPointer => Element::Void,
+        C0Type::CharPointer => Element::Char,
+        C0Type::Int8Pointer => Element::Int8,
+        C0Type::Int16Pointer => Element::Int16,
+        C0Type::Int32Pointer => Element::Int32,
+        C0Type::UInt8Pointer => Element::UInt8,
+        C0Type::UInt16Pointer => Element::UInt16,
+        C0Type::UInt32Pointer => Element::UInt32,
+        C0Type::Int64Pointer => Element::Int64,
+        C0Type::UInt64Pointer => Element::UInt64,
+        C0Type::Float32Pointer => Element::Float32,
+        C0Type::Float64Pointer => Element::Float64,
+        _ => return None,
+    })
+}
+
+fn pointer_array_element_type(element: crate::kernel::CPointerArrayElement) -> C0Type {
+    use crate::kernel::CPointerArrayElement as Element;
+    match element {
+        Element::Void => C0Type::VoidPointer,
+        Element::Char => C0Type::CharPointer,
+        Element::Int8 => C0Type::Int8Pointer,
+        Element::Int16 => C0Type::Int16Pointer,
+        Element::Int32 => C0Type::Int32Pointer,
+        Element::UInt8 => C0Type::UInt8Pointer,
+        Element::UInt16 => C0Type::UInt16Pointer,
+        Element::UInt32 => C0Type::UInt32Pointer,
+        Element::Int64 => C0Type::Int64Pointer,
+        Element::UInt64 => C0Type::UInt64Pointer,
+        Element::Float32 => C0Type::Float32Pointer,
+        Element::Float64 => C0Type::Float64Pointer,
+    }
 }
 
 fn kernel_integer_literal_value(
@@ -973,7 +1009,10 @@ fn kernel_integer_literal_value(
             }
             _ => return None,
         },
-        C0Type::Int8Pointer | C0Type::Int8PointerPointer
+        C0Type::VoidPointer
+        | C0Type::VoidPointerPointer
+        | C0Type::Int8Pointer
+        | C0Type::Int8PointerPointer
             if matches!(initializer, C0Expression::Int32Literal(0)) =>
         {
             crate::kernel::CValue::typed_pointer(
@@ -1156,20 +1195,18 @@ impl C0StaticArray {
         self
     }
 
-    pub(crate) fn to_kernel_static_array(&self) -> Option<crate::kernel::CStaticArray> {
-        let values = self
-            .initializer
-            .iter()
-            .map(|value| kernel_integer_literal_value(self.element_type, value))
-            .collect::<Option<Vec<_>>>()?;
-        Some(crate::kernel::CStaticArray::new(
+    fn to_kernel_static_array_with_values(
+        &self,
+        values: Vec<crate::kernel::CValue>,
+    ) -> crate::kernel::CStaticArray {
+        crate::kernel::CStaticArray::new(
             self.source_name.clone(),
             self.kernel_name.clone(),
             self.element_type.to_kernel_type(),
             self.length,
             values,
-        ))
-        .map(|array| array.with_constant(self.is_constant()))
+        )
+        .with_constant(self.is_constant())
     }
 }
 
@@ -1835,6 +1872,7 @@ pub enum C0Type {
     UInt64Array(u32),
     Float32Array(u32),
     Float64Array(u32),
+    PointerArray(crate::kernel::CPointerArrayElement, u32),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1899,6 +1937,7 @@ impl CAbi {
             }
             (Self::Lp64, C0Type::Float32Array(length)) => (length.saturating_mul(4), 4),
             (Self::Lp64, C0Type::Float64Array(length)) => (length.saturating_mul(8), 8),
+            (Self::Lp64, C0Type::PointerArray(_, length)) => (length.saturating_mul(8), 8),
         }
     }
 }
@@ -2887,6 +2926,17 @@ impl C0Function {
                 )?;
             }
         }
+        for array in self
+            .global_arrays
+            .values()
+            .filter(|array| array.element_type().is_pointer())
+        {
+            if let Some(initializer) = array.initializer() {
+                for value in initializer {
+                    self.validate_static_pointer_initializer(array.element_type(), false, value)?;
+                }
+            }
+        }
         for static_local in self.static_locals.values() {
             if static_local.c_type().is_pointer() {
                 self.validate_static_pointer_initializer(
@@ -2894,6 +2944,15 @@ impl C0Function {
                     static_local.pointee_is_constant(),
                     static_local.initializer(),
                 )?;
+            }
+        }
+        for array in self
+            .static_arrays
+            .values()
+            .filter(|array| array.element_type().is_pointer())
+        {
+            for value in array.initializer() {
+                self.validate_static_pointer_initializer(array.element_type(), false, value)?;
             }
         }
         Ok(())
@@ -2909,6 +2968,30 @@ impl C0Function {
             return Some(global.to_kernel_global_with_value(value));
         }
         global.to_kernel_global()
+    }
+
+    fn to_kernel_global_array(&self, array: &C0GlobalArray) -> Option<crate::kernel::CGlobalArray> {
+        let values = array
+            .initializer()?
+            .iter()
+            .map(|initializer| {
+                self.static_address_initializer_value(array.element_type(), false, initializer)
+                    .or_else(|| kernel_integer_literal_value(array.element_type(), initializer))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(array.to_kernel_global_array_with_values(values))
+    }
+
+    fn to_kernel_static_array(&self, array: &C0StaticArray) -> Option<crate::kernel::CStaticArray> {
+        let values = array
+            .initializer()
+            .iter()
+            .map(|initializer| {
+                self.static_address_initializer_value(array.element_type(), false, initializer)
+                    .or_else(|| kernel_integer_literal_value(array.element_type(), initializer))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(array.to_kernel_static_array_with_values(values))
     }
 
     fn to_kernel_static(
@@ -3028,7 +3111,7 @@ impl C0Function {
                 .with_global_arrays(
                     self.global_arrays
                         .values()
-                        .filter_map(C0GlobalArray::to_kernel_global_array)
+                        .filter_map(|array| self.to_kernel_global_array(array))
                         .collect(),
                 )
                 .with_global_aggregates(
@@ -3054,7 +3137,7 @@ impl C0Function {
             .with_static_arrays(
                 self.static_arrays
                     .values()
-                    .filter_map(C0StaticArray::to_kernel_static_array)
+                    .filter_map(|array| self.to_kernel_static_array(array))
                     .collect(),
             )
             .with_static_aggregates(
@@ -3535,6 +3618,8 @@ impl C0Type {
         matches!(
             self,
             Self::Bool
+                | Self::VoidPointer
+                | Self::VoidPointerPointer
                 | Self::Int8
                 | Self::Int16
                 | Self::Int32
@@ -3584,6 +3669,7 @@ impl C0Type {
             Self::UInt64Pointer | Self::UInt64Array(_) => Some(Self::UInt64),
             Self::Float32Pointer | Self::Float32Array(_) => Some(Self::Float32),
             Self::Float64Pointer | Self::Float64Array(_) => Some(Self::Float64),
+            Self::PointerArray(element, _) => Some(pointer_array_element_type(element)),
             Self::Int8PointerPointer => Some(Self::Int8Pointer),
             Self::Int16PointerPointer => Some(Self::Int16Pointer),
             Self::UInt16PointerPointer => Some(Self::UInt16Pointer),
@@ -3664,6 +3750,7 @@ impl C0Type {
             | Self::UInt64Array(_)
             | Self::Float32Array(_)
             | Self::Float64Array(_) => return None,
+            Self::PointerArray(_, _) => return None,
         })
     }
 
@@ -3719,6 +3806,9 @@ impl C0Type {
             Self::UInt64Array(length) => crate::kernel::CType::UInt64Array(length),
             Self::Float32Array(length) => crate::kernel::CType::Float32Array(length),
             Self::Float64Array(length) => crate::kernel::CType::Float64Array(length),
+            Self::PointerArray(element, length) => {
+                crate::kernel::CType::PointerArray(element, length)
+            }
         }
     }
 }
@@ -5571,9 +5661,10 @@ fn struct_scalar_array_shape(field: &C0StructField) -> Option<(C0Type, Vec<u32>)
         C0Type::UInt64Array(length) => (C0Type::UInt64, length),
         C0Type::CharArray(length) => (C0Type::Char, length),
         C0Type::UInt8Array(length) => (C0Type::UInt8, length),
+        C0Type::PointerArray(element, length) => (pointer_array_element_type(element), length),
         _ => return None,
     };
-    if field.struct_name.is_some() {
+    if field.struct_name.is_some() && !matches!(field.c_type, C0Type::PointerArray(_, _)) {
         return None;
     }
     Some((
@@ -7089,7 +7180,9 @@ impl Parser {
                 continue;
             }
             if field.union_name.is_some()
-                || (field.struct_name.is_some() && !field.c_type.is_pointer())
+                || (field.struct_name.is_some()
+                    && !field.c_type.is_pointer()
+                    && !matches!(field.c_type, C0Type::PointerArray(_, _)))
                 || !matches!(
                     field.c_type,
                     C0Type::Bool
@@ -7110,6 +7203,7 @@ impl Parser {
                         | C0Type::UInt8Array(_)
                         | C0Type::Float32Array(_)
                         | C0Type::Float64Array(_)
+                        | C0Type::PointerArray(_, _)
                         | C0Type::Int32Pointer
                         | C0Type::CharPointer
                         | C0Type::UInt8Pointer
@@ -7593,8 +7687,9 @@ impl Parser {
     /// whether the existing always-inline linkage restriction applies.
     /// `nothrow` adds no proof facts: C0 has no exception semantics, and the
     /// annotation says nothing about termination, memory effects, or safety.
-    /// `leaf` is also accepted without using its cross-unit callback restriction
-    /// as a proof assumption. Calls retain their ordinary checked contracts.
+    /// `leaf`, `const`, and `nonnull` are also accepted without using their
+    /// restrictions as proof assumptions. Calls retain their ordinary checked
+    /// contracts, including their ordinary argument obligations.
     fn consume_function_attributes(&mut self) -> Result<bool, C0SyntaxError> {
         let mut always_inline = false;
         while self.peek_ident() == Some("__attribute__") {
@@ -7605,9 +7700,32 @@ impl Parser {
                 let attribute = self.expect_ident("GNU function attribute")?;
                 match attribute.as_str() {
                     "always_inline" | "__always_inline__" => always_inline = true,
-                    "nothrow" | "__nothrow__" | "leaf" | "__leaf__" => {},
+                    "nothrow" | "__nothrow__" | "leaf" | "__leaf__" | "const"
+                    | "__const__" => {},
+                    "nonnull" | "__nonnull__" => {
+                        if self.peek() == Some(&Token::LParen) {
+                            self.position += 1;
+                            loop {
+                                let Some(Token::Number(index)) = self.next() else {
+                                    return Err(self.error_at_previous(
+                                        "GNU nonnull attribute requires positive parameter indices",
+                                    ));
+                                };
+                                if index.parse::<u32>().ok().filter(|index| *index > 0).is_none() {
+                                    return Err(self.error_at_previous(
+                                        "GNU nonnull attribute requires positive parameter indices",
+                                    ));
+                                }
+                                if self.peek() != Some(&Token::Comma) {
+                                    break;
+                                }
+                                self.position += 1;
+                            }
+                            self.expect(Token::RParen)?;
+                        }
+                    }
                     _ => return Err(self.error_at_previous(format!(
-                        "unsupported GNU function attribute `{attribute}`; only `always_inline`, `nothrow`, and `leaf` are supported in this slice"
+                        "unsupported GNU function attribute `{attribute}`; only `always_inline`, `nothrow`, `leaf`, `const`, and `nonnull` are supported in this slice"
                     ))),
                 }
                 if self.peek() != Some(&Token::Comma) {
@@ -8055,10 +8173,10 @@ impl Parser {
                 }
                 other => other,
             };
-            if struct_pointer_name.is_some() && array_length.is_some() {
-                return Err(
-                    self.error_here("file-scope arrays of struct pointers are not supported yet")
-                );
+            if array_length.is_some() && array_type_for_element(parsed_type.c_type, 1).is_none() {
+                return Err(self.error_here(
+                    "file-scope array element type requires a modeled array pointer type",
+                ));
             }
             if parsed_type.is_volatile && array_length.is_some() {
                 return Err(self.error_here(
@@ -8066,6 +8184,10 @@ impl Parser {
                 ));
             }
             if let Some(array_length) = array_length {
+                if let Some(struct_name) = &struct_pointer_name {
+                    self.variable_structs
+                        .insert(kernel_name.clone(), struct_name.clone());
+                }
                 match array_length {
                     GlobalArrayLength::Complete(shape) => {
                         let length = array_shape_element_count(&shape).ok_or_else(|| {
@@ -9281,7 +9403,7 @@ impl Parser {
             ));
         }
         let (c_type, array_shape) = if self.peek() == Some(&Token::LBracket) {
-            if base_type.struct_name.is_some()
+            if (base_type.struct_name.is_some() && !base_type.c_type.is_pointer())
                 || !matches!(
                     base_type.c_type,
                     C0Type::Int32
@@ -9291,7 +9413,7 @@ impl Parser {
                         | C0Type::UInt8
                         | C0Type::Float32
                         | C0Type::Float64
-                )
+                ) && pointer_array_element(base_type.c_type).is_none()
             {
                 return Err(self.error_here(
                     "inline scalar arrays in structs currently support int32, int64, uint64, uint8, float, and double elements",
@@ -9320,47 +9442,54 @@ impl Parser {
                 C0Type::UInt8 => C0Type::UInt8Array(element_count),
                 C0Type::Float32 => C0Type::Float32Array(element_count),
                 C0Type::Float64 => C0Type::Float64Array(element_count),
-                _ => unreachable!("validated scalar struct array element type"),
+                pointer => C0Type::PointerArray(
+                    pointer_array_element(pointer)
+                        .expect("validated pointer struct array element type"),
+                    element_count,
+                ),
             };
             (c_type, array_shape)
         } else {
             (base_type.c_type, None)
         };
 
-        if !matches!(
-            c_type,
-            C0Type::Bool
-                | C0Type::Int8
-                | C0Type::Int16
-                | C0Type::Int32
-                | C0Type::Char
-                | C0Type::UInt8
-                | C0Type::UInt16
-                | C0Type::UInt32
-                | C0Type::Int64
-                | C0Type::UInt64
-                | C0Type::Float32
-                | C0Type::Float64
-                | C0Type::Int32Pointer
-                | C0Type::CharPointer
-                | C0Type::UInt8Pointer
-                | C0Type::Float32Pointer
-                | C0Type::Float64Pointer
-                | C0Type::Int32PointerPointer
-                | C0Type::CharPointerPointer
-                | C0Type::UInt8PointerPointer
-                | C0Type::Float32PointerPointer
-                | C0Type::Float64PointerPointer
-                | C0Type::Int32Array(_)
-                | C0Type::Int64Array(_)
-                | C0Type::UInt64Array(_)
-                | C0Type::CharArray(_)
-                | C0Type::UInt8Array(_)
-                | C0Type::Float32Array(_)
-                | C0Type::Float64Array(_)
-        ) {
+        if !c_type.is_pointer()
+            && !matches!(
+                c_type,
+                C0Type::Bool
+                    | C0Type::Int8
+                    | C0Type::Int16
+                    | C0Type::Int32
+                    | C0Type::Char
+                    | C0Type::UInt8
+                    | C0Type::UInt16
+                    | C0Type::UInt32
+                    | C0Type::Int64
+                    | C0Type::UInt64
+                    | C0Type::Float32
+                    | C0Type::Float64
+                    | C0Type::Int32Pointer
+                    | C0Type::CharPointer
+                    | C0Type::UInt8Pointer
+                    | C0Type::Float32Pointer
+                    | C0Type::Float64Pointer
+                    | C0Type::Int32PointerPointer
+                    | C0Type::CharPointerPointer
+                    | C0Type::UInt8PointerPointer
+                    | C0Type::Float32PointerPointer
+                    | C0Type::Float64PointerPointer
+                    | C0Type::Int32Array(_)
+                    | C0Type::Int64Array(_)
+                    | C0Type::UInt64Array(_)
+                    | C0Type::CharArray(_)
+                    | C0Type::UInt8Array(_)
+                    | C0Type::Float32Array(_)
+                    | C0Type::Float64Array(_)
+                    | C0Type::PointerArray(_, _)
+            )
+        {
             return Err(self.error_here(format!(
-                "struct `{struct_name}` fields currently support modeled integer and floating-point scalars, fixed scalar arrays, and pointer fields",
+                "struct `{struct_name}` fields currently support modeled scalars, fixed arrays, and pointer fields",
             )));
         }
         let (field_size, field_alignment) = match c_type {
@@ -9378,6 +9507,12 @@ impl Parser {
             ),
             C0Type::CharArray(length) => (length, 1),
             C0Type::UInt8Array(length) => (length, 1),
+            C0Type::PointerArray(_, length) => (
+                length.checked_mul(8).ok_or_else(|| {
+                    self.error_here(format!("struct `{struct_name}` layout is too large"))
+                })?,
+                8,
+            ),
             _ => self.abi.size_and_alignment(c_type),
         };
         Ok((
@@ -9821,6 +9956,9 @@ impl Parser {
                 C0Type::Int8Array(_) => {
                     return Err(self.error_at_previous("pointer-to-array types are not supported"));
                 }
+                C0Type::PointerArray(_, _) => {
+                    return Err(self.error_at_previous("pointer-to-array types are not supported"));
+                }
                 C0Type::Int32Array(_)
                 | C0Type::CharArray(_)
                 | C0Type::UInt8Array(_)
@@ -9843,13 +9981,16 @@ impl Parser {
             if base_constant {
                 pointee_constant = true;
             }
-            if self.peek_ident() == Some("const") {
+            loop {
+                match self.peek_ident() {
+                    Some("const") => object_constant = true,
+                    Some("volatile") => volatile_levels |= 1,
+                    // Restrict constrains aliases used by a valid C program.
+                    // Click never infers ownership or separation from it.
+                    Some("restrict" | "__restrict" | "__restrict__") => {}
+                    _ => break,
+                }
                 self.position += 1;
-                object_constant = true;
-            }
-            if self.peek_ident() == Some("volatile") {
-                self.position += 1;
-                volatile_levels |= 1;
             }
             saw_pointer = true;
             if parsed.union_name.is_some() {
@@ -10156,12 +10297,11 @@ impl Parser {
         if parsed_type.enum_name.is_some() {
             return Err(self.error_here("local arrays of enum type are not supported"));
         }
-        let (array_type, element_width, element_name, struct_array): (
-            fn(u32) -> C0Type,
-            u32,
-            String,
-            bool,
-        ) = if let Some(struct_name) = parsed_type.struct_name.as_deref() {
+        let (element_width, element_name, struct_array) = if is_plain_struct_type(parsed_type) {
+            let struct_name = parsed_type
+                .struct_name
+                .as_deref()
+                .expect("plain struct array has a tag");
             let element_width = self
                 .structs
                 .get(struct_name)
@@ -10169,27 +10309,18 @@ impl Parser {
                     self.error_here(format!("unknown struct declaration `{struct_name}`"))
                 })?
                 .size_bytes;
-            (
-                C0Type::UInt8Array,
-                element_width,
-                format!("struct {struct_name}"),
-                true,
-            )
+            (element_width, format!("struct {struct_name}"), true)
         } else {
-            match parsed_type.c_type {
-                C0Type::Int8 => (C0Type::Int8Array, 1u32, "int8".to_string(), false),
-                C0Type::Int16 => (C0Type::Int16Array, 2u32, "int16".to_string(), false),
-                C0Type::UInt16 => (C0Type::UInt16Array, 2u32, "uint16".to_string(), false),
-                C0Type::Int32 => (C0Type::Int32Array, 4u32, "int32".to_string(), false),
-                C0Type::Char => (C0Type::CharArray, 1u32, "char".to_string(), false),
-                C0Type::UInt8 => (C0Type::UInt8Array, 1u32, "uint8".to_string(), false),
-                C0Type::UInt32 => (C0Type::UInt32Array, 4u32, "uint32".to_string(), false),
-                C0Type::Int64 => (C0Type::Int64Array, 8u32, "int64".to_string(), false),
-                C0Type::UInt64 => (C0Type::UInt64Array, 8u32, "uint64".to_string(), false),
-                C0Type::Float32 => (C0Type::Float32Array, 4u32, "float".to_string(), false),
-                C0Type::Float64 => (C0Type::Float64Array, 8u32, "double".to_string(), false),
-                _ => return Err(self.error_here("only scalar local arrays are supported")),
+            if array_type_for_element(parsed_type.c_type, 1).is_none() {
+                return Err(
+                    self.error_here("only modeled scalar and pointer local arrays are supported")
+                );
             }
+            (
+                parsed_type.c_type.abi_size_bytes(),
+                format!("{:?}", parsed_type.c_type),
+                false,
+            )
         };
 
         if element_width == 0 {
@@ -10248,7 +10379,13 @@ impl Parser {
             element_count
         };
         let shape = (struct_array || dimensions.len() > 1).then_some(dimensions);
-        Ok((array_type(array_length), shape))
+        let array_type = if struct_array {
+            C0Type::UInt8Array(array_length)
+        } else {
+            array_type_for_element(parsed_type.c_type, array_length)
+                .expect("validated local array element type")
+        };
+        Ok((array_type, shape))
     }
 
     fn parse_block_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
@@ -10733,6 +10870,7 @@ impl Parser {
             C0Type::UInt64Array(length) => (length, C0Type::UInt64),
             C0Type::Float32Array(length) => (length, C0Type::Float32),
             C0Type::Float64Array(length) => (length, C0Type::Float64),
+            C0Type::PointerArray(element, length) => (length, pointer_array_element_type(element)),
             _ => unreachable!("array initializer called for a scalar type"),
         };
         let zero = zero_initializer(element_type);
@@ -12060,7 +12198,10 @@ impl Parser {
                     return Err(self.error_here("only pointer-to-struct types are supported"));
                 }
                 if c_type != parsed_type.c_type
-                    && !matches!(c_type, C0Type::UInt8Array(_) | C0Type::UInt8Pointer)
+                    && !matches!(
+                        c_type,
+                        C0Type::UInt8Array(_) | C0Type::UInt8Pointer | C0Type::PointerArray(_, _)
+                    )
                 {
                     return Err(self.error_here("local arrays of struct type are not supported"));
                 }
@@ -12103,9 +12244,10 @@ impl Parser {
                         | C0Type::UInt8Array(_)
                         | C0Type::Float32Array(_)
                         | C0Type::Float64Array(_)
+                        | C0Type::PointerArray(_, _)
                 ) {
-                    let initializer = if let Some(struct_name) = parsed_type.struct_name.as_deref()
-                    {
+                    let initializer = if is_plain_struct_type(&parsed_type) {
+                        let struct_name = parsed_type.struct_name.as_deref().unwrap();
                         let dimensions = array_shape.as_deref().expect(
                             "local struct array initializers retain their declared dimensions",
                         );
@@ -12303,6 +12445,11 @@ impl Parser {
                     return Err(
                         self.error_here("volatile static local arrays are not supported yet")
                     );
+                }
+                if array_type_for_element(parsed_type.c_type, 1).is_none() {
+                    return Err(self.error_here(
+                        "static array element type requires a modeled array pointer type",
+                    ));
                 }
                 let dimensions = self
                     .parse_global_array_length(&source_name)?
@@ -12537,6 +12684,9 @@ impl Parser {
                 C0Type::UInt8Array(length) => (C0Type::UInt8, length),
                 C0Type::Float32Array(length) => (C0Type::Float32, length),
                 C0Type::Float64Array(length) => (C0Type::Float64, length),
+                C0Type::PointerArray(element, length) => {
+                    (pointer_array_element_type(element), length)
+                }
                 C0Type::Int32Pointer
                 | C0Type::CharPointer
                 | C0Type::UInt8Pointer
@@ -12550,6 +12700,7 @@ impl Parser {
                 // A callback field copies as the eight-byte pointer value it
                 // is, keeping the destination's declared signature.
                 | C0Type::FunctionPointer(_) => (field.c_type, 1),
+                pointer if pointer.is_pointer() => (pointer, 1),
                 _ => unreachable!("validated struct value field shape"),
             };
             let element_signature = matches!(element_type, C0Type::FunctionPointer(_))
@@ -16328,7 +16479,7 @@ impl Parser {
     fn scalar_array_field_shape(&self, expression: &C0Expression) -> Option<Vec<u32>> {
         let C0Expression::Field {
             field_type,
-            field_struct_name: None,
+            field_struct_name,
             array_shape,
             ..
         } = expression
@@ -16343,8 +16494,12 @@ impl Parser {
             | C0Type::UInt8Array(length)
             | C0Type::Float32Array(length)
             | C0Type::Float64Array(length) => *length,
+            C0Type::PointerArray(_, length) => *length,
             _ => return None,
         };
+        if field_struct_name.is_some() && !matches!(field_type, C0Type::PointerArray(_, _)) {
+            return None;
+        }
         Some(array_shape.clone().unwrap_or_else(|| vec![length]))
     }
 
@@ -16482,6 +16637,22 @@ impl Parser {
                 field_struct_name: Some(struct_name),
                 ..
             } => Some(struct_name.clone()),
+            C0Expression::Index(base, _) => match base.as_ref() {
+                C0Expression::Field {
+                    field_type: C0Type::PointerArray(_, _),
+                    field_struct_name: Some(struct_name),
+                    ..
+                } => Some(struct_name.clone()),
+                C0Expression::Variable(name)
+                    if matches!(
+                        self.variable_types.get(name),
+                        Some(C0Type::PointerArray(_, _))
+                    ) =>
+                {
+                    self.variable_structs.get(name).cloned()
+                }
+                _ => None,
+            },
             C0Expression::Load(pointer) => self.struct_pointer_pointer_name(pointer),
             C0Expression::SequentialRead { struct_name, .. }
             | C0Expression::SequentialWrite { struct_name, .. } => struct_name.clone(),
@@ -16945,7 +17116,9 @@ impl Parser {
                 }
                 (field_struct_name.clone(), None)
             }
-            C0Expression::Load(_) => (self.struct_pointer_name(base), None),
+            C0Expression::Load(_) | C0Expression::Index(_, _) => {
+                (self.struct_pointer_name(base), None)
+            }
             C0Expression::SequentialRead {
                 c_type,
                 struct_name,
@@ -16966,7 +17139,9 @@ impl Parser {
         };
         if let Some(struct_name) = struct_name {
             let layout = self.structs.get(&struct_name).ok_or_else(|| {
-                self.error_here(format!("unknown struct declaration `{struct_name}`"))
+                self.error_here(format!(
+                    "cannot access field through incomplete struct `{struct_name}`"
+                ))
             })?;
             let field = layout.fields.get(field_name).ok_or_else(|| {
                 self.error_here(format!(

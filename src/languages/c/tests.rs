@@ -1,6 +1,106 @@
 use super::*;
 
 #[test]
+fn struct_pointer_arrays_keep_element_types_layout_and_incomplete_tags() {
+    let unit = syntax::parse_translation_unit_for_source(
+        "struct opaque; \
+         struct slots { int *values[2]; const char *labels[2]; \
+                        struct opaque *hidden[3]; int tail; }; \
+         int read(struct slots *p, int *value) { \
+             p->values[1] = value; return *p->values[1]; \
+         }",
+        "pointer_arrays.c",
+        &source::ExpandedLineMap::empty(),
+    )
+    .expect("pointer array fields and indexed access must parse");
+    let layout = &unit.structs["slots"];
+    assert_eq!(layout.size_bytes(), 64);
+    assert_eq!(layout.field("values").unwrap().offset_bytes(), 0);
+    assert_eq!(layout.field("values").unwrap().byte_width(), 16);
+    assert_eq!(layout.field("labels").unwrap().offset_bytes(), 16);
+    assert_eq!(layout.field("hidden").unwrap().offset_bytes(), 32);
+    assert_eq!(
+        layout.field("hidden").unwrap().struct_name(),
+        Some("opaque")
+    );
+    assert_eq!(layout.field("tail").unwrap().offset_bytes(), 56);
+    assert!(matches!(
+        layout.field("values").unwrap().c_type(),
+        syntax::C0Type::PointerArray(crate::kernel::CPointerArrayElement::Int32, 2)
+    ));
+}
+
+#[test]
+fn struct_pointer_arrays_reject_wrong_elements_and_incomplete_dereferences() {
+    for (source, expected) in [
+        (
+            "struct slots { int *values[2]; }; \
+             int bad(struct slots *p, char *value) { \
+                 p->values[0] = value; return 0; \
+             }",
+            "pointer",
+        ),
+        (
+            "struct opaque; struct slots { struct opaque *values[2]; }; \
+             int bad(struct slots *p) { return p->values[0]->field; }",
+            "incomplete struct",
+        ),
+    ] {
+        let error = match syntax::parse_translation_unit_for_source(
+            source,
+            "bad.c",
+            &source::ExpandedLineMap::empty(),
+        ) {
+            Ok(_) => panic!("invalid pointer-array use must be refused: {source}"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn global_and_static_pointer_arrays_preserve_address_initializers() {
+    let functions = syntax::parse_functions(
+        "int target; int *global_slots[2] = {&target, 0}; \
+         int read(void) { static int *local_slots[2] = {&target, 0}; \
+                          return global_slots[0] == local_slots[0]; }",
+    )
+    .expect("pointer arrays with static addresses should parse");
+    let function = functions[0].to_kernel_function();
+    assert_eq!(function.global_arrays().len(), 1);
+    assert_eq!(function.static_arrays().len(), 1);
+    for values in [
+        function.global_arrays()[0].initial_values(),
+        function.static_arrays()[0].initial_values(),
+    ] {
+        assert!(
+            matches!(&values[0], crate::kernel::CValue::Pointer(pointer) if !pointer.is_null())
+        );
+        assert!(matches!(&values[1], crate::kernel::CValue::Pointer(pointer) if pointer.is_null()));
+    }
+}
+
+#[test]
+fn pointer_arrays_reject_unmodeled_pointer_depth_without_panicking() {
+    for source in [
+        "int **slots[2]; int read(void) { return 0; }",
+        "int read(void) { static int **slots[2]; return 0; }",
+        "int read(void) { int **slots[2]; return 0; }",
+        "struct slots { int **values[2]; };",
+    ] {
+        assert!(
+            syntax::parse_translation_unit_for_source(
+                source,
+                "pointer_depth.c",
+                &source::ExpandedLineMap::empty(),
+            )
+            .is_err(),
+            "unsupported pointer depth should report a syntax error: {source}"
+        );
+    }
+}
+
+#[test]
 fn file_scope_struct_forward_declarations_keep_incomplete_types_incomplete() {
     let unit = syntax::parse_translation_unit_for_source(
         "struct opaque; struct opaque; int accepts(struct opaque *value); \
@@ -12156,7 +12256,7 @@ fn struct_constant_array_lengths_reject_invalid_values() {
 }
 
 #[test]
-fn c0_nothrow_and_leaf_attributes_accept_aliases_lists_and_repeated_groups() {
+fn c0_nothrow_leaf_and_const_attributes_accept_aliases_lists_and_repeated_groups() {
     for attributes in [
         "__attribute__((leaf))",
         "__attribute__((__leaf__))",
@@ -12167,6 +12267,9 @@ fn c0_nothrow_and_leaf_attributes_accept_aliases_lists_and_repeated_groups() {
         "__attribute__((__nothrow__))",
         "__attribute__((nothrow, __nothrow__))",
         "__attribute__((nothrow)) __attribute__((__nothrow__))",
+        "__attribute__((const))",
+        "__attribute__((__const__))",
+        "__attribute__((__nothrow__, __leaf__)) __attribute__((__const__))",
     ] {
         for (prefix, suffix) in [(attributes, ""), ("", attributes)] {
             let definition =
@@ -12195,7 +12298,26 @@ fn c0_nothrow_and_leaf_attributes_accept_aliases_lists_and_repeated_groups() {
 }
 
 #[test]
-fn c0_nothrow_and_leaf_attributes_do_not_hide_unsupported_attributes_or_linkage() {
+fn c0_nonnull_function_attributes_accept_parameter_indices_without_granting_ownership() {
+    for attributes in [
+        "__attribute__((nonnull))",
+        "__attribute__((__nonnull__ (1, 2)))",
+        "__attribute__((__nothrow__, __leaf__)) __attribute__((__nonnull__ (1)))",
+    ] {
+        let prototype = format!("extern int inspect(int *p, int *q) {attributes};");
+        syntax::validate_header(&prototype, &source::ExpandedLineMap::empty()).unwrap();
+        syntax::parse_functions(&format!(
+            "{prototype} int inspect(int *p, int *q) {{ return *p + *q; }}"
+        ))
+        .unwrap();
+    }
+    let c = "int inspect(int *p) __attribute__((nonnull(1))) { return *p; }";
+    let proof = "verifying \"nonnull.c\"; int inspect(int *p) { ensures result == 7 by auto; }";
+    assert!(crate::surface::verify_c0_sources(proof, &[("nonnull.c", c)]).is_err());
+}
+
+#[test]
+fn c0_nothrow_leaf_const_and_nonnull_attributes_do_not_hide_unsupported_attributes_or_linkage() {
     for source in [
         "int f(void) __attribute__((leaf, noreturn));",
         "int f(void) __attribute__((leaf)) __attribute__((aligned(8)));",
@@ -12211,12 +12333,35 @@ fn c0_nothrow_and_leaf_attributes_do_not_hide_unsupported_attributes_or_linkage(
         "int f(void) __attribute__((nothrow(1)));",
         "int f(void) __attribute__((nothrow,));",
         "int f(void) __attribute__((nothrow);",
+        "int f(void) __attribute__((__const__, noreturn));",
+        "int f(void) __attribute__((__const__(1)));",
+        "int f(void) __attribute__((nonnull(0)));",
+        "int f(void) __attribute__((nonnull(x)));",
+        "int f(void) __attribute__((nonnull(1,)));",
     ] {
         assert!(
             syntax::validate_header(source, &source::ExpandedLineMap::empty()).is_err(),
             "{source}"
         );
     }
+}
+
+#[test]
+fn c0_restrict_pointer_qualifiers_preserve_pointer_types_without_alias_facts() {
+    for qualifier in ["restrict", "__restrict", "__restrict__"] {
+        let prototype = format!("extern int read(int *{qualifier} p, const int *{qualifier} q);");
+        syntax::validate_header(&prototype, &source::ExpandedLineMap::empty()).unwrap();
+        syntax::parse_functions(&format!(
+            "{prototype} int read(int *p, const int *q) {{ return *p + *q; }}"
+        ))
+        .unwrap();
+    }
+    for source in ["restrict int bad;", "int bad(restrict int p);"] {
+        assert!(syntax::parse_functions(source).is_err(), "{source}");
+    }
+    let c = "int read(int *restrict p) { return *p; }";
+    let proof = "verifying \"restrict.c\"; int read(int *p) { ensures result == 7 by auto; }";
+    assert!(crate::surface::verify_c0_sources(proof, &[("restrict.c", c)]).is_err());
 }
 
 #[test]

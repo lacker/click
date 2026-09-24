@@ -4487,6 +4487,7 @@ fn c_parameter_type_spelling(parameter: &CParameter) -> String {
         CType::UInt64Array(_) => "uint64*",
         CType::Float32Array(_) => "float32*",
         CType::Float64Array(_) => "float64*",
+        CType::PointerArray(element, _) => element.decayed_type_spelling(),
     };
     if parameter.pointee_is_constant() {
         format!("const {base}")
@@ -9625,6 +9626,9 @@ pub(crate) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue 
         | CType::Float64Array(_) => {
             unreachable!("C functions cannot return array values")
         }
+        CType::PointerArray(_, _) => {
+            unreachable!("C functions cannot return array values")
+        }
     }
 }
 
@@ -11144,57 +11148,63 @@ fn zero_aggregate_fields(
             CType::UInt8Array(length) => (CType::UInt8, length),
             CType::Float32Array(length) => (CType::Float32, length),
             CType::Float64Array(length) => (CType::Float64, length),
+            CType::PointerArray(element, length) => (element.pointer_type(), length),
             _ => continue,
         };
-        let zero = match element_type {
-            CType::Bool => CValue::Bool(Bitvector32Term::Constant(0)),
-            CType::Int8 => int8(0),
-            CType::Int16 => int16(0),
-            CType::Int32 => int32(0),
-            CType::UInt8 => uint8(0),
-            CType::UInt16 => uint16(0),
-            CType::UInt32 => uint32(0),
-            CType::Int64 => CValue::Int64(Bitvector32Term::Int64Constant(0)),
-            CType::UInt64 => CValue::UInt64(Bitvector32Term::UInt64Constant(0)),
-            CType::Float32 => CValue::Float32(Bitvector32Term::Constant(0)),
-            CType::Float64 => CValue::Float64(Bitvector32Term::UInt64Constant(0)),
-            CType::Int32Pointer
-            | CType::UInt8Pointer
-            | CType::Float32Pointer
-            | CType::Float64Pointer
-            | CType::Int32PointerPointer
-            | CType::UInt8PointerPointer
-            | CType::Float32PointerPointer
-            | CType::Float64PointerPointer
-            | CType::FunctionPointer(_) => CValue::typed_pointer(Pointer::null(), element_type),
-            CType::Int8Array(_) => {
-                continue;
+        let zero = if matches!(field.c_type(), CType::PointerArray(_, _)) {
+            CValue::typed_pointer(Pointer::null(), element_type)
+        } else {
+            match element_type {
+                CType::Bool => CValue::Bool(Bitvector32Term::Constant(0)),
+                CType::Int8 => int8(0),
+                CType::Int16 => int16(0),
+                CType::Int32 => int32(0),
+                CType::UInt8 => uint8(0),
+                CType::UInt16 => uint16(0),
+                CType::UInt32 => uint32(0),
+                CType::Int64 => CValue::Int64(Bitvector32Term::Int64Constant(0)),
+                CType::UInt64 => CValue::UInt64(Bitvector32Term::UInt64Constant(0)),
+                CType::Float32 => CValue::Float32(Bitvector32Term::Constant(0)),
+                CType::Float64 => CValue::Float64(Bitvector32Term::UInt64Constant(0)),
+                CType::Int32Pointer
+                | CType::UInt8Pointer
+                | CType::Float32Pointer
+                | CType::Float64Pointer
+                | CType::Int32PointerPointer
+                | CType::UInt8PointerPointer
+                | CType::Float32PointerPointer
+                | CType::Float64PointerPointer
+                | CType::FunctionPointer(_) => CValue::typed_pointer(Pointer::null(), element_type),
+                CType::Int8Array(_) => {
+                    continue;
+                }
+                CType::PointerArray(_, _) => continue,
+                CType::Int16Array(_)
+                | CType::Int32Array(_)
+                | CType::UInt8Array(_)
+                | CType::UInt16Array(_)
+                | CType::UInt32Array(_)
+                | CType::Int64Array(_)
+                | CType::UInt64Array(_)
+                | CType::Float32Array(_)
+                | CType::Float64Array(_)
+                | CType::Void
+                | CType::VoidPointer
+                | CType::VoidPointerPointer => {
+                    continue;
+                }
+                CType::Int8Pointer | CType::Int8PointerPointer => continue,
+                CType::Int16Pointer
+                | CType::UInt16Pointer
+                | CType::UInt32Pointer
+                | CType::Int64Pointer
+                | CType::UInt64Pointer
+                | CType::Int16PointerPointer
+                | CType::UInt16PointerPointer
+                | CType::UInt32PointerPointer
+                | CType::Int64PointerPointer
+                | CType::UInt64PointerPointer => continue,
             }
-            CType::Int16Array(_)
-            | CType::Int32Array(_)
-            | CType::UInt8Array(_)
-            | CType::UInt16Array(_)
-            | CType::UInt32Array(_)
-            | CType::Int64Array(_)
-            | CType::UInt64Array(_)
-            | CType::Float32Array(_)
-            | CType::Float64Array(_)
-            | CType::Void
-            | CType::VoidPointer
-            | CType::VoidPointerPointer => {
-                continue;
-            }
-            CType::Int8Pointer | CType::Int8PointerPointer => continue,
-            CType::Int16Pointer
-            | CType::UInt16Pointer
-            | CType::UInt32Pointer
-            | CType::Int64Pointer
-            | CType::UInt64Pointer
-            | CType::Int16PointerPointer
-            | CType::UInt16PointerPointer
-            | CType::UInt32PointerPointer
-            | CType::Int64PointerPointer
-            | CType::UInt64PointerPointer => continue,
         };
         for index in 0..element_count {
             let offset = field

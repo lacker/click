@@ -93,7 +93,9 @@ order other than little-endian have no view either.
 mutation through a `memcpy` buffer;
 `mdtests/byte_representation_pointer_bytes_refused.md` and
 `mdtests/byte_representation_pointer_byte_write_refused.md` pin the pointer
-refusals.
+refusals. The design record for representation copies, the byte view, and the
+reinterpretations that stay refused is
+[Byte representation](../internals/byte-representation.md).
 
 ## Heap blocks and lifetimes
 

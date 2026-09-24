@@ -1,7 +1,7 @@
 # A byte write into a copied pointer loses the pointer
 
 This is the frozen `rep_copy.c` round trip
-(`design/byte-representation/rep_copy.c`) with `buf[8] = 0;` between the two
+(`examples/byte-representation/rep_copy.c`) with `buf[8] = 0;` between the two
 copies: a defined write of the first byte of the copied `target` pointer.
 The byte view updates integer cells in place, but a pointer cell has no byte
 view, so the store forgets the pointer cell and records only the written

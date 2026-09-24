@@ -127,11 +127,14 @@ does not freeze memory reachable through mutable aliases.
 The unchanged probe's Ubuntu GCC 13/glibc 2.39 preprocessed artifact is now
 committed as a locked fixture and loaded in the Mac gate without GCC or Linux
 headers. Bare `struct sigevent;` forward declarations now parse without
-inventing a layout. The next bounded refusal is in
-`bits/types/__locale_t.h:30`: a struct member is an array of pointers to
-incomplete `struct __locale_data`, while inline struct arrays currently admit
-only scalar elements. The modeled proof remains separate from native runtime
-validation; importing these headers grants no pthread semantics.
+inventing a layout. Fixed pointer arrays in structs now import, including the
+member in `bits/types/__locale_t.h:30`. The next bounded refusal is the GNU
+anonymous union typedef in `bits/atomic_wide_counter.h:26`. The importer now
+accepts GNU `const` and `nonnull` function annotations and the standard and
+GNU spellings of `restrict` on pointer declarators. These annotations grant no
+purity, nonnull, or separation proof facts. The modeled proof remains separate
+from native runtime validation; importing these headers grants no pthread
+semantics.
 
 The compiler-backed regression uses the host GCC/header installation and locks
 those actual inputs. This run does not establish the selected Debian GCC

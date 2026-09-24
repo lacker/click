@@ -11,6 +11,7 @@ name differ, user-facing documentation uses the Surface Click name.
 - [Kernel implementation](kernel.md)
 - [Separation logic](separation-logic.md)
 - [Stable views](stable-views.md)
+- [Byte representation](byte-representation.md)
 - [Memory derivation DAG](memory-dag.md)
 - [The resource tracker](resource-tracker.md)
 - [Mathematical integers](mathematical-integers.md)

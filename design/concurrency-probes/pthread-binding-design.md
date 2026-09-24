@@ -1,22 +1,13 @@
 # Pthread calls as ordinary checked C steps
 
-Status: design direction accepted, 2026-09-22; implementation order amended to
-allow modeled-runtime client verification on macOS before native binding.
-
-This is the original binding design for
-[Chunk A](../../issues/concurrency-demo.md#chunk-a-explicit-modeled-pthread-binding-identity).
 The modeled binding and [frozen parent proof](../../examples/concurrency-fork-join/)
-are now implemented; the code fragments below retain the original design
-context. Native runtime validation remains separate work.
+are implemented. This record explains the checked create/join rule and its
+trust boundary; native runtime validation remains open in the
+[concurrency milestone](../../issues/concurrency-demo.md#native-pthread-binding).
 
-Implementation checkpoint: the [probe record](README.md#compiler-import-checkpoint)
-records completion of the user-space compiler-import foundation and successive
-real-header fixes through pointer-to-const struct fields (`d3aa4cd8`). The
-current Linux parser boundary is the inline pointer array in
-`bits/types/__locale_t.h:30`; bare `struct sigevent;` now parses. The
-[issue handoff](../../issues/concurrency-demo.md#resume-here-2026-09-22-handoff)
-starts with an explicit, Mac-runnable modeled binding. The real-header gap
-remains for later native runtime validation.
+The [probe record](README.md#compiler-import-checkpoint) tracks the selected
+source and real-header import boundary. The modeled binding can verify clients
+on macOS without a native pthread claim.
 
 ## Recommendation
 

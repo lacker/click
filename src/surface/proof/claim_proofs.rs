@@ -1794,6 +1794,9 @@ pub(super) fn finish_ordered_proof<'a>(
         // disagree across paths (see the stitch below).
         let mut implicit_closure_by_path = Vec::with_capacity(execution.paths().len());
 
+        // Every theorem below carries this one execution until the finished
+        // execution replaces it for all of them at once.
+        let provisional_checked_execution = std::sync::Arc::new(completed_execution.clone());
         crate::instrumentation::measure_operation(
             function_block.signature().name(),
             &proof_label,
@@ -4537,7 +4540,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                 .frontier_loop_clauses
                                 .to_vec(),
                             frontier_loop_rules: proof_execution.core.frontier_loop_rules.to_vec(),
-                            checked_execution: completed_execution.clone(),
+                            checked_execution: std::sync::Arc::clone(
+                                &provisional_checked_execution,
+                            ),
                             checked_proposition,
                         });
                     }
@@ -4598,8 +4603,9 @@ pub(super) fn finish_ordered_proof<'a>(
             .with_checked_resource_transitions(checked_resource_transitions_by_path);
         let completed_with_resource_claims = completed_with_resource_claims
             .with_checked_returned_resources(checked_returned_resources_by_path);
+        let completed_with_resource_claims = std::sync::Arc::new(completed_with_resource_claims);
         for theorem in &mut verified {
-            theorem.checked_execution = completed_with_resource_claims.clone();
+            theorem.checked_execution = std::sync::Arc::clone(&completed_with_resource_claims);
         }
         // A context that recorded a proof-branch choice appends its
         // post-execution tactics as a flat suffix after the choice point,
@@ -5022,7 +5028,7 @@ mod evidence_tests {
         );
         assert!(
             closure
-                .require_evidence(&execution.clone(), 0, &key)
+                .require_evidence(&CCheckedFunctionExecution::clone(execution), 0, &key)
                 .is_err()
         );
         assert!(

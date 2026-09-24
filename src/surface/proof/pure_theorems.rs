@@ -553,6 +553,7 @@ pub(super) fn click_type_from_algebraic_value_type(
             CType::Int32Array(length) => C0Type::Int32Array(*length),
             CType::UInt8Array(length) => C0Type::UInt8Array(*length),
             CType::UInt32Array(length) => C0Type::UInt32Array(*length),
+            CType::PointerArray(element, length) => C0Type::PointerArray(*element, *length),
             CType::Int64Array(length) => C0Type::Int64Array(*length),
             CType::UInt64Array(length) => C0Type::UInt64Array(*length),
             CType::Float32Array(length) => C0Type::Float32Array(*length),
@@ -1492,6 +1493,18 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 }
                 C0Type::FunctionPointer(_) => CValue::typed_pointer(
                     Pointer::symbolic_function(Variable(index as u64)),
+                    c_type.to_kernel_type(),
+                ),
+                C0Type::PointerArray(_, _) => CValue::typed_pointer(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            8,
+                        ),
+                    },
                     c_type.to_kernel_type(),
                 ),
             };

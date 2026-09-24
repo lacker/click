@@ -347,6 +347,20 @@ sweep at every call; it is not the logarithmic contract, which the smart
 `execute` planner does not yet meet (its test comment names the remaining
 linear terms).
 
+The contract is measured on the same family under explicit simple tactics.
+`expanded_roundtrip_extra_copy_is_logarithmic_beside_unrelated_allocations`
+expands both variants' smart proofs outside the measurement, at 1, 2, 4, and
+7 unrelated allocations (seven is the largest member whose null-check chain
+fits the checked drivers' nesting bound of eleven), and bounds the extra
+copy's marginal verification work by its smallest value plus four units per
+doubling. `expanded_roundtrip_work_per_source_byte_is_logarithmic` bounds the
+whole expanded proof's work per C source byte, which is quadratic in the
+allocations, by its smallest value plus one unit per doubling of the source.
+`grouped_proof_finalization_reads_each_path_once` grows the early returns of
+one function under a grouped proof and requires the implicit empty-effect
+check to stay near-linear in the paths: a grouped proof issues one theorem per
+path over one shared execution, and finalization visits that execution once.
+
 Rust library tests and both fixture gates enforce deterministic tactic-work
 budgets but do not inherit production time limits. Tests specifically about
 real-time interruption install explicit time limits. Fixture traversal runs on
@@ -573,8 +587,11 @@ workflow. An mdtest is profiled from its embedded
 ` ```c ` or ` ```cpp ` and ` ```click ` blocks using the same preparation the mdtests gate
 uses, and reported locations point into the markdown file. Quarantine does not
 apply — a quarantined mdtest is exactly the one worth profiling. The two modes
-are told apart by shape: example projects win whenever a Click sidecar is found
-under the directory, so their `README.md` files are not mistaken for mdtests.
+are told apart by shape: a directory that directly contains a markdown test is
+an mdtests directory; otherwise example projects win whenever a Click sidecar is
+found in or directly under the directory, so their `README.md` files are not
+mistaken for mdtests. Project targets select sidecars exactly as `click verify`
+does.
 
 The defaults report smart tactics at 2 seconds, simple tactics at
 500 milliseconds, control-tactic containers at 6 seconds, and stop each project

@@ -76,6 +76,10 @@ Current projects:
   independently profiled proof unit.
 - `runtime-int32-allocation/` verifies positive runtime-sized `int32` backing
   allocation and exact deallocation authority in isolation.
+- `byte-representation/` copies a record holding a scalar and a pointer into a
+  byte buffer and back with `memcpy`, proving the restored scalar, pointer
+  identity, and pointee value without granting pointee authority, plus a
+  parameterized companion and a modular caller.
 - `allocated-linked-list/` combines fixed-size allocation authority with a
   recursive list resource, including failure-preserving prepend, one-node
   deallocation, and a terminating recursive destructor.

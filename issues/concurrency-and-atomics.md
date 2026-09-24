@@ -1,11 +1,9 @@
 # Model concurrency and atomics
 
-C0 has no production binding from C thread calls to checked concurrent
-execution, nor a supported mutex/atomic/fence or data-race model. Internal
-checked spawn/join ownership operations, stable local job views, and
-compiler-backed user-space imports exist; they do not yet verify a concurrent
-C parent. See the [current P1 handoff](concurrency-demo.md#resume-here-2026-09-22-handoff)
-for completed work and the exact real-header import boundary.
+Click verifies a frozen concurrent C fork/join program under an explicit
+modeled pthread runtime. Native runtime validation, mutexes, and atomics
+remain open. See the [P1 concurrency milestone](concurrency-demo.md#current-state)
+for the current boundary and remaining three-program acceptance criteria.
 
 The P1 [concurrency demo](concurrency-demo.md) owns the before-launch slice:
 three programs exercising fork/join ownership, mutex-protected mutation, and

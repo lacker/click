@@ -26,6 +26,16 @@ across calls, and destruction. The neighboring `heap_*` mdtests pin the main
 negative cases: unresolved allocation outcome, uninitialized read, leak,
 interior free, and double free.
 
+`examples/byte-representation/` is the representation-copy project. Its
+frozen `rep_copy.c` copies a record's bytes into a heap buffer and back with
+`memcpy`, and the sidecar proves the restored scalar, the restored pointer's
+identity, and the pointee value read through it. A parameterized companion
+proves the same for a symbolic tag and a caller's pointer, and a modular caller
+uses the round trip's contract. The neighboring `byte_representation_*`
+mdtests pin the negatives: out-of-bounds, overlapping, incomplete, read-only,
+and borrowed-destination copies, pointer bytes, integer/pointer
+reinterpretation, and a restored pointer without authority or after free.
+
 `examples/runtime-int32-allocation/` is the focused runtime-sized array
 allocation project. It proves `malloc(count * 4)` and matching `free` for a
 positive signed-safe `int32` count. `examples/owned-vector/` composes that

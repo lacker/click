@@ -231,6 +231,12 @@ pub(in crate::surface) fn initial_call_state(
                     parameter.name()
                 )));
             }
+            C0Type::PointerArray(_, _) => {
+                return Err(ClickError::new(format!(
+                    "array parameter `{}` should have lowered to a pointer",
+                    parameter.name()
+                )));
+            }
         }
     }
 

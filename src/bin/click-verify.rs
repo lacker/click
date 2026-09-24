@@ -8,9 +8,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use click::cli::{
-    CInput, DEFAULT_VERIFY_TIME_LIMIT, contains_click_file, files_with_extension, find_projects,
-    looks_like_source_location, parse_duration, parse_source_location, read_click_project_at_root,
-    source_refs,
+    CInput, DEFAULT_VERIFY_TIME_LIMIT, load_sidecar_inputs, looks_like_source_location,
+    parse_duration, parse_source_location, select_sidecars, source_refs,
 };
 use click::languages::c::source as c_source;
 use click::languages::c::target::CTarget;
@@ -207,24 +206,10 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
 /// Verifies every sidecar under a project or examples directory, reporting
 /// each one as it passes so a long run shows progress.
 fn verify_directory(path: &Path, time_limit: Duration) -> Result<(), String> {
-    let projects = find_projects(path)?;
-    let project_root = if contains_click_file(path)? {
-        path.parent().unwrap_or_else(|| Path::new("."))
-    } else {
-        path
-    };
-    let mut sidecars = Vec::new();
-    for project in &projects {
-        let mut project_sidecars = files_with_extension(project, "click")?;
-        project_sidecars.sort();
-        sidecars.append(&mut project_sidecars);
-    }
-    if sidecars.is_empty() {
-        return Err(format!(
-            "`{}` contains no Click sidecars to verify",
-            path.display()
-        ));
-    }
+    let selection = select_sidecars(path)?;
+    let sidecars = selection.sidecars().collect::<Vec<_>>();
+    let projects = &selection.projects;
+    let project_root = selection.project_root.as_path();
     for sidecar in &sidecars {
         verify_file(sidecar, time_limit, Some(project_root), None)?;
         println!("verified {}", display_path(sidecar, path));
@@ -245,27 +230,13 @@ fn verify_changed(
     time_limit: Duration,
     explain_only: bool,
 ) -> Result<(), String> {
-    let project_root = if path.is_file() {
-        path.parent().unwrap_or_else(|| Path::new("."))
-    } else if contains_click_file(path)? {
-        path.parent().unwrap_or_else(|| Path::new("."))
-    } else {
-        path
-    };
-    let sidecars = if path.is_dir() {
-        let projects = find_projects(path)?;
-        let mut sidecars = Vec::new();
-        for project in projects {
-            sidecars.extend(files_with_extension(&project, "click")?);
-        }
-        sidecars.sort();
-        sidecars
-    } else {
-        vec![path.to_path_buf()]
-    };
-    if sidecars.is_empty() {
-        return Err(format!("`{}` contains no Click sidecars", path.display()));
-    }
+    let selection = select_sidecars(path)?;
+    let project_root = selection.project_root.as_path();
+    let mut sidecars = selection
+        .sidecars()
+        .map(Path::to_path_buf)
+        .collect::<Vec<_>>();
+    sidecars.sort();
     let repo = git_repo_root(path)?;
     let baseline_commit = git_commit_id(&repo, revision)?;
 
@@ -413,22 +384,24 @@ fn proof_error_report(
     project: &ClickProject,
     inputs: &CInput,
 ) -> String {
-    let mut report = if suggest_trace {
-        error.concise_report()
+    let (mut report, mut context) = if suggest_trace {
+        error.concise_report_parts()
     } else {
-        error.report()
+        (error.report(), Vec::new())
     };
     if suggest_trace {
         if let Some(source) = project.entry_source()
             && let Some(position) = proof_source_position(error, project, inputs, source)
             && let Some(excerpt) = source_excerpt(sidecar, source, &position)
         {
-            report.push('\n');
-            report.push_str(&excerpt);
+            context.push(excerpt);
         }
         if let Some(location) = error.proof_step_location() {
-            report.push_str("\n  step: ");
-            report.push_str(location);
+            context.push(format!("step: {location}"));
+        }
+        if !context.is_empty() {
+            report.push_str("\n\n");
+            report.push_str(&context.join("\n"));
         }
     }
     if suggest_trace
@@ -438,7 +411,7 @@ fn proof_error_report(
             .and_then(|claim| claim.split_once('.'))
     {
         report.push_str(&format!(
-            "\n  trace: click verify --trace-proof {} {}",
+            "\n\nTo get a trace:\n  click verify --trace-proof {} {}",
             shell_word(function.0),
             shell_word(&sidecar.display().to_string())
         ));
@@ -1062,21 +1035,6 @@ fn print_external_dependencies(
     }
 }
 
-fn load_sidecar_inputs(
-    click_path: &Path,
-    project_root: Option<&Path>,
-) -> Result<(String, ClickProject, CInput), String> {
-    let click_source = fs::read_to_string(click_path)
-        .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-    let project = read_click_project_at_root(
-        click_path,
-        &click_source,
-        project_root.unwrap_or_else(|| click_path.parent().unwrap_or_else(|| Path::new("."))),
-    )?;
-    let inputs = click::cli::read_c_inputs_for_project(click_path, &click_source, &project)?;
-    Ok((click_source, project, inputs))
-}
-
 #[cfg(test)]
 #[path = "click-verify/incremental_tests.rs"]
 mod incremental_tests;
@@ -1283,12 +1241,11 @@ mod tests {
 
     #[test]
     fn directory_mode_finds_every_sidecar_in_a_single_project() {
-        let projects =
-            find_projects(Path::new("examples/input-cursor")).expect("the project should resolve");
-        assert_eq!(projects.len(), 1);
-        let sidecars =
-            files_with_extension(&projects[0], "click").expect("sidecars should be listed");
-        assert!(!sidecars.is_empty());
+        let selection = select_sidecars(Path::new("examples/input-cursor"))
+            .expect("the project should resolve");
+        assert_eq!(selection.projects.len(), 1);
+        assert!(!selection.projects[0].sidecars.is_empty());
+        assert_eq!(selection.project_root, Path::new("examples"));
     }
 
     #[test]

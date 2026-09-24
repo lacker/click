@@ -1,19 +1,16 @@
-# A byte of a copied pointer is not readable
+# A restored pointer does not restore a freed pointee
 
 This is the frozen `rep_copy.c` round trip
-(`examples/byte-representation/rep_copy.c`) cut after its first `memcpy`, reading
-`buf[8]`: the first byte of the copied `target` pointer. The representation
-copy planted that field as a typed pointer cell at buffer offset 8, and a
-pointer's bytes are opaque. The byte view of integer cells covers integer
-cells only, so the one-byte load at the pointer cell's own address is refused
-as a load that does not fit the cell's value. Nothing is guessed about the
-address's bytes, which is what keeps a pointer rebuilt from bytes refused.
-The contract is irrelevant; execution stops at the load.
+(`byte_representation_roundtrip.md`) with one change: `free(pointee)`
+moves before the final read, so `*dst->target` dereferences the restored
+pointer after its pointee's lifetime has ended. The representation copy
+preserves the pointer's allocation identity, which is exactly why the load is
+refused: `dst->target` still names the freed allocation, and the kernel
+reports the load as an invalid memory access. Copying a pointer's
+representation neither extends its pointee's lifetime nor carries authority
+to access it.
 
-Companion: `byte_representation_pointer_byte_write_refused.md` refuses the
-write direction.
-
-```c filename=pointer_byte_read.c
+```c filename=restored_pointer_after_free.c
 void *malloc(unsigned long size);
 void free(void *ptr);
 void *memcpy(void *dest, const void *src, unsigned long n);
@@ -50,8 +47,9 @@ int f(void) {
     src->tag = 11u;
     src->target = pointee;
     memcpy(buf, (unsigned char *)(void *)src, sizeof(struct record));
-    int out = buf[8];
+    memcpy((unsigned char *)(void *)dst, buf, sizeof(struct record));
     free(pointee);
+    int out = dst->tag + *dst->target;
     free(src);
     free(buf);
     free(dst);
@@ -60,10 +58,10 @@ int f(void) {
 ```
 
 ```click
-verifying "pointer_byte_read.c";
+verifying "restored_pointer_after_free.c";
 
 int f() {
-    ensures result == 0 or result == -1;
+    ensures result == 18 or result == -1;
 } by {
     execute();
     simp();
@@ -71,5 +69,5 @@ int f() {
 ```
 
 ```expect
-fail: a 1-byte load at `heap-allocation:1000002@8` did not fit the cell's value
+fail: invalid memory access
 ```

@@ -1,7 +1,7 @@
 # Bytes of a copied integer read back through the buffer
 
 The C below is the frozen `rep_copy.c` round trip
-(`design/byte-representation/rep_copy.c`) cut after its first `memcpy`: the
+(`examples/byte-representation/rep_copy.c`) cut after its first `memcpy`: the
 record's bytes are in the `unsigned char` buffer, and each function reads one
 of them. The representation copy planted `tag` as a typed `unsigned int` cell
 at buffer offset 0, so `buf[0]` and `buf[1]` land inside that cell rather than

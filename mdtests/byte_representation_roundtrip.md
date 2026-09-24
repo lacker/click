@@ -1,8 +1,8 @@
 # The frozen byte-representation round trip verifies
 
-This is the import/load checkpoint for the P1
-[byte-representation demo](../../issues/byte-representation-demo.md). The C
-below is `design/byte-representation/rep_copy.c`, byte for byte: a live `int`
+The C below is
+[`examples/byte-representation/rep_copy.c`](../examples/byte-representation/rep_copy.c),
+byte for byte: a live `int`
 pointee, a source record, a 16-byte buffer, and a distinct destination
 record, with `memcpy` roundtripping all `sizeof(struct record)` bytes through
 `(unsigned char *)(void *)` casts. The sidecar states the intended
@@ -19,8 +19,10 @@ three live heap authorities stay unique through both copies and all four
 frees. `mdtests/ext_memcpy_allocation_authority.md` pins the latter
 independently with no typed values at all.
 
-The negative, companion, scaling, and design-record halves of the issue
-remain open; this fixture is the positive round trip only.
+The example project verifies the same source beside a parameterized
+companion and a modular caller; the negatives and the design record are
+listed in
+[`docs/internals/byte-representation.md`](../docs/internals/byte-representation.md).
 
 ```c filename=rep_copy.c
 void *malloc(unsigned long size);

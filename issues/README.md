@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (9)
+## P1: before launch (8)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -62,7 +62,6 @@ concurrency, and graph coverage remain P2.
 Soundness and kernel shape:
 
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
-- [Verify byte representation copying and pointer preservation](byte-representation-demo.md)
 - [Verify independently owned parents sharing a heap child](shared-heap-graph-demo.md)
 - [Contract retire keeps the zeroed reading](../bugs/contract-retire-keeps-zeroed-reading.md)
 - [store_union keeps a stale raw cell under an equal spelling](../bugs/store-union-keeps-aliased-raw-cell.md)
@@ -88,16 +87,24 @@ its two-guard and conditional-lifetime acceptance cases, including a
 conditional guard whose normal call outcome continues while the caught outcome
 returns, plus hostile cleanup proofs and a deterministic scaling regression.
 General backward/irreducible `goto`, multi-compiler support, and broad C++
-coverage remain outside the delivered slices. The byte-representation and
-sequential shared-heap-graph demos do not depend on goto, C++, or concurrency.
+coverage remain outside the delivered slices. The completed
+[byte-representation example](../examples/byte-representation/README.md)
+verifies a record's representation copied through a byte buffer and back,
+preserving its scalar and pointer identity without granting pointee
+authority; its design record is
+[Byte representation](../docs/internals/byte-representation.md). The
+sequential shared-heap-graph demo does not depend on goto, C++, or
+concurrency.
 
 Specification and proof:
 
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 
-## P2: after launch (24)
+## P2: after launch (26)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
+- [Refuse expansions that exceed the checked nesting limit](expand-emits-unverifiable-rewrite-at-nesting-limit.md)
+- [Reject `result` inside entry snapshots](result-accepted-in-entry-snapshots.md)
 - [Lower a dependent composite argument in every tactic position](dependent-composite-argument-in-tactics.md)
 
 Worth doing, not worth blocking the rbtree claim on. Promote one to P1 when

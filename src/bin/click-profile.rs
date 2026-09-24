@@ -1,14 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use click::cli::{
     CInput, DEFAULT_EXPANSION_TIME_LIMIT, DEFAULT_SIMPLE_TACTIC_LIMIT, DEFAULT_SMART_TACTIC_LIMIT,
-    MdTestExpectation, files_with_extension, find_mdtests, find_projects, format_duration,
-    format_fractional_duration, looks_like_mdtest, parse_duration, prepare_mdtest_inputs,
-    read_c_inputs, read_click_project, read_mdtest, shell_quote, source_refs,
+    MdTestExpectation, TargetSelection, format_duration, format_fractional_duration,
+    load_sidecar_inputs, looks_like_mdtest, parse_duration, prepare_mdtest_inputs,
+    read_click_project, read_mdtest, select_targets, shell_quote, source_refs,
 };
 use click::instrumentation::{self, ActiveVerificationWork, TacticEvent, VerificationEvent};
 use click::surface::{
@@ -335,9 +334,9 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
     let arguments = parse_arguments(raw_arguments)?;
     let targets = profile_targets(&arguments.path)?;
     let mut profiles = Vec::new();
-    for target in targets {
+    for target in &targets {
         profiles.push(profile_target(
-            &target,
+            target,
             arguments.thresholds,
             arguments.time_limit,
         )?);
@@ -453,61 +452,61 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     })
 }
 
-/// Chooses what to profile: a markdown test, a directory of them, or the
-/// example projects under a directory.
-///
-/// Told apart by shape, not by a flag. A `.md` argument names one mdtest.
-/// Otherwise example projects win, because they carry `README.md` files that
-/// must not be mistaken for mdtests. A directory containing real mdtest
-/// containers remains a mdtest collection even when it also contains local
-/// `.click` modules imported by those containers.
-fn profile_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
-    if looks_like_mdtest(path) {
-        return find_mdtests(path);
+/// One profiled unit, with its own deadline and report: a markdown test, or
+/// the sidecars of one example project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ProfileTarget {
+    Mdtest(PathBuf),
+    /// Sidecars selected exactly as `click verify` selects them, with the
+    /// root their local imports resolve within. A direct sidecar target is
+    /// its own one-sidecar project.
+    Sidecars {
+        project: PathBuf,
+        project_root: PathBuf,
+        sidecars: Vec<PathBuf>,
+    },
+}
+
+impl ProfileTarget {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Mdtest(path) => path,
+            Self::Sidecars { project, .. } => project,
+        }
     }
-    if path
-        .extension()
-        .is_some_and(|extension| extension == "click")
-    {
-        return Ok(vec![path.to_path_buf()]);
-    }
-    if path.is_dir() && directory_contains_mdtests(path)? {
-        return find_mdtests(path);
-    }
-    match find_projects(path) {
-        Ok(projects) => Ok(projects),
-        Err(message) => {
-            if path.is_dir() && !files_with_extension(path, "md")?.is_empty() {
-                find_mdtests(path)
-            } else {
-                Err(message)
-            }
+
+    fn project_root(&self) -> Option<&Path> {
+        match self {
+            Self::Mdtest(_) => None,
+            Self::Sidecars { project_root, .. } => Some(project_root),
         }
     }
 }
 
-fn directory_contains_mdtests(path: &Path) -> Result<bool, String> {
-    for markdown in files_with_extension(path, "md")? {
-        let source = fs::read_to_string(&markdown)
-            .map_err(|error| format!("failed to read `{}`: {error}", markdown.display()))?;
-        match click::cli::parse_mdtest(&markdown, &source) {
-            Ok(mdtest) if mdtest.click_source.is_some() && mdtest.expectation.is_some() => {
-                return Ok(true);
-            }
-            Err(_) if source.contains("```click") && source.contains("```expect") => {
-                return Ok(true);
-            }
-            Ok(_) | Err(_) => {}
-        }
-    }
-    Ok(false)
+/// Chooses what to profile with the target selection shared with `click
+/// verify` and `click audit`: a sidecar, an example project, an examples
+/// directory, a markdown test, or a directory of them.
+fn profile_targets(path: &Path) -> Result<Vec<ProfileTarget>, String> {
+    Ok(match select_targets(path)? {
+        TargetSelection::Mdtests(paths) => paths.into_iter().map(ProfileTarget::Mdtest).collect(),
+        TargetSelection::Sidecars(selection) => selection
+            .projects
+            .into_iter()
+            .map(|project| ProfileTarget::Sidecars {
+                project: project.path,
+                project_root: selection.project_root.clone(),
+                sidecars: project.sidecars,
+            })
+            .collect(),
+    })
 }
 
 fn profile_target(
-    project: &Path,
+    target: &ProfileTarget,
     thresholds: Thresholds,
     time_limit: Duration,
 ) -> Result<ProjectProfile, String> {
+    let project = target.path();
     let started = Instant::now();
     let diagnostic_limits = instrumentation::TacticLimits {
         simple: time_limit,
@@ -516,12 +515,13 @@ fn profile_target(
     };
     let (verification, events) = instrumentation::with_deadline(time_limit, || {
         instrumentation::with_tactic_limits(diagnostic_limits, || {
-            instrumentation::collect(|| {
-                if looks_like_mdtest(project) {
-                    verify_mdtest(project)
-                } else {
-                    verify_project(project)
-                }
+            instrumentation::collect(|| match target {
+                ProfileTarget::Mdtest(path) => verify_mdtest(path),
+                ProfileTarget::Sidecars {
+                    project,
+                    project_root,
+                    sidecars,
+                } => verify_sidecars(project, project_root, sidecars),
             })
         })
     });
@@ -545,69 +545,96 @@ fn profile_target(
             }),
     )
     .map_err(|message| format!("while profiling `{}`: {message}", project.display()))?;
-    let source = load_profiled_source(project)?;
-    let runtime = match &source.project {
-        Some(project) => click::surface::selected_project_thread_runtime(project),
-        None => click::surface::selected_thread_runtime(&source.click_source),
-    }
-    .map_err(|error| error.report())?;
-    profile.runtime_assumptions = runtime
-        .assumption()
-        .map(str::to_string)
-        .into_iter()
-        .collect();
+    let mut sources = ProfiledSources::new(target.project_root());
+    profile.runtime_assumptions = runtime_assumptions(&events, &mut sources)?;
     finish_time_accounting(&mut profile, wall_elapsed);
     profile.verification_failure = verification.err();
-    profile.work.smart_source_sites = count_smart_source_sites(&events)?;
-    resolve_source_positions(&mut profile)?;
+    profile.work.smart_source_sites = count_smart_source_sites(&events, &mut sources)?;
+    resolve_source_positions(&mut profile, &mut sources)?;
     Ok(profile)
+}
+
+/// The distinct Click sources whose verification a profile observed.
+fn observed_sources(events: &[VerificationEvent]) -> BTreeSet<&Path> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            VerificationEvent::Source(path) => Some(path.as_path()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Every distinct thread-runtime assumption among the sources a profile
+/// verified; a project directory may hold sidecars with different runtimes.
+fn runtime_assumptions(
+    events: &[VerificationEvent],
+    sources: &mut ProfiledSources,
+) -> Result<Vec<String>, String> {
+    let mut assumptions = BTreeSet::new();
+    for path in observed_sources(events) {
+        let source = sources.get(path)?;
+        let runtime = match &source.project {
+            Some(project) => click::surface::selected_project_thread_runtime(project),
+            None => click::surface::selected_thread_runtime(&source.click_source),
+        }
+        .map_err(|error| error.report())?;
+        assumptions.extend(runtime.assumption().map(str::to_string));
+    }
+    Ok(assumptions.into_iter().collect())
 }
 
 #[cfg(test)]
 #[allow(dead_code)] // Used by the shared dispatcher regression matrix.
 pub(crate) fn verify_target_for_test(path: &Path) -> Result<(), String> {
-    let profile = profile_target(path, Thresholds::default(), Duration::from_secs(5))?;
-    match profile.verification_failure {
-        Some(error) => Err(error),
-        None => Ok(()),
+    for target in profile_targets(path)? {
+        let profile = profile_target(&target, Thresholds::default(), Duration::from_secs(5))?;
+        if let Some(error) = profile.verification_failure {
+            return Err(error);
+        }
     }
+    Ok(())
 }
 
-fn count_smart_source_sites(events: &[VerificationEvent]) -> Result<usize, String> {
-    let paths = events
-        .iter()
-        .filter_map(|event| match event {
-            VerificationEvent::Source(path) => Some(path.clone()),
-            _ => None,
+fn count_smart_source_sites(
+    events: &[VerificationEvent],
+    sources: &mut ProfiledSources,
+) -> Result<usize, String> {
+    observed_sources(events)
+        .into_iter()
+        .try_fold(0usize, |total, path| {
+            let source = sources.get(path)?;
+            let sites = match &source.inputs {
+                CInput::Bundle(c_sources) => match &source.project {
+                    Some(project) => {
+                        c0_project_smart_tactic_source_sites(project, &source_refs(c_sources))
+                    }
+                    None => {
+                        c0_smart_tactic_source_sites(&source.click_source, &source_refs(c_sources))
+                    }
+                },
+                CInput::Prepared(imports) => match &source.project {
+                    Some(project) => {
+                        c0_prepared_project_smart_tactic_source_sites(project, imports)
+                    }
+                    None => c0_prepared_smart_tactic_source_sites(&source.click_source, imports),
+                },
+                CInput::PreparedCpp(import) => match &source.project {
+                    Some(project) => {
+                        cpp_prepared_project_smart_tactic_source_sites(project, import)
+                    }
+                    None => cpp_prepared_smart_tactic_source_sites(&source.click_source, import),
+                },
+            }
+            .map_err(|error| {
+                format!(
+                    "could not inventory `{}`: {}",
+                    path.display(),
+                    error.report()
+                )
+            })?;
+            Ok(total + sites.len())
         })
-        .collect::<BTreeSet<_>>();
-    paths.into_iter().try_fold(0usize, |total, path| {
-        let source = load_profiled_source(&path)?;
-        let sites = match &source.inputs {
-            CInput::Bundle(c_sources) => match &source.project {
-                Some(project) => {
-                    c0_project_smart_tactic_source_sites(project, &source_refs(c_sources))
-                }
-                None => c0_smart_tactic_source_sites(&source.click_source, &source_refs(c_sources)),
-            },
-            CInput::Prepared(imports) => match &source.project {
-                Some(project) => c0_prepared_project_smart_tactic_source_sites(project, imports),
-                None => c0_prepared_smart_tactic_source_sites(&source.click_source, imports),
-            },
-            CInput::PreparedCpp(import) => match &source.project {
-                Some(project) => cpp_prepared_project_smart_tactic_source_sites(project, import),
-                None => cpp_prepared_smart_tactic_source_sites(&source.click_source, import),
-            },
-        }
-        .map_err(|error| {
-            format!(
-                "could not inventory `{}`: {}",
-                path.display(),
-                error.report()
-            )
-        })?;
-        Ok(total + sites.len())
-    })
 }
 
 fn finish_time_accounting(profile: &mut ProjectProfile, wall_elapsed: Duration) {
@@ -1396,7 +1423,36 @@ struct ProfiledSource {
     line_offset: usize,
 }
 
-fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
+/// Profiled sources loaded at most once per profile, with the project root
+/// their target selected.
+struct ProfiledSources {
+    project_root: Option<PathBuf>,
+    loaded: BTreeMap<PathBuf, ProfiledSource>,
+}
+
+impl ProfiledSources {
+    fn new(project_root: Option<&Path>) -> Self {
+        Self {
+            project_root: project_root.map(Path::to_path_buf),
+            loaded: BTreeMap::new(),
+        }
+    }
+
+    fn get(&mut self, path: &Path) -> Result<&ProfiledSource, String> {
+        if !self.loaded.contains_key(path) {
+            let source = load_profiled_source(path, self.project_root.as_deref())?;
+            self.loaded.insert(path.to_path_buf(), source);
+        }
+        Ok(&self.loaded[path])
+    }
+}
+
+/// Loads a profiled mdtest, or a sidecar with its imports resolved within
+/// `project_root` exactly as `click verify` loads it.
+fn load_profiled_source(
+    path: &Path,
+    project_root: Option<&Path>,
+) -> Result<ProfiledSource, String> {
     if looks_like_mdtest(path) {
         let mdtest = read_mdtest(path)?;
         let inputs = prepare_mdtest_inputs(&mdtest)?;
@@ -1424,10 +1480,7 @@ fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
             line_offset: mdtest.click_start_line.saturating_sub(1),
         });
     }
-    let click_source = fs::read_to_string(path)
-        .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
-    let inputs = read_c_inputs(path, &click_source)?;
-    let project = read_click_project(path, &click_source)?;
+    let (click_source, project, inputs) = load_sidecar_inputs(path, project_root)?;
     Ok(ProfiledSource {
         click_source,
         inputs,
@@ -1443,8 +1496,10 @@ fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
 /// surface proof never wrote, so demanding a location for every timed step
 /// would make the slowest proofs — exactly the ones worth profiling — the
 /// only ones that cannot be profiled.
-fn resolve_source_positions(profile: &mut ProjectProfile) -> Result<(), String> {
-    let mut sources: BTreeMap<PathBuf, ProfiledSource> = BTreeMap::new();
+fn resolve_source_positions(
+    profile: &mut ProjectProfile,
+    sources: &mut ProfiledSources,
+) -> Result<(), String> {
     let mut unresolved: BTreeMap<String, usize> = BTreeMap::new();
     let interrupted_key = match profile.interrupted.as_mut() {
         Some(InterruptedWork::Tactic(key)) => Some(key),
@@ -1460,12 +1515,7 @@ fn resolve_source_positions(profile: &mut ProjectProfile) -> Result<(), String> 
         if key.source_path.as_os_str().is_empty() {
             return Err("timing event had no Click source path".to_string());
         }
-        let source = match sources.entry(key.source_path.clone()) {
-            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(load_profiled_source(key.source_path.as_path())?)
-            }
-        };
+        let source = sources.get(&key.source_path)?;
         let position = match &source.inputs {
             CInput::Bundle(c_sources) => match &source.project {
                 Some(project) => c0_project_tactic_source_position(
@@ -1588,28 +1638,21 @@ fn verify_mdtest(path: &Path) -> Result<(), String> {
     }
 }
 
-fn verify_project(project: &Path) -> Result<(), String> {
-    let mut click_paths = if project.is_file()
-        && project
-            .extension()
-            .is_some_and(|extension| extension == "click")
-    {
-        vec![project.to_path_buf()]
-    } else {
-        files_with_extension(project, "click")?
-    };
-    click_paths.sort();
-    if click_paths.is_empty() {
+/// Verifies one selected project's sidecars in order, loading each exactly
+/// as `click verify` does.
+fn verify_sidecars(
+    project: &Path,
+    project_root: &Path,
+    sidecars: &[PathBuf],
+) -> Result<(), String> {
+    if sidecars.is_empty() {
         return Err(format!(
             "example project `{}` has no Click sidecar",
             project.display()
         ));
     }
-    for click_path in click_paths {
-        let click_source = fs::read_to_string(&click_path)
-            .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-        let inputs = read_c_inputs(&click_path, &click_source)?;
-        let click_project = read_click_project(&click_path, &click_source)?;
+    for click_path in sidecars {
+        let (_, click_project, inputs) = load_sidecar_inputs(click_path, Some(project_root))?;
         if instrumentation::enabled() {
             instrumentation::emit(VerificationEvent::Source(click_path.clone()));
         }

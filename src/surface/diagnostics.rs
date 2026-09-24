@@ -2483,6 +2483,7 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         | C0Type::Float32PointerPointer
         | C0Type::Float64PointerPointer => 8,
         C0Type::FunctionPointer(_) => 8,
+        C0Type::PointerArray(_, _) => 8,
     }
 }
 
@@ -2788,6 +2789,9 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 | CType::UInt64Array(_)
                 | CType::Float32Array(_)
                 | CType::Float64Array(_) => {
+                    return format!("*{}", describe_c_expression(pointer));
+                }
+                CType::PointerArray(_, _) => {
                     return format!("*{}", describe_c_expression(pointer));
                 }
             };

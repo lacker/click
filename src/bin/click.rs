@@ -120,9 +120,9 @@ mod tests {
         .unwrap();
         let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(error.starts_with("proof error:"), "{error}");
-        assert!(error.contains("tactic: step"), "{error}");
+        assert!(error.contains("\n\ntactic: step"), "{error}");
         assert!(
-            error.contains("trace: click verify --trace-proof f "),
+            error.contains("\n\nTo get a trace:\n  click verify --trace-proof f "),
             "{error}"
         );
 
@@ -138,7 +138,7 @@ mod tests {
             "{traced}"
         );
         assert!(traced.contains("source tactic 0: step"), "{traced}");
-        assert!(!traced.contains("trace: click verify"), "{traced}");
+        assert!(!traced.contains("To get a trace:"), "{traced}");
 
         fs::write(
             directory.join("f.c"),
@@ -172,6 +172,74 @@ mod tests {
     }
 
     #[test]
+    fn trace_reports_contract_certification_snapshot_gap() {
+        let directory =
+            std::env::temp_dir().join(format!("click-certification-trace-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("shared_parent.c"),
+            include_str!("../../design/shared-heap-probes/shared_parent.c"),
+        )
+        .unwrap();
+        let sidecar = directory.join("shared_parent.click");
+        let source = include_str!("../../design/shared-heap-probes/shared_parent.click");
+        let source = source.replacen(
+            "    produces &p->kid;\n} by {\n    match link.link {",
+            "    produces &p->kid;\n    ensures old(p->kid) == old(p->kid);\n} by {\n    match link.link {",
+            1,
+        );
+        fs::write(&sidecar, source).unwrap();
+
+        let plain = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
+        assert!(
+            plain.starts_with("proof error in `parent_detach`:\n"),
+            "{plain}"
+        );
+        assert!(!plain.contains("could not certify contract for"), "{plain}");
+        let (failure, context_and_trace) = plain.split_once("\n\ngoal: ").expect(&plain);
+        assert!(failure.contains("could not prove `fact obj->refs == count(child_ref(obj));`"));
+        let (context, trace) = context_and_trace
+            .split_once("\n\nTo get a trace:\n  ")
+            .expect(&plain);
+        assert!(context.contains("\nstep: execution path 0"), "{plain}");
+        assert!(
+            trace
+                == format!(
+                    "click verify --trace-proof parent_detach {}",
+                    sidecar.display()
+                ),
+            "{plain}"
+        );
+        let traced = entry([
+            "verify".to_string(),
+            "--trace-proof".to_string(),
+            "parent_detach".to_string(),
+            sidecar.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(traced.contains("stage: contract certification"), "{traced}");
+        assert!(
+            traced.contains("goal: fact obj->refs == count(child_ref(obj));"),
+            "{traced}"
+        );
+        assert!(
+            traced.contains("same address and required value"),
+            "{traced}"
+        );
+        assert!(traced.contains("snapshot reads agree"), "{traced}");
+        assert!(traced.contains("checked facts (showing"), "{traced}");
+        assert!(
+            !traced.contains("<no checked simple steps recorded"),
+            "{traced}"
+        );
+        assert!(!traced.contains("CMemory {"), "{traced}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn trace_includes_checked_prefix_before_a_statement_runtime_error() {
         let directory = std::env::temp_dir().join(format!(
             "click-trace-statement-runtime-error-{}",
@@ -191,7 +259,7 @@ mod tests {
         let error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(error.starts_with("proof error:"), "{error}");
         assert!(
-            error.contains("trace: click verify --trace-proof f "),
+            error.contains("\n\nTo get a trace:\n  click verify --trace-proof f "),
             "{error}"
         );
         let traced = entry([
@@ -470,7 +538,7 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
         fs::write(&sidecar, "verifying \"f.c\"; int32 read(").unwrap();
         let syntax = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(syntax.starts_with("syntax error:"), "{syntax}");
-        assert!(!syntax.contains("trace: click verify"), "{syntax}");
+        assert!(!syntax.contains("To get a trace:"), "{syntax}");
 
         fs::write(
             &sidecar,
@@ -479,7 +547,7 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
         .unwrap();
         let type_error = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
         assert!(type_error.starts_with("type error:"), "{type_error}");
-        assert!(!type_error.contains("trace: click verify"), "{type_error}");
+        assert!(!type_error.contains("To get a trace:"), "{type_error}");
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -899,6 +899,72 @@ fn lower_ensure_under_completion_binders(
     )
 }
 
+/// Diagnostic evidence from a failed contract path preparation. This carries
+/// no authority into certification; only the failed obligation and a bounded
+/// view of the facts available to its exact check are retained.
+#[derive(Clone, Debug)]
+pub(crate) struct ContractPathPreparationFailure {
+    pub reason: String,
+    pub obligation: Option<Proposition>,
+    pub source_goal: Option<String>,
+    pub available: Vec<Proposition>,
+    pub available_count: usize,
+}
+
+impl From<String> for ContractPathPreparationFailure {
+    fn from(reason: String) -> Self {
+        Self {
+            reason,
+            obligation: None,
+            source_goal: None,
+            available: Vec::new(),
+            available_count: 0,
+        }
+    }
+}
+
+fn unproved_contract_path_condition(
+    reason: String,
+    obligation: &ProofObligation,
+    assumptions: &PureFactContext,
+) -> ContractPathPreparationFailure {
+    // Sample both ends of the fact index without retaining the whole context.
+    // Its order is index order, not execution order. These are the facts
+    // consulted by certification, including resource population facts,
+    // rather than a second execution or a speculative proof search.
+    let mut first = Vec::new();
+    let mut last = std::collections::VecDeque::new();
+    let mut count = 0;
+    let facts = assumptions
+        .condition_fact_pairs()
+        .map(|(condition, polarity)| Proposition::ConditionIs(condition.clone(), polarity))
+        .chain(assumptions.proposition_facts().cloned());
+    for fact in facts {
+        count += 1;
+        if first.len() < 8 {
+            first.push(fact);
+        } else {
+            if last.len() == 24 {
+                last.pop_front();
+            }
+            last.push_back(fact);
+        }
+    }
+    first.extend(last);
+    ContractPathPreparationFailure {
+        reason,
+        obligation: Some(obligation.proposition().clone()),
+        source_goal: obligation
+            .context()
+            .and_then(|context| context.strip_prefix("resource population invariant "))
+            .and_then(|context| context.split_once(": "))
+            .and_then(|(_, fact)| fact.split_once(": fact "))
+            .map(|(_, body)| format!("fact {body}")),
+        available: first,
+        available_count: count,
+    }
+}
+
 fn prepare_function_claim_path(
     function: &CFunction,
     path: &SymbolicCExecutionPath,
@@ -907,14 +973,19 @@ fn prepare_function_claim_path(
     deferred_contract_exit: bool,
     deferred_contract_exit_error: Option<CRuntimeError>,
     checked_returned_resources: crate::kernel::ResourceContext,
-) -> Result<CertifiedFunctionClaimPath, String> {
+    capture_failure: bool,
+) -> Result<CertifiedFunctionClaimPath, ContractPathPreparationFailure> {
     let Some((caller_state, arguments, outcome, assumptions)) =
         certified_function_path_parts(function, path)
     else {
-        return Err("the certified path does not belong to the exact function".to_string());
+        return Err("the certified path does not belong to the exact function"
+            .to_string()
+            .into());
     };
     let Some(mut entry_state) = c_function_entry_state(caller_state, function, arguments) else {
-        return Err("the function entry state cannot be reconstructed".to_string());
+        return Err("the function entry state cannot be reconstructed"
+            .to_string()
+            .into());
     };
     let mut budget = ExecutionBudget::beside_live_state();
     let (required_resources, checked_required_resources) =
@@ -929,13 +1000,15 @@ fn prepare_function_claim_path(
             Ok(Err(error)) => {
                 return Err(format!(
                     "the required resource context cannot be evaluated: {error:?}"
-                ));
+                )
+                .into());
             }
             Err(limit) => {
                 return Err(format!(
                     "the required resource context stopped at {}",
                     limit.describe()
-                ));
+                )
+                .into());
             }
         };
     let Some((_, definition_facts)) = expand_all_composite_resource_facts_and_propositions(
@@ -944,7 +1017,9 @@ fn prepare_function_claim_path(
         entry_state.memory(),
         &assumptions,
     ) else {
-        return Err("the required composite resources cannot be expanded".to_string());
+        return Err("the required composite resources cannot be expanded"
+            .to_string()
+            .into());
     };
     let mut assumptions = assumptions_with_propositions(&assumptions, &definition_facts);
     let Some(population_facts) = evaluate_resource_population_fact_propositions(
@@ -954,7 +1029,9 @@ fn prepare_function_claim_path(
         &assumptions,
         false,
     ) else {
-        return Err("the counted population facts cannot be evaluated".to_string());
+        return Err("the counted population facts cannot be evaluated"
+            .to_string()
+            .into());
     };
     for fact in population_facts {
         assumptions = assumptions.assume_proposition(fact.proposition);
@@ -992,7 +1069,9 @@ fn prepare_function_claim_path(
             crate::kernel::functions::is_deferred_conditional_resource_effect_error(error)
         }) else {
             return Err(
-                "the deferred conditional contract exit has no valid boundary error".to_string(),
+                "the deferred conditional contract exit has no valid boundary error"
+                    .to_string()
+                    .into(),
             );
         };
         let _ = error;
@@ -1008,13 +1087,15 @@ fn prepare_function_claim_path(
             Ok(Err(error)) => {
                 return Err(format!(
                     "the deferred conditional contract exit cannot be resolved: {error:?}"
-                ));
+                )
+                .into());
             }
             Err(limit) => {
                 return Err(format!(
                     "the deferred conditional contract exit stopped at {}",
                     limit.describe()
-                ));
+                )
+                .into());
             }
         }
     } else {
@@ -1027,10 +1108,14 @@ fn prepare_function_claim_path(
         entry_state.memory(),
         &assumptions,
     ) else {
-        return Err("the entry resource context cannot be expanded".to_string());
+        return Err("the entry resource context cannot be expanded"
+            .to_string()
+            .into());
     };
     let Ok(resource_facts) = entry_resources.observable_facts(&assumptions) else {
-        return Err("the entry resource context is not observable".to_string());
+        return Err("the entry resource context is not observable"
+            .to_string()
+            .into());
     };
     entry_state = entry_state.with_resource_context(entry_resources.clone());
     let execution_facts = path.execution_facts();
@@ -1054,10 +1139,15 @@ fn prepare_function_claim_path(
                 && !loadable_covered_by_fact(&assumptions, obligation.proposition())
                 && !forall_loadable_covered_by_fact(&assumptions, obligation.proposition())
         }) {
-            return Err(format!(
+            let reason = format!(
                 "the divergent verification path has an unproved condition: {}",
                 unproved_path_obligation_message(obligation)
-            ));
+            );
+            return Err(if capture_failure {
+                unproved_contract_path_condition(reason, obligation, &assumptions)
+            } else {
+                reason.into()
+            });
         }
         return Ok(CertifiedFunctionClaimPath {
             caller_state: caller_state.clone(),
@@ -1083,7 +1173,7 @@ fn prepare_function_claim_path(
         {
             (value, state, true)
         }
-        _ => return Err(format!("the certified path is not safe: {outcome:?}")),
+        _ => return Err(format!("the certified path is not safe: {outcome:?}").into()),
     };
     let exit_memory = if exceptional {
         raw_exit_state.memory().clone()
@@ -1103,10 +1193,14 @@ fn prepare_function_claim_path(
         claim_exit_state.memory(),
         &assumptions,
     ) else {
-        return Err("the exit resource context cannot be expanded".to_string());
+        return Err("the exit resource context cannot be expanded"
+            .to_string()
+            .into());
     };
     let Ok(post_resource_facts) = post_resources.observable_facts(&assumptions) else {
-        return Err("the exit resource context is not observable".to_string());
+        return Err("the exit resource context is not observable"
+            .to_string()
+            .into());
     };
     let mut assumptions = assumptions_with_propositions(&assumptions, &post_resource_facts);
     let mut post_state = entry_state.clone().with_memory(exit_memory);
@@ -1178,10 +1272,15 @@ fn prepare_function_claim_path(
             );
         !proved
     }) {
-        return Err(format!(
+        let reason = format!(
             "the execution path has an unproved verification condition: {}",
             unproved_path_obligation_message(obligation)
-        ));
+        );
+        return Err(if capture_failure {
+            unproved_contract_path_condition(reason, obligation, &assumptions)
+        } else {
+            reason.into()
+        });
     }
 
     Ok(CertifiedFunctionClaimPath {
@@ -2211,7 +2310,7 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
     }
     let timings = crate::instrumentation::enabled();
     let prepare_started = std::time::Instant::now();
-    let cases = contract_path_set_views(contract_execution);
+    let cases = contract_path_set_views(contract_execution, false);
     let checked_propositions = checked_proposition_index(checked_propositions);
     let claims = function
         .contract_claims()
@@ -2294,11 +2393,17 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
 /// never prepares the second.
 struct ContractPathSetView<'a> {
     set: &'a CContractPathSet,
-    prepared: std::cell::OnceCell<Result<Vec<CertifiedFunctionClaimPath>, String>>,
+    capture_failure: bool,
+    prepared: std::cell::OnceCell<
+        Result<Vec<CertifiedFunctionClaimPath>, ContractPathPreparationFailure>,
+    >,
 }
 
 impl ContractPathSetView<'_> {
-    fn prepared(&self, function: &CFunction) -> &Result<Vec<CertifiedFunctionClaimPath>, String> {
+    fn prepared(
+        &self,
+        function: &CFunction,
+    ) -> &Result<Vec<CertifiedFunctionClaimPath>, ContractPathPreparationFailure> {
         self.prepared.get_or_init(|| {
             crate::instrumentation::measure_operation(
                 function.name(),
@@ -2342,9 +2447,14 @@ impl ContractPathSetView<'_> {
                                     .get(index)
                                     .cloned()
                                     .unwrap_or_else(crate::kernel::ResourceContext::new),
+                                self.capture_failure,
                             )
-                            .map_err(|reason| {
-                                format!("execution path {index} is invalid: {reason}")
+                            .map_err(|mut failure| {
+                                failure.reason = format!(
+                                    "execution path {index} is invalid: {}",
+                                    failure.reason
+                                );
+                                failure
                             })
                         })
                         .collect()
@@ -2356,6 +2466,7 @@ impl ContractPathSetView<'_> {
 
 fn contract_path_set_views(
     contract_execution: &CFunctionContractExecution,
+    capture_failure: bool,
 ) -> Vec<Vec<ContractPathSetView<'_>>> {
     contract_execution
         .cases()
@@ -2365,6 +2476,7 @@ fn contract_path_set_views(
                 .iter()
                 .map(|set| ContractPathSetView {
                     set,
+                    capture_failure,
                     prepared: std::cell::OnceCell::new(),
                 })
                 .collect()
@@ -2444,10 +2556,23 @@ pub(crate) fn c_unverified_function_contract_claims_with_checked_propositions(
     contract_execution: &CFunctionContractExecution,
     checked_propositions: &[CCheckedFunctionProposition],
 ) -> Result<Vec<CFunctionContractClaimKey>, String> {
+    c_unverified_function_contract_claims_diagnostic(
+        function,
+        contract_execution,
+        checked_propositions,
+    )
+    .map_err(|failure| failure.reason)
+}
+
+pub(crate) fn c_unverified_function_contract_claims_diagnostic(
+    function: &CFunction,
+    contract_execution: &CFunctionContractExecution,
+    checked_propositions: &[CCheckedFunctionProposition],
+) -> Result<Vec<CFunctionContractClaimKey>, ContractPathPreparationFailure> {
     if !contract_execution.is_complete() {
-        return Err("certification produced no paths".to_string());
+        return Err("certification produced no paths".to_string().into());
     }
-    let cases = contract_path_set_views(contract_execution);
+    let cases = contract_path_set_views(contract_execution, true);
     let checked_propositions = checked_proposition_index(checked_propositions);
     let mut unverified = missing_function_contract_claim_keys(function);
     let claim_unverified = function
@@ -2477,7 +2602,7 @@ pub(crate) fn c_unverified_function_contract_claims_with_checked_propositions(
             .filter_map(|prepared| prepared.as_ref().err())
             .collect::<Vec<_>>();
         if !failures.is_empty() && failures.len() == alternatives.len() {
-            return Err(failures[0].clone());
+            return Err((*failures[0]).clone());
         }
     }
     Ok(unverified)

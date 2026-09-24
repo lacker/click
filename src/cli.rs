@@ -804,6 +804,162 @@ pub fn find_projects(path: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(projects)
 }
 
+/// One example project selected by a CLI target, with its sidecars in order.
+///
+/// For a direct sidecar target, `path` is that sidecar and it is the only
+/// member of `sidecars`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SelectedProject {
+    pub path: PathBuf,
+    pub sidecars: Vec<PathBuf>,
+}
+
+/// The Click sidecars a `verify`, `profile`, or `audit` target names, grouped
+/// by example project, together with the root their local imports resolve
+/// within.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SidecarSelection {
+    pub project_root: PathBuf,
+    pub projects: Vec<SelectedProject>,
+}
+
+impl SidecarSelection {
+    /// Every selected sidecar, in project order.
+    pub fn sidecars(&self) -> impl Iterator<Item = &Path> {
+        self.projects
+            .iter()
+            .flat_map(|project| project.sidecars.iter().map(PathBuf::as_path))
+    }
+}
+
+/// Selects the sidecars behind a target the way `click verify` does.
+///
+/// A file is one sidecar whose imports resolve within its own directory. A
+/// directory that directly contains a sidecar is one example project; any
+/// other directory selects its immediate subdirectories that do. Directory
+/// projects resolve imports within the enclosing examples directory, so one
+/// example may import another's model.
+pub fn select_sidecars(path: &Path) -> Result<SidecarSelection, String> {
+    if !path.is_dir() {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        return Ok(SidecarSelection {
+            project_root: parent.to_path_buf(),
+            projects: vec![SelectedProject {
+                path: path.to_path_buf(),
+                sidecars: vec![path.to_path_buf()],
+            }],
+        });
+    }
+    let project_paths = find_projects(path)?;
+    let project_root = if contains_click_file(path)? {
+        path.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+    } else {
+        path
+    };
+    let mut projects = Vec::with_capacity(project_paths.len());
+    for project in project_paths {
+        let sidecars = files_with_extension(&project, "click")?;
+        projects.push(SelectedProject {
+            path: project,
+            sidecars,
+        });
+    }
+    let selection = SidecarSelection {
+        project_root: project_root.to_path_buf(),
+        projects,
+    };
+    if selection.sidecars().next().is_none() {
+        return Err(format!(
+            "`{}` contains no Click sidecars to verify",
+            path.display()
+        ));
+    }
+    Ok(selection)
+}
+
+/// What a `profile` or `audit` target selects: markdown tests, or sidecars
+/// chosen exactly as `click verify` chooses them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TargetSelection {
+    Mdtests(Vec<PathBuf>),
+    Sidecars(SidecarSelection),
+}
+
+/// Chooses between mdtest and sidecar mode by shape, not by a flag.
+///
+/// A `.md` argument names one mdtest. A directory holding real mdtest
+/// containers is a mdtest collection even when it also holds local `.click`
+/// modules those containers import. Otherwise example projects win, because
+/// they carry `README.md` files that must not be mistaken for mdtests; a
+/// directory with no sidecar project but some markdown falls back to mdtests.
+pub fn select_targets(path: &Path) -> Result<TargetSelection, String> {
+    if looks_like_mdtest(path) {
+        return find_mdtests(path).map(TargetSelection::Mdtests);
+    }
+    if !path.is_dir() {
+        return select_sidecars(path).map(TargetSelection::Sidecars);
+    }
+    if directory_contains_mdtests(path)? {
+        return find_mdtests(path).map(TargetSelection::Mdtests);
+    }
+    match select_sidecars(path) {
+        Ok(selection) => Ok(TargetSelection::Sidecars(selection)),
+        Err(message) => {
+            if files_with_extension(path, "md")?.is_empty() {
+                Err(message)
+            } else {
+                find_mdtests(path).map(TargetSelection::Mdtests)
+            }
+        }
+    }
+}
+
+/// Returns true when the directory directly contains a recognizable mdtest.
+///
+/// A malformed container that still has both a Click and an expectation fence
+/// counts, so its parse error surfaces instead of the directory silently
+/// becoming a Click project merely because it also holds imported modules.
+pub fn directory_contains_mdtests(path: &Path) -> Result<bool, String> {
+    for markdown in files_with_extension(path, "md")? {
+        let source = fs::read_to_string(&markdown)
+            .map_err(|error| format!("failed to read `{}`: {error}", markdown.display()))?;
+        match parse_mdtest(&markdown, &source) {
+            Ok(mdtest) if mdtest.click_source.is_some() && mdtest.expectation.is_some() => {
+                return Ok(true);
+            }
+            Err(_) if source.contains("```click") && source.contains("```expect") => {
+                return Ok(true);
+            }
+            Ok(_) | Err(_) => {}
+        }
+    }
+    Ok(false)
+}
+
+/// Reads a sidecar, its transitive local Click imports within
+/// `project_root`, and the C inputs its selected target declares.
+///
+/// `None` uses the sidecar's own directory as the project root.
+pub fn load_sidecar_inputs(
+    click_path: &Path,
+    project_root: Option<&Path>,
+) -> Result<(String, ClickProject, CInput), String> {
+    let click_source = fs::read_to_string(click_path)
+        .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
+    let project = read_click_project_at_root(
+        click_path,
+        &click_source,
+        project_root.unwrap_or_else(|| click_path.parent().unwrap_or_else(|| Path::new("."))),
+    )?;
+    let inputs = read_c_inputs_for_project(click_path, &click_source, &project)?;
+    Ok((click_source, project, inputs))
+}
+
 /// Returns true when the directory directly contains a `.click` sidecar.
 pub fn contains_click_file(path: &Path) -> Result<bool, String> {
     Ok(directory_entries(path)?.into_iter().any(|entry| {
