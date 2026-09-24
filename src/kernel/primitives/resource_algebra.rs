@@ -4130,6 +4130,15 @@ impl ResourceContext {
         {
             return Some(self);
         }
+        // An empty range is the unit of memory ownership: it names no cell,
+        // so requiring it consumes nothing. Without this a body such as
+        // `owns data[start..next]` could not fold at `next == start` unless an
+        // empty fact happened to be lying around from an earlier split.
+        if let CResource::Memory(range) = fact.resource()
+            && memory_range_is_proven_empty(range, assumptions)
+        {
+            return Some(self);
+        }
 
         if let CResource::Memory(range) = fact.resource()
             && let Some(candidates) = self.concrete_memory_start_candidates(range, fact.is_own())
@@ -5018,6 +5027,22 @@ fn exact_resource_fact_entails(
 ///
 /// The counted-population helpers in `functions.rs` share this routine.
 /// `quantity_relations_ignore_unrelated_facts` is the scaling regression.
+/// Whether `range` is proved to name no cell: its two endpoints are the same
+/// term or proved equal.
+pub(in crate::kernel) fn memory_range_is_proven_empty(
+    range: &CMemoryRange,
+    assumptions: &PureFactContext,
+) -> bool {
+    range.start() == range.end()
+        || quantity_condition_holds(
+            assumptions,
+            ConditionTerm::Bitvector32Equal(
+                Box::new(range.start().clone()),
+                Box::new(range.end().clone()),
+            ),
+        )
+}
+
 pub(in crate::kernel) fn quantity_condition_holds(
     assumptions: &PureFactContext,
     condition: ConditionTerm,

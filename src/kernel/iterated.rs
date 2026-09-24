@@ -531,7 +531,24 @@ fn every_guard(
             ),
             true,
         ));
-    iterated_guard_at(state, iterated, &index, &hypotheses)
+    let cell = guard_cell_value(state, iterated, &index, &hypotheses)?;
+    if let Some(value) = guard_holds_for(&hypotheses, iterated, &cell) {
+        return Ok(Some(value));
+    }
+    // The guard over the whole range is a universally quantified fact;
+    // instantiating it at the arbitrary index is the one scan over the
+    // context's quantified facts this whole-range step makes.
+    let equal = ConditionTerm::Bitvector32Equal(
+        Box::new(cell.clone()),
+        Box::new(iterated.guard().value().clone()),
+    );
+    let instantiated = hypotheses
+        .instantiated_universal_consequents(&equal)
+        .into_iter()
+        .fold(hypotheses.clone(), |facts, consequent| {
+            facts.assume_proposition(consequent)
+        });
+    Ok(guard_holds_for(&instantiated, iterated, &cell))
 }
 
 /// The frame of a loop that declares its own resources, without the iterated

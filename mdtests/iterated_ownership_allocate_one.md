@@ -9,6 +9,9 @@ value makes the guard false the hole closes again: the refolded
 `arena_cells` owes nothing for the claimed cell, which the caller now owns
 through `claimed`. On the occupied path nothing moves.
 
+`src/surface/tests/expansion_tests.rs` expands this fixture's proof and
+reverifies the result; `click audit` agrees.
+
 ```c filename=iterated_ownership_allocate_one.c
 int32 claim(int32* data, int32* occupied, int32 capacity, int32 index) {
     if (occupied[index] != 0) {

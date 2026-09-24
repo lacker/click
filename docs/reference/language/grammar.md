@@ -59,6 +59,7 @@ documentation inventory keep the following accepted words synchronized.
 | `by`, `auto`, `using` | Proof introduction, default smart proof, and exact-premise syntax. |
 | `mark`, `step`, `execute`, `execute_until` | Execution tactics. |
 | `unfold`, `fold`, `observe`, `construct`, `open` | Predicate and resource tactics. |
+| `take`, `give`, `gather`, `scatter` | Iterated guarded-ownership tactics: move one element out of or into an iterated fact, and form or dissolve the whole fact. `forall` inside a resource body starts the iterated clause itself. |
 | `apply`, `have`, `if`, `cases`, `both`, `branch`, `outcomes`, `loop` | Theorem application and structural proof tactics. |
 | `witness`, `let`, `satisfy` | Existential introduction and elimination. |
 | `assumption`, `extract`, `normalize`, `intro`, `split`, `left`, `right`, `enumerate`, `contradiction` | Explicit proposition tactics. |
