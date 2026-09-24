@@ -162,14 +162,71 @@ claim is not a general current limitation;
 guard reading a folded owned composite. Re-reduce any particular recursive
 resource refusal before treating it as a verifier defect.
 
+## Current blocker: lowering a historical read inside an existential
+
 The 2026-09-23 reachability attempt reached the left recursive-success
-branch: `Path::Here` proves the direct-success return, but the recursive
-callee's existential cannot yet be opened in caller-side Click when its `cur`
-argument was evaluated as `left[cur]` before the call. The precise trace and
-proof attempts are recorded in `design/dfs-gaps/branching_graph_dfs.md`; the
-minimal negative regression is
-`mdtests/call_existential_evaluated_load_guard.md`. This is a call-site
-existential/viewability proof-language gap, not a missing C path witness.
+branch. `Path::Here` proves the direct-success return. At the left recursive
+call, C evaluates `left[cur]` before the call. The relevant callee contract is:
+
+```click
+ensures result != 0 implies exists (path: Path) {
+    walk(left, right, cur, path) == to
+};
+```
+
+At the call site, `cur` is instantiated with the already-evaluated argument
+value and `result` with `left_result`. The success branch establishes
+`left_result != 0`. The caller needs the
+consequent existential so `let (rest: Path) satisfy { ... };` can open it and
+construct the longer path. In source Click, the pre-call argument is naturally
+spelled `at(before_left_call, left[cur])`; a current-state `left[cur]` could
+name a different read after the call. The trace shows the callee's guarantee,
+but a proof-side citation of
+
+```click
+exists (rest: Path) {
+    walk(left, right, at(before_left_call, left[cur]), rest) == to
+}
+```
+
+does not lower to the same kernel proposition. Lowering that *written*
+existential evaluates its body read at `before_left_call` and puts a
+viewability/loadability condition inside the existential. The call-produced
+fact already uses the evaluated C argument value and has no corresponding
+condition in its existential body; the call checked the argument evaluation
+separately. Thus `extract` cannot use the implication as the cited rule, and
+`let satisfy` cannot find the exact existential. This is a mismatch between
+two routes through the same lowering machinery, not evidence that the callee
+contract lacks a path witness or that `left_result != 0` is unavailable.
+
+The design challenge is to keep *what proposition a Click fact denotes*
+stable enough that a certified fact can be spelled and cited in surface Click,
+while checking that expressions used to establish or invoke it are defined.
+Moving viewability out of proposition lowering may be the right direction,
+but it cannot simply drop the check: a body read that depends on an
+existential witness must be valid for the *same* witness. Today
+`src/kernel/spec.rs` deliberately folds evaluation facts and obligations into
+each existential branch (`existential_body_branch`) to retain that scope.
+The next design should identify where these definedness obligations belong
+without silently strengthening a cited fact, allowing an undefined read, or
+introducing a second, inconsistent lowering. In particular, distinguish the
+already-checked evaluation of a C call argument from evaluating an arbitrary
+proof expression under a binder; establish how snapshot identity and witness
+scope survive call substitution, printing, citation, and certificate checking.
+
+The immediate target is narrow: turn the unchanged
+`mdtests/call_existential_evaluated_load_guard.md` into a positive regression
+where the call-produced existential can be cited with its historical Click
+spelling, the known nonzero result discharges the implication, and the
+`let satisfy` tactic opens the resulting fact. Add a negative regression for an
+unviewable/witness-dependent read so the fix cannot prove an ill-defined
+existential. Then resume the unchanged DFS C and resolve this one
+left-recursive-success case, before tackling the right-success branch or the
+rest of reachability. The precise proof attempts are in
+`design/dfs-gaps/branching_graph_dfs.md`; use `click verify --trace-proof dfs
+--trace-to LINE` to inspect the checked facts at the
+failing tactic. Do not change the C or add a proof-only stronger contract to
+hide the mismatch.
 
 ## Acceptance
 
