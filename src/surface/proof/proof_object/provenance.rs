@@ -220,9 +220,7 @@ impl<'a> Proof<'a> {
             node = current.parent.clone();
         }
         if ancestor.is_some() {
-            return Err(
-                self.step_error("certificate validationpoint is not an ancestor of this proof")
-            );
+            return Err(self.step_error("certificate checkpoint is not an ancestor of this proof"));
         }
         steps.reverse();
         ProofCertificate::from_steps(steps)

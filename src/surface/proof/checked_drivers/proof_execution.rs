@@ -2599,9 +2599,16 @@ fn advance_focused_execution_region_with_branch_continuation<'a>(
                 continuation,
                 ..
             } => {
-                proof = proof.with_execution_tactic_index(*index)?;
-                return advance_execution_match(
-                    proof,
+                // Like every other structure in this region, the match is
+                // attributed to its own tactic only while it runs. Its
+                // result continues the enclosing region (an enclosing
+                // branch arm, case, or outcome), so it carries the owner's
+                // exact diagnostic context back out: the enclosing join and
+                // certificate checkpoint compare that context by identity.
+                let owner = proof.clone();
+                let at_match = proof.with_execution_tactic_index(*index)?;
+                let Some(matched) = advance_execution_match(
+                    at_match,
                     proof_match,
                     arms,
                     continuation,
@@ -2609,7 +2616,11 @@ fn advance_focused_execution_region_with_branch_continuation<'a>(
                     proof_site,
                     owning_source_index,
                     depth,
-                );
+                )?
+                else {
+                    return decline();
+                };
+                return Ok(Some(matched.restore_execution_tactic_attribution(&owner)?));
             }
             InternalProofNode::Done => return Ok(Some(proof)),
             InternalProofNode::Linear {
@@ -3006,9 +3017,9 @@ fn try_advance_checked_execution_branch<'a>(
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
         return decline_region_depth();
     }
-    let proof = proof.with_execution_tactic_index(tactic_index)?;
-    let checkpoint = proof.checkpoint();
-    let (split, record) = proof.split_focused_execution_branch()?;
+    let at_branch = proof.with_execution_tactic_index(tactic_index)?;
+    let checkpoint = at_branch.checkpoint();
+    let (split, record) = at_branch.split_focused_execution_branch()?;
     let has_sole_feasible_arm = record.sole_feasible_arm().is_some();
     let Some(arms) = advance_checked_branch_arms(
         split,
@@ -3025,9 +3036,14 @@ fn try_advance_checked_execution_branch<'a>(
     else {
         return decline();
     };
-    let joined =
-        arms.advanced
-            .join_focused_execution_split(&record, arms.empty, arms.join_interface)?;
+    // The arms share one proof and may leave it attributed to a nested
+    // structure's tactic. Restore the branch's own attribution after the
+    // join, as the neighbouring `if` and call-outcome joins do, so the
+    // certificate checkpoint and the caller see the branch's exact context.
+    let joined = arms
+        .advanced
+        .join_focused_execution_split(&record, arms.empty, arms.join_interface)?
+        .restore_execution_tactic_attribution(&at_branch)?;
     let certificate = proof_site
         .is_some()
         .then(|| joined.certificate_since(&checkpoint))
