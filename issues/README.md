@@ -62,7 +62,7 @@ concurrency, and graph coverage remain P2.
 Soundness and kernel shape:
 
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
-- [Verify independently owned parents sharing a heap child](shared-heap-graph-demo.md)
+- [Design resource invariants for sequential and concurrent shared heaps](shared-heap-graph-demo.md)
 - [Contract retire keeps the zeroed reading](../bugs/contract-retire-keeps-zeroed-reading.md)
 - [store_union keeps a stale raw cell under an equal spelling](../bugs/store-union-keeps-aliased-raw-cell.md)
 - [spec-fold binder identities collide with the quantifier bands](../bugs/spec-fold-binders-collide-with-quantifier-band.md)
@@ -93,8 +93,9 @@ verifies a record's representation copied through a byte buffer and back,
 preserving its scalar and pointer identity without granting pointee
 authority; its design record is
 [Byte representation](../docs/internals/byte-representation.md). The
-sequential shared-heap-graph demo does not depend on goto, C++, or
-concurrency.
+frozen sequential shared-heap program does not depend on goto or C++. Its
+resource-invariant design must also state how a future concurrent
+reference-counted version differs from the sequential one.
 
 Specification and proof:
 
