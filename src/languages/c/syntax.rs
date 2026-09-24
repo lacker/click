@@ -7715,6 +7715,14 @@ impl Parser {
             } else if self.peek_ident() == Some("struct") && self.peek_n(2) == Some(&Token::LBrace)
             {
                 self.parse_struct_declaration()?;
+            } else if self.peek_ident() == Some("struct")
+                && matches!(self.peek_n(1), Some(Token::Ident(_)))
+                && self.peek_n(2) == Some(&Token::Semicolon)
+            {
+                // A forward declaration has no layout. Keep later uses on
+                // the ordinary complete-type checks rather than inventing one.
+                self.position += 2;
+                self.expect(Token::Semicolon)?;
             } else if self.peek_ident() == Some("enum") && self.peek_n(2) == Some(&Token::LBrace) {
                 self.parse_enum_declaration()?;
             } else if self.peek_ident() == Some("union") && self.peek_n(2) == Some(&Token::LBrace) {

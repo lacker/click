@@ -1986,6 +1986,78 @@ mod tests {
     }
 
     #[test]
+    fn frozen_pthread_gcc_import_reaches_the_next_header_boundary_offline() {
+        struct CopiedFixture(PathBuf);
+        impl Drop for CopiedFixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let original =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pthread-linux-import");
+        assert_eq!(
+            fs::read(original.join("main.c")).unwrap(),
+            fs::read(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("examples/concurrency-fork-join/fork_join.c")
+            )
+            .unwrap(),
+            "the compiler fixture must keep the frozen C source unchanged"
+        );
+        let root = fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!(
+                "click-pthread-gcc-offline-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+        fs::create_dir(&root).unwrap();
+        let fixture = CopiedFixture(root);
+        for name in [
+            "main.c",
+            "main.click",
+            "main.click.import.json",
+            "main.click.import.lock.json",
+            "main.i",
+        ] {
+            fs::copy(original.join(name), fixture.0.join(name)).unwrap();
+        }
+        let config = fixture.0.join("main.click.import.json");
+        let lock: Lock = serde_json::from_slice(&fs::read(lock_path(&config)).unwrap()).unwrap();
+        assert_ne!(lock.config_directory, fixture.0.to_string_lossy());
+        assert!(
+            lock.sources[0]
+                .dependencies
+                .keys()
+                .any(|path| path.ends_with("/pthread.h"))
+        );
+        #[cfg(target_os = "macos")]
+        assert!(!Path::new(&lock.toolchain.cc1_path).exists());
+
+        let sidecar = fixture.0.join("main.click");
+        let proof = fs::read_to_string(&sidecar).unwrap();
+        let crate::cli::CInput::Prepared(imports) =
+            crate::cli::read_c_inputs(&sidecar, &proof).unwrap()
+        else {
+            panic!("ordinary loading must select the locked pthread GCC artifact");
+        };
+        assert_eq!(
+            imports[0].identity(),
+            load_imports(&original.join("main.click.import.json")).unwrap()[0].identity()
+        );
+        let error = match crate::surface::verify_c0_prepared_sources(&proof, &imports) {
+            Ok(_) => panic!("the remaining real-header parser gap must be refused"),
+            Err(error) => error.message().to_string(),
+        };
+        assert!(error.len() < 4096, "unbounded import diagnostic: {error}");
+        assert!(error.contains("/bits/types/__locale_t.h:30"), "{error}");
+        assert!(error.contains("inline scalar arrays in structs"), "{error}");
+        assert!(!error.contains("unknown struct declaration `sigevent`"));
+    }
+
+    #[test]
     fn rejects_ambient_or_executable_compiler_options() {
         assert!(validate_args(&["-fplugin=evil.so".into()], CTarget::SUPPORTED).is_err());
         assert!(validate_args(&["-c".into()], CTarget::SUPPORTED).is_err());

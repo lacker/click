@@ -604,9 +604,6 @@ fn userspace_frozen_pthread_probe_records_real_header_boundary() {
         "{error}"
     );
     assert!(error.len() < 4096, "unbounded import diagnostic");
-    assert!(error.contains("/time.h:"), "{error}");
-    assert!(
-        error.contains("unknown struct declaration `sigevent`"),
-        "{error}"
-    );
+    assert!(error.contains("/bits/types/__locale_t.h:"), "{error}");
+    assert!(error.contains("inline scalar arrays in structs"), "{error}");
 }
