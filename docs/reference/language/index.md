@@ -1331,6 +1331,10 @@ its own.
 `fold(object_ref(obj))` initializes a population of one from its body
 resources. `open(object_ref(obj)) { ... }` temporarily exposes the one shared
 body and requires it to be restored on exit without changing the population.
+A call inside the block cannot be passed a unit of that population, and its
+return does not assume that population's body facts: closing the block proves
+them from what the caller knows
+(`mdtests/call_inside_open_population_does_not_assume_its_body.md`).
 `unfold(object_ref(obj))` is the inverse lifetime operation and is allowed only
 after proving that the count is exactly one; it exposes the body for a final
 destructor or `free`. Ordinary retain and release operations use `open` rather

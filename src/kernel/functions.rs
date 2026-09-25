@@ -15593,6 +15593,20 @@ fn apply_counted_population_transitions_with_interface(
         if population_quantity_is_zero(&population.count, assumptions) {
             continue;
         }
+        // A body the caller holds open is not closed, so its invariant is
+        // not a fact anywhere until the caller closes it again, and closing
+        // proves it. The callee cannot have touched that body -- a call is
+        // refused a population unit whose body is open -- so it established
+        // nothing about it, and the caller's open memory may contradict it.
+        // Assuming it here made a call inside `open` a certified
+        // contradiction (`mdtests/call_inside_open_population_does_not_assume_its_body.md`).
+        if caller_state.population_body_is_open(
+            &population.name,
+            &population.arguments,
+            assumptions,
+        ) {
+            continue;
+        }
         let population_body =
             interface
                 .composite_resource_definitions()
