@@ -64,7 +64,7 @@ pub(crate) struct ProofFacts {
     /// consequent is an int32 or int64 equality, keyed by the consequent's
     /// atomic operands. A goal-local smart closer selects the guarded
     /// equalities that could rewrite the goal from these buckets alone.
-    guarded_equalities_by_atom:
+    guarded_implications_by_atom:
         PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>>,
     /// True finite-float classifications retain their shared fact identity so
     /// a reflexive comparison does not publish the same premise twice.
@@ -324,7 +324,7 @@ impl ProofFacts {
         let mut by_snapshot_blind = PersistentMap::default();
         let mut by_integer_condition_alpha = PersistentMap::default();
         let mut bitvector_equalities_by_atom = PersistentMap::default();
-        let mut guarded_equalities_by_atom = PersistentMap::default();
+        let mut guarded_implications_by_atom = PersistentMap::default();
         let mut finite_classifications_by_key = PersistentMap::default();
         let mut algebraic_equalities_by_term = PersistentMap::default();
         let mut by_quantified_equivalence = PersistentMap::default();
@@ -376,8 +376,8 @@ impl ProofFacts {
                 }
             }
             let fact = Arc::new(crate::kernel::clone_proposition_iteratively(fact));
-            guarded_equalities_by_atom =
-                index_guarded_equality_fact(guarded_equalities_by_atom, &fact);
+            guarded_implications_by_atom =
+                index_guarded_implication_fact(guarded_implications_by_atom, &fact);
             by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact.as_ref());
             by_integer_condition_alpha =
                 index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
@@ -403,7 +403,7 @@ impl ProofFacts {
             by_snapshot_blind,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
-            guarded_equalities_by_atom,
+            guarded_implications_by_atom,
             finite_classifications_by_key,
             algebraic_equalities_by_term,
             by_quantified_equivalence,
@@ -484,8 +484,8 @@ impl ProofFacts {
             }
         }
         let fact = Arc::new(fact);
-        let guarded_equalities_by_atom =
-            index_guarded_equality_fact(self.guarded_equalities_by_atom.clone(), &fact);
+        let guarded_implications_by_atom =
+            index_guarded_implication_fact(self.guarded_implications_by_atom.clone(), &fact);
         by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact.as_ref());
         by_integer_condition_alpha =
             index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
@@ -516,7 +516,7 @@ impl ProofFacts {
             by_snapshot_blind,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
-            guarded_equalities_by_atom,
+            guarded_implications_by_atom,
             finite_classifications_by_key,
             algebraic_equalities_by_term,
             by_quantified_equivalence,
@@ -1189,11 +1189,11 @@ impl ProofFacts {
             .collect()
     }
 
-    /// Definedness-guarded equalities (`defined(e) implies a == b`) whose
+    /// Definedness-guarded comparisons (`defined(e) implies a == b`) whose
     /// consequent shares an atomic operand with `proposition`, oldest first
     /// within each atom and deduplicated by identity. The lookup visits only
     /// the buckets of the atoms the proposition names.
-    pub(crate) fn guarded_equalities_mentioning(
+    pub(crate) fn guarded_implications_mentioning(
         &self,
         proposition: &Proposition,
     ) -> Vec<Proposition> {
@@ -1202,7 +1202,7 @@ impl ProofFacts {
         let mut seen = BTreeSet::new();
         let mut implications = Vec::new();
         for atom in atoms {
-            if let Some(bucket) = self.guarded_equalities_by_atom.get(&atom) {
+            if let Some(bucket) = self.guarded_implications_by_atom.get(&atom) {
                 for implication in bucket.iter() {
                     crate::instrumentation::record_deterministic_work(1);
                     if seen.insert(Arc::as_ptr(implication) as usize) {
@@ -1616,7 +1616,7 @@ pub(crate) fn is_definedness_guard(proposition: &Proposition) -> bool {
     }
 }
 
-fn index_guarded_equality_fact(
+fn index_guarded_implication_fact(
     mut index: PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>>,
     fact: &Arc<Proposition>,
 ) -> PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>> {
@@ -1624,12 +1624,26 @@ fn index_guarded_equality_fact(
         return index;
     };
     let Proposition::ConditionIs(
-        ConditionTerm::Bitvector32Equal(left, right) | ConditionTerm::Bitvector64Equal(left, right),
-        true,
+        ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector64Equal(left, right)
+        | ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector64SignedLessThan(left, right)
+        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right),
+        _,
     ) = consequent.as_ref()
     else {
         return index;
     };
+    // Only a definedness guard: applying an ambient implication under an
+    // ordinary condition stays an explicit `extract`
+    // (`verified_call_ensure_premise_needs_its_discharge.md`), while a
+    // no-overflow guard is a side condition of the arithmetic the
+    // consequent states.
     if !is_definedness_guard(guard) {
         return index;
     }

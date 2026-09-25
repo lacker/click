@@ -21298,6 +21298,11 @@ fn evaluate_function_declared_resource_spec(
         .enumerate()
     {
         let argument_state = match argument_snapshot {
+            // A clause checked at entry is evaluated in a frame that adds
+            // the read authority of the clause set's own folded instances;
+            // an `old(..)` argument read at that same snapshot reads through
+            // the same authority. The frame changes no cell.
+            CResourceSnapshot::Entry if state.memory() == entry_state.memory() => state,
             CResourceSnapshot::Entry => entry_state,
             CResourceSnapshot::Current | CResourceSnapshot::Post => state,
         };

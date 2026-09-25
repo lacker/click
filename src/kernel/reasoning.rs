@@ -10,6 +10,8 @@ pub(crate) use substitution::resolve_load_variables_via;
 pub(crate) use substitution::resolve_minted_load_pointer;
 pub(crate) use substitution::resolve_minted_load_variables;
 pub(crate) use substitution::resolve_symbolic_pointer_alias;
+#[cfg(test)]
+pub(in crate::kernel) use substitution::substitute_bitvector_variable_in_memory;
 pub(in crate::kernel) use substitution::substitute_bitvector_variable_in_spec_proposition;
 pub(in crate::kernel) mod memory_resolution;
 pub(in crate::kernel) mod variable_collection;

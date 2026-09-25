@@ -4835,7 +4835,20 @@ struct SubstitutedMemoryFrame {
 thread_local! {
     static SUBSTITUTED_MEMORIES: std::cell::RefCell<Vec<SubstitutedMemoryFrame>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Interned snapshots a variable was found not to occur in. A quantified
+    /// fact over `m[p + j]` names its binder only in the address, never in
+    /// the snapshot, yet each instantiation used to rewrite the whole
+    /// snapshot again: the arena pipeline's order decisions instantiate its
+    /// frames once per candidate term. The answer depends only on the
+    /// immutable snapshot and the variable, so it is kept across
+    /// substitutions; the key names the arena, so a reset arena misses.
+    static MEMORY_LACKS_VARIABLE: std::cell::RefCell<
+        std::collections::HashSet<((u32, u32), Variable)>,
+    > = std::cell::RefCell::new(std::collections::HashSet::new());
 }
+
+/// Entries kept before the absent-variable memo is cleared.
+const MEMORY_LACKS_VARIABLE_LIMIT: usize = 1 << 20;
 
 /// Opens (or joins) the snapshot memo for one `(from, to)` substitution.
 struct SubstitutedMemoryScope {
@@ -4882,8 +4895,11 @@ fn substitute_bitvector_variable_in_shared_memory(
     from: Variable,
     to: &Bitvector32Term,
 ) -> SharedCMemory {
-    let _scope = SubstitutedMemoryScope::enter(from, to);
     let identity = memory.arena_id();
+    if memory_lacks_variable(identity, from) {
+        return memory.clone();
+    }
+    let _scope = SubstitutedMemoryScope::enter(from, to);
     let substituted = SUBSTITUTED_MEMORIES.with(|frames| {
         frames
             .borrow()
@@ -4893,11 +4909,11 @@ fn substitute_bitvector_variable_in_shared_memory(
     if let Some(substituted) = substituted {
         return substituted;
     }
-    let substituted = crate::kernel::intern_c_memory(substitute_bitvector_variable_in_memory(
-        memory.memory(),
-        from,
-        to,
-    ));
+    let substituted =
+        crate::kernel::intern_c_memory(rewrite_memory_snapshot(memory.memory(), from, to));
+    if substituted == *memory {
+        record_memory_lacks_variable(identity, from);
+    }
     SUBSTITUTED_MEMORIES.with(|frames| {
         if let Some(frame) = frames.borrow_mut().last_mut() {
             frame.substituted.insert(identity, substituted.clone());
@@ -4918,12 +4934,46 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
     from: Variable,
     to: &Bitvector32Term,
 ) -> CMemory {
+    // A snapshot carried by value (a loadability or effect proposition) is
+    // interned only to consult and fill the absent-variable memo; interning
+    // an already-registered snapshot is a shallow lookup.
+    let shared = crate::kernel::intern_c_memory(memory.clone());
+    let identity = shared.arena_id();
+    if memory_lacks_variable(identity, from) {
+        return memory.clone();
+    }
+    let substituted = rewrite_memory_snapshot(memory, from, to);
+    if crate::kernel::intern_c_memory(substituted.clone()) == shared {
+        record_memory_lacks_variable(identity, from);
+    }
+    substituted
+}
+
+fn rewrite_memory_snapshot(memory: &CMemory, from: Variable, to: &Bitvector32Term) -> CMemory {
     crate::instrumentation::measure_operation(
         "kernel",
         "substitution",
         "substitution: snapshot rewrite",
         || substitute_bitvector_variable_in_memory_contents(memory, from, to),
     )
+}
+
+fn memory_lacks_variable(identity: (u32, u32), from: Variable) -> bool {
+    let absent = MEMORY_LACKS_VARIABLE.with(|absent| absent.borrow().contains(&(identity, from)));
+    if absent {
+        crate::instrumentation::record_deterministic_work(1);
+    }
+    absent
+}
+
+fn record_memory_lacks_variable(identity: (u32, u32), from: Variable) {
+    MEMORY_LACKS_VARIABLE.with(|absent| {
+        let mut absent = absent.borrow_mut();
+        if absent.len() >= MEMORY_LACKS_VARIABLE_LIMIT {
+            absent.clear();
+        }
+        absent.insert((identity, from));
+    });
 }
 
 fn substitute_bitvector_variable_in_memory_contents(

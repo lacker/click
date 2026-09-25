@@ -3055,3 +3055,55 @@ fn simp_equality_chain_is_linear_and_unrelated_queries_are_flat() {
         );
     }
 }
+
+/// A simplifier goal no case split can decide does not pay for case splits
+/// over disjunctions about other variables: each call outcome in a long
+/// proof (`result == 0 or result == 1`) used to be split, nested, before the
+/// derivation failed. The split skips a disjunction sharing no variable with
+/// the goal, so the failing derivation's work stays flat as they grow.
+#[test]
+fn failing_simp_derivation_ignores_unrelated_disjunctions() {
+    use crate::kernel::{Bitvector32Term, ConditionTerm, Proposition, PureFactContext, Variable};
+    use crate::surface::planning::proposition_search::PropositionSearch;
+
+    let equal = |variable: u64, value: u32| {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(Variable(variable))),
+                Box::new(Bitvector32Term::Constant(value)),
+            ),
+            true,
+        )
+    };
+    let samples = [2, 4, 6, 8]
+        .into_iter()
+        .map(|size| {
+            let mut context = PureFactContext::new();
+            for index in 0..size {
+                let variable = 432_000 + index as u64;
+                context = context.assume_proposition(Proposition::Or(
+                    Box::new(equal(variable, 0)),
+                    Box::new(equal(variable, 1)),
+                ));
+            }
+            let goal = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(
+                    Box::new(Bitvector32Term::Variable(Variable(433_000))),
+                    Box::new(Bitvector32Term::Constant(5)),
+                ),
+                true,
+            );
+            let (derivation, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context.derive_simp_proposition(&goal)
+            });
+            assert!(derivation.is_none(), "nothing bounds the goal's variable");
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(2).saturating_add(64),
+            "unrelated disjunctions were split: {samples:?}"
+        );
+    }
+}

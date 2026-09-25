@@ -7568,13 +7568,13 @@ fn lower_bound_search_ignores_unrelated_facts() {
     );
 }
 
-/// The guarded-equality index selects `defined(e) implies a == b` facts by
-/// the consequent's operands: a goal naming `a` finds the one guarded
+/// The guarded-implication index selects `defined(e) implies a == b` facts
+/// by the consequent's operands: a goal naming `a` finds the one guarded
 /// equality about `a`, and the lookup's work does not grow with unrelated
-/// guarded equalities. An implication under an ordinary guard is not
-/// indexed.
+/// guarded equalities. An implication under an ordinary condition is not
+/// indexed: applying it stays an explicit `extract`.
 #[test]
-fn guarded_equality_lookup_is_keyed_by_consequent_operands() {
+fn guarded_implication_lookup_is_keyed_by_consequent_operands() {
     let guarded = |index: u64| {
         let old = Bitvector32Term::Variable(Variable(98_000 + index));
         let delta = Bitvector32Term::Variable(Variable(98_500 + index));
@@ -7600,16 +7600,16 @@ fn guarded_equality_lookup_is_keyed_by_consequent_operands() {
         ),
         true,
     );
-    let ordinary_guard = Proposition::Implies(
-        Box::new(Proposition::ConditionIs(
+    let bound = |value: u32| {
+        Proposition::ConditionIs(
             ConditionTerm::signed_less_than(
                 Bitvector32Term::Variable(Variable(97_900)),
-                Bitvector32Term::Constant(10),
+                Bitvector32Term::Constant(value),
             ),
             true,
-        )),
-        Box::new(goal.clone()),
-    );
+        )
+    };
+    let ordinary_guard = Proposition::Implies(Box::new(bound(10)), Box::new(goal.clone()));
     let samples = [16, 32, 64, 128]
         .into_iter()
         .map(|size| {
@@ -7617,7 +7617,7 @@ fn guarded_equality_lookup_is_keyed_by_consequent_operands() {
             facts.extend((1..size).map(guarded));
             let facts = crate::kernel::proof::ProofFacts::from_ordered(&facts);
             let (selected, work) = crate::instrumentation::measure_deterministic_work(|| {
-                facts.guarded_equalities_mentioning(&goal)
+                facts.guarded_implications_mentioning(&goal)
             });
             assert_eq!(selected, vec![guarded(0)]);
             assert!(work > 0, "the lookup charges the buckets it visits");
@@ -7630,4 +7630,35 @@ fn guarded_equality_lookup_is_keyed_by_consequent_operands() {
             "guarded-equality lookup grew with unrelated facts: {samples:?}"
         );
     }
+}
+
+/// Substituting a quantifier's binder into a snapshot it does not occur in
+/// rewrites the snapshot once; every later substitution of that variable into
+/// that snapshot is a memo hit, whatever the replacement.
+#[test]
+fn snapshot_substitution_of_an_absent_variable_is_memoized() {
+    let mut memory = CMemory::new();
+    for index in 0..64 {
+        memory = memory.with_block(format!("snapshot-memo-{index}"), 4);
+    }
+    let absent = Variable(434_000);
+    let (_, first) = crate::instrumentation::measure_deterministic_work(|| {
+        crate::kernel::reasoning::substitute_bitvector_variable_in_memory(
+            &memory,
+            absent,
+            &Bitvector32Term::Constant(1),
+        )
+    });
+    let (_, second) = crate::instrumentation::measure_deterministic_work(|| {
+        crate::kernel::reasoning::substitute_bitvector_variable_in_memory(
+            &memory,
+            absent,
+            &Bitvector32Term::Constant(2),
+        )
+    });
+    assert!(
+        first >= 64,
+        "the first substitution walks the snapshot: {first}"
+    );
+    assert!(second <= 2, "the repeat is a memo hit: {second}");
 }

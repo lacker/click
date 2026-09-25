@@ -128,7 +128,15 @@ Nothing mentions a prefix.
   It needs no prefix: any live region can be freed.
 - `arena_read` and `arena_write` borrow the region and the state, require
   the region to lie inside the arena (`r.end <= st.capacity`), and leave
-  every occupancy cell unchanged; `arena_region_length` borrows both too.
+  every occupancy cell, `region->arena`, and the arena's `capacity` and
+  `data` unchanged, with `r.end <= st.capacity` again at return;
+  `arena_read`'s result is the cell's value before the call, and
+  `arena_region_length` borrows both too. The state is named
+  `arena_state(old(region->arena))`: a borrowed instance is re-read at the
+  call's return, and the callee owns the descriptor, so naming it through
+  the current `region->arena` would not match the caller's
+  `arena_state(arena)` before the caller applies the callee's
+  postconditions (`mdtests/borrowed_instance_argument_reads_old_field.md`).
   The occupancy frame across the store needs the written index's range in
   the terms the store address is spelled in (`0 <= region->start + index`
   and `region->start + index < region->arena->capacity`), so the proofs
@@ -161,6 +169,17 @@ them, and the call rule now keeps a cell an owned member of the caller's
 residual resources holds, opening a residual `arena_region` one layer
 (`mdtests/call_keeps_caller_object_beside_folded_state.md`,
 `mdtests/call_keeps_region_beside_folded_arena_state.md`).
+
+A per-cell pipeline draft verifies the initialization-failure path, both
+paths that destroy after a failed allocation (including freeing `first`
+first), the second allocation's success with its zero-outside-both-regions
+invariant, both writes with the invariant carried across them, and the
+call of the first read. It stops at the value that read returns, `first`'s
+written value carried across `arena_write(second, ..)`: the
+chain `first->arena->data == second->arena->data == at(m,
+second->arena->data) == at(m, first->arena->data)` is proved link by link,
+but `simp` does not compose it
+(`mdtests/pointer_field_alias_chain_across_call_frontier.md`).
 
 ## Sidecar layout
 

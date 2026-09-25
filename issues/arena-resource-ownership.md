@@ -394,6 +394,28 @@ window of `count` cells contains an occupied cell); without it a caller can
 still show a same-size allocation reuses a freed middle region when the hole
 is the only free run, through the frames.
 
+The per-cell pipeline draft now reaches the first read. What moved it:
+`simp` uses a comparison a definedness guard holds under
+(`mdtests/guarded_postcondition_closes_after_call.md`; the `int64` form is
+`mdtests/guarded_postcondition_int64_bounds_frontier.md`), chains the
+equalities a scope's `have`s state and rewrites through loaded pointer
+fields (`mdtests/simp_chains_equalities_stated_in_a_scope.md`,
+`mdtests/rewrite_through_a_loaded_pointer_field.md`); `arena_read` and
+`arena_write` state their occupancy, capacity, and data frames and name the
+state `arena_state(old(region->arena))`
+(`mdtests/borrowed_instance_argument_reads_old_field.md`); and two search
+costs the draft exposed are gone (a failing `simp` case-split nested over
+every call outcome in scope, and each quantified-frame instantiation
+rewriting whole memory snapshots). It verifies initialization failure, both
+destroys after a failed allocation, the second allocation's
+zero-outside-both-regions invariant, both writes with that invariant
+carried across them, and the call of the first read. The next frontier is
+the value that read returns, `first`'s written value carried across
+`arena_write(second, ..)`: every link of the
+pointer-field chain proves, but `simp` does not compose it
+(`mdtests/pointer_field_alias_chain_across_call_frontier.md`). The prefix
+sidecars stay until the pipeline verifies.
+
 Two further limits of the per-cell contracts: nothing relates `live` to the
 number of occupied cells or regions (the kernel has no count of a guarded
 population), so `arena_alloc` requires `st.live < 2147483647` and

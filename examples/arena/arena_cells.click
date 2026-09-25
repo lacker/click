@@ -2775,7 +2775,7 @@ verifying "arena_write.c";
 
 void arena_write(struct region* region, int32 index, int32 value) {
     owns r: arena_region(region);
-    owns st: arena_state(region->arena);
+    owns st: arena_state(old(region->arena));
     requires 0 <= index;
     requires defined(r.start + index) and r.start + index < r.end;
     requires r.end <= st.capacity;
@@ -2783,8 +2783,11 @@ void arena_write(struct region* region, int32 index, int32 value) {
     ensures r.start == old(r.start);
     ensures r.end == old(r.end);
     ensures st.capacity == old(st.capacity);
+    ensures r.end <= st.capacity;
     ensures st.live == old(st.live);
     ensures region->arena == old(region->arena);
+    ensures region->arena->capacity == old(region->arena->capacity);
+    ensures region->arena->data == old(region->arena->data);
     ensures region->arena->data[region->start + index] == value;
     ensures forall (k: int32) {
         0 <= k and k < region->arena->capacity implies
@@ -2871,7 +2874,7 @@ verifying "arena_read.c";
 
 int32 arena_read(struct region* region, int32 index) {
     owns r: arena_region(region);
-    owns st: arena_state(region->arena);
+    owns st: arena_state(old(region->arena));
     requires 0 <= index;
     requires defined(r.start + index) and r.start + index < r.end;
     requires r.end <= st.capacity;
@@ -2879,9 +2882,13 @@ int32 arena_read(struct region* region, int32 index) {
     ensures r.start == old(r.start);
     ensures r.end == old(r.end);
     ensures st.capacity == old(st.capacity);
+    ensures r.end <= st.capacity;
     ensures st.live == old(st.live);
     ensures region->arena == old(region->arena);
+    ensures region->arena->capacity == old(region->arena->capacity);
+    ensures region->arena->data == old(region->arena->data);
     ensures result == region->arena->data[region->start + index];
+    ensures result == old(region->arena->data[region->start + index]);
     ensures forall (k: int32) {
         0 <= k and k < region->arena->capacity implies
             region->arena->occupied[k] == old(region->arena->occupied[k])
@@ -2994,7 +3001,7 @@ verifying "arena_region_length.c";
 
 int32 arena_region_length(struct region* region) {
     owns r: arena_region(region);
-    owns st: arena_state(region->arena);
+    owns st: arena_state(old(region->arena));
     ensures result == r.end - r.start;
     ensures st.live == old(st.live);
     ensures r.start == old(r.start);

@@ -30,6 +30,32 @@ use crate::kernel::planning_api::*;
 use crate::kernel::*;
 use std::collections::BTreeSet;
 
+/// Nested disjunction case splits allowed inside one derivation.
+const MAX_DISJUNCTION_SPLIT_DEPTH: usize = 2;
+
+thread_local! {
+    static DISJUNCTION_SPLIT_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+struct DisjunctionSplitDepth;
+
+impl DisjunctionSplitDepth {
+    fn enter() -> Option<Self> {
+        DISJUNCTION_SPLIT_DEPTH.with(|depth| {
+            (depth.get() < MAX_DISJUNCTION_SPLIT_DEPTH).then(|| {
+                depth.set(depth.get() + 1);
+                DisjunctionSplitDepth
+            })
+        })
+    }
+}
+
+impl Drop for DisjunctionSplitDepth {
+    fn drop(&mut self) {
+        DISJUNCTION_SPLIT_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
 /// The logical search over a kernel fact context, as Surface planning.
 ///
 /// Import this trait to plan with a [`PureFactContext`]; the kernel itself
@@ -899,7 +925,28 @@ impl PropositionSearch for PureFactContext {
         proposition: &Proposition,
         for_simp: bool,
     ) -> Option<PropositionDerivationRule> {
+        // Each case re-enters the whole derivation, which splits again on
+        // every remaining disjunction: with a dozen call outcomes in scope
+        // (`result == 0 or result == 1` per call) a goal no case helps paid
+        // for every nested combination before failing. A split can only help
+        // through a case that constrains something the goal names, so a
+        // disjunction over machine variables none of which the goal names is
+        // not split, and splits nest at most `MAX_DISJUNCTION_SPLIT_DEPTH`
+        // deep.
+        let _depth = DisjunctionSplitDepth::enter()?;
+        let mut goal_variables = BTreeSet::new();
+        collect_proposition_bitvector_variables(proposition, &mut goal_variables);
         for disjunction in self.disjunction_fact_propositions() {
+            let mut disjunction_variables = BTreeSet::new();
+            collect_proposition_bitvector_variables(disjunction, &mut disjunction_variables);
+            // A disjunction or goal over no machine variable (predicates,
+            // algebraic values) is never judged unrelated.
+            if !goal_variables.is_empty()
+                && !disjunction_variables.is_empty()
+                && disjunction_variables.is_disjoint(&goal_variables)
+            {
+                continue;
+            }
             let mut cases = Vec::new();
             collect_or_cases(disjunction, &mut cases);
             if cases.len() < 2 {

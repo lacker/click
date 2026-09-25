@@ -1,22 +1,23 @@
-//! Smart closure through a definedness-guarded equality.
+//! Smart closure through a definedness-guarded comparison.
 //!
 //! Lowering a partial C expression such as `old(st.live) + result` at a call
 //! or a return keeps its no-overflow condition as the antecedent of the
 //! equality it states: `defined(old(st.live) + result) implies st.live ==
 //! old(st.live) + result`. The kernel does not harvest such a consequent on
 //! its own; the checked `extract` rule does once the guard is an available
-//! fact. This closer selects the guarded equalities whose consequent shares an
-//! operand with the goal, proves each guard with an ordinary nested `simp`
-//! (the bounded overflow-interval reasoning decides it from the operands'
-//! bounds), extracts the consequent, and continues the closure. Expansion
-//! therefore renders the discharge as `have defined(..) by { .. }` followed
-//! by `extract(..)`.
+//! fact. This closer selects the guarded comparisons whose consequent shares
+//! an operand with the goal, proves each guard with an ordinary nested
+//! `simp` (the bounded overflow-interval reasoning decides it from the
+//! operands' bounds), extracts the consequent, and continues the closure.
+//! Expansion therefore renders the discharge as `have defined(..) by { .. }`
+//! followed by `extract(..)`. An implication under an ordinary condition is
+//! not selected: applying it stays an explicit step.
 
 use super::*;
 use std::cell::Cell;
 
-/// At most this many guarded equalities are tried for one goal.
-const MAX_GUARDED_CANDIDATES: usize = 4;
+/// At most this many guarded comparisons are tried for one goal.
+const MAX_GUARDED_CANDIDATES: usize = 6;
 
 /// Nested guarded extractions (a guard, or the goal left after one
 /// extraction, that itself needs another guarded equality) stop at this
@@ -54,7 +55,7 @@ impl<'a> Proof<'a> {
         if !matches!(goal, Proposition::ConditionIs(..)) {
             return Ok(None);
         }
-        let candidates = self.facts().guarded_equalities_mentioning(goal);
+        let candidates = self.facts().guarded_implications_mentioning(goal);
         if candidates.is_empty() {
             return Ok(None);
         }
@@ -65,7 +66,7 @@ impl<'a> Proof<'a> {
             let Proposition::Implies(guard, consequent) = &implication else {
                 continue;
             };
-            if self.facts().contains(consequent) {
+            if self.facts().contains(consequent) || self.antecedent_is_refuted(guard) {
                 continue;
             }
             let Some((surface_guard, surface_consequent)) =
@@ -85,9 +86,15 @@ impl<'a> Proof<'a> {
             if extracted.is_complete() || extracted.focused_discharged() {
                 return Ok(Some(extracted));
             }
-            // The consequent names a goal operand: rewriting the goal with it
-            // leaves the operands' own facts to close what remains.
-            if let Some(rewritten) = attempt::candidate_outcome(
+            // An equality consequent names a goal operand: rewriting the goal
+            // with it leaves the operands' own facts to close what remains.
+            if matches!(
+                consequent.as_ref(),
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(..) | ConditionTerm::Bitvector64Equal(..),
+                    true
+                )
+            ) && let Some(rewritten) = attempt::candidate_outcome(
                 extracted.apply_step(ProofStep::Rewrite(surface_consequent.clone())),
             )? {
                 if rewritten.focused_discharged() {
@@ -158,6 +165,32 @@ impl<'a> Proof<'a> {
         None
     }
 
+    /// Whether the kernel's own decision already refutes one conjunct of an
+    /// antecedent, so proving it would be a search bound to fail (the other
+    /// outcome's `result == 0 implies ..` on a path where `result == 1`).
+    fn antecedent_is_refuted(&self, antecedent: &Proposition) -> bool {
+        let mut pending = vec![antecedent];
+        while let Some(proposition) = pending.pop() {
+            match proposition {
+                Proposition::And(left, right) => {
+                    pending.push(left);
+                    pending.push(right);
+                }
+                Proposition::ConditionIs(condition, value)
+                    if self
+                        .facts()
+                        .assumptions()
+                        .decide(condition)
+                        .is_some_and(|decided| decided != *value) =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// `have <guard> by { simp(); }`, or the proof unchanged when the guard
     /// is already available.
     fn prove_guard(&self, surface_guard: &ClickProposition) -> Result<Option<Self>, ClickError> {
@@ -189,13 +222,28 @@ impl<'a> Proof<'a> {
         if let Some(surface_goal) = self.surface_goal() {
             collect_goal_field_accesses(surface_goal, &mut accesses);
         }
+        let bound = self
+            .proposition_obligation()
+            .map(|goal| {
+                goal.surface_bindings
+                    .iter()
+                    .filter_map(|(name, binding)| match binding {
+                        ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                            Bitvector32Term::Variable(variable),
+                        ))) => Some((*variable, name.clone())),
+                        _ => None,
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
         let speller = GuardedTermSpeller {
             view: &view,
             accesses: &accesses,
             snapshots: view.recorded_snapshots.recent(MAX_SPELLING_SNAPSHOTS),
+            bound,
         };
         let surface_guard = speller.guard(guard)?;
-        let surface_consequent = speller.equality(consequent)?;
+        let surface_consequent = speller.comparison(consequent)?;
         let lowers_to = |surface: &ClickProposition, kernel: &Proposition| {
             self.lower_surface_proposition(surface, "guarded simp premise")
                 .is_ok_and(|lowered| {
@@ -205,6 +253,30 @@ impl<'a> Proof<'a> {
         (lowers_to(&surface_guard, guard) && lowers_to(&surface_consequent, consequent))
             .then_some((surface_guard, surface_consequent))
     }
+}
+
+type BinaryExpression = fn(Box<ContractExpression>, Box<ContractExpression>) -> ContractExpression;
+
+/// The operands and the written operator of a no-overflow condition.
+fn overflow_operands(
+    condition: &ConditionTerm,
+) -> Option<(&Bitvector32Term, &Bitvector32Term, BinaryExpression)> {
+    let (left, right, construct): (_, _, BinaryExpression) = match condition {
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
+            (left, right, ContractExpression::Add)
+        }
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
+            (left, right, ContractExpression::Subtract)
+        }
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right) => {
+            (left, right, ContractExpression::Multiply)
+        }
+        _ => return None,
+    };
+    Some((left, right, construct))
 }
 
 /// The recorded snapshots consulted for an earlier model-field value.
@@ -261,6 +333,8 @@ struct GuardedTermSpeller<'v, 'p> {
     view: &'v FixedStateOperationView<'p>,
     accesses: &'v [ResourceFieldAccess],
     snapshots: Vec<(&'p SnapshotSelector, &'p CState)>,
+    /// Binders an enclosing `intro` named, by their kernel variables.
+    bound: BTreeMap<Variable, String>,
 }
 
 impl GuardedTermSpeller<'_, '_> {
@@ -270,46 +344,74 @@ impl GuardedTermSpeller<'_, '_> {
                 Box::new(self.guard(left)?),
                 Box::new(self.guard(right)?),
             )),
-            Proposition::ConditionIs(condition, false) => {
-                let (left, right, construct): (
-                    _,
-                    _,
-                    fn(Box<ContractExpression>, Box<ContractExpression>) -> ContractExpression,
-                ) = match condition {
-                    ConditionTerm::Bitvector32SignedAddOverflows(left, right)
-                    | ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
-                        (left, right, ContractExpression::Add)
-                    }
-                    ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
-                    | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
-                        (left, right, ContractExpression::Subtract)
-                    }
-                    ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
-                    | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right) => {
-                        (left, right, ContractExpression::Multiply)
-                    }
-                    _ => return None,
-                };
+            Proposition::ConditionIs(condition, false)
+                if let Some((left, right, construct)) = overflow_operands(condition) =>
+            {
                 Some(ClickProposition::Defined {
                     expression: construct(Box::new(self.term(left)?), Box::new(self.term(right)?)),
                 })
             }
-            _ => None,
+            _ => self.comparison(guard),
         }
     }
 
-    fn equality(&self, consequent: &Proposition) -> Option<ClickProposition> {
-        let Proposition::ConditionIs(
-            ConditionTerm::Bitvector32Equal(left, right)
-            | ConditionTerm::Bitvector64Equal(left, right),
-            true,
-        ) = consequent
-        else {
+    /// An int32 or int64 comparison, in either polarity.
+    fn comparison(&self, proposition: &Proposition) -> Option<ClickProposition> {
+        let Proposition::ConditionIs(condition, value) = proposition else {
             return None;
+        };
+        // The ordinary synthesis spells a comparison over current names and
+        // the enclosing binders whole; the pieces below cover what it cannot
+        // name (an earlier model field, a local out of scope).
+        if !self.bound.is_empty()
+            && let Some(whole) = synthesize_surface_proposition_with_bound_variable_names(
+                proposition,
+                self.view.parameters,
+                self.view.arguments,
+                self.view.state,
+                &self.bound,
+            )
+        {
+            return Some(whole);
+        }
+        let (left, right, operator) = match condition {
+            ConditionTerm::Bitvector32Equal(left, right)
+            | ConditionTerm::Bitvector64Equal(left, right) => {
+                (left, right, ComparisonOperator::Equal)
+            }
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+            | ConditionTerm::Bitvector64SignedLessThan(left, right) => {
+                (left, right, ComparisonOperator::LessThan)
+            }
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector64SignedLessEqual(left, right) => {
+                (left, right, ComparisonOperator::LessEqual)
+            }
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector64SignedGreaterThan(left, right) => {
+                (left, right, ComparisonOperator::GreaterThan)
+            }
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector64SignedGreaterEqual(left, right) => {
+                (left, right, ComparisonOperator::GreaterEqual)
+            }
+            _ => return None,
+        };
+        let operator = if *value {
+            operator
+        } else {
+            match operator {
+                ComparisonOperator::Equal => ComparisonOperator::NotEqual,
+                ComparisonOperator::LessThan => ComparisonOperator::GreaterEqual,
+                ComparisonOperator::LessEqual => ComparisonOperator::GreaterThan,
+                ComparisonOperator::GreaterThan => ComparisonOperator::LessEqual,
+                ComparisonOperator::GreaterEqual => ComparisonOperator::LessThan,
+                ComparisonOperator::NotEqual | ComparisonOperator::In => return None,
+            }
         };
         Some(ClickProposition::Comparison {
             left: self.term(left)?,
-            operator: ComparisonOperator::Equal,
+            operator,
             right: self.term(right)?,
         })
     }
@@ -367,6 +469,13 @@ impl GuardedTermSpeller<'_, '_> {
     }
 
     fn term(&self, term: &Bitvector32Term) -> Option<ContractExpression> {
+        if let Bitvector32Term::Variable(variable) = term
+            && let Some(name) = self.bound.get(variable)
+        {
+            return Some(ContractExpression::CFragment(CExpression::Variable(
+                name.clone(),
+            )));
+        }
         if let Some(field) = self.field_spelling(term) {
             return Some(field);
         }
