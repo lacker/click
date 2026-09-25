@@ -1421,6 +1421,14 @@ impl CBlock {
     }
 }
 
+/// Whether a call's write set includes [`CMemoryRange::unnamed_footprint`]:
+/// memory reachable from the callee's resources that no clause names.
+pub(in crate::kernel) fn write_set_reaches_unnamed_memory(mutable_ranges: &[CMemoryRange]) -> bool {
+    mutable_ranges
+        .iter()
+        .any(CMemoryRange::is_unnamed_footprint)
+}
+
 /// The cells [`call_havoc_keeps_cell`] can drop: those in a block not
 /// proven distinct from some mutable range's base. Every other cell is kept
 /// by the first rung of `range_proven_disjoint_from_pointer`, so the producer
@@ -1667,16 +1675,40 @@ fn call_havoc_keeps_cell(
 /// load of a cell they hold is named across the call, and the write-set
 /// marker spells them so two paths that keep different memory never share
 /// the resulting snapshot.
+///
+/// A write set that reaches unnamed memory records every flat owned member
+/// of the residual, cached or not. Such a call havocs every cell no rule
+/// keeps, so a member whose cell an earlier call's havoc already dropped
+/// from the cache -- and which no load has cached again since -- would
+/// otherwise be recorded on neither edge, and a load after the second call
+/// could not be named across it. The cost is the residual's flat members,
+/// once per such call, beside the havoc's visit of every cached cell.
 fn call_havoc_kept_ranges(
     kept: Option<&CallKeptOwnership>,
     flat_hits: Vec<CMemoryRange>,
+    unnamed: bool,
 ) -> Option<CallKeptRanges> {
     let kept = kept?;
     let mut ranges = kept.opened.ranges.clone();
-    for range in flat_hits {
-        let fact = CResourceFact::own_memory(range);
-        if !ranges.facts().contains(&fact) {
-            ranges = ranges.unchecked_with_fact(fact);
+    let mut recorded = ranges
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.memory_own_range().cloned())
+        .collect::<BTreeSet<_>>();
+    let residual_members = if unnamed {
+        kept.residual
+            .facts()
+            .iter()
+            .filter(|fact| fact.is_own())
+            .filter_map(|fact| fact.memory_own_range().cloned())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    crate::instrumentation::record_deterministic_work(residual_members.len());
+    for range in flat_hits.into_iter().chain(residual_members) {
+        if recorded.insert(range.clone()) {
+            ranges = ranges.unchecked_with_fact(CResourceFact::own_memory(range));
         }
     }
     let recorded = CallKeptRanges::new(ranges, kept.opened.premises.clone());
@@ -2697,6 +2729,7 @@ impl CMemory {
     ) -> Self {
         let base = Some(intern_derivation_base(&mut self));
         let mut flat_hits = Vec::new();
+        let unnamed = write_set_reaches_unnamed_memory(mutable_ranges);
         call_havoc_candidates(mutable_ranges).retain_map(
             std::sync::Arc::make_mut(&mut self.cells),
             |pointer, value| match call_havoc_keeps_cell(
@@ -2717,7 +2750,7 @@ impl CMemory {
                 CallHavocCellRule::Dropped => false,
             },
         );
-        let kept_ranges = call_havoc_kept_ranges(kept, flat_hits);
+        let kept_ranges = call_havoc_kept_ranges(kept, flat_hits, unnamed);
         self.forget_zeroed_allocations_written_by(mutable_ranges, assumptions);
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("call-havoc:{}", variable.0).into(),
@@ -2792,6 +2825,7 @@ impl CMemory {
         // `before` without the candidates the rule drops, and the comparison
         // walks only the paths the two snapshots do not share.
         let candidates = call_havoc_candidates(mutable_ranges);
+        let unnamed = write_set_reaches_unnamed_memory(mutable_ranges);
         let mut visited = 0usize;
         let mut flat_hits = Vec::new();
         let mut dropped_cells = Vec::new();
@@ -2818,7 +2852,7 @@ impl CMemory {
             .map(|(key, _)| key)
             .collect::<Vec<_>>();
         crate::instrumentation::record_deterministic_work(visited);
-        let kept_ranges = call_havoc_kept_ranges(kept, flat_hits);
+        let kept_ranges = call_havoc_kept_ranges(kept, flat_hits, unnamed);
         let write_set_marker =
             call_write_set_marker(variable, mutable_ranges, kept_ranges.as_ref());
         if added_blocks.len() != 2

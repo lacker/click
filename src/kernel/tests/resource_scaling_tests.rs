@@ -1127,3 +1127,183 @@ fn population_call_partition_rejects_aliasing_memory() {
         .is_none()
     );
 }
+
+fn tag_schema() -> ResourceFieldSchema {
+    ResourceFieldSchema::new(vec![("tag".into(), ResourceFieldType::C(CType::Int32))]).unwrap()
+}
+
+fn layer_name(layer: usize) -> String {
+    format!("layer{layer:05}")
+}
+
+/// `layers` field-bearing definitions in a chain: the first owns `p[0..1]`,
+/// and each later one names the one before it as a child over the same `p`,
+/// with its own `tag` as the child's. Installed as a contract interface
+/// installs them: sorted by name, with their reach decided.
+fn layered_definitions(layers: usize) -> Vec<CCompositeResourceDefinition> {
+    let mut definitions = (0..layers)
+        .map(|layer| {
+            let contains = if layer == 0 {
+                vec![CResourceSpec::owned_memory(CMemorySegment {
+                    base: c_variable("p"),
+                    start: c_int32_literal(0),
+                    end: c_int32_literal(1),
+                    element_width: 4,
+                    guard: None,
+                })]
+            } else {
+                Vec::new()
+            };
+            let children = if layer == 0 {
+                Vec::new()
+            } else {
+                vec![CResourceChildSpec {
+                    name: "child".into(),
+                    resource: layer_name(layer - 1),
+                    binding: Variable(5_000_000 + layer as u64),
+                    arguments: vec![c_variable("p")],
+                    field_bindings: vec![CResourceChildField::Parent(0)],
+                }]
+            };
+            CCompositeResourceDefinition::new(
+                layer_name(layer),
+                vec![c_parameter("p", CType::Int32Pointer)],
+                None,
+                false,
+                contains,
+                vec![],
+            )
+            .with_instance_schema(Some(tag_schema()))
+            .with_children(children)
+        })
+        .collect::<Vec<_>>();
+    definitions.sort_by(|left, right| left.name().cmp(right.name()));
+    crate::kernel::owned_footprint_reach::propagate_owned_footprint_reach(&mut definitions);
+    definitions
+}
+
+fn layered_instance(layers: usize) -> CResourceFact {
+    CResourceFact::own(CResource::Instance(
+        ResourceInstance::new(
+            Variable(2 * TARGET_HEAP),
+            layer_name(layers - 1),
+            vec![CValue::pointer(heap_base(TARGET_HEAP)).into()].into(),
+            tag_schema(),
+            vec![int32(0).into()].into(),
+        )
+        .unwrap(),
+    ))
+}
+
+/// The owned footprint of the outermost of `N` layered definitions is the one
+/// cell the innermost owns, derived with one visit per layer: work linear in
+/// the definitions, not a nesting bound. Deciding which definitions reach
+/// unnamed memory, once per definition set, is linear too.
+#[test]
+fn a_layered_footprint_is_linear_in_its_definitions() {
+    const LAYER_COUNTS: [usize; 4] = [8, 32, 128, 512];
+    let mut derived = Vec::new();
+    let mut installed = Vec::new();
+    for layers in LAYER_COUNTS {
+        let (definitions, work) =
+            crate::instrumentation::measure_deterministic_work(|| layered_definitions(layers));
+        installed.push((layers, work));
+        let state = CState::new();
+        let assumptions = PureFactContext::new();
+        let fact = layered_instance(layers);
+        let (ranges, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::functions::checked_owned_memory_ranges(
+                &fact,
+                &definitions,
+                &state,
+                &assumptions,
+            )
+            .unwrap()
+        });
+        assert_eq!(
+            ranges,
+            vec![CMemoryRange::new(
+                heap_base(TARGET_HEAP),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )],
+            "a {layers}-layer chain owns exactly the innermost cell"
+        );
+        derived.push((layers, work));
+    }
+    eprintln!("layered footprint by layer count (N, units): {derived:?}");
+    eprintln!("layered reach by layer count (N, units): {installed:?}");
+    for (what, samples) in [("footprint", &derived), ("reach", &installed)] {
+        let (smallest, base_work) = samples[0];
+        let per_layer = base_work as f64 / smallest as f64;
+        for (layers, work) in samples {
+            let allowed = 2.0 * per_layer * *layers as f64 + 8.0;
+            assert!(
+                (*work as f64) <= allowed,
+                "a {layers}-layer {what} charged {work} units, above {allowed:.1} (linear in \
+                 the definitions): {samples:?}"
+            );
+        }
+    }
+}
+
+/// A recursive definition's footprint is unnamed memory, decided from the
+/// definition: however many nodes the state knows are live, the derivation
+/// does not descend into them.
+#[test]
+fn a_recursive_footprint_is_constant_in_live_nodes() {
+    let mut definitions = vec![CCompositeResourceDefinition::new(
+        "list",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        None,
+        true,
+        vec![
+            CResourceSpec::owned_memory(CMemorySegment {
+                base: c_variable("p"),
+                start: c_int32_literal(0),
+                end: c_int32_literal(1),
+                element_width: 4,
+                guard: None,
+            }),
+            CResourceSpec::composite(
+                CResourceAccessMode::Own,
+                "list".into(),
+                vec![c_pointer_offset_bytes(c_variable("p"), 4)],
+                vec![CType::Int32Pointer],
+            ),
+        ],
+        vec![],
+    )];
+    crate::kernel::owned_footprint_reach::propagate_owned_footprint_reach(&mut definitions);
+    let mut samples = Vec::new();
+    for nodes in SIZES {
+        // The live nodes: a known cell at each of them.
+        let memory = (0..nodes).fold(CMemory::new(), |memory, node| {
+            memory.store(
+                Pointer {
+                    block: PointerBlock::Heap(TARGET_HEAP),
+                    offset: PointerOffsetTerm::Constant(4 * node as i64),
+                },
+                int32(node as u32),
+            )
+        });
+        let state = CState::new().with_memory(memory);
+        let assumptions = PureFactContext::new();
+        let fact = CResourceFact::own(CResource::Composite {
+            name: "list".into(),
+            arguments: vec![CValue::pointer(heap_base(TARGET_HEAP)).into()].into(),
+        });
+        let (ranges, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::functions::checked_owned_memory_ranges(
+                &fact,
+                &definitions,
+                &state,
+                &assumptions,
+            )
+            .unwrap()
+        });
+        assert_eq!(ranges, vec![CMemoryRange::unnamed_footprint()]);
+        samples.push((nodes, work));
+    }
+    assert_constant_plus_log_growth("a recursive footprint", &samples, 0.0);
+}

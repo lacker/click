@@ -4672,9 +4672,9 @@ pub(super) fn environment_composite_resource_definitions(
 
 /// Installs a loop's declared-resource frame from the kernel's own reading
 /// of the loop's resource specs at entry: each owned spec evaluated against
-/// the entering context, expanded through the composite definitions, and
-/// its owned ranges canonicalized, the same derivation a function's
-/// resource-derived frame gets. A check that already carries validated
+/// the entering context, and its owned footprint derived from the resource
+/// definitions (`checked_owned_memory_ranges`), the same derivation a
+/// function's resource-derived frame gets. A check that already carries validated
 /// ranges keeps them. When the specs do not evaluate, the checks stay
 /// uninstalled and the loop's declaration failure is the verdict; the
 /// declared frame then fails closed like an inherited one.
@@ -6053,6 +6053,11 @@ pub(super) fn loop_effect_segment_contains_pointer(
     bytes: u32,
     assumptions: &PureFactContext,
 ) -> bool {
+    // An unnamed footprint covers every access: it is the write set of
+    // memory the frame's resources reach past what their clauses name.
+    if crate::kernel::primitives::is_unnamed_footprint_base(&segment.base) {
+        return true;
+    }
     assumptions.pointer_access_in_range(
         pointer,
         bytes,
@@ -6068,6 +6073,9 @@ pub(super) fn loop_effect_segment_contains_range(
     range: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> bool {
+    if crate::kernel::primitives::is_unnamed_footprint_base(&segment.base) {
+        return true;
+    }
     if range.element_width() != segment.element_width {
         return false;
     }

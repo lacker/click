@@ -182,9 +182,6 @@ holds an occupied cell).
   kernel has no count of a guarded population), so `arena_alloc` requires
   `st.live < 2147483647` and `arena_destroy` requires the all-free map
   rather than `live == 0`.
-- A call's footprint skips an instance it cannot open from one state, such
-  as an undecided matched arm or a recursive body
-  ([`bugs/loop-and-call-footprints-skip-unopenable-instances.md`](../../bugs/loop-and-call-footprints-skip-unopenable-instances.md)).
 - A call that lends an iterated fact havocs every cell the fact could hold,
   whatever the callee writes; the caller's frame across it comes only from
   the cells it keeps owning.

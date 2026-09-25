@@ -1165,6 +1165,7 @@ impl CFunction {
     ) -> Self {
         definitions.sort_by(|left, right| left.name().cmp(right.name()));
         super::super::thread_confinement::propagate_thread_confinement(&mut definitions);
+        super::super::owned_footprint_reach::propagate_owned_footprint_reach(&mut definitions);
         self.contract_interface.composite_resource_definitions = definitions;
         self
     }
@@ -1418,6 +1419,7 @@ impl CCompositeResourceDefinition {
             matched_recursive: false,
             counted_population: false,
             thread_confined: false,
+            owned_footprint_unnamed: false,
             facts_claim_liveness: false,
             contains,
             children: Vec::new(),
@@ -1492,6 +1494,7 @@ impl CCompositeResourceDefinition {
             matched_recursive: false,
             counted_population: true,
             thread_confined,
+            owned_footprint_unnamed: false,
             facts_claim_liveness: false,
             contains,
             children: Vec::new(),
@@ -1537,6 +1540,38 @@ impl CCompositeResourceDefinition {
 
     pub fn is_thread_confined(&self) -> bool {
         self.thread_confined
+    }
+
+    /// Whether this definition's owned footprint reaches memory no clause
+    /// instance names (`owned_footprint_reach`).
+    pub(crate) fn owned_footprint_reaches_unnamed_memory(&self) -> bool {
+        self.owned_footprint_unnamed
+    }
+
+    /// Every family this definition contains or names as a child, in its
+    /// unmatched body and in each arm.
+    pub(crate) fn referenced_family_names(&self) -> impl Iterator<Item = &str> {
+        let contained = self
+            .contains
+            .iter()
+            .chain(
+                self.matched
+                    .iter()
+                    .flat_map(|body| body.arms.iter())
+                    .flat_map(|arm| arm.contains.iter()),
+            )
+            .filter_map(|spec| spec.contained_definition_name());
+        let children = self
+            .children
+            .iter()
+            .chain(
+                self.matched
+                    .iter()
+                    .flat_map(|body| body.arms.iter())
+                    .flat_map(|arm| arm.children.iter()),
+            )
+            .map(|child| child.resource.as_str());
+        contained.chain(children)
     }
 
     pub fn needs_outcome_resource_transfer(&self) -> bool {
@@ -1790,7 +1825,54 @@ impl CMemoryRange {
     pub fn end(&self) -> &Bitvector32Term {
         &self.end
     }
+
+    /// The write set of memory no clause names: the largest valid extent at
+    /// an unconstrained symbolic address.
+    ///
+    /// A resource footprint that reaches memory the kernel cannot spell -- a
+    /// recursive body's nodes past the arguments, an existential witness's
+    /// object -- covers every block reachable from its arguments, and those
+    /// blocks are unknown. A symbolic block is never proven distinct from
+    /// any block ([`super::PointerBlock::proven_distinct`]), no fact mentions
+    /// this reserved identity, so nothing places its base, and the range is
+    /// not empty, so no separation rule can place a cell outside it: every
+    /// havoc, effect summary and transport that reads the write set treats
+    /// it as covering all memory, except where a rule that does not consult
+    /// the write set at all (the caller's residual ownership, the function's
+    /// withheld ownership at a loop) keeps a cell. Consumers that ask the
+    /// opposite, positive question -- does the write set *cover* an access --
+    /// answer it through [`Self::is_unnamed_footprint`].
+    pub(crate) fn unnamed_footprint() -> Self {
+        Self::new_with_element_width(
+            Pointer {
+                block: super::PointerBlock::Symbolic(UNNAMED_FOOTPRINT_BLOCK),
+                offset: super::PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            // Endpoints are `int32` values: this is the largest extent whose
+            // guards hold, so no consumer that assumes a held range's extent
+            // guards can meet a false one here.
+            Bitvector32Term::Constant(i32::MAX as u32),
+            1,
+        )
+    }
+
+    /// Whether this is [`Self::unnamed_footprint`].
+    pub(crate) fn is_unnamed_footprint(&self) -> bool {
+        is_unnamed_footprint_base(&self.base)
+    }
 }
+
+/// Whether a range or segment based at `base` is
+/// [`CMemoryRange::unnamed_footprint`]: the reserved block is spelled nowhere
+/// else.
+pub(crate) fn is_unnamed_footprint_base(base: &Pointer) -> bool {
+    base.block == super::PointerBlock::Symbolic(UNNAMED_FOOTPRINT_BLOCK)
+}
+
+/// The reserved symbolic block of [`CMemoryRange::unnamed_footprint`]. It is
+/// never allocated to a program value, so no fact constrains it.
+pub(crate) const UNNAMED_FOOTPRINT_BLOCK: super::Variable = super::Variable(u64::MAX - 0x666f_6f74);
 
 /// Convert a logical element range to a physical byte count in the kernel's
 /// 32-bit memory model. Callers must carry

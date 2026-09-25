@@ -6,8 +6,8 @@ and the claim is true, but the arm is not decided. The call havoc keeps a
 cell an owned residual member holds only when it can read the member's body
 exactly, and it opens only an unconditional, unmatched instance body one
 layer: a matched body (decided or not), a guarded or witness-bearing one
-keeps nothing. So `b->v` is havocked, and the rule does not widen the open
-footprint gap in `bugs/loop-and-call-footprints-skip-unopenable-instances.md`.
+keeps nothing. So `b->v` is havocked: the rule keeps only bytes it reads
+exactly.
 
 ```c filename=call_havocs_cell_of_unopened_residual_instance.c
 struct box {

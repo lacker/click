@@ -16,6 +16,7 @@ pub const RESOURCE_SEMANTICS_VERSION: u32 = 8;
 pub(crate) mod assumptions;
 mod eval;
 mod functions;
+mod owned_footprint_reach;
 mod population_access;
 mod thread_confinement;
 pub(crate) use functions::ResourceBodyClauseRecord;

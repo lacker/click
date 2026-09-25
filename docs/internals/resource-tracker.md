@@ -1174,24 +1174,56 @@ permitted stores or a transition that drops the fact:
   reads that index.
 - A loop that declares a resource, and a call whose contract owns one,
   havoc the memory those resources own. That footprint
-  (`checked_owned_memory_ranges`) counts an iterated fact as the span of
-  every element it could hold, whatever its guards and holes say, and opens
-  a field-bearing instance one body layer at its own fields, as `unfold`
-  does. Both used to contribute nothing, so a loop or callee was summarized
-  as writing none of their memory
-  (`mdtests/loop_binder_instance_footprint_includes_its_memory.md`,
-  `mdtests/call_through_instance_footprint_includes_its_memory.md`). An
-  instance this layer cannot open -- a matched body whose arm is not decided,
-  a recursive or witness-bearing body -- and a recursive composite the
-  expansion leaves folded still contribute nothing, so a loop or call that
-  holds one is still summarized as not writing its memory. That gap is open.
+  (`checked_owned_memory_ranges`, `OwnedFootprintDerivation` in
+  `src/kernel/functions.rs`) is derived from the resource definitions, not
+  by opening the held resources as `unfold` would: each owned clause of each
+  body, with the parameters bound to the arguments and an instance's fields
+  where they are known, evaluated at the loop or call entry, and the same
+  for every contained composite and named child, whose arguments are
+  evaluated there too. An iterated fact counts as the span of every element
+  it could hold, whatever its guards and holes say. A matched body whose arm
+  is not decided contributes the union of its arms, a guarded body whose
+  guard is not decided counts as active, and a composite's witness is bound
+  as `unfold` binds it. The descent follows definitions, so it terminates
+  without a nesting bound and costs one visit per family on a chain
+  (`a_layered_footprint_is_linear_in_its_definitions`). A definition on a
+  cycle of families, or an instance body that binds a witness, owns memory
+  at addresses no argument spells -- every block reachable from its pointer
+  arguments through the fields its body owns -- and those blocks are not
+  known; nor is a clause that does not evaluate. Such a footprint is
+  `CMemoryRange::unnamed_footprint`, a range at a reserved symbolic block
+  that no separation rule places apart from any cell, so it covers every
+  cell except the ones the two rules below keep, which do not read the
+  footprint at all. Which definitions reach unnamed memory is decided once
+  per definition set, when a contract interface installs them
+  (`src/kernel/owned_footprint_reach.rs`), so a recursive family costs one
+  unit however many nodes are live
+  (`a_recursive_footprint_is_constant_in_live_nodes`). Coverage questions
+  -- a loop effect check, a refinement's containment, an Effect claim --
+  read the unnamed footprint as covering every access. The footprint used to
+  be enumerated by opening each held instance one body layer, and an
+  instance with a named child, a matched body whose arm was not decided, a
+  recursive or witness-bearing body, a nesting past eight layers, and a
+  recursive composite the expansion left folded all contributed nothing, so
+  a loop or call holding one was summarized as writing none of its memory
+  (`mdtests/call_through_deep_instance_chain_footprint_includes_its_memory.md`,
+  `mdtests/loop_over_recursive_list_footprint_includes_its_nodes.md`,
+  `mdtests/call_through_witness_footprint_includes_its_memory.md`,
+  `mdtests/call_through_matched_arm_child_footprint_includes_its_memory.md`,
+  `mdtests/call_through_recursive_list_footprint_includes_its_nodes.md`, and
+  the earlier `mdtests/loop_binder_instance_footprint_includes_its_memory.md`
+  and `mdtests/call_through_instance_footprint_includes_its_memory.md`). An
+  exact footprint keeps a cell no clause owns
+  (`mdtests/call_through_deep_instance_chain_keeps_a_cell_outside_it.md`,
+  `mdtests/call_through_undecided_arm_keeps_a_cell_no_arm_owns.md`).
   The span over-approximates what a loop can write, so the loop head does
   not havoc a cell the enclosing function keeps owning outside the loop's
   declared resources: the body holds that cell only as a view and a store
   needs ownership, so the partition at the loop entry keeps it apart from
   anything the loop can come to hold
   (`mdtests/loop_keeps_cells_the_function_keeps_owning.md`,
-  `mdtests/loop_body_cannot_write_function_owned_cells.md`). The kept cells
+  `mdtests/loop_body_cannot_write_function_owned_cells.md`,
+  `mdtests/loop_over_recursive_list_keeps_cells_the_function_keeps.md`). The kept cells
   are found through the kept context's base index, one lookup per cell.
 - A call is the same argument at a call boundary. The callee's footprint
   over-approximates what it owns, so a cell an owned member of the caller's
@@ -1211,8 +1243,8 @@ permitted stores or a transition that drops the fact:
   (the callee may hold its owner), an iterated clause in an opened body is
   skipped rather than counted at its span, a nested instance is not opened
   again, and an instance that cannot be opened (a matched body, decided or
-  not, a guarded, recursive or witness-bearing one) keeps nothing, so this
-  rule does not widen the open gap above. Flat residual members are found
+  not, a guarded, recursive or witness-bearing one) keeps nothing: the rule
+  keeps only bytes it reads exactly. Flat residual members are found
   through the residual's base index, one lookup per cell; opened ranges
   through theirs, then among the opened ranges of the cell's block when a
   reloaded base is proven equal to the opened one. The opening costs one
@@ -1226,6 +1258,13 @@ permitted stores or a transition that drops the fact:
   effect-summary route
   (`memory_snapshots_directly_proven_equal_for_memory_resolution`) read those
   ranges and name a cell they hold across the call at its pre-call value.
+  A call whose footprint reaches unnamed memory records every flat owned
+  member of the residual, cached or not: such a call drops every cell no
+  rule keeps, so a member whose cell an earlier call already dropped from
+  the cache, and which no load cached again, would be recorded on neither
+  edge, and a load after the second call could not be named across it
+  (`mdtests/consecutive_calls_through_recursive_list_keep_caller_cells.md`,
+  `mdtests/consecutive_calls_through_recursive_tree_keep_child_links.md`).
   Retaining the cached values instead made later loads of the block compare
   against more cached cells, and the arena pipeline's load resolution ran
   past its time limit

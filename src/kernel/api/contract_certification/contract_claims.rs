@@ -1712,6 +1712,10 @@ fn function_claim_holds_on_prepared_path(
                 return false;
             };
             let mutable_ranges = projection.ranges().to_vec();
+            // A footprint that reaches unnamed memory covers every write.
+            let covers_everything = mutable_ranges
+                .iter()
+                .any(crate::kernel::CMemoryRange::is_unnamed_footprint);
             let mut effect_memory = caller_state.memory().clone();
             let mut seen_transitions = Vec::<(CMemory, CMemory)>::new();
             let is_function_fresh_heap_pointer = |pointer: &Pointer, current: &CMemory| {
@@ -1775,7 +1779,8 @@ fn function_claim_holds_on_prepared_path(
                         .iter()
                         .filter(|(pointer, _)| !pointer.block.starts_with("local:"))
                         .all(|(pointer, bytes)| {
-                            is_function_fresh_heap_pointer(pointer, before)
+                            covers_everything
+                                || is_function_fresh_heap_pointer(pointer, before)
                                 || mutable_ranges.iter().any(|range| {
                                     assumptions.pointer_access_in_range(
                                         pointer,
@@ -1822,7 +1827,8 @@ fn function_claim_holds_on_prepared_path(
                         seen_transitions.push((before.clone(), after.clone()));
                     }
                     nested_ranges.iter().all(|nested| {
-                        is_function_fresh_heap_pointer(nested.base(), before)
+                        covers_everything
+                            || is_function_fresh_heap_pointer(nested.base(), before)
                             || mutable_ranges
                                 .iter()
                                 .any(|allowed| memory_range_covers(allowed, nested, assumptions))

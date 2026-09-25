@@ -18,12 +18,13 @@ pub(crate) const MUTEX_HELD_PREDICATE_NAME: &str = "__click_mutex_held";
 
 mod contracts;
 pub(crate) use contracts::{
-    MemoryRangeExtent, element_count_limit_constrains_int32, memory_range_byte_count,
-    memory_range_byte_count_extent, memory_range_byte_count_guards, memory_range_element_count,
-    memory_range_element_count_guards, memory_range_element_count_limit,
-    memory_range_extent_guard_spellings, scaled_extent_element_width,
-    stated_loadable_extent_guard_spellings, stated_loadable_extent_guards,
-    stated_separation_extent_bounds, stated_separation_extent_guards,
+    MemoryRangeExtent, element_count_limit_constrains_int32, is_unnamed_footprint_base,
+    memory_range_byte_count, memory_range_byte_count_extent, memory_range_byte_count_guards,
+    memory_range_element_count, memory_range_element_count_guards,
+    memory_range_element_count_limit, memory_range_extent_guard_spellings,
+    scaled_extent_element_width, stated_loadable_extent_guard_spellings,
+    stated_loadable_extent_guards, stated_separation_extent_bounds,
+    stated_separation_extent_guards,
 };
 mod integer;
 pub use integer::{
@@ -2649,6 +2650,12 @@ pub struct CCompositeResourceDefinition {
     /// A definition-level restriction on direct transfer to another thread.
     /// Computed when definitions are installed, including contained families.
     pub(super) thread_confined: bool,
+    /// Whether the owned footprint reaches memory no clause instance names:
+    /// the definition is on a cycle of families, binds an existential witness
+    /// in an instance body, or contains or names a child of such a
+    /// definition. Computed when definitions are installed
+    /// (`owned_footprint_reach`).
+    pub(super) owned_footprint_unnamed: bool,
     /// Whether a body fact mentions an allocation-liveness claim
     /// (`loadable(...)`, directly or through a predicate). A loan of the
     /// composite stabilizes its memory and tokens, not the liveness of

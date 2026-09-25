@@ -893,7 +893,7 @@ fn candidate_memory_ranges_proven_separate(
 fn reserved_effect_support_index(
     range_sources: &[(CMemoryRange, CResourceFact)],
     reserved_ownership_supports: &[(CResourceFact, ResourceOccurrenceId)],
-) -> BTreeMap<CMemoryRange, Option<ResourceOccurrenceId>> {
+) -> BTreeMap<CMemoryRange, Option<BTreeSet<ResourceOccurrenceId>>> {
     let mut by_requirement = BTreeMap::<&CResourceFact, Option<ResourceOccurrenceId>>::new();
     for (fact, support) in reserved_ownership_supports {
         by_requirement
@@ -905,17 +905,24 @@ fn reserved_effect_support_index(
             })
             .or_insert(Some(*support));
     }
-    let mut index = BTreeMap::<CMemoryRange, Option<ResourceOccurrenceId>>::new();
+    // One canonical range may come from several requirements -- the unnamed
+    // footprint comes from every requirement that reaches unnamed memory --
+    // so each range keeps the set of occurrences it was reserved out of, and
+    // loses its provenance when any of them has none.
+    let mut index = BTreeMap::<CMemoryRange, Option<BTreeSet<ResourceOccurrenceId>>>::new();
     for (range, source) in range_sources {
         let support = by_requirement.get(source).copied().flatten();
-        index
+        let entry = index
             .entry(canonical_memory_range(range.clone()))
-            .and_modify(|known| {
-                if *known != support {
-                    *known = None;
+            .or_insert_with(|| Some(BTreeSet::new()));
+        match support {
+            Some(support) => {
+                if let Some(supports) = entry {
+                    supports.insert(support);
                 }
-            })
-            .or_insert(support);
+            }
+            None => *entry = None,
+        }
     }
     index
 }
@@ -929,21 +936,22 @@ fn reserved_effect_support_index(
 /// composite expansion produced) and a view with no owner behind it (an
 /// intrinsic or empty-composite view) carry no provenance, and an effect and
 /// a view from the same occurrence -- a partial borrow of one owner, D8 --
-/// still need the arithmetic proof.
+/// still need the arithmetic proof. An effect reserved out of several
+/// occurrences is disjoint from a view lent from none of them.
 fn effect_is_disjoint_from_view_by_provenance(
-    reserved_effect_supports: &BTreeMap<CMemoryRange, Option<ResourceOccurrenceId>>,
+    reserved_effect_supports: &BTreeMap<CMemoryRange, Option<BTreeSet<ResourceOccurrenceId>>>,
     effect: &CMemoryRange,
     viewed_support: Option<ResourceOccurrenceId>,
 ) -> bool {
     let Some(viewed_support) = viewed_support else {
         return false;
     };
-    let Some(Some(effect_support)) =
+    let Some(Some(effect_supports)) =
         reserved_effect_supports.get(&canonical_memory_range(effect.clone()))
     else {
         return false;
     };
-    *effect_support != viewed_support
+    !effect_supports.is_empty() && !effect_supports.contains(&viewed_support)
 }
 
 fn candidate_memory_ranges_relation(
@@ -5761,21 +5769,20 @@ fn project_explicit_memory_segments(
     Ok(Ok((ranges.into_iter().collect(), evidence_facts)))
 }
 
-/// The canonical owned memory ranges one checked owned fact denotes: the
-/// fact expanded through the composite definitions over `memory`, every
-/// owned range of the expansion in canonical form. This is the one
-/// derivation of a resource-derived write footprint, for a function's frame
-/// and a loop's declared frame alike; nothing lowered from source is a
-/// second source of it. `None` when the expansion is unavailable.
+/// The canonical owned memory ranges one checked owned fact denotes, derived
+/// from its definitions at `state` ([`OwnedFootprintDerivation`]), each once.
+/// This is the one derivation of a resource-derived write footprint, for a
+/// function's frame and a loop's declared frame alike; nothing lowered from
+/// source is a second source of it. Memory it cannot name is
+/// [`CMemoryRange::unnamed_footprint`]; `None` only when a family the fact
+/// reaches has no definition at all.
 pub(super) fn checked_owned_memory_ranges(
     fact: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     state: &CState,
     assumptions: &PureFactContext,
 ) -> Option<Vec<CMemoryRange>> {
-    let mut ranges = Vec::new();
-    collect_checked_owned_memory_ranges(fact, definitions, state, assumptions, 0, &mut ranges)?;
-    Some(ranges)
+    OwnedFootprintDerivation::new(definitions, state, assumptions).derive(fact)
 }
 
 /// What a caller keeps owning across a call whose resource transfer left it
@@ -5960,91 +5967,480 @@ fn unmatched_instance_body_ownership(
     Some((owned_memory_ranges_of(&expanded), premises))
 }
 
-/// How many field-bearing instance layers one footprint derivation opens.
-/// Each layer is one definition's own body.
-const OWNED_FOOTPRINT_INSTANCE_DEPTH: usize = 8;
+/// How much one owned-footprint derivation may visit: one unit per owned
+/// fact, opened body and child. A footprint that needs more is summarized by
+/// [`CMemoryRange::unnamed_footprint`], which is sound for every consumer.
+const OWNED_FOOTPRINT_WORK_LIMIT: usize = 4096;
 
-/// Appends the owned memory `fact` denotes to `ranges`.
+/// The owned memory one held resource denotes, derived from its definitions
+/// rather than by opening it as `unfold` would.
 ///
-/// Composites expand through their definitions; a field-bearing instance is
-/// opened one body layer at its own fields and arguments, exactly as
-/// `unfold` opens it, and its body is walked again; an iterated fact
-/// contributes the span of every element it could hold, whatever its guards
-/// and holes say, since the holder may take any of them. Tokens, including
-/// allocation authority, own no bytes.
+/// A plain range counts as itself and an iterated fact as the span of every
+/// element it could hold, whatever its guards and holes say, since the holder
+/// may take any of them. A composite or instance contributes its definition's
+/// owned clauses with the parameters bound to its arguments -- and an
+/// instance's fields, where they are known -- evaluated at `state`, and its
+/// contained composites and named children the same way, their arguments
+/// evaluated at `state` too: the definition holds there, so the memory its
+/// body owns is the memory the clauses spell there. Tokens own no bytes.
 ///
-/// Before instances and iterated facts were opened here, both contributed
-/// nothing, so a loop binder or callee holding one was summarized as writing
-/// none of its memory, and a transport across the loop or call kept a stale
-/// fact about a cell it wrote
-/// (`mdtests/loop_binder_instance_footprint_includes_its_memory.md`,
-/// `mdtests/call_through_instance_footprint_includes_its_memory.md`).
-/// An instance this layer cannot open -- a matched body whose arm is not
-/// decided, a recursive or witness-bearing body, or a nesting deeper than
-/// [`OWNED_FOOTPRINT_INSTANCE_DEPTH`] -- and a recursive composite the
-/// expansion leaves folded still contribute nothing, so a loop or call that
-/// holds one is still summarized as not writing its memory. That is an open
-/// soundness gap, not a claim that the memory is unwritten; closing it needs
-/// a footprint that is not enumerated from one state.
-fn collect_checked_owned_memory_ranges(
-    fact: &CResourceFact,
-    definitions: &[CCompositeResourceDefinition],
-    state: &CState,
-    assumptions: &PureFactContext,
-    depth: usize,
-    ranges: &mut Vec<CMemoryRange>,
-) -> Option<()> {
-    crate::instrumentation::record_deterministic_work(1);
-    let singleton = ResourceContext::new().unchecked_with_fact(fact.clone());
-    let expanded =
-        expand_all_composite_resource_facts(&singleton, definitions, state.memory(), assumptions)?;
-    for fact in expanded.facts().iter() {
-        if !fact.is_own() {
-            continue;
-        }
-        if let Some(range) = fact.memory_own_range() {
-            ranges.push(canonical_memory_range(range.clone()));
-            continue;
-        }
-        match fact.resource() {
-            CResource::Iterated(iterated) => {
-                ranges.push(canonical_memory_range(iterated.spanning_range()));
-            }
-            CResource::Instance(instance) if depth < OWNED_FOOTPRINT_INSTANCE_DEPTH => {
-                let Ok(index) = definitions
-                    .binary_search_by(|definition| definition.name().cmp(instance.name()))
-                else {
-                    continue;
-                };
-                let scratch = state.clone().with_resource_context(
-                    ResourceContext::new().unchecked_with_fact(fact.clone()),
-                );
-                let Ok(opened) = rewrite_resource_instance_selecting_children(
-                    &scratch,
-                    instance,
-                    &definitions[index],
-                    definitions,
-                    assumptions,
-                    true,
-                    None,
-                ) else {
-                    continue;
-                };
-                for body_fact in opened.state.resources().facts().iter() {
-                    collect_checked_owned_memory_ranges(
-                        body_fact,
-                        definitions,
-                        state,
-                        assumptions,
-                        depth + 1,
-                        ranges,
-                    )?;
-                }
-            }
-            _ => {}
+/// Nothing needs the body to be *openable*. A matched body whose arm is not
+/// decided contributes the union of its arms; an arm clause that needs a
+/// binding the undecided model does not supply, and any clause that does not
+/// evaluate, reaches memory no clause names here. A guarded body whose guard
+/// is not decided is counted as active. A composite's existential witness is
+/// bound as `unfold` binds it: to the recorded origin of its word, or else to
+/// a fresh symbolic pointer no separation rule places. The descent follows
+/// definitions, not unfoldings: a definition that can reach itself, directly
+/// or through the family it contains, or that binds a witness in an instance
+/// body, has no finite set of clause instances, and its footprint is every
+/// block reachable from its pointer arguments through the fields its body
+/// owns. Those blocks are not known, so the footprint is
+/// [`CMemoryRange::unnamed_footprint`]: every cell except the ones a rule that
+/// does not read the footprint keeps (what the caller keeps owning across a
+/// call, what the function keeps owning across a loop). Which definitions
+/// reach unnamed memory is decided once per definition set
+/// ([`CCompositeResourceDefinition::owned_footprint_reaches_unnamed_memory`]),
+/// so a recursive family costs one unit however many nodes are live, and a
+/// finite chain of families costs one visit per layer.
+///
+/// Before this derivation, a footprint was enumerated by opening each held
+/// instance one body layer at `state`, as `unfold` opens it. An instance that
+/// could not be opened there -- one with a named child, a matched body whose
+/// arm was not decided, a recursive or witness-bearing body, a nesting deeper
+/// than eight layers -- and a recursive composite the expansion left folded
+/// contributed nothing, so a loop or call that held one was summarized as
+/// writing none of its memory, and a transport across it kept a fact about a
+/// cell it wrote (`mdtests/call_through_deep_instance_chain_footprint_includes_its_memory.md`
+/// and the other `*_footprint_includes_*` fixtures).
+struct OwnedFootprintDerivation<'a> {
+    definitions: &'a [CCompositeResourceDefinition],
+    state: &'a CState,
+    assumptions: &'a PureFactContext,
+    evaluation_assumptions: PureFactContext,
+    ranges: Vec<CMemoryRange>,
+    reaches_unnamed: bool,
+    undefined_family: bool,
+    work: usize,
+    /// What remains to visit. The descent is a worklist rather than a
+    /// recursion, so a long chain of families costs heap, not stack.
+    pending: Vec<OwnedFootprintTask<'a>>,
+}
+
+/// One pending visit of [`OwnedFootprintDerivation`].
+enum OwnedFootprintTask<'a> {
+    /// An owned fact a body evaluated to, or the held fact itself.
+    Fact(CResourceFact),
+    /// A named child: its definition, its arguments evaluated at the state,
+    /// and whichever of its fields the parent supplies.
+    Instance {
+        definition: &'a CCompositeResourceDefinition,
+        arguments: Vec<AlgebraicValue>,
+        fields: Vec<Option<AlgebraicValue>>,
+    },
+}
+
+impl<'a> OwnedFootprintDerivation<'a> {
+    fn new(
+        definitions: &'a [CCompositeResourceDefinition],
+        state: &'a CState,
+        assumptions: &'a PureFactContext,
+    ) -> Self {
+        Self {
+            definitions,
+            state,
+            assumptions,
+            evaluation_assumptions: assumptions
+                .clone()
+                .allow_symbolic_contract_loads()
+                .prefer_symbolic_external_loads(),
+            ranges: Vec::new(),
+            reaches_unnamed: false,
+            undefined_family: false,
+            work: 0,
+            pending: Vec::new(),
         }
     }
-    Some(())
+
+    /// The footprint of `fact`, owned by the holder. `None` when a family
+    /// it reaches has no definition in the set: the interface is malformed
+    /// and the transition that needs the footprint is refused.
+    fn derive(mut self, fact: &CResourceFact) -> Option<Vec<CMemoryRange>> {
+        self.pending.push(OwnedFootprintTask::Fact(fact.clone()));
+        while let Some(task) = self.pending.pop() {
+            // Past the bound the footprint is unnamed memory, which covers
+            // everything the rest could have named.
+            if !self.charge() {
+                break;
+            }
+            match task {
+                OwnedFootprintTask::Fact(fact) => self.owned_fact(&fact),
+                OwnedFootprintTask::Instance {
+                    definition,
+                    arguments,
+                    fields,
+                } => self.instance(definition, &arguments, &fields),
+            }
+        }
+        if self.undefined_family {
+            return None;
+        }
+        // Arms and children of one body may spell the same clause instance.
+        self.ranges.sort();
+        self.ranges.dedup();
+        // Adjacent members of one body are one physical range, as the
+        // composition that expanded a composite normalized them. Ranges the
+        // union of several arms spells may overlap, and then stay as they
+        // are.
+        let mut ranges = match ResourceContext::new().try_compose_with_facts(
+            self.ranges.iter().cloned().map(CResourceFact::own_memory),
+            self.assumptions,
+        ) {
+            Ok(normalized) => owned_memory_ranges_of(&normalized),
+            Err(_) => self.ranges,
+        };
+        if self.reaches_unnamed {
+            ranges.push(CMemoryRange::unnamed_footprint());
+        }
+        ranges.sort();
+        ranges.dedup();
+        Some(ranges)
+    }
+
+    /// Charges one unit; past the bound the footprint is unnamed.
+    fn charge(&mut self) -> bool {
+        self.work += 1;
+        crate::instrumentation::record_deterministic_work(1);
+        if self.work > OWNED_FOOTPRINT_WORK_LIMIT {
+            self.reaches_unnamed = true;
+            return false;
+        }
+        true
+    }
+
+    fn definition(&self, name: &str) -> Option<&'a CCompositeResourceDefinition> {
+        let definitions = self.definitions;
+        match definitions.binary_search_by(|definition| definition.name().cmp(name)) {
+            Ok(index) => Some(&definitions[index]),
+            // A definition set assembled without sorting is still searched,
+            // once per visited body.
+            Err(_) => definitions
+                .iter()
+                .find(|definition| definition.name() == name),
+        }
+    }
+
+    /// Whether the descent may enter `definition`: otherwise its footprint is
+    /// unnamed memory. A set installed through a contract interface flags
+    /// every definition on a cycle of families; in a set assembled otherwise,
+    /// a cycle through several families is cut by the work bound.
+    fn enters(&mut self, definition: &CCompositeResourceDefinition) -> bool {
+        if definition.owned_footprint_reaches_unnamed_memory() || definition.is_recursive() {
+            self.reaches_unnamed = true;
+            return false;
+        }
+        true
+    }
+
+    fn owned_fact(&mut self, fact: &CResourceFact) {
+        if !fact.is_own() {
+            return;
+        }
+        match fact.resource() {
+            CResource::Memory(range) => self.ranges.push(canonical_memory_range(range.clone())),
+            CResource::Iterated(iterated) => self
+                .ranges
+                .push(canonical_memory_range(iterated.spanning_range())),
+            // A token and a mutex guard own no bytes; a guard's guarded
+            // resources are separate facts that reach here on their own.
+            CResource::Token { .. } | CResource::MutexGuard(_) => {}
+            CResource::Composite { name, arguments } => self.composite(name, arguments),
+            CResource::Instance(instance) => {
+                let Some(definition) = self.definition(instance.name()) else {
+                    self.undefined_family = true;
+                    return;
+                };
+                if definition.instance_schema.as_ref() != Some(instance.schema()) {
+                    self.reaches_unnamed = true;
+                    return;
+                }
+                let fields = instance
+                    .fields()
+                    .iter()
+                    .cloned()
+                    .map(Some)
+                    .collect::<Vec<_>>();
+                self.instance(definition, instance.arguments(), &fields);
+            }
+        }
+    }
+
+    /// The parameters of `definition` bound to `arguments` in `evaluation`.
+    fn bind_parameters(
+        definition: &CCompositeResourceDefinition,
+        arguments: &[AlgebraicValue],
+        evaluation: &mut CState,
+    ) -> bool {
+        if definition.parameters.len() != arguments.len() {
+            return false;
+        }
+        for (parameter, argument) in definition.parameters.iter().zip(arguments) {
+            let Some(value) = argument.as_c_value() else {
+                return false;
+            };
+            if value.c_type() != parameter.c_type() {
+                return false;
+            }
+            evaluation.locals.set_typed(
+                parameter.name().to_owned(),
+                value.clone(),
+                parameter.c_type(),
+            );
+        }
+        true
+    }
+
+    fn composite(&mut self, name: &str, arguments: &[AlgebraicValue]) {
+        let Some(definition) = self.definition(name) else {
+            self.undefined_family = true;
+            return;
+        };
+        if definition.instance_schema.is_some() || definition.matched.is_some() {
+            self.reaches_unnamed = true;
+            return;
+        }
+        if !self.enters(definition) {
+            return;
+        }
+        let mut evaluation = CState::new().with_memory(self.state.memory().clone());
+        if !Self::bind_parameters(definition, arguments, &mut evaluation)
+            || bind_composite_witnesses(definition, arguments, &mut evaluation, self.assumptions)
+                .is_none()
+        {
+            self.reaches_unnamed = true;
+            return;
+        }
+        self.body(definition, evaluation, &definition.contains, &[], &[], None);
+    }
+
+    fn instance(
+        &mut self,
+        definition: &'a CCompositeResourceDefinition,
+        arguments: &[AlgebraicValue],
+        fields: &[Option<AlgebraicValue>],
+    ) {
+        let Some(schema) = definition.instance_schema.as_ref() else {
+            self.reaches_unnamed = true;
+            return;
+        };
+        if schema.fields().len() != fields.len()
+            || !definition.witnesses.is_empty()
+            || !self.enters(definition)
+        {
+            self.reaches_unnamed = true;
+            return;
+        }
+        let mut evaluation = self.state.clone();
+        evaluation.resources = ResourceContext::new();
+        if definition.matched.is_some() {
+            // An arm's C names are lexical parameters and constructor
+            // bindings, never incidental locals of the function holding it.
+            evaluation.locals = CLocalEnvironment::default();
+        }
+        for ((name, _), value) in schema.fields().iter().zip(fields) {
+            if let Some(AlgebraicValue::C(value)) = value {
+                evaluation
+                    .locals
+                    .set_typed(name.clone(), value.clone(), value.c_type());
+            }
+        }
+        if !Self::bind_parameters(definition, arguments, &mut evaluation) {
+            self.reaches_unnamed = true;
+            return;
+        }
+        let Some(matched) = definition.matched.as_ref() else {
+            self.body(
+                definition,
+                evaluation,
+                &definition.contains,
+                &definition.children,
+                fields,
+                None,
+            );
+            return;
+        };
+        for (arm, constructor) in self.footprint_arms(definition, matched, arguments, fields) {
+            let mut arm_evaluation = evaluation.clone();
+            if let Some(constructor) = &constructor {
+                for ((name, binding_type), value) in
+                    arm.bindings.iter().zip(&arm.binding_types).zip(constructor)
+                {
+                    if let (AlgebraicValueType::C(_), AlgebraicValue::C(value)) =
+                        (binding_type, value)
+                    {
+                        let spelled = arm_binding_program_spelling(value, self.assumptions)
+                            .unwrap_or_else(|| value.clone());
+                        arm_evaluation
+                            .locals
+                            .set_typed(name.clone(), spelled, value.c_type());
+                    }
+                }
+            }
+            self.body(
+                definition,
+                arm_evaluation,
+                &arm.contains,
+                &arm.children,
+                fields,
+                constructor.as_deref(),
+            );
+        }
+    }
+
+    /// The arms a matched body may be in: the one its model's constructor
+    /// names, with that constructor's fields, when the model or the premises
+    /// decide it, and otherwise every arm, with no bindings.
+    fn footprint_arms(
+        &self,
+        definition: &'a CCompositeResourceDefinition,
+        matched: &'a CResourceMatchBody,
+        arguments: &[AlgebraicValue],
+        fields: &[Option<AlgebraicValue>],
+    ) -> Vec<(&'a CResourceMatchArm, Option<Vec<AlgebraicValue>>)> {
+        let constructor_arm = |variant: &str, fields: &[AlgebraicValue]| {
+            matched
+                .arms
+                .iter()
+                .find(|arm| arm.variant == variant)
+                .map(|arm| vec![(arm, Some(fields.to_vec()))])
+        };
+        if let Some(Some(AlgebraicValue::Algebraic(model))) = fields.get(matched.field_index)
+            && let AlgebraicTermNode::Constructor { variant, fields } = &model.node
+            && let Some(arms) = constructor_arm(variant, fields)
+        {
+            return arms;
+        }
+        if let (Some(schema), Some(fields)) = (
+            definition.instance_schema.as_ref(),
+            fields.iter().cloned().collect::<Option<Vec<_>>>(),
+        ) && let Some(instance) = ResourceInstance::new(
+            Variable(u64::MAX),
+            definition.name().to_string(),
+            arguments.iter().cloned().collect(),
+            schema.clone(),
+            fields.into_iter().collect(),
+        ) {
+            let refutations =
+                instance_arm_model_facts(&instance, self.definitions, self.state, self.assumptions);
+            let selection = refutations.into_iter().fold(
+                self.assumptions.clone(),
+                PureFactContext::assume_proposition,
+            );
+            if let Ok((arm, constructor)) =
+                selected_instance_match_arm(&instance, definition, self.definitions, &selection)
+                && let AlgebraicTermNode::Constructor { fields, .. } = constructor.node
+            {
+                return vec![(arm, Some(fields))];
+            }
+        }
+        matched.arms.iter().map(|arm| (arm, None)).collect()
+    }
+
+    /// One body: its guard, its owned clauses, and its named children, whose
+    /// footprints are queued.
+    fn body(
+        &mut self,
+        definition: &'a CCompositeResourceDefinition,
+        mut evaluation: CState,
+        contains: &'a [CResourceSpec],
+        children: &'a [CResourceChildSpec],
+        fields: &[Option<AlgebraicValue>],
+        constructor: Option<&[AlgebraicValue]>,
+    ) {
+        let mut budget = ExecutionBudget::beside_live_state();
+        // An undecided guard counts the body as active: the footprint is an
+        // upper bound, and a body that is not active owns nothing extra.
+        if evaluate_composite_resource_body_condition(
+            definition,
+            &evaluation,
+            &self.evaluation_assumptions,
+            &mut budget,
+        ) == Some(false)
+        {
+            return;
+        }
+        for spec in contains {
+            let Ok(Ok(fact)) = evaluate_function_resource_spec(
+                &evaluation,
+                spec,
+                &self.evaluation_assumptions,
+                &mut budget,
+            ) else {
+                self.reaches_unnamed = true;
+                continue;
+            };
+            evaluation.resources = evaluation
+                .resources
+                .clone()
+                .unchecked_with_fact(fact.clone());
+            if fact.is_own() {
+                self.pending.push(OwnedFootprintTask::Fact(fact));
+            }
+        }
+        for child in children {
+            let Some(child_definition) = self.definition(&child.resource) else {
+                self.undefined_family = true;
+                continue;
+            };
+            let arguments = child
+                .arguments
+                .iter()
+                .zip(&child_definition.parameters)
+                .map(|(argument, parameter)| {
+                    let Ok(paths) = evaluate_c_expression_paths(
+                        &evaluation,
+                        argument,
+                        &self.evaluation_assumptions,
+                        &mut budget,
+                    ) else {
+                        return None;
+                    };
+                    // The body holds wherever the resource is held, so the
+                    // argument reads the cells the body owns there.
+                    let [path] = paths.as_slice() else {
+                        return None;
+                    };
+                    let CExpressionOutcome::Value(value) = &path.outcome else {
+                        return None;
+                    };
+                    coerce_c_function_argument_without_obligations(value, parameter)
+                        .map(AlgebraicValue::C)
+                })
+                .collect::<Option<Vec<_>>>();
+            let Some(arguments) = arguments.filter(|arguments| {
+                arguments.len() == child.arguments.len()
+                    && arguments.len() == child_definition.parameters.len()
+            }) else {
+                self.reaches_unnamed = true;
+                continue;
+            };
+            let fields = child
+                .field_bindings
+                .iter()
+                .map(|source| match source {
+                    CResourceChildField::Constructor(index) => {
+                        constructor.and_then(|fields| fields.get(*index).cloned())
+                    }
+                    CResourceChildField::Parent(index) => fields.get(*index).cloned().flatten(),
+                })
+                .collect::<Vec<_>>();
+            self.pending.push(OwnedFootprintTask::Instance {
+                definition: child_definition,
+                arguments,
+                fields,
+            });
+        }
+    }
 }
 
 pub(crate) fn project_contract_memory_effects_with_guard_policy(
@@ -6992,6 +7388,23 @@ fn mutable_footprint_is_compatible_for_interfaces(
     // the proof-sensitive endpoint check. This avoids comparing every
     // implementation range with every unrelated target range while retaining
     // the shallow alias fallback for symbolic blocks.
+    // An unnamed footprint may write any memory: a target that allows one
+    // allows every implementation write, and an implementation that needs
+    // one is allowed only by a target that allows one too.
+    if contract_projection
+        .ranges()
+        .iter()
+        .any(CMemoryRange::is_unnamed_footprint)
+    {
+        return Ok(true);
+    }
+    if function_projection
+        .ranges()
+        .iter()
+        .any(CMemoryRange::is_unnamed_footprint)
+    {
+        return Ok(false);
+    }
     let mut available_by_family: BTreeMap<(PointerBlock, u32), Vec<&CMemoryRange>> =
         BTreeMap::new();
     for available in contract_projection.ranges() {
