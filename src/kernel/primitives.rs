@@ -14,6 +14,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
 
 pub(crate) const SAME_OBJECT_PREDICATE_NAME: &str = "__click_same_object";
+pub(crate) const MUTEX_HELD_PREDICATE_NAME: &str = "__click_mutex_held";
 
 mod contracts;
 pub(crate) use contracts::{

@@ -8146,6 +8146,20 @@ impl Parser {
             self.check_unary_nesting_limit(depth)?;
             self.position += 1;
             let expression = self.parse_contract_unary_at_depth(depth + 1)?;
+            if let ContractExpression::Field {
+                base, offset_bytes, ..
+            } = &expression
+            {
+                let Some(base) = contract_expression_as_c_fragment(base) else {
+                    return Err(self.error("address-of field requires a current C pointer base"));
+                };
+                return Ok(ContractExpression::CFragment(
+                    CExpression::PointerOffsetBytes {
+                        pointer: Box::new(base),
+                        bytes: *offset_bytes,
+                    },
+                ));
+            }
             let Some(expression) = contract_expression_as_c_fragment(&expression) else {
                 return Err(self.error("address-of is only supported on current C expressions"));
             };

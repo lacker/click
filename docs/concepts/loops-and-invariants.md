@@ -9,6 +9,14 @@ A loop invariant is a fact that must hold:
 - at the start of every iteration,
 - and after one iteration preserves it.
 
+Under the modeled pthread runtime, `held(&object->mu)` states that the current
+execution path owns that mutex's guard. It is checked from the mutex state, so
+a proof can use it in `have` and in an invariant. A loop back edge must also
+restore the mutex ownership with which that loop head began; an invariant
+alone cannot discard a newly acquired guard. The current loop head represents
+one concrete mutex status, so a loop whose head alternates between held and
+unheld still needs a conditional mutex-state abstraction.
+
 These checks prove that every finite iteration prefix is safe and that the
 invariant is available if the loop exits. They say nothing about whether the
 loop exits, so a summarized loop also declares why it ends: every `loop`

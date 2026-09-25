@@ -5442,6 +5442,39 @@ fn lower_spec_predicate_proposition_at_state_in(
     algebraic_bindings: &BTreeMap<String, AlgebraicTerm>,
     budget: &mut SpecEvaluation<'_>,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    if name == MUTEX_HELD_PREDICATE_NAME {
+        let [SpecPredicateArgument::Value(mutex)] = arguments else {
+            return Ok(vec![invalid_mutex_held_path(Vec::new(), Vec::new())]);
+        };
+        let paths = evaluate_spec_expression_paths_with_algebraic_bindings_in(
+            state,
+            mutex,
+            loop_entry_state,
+            assumptions,
+            algebraic_bindings,
+            budget,
+        )?;
+        return Ok(paths
+            .into_iter()
+            .map(|path| {
+                let CValue::Pointer(mutex) = path.value else {
+                    return invalid_mutex_held_path(path.facts, path.obligations);
+                };
+                let held = state
+                    .mutex_ledger
+                    .as_ref()
+                    .map_or(ConditionTerm::Constant(false), |ledger| {
+                        ledger.held_condition(mutex.pointer())
+                    });
+                SpecPropositionPath {
+                    introductions: Vec::new(),
+                    proposition: Proposition::ConditionIs(held, true),
+                    facts: path.facts,
+                    obligations: path.obligations,
+                }
+            })
+            .collect());
+    }
     // A function-contract fact describes the behavior of its pointer value;
     // it is independent of the caller's current resource-population snapshot.
     // Keeping the uniform predicate state argument canonical lets a closed
@@ -5543,6 +5576,23 @@ fn lower_spec_predicate_proposition_at_state_in(
         }
     }
     Ok(paths)
+}
+
+fn invalid_mutex_held_path(
+    facts: Vec<ExecutionPureFact>,
+    mut obligations: Vec<ProofObligation>,
+) -> SpecPropositionPath {
+    let refusal = super::loops::false_equals_true_proposition();
+    obligations.push(
+        ProofObligation::verification_condition(refusal.clone())
+            .with_context("held expects one mutex pointer"),
+    );
+    SpecPropositionPath {
+        introductions: Vec::new(),
+        proposition: refusal,
+        facts,
+        obligations,
+    }
 }
 
 /// Evaluates one specification expression with explicit algebraic bindings

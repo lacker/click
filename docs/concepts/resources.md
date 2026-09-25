@@ -568,10 +568,12 @@ unit places no hold. Lending a unit of a bodyless token population leaves the
 remaining units usable.
 
 A resource body may place `guarded_by object->mutex;` after any field
-declarations to identify the C mutex intended to guard the whole body. This
-spelling is reserved while the checked mutex protocol is being implemented:
-verification refuses the declaration rather than treating it as an ordinary
-resource or assuming that an unmodeled lock protects its facts.
+declarations to identify the C mutex intended to guard the whole body. The
+modeled pthread runtime accepts this for an exclusive, unmatched resource:
+initialization escrows a folded instance, locking transfers it to the current
+execution path, and unlocking requires it folded again. In an execution proof,
+`held(&object->mutex)` states whether that path owns the lock guard; it does
+not by itself grant the protected resource.
 
 A contract clause speaks about parameters, so `consumes t: tree_at(root);`
 names the tree at the entry argument. These tactics are not contract clauses:

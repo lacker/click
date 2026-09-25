@@ -3040,6 +3040,20 @@ impl AnnotationLowerer<'_> {
     ) -> Result<SpecProposition, String> {
         match proposition {
             ClickProposition::PredicateCall { name, arguments } => {
+                if name == "held" {
+                    let [mutex] = arguments.as_slice() else {
+                        return Err(format!(
+                            "held expects one mutex pointer, got {}",
+                            arguments.len()
+                        ));
+                    };
+                    return Ok(SpecProposition::Predicate {
+                        name: crate::kernel::MUTEX_HELD_PREDICATE_NAME.to_string(),
+                        arguments: vec![SpecPredicateArgument::Value(
+                            self.lower_contract_expression_to_spec(mutex, environment)?,
+                        )],
+                    });
+                }
                 if name == "same_object" {
                     let [left, right] = arguments.as_slice() else {
                         return Err(format!(

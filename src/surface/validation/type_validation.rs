@@ -208,6 +208,22 @@ fn validate_proposition_expression_types_one(
             validate_proposition_expression_types(body, &body_variables, click_functions, context)
         }
         ClickProposition::PredicateCall { name, arguments } => {
+            if name == "held" {
+                let [mutex] = arguments.as_slice() else {
+                    return Err(ClickError::new(format!(
+                        "held expects one mutex pointer in {context}, got {}",
+                        arguments.len()
+                    )));
+                };
+                let actual =
+                    infer_contract_expression_type(mutex, variables, click_functions, context)?;
+                if !actual.is_some_and(C0Type::is_object_pointer) {
+                    return Err(ClickError::new(format!(
+                        "held expects a mutex pointer in {context}"
+                    )));
+                }
+                return Ok(());
+            }
             if name == "same_object" {
                 let [left, right] = arguments.as_slice() else {
                     return Err(ClickError::new(format!(
@@ -3255,6 +3271,15 @@ fn validate_predicate_calls_in_proposition_one(
             validate_predicate_calls_in_proposition(body, predicates, click_functions, context)
         }
         ClickProposition::PredicateCall { name, arguments } => {
+            if name == "held" {
+                if arguments.len() != 1 {
+                    return Err(ClickError::new(format!(
+                        "held expects one mutex pointer in {context}, got {}",
+                        arguments.len()
+                    )));
+                }
+                return validate_contract_expression_calls(&arguments[0], click_functions, context);
+            }
             if name == "same_object" {
                 if arguments.len() != 2 {
                     return Err(ClickError::new(format!(

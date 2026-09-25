@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::persistent::PersistentMap;
 
-use super::{CResource, CResourceFact, CState, Pointer, PureFactContext};
+use super::{CResource, CResourceFact, CState, ConditionTerm, Pointer, PureFactContext};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum MutexTransitionError {
@@ -48,6 +48,10 @@ struct MutexLedgerStorage {
     entries: PersistentMap<Pointer, MutexEntry>,
     locked_count: usize,
     return_obligation_count: usize,
+    /// A loop join need only revisit mutexes changed since its head. Keeping
+    /// this path avoids scanning unrelated mutexes on every back edge.
+    predecessor: Option<Arc<MutexLedgerStorage>>,
+    changed_mutex: Option<Pointer>,
 }
 
 /// An acquisition identity. The private fields cannot be synthesized from a
@@ -312,12 +316,18 @@ impl MutexLedger {
                 entries: PersistentMap::default(),
                 locked_count: 0,
                 return_obligation_count: 0,
+                predecessor: None,
+                changed_mutex: None,
             }),
         }
     }
 
     fn get(&self, mutex: &Pointer) -> Option<&MutexEntry> {
         self.storage.entries.get(mutex)
+    }
+
+    pub(super) fn held_condition(&self, mutex: &Pointer) -> ConditionTerm {
+        ConditionTerm::Constant(matches!(self.get(mutex), Some(MutexEntry::Locked { .. })))
     }
 
     fn with_inserted(&self, mutex: Pointer, entry: MutexEntry) -> Self {
@@ -330,12 +340,14 @@ impl MutexLedger {
         Self {
             storage: Arc::new(MutexLedgerStorage {
                 identity: Self::fresh_identity(),
-                entries: self.storage.entries.with_inserted(mutex, entry),
+                entries: self.storage.entries.with_inserted(mutex.clone(), entry),
                 locked_count: self.storage.locked_count + usize::from(now_locked)
                     - usize::from(was_locked),
                 return_obligation_count: self.storage.return_obligation_count
                     + usize::from(has_return_obligation)
                     - usize::from(had_return_obligation),
+                predecessor: Some(self.storage.clone()),
+                changed_mutex: Some(mutex.clone()),
             }),
         }
     }
@@ -352,6 +364,8 @@ impl MutexLedger {
                 locked_count: self.storage.locked_count - usize::from(was_locked),
                 return_obligation_count: self.storage.return_obligation_count
                     - usize::from(had_return_obligation),
+                predecessor: Some(self.storage.clone()),
+                changed_mutex: Some(mutex.clone()),
             }),
         }
     }
@@ -367,6 +381,48 @@ impl MutexLedger {
     /// An unlocked empty mutex has no resource or guard to discharge at return.
     pub(super) fn has_return_obligation(&self) -> bool {
         self.storage.return_obligation_count != 0
+    }
+
+    /// Compare the protocol state after a loop body with its loop head. A
+    /// state from another lineage is rejected.
+    pub(super) fn same_protocol_state_since(&self, next: &Self) -> bool {
+        if self.storage.identity == next.storage.identity {
+            return true;
+        }
+        if self.storage.entries.len() != next.storage.entries.len()
+            || self.storage.locked_count != next.storage.locked_count
+            || self.storage.return_obligation_count != next.storage.return_obligation_count
+        {
+            return false;
+        }
+        let mut changed = std::collections::BTreeSet::new();
+        let mut cursor = next.storage.as_ref();
+        while cursor.identity != self.storage.identity {
+            let (Some(previous), Some(mutex)) = (&cursor.predecessor, &cursor.changed_mutex) else {
+                return false;
+            };
+            changed.insert(mutex);
+            cursor = previous.as_ref();
+        }
+        changed
+            .into_iter()
+            .all(|mutex| match (self.get(mutex), next.get(mutex)) {
+                (Some(MutexEntry::Unlocked(left)), Some(MutexEntry::Unlocked(right))) => {
+                    left == right
+                }
+                (
+                    Some(MutexEntry::Locked {
+                        invariant: left,
+                        epoch: left_epoch,
+                    }),
+                    Some(MutexEntry::Locked {
+                        invariant: right,
+                        epoch: right_epoch,
+                    }),
+                ) => left == right && left_epoch == right_epoch,
+                (None, None) => true,
+                _ => false,
+            })
     }
 }
 
@@ -482,6 +538,59 @@ mod tests {
         assert!(unlocked.state().resources.facts().is_empty());
         let destroyed = unlocked.destroy(&mutex, &assumptions).unwrap();
         assert!(destroyed.state().mutex_ledger.is_none());
+    }
+
+    #[test]
+    fn loop_back_edge_checks_mutex_ownership_and_accepts_a_balanced_exchange() {
+        let assumptions = PureFactContext::new();
+        let mutex = mutex(0);
+        let head = MutexContext::new(CState::new())
+            .initialize_empty(mutex.clone())
+            .unwrap();
+        let held = head.acquire_current(&mutex, &assumptions).unwrap();
+        let mismatch = crate::kernel::c_loop_state_components_match_at_back_edge(
+            head.state(),
+            held.state(),
+            &assumptions,
+            &[],
+        )
+        .unwrap_err();
+        assert!(mismatch.contains("mutex ownership"), "{mismatch}");
+
+        let released = held.release_current(&mutex, &assumptions).unwrap();
+        crate::kernel::c_loop_state_components_match_at_back_edge(
+            head.state(),
+            released.state(),
+            &assumptions,
+            &[],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn loop_mutex_join_work_tracks_changed_keys_not_unrelated_mutexes() {
+        let assumptions = PureFactContext::new();
+        let mut work = Vec::new();
+        for size in [32, 128, 512] {
+            let mut head = MutexContext::new(CState::new());
+            for index in 0..size {
+                head = head.initialize_empty(mutex(index)).unwrap();
+            }
+            let selected = mutex(size / 2);
+            let held = head.acquire_current(&selected, &assumptions).unwrap();
+            let released = held.release_current(&selected, &assumptions).unwrap();
+            let (equal, units) = crate::persistent::measure_persistent_work(|| {
+                head.state()
+                    .mutex_ledger
+                    .as_ref()
+                    .unwrap()
+                    .same_protocol_state_since(released.state().mutex_ledger.as_ref().unwrap())
+            });
+            assert!(equal);
+            work.push(units);
+        }
+        assert!(work[1] <= work[0] + 8, "{work:?}");
+        assert!(work[2] <= work[1] + 8, "{work:?}");
     }
     use crate::kernel::{
         CType, PointerOffsetTerm, ResourceContext, ResourceFieldSchema, ResourceFieldType,

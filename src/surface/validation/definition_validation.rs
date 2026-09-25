@@ -10,12 +10,24 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
 
     let mut predicates = BTreeMap::new();
     for definition in &predicate_definitions {
+        reject_held_outside_execution(
+            definition.body(),
+            &format!("predicate `{}`", definition.name()),
+        )?;
         if matches!(
             definition.name(),
             "same_object" | crate::kernel::SAME_OBJECT_PREDICATE_NAME
         ) {
             return Err(ClickError::new(
                 "`same_object` is a built-in proposition and cannot be redefined",
+            ));
+        }
+        if matches!(
+            definition.name(),
+            "held" | crate::kernel::MUTEX_HELD_PREDICATE_NAME
+        ) {
+            return Err(ClickError::new(
+                "`held` is a built-in proposition and cannot be redefined",
             ));
         }
         generics::validate_type_parameter_list(
@@ -44,6 +56,14 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                 "`same_object` is a built-in proposition and cannot be redefined",
             ));
         }
+        if matches!(
+            definition.name(),
+            "held" | crate::kernel::MUTEX_HELD_PREDICATE_NAME
+        ) {
+            return Err(ClickError::new(
+                "`held` is a built-in proposition and cannot be redefined",
+            ));
+        }
         if predicates.contains_key(definition.name()) {
             return Err(ClickError::new(format!(
                 "`{}` is defined as both a predicate and a contract",
@@ -65,6 +85,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
     }
     let mut proposition_calls = predicates.clone();
     proposition_calls.insert("same_object".to_string(), 2);
+    proposition_calls.insert("held".to_string(), 1);
     proposition_calls.extend(contracts.keys().map(|name| (name.clone(), 1)));
 
     let mut click_functions = BTreeMap::new();
@@ -441,6 +462,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
             }
             if let Some(proposition) = requirement.proposition() {
                 let context = format!("requires clause in `{}`", function.signature().name());
+                reject_held_outside_execution(proposition, &context)?;
                 validate_predicate_calls_in_proposition(
                     proposition,
                     &proposition_calls,
@@ -493,6 +515,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
             match ensure.ensure() {
                 Ensure::Proposition(proposition) => {
                     let context = format!("ensures clause in `{}`", function.signature().name());
+                    reject_held_outside_execution(proposition, &context)?;
                     validate_predicate_calls_in_proposition(
                         proposition,
                         &proposition_calls,
@@ -591,6 +614,22 @@ fn validate_contract_applications_in_proposition_one(
 ) -> Result<(), ClickError> {
     match proposition {
         ClickProposition::PredicateCall { name, arguments } => {
+            if name == "held" {
+                let [mutex] = arguments.as_slice() else {
+                    return Err(ClickError::new(format!(
+                        "held expects one mutex pointer in {context}, got {}",
+                        arguments.len()
+                    )));
+                };
+                let actual =
+                    infer_contract_expression_type(mutex, variables, click_functions, context)?;
+                if !actual.is_some_and(C0Type::is_object_pointer) {
+                    return Err(ClickError::new(format!(
+                        "held expects a mutex pointer in {context}"
+                    )));
+                }
+                return Ok(());
+            }
             if name == "same_object" {
                 let [left, right] = arguments.as_slice() else {
                     return Err(ClickError::new(format!(
@@ -751,6 +790,38 @@ pub(in crate::surface) fn theorem_resource_conclusion_refusal(theorem_name: &str
     )
 }
 
+fn reject_held_outside_execution(
+    proposition: &ClickProposition,
+    context: &str,
+) -> Result<(), ClickError> {
+    let mut pending = vec![proposition];
+    while let Some(current) = pending.pop() {
+        match current {
+            ClickProposition::PredicateCall { name, .. } if name == "held" => {
+                return Err(ClickError::new(format!(
+                    "`held` describes the current execution path and cannot appear in {context}"
+                )));
+            }
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            ClickProposition::Not(body)
+            | ClickProposition::At {
+                proposition: body, ..
+            }
+            | ClickProposition::ForAll { body, .. }
+            | ClickProposition::Exists { body, .. }
+            | ClickProposition::RangeAll { body, .. }
+            | ClickProposition::RangeAny { body, .. } => pending.push(body),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn validate_theorem_definition(
     theorem: &TheoremDefinition,
     predicates: &BTreeMap<String, usize>,
@@ -782,6 +853,10 @@ fn validate_theorem_definition(
             )));
         };
         let proposition = &proposition;
+        reject_held_outside_execution(
+            proposition,
+            &format!("requires clause in theorem `{}`", theorem.name()),
+        )?;
         validate_predicate_calls_in_proposition(
             proposition,
             predicates,
@@ -815,6 +890,10 @@ fn validate_theorem_definition(
                 theorem.name(),
             )));
         };
+        reject_held_outside_execution(
+            proposition,
+            &format!("ensures clause in theorem `{}`", theorem.name()),
+        )?;
         validate_predicate_calls_in_proposition(
             proposition,
             predicates,
@@ -1032,6 +1111,7 @@ fn validate_resource_definition<'a>(
     }
     let mut prior_facts = Vec::new();
     for fact in composite_body.facts() {
+        reject_held_outside_execution(fact, &format!("resource `{}` fact", definition.name()))?;
         if proposition_contains_old_expression(fact) {
             return Err(ClickError::new(format!(
                 "`old(...)` is not available inside resource `{}` fact",
