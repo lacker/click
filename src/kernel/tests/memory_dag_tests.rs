@@ -2607,3 +2607,54 @@ fn a_retirement_inside_its_calls_havoc_names_cells_at_the_call() {
         Some(intern_c_memory_ref(&separated))
     );
 }
+
+/// A constant established only through a load equality across a call: the
+/// caller pinned a cell before a call that havocs a disjoint range, and no
+/// fact relates the two snapshots' loads. Constant normalization must still
+/// find the constant by proving the loads equal from the memory history --
+/// for the post-call load itself, and for a term an equality fact connects
+/// to it, whose class has no constant of its own.
+#[test]
+fn constant_normalization_bridges_a_load_across_a_call() {
+    let base = CMemory::new().with_block("arg-memory", 16);
+    let read = arc_pointer(0);
+    let load_in = |memory: &CMemory| {
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(memory),
+            Box::new(read.clone()),
+        )
+    };
+    let after_call = base.clone().with_call_memory_havoc(
+        Variable(930_101),
+        &[memory_range(arc_pointer(8), 0, 8)],
+        &PureFactContext::new(),
+        None,
+    );
+    let copy = Bitvector32Term::Variable(Variable(930_102));
+    let assumptions = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::equal(load_in(&base), Bitvector32Term::Constant(5)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::equal(copy.clone(), load_in(&after_call)),
+            true,
+        );
+
+    assert_eq!(
+        assumptions.known_signed_constant_after_normalization(&load_in(&after_call)),
+        Some(5),
+        "the post-call load is proved equal to the pinned pre-call load"
+    );
+    assert_eq!(
+        assumptions.known_signed_constant_after_normalization(&copy),
+        Some(5),
+        "a term equal to the post-call load reaches the constant through it"
+    );
+    assert_eq!(
+        assumptions
+            .known_signed_constant_after_normalization(&Bitvector32Term::add(copy, 1u32.into())),
+        Some(6),
+        "an unrecorded sum folds from its bridged operand"
+    );
+}

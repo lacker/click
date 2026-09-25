@@ -350,6 +350,23 @@ the five queries of `condition_fact_queries_ignore_unrelated_facts`
 (`src/kernel/tests/memory_scaling_tests.rs`) examine 3 facts in all; they
 examined 265 to 2,057 before.
 
+A term's constant after equality normalization is a lookup in
+`ConstantClasses` (`src/kernel/assumptions/constant_classes.rs`), which the
+fact context maintains on every true 32-bit equality it files. Each class
+carries the merge of its members' folded constants as `Known(c)`,
+`Ambiguous`, or `Unknown`; a union merges two classes' constants, so two
+different constants in one class are still ambiguous, and a class whose
+constant rises re-folds only the compound terms that use one of its members.
+A constant only rises, so each registered term is re-folded a bounded number
+of times along one path. A query no longer walks the facts connected to the
+term: before, a counter advanced by `N` calls re-walked its whole chain at
+every call, deep-comparing every same-address load at another snapshot, so
+the `N`th call cost `O(N^2)`. Only an `Unknown` class does query-time work:
+its conditional members are decided, and its loads are compared with the
+loads of settled classes at the same memory-blind address. The regression
+is `counter_call_chain_ensure_lowering_stays_flat_per_call`
+(`src/surface/tests/scaling_tests.rs`).
+
 Condition premise search tries single candidates, then candidate pairs that
 some derivation could connect: two facts sharing a bitvector variable
 (collected through load pointers and memories, so snapshot forms still

@@ -1765,253 +1765,103 @@ impl PureFactContext {
         &self,
         term: &Bitvector32Term,
     ) -> Option<i64> {
-        match self.signed_constant_after_equality_normalization_inner(
-            term,
-            &mut BTreeSet::new(),
-            &mut BTreeMap::new(),
-        ) {
+        match self.constant_class_resolution(term, &mut BTreeSet::new()) {
             SignedConstantResolution::Known(value) => Some(value),
             SignedConstantResolution::Unknown | SignedConstantResolution::Ambiguous => None,
         }
     }
 
-    /// One walk resolves each term once: `resolved` holds the terms the
-    /// walk has finished, `resolving` the terms in progress. A term reached
-    /// again while in progress is a cycle through the equality facts and
-    /// resolves to nothing on that path. The walk's work is therefore the
-    /// number of distinct terms the facts connect to the query, each scanned
-    /// once, with no node budget.
-    fn signed_constant_after_equality_normalization_inner(
+    /// A term's constant after equality normalization, read from the
+    /// constant classes (`ConstantClasses`). A settled class answers by
+    /// lookup. An `Unknown` class additionally decides its conditional
+    /// members under this context and compares its loads with the loads of
+    /// settled classes at the same address, the equalities memory reasoning
+    /// proves without a fact. A term no fact mentions folds from its
+    /// operands, and a load among them is compared in the same way.
+    fn constant_class_resolution(
         &self,
         term: &Bitvector32Term,
-        resolving: &mut BTreeSet<Bitvector32Term>,
-        resolved: &mut BTreeMap<Bitvector32Term, SignedConstantResolution>,
+        visiting: &mut BTreeSet<u64>,
     ) -> SignedConstantResolution {
-        if let Some(done) = resolved.get(term) {
-            return *done;
-        }
+        crate::instrumentation::record_deterministic_work(1);
         if let Some(value) = signed_bitvector_constant(term) {
             return SignedConstantResolution::Known(value);
         }
-        // Subterms recur across fact paths within one walk; a memoized Known
-        // is fact evidence and stays valid however the search was pruned, so
-        // it may be reused at any depth (Unknown under an active `resolving`
-        // cycle cut is path-dependent and is only cached by the outer entry
-        // point).
-        let memo_id = ambient_assumptions_memo_id(self);
-        if let Some(memo_id) = memo_id
-            && let Some(Some(known)) = CONSTANT_NORMALIZATION_MEMO
-                .with(|memo| memo.borrow().get(&(memo_id, term.clone())).copied())
-        {
-            return SignedConstantResolution::Known(known);
+        let classes = &self.constant_classes;
+        if let Some(id) = classes.class_id(term) {
+            let constant = classes.constant_of_class(id);
+            if constant != SignedConstantResolution::Unknown || !visiting.insert(id) {
+                return constant;
+            }
+            let mut result = SignedConstantResolution::Unknown;
+            for conditional in classes.conditional_members(id) {
+                result = result.merge(self.conditional_constant_resolution(&conditional, visiting));
+            }
+            for (member, candidate, candidate_class) in classes.bridgeable_loads(id) {
+                if self.loads_bridge(&member, &candidate) {
+                    result = result.merge(classes.constant_of_class(candidate_class));
+                }
+            }
+            visiting.remove(&id);
+            return result;
         }
-        if !resolving.insert(term.clone()) {
-            return SignedConstantResolution::Unknown;
-        }
-
         let mut result = match term {
-            Bitvector32Term::Add(left, right) => self.signed_binary_constant_known_equal(
-                left,
-                right,
-                resolving,
-                resolved,
-                Bitvector32Term::add,
-            ),
-            Bitvector32Term::Subtract(left, right) => self.signed_binary_constant_known_equal(
-                left,
-                right,
-                resolving,
-                resolved,
-                Bitvector32Term::subtract,
-            ),
-            Bitvector32Term::Multiply(left, right) => self.signed_binary_constant_known_equal(
-                left,
-                right,
-                resolving,
-                resolved,
-                Bitvector32Term::multiply,
-            ),
-            Bitvector32Term::Divide(left, right) => self.signed_binary_constant_known_equal(
-                left,
-                right,
-                resolving,
-                resolved,
-                Bitvector32Term::divide,
-            ),
-            Bitvector32Term::UnsignedDivide(left, right) => self
-                .signed_binary_constant_known_equal(
-                    left,
-                    right,
-                    resolving,
-                    resolved,
-                    Bitvector32Term::unsigned_divide,
-                ),
-            Bitvector32Term::Remainder(left, right) => self.signed_binary_constant_known_equal(
-                left,
-                right,
-                resolving,
-                resolved,
-                Bitvector32Term::remainder,
-            ),
-            Bitvector32Term::UnsignedRemainder(left, right) => self
-                .signed_binary_constant_known_equal(
-                    left,
-                    right,
-                    resolving,
-                    resolved,
-                    Bitvector32Term::unsigned_remainder,
-                ),
-            Bitvector32Term::ShiftLeft(left, right) => self.signed_binary_constant_known_equal(
-                left,
-                right,
-                resolving,
-                resolved,
-                Bitvector32Term::shift_left,
-            ),
-            Bitvector32Term::ArithmeticShiftRight(left, right) => self
-                .signed_binary_constant_known_equal(
-                    left,
-                    right,
-                    resolving,
-                    resolved,
-                    Bitvector32Term::arithmetic_shift_right,
-                ),
-            Bitvector32Term::LogicalShiftRight(left, right) => self
-                .signed_binary_constant_known_equal(
-                    left,
-                    right,
-                    resolving,
-                    resolved,
-                    Bitvector32Term::logical_shift_right,
-                ),
-            Bitvector32Term::BitwiseAnd(left, right) => self.signed_binary_constant_known_equal(
-                left,
-                right,
-                resolving,
-                resolved,
-                Bitvector32Term::bitwise_and,
-            ),
-            Bitvector32Term::BitwiseOr(left, right) => self.signed_binary_constant_known_equal(
-                left,
-                right,
-                resolving,
-                resolved,
-                Bitvector32Term::bitwise_or,
-            ),
-            Bitvector32Term::BitwiseXor(left, right) => self.signed_binary_constant_known_equal(
-                left,
-                right,
-                resolving,
-                resolved,
-                Bitvector32Term::bitwise_xor,
-            ),
-            Bitvector32Term::BitwiseNot(value) => self
-                .signed_constant_after_equality_normalization_inner(value, resolving, resolved)
-                .map(|value| {
-                    Bitvector32Term::bitwise_not(Bitvector32Term::Constant(value as i32 as u32))
-                }),
-            Bitvector32Term::If {
-                condition,
-                then_term,
-                else_term,
-            } => match self.decide(condition) {
-                Some(condition) => self.signed_constant_after_equality_normalization_inner(
-                    if condition { then_term } else { else_term },
-                    resolving,
-                    resolved,
-                ),
-                None => SignedConstantResolution::Unknown,
-            },
-            _ => SignedConstantResolution::Unknown,
+            Bitvector32Term::If { .. } => self.conditional_constant_resolution(term, visiting),
+            _ => super::super::constant_classes::fold_arithmetic(term, |operand| {
+                self.constant_class_resolution(operand, visiting)
+            }),
         };
-
-        // Deep equality (with snapshot bridging) is only worth attempting on
-        // candidates that could plausibly denote this term: two loads must
-        // read the same block through offsets built from the same number of
-        // atoms, and a load never equals a non-load term through this walk
-        // except via another fact that mentions the load itself. Without the
-        // gate the walk pays a bridging search against every fact at every
-        // recursion level.
-        // A load variable is gated exactly as the load it represents: without
-        // the gate every equality fact in the context is a deep-equality
-        // candidate for every load variable, which is quadratic in the facts.
-        let term_view = crate::kernel::eval::viewed_as_memory_load(term);
-        let plausibly_equal = |candidate: &Bitvector32Term| {
-            if candidate == term {
-                return true;
-            }
-            let candidate_view = crate::kernel::eval::viewed_as_memory_load(candidate);
-            match (
-                term_view.as_ref().unwrap_or(term),
-                candidate_view.as_ref().unwrap_or(candidate),
-            ) {
-                (
-                    Bitvector32Term::MemoryLoad(_, term_pointer),
-                    Bitvector32Term::MemoryLoad(_, candidate_pointer),
-                ) => pointers_equal_ignoring_memories(term_pointer, candidate_pointer),
-                (Bitvector32Term::MemoryLoad(_, _), _) | (_, Bitvector32Term::MemoryLoad(_, _)) => {
-                    false
-                }
-                _ => true,
-            }
-        };
-        for (condition, value) in self.condition_facts.iter() {
-            let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) else {
-                continue;
-            };
-            if plausibly_equal(left) && self.bitvector_terms_proven_equal(term, left) {
-                result = result.merge(self.signed_constant_after_equality_normalization_inner(
-                    right, resolving, resolved,
-                ));
-            }
-            if plausibly_equal(right) && self.bitvector_terms_proven_equal(term, right) {
-                result =
-                    result.merge(self.signed_constant_after_equality_normalization_inner(
-                        left, resolving, resolved,
-                    ));
-            }
-        }
-
-        resolving.remove(term);
-        resolved.insert(term.clone(), result);
-        if let SignedConstantResolution::Known(known) = result
-            && let Some(memo_id) = memo_id
+        if result == SignedConstantResolution::Unknown
+            && let Some((key, _)) = super::super::constant_classes::load_key(term)
         {
-            CONSTANT_NORMALIZATION_MEMO.with(|memo| {
-                let mut memo = memo.borrow_mut();
-                if memo.len() >= DECIDE_MEMO_LIMIT {
-                    memo.clear();
+            for (candidate, candidate_class) in classes.settled_loads_at(key) {
+                crate::instrumentation::record_deterministic_work(1);
+                if self.loads_bridge(term, candidate) {
+                    result = result.merge(classes.constant_of_class(candidate_class));
                 }
-                memo.insert((memo_id, term.clone()), Some(known));
-            });
+            }
         }
         result
     }
 
-    fn signed_binary_constant_known_equal(
+    fn conditional_constant_resolution(
         &self,
-        left: &Bitvector32Term,
-        right: &Bitvector32Term,
-        resolving: &mut BTreeSet<Bitvector32Term>,
-        resolved: &mut BTreeMap<Bitvector32Term, SignedConstantResolution>,
-        operation: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
+        term: &Bitvector32Term,
+        visiting: &mut BTreeSet<u64>,
     ) -> SignedConstantResolution {
-        let left =
-            self.signed_constant_after_equality_normalization_inner(left, resolving, resolved);
-        let right =
-            self.signed_constant_after_equality_normalization_inner(right, resolving, resolved);
-        match (left, right) {
-            (SignedConstantResolution::Ambiguous, _) | (_, SignedConstantResolution::Ambiguous) => {
-                SignedConstantResolution::Ambiguous
-            }
-            (SignedConstantResolution::Known(left), SignedConstantResolution::Known(right)) => {
-                SignedConstantResolution::from_term(operation(
-                    Bitvector32Term::Constant(left as i32 as u32),
-                    Bitvector32Term::Constant(right as i32 as u32),
-                ))
-            }
-            _ => SignedConstantResolution::Unknown,
+        let Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } = term
+        else {
+            return SignedConstantResolution::Unknown;
+        };
+        match self.decide(condition) {
+            Some(condition) => self
+                .constant_class_resolution(if condition { then_term } else { else_term }, visiting),
+            None => SignedConstantResolution::Unknown,
         }
+    }
+
+    /// Whether two loads of one memory-blind address are proved equal: the
+    /// same pointer structurally, and the snapshots proved to agree there.
+    fn loads_bridge(&self, left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+        let (Some(left_view), Some(right_view)) = (
+            crate::kernel::eval::viewed_as_memory_load(left),
+            crate::kernel::eval::viewed_as_memory_load(right),
+        ) else {
+            return false;
+        };
+        let (
+            Bitvector32Term::MemoryLoad(_, left_pointer),
+            Bitvector32Term::MemoryLoad(_, right_pointer),
+        ) = (&left_view, &right_view)
+        else {
+            return false;
+        };
+        pointers_equal_ignoring_memories(left_pointer, right_pointer)
+            && self.bitvector_terms_proven_equal(left, right)
     }
 
     pub(in crate::kernel) fn decide_signed_comparison_from_equal_constants(
