@@ -43,7 +43,9 @@ extent halves with it into an application the way it brings them into a proof.
 
 ## `arithmetic() using` will not weaken a bound it just derived
 
-Classification: **missing rule**, small.
+Resolved by `mdtests/arithmetic_weakens_transitive_bound.md` and the direct
+one-step uses in `mdtests/unmarked_count_lemmas.click` and
+`mdtests/branching_graph_dfs.md`. The refusal below is historical.
 
 `j < hi` and `hi <= n` give `j < n`, which is `j <= n - 1`, so `j <= n`
 follows. The planner refuses it in one step:

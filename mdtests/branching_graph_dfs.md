@@ -348,8 +348,7 @@ theorem unmarked_point_update(
             have hi - 1 < 2147483647 by { arithmetic() using { 0 <= lo; lo < hi; } }
             have j <= hi - 1 by { arithmetic() using { 0 <= lo; lo < hi; j < hi; } }
             if j == hi - 1 {
-                have j < n by { arithmetic() using { j < hi; hi <= n; } }
-                have j <= n by { arithmetic() using { j < n; } }
+                have j <= n by { arithmetic() using { j < hi; hi <= n; } }
                 have hi - 1 <= j by {
                     arithmetic() using { 0 <= lo; lo < hi; j == hi - 1; }
                 }

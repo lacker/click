@@ -1082,7 +1082,9 @@ impl<'a> Proof<'a> {
         }
         if let Some(goal) = self.goal()
             && let Some(plan) =
-                crate::surface::checking::plan_signed_arithmetic_certificate(goal, &premises)
+                crate::surface::checking::plan_signed_arithmetic_certificate_with_weakening(
+                    goal, &premises,
+                )
         {
             let surface_goal = self.surface_goal().cloned().or_else(|| {
                 let context = self.execution_context()?;

@@ -159,8 +159,8 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    checked by `mdtests/int32_disequality_symmetry.md`. The point-update
    theorem still splits below/above to cover both sides of the marked index.
    `have` cannot take a label; `assumption()` cannot close a `viewable` goal;
-   `arithmetic() using { j < hi; hi <= n }` will not weaken to `j <= n` and says
-   the premises are insufficient; `missing pure fact: constant condition is true`
+   `arithmetic() using { j < hi; hi <= n; }` now proves `j <= n` in one checked
+   step; `missing pure fact: constant condition is true`
    does not say which constant; a store refusal spells `owns b[0..1]` as
    `owns a[(v100001 - v100000)..]`.
 

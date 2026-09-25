@@ -419,6 +419,37 @@ fn integer_surface_add(
     })
 }
 
+fn integer_surface_transitive(
+    left: &ClickProposition,
+    right: &ClickProposition,
+) -> Option<ClickProposition> {
+    let (left_start, left_operator, left_end) = integer_surface_ordered_parts(left)?;
+    let (right_start, right_operator, right_end) = integer_surface_ordered_parts(right)?;
+    let operator = if matches!(left_operator, ComparisonOperator::LessThan)
+        || matches!(right_operator, ComparisonOperator::LessThan)
+    {
+        ComparisonOperator::LessThan
+    } else if left_operator == ComparisonOperator::LessEqual
+        && right_operator == ComparisonOperator::LessEqual
+    {
+        ComparisonOperator::LessEqual
+    } else {
+        return None;
+    };
+    let (start, end) = if left_end == right_start {
+        (left_start, right_end)
+    } else if right_end == left_start {
+        (right_start, left_end)
+    } else {
+        return None;
+    };
+    Some(ClickProposition::Comparison {
+        left: start,
+        operator,
+        right: end,
+    })
+}
+
 /// Keep a normalized zero affine claim in a form that direct lowering does
 /// not constant-fold to an equality.  `0 <= 0` is mathematically the same
 /// claim, but some lowering paths canonicalize that literal proposition as
@@ -825,6 +856,20 @@ impl<'a> Proof<'a> {
         premise_pairs: &[(Proposition, ClickProposition)],
         surface_goal: &ClickProposition,
     ) -> Option<SignedInt32Certificate> {
+        let weakening_source = match plan.nodes.get(plan.conclusion) {
+            Some(SignedArithmeticNode::Add { left, right, .. })
+                if matches!(
+                    plan.nodes.get(*left),
+                    Some(SignedArithmeticNode::Add { .. })
+                ) && matches!(plan.nodes.get(*right), Some(SignedArithmeticNode::Trivial { result })
+                        if result.relation == SignedArithmeticRelation::LessEqual
+                            && result.terms.is_empty()
+                            && result.constant == BigInt::from(-1)) =>
+            {
+                Some(*left)
+            }
+            _ => None,
+        };
         let mut used = BTreeSet::new();
         for node in &plan.nodes {
             match node {
@@ -923,8 +968,13 @@ impl<'a> Proof<'a> {
                     {
                         integer_surface_zero_claim(left_surface, right_surface)
                     } else {
-                        claim_surface(result)
-                            .or_else(|| integer_surface_add(left_surface, right_surface))
+                        claim_surface(result).or_else(|| {
+                            if weakening_source == Some(surfaces.len()) {
+                                integer_surface_transitive(left_surface, right_surface)
+                            } else {
+                                integer_surface_add(left_surface, right_surface)
+                            }
+                        })
                     }
                 }
                 SignedArithmeticNode::EqualityToLessEqual {
@@ -976,7 +1026,15 @@ impl<'a> Proof<'a> {
                 SignedArithmeticNode::Add { left, right, .. } => SignedArithmeticStep::Add {
                     left: r(*left),
                     right: r(*right),
-                    result: result()?,
+                    // The final sum is already checked against the goal's
+                    // affine claim. Reuse that source spelling instead of
+                    // printing another composite expression whose machine
+                    // additions may lower to different atoms.
+                    result: if node_index == plan.conclusion && weakening_source.is_some() {
+                        surface_goal.clone()
+                    } else {
+                        result()?
+                    },
                 },
                 SignedArithmeticNode::EqualityToLessEqual {
                     source, reverse, ..
