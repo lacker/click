@@ -118,11 +118,11 @@ Nothing mentions a prefix.
   marks it, which the store rule closes. Because nothing ties `live` to the
   number of regions, the increment's definedness is the precondition
   `st.live < 2147483647`. The contract states nothing about occupancy
-  cells: the success frame is blocked by the frontier below, and even the
-  failure frame and the marked run, which verify, cannot be expanded,
-  because `click expand` renders the post-exit `simp` that closes a
-  quantified postcondition over the state's cells as an `assumption` that
-  does not recheck.
+  cells. Both frames are blocked by the frontier below; the failure frame
+  in particular does not close after the scan loop, which owns and havocs
+  the whole map. The marked run is not blocked by expansion any more, but
+  the success path's closing `simp` exhausts its smart budget on it, and an
+  explicit proof from the mark window's post-loop fact is not yet written.
 - `arena_read`, `arena_write`, and `arena_region_length` borrow the region
   and the state.
 

@@ -3201,17 +3201,32 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
     })
 }
 
+/// The alpha-invariant bucket key of a quantified proposition, or of an
+/// implication chain whose final consequent is quantified. Guarded
+/// quantifiers such as `result == 1 implies forall (k) { ... }` are
+/// independently lowered with fresh binders by a `have` and by the claim it
+/// discharges; indexing the whole chain lets an explicit `assumption` find
+/// the alpha-equivalent fact without a derivation search.
 pub(crate) fn quantified_equivalence_index_key(
     proposition: &Proposition,
 ) -> Option<QuantifiedEquivalenceKey> {
     if !matches!(
-        proposition,
+        implication_chain_conclusion(proposition),
         Proposition::ForAll { .. } | Proposition::Exists { .. }
     ) {
         return None;
     }
     alpha_proposition_key::<true>(proposition, &mut BTreeMap::new(), &mut 0)
         .map(QuantifiedEquivalenceKey)
+}
+
+/// The final consequent of a (possibly empty) implication chain. The walk
+/// visits only the chain's connective spine.
+pub(crate) fn implication_chain_conclusion(mut proposition: &Proposition) -> &Proposition {
+    while let Proposition::Implies(_, consequent) = proposition {
+        proposition = consequent;
+    }
+    proposition
 }
 
 /// Compare only quantified propositions containing a loadability atom using

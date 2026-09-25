@@ -417,6 +417,53 @@ fn proof_cases_after_c_branch_expand_and_reverify() {
     }
 }
 
+/// A postcondition `result == 1 implies forall (k: int32) { ... }` closed by
+/// `simp()` after execution expands to a `have` of the claim and
+/// `assumption()`. The `have` and the claim lower the guarded quantifier with
+/// independent fresh binders; the rewrite re-verifies only because
+/// `assumption` matches that guarded quantifier up to its binders.
+#[test]
+fn guarded_quantified_postcondition_expands_and_reverifies() {
+    for (relative, function) in [
+        (
+            "mdtests/guarded_quantified_postcondition_expands.md",
+            "vacuous",
+        ),
+        (
+            "mdtests/guarded_quantified_postcondition_after_loop_expands.md",
+            "fill",
+        ),
+    ] {
+        let (click_source, c_sources) = mdtest_sources(relative);
+        let c_sources = c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        verify_c0_sources(&click_source, &c_sources)
+            .unwrap_or_else(|error| panic!("`{relative}` should verify: {}", error.message()));
+        let expanded =
+            expand_c0_claim_source(&click_source, &c_sources, function, CProofClaim::Grouped)
+                .unwrap_or_else(|error| panic!("`{relative}` should expand: {}", error.message()));
+        let claim = &expanded[expanded
+            .find(&format!("int {function}("))
+            .expect("claim proof")..];
+        let claim = &claim[claim.find("} by {").expect("claim proof body")..];
+        let claim = &claim[..claim[1..].find("\n}").expect("claim end")];
+        assert!(!claim.contains("execute()"), "{expanded}");
+        assert!(!claim.contains("simp()"), "{expanded}");
+        assert!(
+            claim.contains("have result == 1 implies forall (k: int32)"),
+            "{expanded}"
+        );
+        if let Err(error) = verify_c0_sources(&expanded, &c_sources) {
+            panic!(
+                "the expanded `{relative}` should re-verify: {}\n{expanded}",
+                error.message()
+            );
+        }
+    }
+}
+
 #[test]
 fn branch_continuation_match_expands_and_reverifies() {
     for relative in [

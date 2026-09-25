@@ -326,10 +326,14 @@ with `gather`, destruction requires an all-free map and dissolves it with
 `scatter`, and allocation places the region anywhere, with the scan's run
 held in a loop window and the mark loop taking each element out of the fact
 before marking it. `examples/arena/README.md` has the contracts. The
-allocation contract states nothing about occupancy cells: the failure
-frame and the marked run verify, but `click expand` renders the post-exit
-`simp` that closes a quantified postcondition over memory as an
-`assumption` that does not recheck, so they are left out.
+allocation contract states nothing about occupancy cells. `click expand`
+now re-verifies a guarded quantified postcondition closed after execution
+(`mdtests/guarded_quantified_postcondition_expands.md`), so expansion no
+longer blocks them; the proofs do. The failure frame does not close after
+the scan loop, which owns and havocs the whole map with no frame invariant
+(the loop-frame frontier below), and the success path's closing `simp`
+exhausts its smart budget on the marked run, which needs an explicit proof
+from the mark window's post-loop fact.
 
 Three kernel defects were fixed on the way, each with a regression:
 

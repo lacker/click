@@ -650,6 +650,26 @@ pub(crate) fn quantified_equivalent_available_fact(
 }
 
 pub(crate) fn quantified_binder_equivalent(left: &Proposition, right: &Proposition) -> bool {
+    // A guarded quantifier matches when the guards are identical and the
+    // quantified conclusions are binder-equivalent. The antecedents are
+    // compared exactly; only the final quantifier is compared up to its
+    // binders, by the same authoritative rules as a top-level quantifier.
+    let (mut left, mut right) = (left, right);
+    let mut guarded = false;
+    while let (
+        Proposition::Implies(left_guard, left_body),
+        Proposition::Implies(right_guard, right_body),
+    ) = (left, right)
+    {
+        if left_guard != right_guard {
+            return false;
+        }
+        (left, right) = (left_body, right_body);
+        guarded = true;
+    }
+    if guarded && left == right {
+        return true;
+    }
     if let (Some(left_key), Some(right_key)) = (
         super::fact_keys::quantified_algebraic_captured_array_identity_key(left),
         super::fact_keys::quantified_algebraic_captured_array_identity_key(right),
@@ -1394,6 +1414,62 @@ mod tests {
             quantified_equivalence_index_key(&different_free),
             "free variable identities remain part of the key"
         );
+    }
+
+    /// `have result == 1 implies forall (k) { ... }` and the claim it
+    /// discharges lower the same guarded quantifier with independent fresh
+    /// binders. An explicit `assumption` must find the alpha-equivalent fact
+    /// through the quantified index, and must still refuse a different guard
+    /// or a different quantified body.
+    #[test]
+    fn guarded_quantifier_matches_its_alpha_variant_only() {
+        let guard = |value: u32| {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(Variable(1))),
+                    Box::new(Bitvector32Term::Constant(value)),
+                ),
+                true,
+            )
+        };
+        let guarded = |guard: Proposition, binder: Variable, bound: Variable| {
+            Proposition::Implies(
+                Box::new(guard),
+                Box::new(Proposition::ForAll {
+                    var: binder,
+                    sort: Sort::CInt32,
+                    body: Box::new(Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32SignedLessThan(
+                            Box::new(Bitvector32Term::Variable(binder)),
+                            Box::new(Bitvector32Term::Variable(bound)),
+                        ),
+                        true,
+                    )),
+                }),
+            )
+        };
+        let fact = guarded(guard(1), Variable(2_000_000), Variable(7));
+        let renamed = guarded(guard(1), Variable(3_100_000), Variable(7));
+        let other_guard = guarded(guard(0), Variable(3_100_000), Variable(7));
+        let other_body = guarded(guard(1), Variable(3_100_000), Variable(8));
+
+        assert!(quantified_equivalence_index_key(&fact).is_some());
+        assert_eq!(
+            quantified_equivalence_index_key(&fact),
+            quantified_equivalence_index_key(&renamed)
+        );
+        assert!(quantified_binder_equivalent(&fact, &renamed));
+        assert!(!quantified_binder_equivalent(&fact, &other_guard));
+        assert!(!quantified_binder_equivalent(&fact, &other_body));
+        assert!(
+            quantified_equivalence_index_key(&guard(1)).is_none(),
+            "an unquantified implication keeps its exact lookup"
+        );
+
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&fact));
+        assert!(facts.pure_assumption_available(&renamed));
+        assert!(!facts.pure_assumption_available(&other_guard));
+        assert!(!facts.pure_assumption_available(&other_body));
     }
 
     #[test]
