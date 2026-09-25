@@ -163,8 +163,8 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    `arithmetic() using { j < hi; hi <= n; }` now proves `j <= n` in one checked
    step; a constant-true `using` premise such as `0 <= 0` is accepted
    (`mdtests/apply_using_accepts_a_constant_true_premise.md`) and a false one
-   names itself; a store refusal spells `owns b[0..1]` as
-   `owns a[(v100001 - v100000)..]`.
+   names itself; a store refusal now spells `owns b[0..1]` against its own
+   base (`mdtests/a_store_refusal_names_the_stores_own_base.md`).
 
 The unchanged two-successor graph search now checks termination, memory
 safety, and success-path reachability in `mdtests/branching_graph_dfs.md`,

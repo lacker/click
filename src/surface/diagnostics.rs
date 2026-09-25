@@ -1223,6 +1223,30 @@ pub(super) fn describe_parameter_relative_range(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Option<String> {
+    let (parameter, base_index) = parameter_relative_base(range, parameters, arguments)?;
+    let (start, end) = parameter_relative_endpoints(&base_index, range);
+    Some(format!(
+        "{}[{}..{}]",
+        parameter.name(),
+        describe_bitvector_with_context(&start, parameters, arguments),
+        describe_bitvector_with_context(&end, parameters, arguments)
+    ))
+}
+
+/// The parameter a range is spelled against, with the element index of the
+/// range's base from that parameter's base.
+///
+/// Every external pointer parameter shares one block, so any of them can name
+/// a range as a symbolic offset from its own base: `b[0..1]` is also
+/// `a[(b - a)..(b - a) + 1]`. Prefer the parameter the range sits at a
+/// constant offset from, and fall back to the first symbolic one only when no
+/// parameter does.
+fn parameter_relative_base<'a>(
+    range: &CMemoryRange,
+    parameters: &'a [syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<(&'a syntax::C0Parameter, Bitvector32Term)> {
+    let mut symbolic = None;
     for (parameter, argument) in parameters.iter().zip(arguments) {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
@@ -1234,16 +1258,76 @@ pub(super) fn describe_parameter_relative_range(
         ) else {
             continue;
         };
-        let start = bitvector32_add(base_index.clone(), range.start().clone());
-        let end = bitvector32_add(base_index, range.end().clone());
-        return Some(format!(
-            "{}[{}..{}]",
-            parameter.name(),
-            describe_bitvector_with_context(&start, parameters, arguments),
-            describe_bitvector_with_context(&end, parameters, arguments)
-        ));
+        if base_index.as_const().is_some() {
+            return Some((parameter, base_index));
+        }
+        symbolic.get_or_insert((parameter, base_index));
     }
-    None
+    symbolic
+}
+
+fn parameter_relative_endpoints(
+    base_index: &Bitvector32Term,
+    range: &CMemoryRange,
+) -> (Bitvector32Term, Bitvector32Term) {
+    (
+        bitvector32_add(base_index.clone(), range.start().clone()),
+        bitvector32_add(base_index.clone(), range.end().clone()),
+    )
+}
+
+/// A note for a missing memory range that a held range of the same base and
+/// start would cover if it were long enough. The verdict compared the two
+/// ends; say which comparison was not established, so `owns b[0..n]` against
+/// `b[0..1]` reads as `1 <= n` (the held range may be empty) rather than as a
+/// resource the proof never held.
+pub(super) fn describe_missing_range_end_note(
+    error: &crate::kernel::CRuntimeError,
+    resource_facts: &[CResourceFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let crate::kernel::CRuntimeError::MissingResource { resource } = error else {
+        return String::new();
+    };
+    let Some(required) = resource
+        .memory_own_range()
+        .or_else(|| resource.memory_view_range())
+    else {
+        return String::new();
+    };
+    let Some(held_fact) = resource_facts.iter().find(|fact| {
+        let held = if resource.is_own() {
+            fact.memory_own_range()
+        } else {
+            fact.memory_own_range().or_else(|| fact.memory_view_range())
+        };
+        held.is_some_and(|held| {
+            held.base() == required.base()
+                && held.start() == required.start()
+                && held.end() != required.end()
+        })
+    }) else {
+        return String::new();
+    };
+    let held = held_fact
+        .memory_own_range()
+        .or_else(|| held_fact.memory_view_range())
+        .expect("selected a memory range fact");
+    let (required_end, held_end) = match parameter_relative_base(required, parameters, arguments) {
+        Some((_, base_index)) => (
+            parameter_relative_endpoints(&base_index, required).1,
+            parameter_relative_endpoints(&base_index, held).1,
+        ),
+        None => (required.end().clone(), held.end().clone()),
+    };
+    format!(
+        "\n  note: held `{}` covers `{}` only when `{} <= {}`",
+        describe_resource_fact(held_fact, parameters, arguments),
+        describe_memory_range(required, parameters, arguments),
+        describe_bitvector_with_context(&required_end, parameters, arguments),
+        describe_bitvector_with_context(&held_end, parameters, arguments),
+    )
 }
 
 /// The snapshot and pointer a still-unresolved comparison side loads from, if

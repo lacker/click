@@ -2781,7 +2781,11 @@ fn execute_step_from_frontier_position_selecting_path(
             } else {
                 "could not verify C operation"
             };
-            let detail = describe_runtime_error(error, parameters, arguments);
+            let detail = format!(
+                "{}{}",
+                describe_runtime_error(error, parameters, arguments),
+                describe_missing_range_end_note(error, &current_resources, parameters, arguments)
+            );
             if matches!(
                 error,
                 crate::kernel::CRuntimeError::UninitializedMutex { .. }
@@ -3396,7 +3400,11 @@ fn execute_step_from_frontier_position_selecting_path(
             } else {
                 "could not verify C operation"
             };
-            let detail = describe_runtime_error(&error, parameters, arguments);
+            let detail = format!(
+                "{}{}",
+                describe_runtime_error(&error, parameters, arguments),
+                describe_missing_range_end_note(&error, &current_resources, parameters, arguments)
+            );
             if matches!(
                 error,
                 crate::kernel::CRuntimeError::UninitializedMutex { .. }

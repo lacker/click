@@ -81,24 +81,12 @@ The original `close_invariants by` arm was not rebuilt: a loop invariant
 
 ## The owned range in a store refusal is spelled against the wrong base
 
-Classification: **bad diagnostic**.
-
-With `views a[0..n]; owns b[0..n]; requires 0 <= n;` — where `n` may be `0`, so
-a store to `b[0]` really is unjustified — the refusal is:
-
-```text
-`walk.contract` tactic 0: `step()` produced runtime error: missing resource
-fact `owns a[(v100001 - v100000)..((v100001 - v100000) + 1)]`
-```
-
-The verdict is right and the spelling is not. The store is to `b[0]` and the
-resource it needs is `owns b[0..1]`; instead the reader is shown the same bytes
-expressed as an offset from the *other* parameter's base, with two kernel
-variables in it. `docs/internals/resource-tracker.md` promises the opposite —
-"It spells the resource with the user's own names (`a[m]`, `g[0]`)" and "An
-index only the lowering has a name for is printed `a[…]`, never as the kernel
-variable". It also does not say the interesting part, which is that `n` may be
-zero.
+Resolved by `mdtests/a_store_refusal_names_the_stores_own_base.md`. With
+`views a[0..n]; owns b[0..n];` the store to `b[0]` was refused as missing
+`owns a[(v100001 - v100000)..]`: every external pointer shares one block, and
+the first parameter was used as the base. The refusal now spells the range
+against the parameter it sits at a constant offset from (`owns b[0..1]`) and
+notes that the held `owns b[0..n]` covers it only when `1 <= n`.
 
 ## A `have` cannot carry a label
 
