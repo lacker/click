@@ -21,6 +21,8 @@ pub(in crate::kernel) fn count_condition_fact_visit() {
 use std::cell::{Cell, RefCell};
 
 mod condition_reasoning;
+mod constant_classes;
+pub(in crate::kernel) use constant_classes::ConstantClasses;
 mod memory_reasoning;
 pub(crate) use memory_reasoning::arm_frame_composite_definitions;
 pub(crate) use memory_reasoning::clear_frame_expansion_memo;
@@ -3042,10 +3044,12 @@ impl PureFactContext {
         self.bitvector_equality_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.bitvector64_equality_facts = crate::persistent::PersistentMap::default();
         self.exact_constant_equalities = crate::persistent::PersistentMap::default();
+        self.constant_classes = ConstantClasses::default();
         let conditions = self.condition_facts.clone();
         for (condition, value) in conditions.iter() {
             self.adjust_bitvector64_equality(condition, *value, true);
             self.adjust_exact_constant_equality(condition, *value, true);
+            self.file_constant_class_equality(condition, *value);
         }
     }
 
@@ -3157,6 +3161,14 @@ impl PureFactContext {
                 self.exact_constant_equalities
                     .with_inserted(term.clone(), facts)
             };
+        }
+    }
+
+    /// Files one true 32-bit equality in the constant classes. Classes only
+    /// grow; withdrawing a fact rebuilds them (`rebuild_memory_load_condition_facts`).
+    fn file_constant_class_equality(&mut self, condition: &ConditionTerm, value: bool) {
+        if let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) {
+            self.constant_classes.assume_equal(left, right);
         }
     }
 
@@ -4420,6 +4432,17 @@ impl PureFactContext {
         self.adjust_bitvector64_equality(&condition, value, true);
         self.adjust_exact_constant_equality(&condition, value, true);
         self.adjust_condition_match_indexes(&condition, value, true);
+        if old == Some(true) && matches!(condition, ConditionTerm::Bitvector32Equal(..)) {
+            // A replaced true equality is withdrawn from classes that only
+            // grow, so they are rebuilt from the facts that remain.
+            self.constant_classes = ConstantClasses::default();
+            let conditions = self.condition_facts.clone();
+            for (condition, value) in conditions.iter() {
+                self.file_constant_class_equality(condition, *value);
+            }
+        } else {
+            self.file_constant_class_equality(&condition, value);
+        }
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
         self
     }

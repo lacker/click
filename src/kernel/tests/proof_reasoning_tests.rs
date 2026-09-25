@@ -7668,3 +7668,76 @@ fn snapshot_substitution_of_an_absent_variable_is_memoized() {
     );
     assert!(second <= 2, "the repeat is a memo hit: {second}");
 }
+
+/// Constant normalization keeps its decisions when its classes are built
+/// incrementally: a counter chain resolves whatever order its facts arrive
+/// in, a second constant anywhere in a class makes that class ambiguous (and
+/// only that class), and withdrawing or replacing the conflicting fact
+/// restores the unique constant.
+#[test]
+fn constant_normalization_classes_detect_ambiguity_in_any_insertion_order() {
+    let counter = |index: u64| Bitvector32Term::Variable(Variable(930_200 + index));
+    let successor = |index: u64| {
+        ConditionTerm::equal(
+            counter(index + 1),
+            Bitvector32Term::add(counter(index), 1u32.into()),
+        )
+    };
+    let start = ConditionTerm::equal(counter(0), Bitvector32Term::Constant(0));
+    // The chain's facts arrive last-first, so every constant reaches the
+    // later counters only by propagation through the recorded sums.
+    let mut chain = PureFactContext::new();
+    for index in (0..4).rev() {
+        chain = chain.assume_condition(successor(index), true);
+    }
+    assert_eq!(
+        chain.known_signed_constant_after_normalization(&counter(4)),
+        None
+    );
+    let chain = chain.assume_condition(start, true);
+    for index in 0..=4 {
+        assert_eq!(
+            chain.known_signed_constant_after_normalization(&counter(index)),
+            Some(index as i64),
+        );
+    }
+
+    let conflict = ConditionTerm::equal(counter(2), Bitvector32Term::Constant(7));
+    let ambiguous = chain.assume_condition(conflict.clone(), true);
+    for index in 2..=4 {
+        assert_eq!(
+            ambiguous.known_signed_constant_after_normalization(&counter(index)),
+            None,
+            "counter {index} is 2 through the chain and 7 through the conflict"
+        );
+    }
+    for index in 0..=1 {
+        assert_eq!(
+            ambiguous.known_signed_constant_after_normalization(&counter(index)),
+            Some(index as i64),
+            "the conflict does not reach counter {index}, which only feeds it"
+        );
+    }
+    // Joining an ambiguous class to another term makes that term ambiguous.
+    let alias = Bitvector32Term::Variable(Variable(930_299));
+    let joined = ambiguous
+        .clone()
+        .assume_condition(ConditionTerm::equal(alias.clone(), counter(4)), true);
+    assert_eq!(
+        joined.known_signed_constant_after_normalization(&alias),
+        None
+    );
+
+    let withdrawn = ambiguous.without_exact_fact(&Proposition::ConditionIs(conflict.clone(), true));
+    assert_eq!(
+        withdrawn.known_signed_constant_after_normalization(&counter(4)),
+        Some(4),
+        "withdrawing the conflict restores the chain's constant"
+    );
+    let replaced = ambiguous.clone().assume_condition(conflict, false);
+    assert_eq!(
+        replaced.known_signed_constant_after_normalization(&counter(4)),
+        Some(4),
+        "replacing the conflict by its negation restores the chain's constant"
+    );
+}

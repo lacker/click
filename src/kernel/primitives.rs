@@ -7189,6 +7189,12 @@ pub struct PureFactContext {
     /// it names. Derived incrementally from `condition_facts`; ordered by
     /// fact so the first entry is the one a scan of `condition_facts` in its
     /// own order would find (`exact_signed_constant`).
+    /// The equality classes of the true `Bitvector32Equal` facts, each with
+    /// the constant its members are proved to denote. Derived incrementally
+    /// from `condition_facts`, so a term's constant after equality
+    /// normalization is a class lookup rather than a walk over every fact
+    /// the term is connected to.
+    pub(super) constant_classes: super::assumptions::ConstantClasses,
     pub(super) exact_constant_equalities: crate::persistent::PersistentMap<
         Bitvector32Term,
         crate::persistent::PersistentMap<ConditionTerm, i64>,

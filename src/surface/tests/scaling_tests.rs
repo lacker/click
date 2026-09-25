@@ -3151,3 +3151,90 @@ fn grouped_proof_theorems_share_one_proof_text() {
         .collect::<Vec<_>>();
     assert_near_linear_scaling("theorems of one branching grouped proof", &samples);
 }
+
+/// One project whose caller makes `call_count` plain `step()`s over a callee
+/// that advances one counter field of an owned object and keeps its other
+/// field. Every call's equality ensures name a load at the previous call's
+/// snapshot, so the counter's constant after normalization runs through the
+/// whole prior call chain -- the `arena_free` shape (`after.live ==
+/// old(st.live) - 1`, `region->start == old(r.start)`).
+fn counter_call_chain(call_count: usize) -> (String, String) {
+    let mut c_source = String::from(
+        "struct range {\n    int32 start;\n    int32 end;\n};\n\nvoid touch(struct range* r) {\n    r->end = r->end + 1;\n}\n\nvoid drive(struct range* r) {\n",
+    );
+    for _ in 0..call_count {
+        c_source.push_str("    touch(r);\n");
+    }
+    c_source.push_str("}\n");
+    let mut click_source = String::from(
+        "verifying \"drive.c\";\n\nvoid touch(struct range* r) {\n    owns object(r);\n    requires r->end < 1000000;\n    ensures r->end == old(r->end) + 1;\n    ensures r->start == old(r->start);\n} by {\n    execute();\n    simp();\n}\n\n",
+    );
+    click_source.push_str(&format!(
+        "void drive(struct range* r) {{\n    owns object(r);\n    requires r->end == 0;\n    ensures r->end == {call_count};\n}} by {{\n"
+    ));
+    for _ in 0..call_count {
+        click_source.push_str("    step();\n");
+    }
+    click_source.push_str("    execute();\n    simp();\n}\n");
+    (c_source, click_source)
+}
+
+/// A simple `step()` over a call lowers the callee's equality ensures in work
+/// proportional to that call, not to the caller's prior call chain.
+///
+/// Normalizing an ensured term to its constant used to re-walk every earlier
+/// call's ensures, deep-comparing each same-address load at another snapshot:
+/// the Nth call cost O(N^2) and the proof O(N^3). The constant is now a class
+/// lookup maintained as each fact is inserted, so the last call's lowering is
+/// flat in N and the whole proof is near-linear.
+#[test]
+fn counter_call_chain_ensure_lowering_stays_flat_per_call() {
+    const LOWERING: &str = "verified call provisional ensure lowering";
+    let mut last_lowering = Vec::new();
+    let mut totals = Vec::new();
+    for size in [8, 16, 32, 64] {
+        let (c_source, click_source) = counter_call_chain(size);
+        let ((verified, work), events) = crate::instrumentation::collect(|| {
+            crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&click_source, &[("drive.c", c_source.as_str())])
+            })
+        });
+        verified.unwrap_or_else(|error| {
+            panic!("size {size} counter call chain failed: {}", error.message())
+        });
+        let lowerings = events
+            .iter()
+            .filter_map(|event| match event {
+                crate::instrumentation::VerificationEvent::OperationFinished {
+                    function,
+                    name,
+                    work,
+                    ..
+                } if name == LOWERING && function == "touch" => Some(*work),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        // Verification lowers each call's ensures once in execution order;
+        // certificate checking lowers them again, so read the costliest call
+        // rather than a position.
+        assert!(
+            lowerings.len() >= size,
+            "every call must lower its ensures: {lowerings:?}"
+        );
+        last_lowering.push((size, lowerings.iter().copied().max().unwrap()));
+        totals.push(ScalingSample {
+            size,
+            work,
+            named_work: BTreeMap::new(),
+        });
+    }
+    let (_, smallest) = last_lowering[0];
+    let (_, largest) = *last_lowering.last().unwrap();
+    // Constant plus a logarithmic index factor: eight times the calls may
+    // not even double the costliest call's lowering.
+    assert!(
+        largest <= smallest.max(1) * 2,
+        "a call's ensure lowering must not grow with the prior call chain: {last_lowering:?}"
+    );
+    assert_near_linear_scaling("counter call chain", &totals);
+}
