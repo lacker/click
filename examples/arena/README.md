@@ -126,8 +126,17 @@ Nothing mentions a prefix.
   fact after its flag is cleared, and produces the descriptor and the state
   at `live - 1`, with every cleared cell `0` and every other cell unchanged.
   It needs no prefix: any live region can be freed.
-- `arena_read`, `arena_write`, and `arena_region_length` borrow the region
-  and the state.
+- `arena_read` and `arena_write` borrow the region and the state, require
+  the region to lie inside the arena (`r.end <= st.capacity`), and leave
+  every occupancy cell unchanged; `arena_region_length` borrows both too.
+  The occupancy frame across the store needs the written index's range in
+  the terms the store address is spelled in (`0 <= region->start + index`
+  and `region->start + index < region->arena->capacity`), so the proofs
+  state those before executing.
+- `arena_alloc` also states `arena->capacity <= 536870911`,
+  `st.capacity == arena->capacity`, and, on success, `0 <= region->start`
+  and `region->start < region->end`; `arena_free` keeps
+  `region->arena->capacity`.
 
 Both loops that write the map must own all of it, because the iterated
 fact's guard cells must be owned by the body that declares it, so each loop

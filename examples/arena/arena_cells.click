@@ -414,12 +414,16 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
     ensures result == 0 or result == 1;
     ensures st.live == old(st.live) + result;
     ensures arena->capacity == old(arena->capacity);
+    ensures arena->capacity <= 536870911;
+    ensures st.capacity == arena->capacity;
     ensures result == 0 implies outcome.model == ArenaAllocOutcome::Failure;
     ensures result == 1 implies outcome.model ==
         ArenaAllocOutcome::Success(region->start, region->end);
     ensures result == 1 implies region->arena == arena;
     ensures result == 1 implies region->end == region->start + count;
     ensures result == 1 implies region->end <= arena->capacity;
+    ensures result == 1 implies 0 <= region->start;
+    ensures result == 1 implies region->start < region->end;
     ensures forall (k: int32) {
         result == 1 and region->start <= k and k < region->end implies
             arena->occupied[k] == 1
@@ -471,6 +475,10 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
             assumption();
             have arena->capacity == old(arena->capacity) by simp;
             assumption();
+            have arena->capacity <= 536870911 by simp;
+            assumption();
+            have st.capacity == arena->capacity by simp;
+            assumption();
             have result == 0 implies outcome.model == ArenaAllocOutcome::Failure by simp;
             assumption();
             have result == 1 implies outcome.model ==
@@ -481,6 +489,10 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
             have result == 1 implies region->end == region->start + count by simp;
             assumption();
             have result == 1 implies region->end <= arena->capacity by simp;
+            assumption();
+            have result == 1 implies 0 <= region->start by simp;
+            assumption();
+            have result == 1 implies region->start < region->end by simp;
             assumption();
             have forall (k: int32) {
                 result == 1 and region->start <= k and k < region->end implies
@@ -559,6 +571,10 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
             assumption();
             have arena->capacity == old(arena->capacity) by simp;
             assumption();
+            have arena->capacity <= 536870911 by simp;
+            assumption();
+            have st.capacity == arena->capacity by simp;
+            assumption();
             have result == 0 implies outcome.model == ArenaAllocOutcome::Failure by simp;
             assumption();
             have result == 1 implies outcome.model ==
@@ -569,6 +585,10 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
             have result == 1 implies region->end == region->start + count by simp;
             assumption();
             have result == 1 implies region->end <= arena->capacity by simp;
+            assumption();
+            have result == 1 implies 0 <= region->start by simp;
+            assumption();
+            have result == 1 implies region->start < region->end by simp;
             assumption();
             have forall (k: int32) {
                 result == 1 and region->start <= k and k < region->end implies
@@ -1077,6 +1097,10 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
             assumption();
             have arena->capacity == old(arena->capacity) by simp;
             assumption();
+            have arena->capacity <= 536870911 by simp;
+            assumption();
+            have st.capacity == arena->capacity by simp;
+            assumption();
             have result == 0 implies outcome.model == ArenaAllocOutcome::Failure by simp;
             assumption();
             have result == 1 implies outcome.model ==
@@ -1087,6 +1111,10 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
             have result == 1 implies region->end == region->start + count by simp;
             assumption();
             have result == 1 implies region->end <= arena->capacity by simp;
+            assumption();
+            have result == 1 implies 0 <= region->start by simp;
+            assumption();
+            have result == 1 implies region->start < region->end by simp;
             assumption();
             have forall (k: int32) {
                 result == 1 and region->start <= k and k < region->end implies
@@ -1962,6 +1990,10 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
     assumption();
     have arena->capacity == old(arena->capacity) by simp;
     assumption();
+    have arena->capacity <= 536870911 by simp;
+    assumption();
+    have st.capacity == arena->capacity by simp;
+    assumption();
     have result == 0 implies outcome.model == ArenaAllocOutcome::Failure by simp;
     assumption();
     have result == 1 implies outcome.model ==
@@ -1972,6 +2004,10 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
     have result == 1 implies region->end == region->start + count by simp;
     assumption();
     have result == 1 implies region->end <= arena->capacity by simp;
+    assumption();
+    have result == 1 implies 0 <= region->start by simp;
+    assumption();
+    have result == 1 implies region->start < region->end by simp;
     assumption();
     have forall (k: int32) {
         result == 1 and region->start <= k and k < region->end implies
@@ -2061,6 +2097,7 @@ void arena_free(struct region* region) {
     ensures region->end == old(r.end);
     ensures after.live == old(st.live) - 1;
     ensures after.capacity == old(st.capacity);
+    ensures region->arena->capacity == old(region->arena->capacity);
     ensures forall (k: int32) {
         region->start <= k and k < region->end implies region->arena->occupied[k] == 0
     };
@@ -2741,6 +2778,7 @@ void arena_write(struct region* region, int32 index, int32 value) {
     owns st: arena_state(region->arena);
     requires 0 <= index;
     requires defined(r.start + index) and r.start + index < r.end;
+    requires r.end <= st.capacity;
 
     ensures r.start == old(r.start);
     ensures r.end == old(r.end);
@@ -2748,6 +2786,10 @@ void arena_write(struct region* region, int32 index, int32 value) {
     ensures st.live == old(st.live);
     ensures region->arena == old(region->arena);
     ensures region->arena->data[region->start + index] == value;
+    ensures forall (k: int32) {
+        0 <= k and k < region->arena->capacity implies
+            region->arena->occupied[k] == old(region->arena->occupied[k])
+    };
 } by {
     let { live: n, capacity: c } = unfold(st);
     let { start: s, end: e } = unfold(r);
@@ -2787,7 +2829,39 @@ void arena_write(struct region* region, int32 index, int32 value) {
         rewrite(region->start == s);
         assumption();
     }
+    have 0 <= region->start + index by {
+        rewrite(region->start == s);
+        apply(int32_le_transitive(0, s, s + index)) using {
+            0 <= s;
+            s <= s + index;
+        }
+    }
+    have s + index < c by {
+        apply(int32_lt_le_transitive(s + index, e, c)) using {
+            s + index < e;
+            e <= c;
+        }
+    }
+    have region->arena->capacity == c by {
+        simp();
+    }
+    have region->start + index < region->arena->capacity by {
+        rewrite(region->start == s);
+        rewrite(region->arena->capacity == c);
+        assumption();
+    }
+    mark w;
     execute();
+    have forall (k: int32) {
+        0 <= k and k < at(w, region->arena->capacity) implies
+            at(w, region->arena->occupied[k]) == region->arena->occupied[k]
+    } by {
+        intro();
+        intro();
+        extract(0 <= k);
+        extract(k < at(w, region->arena->capacity));
+        simp();
+    }
     let r = fold(arena_region(region), { start: s, end: e });
     let st = fold(arena_state(region->arena), { live: n, capacity: c });
     simp();
@@ -2800,6 +2874,7 @@ int32 arena_read(struct region* region, int32 index) {
     owns st: arena_state(region->arena);
     requires 0 <= index;
     requires defined(r.start + index) and r.start + index < r.end;
+    requires r.end <= st.capacity;
 
     ensures r.start == old(r.start);
     ensures r.end == old(r.end);
@@ -2807,6 +2882,10 @@ int32 arena_read(struct region* region, int32 index) {
     ensures st.live == old(st.live);
     ensures region->arena == old(region->arena);
     ensures result == region->arena->data[region->start + index];
+    ensures forall (k: int32) {
+        0 <= k and k < region->arena->capacity implies
+            region->arena->occupied[k] == old(region->arena->occupied[k])
+    };
 } by {
     let { live: n, capacity: c } = unfold(st);
     let { start: s, end: e } = unfold(r);
@@ -2846,7 +2925,39 @@ int32 arena_read(struct region* region, int32 index) {
         rewrite(region->start == s);
         assumption();
     }
+    have 0 <= region->start + index by {
+        rewrite(region->start == s);
+        apply(int32_le_transitive(0, s, s + index)) using {
+            0 <= s;
+            s <= s + index;
+        }
+    }
+    have s + index < c by {
+        apply(int32_lt_le_transitive(s + index, e, c)) using {
+            s + index < e;
+            e <= c;
+        }
+    }
+    have region->arena->capacity == c by {
+        simp();
+    }
+    have region->start + index < region->arena->capacity by {
+        rewrite(region->start == s);
+        rewrite(region->arena->capacity == c);
+        assumption();
+    }
+    mark w;
     execute();
+    have forall (k: int32) {
+        0 <= k and k < at(w, region->arena->capacity) implies
+            at(w, region->arena->occupied[k]) == region->arena->occupied[k]
+    } by {
+        intro();
+        intro();
+        extract(0 <= k);
+        extract(k < at(w, region->arena->capacity));
+        simp();
+    }
     let r = fold(arena_region(region), { start: s, end: e });
     let st = fold(arena_state(region->arena), { live: n, capacity: c });
     simp();
