@@ -209,10 +209,22 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         context.next_kernel_variable,
                     )
                 }
-                .map_err(|message| {
+                .map_err(|refusal| {
+                    let invariants = environment
+                        .function_block
+                        .structural_clauses()
+                        .iter()
+                        .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+                        .flat_map(StructuralClause::items)
+                        .map(|item| item.proposition())
+                        .collect::<Vec<_>>();
                     ClickError::new(format!(
-                        "`{}.loop({loop_index}).preserve`: {message}",
-                        environment.function_block.signature().name()
+                        "`{}.loop({loop_index}).preserve`: {}",
+                        environment.function_block.signature().name(),
+                        crate::surface::diagnostics::describe_loop_head_refusal(
+                            &refusal,
+                            &invariants
+                        )
                     ))
                 })?;
                 for preservation in preservation_contexts {

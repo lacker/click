@@ -389,6 +389,34 @@ impl CLoopPreservationContext {
     }
 }
 
+/// Why a loop head could not be built.
+///
+/// A premise the head owes is returned as the proposition itself, beside the
+/// head state whose locals name its variables, so the surface spells it in
+/// the source's names instead of the kernel printing its internal form.
+#[derive(Clone, Debug)]
+pub enum CLoopHeadRefusal {
+    /// A refusal the kernel spells on its own.
+    Message(String),
+    /// A premise the head's invariants or guard owe that the entry context
+    /// does not discharge.
+    MissingPrerequisite {
+        proposition: Proposition,
+        context: Option<String>,
+        /// The index into the loop's invariant checks whose lowering owes
+        /// the premise, when one does.
+        invariant: Option<usize>,
+        /// The loop-top state the premise is stated over.
+        state: CState,
+    },
+}
+
+impl From<String> for CLoopHeadRefusal {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn c_loop_preservation_contexts(
     loop_entry_state: &CState,
@@ -400,7 +428,7 @@ pub fn c_loop_preservation_contexts(
     body: &CStatement,
     assumptions: &PureFactContext,
     next_kernel_variable: u64,
-) -> Result<Vec<CLoopPreservationContext>, String> {
+) -> Result<Vec<CLoopPreservationContext>, CLoopHeadRefusal> {
     c_loop_preservation_contexts_with_mode(
         loop_entry_state,
         condition,
@@ -428,7 +456,7 @@ pub fn c_do_while_preservation_contexts(
     body: &CStatement,
     assumptions: &PureFactContext,
     next_kernel_variable: u64,
-) -> Result<Vec<CLoopPreservationContext>, String> {
+) -> Result<Vec<CLoopPreservationContext>, CLoopHeadRefusal> {
     c_loop_preservation_contexts_with_mode(
         loop_entry_state,
         condition,
@@ -455,7 +483,7 @@ fn c_loop_preservation_contexts_with_mode(
     assumptions: &PureFactContext,
     next_kernel_variable: u64,
     do_while: bool,
-) -> Result<Vec<CLoopPreservationContext>, String> {
+) -> Result<Vec<CLoopPreservationContext>, CLoopHeadRefusal> {
     // The head inherits the execution's counter instead of restarting at the
     // base of the identity range. Restarting it in the middle of an execution
     // is how a havocked local, a re-bound binder's model field or an
@@ -487,7 +515,7 @@ fn c_loop_preservation_contexts_with_mode(
     )
     .map_err(|error| format!("could not prepare loop effects: {error:?}"))?;
     if let Some(failure) = head.resource_failures.first() {
-        return Err(failure.clone());
+        return Err(failure.clone().into());
     }
     // Preservation runs the body with the loop's declared resources.
     let top_state = head.body;
@@ -562,7 +590,7 @@ fn c_loop_preservation_contexts_with_mode(
             // A guard operand this function may not read leaves the head's
             // premises undefined; there is no iteration to describe here.
             if let Some(outcome) = assumption.undecided_outcome() {
-                return Err(undecided_loop_guard_context(outcome));
+                return Err(undecided_loop_guard_context(outcome).into());
             }
             let CConditionAssumption {
                 facts, obligations, ..
@@ -574,14 +602,18 @@ fn c_loop_preservation_contexts_with_mode(
                     obligation.proposition(),
                 )
             }) {
-                return Err(format!(
-                    "missing loop-head prerequisite{}: {:?}",
-                    obligation
-                        .context()
-                        .map(|context| format!(" ({context})"))
-                        .unwrap_or_default(),
-                    obligation.proposition()
-                ));
+                return Err(CLoopHeadRefusal::MissingPrerequisite {
+                    proposition: obligation.proposition().clone(),
+                    context: obligation.context().map(str::to_string),
+                    invariant: invariant_owing_obligation(
+                        &top_state,
+                        loop_entry_state,
+                        invariant_checks,
+                        assumptions,
+                        obligation,
+                    ),
+                    state: top_state.clone(),
+                });
             }
             let mut pure_facts = facts
                 .into_iter()
@@ -630,6 +662,35 @@ fn c_loop_preservation_contexts_with_mode(
         context.next_kernel_variable = reached;
     }
     Ok(contexts)
+}
+
+/// The invariant whose lowering at the loop head owes `obligation`, for a
+/// refusal to name the clause that needed it. Relowers the checks one at a
+/// time, only on the failing path.
+fn invariant_owing_obligation(
+    top_state: &CState,
+    loop_entry_state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    assumptions: &PureFactContext,
+    obligation: &ProofObligation,
+) -> Option<usize> {
+    let mut budget = ExecutionBudget::beside_live_state();
+    invariant_checks.iter().position(|check| {
+        assume_invariant_checks(
+            top_state,
+            loop_entry_state,
+            std::slice::from_ref(check),
+            assumptions,
+            &[],
+            &[],
+            &mut budget,
+        )
+        .is_ok_and(|contexts| {
+            contexts
+                .iter()
+                .any(|(_, obligations, _)| obligations.contains(obligation))
+        })
+    })
 }
 
 /// Names the loop invariant that could not be read at the abstract loop head.

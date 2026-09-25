@@ -660,6 +660,51 @@ pub(super) fn describe_proof_context(
     )
 }
 
+/// A loop head the kernel could not build, spelled over the head state's
+/// locals, with the written invariant that owed a missing premise when the
+/// kernel found one. `invariants` are the loop's written invariant clauses in
+/// the order the kernel checks them.
+pub(super) fn describe_loop_head_refusal(
+    refusal: &crate::kernel::CLoopHeadRefusal,
+    invariants: &[&ClickProposition],
+) -> String {
+    let (proposition, context, invariant, state) = match refusal {
+        crate::kernel::CLoopHeadRefusal::Message(message) => return message.clone(),
+        crate::kernel::CLoopHeadRefusal::MissingPrerequisite {
+            proposition,
+            context,
+            invariant,
+            state,
+        } => (proposition, context, invariant, state),
+    };
+    let values = state
+        .locals()
+        .object_values()
+        .map(|(name, value)| (name.to_string(), value.clone()))
+        .collect();
+    let (parameters, arguments) = value_naming_tables(&values);
+    let fact = match proposition {
+        Proposition::ConditionIs(condition, true) => {
+            describe_condition_with_context(condition, &parameters, &arguments)
+        }
+        other => describe_pure_fact_spelled(other, &parameters, &arguments),
+    };
+    let context = context
+        .as_ref()
+        .map(|context| format!(" ({context})"))
+        .unwrap_or_default();
+    let owner = invariant
+        .and_then(|index| invariants.get(index))
+        .map(|invariant| {
+            format!(
+                ", which invariant `{}` needs",
+                describe_click_proposition(invariant)
+            )
+        })
+        .unwrap_or_default();
+    format!("missing loop-head prerequisite{context}: `{fact}`{owner}")
+}
+
 pub(super) fn describe_missing_proof_obligations(
     obligations: &[ProofObligation],
     pure_facts: &[Proposition],
@@ -4291,6 +4336,9 @@ pub(super) fn describe_condition_with_context(
             describe_bitvector_with_context(right, parameters, arguments)
         )
     };
+    if let Some(unsigned) = describe_unsigned_comparison(condition, parameters, arguments) {
+        return unsigned;
+    }
     match condition {
         ConditionTerm::Bitvector32Equal(left, right)
         | ConditionTerm::Bitvector64Equal(left, right) => binary(left, "==", right),
@@ -4313,6 +4361,47 @@ pub(super) fn describe_condition_with_context(
         ),
         other => describe_condition(other),
     }
+}
+
+/// A 32-bit unsigned comparison, which the kernel states as the signed
+/// comparison of both operands with their sign bit flipped (see
+/// `ConditionTerm::unsigned_less_equal`). A constant operand arrives already
+/// flipped. Spelled as the unsigned comparison it means, never as the bias.
+fn describe_unsigned_comparison(
+    condition: &ConditionTerm,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    const SIGN_BIT: u32 = 0x8000_0000;
+    let (left, operator, right) = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, "<", right),
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => (left, "<=", right),
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => (left, ">", right),
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => (left, ">=", right),
+        _ => return None,
+    };
+    let flipped = |term: &Bitvector32Term| match term {
+        Bitvector32Term::BitwiseXor(value, sign) | Bitvector32Term::BitwiseXor(sign, value)
+            if sign.as_const() == Some(SIGN_BIT) =>
+        {
+            Some(describe_bitvector_with_context(
+                value, parameters, arguments,
+            ))
+        }
+        _ => None,
+    };
+    let unflipped = |term: &Bitvector32Term| {
+        flipped(term).or_else(|| term.as_const().map(|value| (value ^ SIGN_BIT).to_string()))
+    };
+    // At least one side must carry the flip itself; two bare constants are
+    // an ordinary signed comparison.
+    let (left, right) = match (flipped(left), flipped(right)) {
+        (Some(left), Some(right)) => (left, right),
+        (Some(left), None) => (left, unflipped(right)?),
+        (None, Some(right)) => (unflipped(left)?, right),
+        (None, None) => return None,
+    };
+    Some(format!("{left} {operator} {right} (unsigned)"))
 }
 
 pub(super) fn describe_binary_condition(
