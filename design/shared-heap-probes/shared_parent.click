@@ -8,10 +8,12 @@ resource parent(p: struct parent*) {
     match link {
         ParentLink::Empty => {
             owns &p->kid;
+            fact defined(p->kid);
             fact p->kid == 0;
         },
         ParentLink::Linked(kid) => {
             owns &p->kid;
+            fact defined(p->kid);
             fact p->kid == kid;
             fact kid != 0;
         },
@@ -21,6 +23,8 @@ resource parent(p: struct parent*) {
 resource child_ref(obj: struct child*) {
     contains allocation(obj, sizeof(struct child));
     owns object(obj);
+    fact defined(obj->refs);
+    fact defined(obj->payload);
     fact obj->refs == count(child_ref(obj));
 }
 
@@ -133,6 +137,7 @@ void parent_detach(struct parent* p) {
     requires link.link != ParentLink::Empty;
     consumes child_ref(p->kid);
     produces &p->kid;
+    ensures old(count(child_ref(p->kid))) > 1 implies old(p->kid)->payload == old(p->kid->payload);
 } by {
     match link.link {
         ParentLink::Empty => {

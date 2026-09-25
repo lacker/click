@@ -353,8 +353,8 @@ mod tests {
         let sidecar = directory.join("shared_parent.click");
         let source = include_str!("../../design/shared-heap-probes/shared_parent.click");
         let source = source.replacen(
-            "    produces &p->kid;\n} by {\n    match link.link {",
-            "    produces &p->kid;\n    ensures old(p->kid) == old(p->kid);\n} by {\n    match link.link {",
+            "    produces &p->kid;\n",
+            "    produces &p->kid;\n    ensures old(p->kid) == old(p->kid);\n",
             1,
         );
         assert!(source.contains("ensures old(p->kid) == old(p->kid);"));

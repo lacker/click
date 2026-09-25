@@ -210,17 +210,30 @@ the caller's frame. This lets certification transport the returned count
 invariant across a disjoint parent-link store. The shared-parent helper with
 a tautological additional postcondition now verifies.
 
-The complete shared-parent callers remain blocked. The normal-gate fixture
-`shared_heap_population_initialized_body_gap.md` preserves the unchanged C
-and the allocation-failure cleanup prefix: after `child_init` produces the
-population, a later `child_release` precondition reports the initialized
-counter as uninitialized. Its expected failure documents a checker gap.
-Complete initialized-body observation transport and both caller proofs
-before claiming the sequential migration complete or proceeding to shared
-mutex integration. No mutex runtime or concurrent reclamation rule changes
-in this checkpoint.
+Initialization is now explicit in the shared body: `defined(obj->refs)` and
+`defined(obj->payload)` promise valid typed reads, while the count equality
+only relates values. The parent resource likewise promises a defined child
+pointer. Opening these facts checks ownership or a live loan dependency;
+the facts themselves grant neither access nor thread safety.
 
-All six shared-parent helper claims now pass the complete 18-site expansion
+Contract certification transports initialization only along checked memory
+steps that leave the typed range unchanged, with unchanged lifetime metadata.
+The walk stops at the named premise's snapshot rather than traversing its
+earlier history. A failed allocation now records its no-write memory edge,
+so allocation-failure cleanup can retain a preceding initialization guarantee.
+`population_initialized_cleanup.md` verifies this complete lifecycle. The
+older `shared_heap_population_initialized_body_gap.md` now documents the
+intentional rejection when the resource omits initialization guarantees.
+
+The complete shared-parent callers remain unfinished.
+`shared_heap_population_payload_frontier.md` preserves the unchanged C and a
+complete first-removal caller proof that reaches `out == payload`; the
+remaining failure concerns payload/alias transport across detach and read.
+Finish both caller proofs before claiming the sequential migration complete
+or proceeding to shared mutex integration. No mutex runtime or concurrent
+reclamation rule changes in this checkpoint.
+
+All six shared-parent helper claims pass the complete 18-site expansion
 and independent-reverification audit. Path completion performs the checked
 return-resource exchange after open bodies and deferred invariants have been
 restored, even when simple tactics close every pure claim and no resource is

@@ -371,6 +371,32 @@ fn dynamic_body_fact_dependency(
                     Ok(())
                 }
             },
+            Proposition::CMemoryReadDefined {
+                memory,
+                pointer,
+                value_type,
+            } => {
+                // Definedness is an observation of the same cell as a load.
+                // Retain its access dependency, including loads in its address.
+                walk_term(
+                    &Term::CValue(CValue::pointer(pointer.clone())),
+                    state,
+                    assumptions,
+                    temporary_views,
+                    selected,
+                )?;
+                if memory == state.memory() {
+                    check_load(
+                        pointer.clone(),
+                        value_type.byte_width(),
+                        state,
+                        assumptions,
+                        temporary_views,
+                        selected,
+                    )?;
+                }
+                Ok(())
+            }
             Proposition::CMemoryLoadable { bytes, .. }
             | Proposition::CHeapAllocationFreed { bytes, .. } => walk_term(
                 &Term::Bitvector32(bytes.clone()),
@@ -4849,6 +4875,15 @@ mod v11_resource_dependency_tests {
 
     #[test]
     fn dynamic_current_fact_requires_live_view_binding_and_keeps_owner_scalar_distinct() {
+        check_dynamic_current_fact_dependencies(false);
+    }
+
+    #[test]
+    fn dynamic_definedness_requires_live_view_binding_and_keeps_owner_scalar_distinct() {
+        check_dynamic_current_fact_dependencies(true);
+    }
+
+    fn check_dynamic_current_fact_dependencies(definedness: bool) {
         let pointer = Pointer {
             block: PointerBlock::ExternalArgument,
             offset: PointerOffsetTerm::Constant(0),
@@ -4863,7 +4898,15 @@ mod v11_resource_dependency_tests {
             )),
             Box::new(Bitvector32Term::Constant(0)),
         );
-        let proposition = Proposition::ConditionIs(condition, true);
+        let proposition = if definedness {
+            Proposition::CMemoryReadDefined {
+                memory: memory.clone(),
+                pointer: pointer.clone(),
+                value_type: crate::kernel::CType::Int32,
+            }
+        } else {
+            Proposition::ConditionIs(condition, true)
+        };
         let range = CMemoryRange::new(
             pointer,
             Bitvector32Term::Constant(0),
@@ -4950,6 +4993,17 @@ mod v11_resource_dependency_tests {
                 &no_temporary_views,
             )
             .is_err()
+        );
+
+        assert!(
+            dynamic_body_fact_dependency(
+                &proposition,
+                &CState::new().with_memory(unbound_state.memory().clone()),
+                &PureFactContext::new(),
+                &no_temporary_views,
+            )
+            .is_err(),
+            "a pure definedness fact cannot supply access authority"
         );
 
         let owner_state = CState::new()

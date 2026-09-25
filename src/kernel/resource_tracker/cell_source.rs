@@ -315,6 +315,7 @@ impl MemoryDagHopJustification {
                 derivation,
                 CMemoryDerivation::BlockDeclared { .. }
                     | CMemoryDerivation::HeapAllocationPending { .. }
+                    | CMemoryDerivation::HeapAllocationFailed { .. }
                     | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
                     | CMemoryDerivation::CellsForgotten { .. }
             ),

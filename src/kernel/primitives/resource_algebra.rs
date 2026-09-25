@@ -2604,6 +2604,7 @@ impl ResourceContext {
                 | CMemoryDerivation::BlockDeclared { .. }
                 | CMemoryDerivation::HeapAllocated { .. }
                 | CMemoryDerivation::HeapAllocationPending { .. }
+                | CMemoryDerivation::HeapAllocationFailed { .. }
                 | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
                 | CMemoryDerivation::CellsForgotten { .. } => {}
             }
@@ -2661,6 +2662,7 @@ impl ResourceContext {
             }
             | CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocated { .. }
+            | CMemoryDerivation::HeapAllocationFailed { .. }
             | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
             | CMemoryDerivation::CellsForgotten { .. } => false,
         };
@@ -2777,6 +2779,7 @@ impl ResourceContext {
             CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocated { .. }
             | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::HeapAllocationFailed { .. }
             | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
             | CMemoryDerivation::CellsForgotten { .. } => {}
         }

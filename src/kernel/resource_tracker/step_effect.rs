@@ -101,9 +101,8 @@ pub(in crate::kernel) enum BlockSeparation {
     /// The object that became live is proven distinct from this one, so its
     /// extent and its fresh-allocation status are its own.
     AllocationOfDistinctBlock,
-    /// An allocation was requested and has no address yet. The step records
-    /// only that pending request, which nothing deciding a read of a block
-    /// consults; resolving it is a separate step, judged on its own.
+    /// A pending allocation request was registered or failed. Neither step
+    /// changes existing storage; successful allocation is judged separately.
     PendingAllocationMetadata,
     /// The automatic-storage object retired, or the heap allocation released,
     /// is proven distinct from this one, so this block keeps its contents,
@@ -135,7 +134,7 @@ pub(in crate::kernel) struct Evidence<'a> {
 /// | `Store` | separate on proven-distinct blocks, a common-base offset inequality, typed `separate(..)` evidence, an explicit range, general distinctness, or two owned members of one composition; affected when the written address is provably the loaded one | separate **only** on `PointerBlock::proven_distinct` |
 /// | `BlockDeclared` | separate: it writes nothing | separate when the declared object is proven distinct; affected for this block's own declaration |
 /// | `HeapAllocated` | separate when the block differs | separate when the fresh object is proven distinct; affected for this one |
-/// | `HeapAllocationPending` | separate: it writes nothing | separate: no read of any block consults a pending request |
+/// | `HeapAllocationPending` / `HeapAllocationFailed` | separate: it writes nothing | separate: no read of any block consults a pending request |
 /// | `ContractAllocationClaimsChanged` | separate: it writes nothing | **not shown separate** |
 /// | `ContractAllocationRetired` | separate when the possibly released allocation misses the cell, or when the retiring call's own havoc covers the whole allocation | separate only for a proven-distinct object |
 /// | `CellsForgotten` | separate: the state is the same | **not shown separate** |
@@ -214,6 +213,7 @@ pub(in crate::kernel) fn separation_check(
             | CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocated { .. }
             | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::HeapAllocationFailed { .. }
             | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
             | CMemoryDerivation::CellsForgotten { .. }
             | CMemoryDerivation::LocalLifetimeEnded { .. } => SeparationCheck::PointerDistinctness,
@@ -226,6 +226,7 @@ pub(in crate::kernel) fn separation_check(
             CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocated { .. }
             | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::HeapAllocationFailed { .. }
             | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
             | CMemoryDerivation::CellsForgotten { .. }
             | CMemoryDerivation::LocalLifetimeEnded { .. }
@@ -250,6 +251,7 @@ pub(in crate::kernel) fn separation_check(
             | CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocated { .. }
             | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::HeapAllocationFailed { .. }
             | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
             | CMemoryDerivation::CellsForgotten { .. }
             | CMemoryDerivation::LocalLifetimeEnded { .. }
@@ -410,6 +412,7 @@ fn cell_effect(
         // must look like the pre-arc absence of an edge.
         CMemoryDerivation::BlockDeclared { .. }
         | CMemoryDerivation::HeapAllocationPending { .. }
+        | CMemoryDerivation::HeapAllocationFailed { .. }
         | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
         | CMemoryDerivation::CellsForgotten { .. } => {
             if extended_dag_bridging_active() {
@@ -708,9 +711,10 @@ fn block_effect(step: &CMemoryDerivation, block: &PointerBlock) -> StepEffect {
         CMemoryDerivation::HeapAllocated {
             block: allocated, ..
         } => one_object(allocated, BlockSeparation::AllocationOfDistinctBlock),
-        CMemoryDerivation::HeapAllocationPending { .. } => StepEffect::Separate(Separation::Block(
-            BlockSeparation::PendingAllocationMetadata,
-        )),
+        CMemoryDerivation::HeapAllocationPending { .. }
+        | CMemoryDerivation::HeapAllocationFailed { .. } => StepEffect::Separate(
+            Separation::Block(BlockSeparation::PendingAllocationMetadata),
+        ),
         CMemoryDerivation::HeapFreed {
             allocation_base, ..
         }
@@ -808,6 +812,7 @@ fn footprint_effect(step: &CMemoryDerivation, ranges: Option<&[CMemoryRange]>) -
         CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocated { .. }
             | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::HeapAllocationFailed { .. }
             | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
             | CMemoryDerivation::CellsForgotten { .. }
     ) {
@@ -894,6 +899,7 @@ fn footprint_effect(step: &CMemoryDerivation, ranges: Option<&[CMemoryRange]>) -
         CMemoryDerivation::BlockDeclared { .. }
         | CMemoryDerivation::HeapAllocated { .. }
         | CMemoryDerivation::HeapAllocationPending { .. }
+        | CMemoryDerivation::HeapAllocationFailed { .. }
         | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
         | CMemoryDerivation::CellsForgotten { .. } => separate(FootprintSeparation::WritesNothing),
     }

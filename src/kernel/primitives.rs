@@ -4387,6 +4387,9 @@ pub enum CMemoryDerivation {
         allocation_base: Pointer,
         bytes: Bitvector32Term,
     },
+    /// `base` with a failed pending allocation removed. No storage was
+    /// allocated or written; existing reads retain their validity and value.
+    HeapAllocationFailed { base: SharedCMemory },
     /// `base` with only the allocation claims imported from contracts
     /// changed. Consuming an input claim and installing an output claim do
     /// not write bytes, allocate storage, or free storage, so every load is
@@ -4470,6 +4473,7 @@ impl CMemoryDerivation {
             Self::BlockDeclared { .. } => "BlockDeclared",
             Self::HeapAllocated { .. } => "HeapAllocated",
             Self::HeapAllocationPending { .. } => "HeapAllocationPending",
+            Self::HeapAllocationFailed { .. } => "HeapAllocationFailed",
             Self::ContractAllocationClaimsChanged { .. } => "ContractAllocationClaimsChanged",
             Self::ContractAllocationRetired { .. } => "ContractAllocationRetired",
             Self::HeapFreed { .. } => "HeapFreed",
@@ -4487,6 +4491,7 @@ impl CMemoryDerivation {
             | Self::BlockDeclared { base, .. }
             | Self::HeapAllocated { base, .. }
             | Self::HeapAllocationPending { base, .. }
+            | Self::HeapAllocationFailed { base }
             | Self::ContractAllocationClaimsChanged { base }
             | Self::ContractAllocationRetired { base, .. }
             | Self::HeapFreed { base, .. }

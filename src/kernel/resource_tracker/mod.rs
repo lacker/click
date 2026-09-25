@@ -418,7 +418,8 @@ impl Change {
             CMemoryDerivation::HeapAllocated { block, .. } => Self::Allocation {
                 block: block.clone(),
             },
-            CMemoryDerivation::HeapAllocationPending { .. } => Self::AllocationPending,
+            CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::HeapAllocationFailed { .. } => Self::AllocationPending,
             CMemoryDerivation::ContractAllocationClaimsChanged { .. } => {
                 Self::ContractAllocationClaims
             }

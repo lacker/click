@@ -1,11 +1,10 @@
-# Population value facts do not promise initialization
+# Shared-parent payload transport remains a proof frontier
 
-The unchanged shared-parent C initializes both child fields. This sidecar
-intentionally omits `defined(obj->refs)` and `defined(obj->payload)` from
-`child_ref`. A modular caller cannot infer that guarantee from a logical
-value equality or a count. Its cleanup read must be rejected. The positive
-`population_initialized_cleanup.md` fixture supplies explicit definedness
-facts and checks cleanup across an unrelated allocation.
+The frozen C, explicit initialization facts, and complete first-removal
+caller reach the surviving parent's read. The remaining failure is proving
+`out == payload` across the detach and read contracts; it is no longer an
+uninitialized read during allocation-failure cleanup. Keep the C fixed when
+repairing this proof/contract boundary.
 
 ```c filename=shared_parent.c
 struct child {
@@ -118,10 +117,12 @@ resource parent(p: struct parent*) {
     match link {
         ParentLink::Empty => {
             owns &p->kid;
+            fact defined(p->kid);
             fact p->kid == 0;
         },
         ParentLink::Linked(kid) => {
             owns &p->kid;
+            fact defined(p->kid);
             fact p->kid == kid;
             fact kid != 0;
         },
@@ -131,6 +132,8 @@ resource parent(p: struct parent*) {
 resource child_ref(obj: struct child*) {
     contains allocation(obj, sizeof(struct child));
     owns object(obj);
+    fact defined(obj->refs);
+    fact defined(obj->payload);
     fact obj->refs == count(child_ref(obj));
 }
 
@@ -243,6 +246,7 @@ void parent_detach(struct parent* p) {
     requires link.link != ParentLink::Empty;
     consumes child_ref(p->kid);
     produces &p->kid;
+    ensures old(count(child_ref(p->kid))) > 1 implies old(p->kid)->payload == old(p->kid->payload);
 } by {
     match link.link {
         ParentLink::Empty => {
@@ -262,20 +266,29 @@ int32 run_first_destroyed(int32 payload) {
 } by {
     step();
     step();
-    branch {
-        then { step(); simp(); }
-        else {}
-    }
+    branch { then { step(); simp(); } else {} }
     step();
     step();
     step();
-    branch {
-        then { step(); step(); simp(); }
-        else {}
-    }
+    branch { then { step(); step(); simp(); } else {} }
+    step();
+    step();
+    branch { then { step(); step(); step(); simp(); } else {} }
+    let { link: first_link } = step(parent_attach(first, kid), {});
+    let { link: second_link } = step(parent_attach(second, kid), {});
+    step(child_release(kid), {});
+    step(parent_detach(first), { link: first_link });
+    step();
+    step(parent_read_payload(second), { link: second_link });
+    have out == payload by { simp(); }
+    step(parent_detach(second), { link: second_link });
+    step();
+    step();
+    step();
+    simp();
 }
 ```
 
 ```expect
-fail: read of uninitialized storage
+fail: `simp` failed for `run_first_destroyed.contract`
 ```

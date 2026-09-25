@@ -24,13 +24,21 @@ regression `shared_population_release_expansion_retains_lifetime` preserves
 the frozen source; `population_simple_exit_rejects_final_leak.md` ensures a
 simple closer still rejects an omitted final `free`.
 
-The next caller blocker is initialized-memory observation after producing
-a counted body. The normal-gate expected-failure fixture
-`mdtests/shared_heap_population_initialized_body_gap.md` embeds the unchanged
-frozen C and a caller proof prefix. `child_init` initializes the counter and
-produces `child_ref`; when the first parent allocation fails, the subsequent
-`child_release` precondition reports `read of uninitialized storage`. Repair
-that kernel observation boundary and finish both callers without changing C.
+Initialization support is implemented explicitly: `child_ref` promises
+`defined(obj->refs)` and `defined(obj->payload)`, and parent links promise a
+defined pointer. These facts retain checked ownership/loan dependencies and
+cross only typed no-write memory edges with unchanged lifetime metadata.
+Failed allocation resolution now records such an edge. The complete positive
+`population_initialized_cleanup.md` regression covers both allocation results;
+`shared_heap_population_initialized_body_gap.md` intentionally omits the
+initialization contract and remains rejected.
+
+The next caller frontier is payload/alias transport across detach and read.
+`mdtests/shared_heap_population_payload_frontier.md` embeds the frozen C,
+strengthened helpers, and a complete first-removal caller script. Verification
+reaches `have out == payload` and fails promptly there. Complete that proof
+and the reverse order without changing C; do not treat logical value equality
+as initialization or count membership as access authority.
 
 ## Frozen program and current evidence
 
@@ -42,8 +50,8 @@ parent, and exact final deallocation. Do not reshape this C to suit the proof.
 [`shared_parent.click`](../design/shared-heap-probes/shared_parent.click) verifies
 all six modular helper bodies against those bytes. A scratch caller proof
 advanced through both detaches and parent frees; its remaining success-path
-claim was `out == payload`. The complete lifecycle sidecar is not yet in the
-normal gate.
+claim was `out == payload`. The complete lifecycle is still an expected-failure regression in the
+normal gate, rather than a verified example.
 
 The certification reducer adds only
 `ensures old(p->kid) == old(p->kid);` to `parent_detach`. It previously lost

@@ -1953,6 +1953,22 @@ fn explicit_read_validity_is_typed_and_does_not_cross_havoc() {
         None,
     );
     assert!(!assumptions.has_memory_read_defined_evidence(&changed, &address, CType::Int32));
+    let freed = state
+        .memory()
+        .clone()
+        .free_heap_block(&address, &PureFactContext::new())
+        .unwrap();
+    let stale = Proposition::CMemoryReadDefined {
+        memory: freed,
+        pointer: address,
+        value_type: CType::Int32,
+    };
+    assert!(
+        !crate::kernel::api::contract_certification::certification_proves_proposition(
+            &assumptions,
+            &stale
+        )
+    );
 }
 
 #[test]
@@ -2056,4 +2072,80 @@ fn naming_an_uninitialized_local_cell_does_not_initialize_it() {
             ..
         }]
     ));
+}
+
+#[test]
+fn defined_read_survives_failed_allocation_after_an_unrelated_store() {
+    let address = Pointer {
+        block: PointerBlock::Heap(9100),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let mut samples = Vec::new();
+    for count in [8, 16, 32, 64] {
+        let mut memory = CMemory::new().with_block(address.block.clone(), 4);
+        for index in 0..count {
+            memory = memory.store(
+                Pointer {
+                    block: PointerBlock::Heap(9200 + index),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                int32(1),
+            );
+        }
+        let fact = Proposition::CMemoryReadDefined {
+            memory: memory.clone(),
+            pointer: address.clone(),
+            value_type: CType::Int32,
+        };
+        let assumptions = PureFactContext::new().assume_proposition(fact);
+        let request = Pointer {
+            block: PointerBlock::Symbolic(Variable(9300)),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let pending = memory.with_pending_heap_allocation(
+            request.clone(),
+            Bitvector32Term::Constant(4),
+            false,
+        );
+        // C assigns malloc's result before branching on it. That intervening
+        // store prevents failure from merely interning back to the old memory.
+        let pending = pending.store(
+            Pointer {
+                block: "local:result".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            CValue::pointer(request.clone()),
+        );
+        let (failed, _, _) = pending
+            .resolve_pending_heap_allocation(&request, false)
+            .unwrap();
+        let goal = Proposition::CMemoryReadDefined {
+            memory: failed.clone(),
+            pointer: address.clone(),
+            value_type: CType::Int32,
+        };
+        let (proved, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::api::contract_certification::certification_proves_proposition(
+                &assumptions,
+                &goal,
+            )
+        });
+        assert!(proved, "failure to allocate must preserve an existing read");
+        samples.push(work);
+        let changed = failed.with_call_memory_havoc(
+            Variable(9301),
+            &[CMemoryRange::new(
+                address.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )],
+            &assumptions,
+            None,
+        );
+        assert!(!assumptions.has_memory_read_defined_evidence(&changed, &address, CType::Int32));
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[1] <= pair[0] + 16),
+        "{samples:?}"
+    );
 }

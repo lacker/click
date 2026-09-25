@@ -2391,6 +2391,11 @@ impl CMemory {
                     },
                 );
             }
+        } else if let Some(prior) = prior {
+            record_c_memory_derivation(
+                &mut self,
+                CMemoryDerivation::HeapAllocationFailed { base: prior },
+            );
         }
         Some((self, bytes, resolved_base))
     }

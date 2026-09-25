@@ -2505,6 +2505,13 @@ pub(crate) fn certification_proves_proposition(
         return true;
     }
     let directly_proven = match proposition {
+        // Initialization evidence follows the same checked memory edges used
+        // by typed reads; value equality alone cannot establish it.
+        Proposition::CMemoryReadDefined {
+            memory,
+            pointer,
+            value_type,
+        } => assumptions.proves_memory_read_defined(memory, pointer, *value_type),
         // Order conditions use the deterministic bounded order prover; the
         // fuel-dependent simp decision procedure stays out of certification.
         Proposition::ConditionIs(condition, value)

@@ -215,15 +215,12 @@ impl PureFactContext {
                         return true;
                     }
                     before.read_region_identity(source) == memory.read_region_identity(pointer)
-                        && crate::kernel::api::atomic_loads_equal_along_memory_derivations(
-                            &Bitvector32Term::MemoryLoad(
-                                crate::kernel::intern_c_memory_ref(before),
-                                Box::new(source.clone()),
-                            ),
-                            &Bitvector32Term::MemoryLoad(
-                                crate::kernel::intern_c_memory_ref(memory),
-                                Box::new(pointer.clone()),
-                            ),
+                        && source == pointer
+                        && crate::kernel::memory_provenance::typed_read_has_same_memory_source(
+                            before,
+                            memory,
+                            pointer,
+                            value_type.byte_width(),
                             self,
                         )
                 })

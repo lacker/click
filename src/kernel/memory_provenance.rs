@@ -2193,6 +2193,50 @@ impl LoadCellWalks {
     }
 }
 
+/// Initialization can cross only checked no-write edges for this typed range.
+/// Reaching equal stored values at different sources is insufficient: value
+/// equality grants no authority to read an initialized object.
+pub(super) fn typed_read_has_same_memory_source(
+    before: &CMemory,
+    after: &CMemory,
+    pointer: &Pointer,
+    bytes: u32,
+    assumptions: &PureFactContext,
+) -> bool {
+    with_extended_dag_bridging(|| {
+        let before = intern_c_memory_ref(before);
+        let mut current = intern_c_memory_ref(after);
+        let evidence = crate::kernel::resource_tracker::step_effect::Evidence {
+            assumptions,
+            cross_loop_havoc: true,
+        };
+        // Stop at the named premise, never walk its unrelated earlier history.
+        loop {
+            crate::instrumentation::record_deterministic_work(1);
+            if current == before {
+                return true;
+            }
+            let Some(step) = current.derivation() else {
+                return false;
+            };
+            if !matches!(
+                crate::kernel::resource_tracker::step_effect::affects(
+                    &step,
+                    &current,
+                    crate::kernel::resource_tracker::Resource::Cell { pointer, bytes },
+                    &evidence,
+                ),
+                crate::kernel::resource_tracker::step_effect::StepEffect::Separate(
+                    crate::kernel::resource_tracker::step_effect::Separation::Cell(_)
+                )
+            ) {
+                return false;
+            }
+            current = step.base().clone();
+        }
+    })
+}
+
 /// The memory-DAG equality arm as a term-level test:
 /// true only when both sides are atomic loads the DAG resolves alike.
 ///
