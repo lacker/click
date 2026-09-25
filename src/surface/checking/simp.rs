@@ -459,6 +459,18 @@ fn rewrite_atomic_proposition_by_exact_equality(
                     rewrite_offset(first, left, right),
                     rewrite_offset(second, left, right),
                 ),
+                // A scaled index may be a load variable whose own address
+                // names the rewritten offset (`p->q->cells[i]` under
+                // `p->q == r`): rewrite through it, as through the outer
+                // load. Each level is the registered address of one load.
+                PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                    let rewritten = rewrite_term_offset(value, left, right);
+                    if &rewritten == value.as_ref() {
+                        offset.clone()
+                    } else {
+                        PointerOffsetTerm::scale_int32(rewritten, *byte_width)
+                    }
+                }
                 _ => offset.clone(),
             }
         }

@@ -1072,6 +1072,7 @@ impl ProofFacts {
     /// Returns exact equality facts attached to terms occurring in this
     /// proposition. Selection cost follows the proposition and the matching
     /// equality buckets; unrelated ambient equalities are never visited.
+    #[cfg(test)]
     pub(crate) fn bitvector_equalities_mentioning(
         &self,
         proposition: &Proposition,
@@ -1178,9 +1179,9 @@ impl ProofFacts {
         equalities.into_iter().collect()
     }
 
-    /// Like [`Self::bitvector_equalities_mentioning`], also returning indexed
-    /// pointer-offset equalities between scaled offsets, for the pointer side
-    /// of the load-variable chain bridge.
+    /// The exact bitvector equalities attached to terms of this proposition
+    /// (through the addresses of its loads), together with the indexed
+    /// pointer equalities between scaled offsets, each fact once.
     pub(crate) fn load_equalities_mentioning(&self, proposition: &Proposition) -> Vec<Proposition> {
         self.indexed_load_equalities_mentioning(proposition)
             .into_iter()
@@ -1222,11 +1223,16 @@ impl ProofFacts {
     ) -> Vec<Arc<Proposition>> {
         let mut atoms = BTreeSet::new();
         collect_proposition_bitvector_atoms(proposition, &mut atoms);
+        // One fact is filed under each of its operands' atoms; pointer
+        // identity drops the repeat without comparing payloads.
+        let mut seen = BTreeSet::new();
         let mut equalities = Vec::new();
         for atom in atoms {
             if let Some(bucket) = self.bitvector_equalities_by_atom.get(&atom) {
                 for equality in bucket.iter() {
-                    equalities.push(equality.clone());
+                    if seen.insert(Arc::as_ptr(equality) as usize) {
+                        equalities.push(equality.clone());
+                    }
                 }
             }
         }
@@ -1979,11 +1985,50 @@ fn collect_bitvector_atoms(term: &Bitvector32Term, atoms: &mut BTreeSet<Bitvecto
         Bitvector32Term::PointerAddress(pointer) => {
             collect_pointer_offset_bitvector_atoms(&pointer.offset, atoms)
         }
+        // A load variable names one read; the atoms of the address it read
+        // are the atoms an equality must rewrite to reach it (`p->q->x`
+        // under `p->q == r`). Follow registered addresses a bounded number
+        // of levels, so the selection stays proportional to the term.
+        Bitvector32Term::Variable(variable) => collect_load_address_atoms(*variable, atoms, 0),
         Bitvector32Term::Constant(_)
         | Bitvector32Term::Int64Constant(_)
-        | Bitvector32Term::UInt64Constant(_)
-        | Bitvector32Term::Variable(_) => {}
+        | Bitvector32Term::UInt64Constant(_) => {}
         Bitvector32Term::IntegerToMachine { .. } => {}
+    }
+}
+
+/// Load-address levels followed when collecting a term's atoms.
+const LOAD_ADDRESS_ATOM_DEPTH: usize = 3;
+
+fn collect_load_address_atoms(
+    variable: Variable,
+    atoms: &mut BTreeSet<BitvectorEqualityAtomKey>,
+    depth: usize,
+) {
+    if depth >= LOAD_ADDRESS_ATOM_DEPTH || !crate::kernel::is_load_variable(&variable) {
+        return;
+    }
+    let Some((_, pointer)) = crate::kernel::eval::registered_load_for_variable(&variable) else {
+        return;
+    };
+    let mut pending = vec![&pointer.offset];
+    while let Some(offset) = pending.pop() {
+        match offset {
+            PointerOffsetTerm::Add(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            PointerOffsetTerm::Int32Scaled { value, .. }
+            | PointerOffsetTerm::Int64Scaled { value, .. } => {
+                if let Some(atom) = bitvector_equality_atom_key(value) {
+                    atoms.insert(atom);
+                }
+                if let Bitvector32Term::Variable(inner) = value.as_ref() {
+                    collect_load_address_atoms(*inner, atoms, depth + 1);
+                }
+            }
+            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+        }
     }
 }
 

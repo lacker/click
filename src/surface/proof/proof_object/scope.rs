@@ -733,13 +733,41 @@ impl<'a> ProofScope<'a> {
                         .execution
                         .clone(),
                 };
-                if let Obligation::FunctionOutcome(outcome) = &obligation {
-                    let mut updated = outcome.clone();
-                    let mut data = (*updated.data).clone();
-                    data.surface_propositions
-                        .record_lowering(&proposition, &kernel)?;
-                    updated.data = Arc::new(data);
-                    obligation = Obligation::FunctionOutcome(updated);
+                let mut execution = execution;
+                match &obligation {
+                    Obligation::FunctionOutcome(outcome) => {
+                        let mut updated = outcome.clone();
+                        let mut data = (*updated.data).clone();
+                        data.surface_propositions
+                            .record_lowering(&proposition, &kernel)?;
+                        updated.data = Arc::new(data);
+                        obligation = Obligation::FunctionOutcome(updated);
+                    }
+                    // A `have` inside a proposition scope (under `intro`, or
+                    // a nested `have`) is spelled for the premise lookups
+                    // later steps of that scope make, exactly as one at the
+                    // scope's outcome or frontier is: a later `simp` can then
+                    // cite it by its written form. The spelling is an index
+                    // entry, not authority; a lookup still requires the kernel
+                    // fact to be present.
+                    Obligation::Proposition(goal) => {
+                        if let Some(data) = &goal.outcome {
+                            let mut updated = goal.clone();
+                            let mut data = (**data).clone();
+                            data.surface_propositions
+                                .record_lowering(&proposition, &kernel)?;
+                            updated.outcome = Some(Arc::new(data));
+                            obligation = Obligation::Proposition(updated);
+                        } else if let Some(frontier) = &execution {
+                            let mut updated = (**frontier).clone();
+                            updated
+                                .presentation
+                                .surface_propositions
+                                .record_lowering(&proposition, &kernel)?;
+                            execution = Some(Arc::new(updated));
+                        }
+                    }
+                    Obligation::Frontier(_) => {}
                 }
                 let state = self
                     .root

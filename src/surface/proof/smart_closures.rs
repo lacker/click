@@ -3531,11 +3531,10 @@ impl<'a> Proof<'a> {
                 );
             let mut refinement = None;
             let goal_variable_count = crate::kernel::proposition_variables(&goal).len();
-            let equality_candidates = if matches!(goal, Proposition::CResourceSeparate { .. }) {
-                proof.facts().load_equalities_mentioning(&goal)
-            } else {
-                proof.facts().bitvector_equalities_mentioning(&goal)
-            };
+            // Pointer equalities between scaled offsets are candidates too:
+            // `rewrite` carries one through the address of a load, so a
+            // goal over `p->q->x` reaches `r->x` under `p->q == r`.
+            let equality_candidates = proof.facts().load_equalities_mentioning(&goal);
             let equalities = equality_candidates
                 .into_iter()
                 .chain(proof.facts().algebraic_equalities_mentioning(&goal));

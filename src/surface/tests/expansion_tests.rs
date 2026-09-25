@@ -498,6 +498,47 @@ fn guarded_postcondition_consequent_expands_and_reverifies() {
     }
 }
 
+/// An equality chain through a scope's own `have`s, and an equality
+/// rewritten through a loaded pointer field, expand to explicit `rewrite`
+/// steps that re-verify.
+#[test]
+fn scope_equality_chain_and_loaded_pointer_rewrite_expand_and_reverify() {
+    for (relative, function, expected) in [
+        (
+            "mdtests/simp_chains_equalities_stated_in_a_scope.md",
+            "caller",
+            "rewrite(at(b, occ[k]) == at(a, occ[k]));",
+        ),
+        (
+            "mdtests/rewrite_through_a_loaded_pointer_field.md",
+            "same",
+            "rewrite(",
+        ),
+    ] {
+        let (click_source, c_sources) = mdtest_sources(relative);
+        let c_sources = c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let expanded =
+            expand_c0_claim_source(&click_source, &c_sources, function, CProofClaim::Grouped)
+                .unwrap_or_else(|error| panic!("`{relative}` should expand: {}", error.message()));
+        let claim = &expanded[expanded
+            .find(&format!("int32 {function}("))
+            .expect("claim proof")..];
+        let claim = &claim[claim.find("} by {").expect("claim proof body")..];
+        let claim = &claim[..claim[1..].find("\n}").expect("claim end")];
+        assert!(!claim.contains("simp()"), "{expanded}");
+        assert!(claim.contains(expected), "{expanded}");
+        if let Err(error) = verify_c0_sources(&expanded, &c_sources) {
+            panic!(
+                "the expanded `{relative}` should re-verify: {}\n{expanded}",
+                error.message()
+            );
+        }
+    }
+}
+
 #[test]
 fn branch_continuation_match_expands_and_reverifies() {
     for relative in [

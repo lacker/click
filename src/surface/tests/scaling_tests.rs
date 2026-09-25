@@ -2991,3 +2991,67 @@ fn many_clause_bundle_grows_at_most_quadratically() {
         );
     }
 }
+
+/// `simp` closes `x0 == xN` from the chain `x0 == x1`, ..., `x(N-1) == xN`
+/// in one step, with work linear in the chain; a query about two unrelated
+/// equal terms costs the same whatever chain sits beside it.
+#[test]
+fn simp_equality_chain_is_linear_and_unrelated_queries_are_flat() {
+    let simp_work = |sample: &ScalingSample| {
+        sample
+            .named_work
+            .iter()
+            .filter(|(name, _)| name.ends_with("tactic `simp`"))
+            .map(|(_, work)| *work)
+            .sum::<usize>()
+    };
+    let sources = |size: usize, goal: &str| {
+        let c_parameters = (0..=size)
+            .map(|index| format!("int x{index}"))
+            .chain(["int y".into(), "int z".into(), "int w".into()])
+            .collect::<Vec<_>>()
+            .join(", ");
+        let parameters = (0..=size)
+            .map(|index| format!("int32 x{index}"))
+            .chain(["int32 y".into(), "int32 z".into(), "int32 w".into()])
+            .collect::<Vec<_>>()
+            .join(", ");
+        let requires = (0..size)
+            .map(|index| format!("    requires x{index} == x{};\n", index + 1))
+            .collect::<String>();
+        (
+            format!("int chain({c_parameters}) {{\n    return 0;\n}}\n"),
+            format!(
+                "verifying \"chain.c\";\n\nint32 chain({parameters}) {{\n{requires}    requires y == z;\n    requires z == w;\n    ensures {goal};\n}} by {{\n    execute();\n    simp();\n}}\n"
+            ),
+        )
+    };
+    let mut chain = Vec::new();
+    let mut unrelated = Vec::new();
+    for size in [4, 8, 16, 32] {
+        for (goal, samples) in [
+            (format!("x0 == x{size}"), &mut chain),
+            ("y == w".to_string(), &mut unrelated),
+        ] {
+            let (c_source, click_source) = sources(size, &goal);
+            let (verified, sample) = scaling_sample(size, || {
+                verify_c0_sources(&click_source, &[("chain.c", c_source.as_str())])
+            });
+            verified.unwrap_or_else(|error| panic!("`{goal}` closes: {}", error.message()));
+            samples.push(simp_work(&sample));
+        }
+    }
+    assert!(chain[0] > 0 && unrelated[0] > 0, "{chain:?} {unrelated:?}");
+    for pair in chain.windows(2) {
+        assert!(
+            pair[1] <= pair[0].saturating_mul(3),
+            "chain work grew faster than linear: {chain:?}"
+        );
+    }
+    for work in &unrelated {
+        assert!(
+            *work <= unrelated[0].saturating_add(unrelated[0] / 4),
+            "an unrelated query grew with the chain: {unrelated:?}"
+        );
+    }
+}
