@@ -152,11 +152,22 @@ cells again. Its contract proves
 the new region is one of the freed cells. The proof shows that after the free
 the only free cells are `2` and `3`, and `arena_alloc`'s postcondition that
 the allocated cells were free before the call places the new region among
-them. With the allocation's length that is the freed interval itself; the
-contract states the containment, because relating the length to the loaded
-descriptor needs `defined(reused->start + 2)` proved through the region's
-field, which takes opening the outcome in a case split that the proof of a
-C function without a branch cannot make.
+them. With the allocation's length that is the freed interval itself, but the
+contract states only the containment: `simp` did not use a definedness fact
+proved about the loaded `reused->start` to discharge the guard of the
+allocation's `reused->end == reused->start + 2`, as it does for one proved
+about a region field in the pipeline, and this fixture does not pin that.
+
+The driver reads `middle->arena` into a local after `arena_free(middle)` has
+returned the descriptor, and its contract names the returned state
+`arena_state(old(middle->arena))`. These route around two pinned frontiers: a
+region cannot be unfolded while the caller also owns another descriptor of
+its type (`mdtests/unfold_region_beside_an_object_of_its_type_frontier.md`),
+and a descriptor field the caller holds flat is carried across a later call
+only while its value is cached
+(`mdtests/call_keeps_a_flat_field_only_while_cached_frontier.md`), so
+`middle->arena` read after `arena_alloc` would not be related to the value
+before it.
 
 This is the weaker form of first-fit reuse: the freed hole is the only free
 run, so any successful allocation of that size lands in it. First fit itself
@@ -177,6 +188,7 @@ holds an occupied cell).
 - A call that lends an iterated fact havocs every cell the fact could hold,
   whatever the callee writes; the caller's frame across it comes only from
   the cells it keeps owning.
+- The two frontiers `arena_reuse` routes around, above.
 - A guarded equality over `int64` terms still needs its bounds stated in the
   guard's own spelling
   (`mdtests/guarded_postcondition_int64_bounds_frontier.md`).
