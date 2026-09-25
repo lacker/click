@@ -101,6 +101,7 @@ void parent_attach(struct parent* p, struct child* kid) {
     produces child_ref(kid);
     produces link: parent(p);
     ensures link.link == ParentLink::Linked(kid);
+    ensures p->kid == kid;
     ensures kid->payload == old(kid->payload);
 } by {
     execute();

@@ -234,6 +234,14 @@ counterpart check a modular store/read boundary; the kernel regression covers
 both logical and checked typed reads. This repairs a pointer-identity boundary
 encountered while proving the caller; it does not complete payload transport.
 
+The attachment contract now exports `p->kid == kid` as well as the abstract
+`ParentLink::Linked(kid)` state. A caller can retain this pointer identity at a
+named snapshot and establish the detach contract's count guard. The frontier
+regression checks that both the recorded identity and conditional payload
+preservation are available after detach. Connecting these facts to the
+surviving parent's payload read remains unfinished; neither pointer equality
+nor a membership count grants access to the body.
+
 The complete shared-parent callers remain unfinished.
 `shared_heap_population_payload_frontier.md` preserves the unchanged C and a
 complete first-removal caller proof that reaches `out == payload`; the

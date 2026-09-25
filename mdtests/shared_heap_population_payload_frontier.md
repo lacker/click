@@ -6,6 +6,13 @@ caller reach the surviving parent's read. The remaining failure is proving
 uninitialized read during allocation-failure cleanup. Keep the C fixed when
 repairing this proof/contract boundary.
 
+The explicit attachment postcondition exposes the stored child pointer. The
+caller establishes two remaining membership units before detach, then checks
+both the recorded pointer identity and the conditional payload-preservation
+postcondition after detach. Those facts individually verify; combining aliased
+reads across their snapshots is still the frontier. They are not evidence of
+access authority or thread safety.
+
 ```c filename=shared_parent.c
 struct child {
     int32 refs;
@@ -210,6 +217,7 @@ void parent_attach(struct parent* p, struct child* kid) {
     produces child_ref(kid);
     produces link: parent(p);
     ensures link.link == ParentLink::Linked(kid);
+    ensures p->kid == kid;
     ensures kid->payload == old(kid->payload);
 } by {
     execute();
@@ -277,7 +285,13 @@ int32 run_first_destroyed(int32 payload) {
     let { link: first_link } = step(parent_attach(first, kid), {});
     let { link: second_link } = step(parent_attach(second, kid), {});
     step(child_release(kid), {});
+    have first->kid == kid by { simp(); }
+    have kid->payload == payload by { simp(); }
+    have count(child_ref(first->kid)) > 1 by { simp(); }
+    mark detaching;
     step(parent_detach(first), { link: first_link });
+    have at(detaching, first->kid) == kid by { assumption(); }
+    have at(detaching, first->kid)->payload == at(detaching, first->kid->payload) by { simp(); }
     step();
     step(parent_read_payload(second), { link: second_link });
     have out == payload by { simp(); }
