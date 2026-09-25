@@ -3651,6 +3651,9 @@ fn tactic_end_token(
     let mut braces = 0_usize;
     let mut parentheses = 0_usize;
     let mut brackets = 0_usize;
+    // Quantifiers in a `have` proposition own braces too. Only the block
+    // after its top-level `by` can terminate the tactic.
+    let mut have_body_started = tokens[start].text != "have";
     loop {
         if cursor >= close {
             return Err(ClickError::new(
@@ -3658,12 +3661,15 @@ fn tactic_end_token(
             ));
         }
         match tokens[cursor].text.as_str() {
+            "by" if braces == 0 && parentheses == 0 && brackets == 0 => {
+                have_body_started = true;
+            }
             "{" => braces += 1,
             "}" => {
                 braces = braces.checked_sub(1).ok_or_else(|| {
                     ClickError::new("unbalanced tactic block in selected source proof")
                 })?;
-                if braces == 0 && parentheses == 0 && brackets == 0 {
+                if have_body_started && braces == 0 && parentheses == 0 && brackets == 0 {
                     let continuation = tokens.get(cursor + 1).map(|token| token.text.as_str());
                     // A destructuring proof binding starts with a brace,
                     // but its `}` is followed by `=` rather than ending

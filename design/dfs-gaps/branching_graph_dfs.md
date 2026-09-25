@@ -1,4 +1,4 @@
-# Branching graph DFS: checked success-path reachability
+# Branching graph DFS: checked reachability and completeness
 
 The already-verified `examples/modeled-binary-tree/` search is recursive and
 branches over both children, but it traverses a disjoint, acyclic tree. It does
@@ -22,8 +22,8 @@ Termination and memory safety for bounded successor indices, with `decreases
 unmarked(visited, 0, n)`, are checked in `mdtests/branching_graph_dfs.md`.
 A nonzero return now also implies that `to` is in bounds, was unmarked at
 entry, and is reachable from `cur` by a finite left/right path in the entry
-graph. Full failure-path completeness remains a later claim: it must account
-for nodes visited by the left call before the right call starts.
+graph. With every entry cell unmarked, a zero return proves that no finite
+left/right path reaches the target.
 
 The checked contract owns `visited[0..n]`, views both successor arrays through
 a `bounded_successors` resource carrying their bounds, and keeps each array
@@ -85,13 +85,39 @@ regressions are `mdtests/graph_view_survives_marked_summary_call.md` and
 empty binder map required by a let-bound scalar call; a source-backed test
 checks expansion and reverification of the historical witness fixture.
 
-## Next design decision
+## Checked failure completeness (2026-09-25)
 
-Failure does not imply ordinary graph unreachability with arbitrary initial
-marks: a previsited intermediate node can hide an otherwise reachable target.
-Before implementing completeness, choose an all-unmarked initial condition
-for the public theorem or define reachability through initially unmarked
-nodes. Either route needs a recursive exploration summary that composes when
-the left call marks nodes subsequently encountered by the right call.
+The public theorem uses an all-unmarked entry condition. The recursive contract
+allows arbitrary initial marks and adds three summaries: the target cell is
+unchanged; a failed call leaves its root marked; and every newly marked node
+has both successors marked. Previously marked nodes remain marked as before.
+
+The failed outer call composes these summaries by splitting nodes into the
+root, nodes newly marked by the left call, and nodes newly marked by the right
+call. Monotonic marking carries the left call's closed successors across the
+right call. This accounts for shared nodes and cycles without changing C.
+
+`closed_marks_exclude_target` proves by structural induction that a path from a
+marked node cannot leave a successor-closed marked set excluding the target.
+`exhausted_zero_entry` constructs that set from the failure summary and the
+all-zero entry array. Both are checked independently in
+`mdtests/branching_graph_path_witness.md` and used in the complete C proof.
+The zero-entry condition is essential: a previsited intermediate node can
+block exploration of a reachable target.
+
+The verifier changes supporting the public contract are small: reported post-return
+`have` introductions accept algebraic universal binders, and certification
+uses the typed alpha-identity index for established implications containing
+quantifiers. Explicit assumption checking also compares quantified guards by
+that typed identity. Expansion keeps quantifier braces inside a `have`
+proposition until its `by` body. The focused
+`mdtests/conditional_algebraic_universal_contract.md` and its source-backed
+expand/reverify regression cover these paths.
+Kernel tests reject dropping the guard, changing the endpoint, graph snapshot,
+or binder sort, and check lookup work across increasing unrelated fact counts.
+`mdtests/conditional_call_indexed_result_fact.md` checks explicit framing of a
+historical graph read used as another read's index.
+
+The remaining work is proof ergonomics, catalogued in `issues/dfs.md`.
 Automatic fold read-range inference remains a separate, unapproved design;
-it is not required for the success theorem now checked here.
+it is not required for either correctness theorem.

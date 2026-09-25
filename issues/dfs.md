@@ -5,7 +5,7 @@ found. Kernel soundness findings discovered during the same campaign are
 tracked in `bugs/`. Everything needed for this example is here and in
 `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
-## Handoff checkpoint — 2026-09-25, after branching reachability proof
+## Handoff checkpoint — 2026-09-25, after branching failure completeness
 
 The complete unmodified search now verifies termination and memory safety in
 `mdtests/search_terminates_by_unmarked_count.md`. Its `Integer`-valued fold
@@ -51,8 +51,9 @@ mark more nodes. The successor bounds live in a viewed resource and are
 re-observed after the mutating call. Success-path reachability for this graph
 search now verifies too, with a finite `Path` witness in the entry graph and
 an in-bounds target that was unmarked at entry. The recursive contract also
-preserves each previously marked node. Both recursive success branches and
-their snapshot framing are checked; see
+preserves each previously marked node. Failure completeness from all-unmarked
+entry is also checked, using the closed-successor summary described below.
+Both recursive success branches and their snapshot framing are checked; see
 `design/dfs-gaps/branching_graph_dfs.md`. Discuss the fold-read-range design in
 item 2 with the user before implementing it.
 
@@ -156,12 +157,13 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
 The unchanged two-successor graph search now checks termination, memory
 safety, and success-path reachability in `mdtests/branching_graph_dfs.md`,
 including the right recursive call after the left has changed `visited`.
-The next correctness question is failure-path completeness: with arbitrary
-initial marks, an already marked intermediate node can block a path to an
-unmarked target. Choose an all-unmarked initial condition or specify paths
-through initially unmarked nodes before attempting that theorem. The
-recursive summary must account for nodes marked by the left call before the
-right call begins. A binary-tree recursive search is also
+Failure-path completeness now checks too: from an all-unmarked entry state,
+returning zero implies that every finite `Path` misses the target. The recursive
+contract still permits arbitrary initial marks. It preserves the target cell,
+marks the failed call's root, and makes every newly marked node's successors
+marked. This summary composes across both calls; path induction gives the
+public theorem. Arbitrary initial marks cannot support ordinary completeness,
+since a previsited node can block exploration of a reachable target. A binary-tree recursive search is also
 verified in `examples/modeled-binary-tree/`, but that resource-ranked acyclic
 case does not cover cycles or sharing. The older folded-resource loop-guard
 claim is not a general current limitation;
@@ -207,10 +209,19 @@ missing index/extent bounds, changed graph snapshots, captured free witnesses,
 and different witness sorts, and pin indexed lookup scaling. The fold-range
 design in item 2 is still unapproved and was not implemented.
 
+The completeness contract additionally checks reported algebraic universal
+introductions and typed alpha matching of quantified conditional facts in
+`mdtests/conditional_algebraic_universal_contract.md`. Kernel regressions
+protect guards, graph snapshots, endpoint values, binder sorts, and indexed
+lookup scaling. Its expansion regression also checks quantified `have` source
+mapping and explicit assumption checking with renamed quantified guards.
+No fold-range inference was added.
+
 ## Acceptance
 
 Termination, memory safety, and success-path reachability of the unmodified C
 are checked by `mdtests/search_terminates_by_unmarked_count.md` and
-`mdtests/branching_graph_dfs.md`. For the
-remaining work, each fixed gap has a minimal regression mdtest, and
+`mdtests/branching_graph_dfs.md`. The branching DFS also checks failure-path
+completeness from an all-unmarked entry state. Remaining work concerns the
+proof-language and tooling costs ranked above; each fixed gap has a minimal regression mdtest, and
 `design/dfs-gaps/` is deleted with this issue.

@@ -2494,13 +2494,14 @@ pub(crate) fn certification_proves_proposition(
     }
     if matches!(
         proposition,
-        Proposition::ForAll { .. } | Proposition::Exists { .. }
+        Proposition::ForAll { .. } | Proposition::Exists { .. } | Proposition::Implies(..)
     ) && assumptions.states_required_goal(proposition)
     {
         // Contract lowering freshens binders independently of proof facts.
         // Use the checked, typed alpha-identity index for every quantified
         // sort, including algebraic path witnesses. This recognizes an
-        // established existential; it never invents or searches for a witness.
+        // established quantified fact, including a conditional one whose
+        // antecedent also has fresh binders; it never invents a witness.
         return true;
     }
     let directly_proven = match proposition {

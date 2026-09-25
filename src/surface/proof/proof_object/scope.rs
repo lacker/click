@@ -145,7 +145,9 @@ impl<'a> ProofScope<'a> {
                     };
                     let expected = match sort {
                         crate::kernel::Sort::Integer => (false, true),
-                        crate::kernel::Sort::CInt32 => (false, false),
+                        crate::kernel::Sort::CInt32 | crate::kernel::Sort::Algebraic(_) => {
+                            (false, false)
+                        }
                         crate::kernel::Sort::CPointer(_) => (true, false),
                         _ => {
                             return Err(self.root.step_error(

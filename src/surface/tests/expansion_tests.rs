@@ -15460,3 +15460,26 @@ fn conditional_call_witness_expansion_keeps_empty_binder_map() {
     );
     verify_c0_sources(&expanded, &sources).expect("the expanded witness proof certifies");
 }
+
+#[test]
+fn conditional_algebraic_universal_expands_and_reverifies() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/conditional_algebraic_universal_contract.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let mdtest = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let original = mdtest.click_source.as_deref().unwrap();
+    verify_c0_sources(original, &sources).expect("conditional universal verifies");
+    let expanded = expand_c0_claim_source(original, &sources, "report", CProofClaim::Grouped)
+        .expect("quantifier braces must remain inside the have proposition");
+    verify_c0_sources(&expanded, &sources)
+        .unwrap_or_else(|error| panic!("{}\n{expanded}", error.message()));
+    let expanded_again =
+        expand_c0_claim_source(&expanded, &sources, "report", CProofClaim::Grouped)
+            .expect("printed quantified haves retain their source mapping");
+    verify_c0_sources(&expanded_again, &sources).expect("reexpanded universal certifies");
+}

@@ -651,9 +651,9 @@ pub(crate) fn quantified_equivalent_available_fact(
 
 pub(crate) fn quantified_binder_equivalent(left: &Proposition, right: &Proposition) -> bool {
     // A guarded quantifier matches when the guards are identical and the
-    // quantified conclusions are binder-equivalent. The antecedents are
-    // compared exactly; only the final quantifier is compared up to its
-    // binders, by the same authoritative rules as a top-level quantifier.
+    // quantified conclusions are binder-equivalent. A guard can itself
+    // quantify variables; its typed alpha identity preserves its snapshots,
+    // free variables, and sorts while allowing those local binders to differ.
     let (mut left, mut right) = (left, right);
     let mut guarded = false;
     while let (
@@ -661,7 +661,9 @@ pub(crate) fn quantified_binder_equivalent(left: &Proposition, right: &Propositi
         Proposition::Implies(right_guard, right_body),
     ) = (left, right)
     {
-        if left_guard != right_guard {
+        if left_guard != right_guard
+            && !super::propositions_are_alpha_equal(left_guard, right_guard)
+        {
             return false;
         }
         (left, right) = (left_body, right_body);

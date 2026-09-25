@@ -5548,3 +5548,136 @@ fn certification_of_algebraic_witness_ignores_unrelated_quantifiers() {
         "certification scanned unrelated quantifiers: {samples:?}"
     );
 }
+
+fn conditional_path_universal(
+    ty: &AlgebraicType,
+    binder: u64,
+    memory: CMemory,
+    target: u32,
+) -> Proposition {
+    let Proposition::Exists {
+        name: _,
+        var,
+        sort,
+        body,
+    } = path_exists_at_snapshot(ty, binder, binder, memory, target)
+    else {
+        unreachable!()
+    };
+    Proposition::Implies(
+        Box::new(Proposition::ForAll {
+            var: Variable(binder + 1),
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(Bitvector32Term::Variable(Variable(binder + 1)), 0.into()),
+                true,
+            )),
+        }),
+        Box::new(Proposition::ForAll { var, sort, body }),
+    )
+}
+
+#[test]
+fn certification_keeps_conditional_universal_guards_snapshots_and_sorts() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let ty = AlgebraicType::parameter("Path".into());
+    let memory = CMemory::new().with_block("graph", 4);
+    let fact = conditional_path_universal(&ty, 100, memory.clone(), 0);
+    let proof_facts = crate::kernel::proof::ProofFacts::from_ordered(std::slice::from_ref(&fact));
+    let facts = PureFactContext::new().assume_proposition(fact);
+    let proves = |goal: &Proposition| {
+        let certified =
+            crate::kernel::api::contract_certification::certification_proves_proposition(
+                &facts, goal,
+            );
+        assert_eq!(proof_facts.pure_assumption_available(goal), certified);
+        certified
+    };
+    let goal = conditional_path_universal(&ty, 200, memory.clone(), 0);
+    assert!(proves(&goal));
+    let Proposition::Implies(_, body) = &goal else {
+        unreachable!()
+    };
+    assert!(
+        !proves(body),
+        "a conditional guarantee cannot lose its guard"
+    );
+    assert!(!proves(&conditional_path_universal(
+        &ty,
+        200,
+        memory.clone(),
+        1
+    )));
+    assert!(!proves(&conditional_path_universal(
+        &AlgebraicType::parameter("OtherPath".into()),
+        200,
+        memory.clone(),
+        0,
+    )));
+    let after = memory.store(
+        Pointer {
+            block: "graph".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        int32(1),
+    );
+    assert!(!proves(&conditional_path_universal(&ty, 200, after, 0)));
+}
+
+#[test]
+fn conditional_universal_certification_ignores_unrelated_facts() {
+    let mut samples = Vec::new();
+    for size in [32, 64, 128, 256] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let ty = AlgebraicType::parameter("Path".into());
+        let memory = CMemory::new().with_block("graph", 4);
+        let mut facts = PureFactContext::new().assume_proposition(conditional_path_universal(
+            &ty,
+            100,
+            memory.clone(),
+            0,
+        ));
+        let mut proof_facts =
+            crate::kernel::proof::ProofFacts::from_ordered(&[conditional_path_universal(
+                &ty,
+                100,
+                memory.clone(),
+                0,
+            )]);
+        for i in 1..=size {
+            proof_facts = proof_facts.with_kernel_checked_fact(conditional_path_universal(
+                &ty,
+                1_000 + 2 * u64::from(i),
+                memory.clone(),
+                i,
+            ));
+            facts = facts.assume_proposition(conditional_path_universal(
+                &ty,
+                1_000 + 2 * u64::from(i),
+                memory.clone(),
+                i,
+            ));
+        }
+        facts.build_stated_proposition_index();
+        let goal = conditional_path_universal(&ty, 200, memory.clone(), 0);
+        let missing = conditional_path_universal(&ty, 200, memory, 1_000);
+        let (verdicts, work) = crate::instrumentation::measure_deterministic_work(|| {
+            (
+                crate::kernel::api::contract_certification::certification_proves_proposition(
+                    &facts, &goal,
+                ),
+                crate::kernel::api::contract_certification::certification_proves_proposition(
+                    &facts, &missing,
+                ),
+                proof_facts.pure_assumption_available(&goal),
+                proof_facts.pure_assumption_available(&missing),
+            )
+        });
+        assert_eq!(verdicts, (true, false, true, false));
+        samples.push(work);
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[0] == pair[1]),
+        "conditional lookup scanned unrelated facts: {samples:?}"
+    );
+}
