@@ -42,7 +42,7 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
         }
         selected.push(source_pair);
     }
-    let checks = |selected: &[(Proposition, ClickProposition)]| {
+    let check_premises = |selected: &[(Proposition, ClickProposition)]| {
         let explicit = selected
             .iter()
             .map(|(kernel, _)| kernel.clone())
@@ -118,6 +118,14 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
         )
     };
 
+    let checks = |selected: &[(Proposition, ClickProposition)]| {
+        crate::instrumentation::measure_operation(
+            "surface",
+            "fact transport",
+            "explicit fact transport: premise check",
+            || check_premises(selected),
+        )
+    };
     if !checks(&selected) {
         let rank = |proposition: &Proposition| match proposition {
             Proposition::CResourceSeparate { .. }
@@ -135,22 +143,34 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
             .cloned()
             .collect::<Vec<_>>();
         remaining.sort_by_key(|(kernel, _)| rank(kernel));
+        // Every candidate prefix below is a subset of the complete list, and
+        // a check only gains assumptions as premises are added. Decide the
+        // complete list once before growing a prefix: when it misses, no
+        // prefix can view the transport, and a failing plan costs one check
+        // rather than one per ambient candidate. When it holds, the prefix
+        // walk selects exactly the premises it always selected, and it
+        // reaches a passing prefix no later than the complete list itself.
+        let complete = selected
+            .iter()
+            .chain(remaining.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        if remaining.is_empty() || !checks(&complete) {
+            let unavailable_count = available
+                .iter()
+                .filter(|fact| !candidates.iter().any(|(candidate, _)| candidate == *fact))
+                .count();
+            return Err(ClickError::new(format!(
+                "explicit surface premises do not view the certified fact transport\n  source: {source:?}\n  target: {target:?}\n  selected surface premises: {}\n  unsynthesizable ambient facts: {unavailable_count} (internal facts omitted)",
+                complete.len(),
+            )));
+        }
         for pair in remaining {
             selected.push(pair);
-            if checks(&selected) {
+            if selected.len() == complete.len() || checks(&selected) {
                 break;
             }
         }
-    }
-    if !checks(&selected) {
-        let unavailable_count = available
-            .iter()
-            .filter(|fact| !candidates.iter().any(|(candidate, _)| candidate == *fact))
-            .count();
-        return Err(ClickError::new(format!(
-            "explicit surface premises do not view the certified fact transport\n  source: {source:?}\n  target: {target:?}\n  selected surface premises: {}\n  unsynthesizable ambient facts: {unavailable_count} (internal facts omitted)",
-            selected.len(),
-        )));
     }
     let mut index = 0;
     while index < selected.len() {
