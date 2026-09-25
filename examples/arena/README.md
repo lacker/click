@@ -174,12 +174,15 @@ A per-cell pipeline draft verifies the initialization-failure path, both
 paths that destroy after a failed allocation (including freeing `first`
 first), the second allocation's success with its zero-outside-both-regions
 invariant, both writes with the invariant carried across them, and the
-call of the first read. It stops at the value that read returns, `first`'s
-written value carried across `arena_write(second, ..)`: the
-chain `first->arena->data == second->arena->data == at(m,
-second->arena->data) == at(m, first->arena->data)` is proved link by link,
-but `simp` does not compose it
-(`mdtests/pointer_field_alias_chain_across_call_frontier.md`).
+call of the first read. It stops at the value that read returns: `first`'s
+written cell has to be carried across `arena_write(second, ..)`. The
+pointer-level links of that frame now compose
+(`mdtests/simp_composes_a_pointer_field_chain_across_a_call.md`), but the
+cell itself, read at an address loaded through `first->arena->data` and
+`first->start`, is not related across the call even after both address
+loads are rewritten to their pre-call values: `simp` reports that the
+recorded execution does not connect the two snapshots, although the
+caller's residual `arena_region` kept that cell.
 
 ## Sidecar layout
 

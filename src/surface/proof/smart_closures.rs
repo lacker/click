@@ -21,6 +21,10 @@ use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
 
 const MAX_DIRECT_CALLER_BINDING_NAMES: usize = 4096;
 
+/// Goal-changing rewrites kept per link of an equality chain: the first
+/// continues the chain, the others get a one-link closing probe.
+const MAX_EQUALITY_REWRITE_BRANCHES: usize = 4;
+
 fn collect_signed_surface_terms<'a>(
     expression: &'a ContractExpression,
     terms: &mut Vec<&'a ContractExpression>,
@@ -3519,17 +3523,24 @@ impl<'a> Proof<'a> {
                 ),
             },
         };
-        let mut proof = self.clone();
-        let mut used = BTreeSet::new();
-        loop {
-            let goal = proof.goal()?.clone();
+        // One level of the chain: every candidate equality mentioning the
+        // goal is tried as a checked rewrite followed by the closers. Up to
+        // `refinement_limit` rewrites that changed the goal are returned for
+        // the next level; a closing-only probe asks for none.
+        let level = |proof: &Self,
+                     used: &BTreeSet<Proposition>,
+                     refinement_limit: usize|
+         -> Result<Option<Self>, Vec<(Proposition, Self)>> {
+            let Some(goal) = proof.goal().cloned() else {
+                return Err(Vec::new());
+            };
             let allows_chain = matches!(goal, Proposition::ConditionIs(_, _))
                 || matches!(goal, Proposition::CResourceSeparate { .. })
                 || matches!(
                     goal,
                     Proposition::Equal(Term::Algebraic(_), Term::Algebraic(_))
                 );
-            let mut refinement = None;
+            let mut refinements: Vec<(Proposition, Self)> = Vec::new();
             let goal_variable_count = crate::kernel::proposition_variables(&goal).len();
             // Pointer equalities between scaled offsets are candidates too:
             // `rewrite` carries one through the address of a load, so a
@@ -3574,7 +3585,7 @@ impl<'a> Proof<'a> {
                     // and work budget between candidates, so a search that
                     // cannot close stops when its tactic's bound runs out.
                     if crate::instrumentation::deadline_exceeded() {
-                        return None;
+                        return Err(Vec::new());
                     }
                     let rewrite = proof.apply_step(ProofStep::Rewrite(oriented));
                     let Ok(rewritten) = rewrite else {
@@ -3596,7 +3607,7 @@ impl<'a> Proof<'a> {
                                 .flatten()
                         })
                     {
-                        return Some(closed);
+                        return Ok(Some(closed));
                     }
                     // Do not turn a value already present in the goal into a
                     // fresh symbolic variable merely because the reverse
@@ -3609,15 +3620,39 @@ impl<'a> Proof<'a> {
                                 <= goal_variable_count
                         });
                     if allows_chain
-                        && refinement.is_none()
+                        && refinements.len() < refinement_limit
                         && rewritten.goal() != Some(&goal)
                         && does_not_expand_a_literal
+                        && !refinements
+                            .iter()
+                            .any(|(_, other)| other.goal() == rewritten.goal())
                     {
-                        refinement = Some((equality.clone(), rewritten));
+                        refinements.push((equality.clone(), rewritten));
                     }
                 }
             }
-            let (equality, rewritten) = refinement?;
+            Err(refinements)
+        };
+        let mut proof = self.clone();
+        let mut used = BTreeSet::new();
+        loop {
+            let refinements = match level(&proof, &used, MAX_EQUALITY_REWRITE_BRANCHES) {
+                Ok(closed) => return closed,
+                Err(refinements) => refinements,
+            };
+            // A link whose own rewrite does not close may be one step from a
+            // closing link. The first refinement continues the chain; each
+            // other one gets a closing-only probe first, so which change the
+            // candidate order happened to find first does not decide whether
+            // a chain through the goal's equality classes closes.
+            for (equality, rewritten) in refinements.iter().skip(1) {
+                let mut probe_used = used.clone();
+                probe_used.insert(equality.clone());
+                if let Ok(Some(closed)) = level(rewritten, &probe_used, 0) {
+                    return Some(closed);
+                }
+            }
+            let (equality, rewritten) = refinements.into_iter().next()?;
             used.insert(equality);
             proof = rewritten;
         }

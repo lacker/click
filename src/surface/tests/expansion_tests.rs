@@ -514,6 +514,11 @@ fn scope_equality_chain_and_loaded_pointer_rewrite_expand_and_reverify() {
             "same",
             "rewrite(",
         ),
+        (
+            "mdtests/simp_composes_a_pointer_field_chain_across_a_call.md",
+            "caller",
+            "rewrite(",
+        ),
     ] {
         let (click_source, c_sources) = mdtest_sources(relative);
         let c_sources = c_sources

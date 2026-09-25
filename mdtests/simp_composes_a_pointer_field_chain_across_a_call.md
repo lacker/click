@@ -1,21 +1,22 @@
-# A pointer-field equality chain across a call is the frontier
+# `simp` composes a pointer-field chain across a call
 
 `first` and `second` point at one arena. `touch(second)` keeps
-`second->arena` and `second->arena->data`. Every link of
-`first->arena->data == at(m, first->arena->data)` is proved separately
-below: `first->arena->data == second->arena->data` (both arena pointers are
+`second->arena` and `second->arena->data`. Each link of
+`first->arena->data == at(m, first->arena->data)` is proved separately:
+`first->arena->data == second->arena->data` (both arena pointers are
 `arena`), `second->arena->data == at(m, second->arena->data)` (the callee's
 frame), and `at(m, second->arena->data) == at(m, first->arena->data)`. The
-closing `simp` still fails: its equality-rewrite chain does not compose
-pointer-offset equalities between loaded pointer fields across two
-snapshots, and it reports that `first->arena` may have changed.
+closing `simp` composes the three.
 
-The per-cell arena pipeline needs this chain for every value it carries
-across a call through the other region (`first`'s data across
-`arena_write(second, ..)`), so this file pins the frontier it stops at.
-When `simp` composes the chain this file should pass unchanged.
+Its equality-rewrite chain used to keep only the first rewrite that changed
+the goal and continue from it; here that was an alias rewrite at the other
+snapshot, from which no further link closed, so `simp` reported that
+`first->arena` may have changed. Each link now keeps up to four
+goal-changing rewrites: the first continues the chain and each other gets a
+one-link closing probe, so the order in which candidates were found no
+longer decides whether a chain closes.
 
-```c filename=pointer_field_alias_chain_across_call_frontier.c
+```c filename=simp_composes_a_pointer_field_chain_across_a_call.c
 struct arena {
     int* data;
 };
@@ -34,7 +35,7 @@ int caller(struct arena* arena, struct region* first, struct region* second) {
 ```
 
 ```click
-verifying "pointer_field_alias_chain_across_call_frontier.c";
+verifying "simp_composes_a_pointer_field_chain_across_a_call.c";
 
 void touch(struct region* region) {
     owns object(region);
@@ -83,5 +84,5 @@ int32 caller(struct arena* arena, struct region* first, struct region* second) {
 ```
 
 ```expect
-fail: `simp` failed for `caller.contract`
+pass
 ```

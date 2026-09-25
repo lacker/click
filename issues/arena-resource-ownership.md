@@ -409,11 +409,13 @@ every call outcome in scope, and each quantified-frame instantiation
 rewriting whole memory snapshots). It verifies initialization failure, both
 destroys after a failed allocation, the second allocation's
 zero-outside-both-regions invariant, both writes with that invariant
-carried across them, and the call of the first read. The next frontier is
-the value that read returns, `first`'s written value carried across
-`arena_write(second, ..)`: every link of the
-pointer-field chain proves, but `simp` does not compose it
-(`mdtests/pointer_field_alias_chain_across_call_frontier.md`). The prefix
+carried across them, and the call of the first read. The pointer-level
+links of carrying `first`'s written value across `arena_write(second, ..)`
+compose (`mdtests/simp_composes_a_pointer_field_chain_across_a_call.md`);
+the next frontier is the cell itself: after rewriting its address loads to
+their pre-call values, `simp` reports that the recorded execution does not
+connect the two snapshots, although the caller's residual `arena_region`
+kept the cell across the call. No reduced fixture pins it yet. The prefix
 sidecars stay until the pipeline verifies.
 
 Two further limits of the per-cell contracts: nothing relates `live` to the
