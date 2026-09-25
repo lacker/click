@@ -63,6 +63,28 @@ this flow and rejects a wrong mutex and an unfolded unlock. The runtime model
 assumes these valid calls succeed. Worker sharing and interference rules are
 still needed before this proves the concurrent counter.
 
+### Mutex model boundary
+
+`held(&mutex)` is a checked fact about the current path's guard. Straight-line
+lock/unlock and loops that restore the same mutex ownership at every loop
+head verify. The [quarantined parity probe](../design/concurrency-probes/mutex_held_parity.c)
+is ordinary C that alternates lock and unlock according to the loop index,
+then releases any final guard and destroys the mutex. It has no Click sidecar
+or passing proof. At its loop head, whether the guard is held depends on the
+index parity. The current loop state has one concrete mutex status, so the
+backedge cannot express that relation for arbitrary `n`.
+
+The next mutex-state design needs a checked conditional guard state: establish
+its relation to `i` at entry and on every backedge, narrow it on each branch,
+and never manufacture unlock authority at a join. It should reject a false
+parity claim and an unlock on a path without the guard. Mutex lifecycle also
+needs an explicit connection to the storage holding `pthread_mutex_t`:
+initialization and destruction are separate from allocation and freeing, and
+the current ledger does not establish that the storage remains live for every
+initialized mutex. Returning a held guard is currently refused; a design for
+transferring it through a function contract remains open. These are distinct
+from the shared lock protocol required by the concurrent counter.
+
 ## Remaining work
 
 ### Native pthread binding

@@ -15,6 +15,17 @@ workers mutate the same ordinary cell under one lock. The
 interference rules needed to verify it; the current one-path mutex escrow
 still refuses worker creation while that mutex is initialized.
 
+The [mutex parity source](mutex_held_parity.c) is a quarantined C probe for a
+smaller open proof boundary. For a successful initialization and valid mutex
+operations, its loop holds the mutex exactly when `i` is odd, then unlocks
+and destroys it before returning. The source is intentionally outside the
+example and mdtest gates: no Click sidecar proves it yet. The current loop
+checker carries one concrete mutex ownership status at a loop head and cannot
+represent this conditional status. Future proof work should keep these C
+bytes fixed and establish the parity relation for arbitrary `n`, including
+zero and both final parities. It must also reject a false parity relation or
+an unlock on an unheld path.
+
 ## Binding direction
 
 The [pthread binding design](pthread-binding-design.md) describes how ordinary
