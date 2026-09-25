@@ -47,4 +47,4 @@ one unfold of a composite.
 - `scripts/check.sh` passes.
 
 Related: [abstract-resource-construction.md](abstract-resource-construction.md);
-[arena-resource-ownership.md](arena-resource-ownership.md).
+the arena example ([`examples/arena/README.md`](../examples/arena/README.md)).

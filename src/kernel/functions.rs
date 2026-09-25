@@ -19915,9 +19915,9 @@ fn instance_arm_read_authority(
 ///
 /// This is the same publication a field-free composite's expansion and a
 /// decided match arm make. The body is evaluated at the instance's own
-/// fields and arguments, so `owns object(region)` in `arena_prefix_region`
-/// makes `region->arena` readable for a clause that names
-/// `arena_prefix_state(region->arena)`. Nothing is owned twice and nothing is
+/// fields and arguments, so `owns object(region)` in the arena example's
+/// `arena_region` makes `region->arena` readable for a clause that names
+/// `arena_state(region->arena)`. Nothing is owned twice and nothing is
 /// opened: the instance stays folded, and only an explicit `unfold` moves its
 /// cells into the proof state. A view grants a read, never a write.
 ///

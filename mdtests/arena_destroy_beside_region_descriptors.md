@@ -2,10 +2,10 @@
 
 `examples/arena`'s `arena_pipeline` ends every path in `arena_destroy(arena)`
 while it still owns its region descriptors. This is that call in isolation,
-with `arena_destroy`'s contract copied from `examples/arena/arena_pipeline.click`
-and the resources it needs from `examples/arena/arena_resources.click`: the caller lends `arena_empty(arena)`, which
-owns both backing arrays and their allocation authority, and keeps
-`object(first)` and `object(second)`.
+with the `arena_destroy` contract of the arena's earlier prefix model and the
+lifecycle resources of `examples/arena/arena_resources.click`: the caller
+lends `arena_empty(arena)`, which owns both backing arrays and their
+allocation authority, and keeps `object(first)` and `object(second)`.
 
 `arena_destroy` sets `arena->data` and `arena->occupied` to null, so the
 allocations it frees can only be named through the values those fields had

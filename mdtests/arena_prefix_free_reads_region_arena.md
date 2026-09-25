@@ -15,9 +15,11 @@ The publication is read authority only. The region stays folded at entry, and
 the proof moves its cells into the state with an explicit `unfold`, exactly as
 it moves the live count's. The live count is unfolded first because it owns
 `&arena->data`, the cell the region's range `region->arena->data[start..end]`
-loads its base from. The shape is the one `examples/arena`'s prefix
-`arena_free` needs; the C here keeps only the live-count decrement so the
-fixture isolates contract addressing from the occupancy loop.
+loads its base from. The shape is the one the arena example's `arena_free`
+needed in its earlier prefix model, and the per-cell `arena_free` names
+`arena_state(region->arena)` beside `arena_region(region)` the same way; the
+C here keeps only the live-count decrement so the fixture isolates contract
+addressing from the occupancy loop.
 
 ```c filename=arena_prefix_free_reads_region_arena.c
 struct arena {

@@ -15,84 +15,43 @@ coalescing operation is required.
 The pipeline allocates two adjacent regions, reads and writes through both,
 frees them in reverse order, and then allocates one region spanning their
 combined space. It cleans up correctly along every allocation-failure path.
+`arena_reuse` frees the middle one of three regions and allocates the same
+size again.
 
-The C is the fixed implementation boundary for the resource-modeling work.
-The Click proof gives each live region exclusive access to its backing
-interval. `arena_free` consumes that authority, clears the occupancy map
-through a checked loop, and returns both the backing and occupancy intervals
-as an `arena_available` resource together with the shared arena metadata. Its
-contract also exposes the exact decrement of `live_regions`.
+The C is the fixed implementation boundary for the resource-modeling work;
+`arena_reuse.c` is the acceptance driver added for the reuse fixture.
 
-`arena_alloc` now verifies for the first allocation from a freshly initialized
-empty arena. Invalid counts return failure without consuming the empty arena
-or the caller-owned descriptor. A successful allocation transfers the exact
-prefix `[0, count)` into `arena_first_allocation` and retains the adjacent
-suffix `[count, capacity)` in the same outcome resource. This deliberately
-specialized contract establishes the first ownership-partition transition
-without pretending that arbitrary holes are modeled yet.
+## Sidecar layout
 
-`arena_pipeline.click` verifies `arena_alloc` as one symbolic
-transition over a retained prefix. Its `arena_prefix_state` resource carries
-two plain fields, the occupied prefix `prefix` and the live count `live`, and
-owns the arena metadata plus an `arena_prefix_partition` child: the complete
-occupancy map, the free data suffix `[prefix, capacity)`, and the facts that
-every occupancy cell below `prefix` is 1 and every one from `prefix` on is 0.
-The field selects the endpoint of the owned suffix directly; no algebraic
-model or `match` is involved. For a symbolic `count`, invalid counts and a
-scan that finds no run of `count` free cells return failure with the state at
-the same fields and the caller-owned descriptor. Success returns the state at
-`prefix + count` and `live + 1` together with an `arena_prefix_region` that
-owns the descriptor and exactly `[prefix, prefix + count)`, and the contract
-states `region->start == old(before.prefix)`, `region->end == region->start +
-count`, and `arena->live_regions == old(before.live) + 1`. Only the
-success/failure outcome keeps a `spec enum`. The proof names the fields where
-it unfolds the state, `let { partition: partition, prefix: p, live: n } =
-unfold(before);`, so the scan loop's invariant, the mark loop, the transported
-occupancy facts, and every refold can say `p` and `n` after the state itself
-is consumed.
+A caller can use a callee's contract only when the callee is verified earlier
+in the same sidecar, and imports carry resources but not C function specs.
 
-The same sidecar verifies the fixed `arena_free`, `arena_read`, and
-`arena_write` over those resources. `arena_prefix_region` takes the region
-descriptor alone and reaches the arena as `region->arena`, so each contract can
-name both resources from the region argument: while a contract's clauses are
-read, the folded region publishes the cells its body owns as read authority
-for its siblings. `arena_free` is a prefix shrink. It consumes the most
-recently allocated region (`freed.end == before.prefix`) together with the
-state, requires `1 <= before.live` and `before.live - 1 <= freed.start`, clears
-`occupied[start..end]` through the C loop, refolds the partition at prefix
-`start` by rejoining the freed data interval to the free suffix under
-`end == prefix`, and produces the state at `prefix == old(freed.start)` and
-`live == old(before.live) - 1` together with the descriptor. `arena_read` and
-`arena_write` borrow the region and the state, require the index inside the
-region's interval in field terms, keep both instances' fields, and state the
-value read or written as `region->arena->data[region->start + index]`. The
-`arena.click` read, write, and free contracts are over `arena_region` and the
-shared `arena_metadata` population instead, which the prefix model does not
-use, so they stay as the fixed-interval forms.
+- `arena_cells.click` is the arena's model: the per-cell occupancy
+  representation, every C function over it (`arena_init`, `arena_alloc`,
+  `arena_free`, `arena_write`, `arena_read`, `arena_destroy`,
+  `arena_region_length`), then `arena_pipeline` and `arena_reuse`. It
+  declares its own resources.
+- `arena.click` keeps the earlier fixed-interval model: `arena_metadata`,
+  `arena_region`, `arena_available`, the specialized first allocation of
+  `arena_alloc`, and `arena_region_length`, `arena_read`, `arena_write`, and
+  `arena_free` over one fixed interval. It imports the lifecycle resources
+  (`arena_initialized_storage`, `arena_initialized_access`,
+  `arena_init_result`, `arena_empty`) from the declaration module
+  `arena_resources.click`, which a directory target does not select as an
+  entry.
 
-`arena_second_alloc.click` verifies the pipeline's second allocation as a
-separate, fixed transition. Its input state describes the occupied prefix
-`[0, 2)`, owns the free data suffix `[2, capacity)` plus the complete
-occupancy map, and states the occupancy facts as requirements. Failure
-restores that state and the caller-owned descriptor; success returns the new
-region `[2, 4)` and retains `[4, capacity)` for the arena. Its resources are
-not the symbolic ones, so it is not literally an instance of the symbolic
-contract; it stays as the fixed instance check of the pipeline's second
-two-cell allocation.
-
-`arena_init` and `arena_destroy` now verify as an independent empty-arena
-lifecycle. Initialization returns the caller-owned descriptor on every path,
-returns both complete backing allocations and ranges only on success, proves
-that every occupancy cell is zero, and releases the data allocation if the
-second allocation fails. Destruction requires an `arena_empty` resource with
-`live_regions == 0`, consumes both allocation authorities, and returns the
-zeroed descriptor.
+An earlier model held the occupied cells as a prefix beside a free suffix
+(`arena_prefix_state`, `arena_prefix_region`). It verified the pipeline,
+whose frees in reverse order it expresses as prefix shrinks, but it could not
+express a free out of allocation order, and it is retired now that the
+per-cell model carries the pipeline. The resource-level negatives written
+against its resources (`mdtests/arena_prefix_region_double_free.md`,
+`mdtests/arena_prefix_regions_reject_overlap.md`) are self-contained and
+stay.
 
 ## The per-cell model
 
-`arena_cells.click` verifies the same fixed C over the per-cell occupancy
-representation, the one that expresses frees in any order. `arena_state`
-owns the arena's four fields, the allocation authority, and an
+`arena_state` owns the arena's four fields, the allocation authority, and an
 `arena_cells` child: the whole occupancy map plus, through iterated guarded
 ownership, exactly the data cells whose occupancy is `0`. Its fields are
 `live` and `capacity`; its facts are `0 <= live`, the capacity bound, and
@@ -113,134 +72,111 @@ Nothing mentions a prefix.
   unchanged; success returns the region with
   `region->end == region->start + count` and
   `region->end <= arena->capacity`, the state at `live + 1`, every cell of
-  `[region->start, region->end)` occupied, and every other cell unchanged.
-  The scan loop carries its free run in an `arena_scan` window, so its
-  per-cell run fact is a resource fact checked at each fold; the mark loop
-  owns an `arena_window`, takes each cell's element out of the iterated fact,
-  and marks it, which the store rule closes. Because nothing ties `live` to
-  the number of regions, the increment's definedness is the precondition
-  `st.live < 2147483647`.
-- `arena_free` consumes the region and the state, with `1 <= st.live` and
-  `r.end <= st.capacity`, clears `[start, end)` through an
+  `[region->start, region->end)` occupied now and free before the call, and
+  every other cell unchanged. The scan loop carries its free run in an
+  `arena_scan` window, so its per-cell run fact is a resource fact checked at
+  each fold; the mark loop owns an `arena_window`, takes each cell's element
+  out of the iterated fact, and marks it, which the store rule closes.
+  Because nothing ties `live` to the number of regions, the increment's
+  definedness is the precondition `st.live < 2147483647`. It also states
+  `arena->capacity <= 536870911`, `st.capacity == arena->capacity`, and, on
+  success, `0 <= region->start` and `region->start < region->end`.
+- `arena_free` consumes any live region and the state, with `1 <= st.live`
+  and `r.end <= st.capacity`, clears `[start, end)` through an
   `arena_clear_window` that gives each cell's element back to the iterated
   fact after its flag is cleared, and produces the descriptor and the state
-  at `live - 1`, with every cleared cell `0` and every other cell unchanged.
-  It needs no prefix: any live region can be freed.
+  at `live - 1`, with every cleared cell `0`, every other cell unchanged, and
+  `region->arena->capacity` kept.
 - `arena_read` and `arena_write` borrow the region and the state, require
   the region to lie inside the arena (`r.end <= st.capacity`), and leave
   every occupancy cell, `region->arena`, and the arena's `capacity` and
-  `data` unchanged, with `r.end <= st.capacity` again at return;
-  `arena_read`'s result is the cell's value before the call, and
-  `arena_region_length` borrows both too. The state is named
-  `arena_state(old(region->arena))`: a borrowed instance is re-read at the
-  call's return, and the callee owns the descriptor, so naming it through
-  the current `region->arena` would not match the caller's
-  `arena_state(arena)` before the caller applies the callee's
-  postconditions (`mdtests/borrowed_instance_argument_reads_old_field.md`).
-  The occupancy frame across the store needs the written index's range in
-  the terms the store address is spelled in (`0 <= region->start + index`
-  and `region->start + index < region->arena->capacity`), so the proofs
-  state those before executing.
-- `arena_alloc` also states `arena->capacity <= 536870911`,
-  `st.capacity == arena->capacity`, and, on success, `0 <= region->start`
-  and `region->start < region->end`; `arena_free` keeps
-  `region->arena->capacity`.
+  `data` unchanged, with `r.end <= st.capacity` again at return. The cell
+  written or read is stated both as `region->arena->data[region->start +
+  index]` and as `region->arena->data[r.start + index]`: the field spelling's
+  definedness is the precondition's, so a caller that keeps the region
+  folded can use it without opening the descriptor. `arena_read`'s result is
+  the cell's value before the call, and `arena_region_length` borrows both
+  too. The state is named `arena_state(old(region->arena))`: a borrowed
+  instance is re-read at the call's return, and the callee owns the
+  descriptor (`mdtests/borrowed_instance_argument_reads_old_field.md`).
 
 Both loops that write the map must own all of it, because the iterated
 fact's guard cells must be owned by the body that declares it, so each loop
 havocs every occupancy cell. What a loop leaves alone is a frame invariant
-against the loop's entry, `arena->occupied[k] == at(mark_free_run.entry,
-arena->occupied[k])` below `start` and from `end` on, and the scan loop
-frames the whole map the same way; the contracts' frames chain those to the
-function entry. The bundles close with explicit closers: each map member is
-transported from the map's viewability stated just before the loop, and the
-field `&arena->occupied` the map is read through adds no member
-(`mdtests/loop_frame_through_folded_state_field_cells.md`). The clearing loop
-reads `region->end` in its condition while its window's iterated clause spans
-all of `data`; the descriptor stays with the function, so the loop head keeps
-its cells (`mdtests/loop_keeps_cells_the_function_keeps_owning.md`).
-
-What the per-cell sidecar does not yet verify is the pipeline; the prefix
-model below keeps verifying it. Every call in the pipeline passes the folded
-`arena_state`, and a call havocs the callee's footprint, here the whole data
-buffer through the iterated clause. The caller keeps its region descriptors
-and the other regions' data outside the transfer, so the callee cannot write
-them, and the call rule now keeps a cell an owned member of the caller's
-residual resources holds, opening a residual `arena_region` one layer
-(`mdtests/call_keeps_caller_object_beside_folded_state.md`,
-`mdtests/call_keeps_region_beside_folded_arena_state.md`).
-
-A per-cell pipeline draft verifies the initialization-failure path, both
-paths that destroy after a failed allocation (including freeing `first`
-first), the second allocation's success with its zero-outside-both-regions
-invariant, both writes with the invariant carried across them, and the
-call of the first read. It stops at the value that read returns: `first`'s
-written cell has to be carried across `arena_write(second, ..)`. The
-pointer-level links of that frame now compose
-(`mdtests/simp_composes_a_pointer_field_chain_across_a_call.md`), but the
-cell itself, read at an address loaded through `first->arena->data` and
-`first->start`, is not related across the call even after both address
-loads are rewritten to their pre-call values: `simp` reports that the
-recorded execution does not connect the two snapshots, although the
-caller's residual `arena_region` kept that cell.
-
-## Sidecar layout
-
-A caller can use a callee's contract only when the callee is verified earlier
-in the same sidecar, and imports carry resources but not C function specs. So
-the files are split by what they share:
-
-- `arena_resources.click` is a declaration module: the lifecycle resources
-  (`arena_initialized_storage`, `arena_initialized_access`,
-  `arena_init_result`, `arena_empty`) and the prefix resources
-  (`arena_prefix_partition`, `arena_prefix_state`, `arena_prefix_region`),
-  and nothing to verify on its own. It names `object(arena)`, whose struct
-  layout comes from an importer's `verifying` sources, so it is checked where
-  `arena.click` and `arena_pipeline.click` import it; a directory target does
-  not select a declaration module as an entry.
-- `arena_pipeline.click` proves every contract the pipeline calls:
-  `arena_init`, the symbolic `arena_alloc`, the prefix-shrink `arena_free`,
-  `arena_write`, `arena_read`, and `arena_destroy`, in that order, then
-  `arena_pipeline` itself, and declares `arena_pipeline.c`. It holds the `ArenaPrefixAllocOutcome` enum and
-  `arena_prefix_alloc_result`, which only the symbolic allocation uses.
-- `arena.click` keeps the fixed-interval model: `arena_metadata`,
-  `arena_region`, `arena_available`, the specialized first allocation of
-  `arena_alloc`, and `arena_region_length`, `arena_read`, `arena_write`, and
-  `arena_free` over `arena_region`.
-- `arena_second_alloc.click` stays the fixed instance check of the pipeline's
-  second two-cell allocation.
-- `arena_cells.click` holds the per-cell model: its resources, the three
-  loop windows, `arena_init`, `arena_alloc`, `arena_free`, `arena_write`,
-  `arena_read`, `arena_destroy`, and `arena_region_length`. It declares its own resources
-  rather than importing `arena_resources.click`, because `arena.click`
-  imports that module and already names a different `arena_region`.
+against the loop's entry, and the contracts' frames chain those to the
+function entry (`mdtests/loop_frame_through_folded_state_field_cells.md`,
+`mdtests/loop_keeps_cells_the_function_keeps_owning.md`).
 
 ## The pipeline
 
 `arena_pipeline` verifies on all five paths: initialization failure, each of
 the three allocation failures, and success, which returns `33`
-(`ensures result == 0 or result == 33`). Every path ends in
-`arena_destroy(arena)` while the caller still owns its region descriptors
-(`mdtests/arena_destroy_beside_region_descriptors.md` is that call alone).
+(`ensures result == 0 or result == 33`). Every call lends the folded
+`arena_state`, whose iterated clause spans the whole data buffer; the caller
+keeps its region descriptors and the other regions' data outside each
+transfer, and the call rule keeps a cell an owned member of the caller's
+residual resources holds
+(`mdtests/call_keeps_region_beside_folded_arena_state.md`).
 
-- Initialization converts to `arena_prefix_state` at `prefix == 0,
-  live == 0` with checked folds: unfold the result, access, and storage,
-  refold storage at `1`, prove the two separations, and fold the partition
-  and state. Each path back to `arena_destroy` converts the other way with
-  `unfold(state)`, `unfold(partition)`,
-  `fold(arena_initialized_access(..., 1))`, and `fold(arena_empty(arena))`.
-  A theorem cannot transform resources, so these are inline folds on each of
-  the four destroy paths.
-- Each call's fresh state fields are carried with `mark` before the call and
-  `have x == at(mark, x)`, `have at(mark, x) == c`, and a `simp() using` of
-  the two after it.
-- The allocation's `region->start == old(before.prefix)` has no caller
-  spelling; `extract(combined->start == at(a3, s4.prefix))` names it.
-  `defined(combined->start + 3)`, which guards the write and read
-  postconditions at index 3, needs the descriptor's cells readable: unfold
-  the state and then the region, `rewrite` and `normalize`, and refold both.
-  The value read back at index 3 is then `33`.
+The proof carries an occupancy invariant: every cell outside the live regions
+is free, spelled against the snapshots at which the regions were allocated
+(`k < at(z1, first->start) or at(z1, first->end) <= k`). Each allocation
+extends it from the callee's per-cell frame, each read and write preserves it
+through the callee's clause that every occupancy cell is unchanged, and each
+free restores the freed interval through its clause that the cleared cells
+are `0`, so the map is all free again before every `arena_destroy`. Region
+endpoints are tracked through the regions' fields
+(`r1.start == at(z1, first->start)`), and the live count and capacity through
+the state's fields, one `have` per carried fact across each call.
 
-The pipeline frees in reverse order, which the prefix model expresses as
-shrinks. Frees out of allocation order are the open representation question
-in `issues/arena-resource-ownership.md`.
+The value written through `first` is carried across the write through
+`second` with an explicit `transport` whose frame evidence is the kept range
+(`mdtests/call_keeps_a_region_cell_read_through_its_descriptor.md`); `simp`
+does not find that step. The combined region's index `3` is in range by its
+fields: `r3.end == r3.start + 4` follows from the allocation's postcondition
+once `defined(r3.start + 4)` is proved on the field, and the cell written and
+read back is named through `r3.start`.
+
+Where `simp` was slow or did not close, the proof is written with explicit
+steps. Of its 370 `simp` calls, 104 are `simp() using` with their premises
+listed, and it states 449 `have`s, 48 `instantiate`s, 17 `rewrite`s,
+5 `apply`s and 2 `transport`s. `click expand --claim arena_pipeline.contract`
+replaces the remaining smart steps with checked simple ones.
+
+## Reuse after a free out of order
+
+`arena_reuse` frees `middle`, the region `[2, 4)` of a six-cell arena whose
+other cells are occupied by live regions on either side, and allocates two
+cells again. Its contract proves
+`result == 1 implies 2 <= reused->start and reused->end <= 4`: every cell of
+the new region is one of the freed cells. The proof shows that after the free
+the only free cells are `2` and `3`, and `arena_alloc`'s postcondition that
+the allocated cells were free before the call places the new region among
+them. With the allocation's length that is the freed interval itself; the
+contract states the containment, because relating the length to the loaded
+descriptor needs `defined(reused->start + 2)` proved through the region's
+field, which takes opening the outcome in a case split that the proof of a
+C function without a branch cannot make.
+
+This is the weaker form of first-fit reuse: the freed hole is the only free
+run, so any successful allocation of that size lands in it. First fit itself
+(the chosen run is the first one of its size) is not stated, because a
+resource fact cannot yet read cells under a nested quantifier's guard, which
+the scan loop's invariant would need (every earlier window of `count` cells
+holds an occupied cell).
+
+## Limits
+
+- Nothing relates `live` to the number of occupied cells or regions (the
+  kernel has no count of a guarded population), so `arena_alloc` requires
+  `st.live < 2147483647` and `arena_destroy` requires the all-free map
+  rather than `live == 0`.
+- A call's footprint skips an instance it cannot open from one state, such
+  as an undecided matched arm or a recursive body
+  ([`bugs/loop-and-call-footprints-skip-unopenable-instances.md`](../../bugs/loop-and-call-footprints-skip-unopenable-instances.md)).
+- A call that lends an iterated fact havocs every cell the fact could hold,
+  whatever the callee writes; the caller's frame across it comes only from
+  the cells it keeps owning.
+- A guarded equality over `int64` terms still needs its bounds stated in the
+  guard's own spelling
+  (`mdtests/guarded_postcondition_int64_bounds_frontier.md`).
