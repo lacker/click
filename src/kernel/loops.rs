@@ -4647,7 +4647,7 @@ fn install_declared_loop_frames(
         let Some(expanded) = super::functions::checked_owned_memory_ranges(
             &fact.fact,
             definitions,
-            entry_state.memory(),
+            entry_state,
             assumptions,
         ) else {
             return Ok(effect_checks.to_vec());

@@ -531,24 +531,51 @@ fn every_guard(
             ),
             true,
         ));
-    let cell = guard_cell_value(state, iterated, &index, &hypotheses)?;
+    let cell = match guard_cell_value(state, iterated, &index, &hypotheses) {
+        Ok(cell) => cell,
+        Err(message) => {
+            // A cell of a fresh heap block reads only once a fact
+            // establishes its value, and here the only such fact is the
+            // quantified one. Instantiate it at the cell's logical load, the
+            // term the fact names, and read the cell again under the result:
+            // the read itself still decides initialization.
+            let logical = Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory_ref(state.memory()),
+                Box::new(iterated.guard_cell(&index)),
+            );
+            let instantiated = instantiate_guard(&hypotheses, iterated, &logical);
+            let cell =
+                guard_cell_value(state, iterated, &index, &instantiated).map_err(|_| message)?;
+            return Ok(guard_holds_for(&instantiated, iterated, &cell));
+        }
+    };
     if let Some(value) = guard_holds_for(&hypotheses, iterated, &cell) {
         return Ok(Some(value));
     }
     // The guard over the whole range is a universally quantified fact;
     // instantiating it at the arbitrary index is the one scan over the
     // context's quantified facts this whole-range step makes.
+    let instantiated = instantiate_guard(&hypotheses, iterated, &cell);
+    Ok(guard_holds_for(&instantiated, iterated, &cell))
+}
+
+/// `hypotheses` with every universally quantified fact instantiated at the
+/// guard comparison of `cell`.
+fn instantiate_guard(
+    hypotheses: &PureFactContext,
+    iterated: &CIteratedMemory,
+    cell: &Bitvector32Term,
+) -> PureFactContext {
     let equal = ConditionTerm::Bitvector32Equal(
         Box::new(cell.clone()),
         Box::new(iterated.guard().value().clone()),
     );
-    let instantiated = hypotheses
+    hypotheses
         .instantiated_universal_consequents(&equal)
         .into_iter()
         .fold(hypotheses.clone(), |facts, consequent| {
             facts.assume_proposition(consequent)
-        });
-    Ok(guard_holds_for(&instantiated, iterated, &cell))
+        })
 }
 
 /// The frame of a loop that declares its own resources, without the iterated

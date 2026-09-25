@@ -2477,8 +2477,24 @@ impl ResourceContext {
         {
             return self;
         }
-        let before_node = crate::kernel::intern_c_memory_ref(before);
-        let mut current = crate::kernel::intern_c_memory_ref(after);
+        // The two snapshots differ only in cells written on the derivation
+        // paths from their nearest common ancestor. Interning is first-wins
+        // on equal content, so `after` may carry the recorded history of an
+        // earlier, content-equal snapshot that never passed through `before`;
+        // walking `after` alone would then visit stores that are not this
+        // transition's and miss the ones on `before`'s side. Arena ids
+        // strictly decrease along a derivation, so stepping whichever side
+        // is younger meets the common ancestor. A store that leaves the cell
+        // holding the same value in both snapshots changes nothing either
+        // side reads.
+        let mut before_side = crate::kernel::intern_c_memory_ref(before);
+        let mut after_side = crate::kernel::intern_c_memory_ref(after);
+        let unchanged_cell = |pointer: &Pointer| {
+            matches!(
+                (before.cells.get(pointer), after.cells.get(pointer)),
+                (Some(left), Some(right)) if left == right
+            )
+        };
         let mut dropped = Vec::<CResourceFact>::new();
         let facts_in_block = |context: &Self, block: &PointerBlock| {
             if memory_block_may_alias(block) {
@@ -2497,12 +2513,20 @@ impl ResourceContext {
                     .collect::<Vec<_>>()
             }
         };
-        while current != before_node {
+        while before_side != after_side {
+            crate::instrumentation::record_deterministic_work(1);
+            let step_after = after_side.arena_id().1 > before_side.arena_id().1;
+            let current = if step_after {
+                &after_side
+            } else {
+                &before_side
+            };
             let Some(derivation) = current.derivation() else {
                 break;
             };
             match &*derivation {
                 CMemoryDerivation::Store { .. } if stores_checked => {}
+                CMemoryDerivation::Store { pointer, .. } if unchanged_cell(pointer) => {}
                 CMemoryDerivation::Store { pointer, value, .. } => {
                     for fact in facts_in_block(&self, &pointer.block) {
                         let CResource::Iterated(iterated) = fact.resource() else {
@@ -2553,7 +2577,12 @@ impl ResourceContext {
                 | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
                 | CMemoryDerivation::CellsForgotten { .. } => {}
             }
-            current = derivation.base().clone();
+            let base = derivation.base().clone();
+            if step_after {
+                after_side = base;
+            } else {
+                before_side = base;
+            }
         }
         let mut context = self;
         for fact in dropped {

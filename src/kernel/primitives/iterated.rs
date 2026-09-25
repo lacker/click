@@ -184,6 +184,22 @@ impl CIteratedMemory {
         )
     }
 
+    /// A memory range containing every element of `lo..hi`: the covering
+    /// range when the elements tile it, otherwise the span from the first
+    /// element's start to the last element's end. An upper bound on the
+    /// memory the fact can ever hold, whatever its guards and holes say.
+    pub(crate) fn spanning_range(&self) -> CMemoryRange {
+        self.covering_range().unwrap_or_else(|| {
+            let last = Bitvector32Term::subtract(self.upper.clone(), Bitvector32Term::Constant(1));
+            CMemoryRange::new_with_element_width(
+                self.element_base.clone(),
+                self.scaled(&self.lower, self.start_offset),
+                self.scaled(&last, self.end_offset),
+                self.element_width,
+            )
+        })
+    }
+
     /// The address of the guard cell at `index`.
     pub(crate) fn guard_cell(&self, index: &Bitvector32Term) -> Pointer {
         self.guard

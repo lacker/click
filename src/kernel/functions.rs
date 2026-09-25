@@ -5647,19 +5647,99 @@ fn project_explicit_memory_segments(
 pub(super) fn checked_owned_memory_ranges(
     fact: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
-    memory: &CMemory,
+    state: &CState,
     assumptions: &PureFactContext,
 ) -> Option<Vec<CMemoryRange>> {
+    let mut ranges = Vec::new();
+    collect_checked_owned_memory_ranges(fact, definitions, state, assumptions, 0, &mut ranges)?;
+    Some(ranges)
+}
+
+/// How many field-bearing instance layers one footprint derivation opens.
+/// Each layer is one definition's own body.
+const OWNED_FOOTPRINT_INSTANCE_DEPTH: usize = 8;
+
+/// Appends the owned memory `fact` denotes to `ranges`.
+///
+/// Composites expand through their definitions; a field-bearing instance is
+/// opened one body layer at its own fields and arguments, exactly as
+/// `unfold` opens it, and its body is walked again; an iterated fact
+/// contributes the span of every element it could hold, whatever its guards
+/// and holes say, since the holder may take any of them. Tokens, including
+/// allocation authority, own no bytes.
+///
+/// Before instances and iterated facts were opened here, both contributed
+/// nothing, so a loop binder or callee holding one was summarized as writing
+/// none of its memory, and a transport across the loop or call kept a stale
+/// fact about a cell it wrote
+/// (`mdtests/loop_binder_instance_footprint_includes_its_memory.md`,
+/// `mdtests/call_through_instance_footprint_includes_its_memory.md`).
+/// An instance this layer cannot open -- a matched body whose arm is not
+/// decided, a recursive or witness-bearing body, or a nesting deeper than
+/// [`OWNED_FOOTPRINT_INSTANCE_DEPTH`] -- and a recursive composite the
+/// expansion leaves folded still contribute nothing, so a loop or call that
+/// holds one is still summarized as not writing its memory. That is an open
+/// soundness gap, not a claim that the memory is unwritten; closing it needs
+/// a footprint that is not enumerated from one state.
+fn collect_checked_owned_memory_ranges(
+    fact: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &PureFactContext,
+    depth: usize,
+    ranges: &mut Vec<CMemoryRange>,
+) -> Option<()> {
+    crate::instrumentation::record_deterministic_work(1);
     let singleton = ResourceContext::new().unchecked_with_fact(fact.clone());
     let expanded =
-        expand_all_composite_resource_facts(&singleton, definitions, memory, assumptions)?;
-    Some(
-        expanded
-            .facts()
-            .iter()
-            .filter_map(|fact| Some(canonical_memory_range(fact.memory_own_range()?.clone())))
-            .collect(),
-    )
+        expand_all_composite_resource_facts(&singleton, definitions, state.memory(), assumptions)?;
+    for fact in expanded.facts().iter() {
+        if !fact.is_own() {
+            continue;
+        }
+        if let Some(range) = fact.memory_own_range() {
+            ranges.push(canonical_memory_range(range.clone()));
+            continue;
+        }
+        match fact.resource() {
+            CResource::Iterated(iterated) => {
+                ranges.push(canonical_memory_range(iterated.spanning_range()));
+            }
+            CResource::Instance(instance) if depth < OWNED_FOOTPRINT_INSTANCE_DEPTH => {
+                let Ok(index) = definitions
+                    .binary_search_by(|definition| definition.name().cmp(instance.name()))
+                else {
+                    continue;
+                };
+                let scratch = state.clone().with_resource_context(
+                    ResourceContext::new().unchecked_with_fact(fact.clone()),
+                );
+                let Ok(opened) = rewrite_resource_instance_selecting_children(
+                    &scratch,
+                    instance,
+                    &definitions[index],
+                    definitions,
+                    assumptions,
+                    true,
+                    None,
+                ) else {
+                    continue;
+                };
+                for body_fact in opened.state.resources().facts().iter() {
+                    collect_checked_owned_memory_ranges(
+                        body_fact,
+                        definitions,
+                        state,
+                        assumptions,
+                        depth + 1,
+                        ranges,
+                    )?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(())
 }
 
 pub(crate) fn project_contract_memory_effects_with_guard_policy(
@@ -5729,7 +5809,7 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
             let Some(expanded) = checked_owned_memory_ranges(
                 &checked.fact,
                 interface.composite_resource_definitions(),
-                entry.memory(),
+                entry,
                 assumptions,
             ) else {
                 return Ok(Err(

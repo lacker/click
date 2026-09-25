@@ -1113,7 +1113,13 @@ While the fact is unfolded, every operation preserves its denotation:
   fact, which the kernel instantiates once at a reserved arbitrary index under
   the range hypotheses. With every guard true the fact is the covering range;
   with every guard false it is empty. `gather` also requires the guard cells
-  to be owned, so the formed fact is as stable as a declared one.
+  to be owned, so the formed fact is as stable as a declared one. The guard
+  cell at the arbitrary index is read as a C load; a never-written heap cell
+  has no value until a fact establishes one, so when that read fails the
+  quantified fact is first instantiated at the cell's load and the cell read
+  again under the result. The second read still decides initialization; this
+  is what lets an initializer gather over a map it has just allocated and
+  zeroed in a loop (`mdtests/iterated_ownership_gather_fresh_heap_map.md`).
 
 ### The guard-store rule
 
@@ -1147,7 +1153,15 @@ permitted stores or a transition that drops the fact:
   unchecked store keeps a fact only when it provably misses the guard block
   or names a hole structurally; a call's havoc that may write the guard
   cells, a free, and an ended lifetime drop it. Dropping loses ownership,
-  which is sound; keeping a claim that may have changed is not.
+  which is sound; keeping a claim that may have changed is not. Snapshots
+  are interned by content with first-wins histories, so the later snapshot
+  can carry the history of an earlier, content-equal one that never passed
+  through the earlier snapshot of this transition. The walk therefore steps
+  both snapshots back to their nearest common ancestor (arena ids strictly
+  decrease along a derivation) and skips a store that leaves its cell with
+  the same value in both; walking the later snapshot alone visited unrelated
+  stores to object fields and dropped the fact
+  (`mdtests/iterated_ownership_survives_branch_reset.md`).
 - A loop-head havoc keeps the fact. The head is a generalization, not a
   write: a loop that inherits the fact runs every body store through the
   planner, and its back edge compares the fact like any other resource. A
@@ -1158,6 +1172,19 @@ permitted stores or a transition that drops the fact:
 - `free` refuses while a fact refers to the freed block, because the fact is
   indexed under both of its blocks and `facts_that_may_refer_to_memory_block`
   reads that index.
+- A loop that declares a resource, and a call whose contract owns one,
+  havoc the memory those resources own. That footprint
+  (`checked_owned_memory_ranges`) counts an iterated fact as the span of
+  every element it could hold, whatever its guards and holes say, and opens
+  a field-bearing instance one body layer at its own fields, as `unfold`
+  does. Both used to contribute nothing, so a loop or callee was summarized
+  as writing none of their memory
+  (`mdtests/loop_binder_instance_footprint_includes_its_memory.md`,
+  `mdtests/call_through_instance_footprint_includes_its_memory.md`). An
+  instance this layer cannot open -- a matched body whose arm is not decided,
+  a recursive or witness-bearing body -- and a recursive composite the
+  expansion leaves folded still contribute nothing, so a loop or call that
+  holds one is still summarized as not writing its memory. That gap is open.
 
 ### Queries
 
