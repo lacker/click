@@ -1317,6 +1317,7 @@ pub(super) fn c_function_contract_certification_assumptions(
                     }
                     CResource::Composite { name, .. } => format!("composite {name}"),
                     CResource::Token { name, .. } => format!("token {name}"),
+                    CResource::MutexGuard(_) => "mutex guard".to_string(),
                     CResource::Instance(instance) => format!("instance {}", instance.name()),
                     CResource::Iterated(iterated) => {
                         format!("iterated ownership of {}", iterated.owner())
@@ -1351,7 +1352,10 @@ pub(super) fn c_function_contract_certification_assumptions(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => continue,
+            CResource::Memory(_)
+            | CResource::Instance(_)
+            | CResource::MutexGuard(_)
+            | CResource::Iterated(_) => continue,
         };
         let Some(count) = entry_state.counted_population(name, arguments) else {
             continue;
@@ -1413,8 +1417,8 @@ pub(super) fn c_function_contract_certification_assumptions(
                 ResourceContextValidityError::DuplicateOwnedResourceFact(_) => {
                     "the same resource is owned twice"
                 }
-                ResourceContextValidityError::InvalidInstanceAccess(_) => {
-                    "a field-bearing resource instance is not owned exclusively"
+                ResourceContextValidityError::InvalidExclusiveAccess(_) => {
+                    "a field-bearing resource instance or mutex guard is not owned exclusively"
                 }
                 ResourceContextValidityError::OverlappingOwnedMemoryResources { .. } => {
                     "two owned memory resources overlap"

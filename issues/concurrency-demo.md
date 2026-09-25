@@ -169,6 +169,20 @@ fork/join rules are the starting point. Implement the lock and publication
 protocols through ordinary C execution and the shared bounded verification
 engine. Keep the C source fixed when proof work exposes a Click gap.
 
+### Guard ownership checkpoint
+
+Modeled lock acquisition now supplies an opaque exclusive guard atom in the
+ordinary resource context. Unlock consumes that exact acquisition's atom;
+ledger heldness alone, a stale guard, a view, or a counted quantity cannot
+supply ownership. The guard is thread-confined and grants no memory access
+on its own. Kernel regressions cover missing/stale authority, invalid
+composition, consumption, and logarithmic indexed work amid unrelated guards.
+
+The surface cannot yet name guard ingredients in a declared resource or a
+contract. That adapter, conditional model arms, and same-thread contract return
+are still required before the unchanged parity loop can verify. Protocol
+lifecycle and shared interference are also still open.
+
 ## Acceptance
 
 - All three frozen C programs and modular sidecars verify through normal

@@ -5104,12 +5104,15 @@ pub(super) struct ResourceContextChange {
 #[derive(Clone, Debug, Default)]
 pub(super) struct ResourceContextIndex {
     pub(super) instances: PersistentMap<Variable, ResourceEntryIds>,
+    /// Only duplicated or malformed guard atoms need a validity check.
+    pub(super) suspect_guards: PersistentMap<MutexGuardIdentity, ()>,
+    pub(super) invalid_guard_access: PersistentMap<MutexGuardIdentity, usize>,
     /// Instance identities with an entry whose access is not one owned unit.
     /// With `instances`, these select the identities that can fail a
     /// validity check without visiting every instance.
     pub(super) invalid_instance_access: PersistentMap<Variable, usize>,
     /// The identities held more than once or held with invalid access: the
-    /// only ones whose entries can fail `instance_validity_error`.
+    /// only ones whose entries can fail `exclusive_validity_error`.
     pub(super) suspect_instances: PersistentMap<Variable, ()>,
     /// Owned instances keyed by the resource family and arity they name. A
     /// loop binder selects its instance by family and arguments, so that
@@ -5450,9 +5453,18 @@ pub enum CResource {
         arguments: ResourceArguments,
     },
     Instance(ResourceInstance),
+    /// Opaque exclusive authority for one acquisition of a modeled mutex.
+    MutexGuard(MutexGuardIdentity),
     /// Iterated guarded ownership: one fact for every element of a bounded
     /// index range whose guard cell holds (`iterated.rs`).
     Iterated(Arc<CIteratedMemory>),
+}
+
+/// An acquisition identity can be copied as syntax, but ownership cannot be duplicated.
+/// Only the checked mutex transition allocates a fresh identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct MutexGuardIdentity {
+    pub(in crate::kernel) epoch: u64,
 }
 
 impl CResource {
@@ -5529,7 +5541,7 @@ impl ResourceInstance {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceContextValidityError {
-    InvalidInstanceAccess(CResourceFact),
+    InvalidExclusiveAccess(CResourceFact),
     DuplicateOwnedResourceFact(CResourceFact),
     OverlappingOwnedMemoryResources {
         left: CMemoryRange,
@@ -5565,6 +5577,11 @@ pub(super) trait ResourceFamilyAlgebra {
             ));
         }
         match self.family() {
+            ResourceFamily::MutexGuard => {
+                return Err(CResourceSpecError::InvalidNestedTerm(
+                    "mutex guard specifications are not yet supported".into(),
+                ));
+            }
             ResourceFamily::Memory => {
                 if !matches!(spec.quantity, CResourceQuantity::One) {
                     return Err(CResourceSpecError::InvalidQuantity {
@@ -5661,6 +5678,8 @@ struct TokenResourceAlgebra;
 /// observation laws by the Click proof layer.
 struct CompositeResourceAlgebra;
 struct InstanceResourceAlgebra;
+struct MutexGuardResourceAlgebra;
+static MUTEX_GUARD_RESOURCE_ALGEBRA: MutexGuardResourceAlgebra = MutexGuardResourceAlgebra;
 
 static MEMORY_RESOURCE_ALGEBRA: MemoryResourceAlgebra = MemoryResourceAlgebra;
 static TOKEN_RESOURCE_ALGEBRA: TokenResourceAlgebra = TokenResourceAlgebra;
@@ -5681,6 +5700,7 @@ pub enum ResourceFamily {
     Composite,
     Token,
     Instance,
+    MutexGuard,
     /// Iterated guarded ownership (`CResource::Iterated`).
     Iterated,
 }
@@ -6040,7 +6060,10 @@ impl CResourceSpec {
                 argument_snapshots,
                 parameter_types,
             },
-            ResourceFamily::Memory | ResourceFamily::Instance | ResourceFamily::Iterated => {
+            ResourceFamily::Memory
+            | ResourceFamily::Instance
+            | ResourceFamily::Iterated
+            | ResourceFamily::MutexGuard => {
                 return Err(CResourceSpecError::InvalidNestedTerm(
                     "only composite and token families have declared resource terms".into(),
                 ));

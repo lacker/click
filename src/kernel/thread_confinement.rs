@@ -62,6 +62,8 @@ pub(super) fn confined_resource_name<'a>(
     definitions: &[CCompositeResourceDefinition],
 ) -> Option<&'a str> {
     let name = match fact {
+        CResourceFact::Own(CResource::MutexGuard(_), _)
+        | CResourceFact::View(CResource::MutexGuard(_)) => return Some("mutex guard"),
         CResourceFact::Own(CResource::Composite { name, .. }, _)
         | CResourceFact::View(CResource::Composite { name, .. })
         | CResourceFact::Own(CResource::Token { name, .. }, _)

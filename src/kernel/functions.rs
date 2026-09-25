@@ -12402,7 +12402,10 @@ fn evaluate_resource_population_body_resources(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => continue,
+            CResource::Memory(_)
+            | CResource::Instance(_)
+            | CResource::MutexGuard(_)
+            | CResource::Iterated(_) => continue,
         };
         let Some(definition) = definitions
             .iter()
@@ -14501,7 +14504,7 @@ fn conflicting_destination_fact(
     error: &ResourceContextValidityError,
 ) -> Option<CResourceFact> {
     match error {
-        ResourceContextValidityError::InvalidInstanceAccess(fact)
+        ResourceContextValidityError::InvalidExclusiveAccess(fact)
         | ResourceContextValidityError::DuplicateOwnedResourceFact(fact) => Some(fact.clone()),
         // The two overlapping ranges are reported in index order, so the
         // destination's own range may be either side.
@@ -14547,7 +14550,10 @@ fn counted_population_quantities(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => continue,
+            CResource::Memory(_)
+            | CResource::Instance(_)
+            | CResource::MutexGuard(_)
+            | CResource::Iterated(_) => continue,
         };
         if name == CResourceFact::ALLOCATION_RESOURCE_NAME {
             continue;
@@ -16759,7 +16765,7 @@ fn instance_body_clauses_are_exchangeable(contains: &[CResourceSpec]) -> bool {
                 ResourceFamily::Composite | ResourceFamily::Token => {
                     matches!(body.quantity(), CResourceQuantity::One)
                 }
-                ResourceFamily::Instance => false,
+                ResourceFamily::Instance | ResourceFamily::MutexGuard => false,
             }
     })
 }
@@ -17895,7 +17901,10 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 (name, arguments)
             }
-            CResource::Memory(_) | CResource::Instance(_) | CResource::Iterated(_) => continue,
+            CResource::Memory(_)
+            | CResource::Instance(_)
+            | CResource::MutexGuard(_)
+            | CResource::Iterated(_) => continue,
         };
         let Some(quantity) = fact.owned_quantity_term() else {
             continue;
@@ -20883,7 +20892,10 @@ fn resource_clause_supply_with_fact(
                 CResource::Composite { .. } => pending.push_back(child),
                 // Iterated ownership grants no read authority of its own: an
                 // element is read only after it is taken out.
-                CResource::Token { .. } | CResource::Instance(_) | CResource::Iterated(_) => {}
+                CResource::Token { .. }
+                | CResource::Instance(_)
+                | CResource::MutexGuard(_)
+                | CResource::Iterated(_) => {}
             }
         }
     }
@@ -20976,8 +20988,8 @@ fn resource_context_runtime_error(error: ResourceContextValidityError) -> CRunti
         ResourceContextValidityError::DuplicateOwnedResourceFact(resource) => {
             CRuntimeError::DuplicateResource { resource }
         }
-        ResourceContextValidityError::InvalidInstanceAccess(_) => CRuntimeError::FunctionContract(
-            "field-bearing resource instances require exclusive ownership with quantity one".into(),
+        ResourceContextValidityError::InvalidExclusiveAccess(_) => CRuntimeError::FunctionContract(
+            "field-bearing resource instances and mutex guards require exclusive ownership with quantity one".into(),
         ),
         ResourceContextValidityError::OverlappingOwnedMemoryResources { left, right } => {
             CRuntimeError::OverlappingOwnedMemoryResources {
@@ -21639,7 +21651,10 @@ fn evaluate_function_declared_resource_spec(
             name: name.to_string(),
             arguments: values.into_iter().map(AlgebraicValue::C).collect(),
         },
-        ResourceFamily::Memory | ResourceFamily::Instance | ResourceFamily::Iterated => {
+        ResourceFamily::Memory
+        | ResourceFamily::Instance
+        | ResourceFamily::MutexGuard
+        | ResourceFamily::Iterated => {
             return Ok(Err(CRuntimeError::FunctionContract(
                 "declared resources cannot use the raw memory family".to_string(),
             )));
@@ -21659,6 +21674,7 @@ fn resource_fact_transfer_priority(resource: &CResourceFact) -> u8 {
             CResource::Composite { .. }
             | CResource::Token { .. }
             | CResource::Instance(_)
+            | CResource::MutexGuard(_)
             | CResource::Iterated(_),
             _,
         ) => 2,

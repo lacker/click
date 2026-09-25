@@ -213,10 +213,22 @@ checks bound the scope index updates logarithmically and restoration by a
 constant-time return to the preceding authority state. Resource artifacts
 use a new semantics version so earlier certificates cannot bypass this rule.
 
-This checkpoint supplies sequential suspension and restoration. Mutex guards
-are not yet ordinary resource ingredients; live-use and lifecycle authority,
-conditional guard ownership, same-thread guard return, and shared interference
-remain later work. It does not add concurrent population access.
+This checkpoint supplies sequential suspension and restoration. The following
+mutex checkpoint puts acquisition guards in the ordinary kernel resource
+context as `CResource::MutexGuard`: an opaque acquisition identity with one
+exclusive owned unit, no view, no count splitting, and no memory authority.
+Acquiring creates the atom alongside the protected assertion. Unlock consumes
+the current acquisition's atom as well as the restored assertion. The ledger
+still describes protocol state; its held bit cannot recreate absent ownership.
+Stale guard atoms do not authorize a later acquisition, and direct worker
+transfer rejects guards as thread-confined. Indexed validity and deterministic
+multi-size acquisition/release tests cover unrelated held guards.
+
+This is the kernel ingredient, not yet surface composition: declared-resource
+bodies cannot name guards yet. Guard body/contract specifications, conditional
+ownership, same-thread guard return, live-use and lifecycle authority, and
+shared interference remain later work. Current return and loop restrictions
+remain in place. This checkpoint does not add concurrent population access.
 
 The surface's return-resource adapter now checks the obligations returned by
 the kernel before marking its transition checked. Calls involving counted

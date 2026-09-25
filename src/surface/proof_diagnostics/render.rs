@@ -1174,6 +1174,7 @@ impl Renderer<'_> {
     }
     fn resource(&mut self, resource: &CResource) {
         match resource {
+            CResource::MutexGuard(_) => self.push("mutex-guard"),
             CResource::Memory(range) => {
                 self.push("memory-resource(");
                 self.pointer(range.base());
@@ -1209,6 +1210,7 @@ impl Renderer<'_> {
     #[cfg(test)]
     fn trace_resource(&mut self, resource: &CResource) {
         match resource {
+            CResource::MutexGuard(_) => self.push("mutex-guard"),
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
                 self.push(name);
                 self.push("(");

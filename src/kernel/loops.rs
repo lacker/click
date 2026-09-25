@@ -5666,7 +5666,10 @@ fn viewed_form_of_resource_fact(fact: &CResourceFact) -> Option<CResourceFact> {
             Some(CResourceFact::View(resource.clone()))
         }
         CResourceFact::Own(
-            CResource::Token { .. } | CResource::Instance(_) | CResource::Iterated(_),
+            CResource::Token { .. }
+            | CResource::Instance(_)
+            | CResource::MutexGuard(_)
+            | CResource::Iterated(_),
             _,
         ) => None,
     }

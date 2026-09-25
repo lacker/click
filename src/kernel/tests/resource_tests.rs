@@ -1305,7 +1305,7 @@ fn resource_instances_are_exclusive_not_counted_or_viewable() {
     for fact in invalid {
         assert!(matches!(
             ResourceContext::new().try_compose_with_fact(fact.clone(), &assumptions),
-            Err(ResourceContextValidityError::InvalidInstanceAccess(_))
+            Err(ResourceContextValidityError::InvalidExclusiveAccess(_))
         ));
         assert!(!context.satisfies_fact(&fact, &assumptions));
         assert!(

@@ -1425,6 +1425,7 @@ fn collect_memory_bound_variables(memory: &CMemory, variables: &mut BTreeSet<Var
 
 fn collect_resource_bound_variables(resource: &CResource, variables: &mut BTreeSet<Variable>) {
     match resource {
+        CResource::MutexGuard(_) => {}
         CResource::Instance(instance) => {
             for value in instance.arguments.iter().chain(instance.fields.iter()) {
                 collect_algebraic_value_bound_variables(value, variables);
@@ -3799,6 +3800,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
     to: &Bitvector32Term,
 ) -> CResource {
     match resource {
+        CResource::MutexGuard(_) => resource.clone(),
         CResource::Instance(instance) => {
             let mut result = instance.clone();
             result.arguments = instance
@@ -6368,6 +6370,7 @@ fn substitute_pointer_variable_in_c_resource(
     to: &Pointer,
 ) -> CResource {
     match resource {
+        CResource::MutexGuard(_) => resource.clone(),
         CResource::Instance(instance) => {
             let mut result = instance.clone();
             result.arguments = instance

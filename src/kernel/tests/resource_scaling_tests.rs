@@ -211,7 +211,7 @@ fn indexed_validity_still_finds_every_violation_kind() {
                 .clone()
                 .unchecked_with_fact(invalid_access.clone())
                 .validity_error(&none),
-            Some(ResourceContextValidityError::InvalidInstanceAccess(
+            Some(ResourceContextValidityError::InvalidExclusiveAccess(
                 invalid_access
             )),
             "an instance view beside {size} allocations"

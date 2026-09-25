@@ -2,7 +2,9 @@
 //!
 //! A mutex may escrow a folded exclusive resource or protect no Click
 //! resource. Acquiring creates a unique guard and, when present, moves that
-//! fact into the current C state. Releasing requires the folded fact back.
+//! fact into the current C state. The guard is an exclusive resource atom in
+//! that same context. Releasing consumes the atom and requires the folded
+//! invariant back; ledger heldness alone cannot authorize release.
 //!
 //! The C binding still has to validate the declaration, pointer, status,
 //! and initialization before a pthread call can use these transitions.
@@ -59,6 +61,14 @@ struct MutexLedgerStorage {
 pub(super) struct MutexGuard {
     mutex: Pointer,
     epoch: u64,
+}
+
+impl MutexGuard {
+    fn resource_fact(&self) -> CResourceFact {
+        CResourceFact::own(CResource::MutexGuard(super::MutexGuardIdentity {
+            epoch: self.epoch,
+        }))
+    }
 }
 
 impl MutexContext {
@@ -164,9 +174,23 @@ impl MutexContext {
             self.state.resources.clone()
         };
         static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
-        let epoch = NEXT_EPOCH.fetch_add(1, Ordering::Relaxed);
+        let epoch = NEXT_EPOCH
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |epoch| {
+                epoch.checked_add(1)
+            })
+            .map_err(|_| {
+                MutexTransitionError::Refusal("mutex acquisition identity space exhausted")
+            })?;
         let mut state = self.state.clone();
-        state.resources = resources;
+        let guard = MutexGuard {
+            mutex: mutex.clone(),
+            epoch,
+        };
+        state.resources = resources
+            .try_compose_with_fact(guard.resource_fact(), assumptions)
+            .map_err(|_| {
+                MutexTransitionError::Refusal("mutex guard conflicts with current authority")
+            })?;
         state.mutex_ledger =
             Some(ledger.with_inserted(mutex.clone(), MutexEntry::Locked { invariant, epoch }));
         Ok((
@@ -270,6 +294,14 @@ impl MutexContext {
             Some(MutexEntry::Locked { invariant, epoch }) if *epoch == guard.epoch => invariant,
             _ => return Err("mutex guard does not match the current holder"),
         };
+        let guard_fact = guard.resource_fact();
+        if !self
+            .state
+            .resources
+            .contains_exact_representation(&guard_fact)
+        {
+            return Err("mutex unlock requires ownership of the current guard");
+        }
         if !same_instance(previous, &restored) {
             return Err("mutex release requires the same resource instance");
         }
@@ -296,7 +328,9 @@ impl MutexContext {
             self.state.resources.clone()
         };
         let mut state = self.state.clone();
-        state.resources = resources;
+        state.resources = resources
+            .without_fact(&guard_fact, assumptions)
+            .ok_or("mutex guard cannot be consumed")?;
         state.mutex_ledger =
             Some(ledger.with_inserted(guard.mutex, MutexEntry::Unlocked(restored)));
         Ok(Self { state })
@@ -491,7 +525,166 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_mutex_tracks_heldness_without_granting_a_resource() {
+    fn guard_ownership_is_independent_of_heldness_and_required_by_unlock() {
+        let assumptions = PureFactContext::new();
+        let mutex = mutex(0);
+        let initialized = MutexContext::new(CState::new())
+            .initialize_empty(mutex.clone())
+            .unwrap();
+        let (holding, guard) = initialized.acquire(&mutex, &assumptions).unwrap();
+        let fact = guard.resource_fact();
+        let mut missing = holding.clone();
+        missing.state.resources = missing
+            .state
+            .resources
+            .clone()
+            .without_fact(&fact, &assumptions)
+            .unwrap();
+        assert_eq!(
+            missing
+                .state
+                .mutex_ledger
+                .as_ref()
+                .unwrap()
+                .held_condition(&mutex),
+            ConditionTerm::Constant(true)
+        );
+        assert_eq!(
+            missing.release_current(&mutex, &assumptions).err(),
+            Some("mutex unlock requires ownership of the current guard")
+        );
+        // An explicit resource exchange can restore the same acquisition's
+        // authority. Merely leaving the ledger locked could not do that.
+        missing.state.resources = missing
+            .state
+            .resources
+            .try_compose_with_fact(fact.clone(), &assumptions)
+            .unwrap();
+        let released = missing.release_current(&mutex, &assumptions).unwrap();
+        assert!(!released.state.resources.satisfies_fact(&fact, &assumptions));
+        let (mut reacquired, current) = released.acquire(&mutex, &assumptions).unwrap();
+        assert_ne!(fact, current.resource_fact());
+        reacquired.state.resources = reacquired
+            .state
+            .resources
+            .clone()
+            .without_fact(&current.resource_fact(), &assumptions)
+            .unwrap()
+            .try_compose_with_fact(fact, &assumptions)
+            .unwrap();
+        assert_eq!(
+            reacquired.release_current(&mutex, &assumptions).err(),
+            Some("mutex unlock requires ownership of the current guard")
+        );
+        assert_eq!(
+            reacquired
+                .release_with_invariant(guard, None, &assumptions)
+                .err(),
+            Some("mutex guard does not match the current holder")
+        );
+    }
+
+    #[test]
+    fn guard_algebra_is_exclusive_unit_ownership_without_views_or_memory() {
+        let assumptions = PureFactContext::new();
+        let (holding, guard) = MutexContext::new(CState::new())
+            .initialize_empty(mutex(0))
+            .unwrap()
+            .acquire(&mutex(0), &assumptions)
+            .unwrap();
+        let fact = guard.resource_fact();
+        let resources = &holding.state.resources;
+        assert!(fact.core().is_none());
+        assert!(fact.core_with_assumptions(&assumptions).is_none());
+        assert!(fact.memory_range().is_none());
+        assert_eq!(
+            super::super::thread_confinement::confined_resource_name(&fact, &[]),
+            Some("mutex guard")
+        );
+        assert!(
+            resources
+                .clone()
+                .try_compose_with_fact(fact.clone(), &assumptions)
+                .is_err()
+        );
+        assert!(
+            resources
+                .clone()
+                .unchecked_with_fact(fact.clone())
+                .normalized(&assumptions)
+                .validity_error(&assumptions)
+                .is_some()
+        );
+        for invalid in [
+            CResourceFact::View(fact.resource().clone()),
+            CResourceFact::own_quantity(
+                fact.resource().clone(),
+                super::super::Bitvector32Term::Constant(0),
+            ),
+            CResourceFact::own_quantity(
+                fact.resource().clone(),
+                super::super::Bitvector32Term::Constant(2),
+            ),
+        ] {
+            assert!(!resources.satisfies_fact(&invalid, &assumptions));
+            assert!(
+                super::super::ResourceContext::new()
+                    .try_compose_with_fact(invalid.clone(), &assumptions)
+                    .is_err()
+            );
+            assert!(
+                resources
+                    .clone()
+                    .without_fact(&invalid, &assumptions)
+                    .is_none()
+            );
+        }
+        let empty = resources.clone().without_fact(&fact, &assumptions).unwrap();
+        assert!(!empty.satisfies_fact(&fact, &assumptions));
+        assert!(empty.clone().without_fact(&fact, &assumptions).is_none());
+        assert!(
+            empty
+                .try_compose_with_fact(fact, &assumptions)
+                .unwrap()
+                .is_valid(&assumptions)
+        );
+    }
+
+    #[test]
+    fn guard_transitions_touch_only_logarithmic_index_paths() {
+        let assumptions = PureFactContext::new();
+        let mut samples = Vec::new();
+        for size in [16usize, 64, 256, 1024] {
+            let mut context = MutexContext::new(CState::new());
+            for index in 0..size {
+                context = context.initialize_empty(mutex(index)).unwrap();
+                context = context
+                    .acquire_current(&mutex(index), &assumptions)
+                    .unwrap();
+            }
+            let target = mutex(size);
+            context = context.initialize_empty(target.clone()).unwrap();
+            let ((holding, released), work) =
+                crate::instrumentation::measure_deterministic_work(|| {
+                    let holding = context.acquire_current(&target, &assumptions).unwrap();
+                    let released = holding.release_current(&target, &assumptions).unwrap();
+                    (holding, released)
+                });
+            assert_eq!(holding.state.resources.facts().len(), size + 1);
+            assert_eq!(released.state.resources.facts().len(), size);
+            samples.push((size, work));
+        }
+        let baseline = samples[0].1;
+        for &(size, work) in &samples {
+            assert!(
+                work > 0 && work <= baseline + 600 * (size.ilog2() as usize - 4),
+                "guard exchange work: {samples:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_mutex_supplies_and_consumes_exclusive_guard() {
         let assumptions = PureFactContext::new();
         let mutex = mutex(0);
         let initialized = MutexContext::new(CState::new())
@@ -519,7 +712,11 @@ mod tests {
                 .unwrap()
                 .has_return_obligation()
         );
-        assert!(held.state().resources.facts().is_empty());
+        assert_eq!(held.state().resources.facts().len(), 1);
+        assert!(matches!(
+            held.state().resources.facts()[0].resource(),
+            CResource::MutexGuard(_)
+        ));
         assert!(held.acquire_current(&mutex, &assumptions).is_err());
         assert_eq!(
             held.destroy(&mutex, &assumptions).err(),
@@ -687,7 +884,12 @@ mod tests {
             .unwrap();
         let (holding, guard) = published.acquire(&mutex, &assumptions).unwrap();
         let mut unfolded = holding.clone();
-        unfolded.state.resources = ResourceContext::new();
+        unfolded.state.resources = unfolded
+            .state
+            .resources
+            .clone()
+            .without_fact(&old, &assumptions)
+            .unwrap();
         assert_eq!(
             unfolded.release(guard, old.clone(), &assumptions).err(),
             Some("mutex invariant must be folded before unlock")

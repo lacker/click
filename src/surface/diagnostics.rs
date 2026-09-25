@@ -1027,6 +1027,8 @@ pub(super) fn describe_resource_fact(
         );
     }
     match resource {
+        CResourceFact::Own(CResource::MutexGuard(_), _)
+        | CResourceFact::View(CResource::MutexGuard(_)) => "mutex guard".to_string(),
         CResourceFact::Own(CResource::Instance(instance), _)
         | CResourceFact::View(CResource::Instance(instance)) => format!(
             "{} instance {}#{}",
@@ -1151,6 +1153,7 @@ fn describe_c_resource(
             name,
             arguments: resource_arguments,
         } => format_declared_resource(name, resource_arguments, parameters, arguments),
+        CResource::MutexGuard(_) => "mutex guard".to_string(),
         CResource::Iterated(iterated) => describe_iterated_memory(iterated, parameters, arguments),
     }
 }
