@@ -314,14 +314,15 @@ tactics are still measured.
 
 The default budgets are 750,000 units for simple tactics, 2,000,000 for
 smart tactics, and 2,500,000 for control tactics, calibrated on 2026-09-25
-over 35 example sidecars and 2,084 mdtests. Simple: 7,866 tactics, p95 =
-1,640, p99 = 5,050, max = 230,969. Smart: 11,173 tactics, p95 = 3,361, p99
-= 21,313, max = 669,938. Control: 1,747 tactics, p95 = 5,340, p99 = 32,927,
-max = 815,089. Each budget gives its corpus maximum at least about 3x
-margin; the tactics that are not 10x under their budget are named in
-`TacticWorkLimits::default` (the arena proofs' heavy `step`s and `have`s,
-owned-vector's `simp`, and two mdtest steps), and they are slow steps to
-reduce, not headroom. Recalibration must run the script over both the
+(base `57ee1ebf`) over 35 example sidecars and 2,084 mdtests. Simple: 7,990
+tactics, p95 = 1,651, p99 = 5,368, max = 83,759. Smart: 11,280 tactics, p95
+= 3,340, p99 = 20,565, max = 671,115. Control: 1,778 tactics, p95 = 5,523,
+p99 = 33,069, max = 745,173. Every simple tactic is at least 9x under its
+budget; the smart and control budgets give their corpus maxima about 3x,
+and the tactics that are not 10x under them are named in
+`TacticWorkLimits::default` (owned-vector's `simp`, the arena proofs' heavy
+`have`s, and three mdtest sites); they are slow steps to reduce, not
+headroom. Recalibration must run the script over both the
 examples and the mdtests and record its statistics there. Changing a work
 budget requires corpus measurements and a documented reason;
 it is not a way to make one difficult proof pass.
