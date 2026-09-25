@@ -294,6 +294,239 @@ fn expired_nested_reasoning_does_not_poison_resolution_memo() {
     clear_memory_resolution_memos();
 }
 
+/// A pointer-distinctness query that failed inside one smart closure, keyed
+/// by the unsalted content id of its fact set, the memory-DAG generation, and
+/// the scope modes its answer depends on. See [`with_closure_failure_memo`].
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ClosureDistinctnessFailure {
+    assumptions: u64,
+    lookups: u64,
+    generation: u64,
+    bridging: bool,
+    explicit: bool,
+    left: Pointer,
+    right: Pointer,
+}
+
+/// Which checked fact-transport question a [`ClosureFactCheckFailure`]
+/// remembers.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum ClosureFactCheck {
+    /// Whether a load-variable chain through the listed facts bridges the
+    /// target.
+    LoadVariableBridge,
+    /// Whether the certified reachability walk carries the source to the
+    /// target.
+    Reachability,
+}
+
+/// A fact-transport check that failed inside one smart closure: its exact
+/// inputs, and the scope state its answer depends on. See
+/// [`closure_memoized_fact_check`].
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ClosureFactCheckFailure {
+    check: ClosureFactCheck,
+    propositions: Vec<Proposition>,
+    after: Option<(u32, u32)>,
+    assumptions: u64,
+    lookups: u64,
+    transitions: Vec<ExecutionPureFact>,
+    generation: u64,
+    bridging: bool,
+    explicit: bool,
+}
+
+thread_local! {
+    static CLOSURE_DISTINCTNESS_FAILURES: std::cell::RefCell<
+        Option<std::collections::HashSet<ClosureDistinctnessFailure>>,
+    > = const { std::cell::RefCell::new(None) };
+    static CLOSURE_TRANSPORT_FAILURES: std::cell::RefCell<
+        Option<BTreeSet<ClosureFactCheckFailure>>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs one checked fact-transport question through the closure failure memo
+/// ([`with_closure_failure_memo`]): outside a closure it just runs; inside
+/// one, a question whose exact inputs already failed in this closure fails
+/// again without being recomputed.
+///
+/// The snapshot transport closure lowers one goal at every recorded snapshot;
+/// every snapshot that holds the goal's cells unchanged lowers it to the same
+/// source, so the same failing questions -- the goal's frame across the step
+/// the proof could not see past -- ran once per such snapshot, and again for
+/// each of simp's strategies that reaches the closure. The key is the
+/// question's whole input: its propositions (source, target, and any listed
+/// facts, in order), the memory it lands in, the content id of its fact set,
+/// its transition facts, the memory-DAG generation, the DAG scope modes, and
+/// the cell lookups in progress. A failure that observed a cycle cut or a
+/// limit is not remembered. Work is the key's size per question.
+pub(crate) fn closure_memoized_fact_check(
+    check: ClosureFactCheck,
+    propositions: &[&Proposition],
+    after: Option<&CMemory>,
+    assumptions: &PureFactContext,
+    transitions: &[ExecutionPureFact],
+    run: impl FnOnce() -> bool,
+) -> bool {
+    let active = CLOSURE_TRANSPORT_FAILURES.with(|failures| failures.borrow().is_some());
+    if !active {
+        return run();
+    }
+    crate::instrumentation::record_deterministic_work(propositions.len() + transitions.len());
+    let failure = ClosureFactCheckFailure {
+        check,
+        propositions: propositions
+            .iter()
+            .map(|proposition| (*proposition).clone())
+            .collect(),
+        after: after.map(|after| crate::kernel::intern_c_memory_ref(after).arena_id()),
+        assumptions: crate::kernel::assumptions::unsalted_assumptions_memo_id(assumptions),
+        lookups: crate::kernel::resource_tracker::cell_source::memory_dag_cell_lookups_fingerprint(
+        ),
+        transitions: transitions.to_vec(),
+        generation: crate::kernel::primitives::c_memory_derivation_generation(),
+        bridging: crate::kernel::api::extended_dag_bridging_active(),
+        explicit: crate::kernel::api::explicit_dag_check_active(),
+    };
+    let known = CLOSURE_TRANSPORT_FAILURES.with(|failures| {
+        failures
+            .borrow()
+            .as_ref()
+            .is_some_and(|failures| failures.contains(&failure))
+    });
+    if known {
+        return false;
+    }
+    let epoch_before = crate::kernel::assumptions::incomplete_reasoning_epoch();
+    let result = run();
+    if !result && crate::kernel::assumptions::incomplete_reasoning_epoch() == epoch_before {
+        CLOSURE_TRANSPORT_FAILURES.with(|failures| {
+            if let Some(failures) = failures.borrow_mut().as_mut() {
+                failures.insert(failure);
+            }
+        });
+    }
+    result
+}
+
+/// Clears the closure failure memo when the outermost scope ends, including
+/// on unwind.
+struct ClosureFailureMemoScope {
+    outermost: bool,
+}
+
+impl Drop for ClosureFailureMemoScope {
+    fn drop(&mut self) {
+        if self.outermost {
+            CLOSURE_DISTINCTNESS_FAILURES.with(|failures| *failures.borrow_mut() = None);
+            CLOSURE_TRANSPORT_FAILURES.with(|failures| *failures.borrow_mut() = None);
+        }
+    }
+}
+
+/// Runs one smart closure with its failed top-level pointer-distinctness
+/// queries remembered for the closure's duration.
+///
+/// A closure that tries one goal against many candidates -- the snapshot
+/// transport closure lowers the goal at every recorded snapshot -- asks the
+/// same failing distinctness question about the goal's own loads once per
+/// candidate, in contexts of equal content, where the ambient resolution memo
+/// is not active: the transport check builds its own contexts. Each query may
+/// cost thousands of units through the explicit-range arm, so a goal whose
+/// frame cannot be proved burned the whole smart budget repeating one
+/// failure instead of failing promptly.
+///
+/// Only failures are remembered, keyed by the cell lookups in progress (a
+/// nested answer may have met an in-progress cell), and never one whose
+/// computation observed a cycle cut or a limit, so a remembered answer is
+/// exactly what recomputing it would return: the memo changes the closure's
+/// cost, never its outcome. The key is the fact set's content id, not a
+/// salted attempt id, so candidates tried as separate search attempts share
+/// it; nothing outlives the closure. [`closure_memoized_fact_check`] uses the
+/// same scope for whole fact-transport questions.
+pub(crate) fn with_closure_failure_memo<T>(body: impl FnOnce() -> T) -> T {
+    let outermost = CLOSURE_DISTINCTNESS_FAILURES.with(|failures| {
+        let mut failures = failures.borrow_mut();
+        if failures.is_some() {
+            return false;
+        }
+        *failures = Some(std::collections::HashSet::new());
+        true
+    });
+    if outermost {
+        CLOSURE_TRANSPORT_FAILURES.with(|failures| *failures.borrow_mut() = Some(BTreeSet::new()));
+    }
+    let _scope = ClosureFailureMemoScope { outermost };
+    body()
+}
+
+fn closure_distinctness_failure_key(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &PureFactContext,
+) -> Option<ClosureDistinctnessFailure> {
+    let active = CLOSURE_DISTINCTNESS_FAILURES.with(|failures| failures.borrow().is_some());
+    if !active {
+        return None;
+    }
+    let (left, right) = if left <= right {
+        (left.clone(), right.clone())
+    } else {
+        (right.clone(), left.clone())
+    };
+    Some(ClosureDistinctnessFailure {
+        assumptions: crate::kernel::assumptions::unsalted_assumptions_memo_id(assumptions),
+        lookups: crate::kernel::resource_tracker::cell_source::memory_dag_cell_lookups_fingerprint(
+        ),
+        generation: crate::kernel::primitives::c_memory_derivation_generation(),
+        bridging: crate::kernel::api::extended_dag_bridging_active(),
+        explicit: crate::kernel::api::explicit_dag_check_active(),
+        left,
+        right,
+    })
+}
+
+/// Inside a closure a failed fact check is answered again without running;
+/// a success is never remembered, nothing is remembered outside a closure,
+/// and the memo ends with the outermost closure.
+#[cfg(test)]
+#[test]
+fn closure_failure_memo_answers_a_repeated_failure_once() {
+    let assumptions = PureFactContext::new();
+    let source = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let target = Proposition::ConditionIs(ConditionTerm::Constant(false), true);
+    let runs = std::cell::Cell::new(0);
+    let check = |answer: bool| {
+        closure_memoized_fact_check(
+            ClosureFactCheck::Reachability,
+            &[&source, &target],
+            None,
+            &assumptions,
+            &[],
+            || {
+                runs.set(runs.get() + 1);
+                answer
+            },
+        )
+    };
+    assert!(!check(false));
+    assert!(!check(false));
+    assert_eq!(runs.get(), 2, "outside a closure every check runs");
+    with_closure_failure_memo(|| {
+        assert!(!check(false));
+        assert!(!check(false));
+        with_closure_failure_memo(|| assert!(!check(false)));
+    });
+    assert_eq!(runs.get(), 3, "one closure runs a failed check once");
+    with_closure_failure_memo(|| {
+        assert!(check(true));
+        assert!(check(true));
+    });
+    assert_eq!(runs.get(), 5, "a success is never remembered");
+    with_closure_failure_memo(|| assert!(!check(false)));
+    assert_eq!(runs.get(), 6, "nothing outlives the closure");
+}
+
 /// Alias check used while resolving a symbolic memory load. This deliberately
 /// avoids general equality transport because that transport may itself resolve
 /// memory loads.
@@ -310,6 +543,30 @@ pub(in crate::kernel) fn pointers_proven_distinct_for_memory_resolution(
         };
         ResolutionQueryKey::PointerDistinct(id, bridging, left, right)
     });
+    if key.is_none()
+        && let Some(failure) = closure_distinctness_failure_key(left, right, assumptions)
+    {
+        let known = CLOSURE_DISTINCTNESS_FAILURES.with(|failures| {
+            failures
+                .borrow()
+                .as_ref()
+                .is_some_and(|failures| failures.contains(&failure))
+        });
+        if known {
+            return false;
+        }
+        let epoch_before = crate::kernel::assumptions::incomplete_reasoning_epoch();
+        let result =
+            pointers_proven_distinct_for_memory_resolution_unmemoized(left, right, assumptions);
+        if !result && crate::kernel::assumptions::incomplete_reasoning_epoch() == epoch_before {
+            CLOSURE_DISTINCTNESS_FAILURES.with(|failures| {
+                if let Some(failures) = failures.borrow_mut().as_mut() {
+                    failures.insert(failure);
+                }
+            });
+        }
+        return result;
+    }
     memoized_resolution_query(key, || {
         pointers_proven_distinct_for_memory_resolution_unmemoized(left, right, assumptions)
     })

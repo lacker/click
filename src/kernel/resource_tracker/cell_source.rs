@@ -557,6 +557,24 @@ pub(in crate::kernel) fn memory_dag_cell_lookup_depth_is_zero() -> bool {
     CELL_LOOKUPS_IN_PROGRESS.with(|lookups| lookups.borrow().is_empty())
 }
 
+/// A fingerprint of the memory-DAG cell lookups in progress: a nested
+/// answer is a function of this set (a lookup of an in-progress cell has no
+/// answer), so a memo that remembers nested answers keys them by it. Work is
+/// the set's size, the lookup nesting depth.
+pub(in crate::kernel) fn memory_dag_cell_lookups_fingerprint() -> u64 {
+    use std::hash::{Hash, Hasher};
+    CELL_LOOKUPS_IN_PROGRESS.with(|lookups| {
+        let lookups = lookups.borrow();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        lookups.len().hash(&mut hasher);
+        for lookup in lookups.iter() {
+            crate::instrumentation::record_deterministic_work(1);
+            lookup.hash(&mut hasher);
+        }
+        hasher.finish()
+    })
+}
+
 impl RangeBoundEvidence {
     fn for_true_condition(
         condition: &ConditionTerm,

@@ -856,6 +856,13 @@ fn assumptions_memo_id(assumptions: &PureFactContext) -> u64 {
     })
 }
 
+/// The content-derived memo id of a fact set, never salted by a search
+/// attempt: the identity [`crate::kernel::reasoning::with_closure_failure_memo`]
+/// keys its negative answers by, so one closure's candidates share them.
+pub(super) fn unsalted_assumptions_memo_id(assumptions: &PureFactContext) -> u64 {
+    assumptions_memo_id(assumptions)
+}
+
 /// Memo identity for the DAG-walk memo tables in api.rs: the ambient scope's
 /// id when one is live (no hashing), the content-derived id otherwise.
 pub(super) fn dag_memo_assumptions_id(assumptions: &PureFactContext) -> u64 {

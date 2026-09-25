@@ -10,6 +10,10 @@ use click::surface::{verify_c0_project, verify_c0_sources, verify_cpp_prepared_p
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
+/// `simp_frame_failure_through_region_arena_is_prompt.md` fails its `simp`
+/// near 575,000 units; repeating its failed questions per candidate used to
+/// run it into the 2,000,000-unit default.
+const PROMPT_SIMP_FRAME_FAILURE_WORK_LIMIT: usize = 1_000_000;
 
 /// Known-broken mdtests, skipped by default so the suite is a meaningful
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
@@ -152,6 +156,21 @@ fn run_mdtest_attempt(path: &Path) -> Result<(), String> {
                 simple: BUBBLE_SORT3_WORK_LIMIT,
                 smart: BUBBLE_SORT3_WORK_LIMIT,
                 control: BUBBLE_SORT3_WORK_LIMIT,
+            };
+            return instrumentation::with_tactic_work_limits(limits, || run_mdtest(path));
+        }
+        if path
+            .file_name()
+            .is_some_and(|name| name == "simp_frame_failure_through_region_arena_is_prompt.md")
+        {
+            // A prompt failure, not a budget crossing: pin the smart and
+            // control budgets well below the default so a return of the
+            // repeated failed questions changes the error and fails the
+            // expectation.
+            let limits = instrumentation::TacticWorkLimits {
+                smart: PROMPT_SIMP_FRAME_FAILURE_WORK_LIMIT,
+                control: PROMPT_SIMP_FRAME_FAILURE_WORK_LIMIT,
+                ..instrumentation::TacticWorkLimits::default()
             };
             return instrumentation::with_tactic_work_limits(limits, || run_mdtest(path));
         }

@@ -271,6 +271,19 @@ explicit:
   memory load reasons under stays the caller's object so the load's alias
   queries keep an ambient memo identity. Both are pure-function memoizations
   over stable interned ids, not new proof authority.
+- **A smart closure asks each failed question once.** A `simp` attempt
+  can reach one goal through several strategies and candidates; the snapshot
+  transport closure lowers the goal at every recorded snapshot, and every
+  snapshot holding the goal's cells unchanged lowers it to the same source.
+  Inside one attempt (`with_closure_failure_memo`) a fact-transport
+  reachability check, a load-variable bridge check, and a pointer-distinctness
+  query that failed are remembered by their exact inputs, the content id of
+  their fact set, the memory-DAG generation, the DAG scope modes, and the cell
+  lookups in progress, and a repeat fails without being recomputed. Failures
+  that met a cycle cut or a limit are not remembered and nothing outlives the
+  attempt, so the memo changes a failing search's cost, never its outcome
+  (`mdtests/simp_frame_failure_through_region_arena_is_prompt.md`, pinned
+  below the default budget by the mdtest harness).
 - **Write-set fingerprints.** Call-havoc markers carry a representation-invariant
   fingerprint of their write set in the marker block size, so
   alpha-colliding claims whose same-named havocs wrote different shapes stay
