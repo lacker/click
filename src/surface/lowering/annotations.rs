@@ -480,6 +480,89 @@ pub(in crate::surface) fn register_kernel_pure_function_definitions(
     }
 }
 
+/// Records each declared `Integer`-valued function's body with the kernel,
+/// once per verification, so the kernel can decide whether it admits a
+/// checked read summary (`design/dfs-gaps/fold-read-range-inference.md`).
+///
+/// This registers program data only. The body is lowered by the same
+/// annotation lowering an `unfold` of the function uses, with the parameters
+/// left as the names the body refers to; the kernel validates it against its
+/// own whitelist and declines anything outside it. A generic declaration, a
+/// parameter that is not a C value, or a body this lowering refuses is simply
+/// not recorded, and framing then has nothing to say about that function.
+pub(in crate::surface) fn register_kernel_fold_read_definitions(
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    struct_layouts: &BTreeMap<String, syntax::C0StructLayout>,
+) {
+    for definition in click_function_environment.definitions.values() {
+        if !definition.type_parameters().is_empty()
+            || definition.return_type() != &ClickType::Integer
+        {
+            continue;
+        }
+        let Some(parameters) = definition
+            .parameters()
+            .iter()
+            .map(|parameter| match parameter.click_type() {
+                ClickType::C(c_type) => {
+                    Some((parameter.name().to_string(), c_type.to_kernel_type()))
+                }
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let entry_state = CState::new();
+        let mut lowerer = AnnotationLowerer {
+            structural_clauses: &[],
+            implicit_contract_mutable_segments: &[],
+            loop_resources: BTreeMap::new(),
+            inherits_resource_derived_frame: false,
+            predicate_environment,
+            click_function_environment,
+            entry_state: &entry_state,
+            result_type: CType::Int32,
+            entry_values: BTreeMap::new(),
+            aggregate_parameters: BTreeSet::new(),
+            parameter_array_element_types: definition
+                .parameters()
+                .iter()
+                .filter_map(|parameter| {
+                    Some((
+                        parameter.name().to_string(),
+                        click_array_element_type(parameter.click_type().c_type()?)?,
+                    ))
+                })
+                .collect(),
+            parameter_pointer_element_widths: click_parameter_pointer_element_widths_with_layouts(
+                definition.parameters(),
+                struct_layouts,
+            ),
+            quantified_values: BTreeMap::new(),
+            algebraic_variables: BTreeMap::new(),
+            algebraic_types: BTreeMap::new(),
+            loop_index: 0,
+            statement_index: 0,
+            next_quantifier_variable: 3_200_000,
+            branch_join_target: None,
+            snapshots: None,
+            count_assumptions: None,
+        };
+        let Ok(body) = lowerer
+            .lower_contract_integer_to_spec(definition.body(), &SpecElaborationContext::default())
+        else {
+            continue;
+        };
+        crate::kernel::register_fold_read_definition(crate::kernel::CFoldReadDefinition::new(
+            definition.name(),
+            parameters,
+            body,
+        ));
+    }
+}
+
 fn lower_kernel_pure_function_definition(
     definition: &ClickFunctionDefinition,
     predicate_environment: &PredicateEnvironment,

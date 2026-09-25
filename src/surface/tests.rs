@@ -2353,6 +2353,83 @@ fn memory_free_pure_functions_are_classified_memory_independent() {
     assert!(!environment.is_memory_independent("absent"));
 }
 
+/// The surface lowering of each declared body is what the kernel's checked
+/// read summary validates. Every pattern outside the subset declines the
+/// whole definition; only the exact prefix-style folds are summarized.
+/// Recursion is not writable here (a recursive pure function takes only
+/// int32 parameters); the kernel test declines a recursive call directly.
+#[test]
+fn fold_read_summaries_are_checked_from_the_lowered_declarations() {
+    let file = parser::parse(
+        r#"
+        function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
+            (lo..hi).fold(0, |acc, k| { acc + to_integer(if v[k] == 0 { 1 } else { 0 }) })
+        }
+        function arms(v: int32[], lo: int32, hi: int32) -> Integer {
+            (lo..hi).fold(0, |acc, k| { acc + to_integer(if v[k] == 0 { v[k] } else { v[k] }) })
+        }
+        function shifted(v: int32[], lo: int32, hi: int32) -> Integer {
+            (lo..hi).fold(0, |acc, k| { acc + to_integer(if v[k + 1] == 0 { 1 } else { 0 }) })
+        }
+        function chased(v: int32[], lo: int32, hi: int32) -> Integer {
+            (lo..hi).fold(0, |acc, k| { acc + to_integer(if v[v[k]] == 0 { 1 } else { 0 }) })
+        }
+        function peek_end(v: int32[], lo: int32, hi: int32) -> Integer {
+            (lo..hi).fold(0, |acc, k| { acc + to_integer(if v[k] == 0 { v[hi] } else { 0 }) })
+        }
+        function helper(v: int32[], k: int32) -> Integer {
+            to_integer(v[k])
+        }
+        function helped(v: int32[], lo: int32, hi: int32) -> Integer {
+            (lo..hi).fold(0, |acc, k| { acc + helper(v, k) })
+        }
+        function nested(v: int32[], lo: int32, hi: int32) -> Integer {
+            (lo..hi).fold(0, |acc, k| { acc + unmarked(v, lo, k) })
+        }
+        function read_end(v: int32[], lo: int32, hi: int32) -> Integer {
+            (lo..v[0]).fold(0, |acc, k| { acc + to_integer(if v[k] == 0 { 1 } else { 0 }) })
+        }
+        function read_initial(v: int32[], lo: int32, hi: int32) -> Integer {
+            (lo..hi).fold(to_integer(v[lo]), |acc, k| { acc + to_integer(if v[k] == 0 { 1 } else { 0 }) })
+        }
+    "#,
+    )
+    .unwrap();
+    let environment = ClickFunctionEnvironment::new(file.click_function_definitions());
+    let _session = crate::kernel::VerificationSession::enter();
+    register_kernel_fold_read_definitions(
+        &PredicateEnvironment::new(&[]),
+        &environment,
+        &BTreeMap::new(),
+    );
+    let summarized = crate::kernel::registered_fold_read_summary;
+    assert!(
+        summarized("unmarked").is_ok(),
+        "{:?}",
+        summarized("unmarked")
+    );
+    assert!(summarized("arms").is_ok(), "{:?}", summarized("arms"));
+    for (name, decline) in [
+        ("shifted", "ReadOutsideFoldIndex"),
+        ("chased", "ReadOutsideFoldIndex"),
+        ("peek_end", "ReadOutsideFoldIndex"),
+        ("helper", "NotATopLevelInt32Fold"),
+        ("helped", "UnsupportedConstruct(\"a function call\")"),
+        ("nested", "UnsupportedConstruct(\"a function call\")"),
+        ("read_end", "UnsupportedEndpoint"),
+        (
+            "read_initial",
+            "UnsupportedInitialValue(\"it reads the array\")",
+        ),
+    ] {
+        assert_eq!(
+            format!("{:?}", summarized(name)),
+            format!("Err(Declined({decline}))"),
+            "`{name}` must decline its whole definition"
+        );
+    }
+}
+
 #[test]
 fn integer_resource_field_observes_unchanged_c_memory_read() {
     let c_source = "int32 read(int32* p) { return *p; }";

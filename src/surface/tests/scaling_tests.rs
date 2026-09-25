@@ -3377,3 +3377,72 @@ fn failing_fact_transport_plan_ignores_unrelated_candidates() {
     );
     assert_near_linear_scaling("fact-transport plan unrelated candidates", &samples);
 }
+
+/// Explicit fold read framing along a straight line of endpoint stores: each
+/// store is followed by one `transport` of the prefix count, which crosses
+/// exactly that store. Total work stays near linear in the number of stores,
+/// and so does the framing rule's own named work, rather than rescanning the
+/// history once per transport.
+#[test]
+fn explicit_fold_read_transport_along_a_store_sequence_is_near_linear() {
+    let mut samples = Vec::new();
+    let mut framing = Vec::new();
+    for size in [4usize, 8, 16, 32] {
+        let stores = (0..size)
+            .map(|index| format!("    v[i] = {index};\n"))
+            .collect::<String>();
+        let c_source = format!("void mark(int32 *v, int32 i) {{\n{stores}}}\n");
+        let steps = (0..size)
+            .map(|index| {
+                format!(
+                    "    mark m{index};\n    step();\n    have zeros(v, 0, i) == 0 by {{\n        transport(\n            at(m{index}, zeros(v, 0, i)) == 0,\n            zeros(v, 0, i) == 0\n        ) using {{\n            at(m{index}, zeros(v, 0, i)) == 0;\n        }}\n        assumption();\n    }}\n"
+                )
+            })
+            .collect::<String>();
+        let click_source = format!(
+            "verifying \"mark.c\";\n\n\
+             function zeros(v: int32[], lo: int32, hi: int32) -> Integer {{\n    \
+                 (lo..hi).fold(0, |acc, k| {{ acc + to_integer(if v[k] == 0 {{ 1 }} else {{ 0 }}) }})\n\
+             }}\n\n\
+             void mark(int32 *v, int32 i) {{\n    \
+                 requires 0 <= i;\n    \
+                 requires i < 1000;\n    \
+                 requires zeros(v, 0, i) == 0;\n    \
+                 owns v[i..(i + 1)];\n    \
+                 ensures zeros(v, 0, i) == 0;\n\
+             }} by {{\n{steps}    execute();\n    simp();\n}}\n"
+        );
+        let (verified, sample) = scaling_sample(size, || {
+            verify_c0_sources(&click_source, &[("mark.c", c_source.as_str())])
+        });
+        verified.unwrap_or_else(|error| {
+            panic!(
+                "{size} framed endpoint stores should verify: {}",
+                error.message()
+            )
+        });
+        framing.push(
+            sample
+                .named_work
+                .get("operation `explicit fact transport: fold read frame`")
+                .copied()
+                .unwrap_or(0),
+        );
+        samples.push(sample);
+    }
+    eprintln!(
+        "fold read transport along stores: total {:?}, framing {framing:?}",
+        samples.iter().map(|sample| sample.work).collect::<Vec<_>>()
+    );
+    assert!(
+        framing[0] > 0,
+        "the fold read frame did not run: {framing:?}"
+    );
+    for pair in framing.windows(2) {
+        assert!(
+            pair[1] <= pair[0].saturating_mul(3),
+            "fold read framing work is not near linear in the store count: {framing:?}"
+        );
+    }
+    assert_near_linear_scaling("explicit fold read transport along stores", &samples);
+}

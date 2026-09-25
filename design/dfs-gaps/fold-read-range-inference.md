@@ -1,7 +1,26 @@
 # Design: checked read ranges for fold applications
 
-Status: proposed design, requested after the DFS completeness proof. This
-change does not implement inference or approve a general effect language.
+Status: delivery steps 1 and 2 landed; steps 3 and 4 are not started and
+not authorized. `src/kernel/fold_read_summary.rs` holds the kernel-checked,
+session-scoped read summary (step 1) and the explicit application-framing
+rule that `transport(P, Q) using { ... }` reaches (step 2). The rule walks
+the recorded memory history between the two array snapshots per query and
+records nothing, so it did not need the open range-epoch representation
+below; automatic reuse (step 3) still does. Kernel pointer offsets are exact
+sums of sign-extended scaled `int32` terms, so the framing rule needs no
+representable-extent bound: it reads the written offset exactly and asks one
+exact order fact (`end <= j` or `j < start`), or a stated separation with
+exact membership facts. Regressions: the kernel tests in
+`src/kernel/fold_read_summary/tests.rs` (every unsupported read pattern,
+byte-width boundary overlap, aliasing, lifetime and call edges, session
+poisoning, and deterministic scaling over body size, application count,
+unrelated facts, interval length, and store sequences),
+`fold_read_summaries_are_checked_from_the_lowered_declarations` in
+`src/surface/tests.rs`,
+`explicit_fold_read_transport_along_a_store_sequence_is_near_linear` in
+`src/surface/tests/scaling_tests.rs`, and the `mdtests/fold_read_transport_*.md`
+fixtures plus `mdtests/sweep_prefix_survives_its_endpoint_store_by_transport.md`.
+This design does not approve a general effect language.
 
 ## Decision and surface behavior
 

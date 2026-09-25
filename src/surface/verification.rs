@@ -2300,6 +2300,11 @@ fn verify_c0_sources_with_context(
             &click_function_environment,
             &resource_struct_layouts,
         );
+        register_kernel_fold_read_definitions(
+            &predicate_environment,
+            &click_function_environment,
+            &resource_struct_layouts,
+        );
         // Frame evidence may look through composite definitions to decide
         // that a call's mutable ranges or a store's written cell cannot
         // touch a loaded pointer inside a composite's footprint. Definitions

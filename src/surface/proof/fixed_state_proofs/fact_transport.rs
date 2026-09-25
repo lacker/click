@@ -497,6 +497,27 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
         ) {
             return Ok(CheckedFixedStateFactTransport { source, target });
         }
+        // A fact about a checked range-fold application crosses a step that
+        // provably misses every cell the fold reads. The kernel decides it
+        // from the function's checked read summary, each recorded step's own
+        // write set, and exact order and separation facts of this context;
+        // the answer is this query's derivation and is recorded nowhere else.
+        let fold_frame = crate::instrumentation::measure_operation(
+            "surface",
+            "fact transport",
+            "explicit fact transport: fold read frame",
+            || {
+                crate::kernel::frame_fold_application_transport(
+                    &source,
+                    &target,
+                    available.assumptions(),
+                )
+            },
+        );
+        let fold_refusal = match fold_frame {
+            Ok(_) => return Ok(CheckedFixedStateFactTransport { source, target }),
+            Err(refusal) => refusal,
+        };
         if !certified_fact_transport_reaches_through(
             &source,
             &target,
@@ -504,7 +525,7 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
             &transport_assumptions,
             &transition_facts,
         ) {
-            return Err(ClickError::new(describe_unreachable_fact_transport(
+            let mut rendered = describe_unreachable_fact_transport(
                 claim_label,
                 tactic_index,
                 surface_source,
@@ -512,7 +533,15 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
                 &source,
                 &target,
                 &transition_facts,
-            )));
+            );
+            if !matches!(
+                fold_refusal,
+                crate::kernel::FoldFrameRefusal::ShapeMismatch
+                    | crate::kernel::FoldFrameRefusal::NothingToFrame
+            ) {
+                rendered.push_str(&format!("\n  fold read frame: {fold_refusal}"));
+            }
+            return Err(ClickError::new(rendered));
         }
     }
     Ok(CheckedFixedStateFactTransport { source, target })

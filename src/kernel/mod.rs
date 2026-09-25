@@ -15,6 +15,7 @@ pub const RESOURCE_SEMANTICS_VERSION: u32 = 8;
 
 pub(crate) mod assumptions;
 mod eval;
+mod fold_read_summary;
 mod functions;
 mod owned_footprint_reach;
 mod population_access;
@@ -55,6 +56,12 @@ mod primitives;
 pub(crate) mod proof;
 mod pure_functions;
 pub(crate) mod sorry;
+#[cfg(test)]
+pub(crate) use fold_read_summary::registered_fold_read_summary;
+pub use fold_read_summary::{
+    CFoldReadDefinition, CheckedFoldReadSummary, FoldReadDecline, register_fold_read_definition,
+};
+pub(crate) use fold_read_summary::{FoldFrameRefusal, frame_fold_application_transport};
 pub use pure_functions::{
     CPureFunctionDefinition, CPureFunctionParameter, register_pure_function_definition,
 };
@@ -263,6 +270,7 @@ impl VerificationSession {
             primitives::clear_block_alignment_registry();
             primitives::clear_never_address_taken_locals();
             pure_functions::clear_pure_function_definitions();
+            fold_read_summary::clear_fold_read_summaries();
             eval::clear_load_canonicalization_caches();
             memory_provenance::clear_canonical_form_caches();
             memory_provenance::clear_provenance_memos();

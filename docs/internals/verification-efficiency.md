@@ -122,6 +122,21 @@ charged to visible semantic output rather than hidden ambient state:
   successor's bindings against the arms' through one membership index over
   binding values and is linear in the binding count, which grows with proof
   length (`interface_binding_inheritance_is_near_linear_in_the_binding_count`).
+- An explicit fold read frame — a `transport` of a fact about an application
+  of a checked range-fold function (`src/kernel/fold_read_summary.rs`) —
+  walks the recorded memory history back from both array snapshots to a
+  common one and decides each step it crosses once, from that step's own
+  write set and exact order or separation lookups. The steps are the frame's
+  semantic output; nothing is recorded or memoized, so the next transport
+  pays only for its own steps. Summary checking is one unit per node of the
+  declared body, once per verification. The kernel tests pin 74, 138, 266,
+  and 522 units for 8 to 64 counted reads in the body; 175 to 1,407 units
+  for 8 to 64 framed applications; 17 units whether 64 or 512 unrelated order
+  facts sit beside one framed store, and whether the interval holds ten or a
+  billion cells; and 272 to 2,176 units for 16 to 128 stores each crossed by
+  its own transport. The surface regression
+  `explicit_fold_read_transport_along_a_store_sequence_is_near_linear` pins
+  the whole verification at 4 to 32 stores.
 
 ## Execution capacity follows selected syntax
 

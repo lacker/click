@@ -58,8 +58,10 @@ an in-bounds target that was unmarked at entry. The recursive contract also
 preserves each previously marked node. Failure completeness from all-unmarked
 entry is also checked, using the closed-successor summary described below.
 Both recursive success branches and their snapshot framing are checked; see
-`design/dfs-gaps/branching_graph_dfs.md`. The proposed fold-read-range design is recorded in
-`design/dfs-gaps/fold-read-range-inference.md`; implementation is still pending.
+`design/dfs-gaps/branching_graph_dfs.md`. The fold-read-range design is recorded in
+`design/dfs-gaps/fold-read-range-inference.md`; its delivery steps 1 and 2
+(checked read summary, explicit transport framing) have landed, and automatic
+reuse (steps 3 and 4) is pending.
 
 This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
 Those files include historical diagnostics, and other small gaps/tooling notes
@@ -73,8 +75,8 @@ Preserve the user's design constraints: keep the C fixed, avoid proof hacks,
 and discuss a proof-language migration when it offers a simpler design.
 Direct aggregate `views` remain restricted; use declared resources and the
 accepted pointer/array forms documented in `docs/concepts/resources.md` and
-`docs/concepts/viewability.md`. The fold-read-range design in item 2 now has a written proposal; its
-application-range representation still needs implementation review. No scratch files or conversation
+`docs/concepts/viewability.md`. The fold-read-range design in item 2 has explicit framing implemented; its
+automatic application-range representation still needs implementation review. No scratch files or conversation
 history are required to reproduce the current blocker.
 
 ---
@@ -136,14 +138,26 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    `unmarked(visited, 0, i)` reads only cells below `i`, but Click records that it
    depends on the whole array, so `visited[i] = 1` discards it; the user pays with
    a frame lemma plus a quantified per-cell transport (about 110 of the sweep
-   example's 190 lines). Design proposal (implementation pending):
-   The requested design is now in `design/dfs-gaps/fold-read-range-inference.md`.
-   It proposes no new syntax: derive a kernel-checked summary for a narrow
-   fold subset, attach support to the application rather than the array, and
-   establish explicit framing before automatic reuse. It records byte-range,
-   aliasing, snapshot, and scaling requirements. Implementation is not yet
-   authorized. This would simplify the sweep prefix proof; it would not
-   remove the DFS point-update lemma for an in-range write.
+   example's 190 lines). The design is `design/dfs-gaps/fold-read-range-inference.md`.
+   Delivery steps 1 and 2 have landed: the kernel checks a read summary for the
+   narrow fold subset from the declared body (`src/kernel/fold_read_summary.rs`),
+   and explicit `transport(P, Q) using { ... }` frames a fact about such an
+   application across a store or checked call write set that an exact order
+   fact or stated separation places outside its `lo..hi` cells.
+   `mdtests/sweep_prefix_survives_its_endpoint_store_by_transport.md` carries
+   the unchanged sweep's prefix across `visited[i] = 1` with one transport and
+   no `unmarked_frame` lemma. The regressions are the `mdtests/fold_read_transport_*.md`
+   fixtures (positive: endpoint store, below a nonzero start, checked empty
+   fold, separated alias, reads in both arms, historical endpoint, a call's
+   write set, surface restatement of the equality; negative: store inside the
+   range, unchecked emptiness, unseparated alias, a global that may be the
+   array, missing bound, changed endpoint and base pointer, a call writing the
+   range, shifted/outside/helper reads, and no granted C read), the kernel
+   tests in `src/kernel/fold_read_summary/tests.rs`, and the scaling tests
+   named in the design's status line. Steps 3 (automatic reuse across
+   statement effects) and 4 (removing the sweep sidecar's prefix-frame
+   scaffolding) are not started. This does not remove the DFS point-update
+   lemma for an in-range write.
 3. **Resolved: gate-checked shared lemma library for mdtests.** `import` still
    supplies theorem statements without checking imported proof bodies. The
    mdtest harness now selects every local `.click` file as its own entry, so
@@ -219,7 +233,8 @@ framing across a separated call, and
 of a proved conditional algebraic existential. Kernel regressions reject
 missing index/extent bounds, changed graph snapshots, captured free witnesses,
 and different witness sorts, and pin indexed lookup scaling. The fold-range
-design in item 2 now has a written proposal and has not been implemented.
+design in item 2 has its explicit framing steps implemented; automatic reuse
+is pending.
 
 The completeness contract additionally checks reported algebraic universal
 introductions and typed alpha matching of quantified conditional facts in
