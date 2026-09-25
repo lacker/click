@@ -347,6 +347,11 @@ pub(super) fn describe_pure_fact(
                 crate::surface::proof_diagnostics::render::render_sort(sort)
             )
         }
+        // A ground constant has nothing to name but its value: say which
+        // constant, so `false is true` does not read as a true condition.
+        Proposition::ConditionIs(ConditionTerm::Constant(constant), value) => {
+            format!("constant condition `{constant}` is {value}")
+        }
         Proposition::ConditionIs(condition, value) => {
             let kind = match condition {
                 ConditionTerm::AlgebraicEqual(_, _) => "algebraic equality",

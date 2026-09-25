@@ -61,19 +61,11 @@ Written as two steps — `have j < n` then `have j <= n by { arithmetic() using
 
 ## A constant-true requirement instance must be `have`d before it is cited
 
-Classification: **missing rule**, small.
-
-Applying a theorem at `lo = 0` owes `0 <= lo`, which at that instance is
-`0 <= 0`. Naming it in the `using` list is refused:
-
-```text
-`search.contract` tactic 2: `apply using` requires an exact premise: missing
-pure fact: constant condition is true
-```
-
-`have 0 <= 0 by { simp(); }` fixes it. The message does not say *which*
-constant condition it wanted, which is the only reason it took a guess to
-repair: with four constants in one `using` list it names none of them.
+Resolved by `mdtests/apply_using_accepts_a_constant_true_premise.md`: a listed
+premise that lowers to the constant it asserts (`0 <= 0` at `lo = 0`) needs no
+fact. A constantly false one still refuses and now names the listed premise in
+the proof's spelling (`mdtests/apply_using_names_a_false_constant_premise.md`);
+it used to say only `missing pure fact: constant condition is true`.
 
 ## `assumption()` does not close a `viewable` goal
 

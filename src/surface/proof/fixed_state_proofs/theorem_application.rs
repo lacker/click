@@ -156,10 +156,30 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
                 ))
             })?,
         };
+        // A listed premise the lowering folded to a ground constant needs no
+        // fact when that constant is the value it asserts: `0 <= 0` at an
+        // instance is `true is true`. The requirement side discharges the same
+        // instance without a premise, so naming it in the list only restates
+        // it. This is a constant structural check, not normalization.
+        if let Proposition::ConditionIs(ConditionTerm::Constant(constant), value) = &premise
+            && constant == value
+        {
+            continue;
+        }
         if !available.available_across_effects(&premise, &[]) {
             let available_facts = available.to_vec();
+            // Name the listed premise in the reader's own spelling: a
+            // premise lowered to a constant or to an internal term says
+            // neither which `using` entry was refused nor why.
+            let constant_note = match &premise {
+                Proposition::ConditionIs(ConditionTerm::Constant(_), _) => {
+                    " (it is false at this instance)"
+                }
+                _ => "",
+            };
             return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `apply using` requires an exact premise: {}",
+                "`{claim_label}` tactic {tactic_index}: `apply using` requires an exact premise: listed premise `{}`{constant_note} is not an available fact: {}",
+                crate::surface::diagnostics::describe_click_proposition(surface_premise),
                 describe_missing_pure_fact(
                     &premise,
                     &available_facts,

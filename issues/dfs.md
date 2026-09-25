@@ -160,8 +160,9 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    theorem still splits below/above to cover both sides of the marked index.
    `have` cannot take a label; `assumption()` cannot close a `viewable` goal;
    `arithmetic() using { j < hi; hi <= n; }` now proves `j <= n` in one checked
-   step; `missing pure fact: constant condition is true`
-   does not say which constant; a store refusal spells `owns b[0..1]` as
+   step; a constant-true `using` premise such as `0 <= 0` is accepted
+   (`mdtests/apply_using_accepts_a_constant_true_premise.md`) and a false one
+   names itself; a store refusal spells `owns b[0..1]` as
    `owns a[(v100001 - v100000)..]`.
 
 The unchanged two-successor graph search now checks termination, memory
