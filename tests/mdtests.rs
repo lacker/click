@@ -34,7 +34,12 @@ fn mdtests() {
                 .unwrap_or_else(|error| panic!("failed to read mdtest directory entry: {error}"))
                 .path()
         })
-        .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
+        // Imported theorem bodies are interfaces to their importers. Run each
+        // local Click library as its own entry so the gate checks those bodies.
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "md" || extension == "click")
+        })
         .collect::<Vec<_>>();
     let filtered = if let Ok(filter) = std::env::var("MDTEST_FILTER") {
         paths.retain(|path| {
@@ -160,6 +165,17 @@ fn run_mdtest_attempt(path: &Path) -> Result<(), String> {
 }
 
 fn run_mdtest(path: &Path) -> Result<(), String> {
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "click")
+    {
+        let source = fs::read_to_string(path)
+            .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
+        let project = read_click_project(path, &source)?;
+        return verify_c0_project(&project, &[])
+            .map(|_| ())
+            .map_err(|error| error.message().to_string());
+    }
     let mdtest = read_mdtest(path)?;
     let click_source = mdtest
         .click_source

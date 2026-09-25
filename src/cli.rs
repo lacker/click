@@ -1585,6 +1585,9 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
+        // Directory selection canonicalizes paths; macOS temp directories
+        // commonly start at /var but resolve beneath /private/var.
+        let root = fs::canonicalize(root).unwrap();
         let module = "# Shared resources.\nimport \"other.click\";\n\
             spec enum Shade { Light, Dark(int32) }\n\
             abstract resource token(p: int32*);\n\

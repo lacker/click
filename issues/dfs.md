@@ -37,10 +37,11 @@ index; `mdtests/loop_symbolic_disjoint_array_store_frame.md` checks that path.
 The earlier reduction in
 `design/dfs-gaps/reachability_needs_an_algebraic_loop_witness.md` is historical.
 
-The explicit
-quantified-transport, whole-array dependency, shared-lemma, extent-restatement,
-and small diagnostic items below remain proof-language or tooling costs, but
+The explicit quantified-transport, whole-array dependency,
+extent-restatement, and small diagnostic items below remain proof-language or tooling costs, but
 none blocks the termination, memory-safety, or branch-local correctness claims.
+The shared-lemma gate gap is closed: the mdtest harness now verifies local
+`.click` modules as entries, and the unmarked lemmas have one checked source.
 
 Whole-array dependency refinement remains design work rather than a small
 finishing edit. The unchanged cyclic, two-successor C search now verifies
@@ -107,11 +108,10 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
 
 ## State
 
-- On master and verifying: `mdtests/unmarked_count_lemmas.md` (`unmarked_frame`,
-  `unmarked_point_update`, by `induct(hi)`) and
+- On master and verifying: `mdtests/unmarked_count_lemmas.click`
+  (`unmarked_frame`, `unmarked_point_update`, by `induct(hi)`) and
   `mdtests/sweep_maintains_a_zero_unmarked_count.md` (a marking loop keeping
-  `invariant unmarked(visited, 0, i) == 0`; it carries a verbatim copy of
-  `unmarked_frame`).
+  `invariant unmarked(visited, 0, i) == 0`; it imports the checked lemma).
 - `mdtests/search_terminates_by_unmarked_count.md` checks the complete C and
   sidecar for `search`, including the success-path result claim. The formerly
   saved blocked proof now verifies without changing the C.
@@ -137,10 +137,12 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    aliasing, snapshot, and scaling requirements. Implementation is not yet
    authorized. This would simplify the sweep prefix proof; it would not
    remove the DFS point-update lemma for an in-range write.
-3. **No gate-checked shared lemma library for mdtests.** `import` supplies
-   theorem statements and assumes their proofs by design, and nothing in
-   `scripts/check.sh` selects a library `.click` file, so lemmas are copied
-   verbatim into each example.
+3. **Resolved: gate-checked shared lemma library for mdtests.** `import` still
+   supplies theorem statements without checking imported proof bodies. The
+   mdtest harness now selects every local `.click` file as its own entry, so
+   `mdtests/unmarked_count_lemmas.click` checks the proof bodies while the
+   search and sweep import their statements. The three copies of
+   `unmarked_frame` and the search's other copied unmarked lemmas are removed.
 4. **Extent bounds restated at every pure-theorem `apply … using`.** A stated
    range carries `0 <= n - lo` and `n - lo <= 1073741823` for the proof, but a
    `using` list in a pure theorem must name them again (the C-proof route accepts

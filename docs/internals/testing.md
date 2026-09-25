@@ -215,6 +215,11 @@ harnesses one after the other. For docs-only changes, CI and the explicit
 described above. The proof fixtures verify their inputs on every core. Judge
 the verdict from the script's exit status.
 
+The mdtest harness checks each `mdtests/*.click` file as an entry module as
+well as each Markdown fixture. An import exposes a library theorem's statement
+to a fixture; selecting the library itself checks its proof body. Keep shared
+lemma files in `mdtests/` so the full gate checks both sides of that boundary.
+
 The tree is clippy-clean, so a new diagnostic belongs to the change that
 introduced it. When a lint is wrong about a deliberate design, silence exactly
 that case with an `#[allow(clippy::…)]` carrying a one-line reason rather than
