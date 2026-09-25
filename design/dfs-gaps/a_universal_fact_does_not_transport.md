@@ -1,5 +1,17 @@
 # a universal fact cannot be carried to another snapshot
 
+Historical reduction. On 2026-09-25, the reported refusal no longer
+reproduces: `mdtests/quantified_fact_explicit_transport_inside_have.md`
+checks the bounded-value quantifier and quantified frame equality inside
+`have` across a separated store;
+`mdtests/comparison_fact_explicit_transport_inside_have.md` checks the
+comparison form. `mdtests/quantified_fact_explicit_transport_rejects_changed_cell.md`
+checks the corresponding refusal when the store changes a read cell. The
+loop-specific form now passes in
+`mdtests/loop_symbolic_disjoint_array_store_frame.md` with one quantified
+transport inside `preserve`. The diagnostics and workaround below describe
+the older proof-language state.
+
 Classification: **missing rule** (no snapshot transport for a quantified
 proposition), with a **missing surface spelling** for the one-cell workaround.
 
