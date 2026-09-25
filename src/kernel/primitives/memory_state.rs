@@ -776,6 +776,74 @@ mod call_havoc_local_retention_tests {
 }
 
 #[cfg(test)]
+mod call_havoc_union_view_tests {
+    use super::*;
+
+    /// A call havoc drops a typed union view inside its write set exactly as
+    /// it drops a cell, keeps one it cannot reach, and its checker accepts
+    /// that result and refuses the one that keeps the written view.
+    #[test]
+    fn call_havoc_drops_union_views_in_its_write_set_and_the_checker_agrees() {
+        let block: PointerBlock = "global:union-havoc".into();
+        let written = Pointer {
+            block: block.clone(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let sibling = Pointer {
+            block: block.clone(),
+            offset: PointerOffsetTerm::Constant(8),
+        };
+        let view = |pointer: &Pointer, value: u32| {
+            (
+                pointer.clone(),
+                CType::Int32,
+                CValue::Int32(Bitvector32Term::Constant(value)),
+            )
+        };
+        let before = CMemory::new()
+            .with_block(block, 16)
+            .store_union_views(written.clone(), 8, vec![view(&written, 3)])
+            .store_union_views(sibling.clone(), 8, vec![view(&sibling, 5)]);
+        let range = CMemoryRange::new_with_element_width(
+            written.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+            1,
+        );
+        let assumptions = PureFactContext::new();
+        let after = before.clone().with_call_memory_havoc(
+            Variable(944_020),
+            std::slice::from_ref(&range),
+            &assumptions,
+            None,
+        );
+        assert_eq!(after.known_union_value(&written, CType::Int32), None);
+        assert_eq!(
+            after.known_union_value(&sibling, CType::Int32),
+            Some(CValue::Int32(Bitvector32Term::Constant(5)))
+        );
+        assert!(after.matches_call_memory_havoc_result(
+            &before,
+            std::slice::from_ref(&range),
+            &assumptions,
+            None,
+        ));
+
+        let mut stale = after.clone();
+        std::sync::Arc::make_mut(&mut stale.union_cells).insert(
+            (written.clone(), CType::Int32),
+            CValue::Int32(Bitvector32Term::Constant(3)),
+        );
+        assert!(!stale.matches_call_memory_havoc_result(
+            &before,
+            std::slice::from_ref(&range),
+            &assumptions,
+            None,
+        ));
+    }
+}
+
+#[cfg(test)]
 mod havoc_identity_tests {
     use super::*;
 
@@ -2730,7 +2798,8 @@ impl CMemory {
         let base = Some(intern_derivation_base(&mut self));
         let mut flat_hits = Vec::new();
         let unnamed = write_set_reaches_unnamed_memory(mutable_ranges);
-        call_havoc_candidates(mutable_ranges).retain_map(
+        let candidates = call_havoc_candidates(mutable_ranges);
+        candidates.retain_map(
             std::sync::Arc::make_mut(&mut self.cells),
             |pointer, value| match call_havoc_keeps_cell(
                 pointer,
@@ -2743,6 +2812,28 @@ impl CMemory {
                 // The cached value is dropped as before; the edge records
                 // the member that holds it, and a load after the call is
                 // named across the edge at its pre-call value.
+                CallHavocCellRule::KeptByCaller(range) => {
+                    flat_hits.push(range);
+                    false
+                }
+                CallHavocCellRule::Dropped => false,
+            },
+        );
+        // A typed union view is a cached value like any other, and it is the
+        // authoritative answer to an exact typed load, so one the callee may
+        // have overwritten must go by the same rule. Keeping it let a load
+        // after the call read the pre-call member
+        // (`mdtests/call_havoc_drops_a_union_member_view.md`).
+        candidates.retain_map(
+            std::sync::Arc::make_mut(&mut self.union_cells),
+            |(pointer, _), value| match call_havoc_keeps_cell(
+                pointer,
+                value,
+                mutable_ranges,
+                assumptions,
+                kept,
+            ) {
+                CallHavocCellRule::Separate => true,
                 CallHavocCellRule::KeptByCaller(range) => {
                     flat_hits.push(range);
                     false
@@ -2840,17 +2931,18 @@ impl CMemory {
                 CallHavocCellRule::Dropped => dropped_cells.push(pointer),
             }
         }
-        let dropped_union_cells = candidates
-            .entries(&before.union_cells)
-            .inspect(|_| visited += 1)
-            .filter(|((pointer, _), value)| {
-                !matches!(
-                    call_havoc_keeps_cell(pointer, value, mutable_ranges, assumptions, kept),
-                    CallHavocCellRule::Separate
-                )
-            })
-            .map(|(key, _)| key)
-            .collect::<Vec<_>>();
+        let mut dropped_union_cells = Vec::new();
+        for (key, value) in candidates.entries(&before.union_cells) {
+            visited += 1;
+            match call_havoc_keeps_cell(&key.0, value, mutable_ranges, assumptions, kept) {
+                CallHavocCellRule::Separate => {}
+                CallHavocCellRule::KeptByCaller(range) => {
+                    flat_hits.push(range);
+                    dropped_union_cells.push(key);
+                }
+                CallHavocCellRule::Dropped => dropped_union_cells.push(key),
+            }
+        }
         crate::instrumentation::record_deterministic_work(visited);
         let kept_ranges = call_havoc_kept_ranges(kept, flat_hits, unnamed);
         let write_set_marker =
