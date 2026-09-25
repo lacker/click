@@ -3631,6 +3631,10 @@ fn verify_c0_sources_with_context(
         theorem.target = selected_target;
         theorem.selection = Some(selection.clone());
     }
+    // Recorded work charges tactic budgets without interrupting the tactic,
+    // so a budget can be exhausted by a step that then returns; its pending
+    // limit fails the run here at the latest.
+    check_verification_deadline()?;
     Ok((verified, function_environment))
 }
 

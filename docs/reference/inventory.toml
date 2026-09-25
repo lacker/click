@@ -1882,6 +1882,10 @@ id = "cli.env.CLICK_RUN_QUARANTINED"
 path = "reference/cli/environment.md#click_run_quarantined"
 
 [[item]]
+id = "cli.env.CLICK_TACTIC_WORK_REPORT"
+path = "reference/cli/environment.md#click_tactic_work_report"
+
+[[item]]
 id = "cli.env.CLICK_DISABLE_TACTIC_BUDGETS"
 path = "reference/cli/environment.md#click_disable_tactic_budgets"
 

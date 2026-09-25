@@ -19,6 +19,15 @@ pub struct TacticEvent {
     pub source_index: usize,
 }
 
+/// One tactic's deterministic work, as its budget was charged: exclusive of
+/// nested tactics, and recorded whether the tactic finished or failed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TacticWorkSample {
+    pub tactic: TacticEvent,
+    pub work: usize,
+    pub failed: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ActiveVerificationWork {
     Tactic(TacticEvent),
@@ -91,40 +100,56 @@ pub struct TacticLimits {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TacticWorkLimits {
-    /// Cooperative verifier checkpoints available to one simple tactic.
+    /// Deterministic work units available to one simple tactic.
     pub simple: usize,
-    /// Cooperative verifier checkpoints available to one smart tactic.
+    /// Deterministic work units available to one smart tactic.
     pub smart: usize,
-    /// Cooperative verifier checkpoints available to one control tactic,
+    /// Deterministic work units available to one control tactic,
     /// excluding work performed by its nested tactics.
     pub control: usize,
 }
 
 impl Default for TacticWorkLimits {
-    /// The deterministic work budget is the primary per-tactic bound: it
-    /// counts cooperative prover checkpoints, so the same source spends the
-    /// same units on any machine under any load.
+    /// The deterministic work budget is the primary per-tactic bound. It is
+    /// charged by every unit of recorded verifier work
+    /// (`record_deterministic_work`, and the cooperative checkpoints, which
+    /// record through the same path), so the same source spends the same
+    /// units on any machine under any load, and a scaling measurement and a
+    /// budget verdict count the same units.
     ///
-    /// Simple calibration (2026-08-12, whole-claim-gate base, after the
-    /// order-fact and resolution-query memos, measured with budgets
-    /// disabled so no cost is clipped): the green example corpus (1,278
-    /// simple tactics including the gate's generated-certificate validation) measures
-    /// p95 = 1,027 units, p99 = 6,292, max = 16,583; the green mdtest
-    /// corpus (6,137 simple tactics across 383 fixtures) measures p99 =
-    /// 766, second-largest = 20,796, max = 148,094 (copy3's
-    /// `close_invariants`, the corpus outlier); the issue-tracked hot steps
-    /// (input-cursor statement 5 and perpetual-service's fold) measure
-    /// 35,368 and 46,242. 500,000 gives the corpus maximum 3.4x margin and
-    /// everything else at least 10x, and deterministically fails any simple
-    /// tactic that grows past roughly three times today's worst known cost.
-    /// Changing a budget requires a fresh corpus measurement across BOTH
-    /// the examples and the mdtests and a documented reason; it is never a
-    /// way to make one proof pass.
+    /// Calibration (2026-09-25, base `021ca511` plus the unified work
+    /// counter; `scripts/measure-tactic-work.sh`, which runs both fixture
+    /// harnesses with budgets disabled so no cost is clipped): the corpus is
+    /// 35 example sidecars and 2,084 mdtests (1,648 with tactics), counting
+    /// every tactic including the gate's generated-certificate checks.
+    ///
+    /// - simple: 7,866 tactics, p95 = 1,640, p99 = 5,050, second-largest =
+    ///   209,526, max = 230,969 (arena `arena_pipeline` `step`s at
+    ///   arena_cells.click:4306 and :4041). 750,000 gives the maximum 3.2x
+    ///   margin; the next largest are also arena_pipeline steps (143,965,
+    ///   88,933, 77,883), and every other simple tactic is below 75,000,
+    ///   which the budget exceeds by 10x.
+    /// - smart: 11,173 tactics, p95 = 3,361, p99 = 21,313, second-largest =
+    ///   626,422, max = 669,938 (both owned-vector `vector_copy`'s `simp` at
+    ///   vector.click:130, run twice). 2,000,000 gives it 3.0x; below it sit
+    ///   an mdtest `close_invariants` (490,467), the arena `have`s (483,814
+    ///   down to 223,596), and copy_n_segment_invariant's `simp` (217,930);
+    ///   every other smart tactic is below 200,000 (10x).
+    /// - control: 1,747 tactics, p95 = 5,340, p99 = 32,927, second-largest =
+    ///   610,181, max = 815,089 (arena `arena_pipeline` `have`s at
+    ///   arena_cells.click:3440 and :3134). 2,500,000 gives the maximum 3.1x;
+    ///   the only other control tactic above 250,000 (10x) is the arena
+    ///   `have` at :3591 (415,937).
+    ///
+    /// The tactics named above are the corpus's genuinely slow steps, not
+    /// headroom to spend. Changing a budget requires a fresh run of the
+    /// script over BOTH the examples and the mdtests and a documented
+    /// reason; it is never a way to make one proof pass.
     fn default() -> Self {
         Self {
-            simple: 500_000,
+            simple: 750_000,
             smart: 2_000_000,
-            control: 2_000_000,
+            control: 2_500_000,
         }
     }
 }
@@ -256,18 +281,22 @@ thread_local! {
     static ACTIVE_TACTICS: RefCell<Vec<ActiveTactic>> = const { RefCell::new(Vec::new()) };
     static ACTIVE_PHASES: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
     static PENDING_LIMIT: RefCell<Option<PendingLimit>> = const { RefCell::new(None) };
-    /// Cooperative verifier checkpoints consumed by nested deterministic-work
-    /// measurements. Unlike tactic work, this includes certification and
-    /// driver phases, so scaling tests can measure a complete native verifier
-    /// transaction without using wall time.
+    /// Budget-calibration sinks: each ended tactic's charged work, without
+    /// the cost of collecting every verification event.
+    static TACTIC_WORK_SINKS: RefCell<Vec<Vec<TacticWorkSample>>> = const { RefCell::new(Vec::new()) };
+    /// Deterministic work consumed by nested measurements. Every unit that
+    /// charges a tactic budget also lands here; unlike tactic work, this
+    /// includes certification and driver phases outside any tactic, so
+    /// scaling tests can measure a complete native verifier transaction
+    /// without using wall time.
     static WORK_COUNTERS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
-    /// A checked variable collector temporarily routes its deterministic node
-    /// charges through the active tactic budget. The collector itself lives
-    /// in the kernel reasoning module, so this scope keeps ordinary
-    /// measurement-only collectors unchanged.
+    /// A checked variable collector turns each of its deterministic node
+    /// charges into a full checkpoint, so it can stop traversing as soon as
+    /// any limit fires. The collector itself lives in the kernel reasoning
+    /// module; outside this scope a record charges the same budget but does
+    /// not interrupt its caller.
     static CHECKED_COLLECTION_DEPTH: Cell<usize> = const { Cell::new(0) };
     static CHECKED_COLLECTION_EXHAUSTED: Cell<bool> = const { Cell::new(false) };
-    static CHECKED_COLLECTION_CHARGING: Cell<bool> = const { Cell::new(false) };
     /// Monotonic count of checked-collector entry attempts. Unlike tactic
     /// work, this remains observable after exhaustion so regressions can
     /// prove that sibling traversal stopped rather than merely becoming
@@ -276,8 +305,8 @@ thread_local! {
     static CHECKED_COLLECTION_ATTEMPTS: Cell<usize> = const { Cell::new(0) };
 }
 
-/// Routes deterministic work recorded by variable collectors through the
-/// active tactic budget until the guard is dropped. Nested scopes share the
+/// Makes deterministic work recorded by variable collectors a checkpoint
+/// (budget and wall clock) until the guard is dropped. Nested scopes share the
 /// outer exhaustion state and do not reset it.
 pub(crate) struct CheckedCollectionScope;
 
@@ -286,7 +315,6 @@ impl CheckedCollectionScope {
         CHECKED_COLLECTION_DEPTH.with(|depth| {
             if depth.get() == 0 {
                 CHECKED_COLLECTION_EXHAUSTED.with(|exhausted| exhausted.set(false));
-                CHECKED_COLLECTION_CHARGING.with(|charging| charging.set(false));
                 #[cfg(test)]
                 CHECKED_COLLECTION_ATTEMPTS.with(|attempts| attempts.set(0));
             }
@@ -299,11 +327,7 @@ impl CheckedCollectionScope {
 impl Drop for CheckedCollectionScope {
     fn drop(&mut self) {
         CHECKED_COLLECTION_DEPTH.with(|depth| {
-            let remaining = depth.get().saturating_sub(1);
-            depth.set(remaining);
-            if remaining == 0 {
-                CHECKED_COLLECTION_CHARGING.with(|charging| charging.set(false));
-            }
+            depth.set(depth.get().saturating_sub(1));
         });
     }
 }
@@ -457,40 +481,60 @@ fn with_default_tactic_time_limit<R>(operation: impl FnOnce() -> R) -> R {
     }
 }
 
+/// Records `units` of deterministic verifier work.
+///
+/// This is the one accounting path: every unit charges each enclosing
+/// [`measure_deterministic_work`] counter and the innermost active tactic's
+/// work budget, whether it arrives here or through a cooperative checkpoint
+/// ([`deadline_exceeded`], [`deadline_exceeded_with_work`]). Recording does
+/// not interrupt the caller: an exhausted budget becomes a pending limit
+/// that the next checkpoint reports, and the verifier checks for one after
+/// every function, so no tactic can finish green past its budget. A
+/// checkpoint additionally consults the wall-clock deadlines.
+///
+/// Inside a [`CheckedCollectionScope`] each record is itself a checkpoint,
+/// and once one reports exhaustion the rest of the scope stops charging so
+/// the collector can unwind.
 pub(crate) fn record_deterministic_work(units: usize) {
-    let checked_collection = CHECKED_COLLECTION_DEPTH.with(|depth| depth.get() > 0);
-    let charging = CHECKED_COLLECTION_CHARGING.with(Cell::get);
-    if checked_collection && !charging {
+    if CHECKED_COLLECTION_DEPTH.with(|depth| depth.get() > 0) {
         if CHECKED_COLLECTION_EXHAUSTED.with(Cell::get) {
             return;
         }
-        CHECKED_COLLECTION_CHARGING.with(|charging| charging.set(true));
-        let exhausted = deadline_exceeded_with_work(units);
-        CHECKED_COLLECTION_CHARGING.with(|charging| charging.set(false));
-        if exhausted {
+        if deadline_exceeded_with_work(units) {
             CHECKED_COLLECTION_EXHAUSTED.with(|flag| flag.set(true));
         }
         return;
     }
+    charge_deterministic_work(units);
+}
+
+/// Charges `units` to every scaling counter and to the innermost active
+/// tactic's budget. Returns `false` when that budget is exhausted; the first
+/// exhaustion leaves a pending work limit whose message names the tactic,
+/// its units, and where they went, and emits one
+/// [`VerificationEvent::TacticWorkBudgetExceeded`].
+fn charge_deterministic_work(units: usize) -> bool {
     WORK_COUNTERS.with(|counters| {
         for counter in counters.borrow_mut().iter_mut() {
             *counter = counter.saturating_add(units);
         }
     });
-}
-
-fn consume_tactic_work(units: usize) -> bool {
-    record_deterministic_work(units);
     let exhausted = ACTIVE_TACTICS.with(|active| {
         let mut active = active.borrow_mut();
         let current = active.last_mut()?;
         if current.work_exhausted {
-            return Some((
+            // Already reported: stay exhausted without rebuilding the
+            // message on every later record, unless the pending limit was
+            // cleared underneath the still-running tactic.
+            if PENDING_LIMIT.with(|pending| pending.borrow().is_some()) {
+                return Some(None);
+            }
+            return Some(Some((
                 current.event.clone(),
                 current.work_used,
                 current.work_limit?,
                 current.named_work.clone(),
-            ));
+            )));
         }
         current.work_used = current.work_used.saturating_add(units);
         let limit = current.work_limit?;
@@ -498,15 +542,18 @@ fn consume_tactic_work(units: usize) -> bool {
             return None;
         }
         current.work_exhausted = true;
-        Some((
+        Some(Some((
             current.event.clone(),
             current.work_used,
             limit,
             current.named_work.clone(),
-        ))
+        )))
     });
-    let Some((tactic, used, limit, named_work)) = exhausted else {
+    let Some(exhausted) = exhausted else {
         return true;
+    };
+    let Some((tactic, used, limit, named_work)) = exhausted else {
+        return false;
     };
     let first = PENDING_LIMIT.with(|pending| {
         let mut pending = pending.borrow_mut();
@@ -585,10 +632,11 @@ fn work_attribution_summary(
 /// consumed, including work outside tactic scopes. Measurements nest: an
 /// inner counter also contributes to every enclosing counter.
 ///
-/// This is intended for deterministic scaling regressions. It deliberately
-/// does not pretend that uninstrumented allocation or copying is free; hot
-/// representations must call the ordinary cooperative checkpoint in their
-/// traversals so both production budgets and scaling tests see that work.
+/// This is intended for deterministic scaling regressions. It counts exactly
+/// the units the tactic budgets are charged, so a scaling measurement and a
+/// budget verdict cannot disagree about a step's cost. It deliberately does
+/// not pretend that uninstrumented allocation or copying is free; hot
+/// representations must record their traversal work so both see it.
 struct WorkCounterGuard {
     active: bool,
 }
@@ -650,7 +698,7 @@ pub(crate) fn numeric_operation_work_exceeded(units: usize) -> bool {
 /// must consume its allowance before multiplication, not just count a unit
 /// after the result has already been allocated.
 pub(crate) fn deadline_exceeded_with_work(units: usize) -> bool {
-    let work = !consume_tactic_work(units);
+    let work = !charge_deterministic_work(units);
     let run = DEADLINES.with(|deadlines| {
         deadlines
             .borrow()
@@ -821,6 +869,39 @@ pub fn exceeded_verification_limit_context() -> Option<String> {
     }
 }
 
+/// Runs `operation` while recording the charged work of every tactic that
+/// ends inside it. Tactic accounting runs exactly as under a budget, so this
+/// is how budgets are calibrated: install no work limits
+/// (`CLICK_DISABLE_TACTIC_BUDGETS`) so no cost is clipped, and read the work
+/// every tactic would have charged. Operation spans are not measured.
+pub fn collect_tactic_work<R>(operation: impl FnOnce() -> R) -> (R, Vec<TacticWorkSample>) {
+    TACTIC_WORK_SINKS.with(|sinks| sinks.borrow_mut().push(Vec::new()));
+    let result = operation();
+    let samples = TACTIC_WORK_SINKS.with(|sinks| {
+        sinks
+            .borrow_mut()
+            .pop()
+            .expect("tactic work sink should remain installed")
+    });
+    (result, samples)
+}
+
+fn record_tactic_work_sample(tactic: &TacticEvent, work: usize, failed: bool) {
+    TACTIC_WORK_SINKS.with(|sinks| {
+        if let Some(sink) = sinks.borrow_mut().last_mut() {
+            sink.push(TacticWorkSample {
+                tactic: tactic.clone(),
+                work,
+                failed,
+            });
+        }
+    });
+}
+
+fn tactic_work_sink_installed() -> bool {
+    TACTIC_WORK_SINKS.with(|sinks| !sinks.borrow().is_empty())
+}
+
 /// Runs `operation` while collecting its structured verification events.
 pub fn collect<R>(operation: impl FnOnce() -> R) -> (R, Vec<VerificationEvent>) {
     COLLECTORS.with(|collectors| collectors.borrow_mut().push(Vec::new()));
@@ -837,6 +918,7 @@ pub fn collect<R>(operation: impl FnOnce() -> R) -> (R, Vec<VerificationEvent>) 
 pub fn enabled() -> bool {
     std::env::var_os("CLICK_TIMINGS").is_some()
         || COLLECTORS.with(|collectors| !collectors.borrow().is_empty())
+        || tactic_work_sink_installed()
         || TACTIC_LIMITS.with(|limits| !limits.borrow().is_empty())
         || TACTIC_WORK_LIMITS.with(|limits| !limits.borrow().is_empty())
 }
@@ -959,6 +1041,7 @@ impl Drop for OperationTiming {
 pub fn starts_enabled() -> bool {
     std::env::var_os("CLICK_TIMING_STARTS").is_some()
         || COLLECTORS.with(|collectors| !collectors.borrow().is_empty())
+        || tactic_work_sink_installed()
         || TACTIC_LIMITS.with(|limits| !limits.borrow().is_empty())
         || TACTIC_WORK_LIMITS.with(|limits| !limits.borrow().is_empty())
 }
@@ -1023,6 +1106,7 @@ pub fn emit(mut event: VerificationEvent) {
                     let finished = active.remove(index);
                     *elapsed = now.duration_since(finished.started_at);
                     *work = finished.work_used;
+                    record_tactic_work_sample(&finished.event, finished.work_used, false);
                     let exclusive =
                         finished.exclusive + now.duration_since(finished.running_since);
                     if finished.limit.is_some_and(|limit| exclusive >= limit) {
@@ -1060,7 +1144,8 @@ pub fn emit(mut event: VerificationEvent) {
                     .iter()
                     .rposition(|candidate| &candidate.event == tactic)
                 {
-                    active.remove(index);
+                    let failed = active.remove(index);
+                    record_tactic_work_sample(&failed.event, failed.work_used, true);
                     if let Some(parent) = active.last_mut() {
                         parent.running_since = now;
                     }
@@ -1300,6 +1385,126 @@ mod tests {
                 } if tactic.class == class
             )));
         }
+    }
+
+    #[test]
+    fn recorded_work_consumes_the_active_tactic_budget() {
+        let limits = TacticWorkLimits {
+            simple: 10,
+            smart: 10,
+            control: 10,
+        };
+        for class in ["simple", "smart", "control"] {
+            let tactic = tactic(class, 0);
+            let ((((), measured), samples), events) = with_tactic_work_limits(limits, || {
+                collect(|| {
+                    collect_tactic_work(|| {
+                        measure_deterministic_work(|| {
+                            emit(VerificationEvent::TacticStarted(tactic.clone()));
+                            record_deterministic_work(9);
+                            assert!(
+                                exceeded_verification_limit_context().is_none(),
+                                "nine recorded units fit a ten-unit budget"
+                            );
+                            assert!(!deadline_exceeded(), "the tenth unit still fits");
+                            assert!(
+                                deadline_exceeded(),
+                                "recorded units and checkpoint units share one budget"
+                            );
+                            emit(VerificationEvent::TacticFailed(tactic.clone()));
+                        })
+                    })
+                })
+            });
+            assert_eq!(measured, 11, "the scaling counter sees the same units");
+            assert_eq!(
+                samples,
+                vec![TacticWorkSample {
+                    tactic: tactic.clone(),
+                    work: 11,
+                    failed: true,
+                }]
+            );
+            assert!(events.iter().any(|event| matches!(
+                event,
+                VerificationEvent::TacticWorkBudgetExceeded {
+                    used: 11,
+                    limit: 10,
+                    ..
+                }
+            )));
+        }
+    }
+
+    #[test]
+    fn exhaustion_inside_a_record_is_reported_once_at_the_next_checkpoint() {
+        let limits = TacticWorkLimits {
+            simple: 100,
+            smart: 100,
+            control: 100,
+        };
+        let tactic = tactic("simple", 3);
+        let (_, events) = with_tactic_work_limits(limits, || {
+            collect(|| {
+                emit(VerificationEvent::TacticStarted(tactic.clone()));
+                record_deterministic_work(60);
+                record_deterministic_work(60);
+                let context = exceeded_verification_limit_context()
+                    .expect("a record past the budget leaves a pending limit");
+                assert!(
+                    context.contains(
+                        "exhausted its deterministic simple work budget after 120 units (100 limit"
+                    ),
+                    "{context}"
+                );
+                assert!(
+                    context.contains("a slow simple tactic is a Click engine bug"),
+                    "{context}"
+                );
+                // Later records and checkpoints keep failing without
+                // re-reporting or growing the reported cost.
+                record_deterministic_work(1_000);
+                assert!(deadline_exceeded());
+                assert!(deadline_exceeded_with_work(5));
+                assert_eq!(deadline_context(), context);
+                emit(VerificationEvent::TacticFailed(tactic.clone()));
+            })
+        });
+        let reports = events
+            .iter()
+            .filter(|event| matches!(event, VerificationEvent::TacticWorkBudgetExceeded { .. }))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reports,
+            vec![&VerificationEvent::TacticWorkBudgetExceeded {
+                tactic,
+                used: 120,
+                limit: 100,
+            }]
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, VerificationEvent::DeadlineExceeded(_))),
+            "work exhaustion must not masquerade as a real-time deadline"
+        );
+    }
+
+    #[test]
+    fn recorded_work_outside_a_tactic_charges_only_the_scaling_counter() {
+        let limits = TacticWorkLimits {
+            simple: 1,
+            smart: 1,
+            control: 1,
+        };
+        let ((), work) = with_tactic_work_limits(limits, || {
+            measure_deterministic_work(|| {
+                record_deterministic_work(50);
+                assert!(exceeded_verification_limit_context().is_none());
+                assert!(!deadline_exceeded());
+            })
+        });
+        assert_eq!(work, 51);
     }
 
     #[test]

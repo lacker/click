@@ -41,6 +41,14 @@ Set `CLICK_EXAMPLE=NAME` to run the named example project.
 Set `CLICK_RUN_QUARANTINED=1` to include quarantined mdtests or examples. An
 explicit filter also selects its matching quarantined fixture.
 
+### `CLICK_TACTIC_WORK_REPORT`
+
+Set `CLICK_TACTIC_WORK_REPORT=DIR` to have the mdtest and example harnesses
+write the deterministic work every tactic charged, one tab-separated file per
+fixture, into `DIR`. `scripts/measure-tactic-work.sh` sets it together with
+`CLICK_DISABLE_TACTIC_BUDGETS=1` to calibrate the tactic work budgets; see
+[Testing Click](../../internals/testing.md).
+
 ## Contributor A/B controls
 
 ### `CLICK_DISABLE_TACTIC_BUDGETS`

@@ -10,8 +10,13 @@ use click::cli::{
 use click::instrumentation::{self, ArtifactReuseRejection};
 use click::languages::refresh_compiler_import;
 use click::surface::{
+    c0_prepared_project_tactic_source_position, c0_project_tactic_source_position,
+    c0_tactic_source_position, cpp_prepared_project_tactic_source_position,
     verify_c0_prepared_project, verify_c0_project, verify_c0_sources, verify_cpp_prepared_project,
 };
+
+#[path = "support/tactic_work.rs"]
+mod tactic_work;
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const SOURCE_MANIFEST: &str = "SOURCE.sha256";
@@ -338,7 +343,54 @@ fn run_example_project(project: &Path) -> Result<(), String> {
                     .map_err(|error| error.message().to_string())
                 };
                 let fixture = fixture_name(&click_path);
-                verify().map_err(|message| format!("sidecar `{fixture}` failed: {message}"))?;
+                let (result, samples) = tactic_work::measure(verify);
+                if !samples.is_empty() {
+                    let single_module =
+                        click_project.modules().len() == 1 && click_project.c_profile().is_none();
+                    tactic_work::write(
+                        "examples",
+                        &fixture,
+                        Path::new(&fixture),
+                        &samples,
+                        |claim, source_index| {
+                            match &inputs {
+                                CInput::Bundle(c_sources) if single_module => {
+                                    c0_tactic_source_position(
+                                        &click_source,
+                                        &source_refs(c_sources),
+                                        claim,
+                                        source_index,
+                                    )
+                                }
+                                CInput::Bundle(c_sources) => c0_project_tactic_source_position(
+                                    &click_project,
+                                    &source_refs(c_sources),
+                                    claim,
+                                    source_index,
+                                ),
+                                CInput::Prepared(imports) => {
+                                    c0_prepared_project_tactic_source_position(
+                                        &click_project,
+                                        imports,
+                                        claim,
+                                        source_index,
+                                    )
+                                }
+                                CInput::PreparedCpp(import) => {
+                                    cpp_prepared_project_tactic_source_position(
+                                        &click_project,
+                                        import,
+                                        claim,
+                                        source_index,
+                                    )
+                                }
+                            }
+                            .ok()
+                            .map(|position| (position.line, position.column))
+                        },
+                    );
+                }
+                result.map_err(|message| format!("sidecar `{fixture}` failed: {message}"))?;
                 eprintln!("verified {}", click_path.display());
             }
         }

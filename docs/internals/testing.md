@@ -274,31 +274,56 @@ mdtest and example harnesses took 58.2 and 17.6 seconds respectively, so the
 aggregate gate.
 
 Production tactics have two independent bounds, and the deterministic work
-budget is the primary one: it counts cooperative prover checkpoints, so the
-same source spends the same units on any machine under any load. The
-real-time limits are a backstop for stretches of work the checkpoints do not
-count: five seconds for simple tactics, two seconds for smart tactics, and
-six seconds for control tactics. Simple correctness must not hinge on
-wall-clock speed — near-threshold time enforcement made one audit pass or
-fail with machine load — while smart search keeps a short cutoff because its
-latency is itself the product. Exhaustion says which kind of bound fired.
-Completed tactic events report both real CPU time and deterministic work, so
-`click profile` can continue measuring actual user latency without making
-that measurement a correctness oracle.
+budget is the primary one. There is one work counter: every unit the
+verifier records (`record_deterministic_work`, and the cooperative
+checkpoints, which record through the same path) charges the innermost
+active tactic's budget and every enclosing scaling measurement alike, so a
+step's cost in a scaling regression is exactly what its budget is charged,
+and the same source spends the same units on any machine under any load. A
+record does not interrupt its caller; exhaustion leaves a pending limit that
+the next checkpoint reports, and the verifier checks after every function,
+so a tactic cannot finish green past its budget. Nested tactics charge their
+own budgets, not their control parent's. The real-time limits are a backstop
+for stretches of work that record nothing: five seconds for simple tactics,
+two seconds for smart tactics, and six seconds for control tactics. Simple
+correctness must not hinge on wall-clock speed — near-threshold time
+enforcement made one audit pass or fail with machine load — while smart
+search keeps a short cutoff because its latency is itself the product.
+Exhaustion says which kind of bound fired, and a work exhaustion names the
+open and completed operation spans its units went to when operation
+measurement is on (`click profile`, `CLICK_TIMINGS=1`). Completed tactic
+events report both real CPU time and deterministic work, so `click profile`
+can continue measuring actual user latency without making that measurement
+a correctness oracle.
 
-The default correctness budgets are 500,000 checkpoints for simple tactics
-and 2,000,000 for smart and control tactics. The simple budget is calibrated
-from the complete green corpus on the whole-claim-gate base (2026-08-12,
-measured with budgets disabled so no cost is clipped): the example projects'
-1,278 simple tactics measure p95 = 1,027 units, p99 = 6,292, max = 16,583;
-the 383 mdtests' 6,137 simple tactics measure p99 = 766 with a single
-148,094-unit outlier (copy3's `close_invariants`; the next largest is
-20,796); and the issue-tracked hot steps sit at 35,368 and 46,242. The
-budget gives the corpus maximum 3.4x margin and everything else at least
-10x, and a simple tactic that grows past roughly three times today's worst
-known cost fails deterministically on any machine. Recalibration must
-measure both the examples and the mdtests.
-Changing a work budget requires corpus measurements and a documented reason;
+Budgets are measured with one command:
+
+```sh
+scripts/measure-tactic-work.sh [REPORT_DIR]
+```
+
+It runs the mdtest and example harnesses with
+`CLICK_DISABLE_TACTIC_BUDGETS=1`, so no cost is clipped (the harnesses' own
+pinned budgets step aside too), and with `CLICK_TACTIC_WORK_REPORT` set, so
+each fixture records in process the work every tactic charged and writes it
+to REPORT_DIR (default: a fresh directory under `target/tactic-work/`). It
+prints, per class and per corpus, the count, p50, p95, p99, second-largest,
+and maximum, and the ten heaviest tactics of each class with their source
+locations. A fixture that fails with budgets disabled is named, and its
+tactics are still measured.
+
+The default budgets are 750,000 units for simple tactics, 2,000,000 for
+smart tactics, and 2,500,000 for control tactics, calibrated on 2026-09-25
+over 35 example sidecars and 2,084 mdtests. Simple: 7,866 tactics, p95 =
+1,640, p99 = 5,050, max = 230,969. Smart: 11,173 tactics, p95 = 3,361, p99
+= 21,313, max = 669,938. Control: 1,747 tactics, p95 = 5,340, p99 = 32,927,
+max = 815,089. Each budget gives its corpus maximum at least about 3x
+margin; the tactics that are not 10x under their budget are named in
+`TacticWorkLimits::default` (the arena proofs' heavy `step`s and `have`s,
+owned-vector's `simp`, and two mdtest steps), and they are slow steps to
+reduce, not headroom. Recalibration must run the script over both the
+examples and the mdtests and record its statistics there. Changing a work
+budget requires corpus measurements and a documented reason;
 it is not a way to make one difficult proof pass.
 
 ### Scaling regressions

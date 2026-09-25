@@ -6,7 +6,14 @@ use click::cli::{
     run_parallel, source_refs,
 };
 use click::instrumentation::{self, ArtifactReuseRejection};
-use click::surface::{verify_c0_project, verify_c0_sources, verify_cpp_prepared_project};
+use click::surface::{
+    c0_project_tactic_source_position, c0_tactic_source_position,
+    cpp_prepared_project_tactic_source_position, verify_c0_project, verify_c0_sources,
+    verify_cpp_prepared_project,
+};
+
+#[path = "support/tactic_work.rs"]
+mod tactic_work;
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
@@ -149,9 +156,13 @@ fn run_mdtest_in_thread(path: &Path) -> Result<(), String> {
 
 fn run_mdtest_attempt(path: &Path) -> Result<(), String> {
     instrumentation::without_tactic_time_limits(|| {
-        if path
-            .file_name()
-            .is_some_and(|name| name == "bubble_sort3_loop_permutation.md")
+        // A calibration run measures every fixture unclipped, so the pinned
+        // budgets below step aside with the defaults.
+        let budgets_disabled = std::env::var_os("CLICK_DISABLE_TACTIC_BUDGETS").is_some();
+        if !budgets_disabled
+            && path
+                .file_name()
+                .is_some_and(|name| name == "bubble_sort3_loop_permutation.md")
         {
             // This is the former load-sensitive clock canary. Its measured
             // maxima are simple 146, smart 21,090, and control 42,169 work
@@ -164,9 +175,10 @@ fn run_mdtest_attempt(path: &Path) -> Result<(), String> {
             };
             return instrumentation::with_tactic_work_limits(limits, || run_mdtest(path));
         }
-        if path
-            .file_name()
-            .is_some_and(|name| name == "simp_frame_failure_through_region_arena_is_prompt.md")
+        if !budgets_disabled
+            && path
+                .file_name()
+                .is_some_and(|name| name == "simp_frame_failure_through_region_arena_is_prompt.md")
         {
             // A prompt failure, not a budget crossing: pin the smart and
             // control budgets well below the default so a return of the
@@ -230,7 +242,48 @@ fn run_mdtest(path: &Path) -> Result<(), String> {
         .map_err(|error| error.message().to_string())
     };
 
-    check_expectation(path, expectation, verify())
+    let (result, samples) = tactic_work::measure(verify);
+    if !samples.is_empty() {
+        let line_offset = mdtest.click_start_line.saturating_sub(1);
+        let relative = path
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap_or(path);
+        tactic_work::write(
+            "mdtests",
+            &relative.display().to_string(),
+            relative,
+            &samples,
+            |claim, source_index| {
+                let position = match (&inputs, &project) {
+                    (CInput::Bundle(sources), Some(project)) => c0_project_tactic_source_position(
+                        project,
+                        &source_refs(sources),
+                        claim,
+                        source_index,
+                    ),
+                    (CInput::Bundle(sources), None) => c0_tactic_source_position(
+                        click_source,
+                        &source_refs(sources),
+                        claim,
+                        source_index,
+                    ),
+                    (CInput::PreparedCpp(import), Some(project)) => {
+                        cpp_prepared_project_tactic_source_position(
+                            project,
+                            import,
+                            claim,
+                            source_index,
+                        )
+                    }
+                    _ => return None,
+                };
+                position
+                    .ok()
+                    .map(|position| (position.line + line_offset, position.column))
+            },
+        );
+    }
+    check_expectation(path, expectation, result)
 }
 
 fn check_expectation(
