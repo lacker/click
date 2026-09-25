@@ -2492,17 +2492,15 @@ pub(crate) fn certification_proves_proposition(
     if assumptions.proves_exact(proposition) {
         return true;
     }
-    if matches!(proposition, Proposition::ForAll { .. })
-        && assumptions
-            .prop_facts
-            .iter()
-            .any(|fact| propositions_alpha_equivalent(fact, proposition))
+    if matches!(
+        proposition,
+        Proposition::ForAll { .. } | Proposition::Exists { .. }
+    ) && assumptions.states_required_goal(proposition)
     {
-        // Bound variables are freshened independently while the contract
-        // assumptions and proof-derived entry facts are lowered. The
-        // proposition is already assumed modulo that irrelevant binder
-        // form, so do not route hundreds of such facts through general
-        // quantified proof search.
+        // Contract lowering freshens binders independently of proof facts.
+        // Use the checked, typed alpha-identity index for every quantified
+        // sort, including algebraic path witnesses. This recognizes an
+        // established existential; it never invents or searches for a witness.
         return true;
     }
     let directly_proven = match proposition {

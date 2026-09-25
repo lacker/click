@@ -975,7 +975,11 @@ impl std::fmt::Display for CallBinderTransport {
             write!(f, "{}", diagnostics::describe_contract_expression(argument))?;
         }
         write!(f, ")")?;
-        if !self.binders.is_empty() {
+        if self.binders.is_empty() && (self.result.is_some() || !self.produced.is_empty()) {
+            // A let-bound call uses the explicit transport grammar even when
+            // it has no input resource binders. Keep its required empty map.
+            write!(f, ", {{}}")?;
+        } else if !self.binders.is_empty() {
             write!(f, ", {{ ")?;
             for (index, binding) in self.binders.iter().enumerate() {
                 if index != 0 {

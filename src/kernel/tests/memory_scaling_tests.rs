@@ -1104,3 +1104,61 @@ fn a_call_kept_instance_range_is_placed_in_work_linear_in_its_body() {
         );
     }
 }
+
+#[test]
+fn symbolic_range_membership_ignores_unrelated_index_bounds() {
+    let mut samples = Vec::new();
+    for size in [64, 128, 256, 512] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let base = Pointer::symbolic(Variable(94_100));
+        let index = Bitvector32Term::Variable(Variable(94_101));
+        let end = Bitvector32Term::Variable(Variable(94_102));
+        let range = memory_range(base.clone(), 0, end.clone());
+        let pointer = base.offset_by_int32_elements(index.clone());
+        let mut facts = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::signed_less_equal(0.into(), index.clone()),
+                true,
+            )
+            .assume_condition(ConditionTerm::signed_less_than(index, end.clone()), true)
+            .assume_condition(
+                ConditionTerm::signed_less_equal(0.into(), end.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(end.clone(), 1_073_741_823.into()),
+                true,
+            );
+        for i in 0..size {
+            let unrelated = Bitvector32Term::Variable(Variable(95_000 + i));
+            facts = facts
+                .assume_condition(
+                    ConditionTerm::signed_less_equal(0.into(), unrelated.clone()),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_less_than(unrelated, end.clone()),
+                    true,
+                );
+        }
+        let (verdicts, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let contains = |p| {
+                crate::kernel::assumptions::pointer_in_memory_range_shallow_with_facts(
+                    p, &range, &facts,
+                )
+            };
+            (
+                contains(&pointer),
+                contains(
+                    &base.offset_by_int32_elements(Bitvector32Term::Variable(Variable(99_999))),
+                ),
+            )
+        });
+        assert_eq!(verdicts, (true, false));
+        samples.push(work);
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[0] == pair[1]),
+        "symbolic membership scanned unrelated bounds: {samples:?}"
+    );
+}

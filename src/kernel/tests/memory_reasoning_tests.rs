@@ -6341,3 +6341,57 @@ fn a_cell_straddling_two_owned_members_is_not_separated_from_either() {
         "a four-byte access at the lower word stays in its own member"
     );
 }
+
+#[test]
+fn symbolic_zero_based_membership_requires_index_and_byte_extent_bounds() {
+    let base = Pointer::symbolic(Variable(94_000));
+    let index = Bitvector32Term::Variable(Variable(94_001));
+    let end = Bitvector32Term::Variable(Variable(94_002));
+    let pointer = base.offset_by_int32_elements(index.clone());
+    let range = memory_range(base.clone(), 0, end.clone());
+    let lower = ConditionTerm::signed_less_equal(0.into(), index.clone());
+    let upper = ConditionTerm::signed_less_than(index.clone(), end.clone());
+    let extent_lower = ConditionTerm::signed_less_equal(0.into(), end.clone());
+    let extent_upper = ConditionTerm::signed_less_equal(end.clone(), 1_073_741_823.into());
+    let bounds = [lower, upper, extent_lower, extent_upper];
+    let context = |omit: Option<usize>| {
+        bounds
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| Some(*i) != omit)
+            .fold(PureFactContext::new(), |facts, (_, bound)| {
+                facts.assume_condition(bound.clone(), true)
+            })
+    };
+    let contains = |pointer: &Pointer, facts: &PureFactContext| {
+        crate::kernel::assumptions::pointer_in_memory_range_shallow_with_facts(
+            pointer, &range, facts,
+        )
+    };
+    assert!(contains(&pointer, &context(None)));
+    for omit in [0, 1, 3] {
+        assert!(
+            !contains(&pointer, &context(Some(omit))),
+            "missing bound {omit}"
+        );
+    }
+    assert!(
+        !contains(&base.offset_by_int32_elements(end.clone()), &context(None)),
+        "the upper endpoint is excluded"
+    );
+    assert!(
+        !contains(
+            &base.offset_by_int32_elements(u32::MAX.into()),
+            &context(None)
+        ),
+        "negative indices are excluded"
+    );
+    assert!(
+        !contains(&pointer.offset_by_int32_elements(1.into()), &context(None)),
+        "a bound on k is not a bound on k+1"
+    );
+    assert!(
+        !crate::kernel::assumptions::pointer_in_memory_range_shallow(&pointer, &range),
+        "symbolic bounds require facts"
+    );
+}

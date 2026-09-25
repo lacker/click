@@ -5,7 +5,7 @@ found. Kernel soundness findings discovered during the same campaign are
 tracked in `bugs/`. Everything needed for this example is here and in
 `design/dfs-gaps/`; nothing depends on anyone's scratch files.
 
-## Handoff checkpoint — 2026-09-22, after branching termination proof
+## Handoff checkpoint — 2026-09-25, after branching reachability proof
 
 The complete unmodified search now verifies termination and memory safety in
 `mdtests/search_terminates_by_unmarked_count.md`. Its `Integer`-valued fold
@@ -49,9 +49,12 @@ contract establishes that `unmarked` cannot increase; the local marking store
 decreases it by one, so the second call still descends after the first call may
 mark more nodes. The successor bounds live in a viewed resource and are
 re-observed after the mutating call. Success-path reachability for this graph
-search remains the next proof claim; see
-`design/dfs-gaps/branching_graph_dfs.md`. In particular, discuss the
-fold-read-range design in item 2 with the user before implementing it.
+search now verifies too, with a finite `Path` witness in the entry graph and
+an in-bounds target that was unmarked at entry. The recursive contract also
+preserves each previously marked node. Both recursive success branches and
+their snapshot framing are checked; see
+`design/dfs-gaps/branching_graph_dfs.md`. Discuss the fold-read-range design in
+item 2 with the user before implementing it.
 
 This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
 Those files include historical diagnostics, and other small gaps/tooling notes
@@ -150,11 +153,15 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    does not say which constant; a store refusal spells `owns b[0..1]` as
    `owns a[(v100001 - v100000)..]`.
 
-Next stage: prove success-path reachability for the unchanged two-successor
-graph search in `design/dfs-gaps/branching_graph_dfs.md`, with a finite
-left/right path in the entry graph. Termination and memory safety, including
-the second recursive call after the first has changed `visited`, are checked
-by `mdtests/branching_graph_dfs.md`. A binary-tree recursive search is also
+The unchanged two-successor graph search now checks termination, memory
+safety, and success-path reachability in `mdtests/branching_graph_dfs.md`,
+including the right recursive call after the left has changed `visited`.
+The next correctness question is failure-path completeness: with arbitrary
+initial marks, an already marked intermediate node can block a path to an
+unmarked target. Choose an all-unmarked initial condition or specify paths
+through initially unmarked nodes before attempting that theorem. The
+recursive summary must account for nodes marked by the left call before the
+right call begins. A binary-tree recursive search is also
 verified in `examples/modeled-binary-tree/`, but that resource-ranked acyclic
 case does not cover cycles or sharing. The older folded-resource loop-guard
 claim is not a general current limitation;
@@ -183,16 +190,27 @@ read permission or initialize heap memory, and validity does not survive a
 free. Resource footprint evaluation and actual C loads remain checked.
 Partial C arithmetic still has its existing definedness obligations.
 
-The full DFS reachability proof remains follow-up work. The saved design
-records the historical left-success failure, but that citation mismatch is
-now covered by positive regressions. Resume the unchanged C from the
-left-success branch; proving the longer path and transporting its graph
-snapshot are separate proof steps. The fold-range design in item 2 above is
-still unapproved and is outside this refactor.
+The follow-up reachability proof now verifies in `mdtests/branching_graph_dfs.md`.
+`walk_frame` in `mdtests/branching_graph_path_witness.md` proves that bounded
+successor arrays equal on `0..n` give equal endpoints for every finite path.
+The DFS proof opens each recursive call's historical witness, prepends its
+edge, and frames the longer path back to the entry graph. Its per-node
+marking summary recovers the target's entry-state zero from the recursive
+call's entry-state zero.
+
+Two focused regressions protect the verifier fixes needed by this composition:
+`mdtests/graph_view_survives_marked_summary_call.md` checks symbolic-index
+framing across a separated call, and
+`mdtests/conditional_algebraic_witness_contract.md` checks final certification
+of a proved conditional algebraic existential. Kernel regressions reject
+missing index/extent bounds, changed graph snapshots, captured free witnesses,
+and different witness sorts, and pin indexed lookup scaling. The fold-range
+design in item 2 is still unapproved and was not implemented.
 
 ## Acceptance
 
 Termination, memory safety, and success-path reachability of the unmodified C
-are checked by `mdtests/search_terminates_by_unmarked_count.md`. For the
+are checked by `mdtests/search_terminates_by_unmarked_count.md` and
+`mdtests/branching_graph_dfs.md`. For the
 remaining work, each fixed gap has a minimal regression mdtest, and
 `design/dfs-gaps/` is deleted with this issue.

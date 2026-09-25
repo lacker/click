@@ -15433,3 +15433,30 @@ fn the_iterated_ownership_release_loop_expands_and_reverifies() {
         &["give(data[i..(i + 1)]);"],
     );
 }
+
+#[test]
+fn conditional_call_witness_expansion_keeps_empty_binder_map() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/conditional_call_existential_historical_read.md");
+    let source = std::fs::read_to_string(&path).unwrap();
+    let mdtest = crate::cli::parse_mdtest(&path, &source).unwrap();
+    let sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    verify_c0_sources(mdtest.click_source.as_deref().unwrap(), &sources)
+        .expect("the original witness proof verifies");
+    let expanded = expand_c0_claim_source(
+        mdtest.click_source.as_deref().unwrap(),
+        &sources,
+        "parent",
+        CProofClaim::Grouped,
+    )
+    .expect("the let-bound call must remain parseable");
+    assert!(
+        expanded.contains("let r = step(child(a, b, n, a[i]), {});"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &sources).expect("the expanded witness proof certifies");
+}

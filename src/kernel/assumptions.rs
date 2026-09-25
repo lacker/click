@@ -5922,6 +5922,24 @@ fn pointer_in_range_shallow(
     else {
         return false;
     };
+    // A zero-based symbolic range needs no affine constant count: its
+    // signed endpoint is its count. Exact bounds put the unshifted index
+    // inside it, and the extent guard prevents byte scaling from wrapping.
+    // Keep nonzero starts and displacements on the exact-affine route below;
+    // turning their modular sums into signed offsets would need more evidence.
+    if start == &Bitvector32Term::Constant(0)
+        && delta.constant == 0
+        && let Some(assumptions) = assumptions
+        && assumptions
+            .established_range_element_count_bound(start, end, element_width)
+            .is_some()
+        && let Some(lower) = assumptions.exact_direct_order_step(start, &delta.index, false)
+        && let Some(upper) = assumptions.exact_direct_order_step(&delta.index, end, true)
+    {
+        record_implicit_reasoning_provenance(assumptions, &lower.premise);
+        record_implicit_reasoning_provenance(assumptions, &upper.premise);
+        return true;
+    }
     let Some(count) = affine_range_element_count(start, end) else {
         return false;
     };

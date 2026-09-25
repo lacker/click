@@ -5418,3 +5418,133 @@ fn an_outer_locals_address_survives_an_inner_scope() {
     };
     assert_eq!(value, &CValue::Int32(Bitvector32Term::Constant(5)));
 }
+
+fn path_exists_at_snapshot(
+    ty: &AlgebraicType,
+    binder: u64,
+    argument: u64,
+    memory: CMemory,
+    target: u32,
+) -> Proposition {
+    Proposition::Exists {
+        name: "path".into(),
+        var: Variable(binder),
+        sort: Sort::Algebraic(ty.clone()),
+        body: Box::new(Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::ClickFunctionApplication {
+                    name: "walk".into(),
+                    arguments: vec![
+                        PureFunctionArgument::ArrayRef {
+                            memory,
+                            pointer: CValue::pointer(Pointer {
+                                block: "graph".into(),
+                                offset: PointerOffsetTerm::Constant(0),
+                            }),
+                            element_type: CType::Int32,
+                        },
+                        PureFunctionArgument::Algebraic(AlgebraicTerm {
+                            algebraic_type: ty.clone(),
+                            node: AlgebraicTermNode::Variable(Variable(argument)),
+                        }),
+                    ],
+                },
+                target.into(),
+            ),
+            true,
+        )),
+    }
+}
+
+#[test]
+fn certification_recognizes_only_the_same_algebraic_existential() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let ty = AlgebraicType::parameter("Path".into());
+    let before = CMemory::new().with_block("graph", 4);
+    let after = before.clone().store(
+        Pointer {
+            block: "graph".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        int32(1),
+    );
+    let fact = path_exists_at_snapshot(&ty, 100, 100, before.clone(), 0);
+    let facts = PureFactContext::new().assume_proposition(fact);
+    let proves = |goal| {
+        crate::kernel::api::contract_certification::certification_proves_proposition(&facts, &goal)
+    };
+    assert!(proves(path_exists_at_snapshot(
+        &ty,
+        200,
+        200,
+        before.clone(),
+        0
+    )));
+    assert!(
+        !proves(path_exists_at_snapshot(&ty, 200, 200, after, 0)),
+        "a changed graph is not alpha renaming"
+    );
+    assert!(
+        !proves(path_exists_at_snapshot(&ty, 200, 100, before.clone(), 0)),
+        "a free path is not the existential binder"
+    );
+    assert!(
+        !proves(path_exists_at_snapshot(&ty, 200, 200, before.clone(), 1)),
+        "the endpoint must match"
+    );
+    assert!(
+        !proves(path_exists_at_snapshot(
+            &AlgebraicType::parameter("OtherPath".into()),
+            200,
+            200,
+            before,
+            0
+        )),
+        "the witness sort must match"
+    );
+}
+
+#[test]
+fn certification_of_algebraic_witness_ignores_unrelated_quantifiers() {
+    let mut samples = Vec::new();
+    for size in [32, 64, 128, 256] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let ty = AlgebraicType::parameter("Path".into());
+        let memory = CMemory::new().with_block("graph", 4);
+        let mut facts = PureFactContext::new().assume_proposition(path_exists_at_snapshot(
+            &ty,
+            100,
+            100,
+            memory.clone(),
+            0,
+        ));
+        for i in 1..=size {
+            facts = facts.assume_proposition(path_exists_at_snapshot(
+                &ty,
+                1_000 + u64::from(i),
+                1_000 + u64::from(i),
+                memory.clone(),
+                i,
+            ));
+        }
+        facts.build_stated_proposition_index();
+        let goal = path_exists_at_snapshot(&ty, 200, 200, memory.clone(), 0);
+        let missing = path_exists_at_snapshot(&ty, 200, 200, memory, 1_000);
+        let (verdicts, work) = crate::instrumentation::measure_deterministic_work(|| {
+            (
+                crate::kernel::api::contract_certification::certification_proves_proposition(
+                    &facts, &goal,
+                ),
+                crate::kernel::api::contract_certification::certification_proves_proposition(
+                    &facts, &missing,
+                ),
+            )
+        });
+        assert_eq!(verdicts, (true, false));
+        samples.push(work);
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[0] == pair[1]),
+        "certification scanned unrelated quantifiers: {samples:?}"
+    );
+}
