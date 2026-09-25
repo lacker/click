@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (8)
+## P1: before launch (9)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -68,6 +68,7 @@ Soundness and kernel shape:
 - [spec-fold binder identities collide with the quantifier bands](../bugs/spec-fold-binders-collide-with-quantifier-band.md)
 - [Byte-extent residue comparison certifies wrapped loads](../bugs/byte-extent-residue-compare-certifies-wrapped-loads.md)
 - [Footprint refusals drop fact-aliased writes](../bugs/footprint-check-drops-fact-aliased-writes.md)
+- [Loop and call footprints skip instances they cannot open](../bugs/loop-and-call-footprints-skip-unopenable-instances.md)
 
 Program import and execution:
 

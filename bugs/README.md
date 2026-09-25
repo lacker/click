@@ -6,4 +6,4 @@ for the roadmap. Each file states the violated invariant, a small intended
 regression, and acceptance criteria. An accepted bug is deleted here when its
 fix, regression coverage, and documentation land.
 
-No open bug reports remain.
+- [Loop and call footprints skip instances they cannot open](loop-and-call-footprints-skip-unopenable-instances.md)
