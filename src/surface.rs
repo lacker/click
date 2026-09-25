@@ -5961,10 +5961,14 @@ pub struct VerifiedCTheorem {
     pub target: crate::languages::c::target::CTarget,
     /// The CLI proof boundary under which this artifact was produced.
     pub selection: Option<CProofSelection>,
-    pub function_block: FunctionBlock,
+    /// Shared by every theorem one proof issued, like `proof_tactics`: the
+    /// block carries the whole grouped proof, and a proof issues a theorem
+    /// per path and claim.
+    pub function_block: std::sync::Arc<FunctionBlock>,
     pub claim: VerifiedClaim,
     pub proof_kind: ProofKind,
-    pub proof_tactics: Option<Vec<ProofTactic>>,
+    /// The source proof text, shared by every theorem one proof issued.
+    pub proof_tactics: Option<std::sync::Arc<[ProofTactic]>>,
     pub expanded_proof: Option<ProofCertificate>,
     pub expansion_blocker: Option<String>,
     pub specification: CFunctionSpecification,

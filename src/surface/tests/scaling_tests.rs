@@ -3085,3 +3085,69 @@ fn failing_simp_derivation_ignores_unrelated_disjunctions() {
         );
     }
 }
+
+fn branching_grouped_claim_project(claim_count: usize) -> (String, String) {
+    let c_source = "int32 branching_claims(int32 a) {\n    int32 x;\n    if (a == 0) {\n        return 0;\n    }\n    x = a;\n    return x;\n}\n"
+        .to_string();
+    let mut click_source = String::from(
+        "verifying \"branching_claims.c\";\n\nint32 branching_claims(int32 a) {\n    requires 0 <= a;\n    requires a <= 10;\n",
+    );
+    for _ in 0..claim_count {
+        click_source.push_str("    ensures result == a;\n");
+    }
+    click_source.push_str(
+        "} by {\n    step();\n    branch {\n        then {\n            execute();\n            simp();\n        }\n        else {}\n    }\n    step();\n    have x == a by {\n        simp();\n    }\n    execute();\n    simp();\n}\n",
+    );
+    (c_source, click_source)
+}
+
+/// A grouped proof issues one theorem per path and claim. Each used to carry
+/// its own copy of the function block, which holds the whole grouped proof,
+/// and of the proof's tactics, and finishing compared every new theorem with
+/// every earlier one field by field, so finishing cost the proof's size times
+/// the number of theorems (twice that number squared for the comparisons).
+/// None of that is deterministic work, so the curve alone cannot see it: the
+/// theorems must share one proof text at every size.
+#[test]
+fn grouped_proof_theorems_share_one_proof_text() {
+    let samples = [8, 16, 32, 64]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = branching_grouped_claim_project(size);
+            let (verified, sample) = scaling_sample(size, || {
+                verify_c0_sources(&click_source, &[("branching_claims.c", c_source.as_str())])
+            });
+            let verified = verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} branching grouped-claim fixture failed: {}",
+                    error.message()
+                )
+            });
+            assert!(
+                verified.len() >= size,
+                "size {size}: every claim should be issued: {} theorems",
+                verified.len()
+            );
+            let first = &verified[0];
+            let first_tactics = first
+                .proof_tactics
+                .as_ref()
+                .expect("a grouped script theorem retains its proof tactics");
+            for theorem in &verified {
+                assert!(
+                    std::sync::Arc::ptr_eq(&theorem.function_block, &first.function_block),
+                    "size {size}: a theorem carries its own copy of the function block"
+                );
+                assert!(
+                    theorem
+                        .proof_tactics
+                        .as_ref()
+                        .is_some_and(|tactics| std::sync::Arc::ptr_eq(tactics, first_tactics)),
+                    "size {size}: a theorem carries its own copy of the proof tactics"
+                );
+            }
+            sample
+        })
+        .collect::<Vec<_>>();
+    assert_near_linear_scaling("theorems of one branching grouped proof", &samples);
+}
