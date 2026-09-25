@@ -2193,12 +2193,12 @@ fn has_live_mutex(state: &CState) -> bool {
     state
         .mutex_ledger
         .as_ref()
-        .is_some_and(super::super::mutexes::MutexLedger::has_any_mutex)
+        .is_some_and(super::super::mutexes::MutexLedger::has_return_obligation)
 }
 
 fn live_mutex_return_refusal() -> CStatementOutcome {
     CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(
-        "a function cannot return with an initialized modeled mutex; destroy it first".to_string(),
+        "a function cannot return with a held mutex or an unpublished guarded resource; unlock or destroy it first".to_string(),
     ))
 }
 

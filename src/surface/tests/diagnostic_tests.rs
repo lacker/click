@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn missing_mutex_invariant_is_a_named_proof_prerequisite() {
+fn uninitialized_mutex_is_a_named_proof_prerequisite() {
     let c_source = r#"
         #include <pthread.h>
         struct cell { pthread_mutex_t mu; };
@@ -18,12 +18,12 @@ fn missing_mutex_invariant_is_a_named_proof_prerequisite() {
     assert!(
         error
             .message()
-            .contains("could not prove that mutex `cell` has a published invariant"),
+            .contains("could not prove that mutex `cell` was initialized on this path"),
         "{error:?}"
     );
     assert_eq!(
         error.concise_report_parts().0,
-        "proof error in `use_mutex`:\n  could not prove that mutex `cell` has a published invariant"
+        "proof error in `use_mutex`:\n  could not prove that mutex `cell` was initialized on this path"
     );
     assert!(!error.message().contains("runtime error"), "{error:?}");
 }

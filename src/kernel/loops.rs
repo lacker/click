@@ -895,14 +895,20 @@ fn execute_modeled_pthread_mutex_paths(
             );
             let transition: Result<CState, CRuntimeError> = if initializing {
                 let selected = environment.selected_call_binders.as_ref();
-                let identity = selected
-                    .filter(|transport| {
-                        transport.function.as_ref() == function_name
-                            && transport.arity == expected_arity
-                            && transport.bindings.len() == 1
-                    })
-                    .and_then(|transport| transport.bindings.get(&Variable(u64::MAX - 1)));
-                identity
+                if selected.is_none() {
+                    super::mutexes::MutexContext::new(state.clone())
+                        .initialize_empty(mutex.pointer().clone())
+                        .map(|context| context.into_state())
+                        .map_err(|message| CRuntimeError::FunctionContract(message.to_string()))
+                } else {
+                    let identity = selected
+                        .filter(|transport| {
+                            transport.function.as_ref() == function_name
+                                && transport.arity == expected_arity
+                                && transport.bindings.len() == 1
+                        })
+                        .and_then(|transport| transport.bindings.get(&Variable(u64::MAX - 1)));
+                    identity
                     .ok_or("mutex init requires `step(pthread_mutex_init(...), { invariant: instance })`")
                     .and_then(|identity| state.resources.owned_instance(*identity)
                         .ok_or("selected mutex invariant is not held folded"))
@@ -925,6 +931,7 @@ fn execute_modeled_pthread_mutex_paths(
                             .map(|context| context.into_state())
                     })
                     .map_err(|message| CRuntimeError::FunctionContract(message.to_string()))
+                }
             } else {
                 let context = super::mutexes::MutexContext::new(state.clone());
                 if function_name == binding.mutex_lock_name {
@@ -932,12 +939,12 @@ fn execute_modeled_pthread_mutex_paths(
                         .acquire_current(mutex.pointer(), &current)
                         .map(|context| context.into_state())
                         .map_err(|error| match error {
-                            super::mutexes::MutexAcquireError::MissingPublishedInvariant => {
-                                CRuntimeError::MissingMutexInvariant {
+                            super::mutexes::MutexTransitionError::NotInitialized => {
+                                CRuntimeError::UninitializedMutex {
                                     mutex: mutex.pointer().clone(),
                                 }
                             }
-                            super::mutexes::MutexAcquireError::Refusal(message) => {
+                            super::mutexes::MutexTransitionError::Refusal(message) => {
                                 CRuntimeError::FunctionContract(message.to_string())
                             }
                         })
@@ -950,7 +957,16 @@ fn execute_modeled_pthread_mutex_paths(
                     context
                         .destroy(mutex.pointer(), &current)
                         .map(|context| context.into_state())
-                        .map_err(|message| CRuntimeError::FunctionContract(message.to_string()))
+                        .map_err(|error| match error {
+                            super::mutexes::MutexTransitionError::NotInitialized => {
+                                CRuntimeError::UninitializedMutex {
+                                    mutex: mutex.pointer().clone(),
+                                }
+                            }
+                            super::mutexes::MutexTransitionError::Refusal(message) => {
+                                CRuntimeError::FunctionContract(message.to_string())
+                            }
+                        })
                 }
             };
             match transition {

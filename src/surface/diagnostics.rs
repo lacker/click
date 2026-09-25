@@ -777,8 +777,8 @@ pub(super) fn describe_runtime_error(
         crate::kernel::CRuntimeError::FunctionContract(message) => {
             format!("function contract could not be applied: {message}")
         }
-        crate::kernel::CRuntimeError::MissingMutexInvariant { mutex } => format!(
-            "could not prove that mutex `{}` has a published invariant",
+        crate::kernel::CRuntimeError::UninitializedMutex { mutex } => format!(
+            "could not prove that mutex `{}` was initialized on this path",
             describe_pointer(mutex, parameters, arguments)
         ),
         crate::kernel::CRuntimeError::UnsupportedConcurrentMutex => {

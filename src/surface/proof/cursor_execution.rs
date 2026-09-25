@@ -2784,7 +2784,7 @@ fn execute_step_from_frontier_position_selecting_path(
             let detail = describe_runtime_error(error, parameters, arguments);
             if matches!(
                 error,
-                crate::kernel::CRuntimeError::MissingMutexInvariant { .. }
+                crate::kernel::CRuntimeError::UninitializedMutex { .. }
                     | crate::kernel::CRuntimeError::UnsupportedConcurrentMutex
             ) {
                 return Err(ClickError::new(detail).with_kind(kind));
@@ -3399,7 +3399,7 @@ fn execute_step_from_frontier_position_selecting_path(
             let detail = describe_runtime_error(&error, parameters, arguments);
             if matches!(
                 error,
-                crate::kernel::CRuntimeError::MissingMutexInvariant { .. }
+                crate::kernel::CRuntimeError::UninitializedMutex { .. }
                     | crate::kernel::CRuntimeError::UnsupportedConcurrentMutex
             ) {
                 return Err(ClickError::new(detail).with_kind(kind));

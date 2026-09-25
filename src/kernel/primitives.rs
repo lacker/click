@@ -3385,9 +3385,9 @@ pub enum CRuntimeError {
     UnsupportedOpaqueFunctionContract(String),
     AbstractFunctionPointerCall(String),
     FunctionContract(String),
-    /// The current proof has not established a guarded resource for this
-    /// mutex, so lock and destroy have no invariant to acquire or return.
-    MissingMutexInvariant {
+    /// Lock or destroy encountered no successful modeled initialization for
+    /// this mutex on the current path.
+    UninitializedMutex {
         mutex: Pointer,
     },
     /// The modeled runtime has no sound shared-mutex transition for workers.
