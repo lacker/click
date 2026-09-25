@@ -56,10 +56,11 @@ parents sharing one child, one branch-on-count `child_release`, both parent
 removal orders, allocation-failure cleanup, a read through the surviving
 parent, and exact final deallocation. Do not reshape this C to suit the proof.
 [`shared_parent.click`](../design/shared-heap-probes/shared_parent.click) verifies
-all six modular helper bodies against those bytes. A scratch caller proof
-advanced through both detaches and parent frees; its remaining success-path
-claim was `out == payload`. The complete lifecycle is still an expected-failure regression in the
-normal gate, rather than a verified example.
+all six modular helper bodies against those bytes. The first-removal caller
+proof now establishes `out == payload`, both detaches, parent frees, and the
+pure return claim. Certification still requests a `child_ref` initialization
+obligation at final return. The complete lifecycle remains an expected-failure
+regression in the normal gate, rather than a verified example.
 
 The certification reducer adds only
 `ensures old(p->kid) == old(p->kid);` to `parent_detach`. It previously lost

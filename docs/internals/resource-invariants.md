@@ -238,14 +238,19 @@ The attachment contract now exports `p->kid == kid` as well as the abstract
 `ParentLink::Linked(kid)` state. A caller can retain this pointer identity at a
 named snapshot and establish the detach contract's count guard. The frontier
 regression checks that both the recorded identity and conditional payload
-preservation are available after detach. Connecting these facts to the
-surviving parent's payload read remains unfinished; neither pointer equality
-nor a membership count grants access to the body.
+preservation are available after detach. Neither pointer equality nor a
+membership count grants access to the body.
 
 The complete shared-parent callers remain unfinished.
 `shared_heap_population_payload_frontier.md` preserves the unchanged C and a
-complete first-removal caller proof that reaches `out == payload`; the
-remaining failure concerns payload/alias transport across detach and read.
+complete first-removal caller proof that now proves `out == payload` and the
+pure return claim. Pointer rewriting uses a registered load's observed
+execution snapshot rather than its projected identity snapshot, retaining the
+history needed to connect the equal addresses. The focused
+`rewrite_heap_alias_after_modular_call.md` regression passes; its negative
+counterpart rejects an overwritten payload. The remaining caller failure is
+resource certification: a `child_ref` initialization obligation is still
+requested at final return after both detaches and parent frees.
 Finish both caller proofs before claiming the sequential migration complete
 or proceeding to shared mutex integration. No mutex runtime or concurrent
 reclamation rule changes in this checkpoint.

@@ -1,17 +1,14 @@
-# Shared-parent payload transport remains a proof frontier
+# Shared-parent final cleanup remains a certification frontier
 
-The frozen C, explicit initialization facts, and complete first-removal
-caller reach the surviving parent's read. The remaining failure is proving
-`out == payload` across the detach and read contracts; it is no longer an
-uninitialized read during allocation-failure cleanup. Keep the C fixed when
-repairing this proof/contract boundary.
+The frozen C and complete first-removal caller now prove the surviving
+parent's `out == payload` and finish the pure return claim. Explicit pointer
+rewrites use the observed load snapshot, retaining the modular payload
+preservation facts across detach and read. Keep the C fixed when repairing
+this proof/contract boundary.
 
-The explicit attachment postcondition exposes the stored child pointer. The
-caller establishes two remaining membership units before detach, then checks
-both the recorded pointer identity and the conditional payload-preservation
-postcondition after detach. Those facts individually verify; combining aliased
-reads across their snapshots is still the frontier. They are not evidence of
-access authority or thread safety.
+Certification still rejects a `child_ref` initialization obligation at final
+return after both parent detaches and frees. This fixture is not a verified
+lifecycle example: the pure proof and resource certification must both pass.
 
 ```c filename=shared_parent.c
 struct child {
@@ -288,12 +285,30 @@ int32 run_first_destroyed(int32 payload) {
     have first->kid == kid by { simp(); }
     have kid->payload == payload by { simp(); }
     have count(child_ref(first->kid)) > 1 by { simp(); }
+    have first->kid->payload == payload by { rewrite(first->kid == kid); simp(); }
     mark detaching;
     step(parent_detach(first), { link: first_link });
     have at(detaching, first->kid) == kid by { assumption(); }
     have at(detaching, first->kid)->payload == at(detaching, first->kid->payload) by { simp(); }
+    have at(detaching, first->kid->payload) == payload by { assumption(); }
+    have at(detaching, first->kid)->payload == payload by {
+        simp() using {
+            at(detaching, first->kid)->payload == at(detaching, first->kid->payload);
+            at(detaching, first->kid->payload) == payload;
+        }
+    }
+    have kid->payload == payload by {
+        have kid == at(detaching, first->kid) by { simp() using { at(detaching, first->kid) == kid; } }
+        rewrite(kid == at(detaching, first->kid));
+        assumption();
+    }
     step();
+    have second->kid == kid by { simp(); }
+    have second->kid->payload == payload by { rewrite(second->kid == kid); simp(); }
+    mark reading;
     step(parent_read_payload(second), { link: second_link });
+    have at(reading, second->kid->payload) == payload by { assumption(); }
+    have out == at(reading, second->kid->payload) by { simp(); }
     have out == payload by { simp(); }
     step(parent_detach(second), { link: second_link });
     step();
@@ -304,5 +319,5 @@ int32 run_first_destroyed(int32 payload) {
 ```
 
 ```expect
-fail: `simp` failed for `run_first_destroyed.contract`
+fail: could not prove `fact defined(obj->refs);` of resource `child_ref` at return from `run_first_destroyed`
 ```

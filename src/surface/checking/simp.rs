@@ -256,7 +256,14 @@ fn rewrite_through_load_variable(
     if !crate::kernel::is_load_variable(variable) {
         return None;
     }
-    let (memory, pointer) = crate::kernel::registered_load_for_variable(variable)?;
+    // Rewrite the address at the snapshot where this load was observed.
+    // Its canonical snapshot may be a projected placeholder: it preserves
+    // the original cell's value, but need not preserve a different address
+    // exposed by the equality. The current epoch's origin retains that
+    // execution history, just as it does for checked load transport.
+    // Without a live origin, keep the variable's defining snapshot.
+    let (memory, pointer) = crate::kernel::registered_load_origin_for_variable(variable)
+        .or_else(|| crate::kernel::registered_load_for_variable(variable))?;
     let rewritten = rewrite_pointer(&pointer);
     if rewritten == pointer {
         return None;
@@ -2650,6 +2657,60 @@ mod tests {
             0,
             "an exhausted deadline stops the search at once"
         );
+    }
+
+    #[test]
+    fn registered_pointer_rewrite_uses_observed_snapshot() {
+        // Projected identity snapshots have no target-cell content. Rewriting
+        // the address must use the observed snapshot, including its latest
+        // overwrite, rather than inventing a disconnected target load.
+        for (case, stored) in [(0, 17), (1, 29)] {
+            let source = Pointer::symbolic(Variable(910_000 + case));
+            let target = Pointer {
+                block: PointerBlock::Heap(920_000 + case),
+                offset: PointerOffsetTerm::Constant(4),
+            };
+            let identity = crate::kernel::intern_c_memory(
+                CMemory::new().with_block(format!("rewrite-origin-{case}"), 16),
+            );
+            let observed = crate::kernel::intern_c_memory(
+                identity
+                    .memory()
+                    .clone()
+                    .store(target.clone(), CValue::Int32(Bitvector32Term::Constant(17)))
+                    .store(
+                        target.clone(),
+                        CValue::Int32(Bitvector32Term::Constant(stored)),
+                    ),
+            );
+            let load =
+                crate::kernel::load_variable_for_cell_with_origin(&identity, &source, 4, &observed);
+            let goal = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(load)),
+                    Box::new(Bitvector32Term::Constant(17)),
+                ),
+                true,
+            );
+            let equality =
+                Proposition::ConditionIs(ConditionTerm::pointer_equal(source, target), true);
+            let rewritten = rewrite_proposition_by_exact_equality(
+                &goal,
+                &equality,
+                std::slice::from_ref(&equality),
+            )
+            .expect("rewrite the registered load at its observed snapshot");
+            assert_eq!(
+                rewritten,
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(
+                        Box::new(Bitvector32Term::Constant(stored)),
+                        Box::new(Bitvector32Term::Constant(17)),
+                    ),
+                    true,
+                )
+            );
+        }
     }
 
     #[test]
