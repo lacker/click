@@ -1,6 +1,6 @@
 # P1: Shared heap graph and resource invariants
 
-## Design chosen; next task: repair release expansion, then caller observations
+## Design chosen; next task: complete sequential caller observations
 
 The target semantics are recorded in
 [Resource invariants, counting, and synchronization](../docs/internals/resource-invariants.md).
@@ -16,16 +16,15 @@ population invariant. The tautological-ensure reducer now passes in the
 normal gate, as do regressions rejecting broken call-entry invariants and
 wrong count updates. Explicit access-authority representation remains open.
 
-The next tooling blocker is expansion of `child_release`'s final `simp()`
-on its nonfinal branch. Ordinary verification succeeds, but expansion loses
-retained allocation-lifetime evidence. This also fails with the pre-checkpoint
-verifier. `shared_population_release_expansion_records_lifetime_gap` in
-`src/bin/click.rs` records the ordinary-pass/expansion-failure pair against
-the unchanged frozen source. The repaired `parent_detach` claim passes its
-three-site audit; the complete helper audit remains blocked. Repair expansion
-first under the tooling-first rule.
+The release expansion blocker is fixed. Every completed path now applies
+its checked return-resource exchange, including a simple proof of a consuming
+contract with no returned resource claim. All 18 smart sites in the six
+unchanged helpers pass expansion, independent rechecking, and audit. The
+regression `shared_population_release_expansion_retains_lifetime` preserves
+the frozen source; `population_simple_exit_rejects_final_leak.md` ensures a
+simple closer still rejects an omitted final `free`.
 
-The subsequent caller blocker is initialized-memory observation after producing
+The next caller blocker is initialized-memory observation after producing
 a counted body. The normal-gate expected-failure fixture
 `mdtests/shared_heap_population_initialized_body_gap.md` embeds the unchanged
 frozen C and a caller proof prefix. `child_init` initializes the counter and

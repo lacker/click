@@ -370,12 +370,10 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
-    // Known tooling gap: ordinary verification succeeds, but expanding the
-    // nonfinal release's last simp loses the retained allocation obligation.
-    // Keep the frozen C as the regression until expansion transports that
-    // evidence; this test must become a successful expansion/recheck then.
+    // Simple claim closers must perform the same checked return exchange as
+    // simp, including a consuming contract with no returned resource claim.
     #[test]
-    fn shared_population_release_expansion_records_lifetime_gap() {
+    fn shared_population_release_expansion_retains_lifetime() {
         let directory = std::env::temp_dir().join(format!(
             "click-population-release-expansion-{}",
             std::process::id()
@@ -393,15 +391,13 @@ mod tests {
         let release_end = source.find("void parent_attach(").unwrap();
         let simp = source[..release_end].rfind("        simp();").unwrap();
         let line = source[..simp].bytes().filter(|byte| *byte == b'\n').count() + 1;
-        let error = entry([
+        entry([
             "expand".to_string(),
+            "--in-place".to_string(),
             format!("{}:{line}:9", sidecar.display()),
         ])
-        .unwrap_err();
-        assert!(
-            error.contains("live allocation obligation was neither returned nor freed"),
-            "{error}"
-        );
+        .unwrap();
+        entry(["verify".to_string(), sidecar.display().to_string()]).unwrap();
         fs::remove_dir_all(directory).unwrap();
     }
 

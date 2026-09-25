@@ -4184,6 +4184,30 @@ pub(super) fn finish_ordered_proof<'a>(
                         )));
                     }
 
+                    // Closing pure claims with simple tactics does not itself
+                    // perform the return-resource exchange. In particular a
+                    // consuming contract may have no resource ensure whose
+                    // `assumption` closer would trigger it. After all open
+                    // bodies and deferred invariants have been checked, give
+                    // every completed path the same checked exit transition
+                    // that a closing `simp` would perform.
+                    if !resource_transition_applied
+                        && matches!(outcome, CFunctionOutcome::Return { .. })
+                        && crate::kernel::c_function_return_resources_definitionally_established(
+                            pre_state,
+                            function,
+                            arguments,
+                            &outcome,
+                            path_requirements.assumptions(),
+                        )
+                        && let Ok(transitioned) = required_outcome(&outcome_proof)?
+                            .apply_outcome_contract_resources(pre_state, function)
+                    {
+                        outcome = transitioned.focused_outcome_snapshot()?;
+                        resource_transition_applied = true;
+                        outcome_proof = Some(transitioned);
+                    }
+
                     if matches!(outcome, CFunctionOutcome::Return { .. }) {
                         let lifetime_assumptions = path_requirements.assumptions();
                         let lifetime_obligation =

@@ -220,11 +220,12 @@ before claiming the sequential migration complete or proceeding to shared
 mutex integration. No mutex runtime or concurrent reclamation rule changes
 in this checkpoint.
 
-The repaired `parent_detach` claim passes expansion, independent rechecking,
-and audit. A full helper audit still encounters an existing tooling defect:
-expanding the final `simp()` on `child_release`'s nonfinal path loses retained
-allocation-lifetime evidence. The CLI test
-`shared_population_release_expansion_records_lifetime_gap` first verifies the
-unchanged helper source and then records that expansion failure. Repair this
-before resuming the sequential caller work; a passing ordinary proof does
-not establish a passing full-helper expansion audit.
+All six shared-parent helper claims now pass the complete 18-site expansion
+and independent-reverification audit. Path completion performs the checked
+return-resource exchange after open bodies and deferred invariants have been
+restored, even when simple tactics close every pure claim and no resource is
+returned. This removes the dependence on a final `simp()` to discharge the
+nonfinal release's allocation-lifetime obligation. The regression
+`shared_population_release_expansion_retains_lifetime` verifies, expands,
+and independently reverifies the unchanged C and helper proof. A final
+release that omits `free` is still rejected with a simple closer.
