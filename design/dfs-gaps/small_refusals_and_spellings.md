@@ -1,5 +1,11 @@
 # small gaps found while proving the marking search
 
+The int32 disequality symmetry refusal is resolved by
+`mdtests/int32_disequality_symmetry.md`. The `below`/`above` split in the
+point-update theorem remains necessary to cover indices on both sides of the
+updated cell. The mdtest shared-library gate described below is also resolved;
+`mdtests/unmarked_count_lemmas.click` is checked as an entry module.
+
 Each of these cost one to six lines of proof text. None blocks a stage on its
 own; together they are most of the bookkeeping in
 `mdtests/unmarked_count_lemmas.md` and

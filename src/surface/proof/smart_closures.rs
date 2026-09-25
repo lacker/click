@@ -4976,7 +4976,9 @@ impl<'a> Proof<'a> {
                 return Some(closed);
             }
         }
-        if !crate::kernel::proof::term_rewrite::TermRewrite::conditional_guards(goal).is_empty() {
+        if crate::kernel::proof::fact_reasoning::is_single_normalization_condition(goal)
+            || !crate::kernel::proof::term_rewrite::TermRewrite::conditional_guards(goal).is_empty()
+        {
             let conditions = premise_pairs
                 .iter()
                 .filter(|&(kernel, _surface)| !condition_polarity_forms(kernel).is_empty())

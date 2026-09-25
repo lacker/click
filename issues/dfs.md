@@ -155,8 +155,9 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    `using` list in a pure theorem must name them again (the C-proof route accepts
    a cited range's available guards). That checker promises to read only listed
    premises, so this is a design question.
-5. Small ones (`small_refusals_and_spellings.md`): no `!=` symmetry (forces
-   `unmarked_point_update`'s `below`/`above` split; not re-tested recently);
+5. Small ones (`small_refusals_and_spellings.md`): int32 `!=` symmetry is now
+   checked by `mdtests/int32_disequality_symmetry.md`. The point-update
+   theorem still splits below/above to cover both sides of the marked index.
    `have` cannot take a label; `assumption()` cannot close a `viewable` goal;
    `arithmetic() using { j < hi; hi <= n }` will not weaken to `j <= n` and says
    the premises are insufficient; `missing pure fact: constant condition is true`
