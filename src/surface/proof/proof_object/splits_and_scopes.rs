@@ -95,6 +95,34 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// The children of a split with no usable whole source form. A loop
+    /// bundle whose whole form could not be synthesized, or was synthesized
+    /// at the wrong snapshot, such as one with a member at the loop entry
+    /// beside members at the iteration entry, still has one for each member
+    /// alone; the smart closer attaches the same form to each leaf it
+    /// closes. Only a member is spelled: a conjunction child is split
+    /// again, so spelling it here would synthesize the rest of the bundle
+    /// once per member. Anything else keeps its children unspelled.
+    fn bundle_member_surface_children(&self) -> [CheckedBothSurfaceChild; 2] {
+        let child = |kernel: Option<&Proposition>| CheckedBothSurfaceChild {
+            surface: kernel
+                .filter(|kernel| !matches!(kernel, Proposition::And(..)))
+                .and_then(|kernel| self.synthesized_bundle_member_surface(kernel)),
+            introductions: None,
+        };
+        match self.goal() {
+            Some(Proposition::And(left, right)) => [child(Some(left)), child(Some(right))],
+            _ => [child(None), child(None)],
+        }
+    }
+
+    /// Whether the focused goal is a loop bundle, whose source form, if any,
+    /// was synthesized by the closer rather than written.
+    fn goal_is_synthesized_bundle(&self) -> bool {
+        self.execution_context()
+            .is_some_and(|context| context.constants.invariant_body_context.is_some())
+    }
+
     /// Computes the Surface spellings that may travel across a checked
     /// `both` split.  Lowering can insert a conjunct (notably an existential
     /// witness guard), so the written proposition is not necessarily shaped
@@ -108,16 +136,7 @@ impl<'a> Proof<'a> {
         &self,
     ) -> Result<[CheckedBothSurfaceChild; 2], ClickError> {
         let Some(surface) = self.surface_goal() else {
-            return Ok([
-                CheckedBothSurfaceChild {
-                    surface: None,
-                    introductions: None,
-                },
-                CheckedBothSurfaceChild {
-                    surface: None,
-                    introductions: None,
-                },
-            ]);
+            return Ok(self.bundle_member_surface_children());
         };
         let Some(Proposition::And(left, right)) = self.goal() else {
             return Err(
@@ -228,6 +247,11 @@ impl<'a> Proof<'a> {
                         introductions: None,
                     },
                 ]);
+            }
+            // A synthesized bundle form that does not mean the goal is a
+            // spelling miss, not a written claim; spell the members alone.
+            if self.goal_is_synthesized_bundle() {
+                return Ok(self.bundle_member_surface_children());
             }
             // The refusal is right whenever it fires: the text does not mean
             // the goal. What it must say is which text, since a smart closer

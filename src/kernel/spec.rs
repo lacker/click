@@ -6492,6 +6492,16 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one(
                 // load from one specified snapshot.
                 let mut facts = pointer_path.facts;
                 let mut value = None;
+                // A pointer cell this snapshot holds as the word carrying its
+                // load variable is the pointer the C load reads there, with
+                // no loadability premise: the evaluator returns that
+                // materialized word as the loaded pointer
+                // (`canonicalized_pointer_value_from_int_cell`). Its width is
+                // the word's, not the pointer's, so the width check below
+                // would otherwise ask again for a read the snapshot already
+                // performs, for example a field `&arena->occupied` an
+                // unfolded resource body owns.
+                let mut materialized_pointer_word = false;
                 if let Some(stored) = memory.known_union_value(&pointer, *value_type) {
                     value = value_type.accepts(&stored).then_some(stored);
                 }
@@ -6505,8 +6515,11 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one(
                         &mut facts,
                         assumptions,
                         None,
-                    )
-                    .or_else(|| value_type.accepts(&stored).then_some(stored));
+                    );
+                    materialized_pointer_word = value.is_some();
+                    if value.is_none() {
+                        value = value_type.accepts(&stored).then_some(stored);
+                    }
                 }
                 if value.is_none() {
                     value = canonicalized_symbolic_load_value(
@@ -6521,7 +6534,9 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one(
                     continue;
                 };
                 let mut obligations = pointer_path.obligations;
-                if !memory.is_loadable_concretely(&pointer, value_type.byte_width()) {
+                if !materialized_pointer_word
+                    && !memory.is_loadable_concretely(&pointer, value_type.byte_width())
+                {
                     let loadable = Proposition::CMemoryLoadable {
                         memory: memory.clone(),
                         base: pointer.clone(),

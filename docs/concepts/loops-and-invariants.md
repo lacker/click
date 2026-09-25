@@ -442,6 +442,22 @@ a parameter (`mdtests/loop_frame_through_field_over_folded_binder_cells.md`,
 that writes the field loses the frame
 (`mdtests/loop_frame_rejects_rewritten_base_field.md`).
 
+The field may also belong to a field-bearing resource the proof unfolds
+before the loop, as `examples/arena`'s `arena_state` owns `&arena->occupied`.
+Unfolding names each pointer field cell as the word that carries its load,
+and a clause's read of that cell is the load it names, so the field itself
+adds no member to the bundle; only the map cells do, one or two hops away
+(`mdtests/loop_frame_through_folded_state_field_cells.md`,
+`mdtests/loop_frame_through_two_hop_field_of_folded_state.md`,
+`mdtests/loop_frame_rejects_rewritten_field_of_folded_state.md`). `old(...)`
+in a loop written inside the proof reads the checked function entry even when
+the proof unfolded a resource before its first step. A map that is viewable
+at the function entry only inside a folded resource is framed against the
+loop entry instead, `arena->occupied[k] == at(mark.entry,
+arena->occupied[k])`, with its viewability stated just before the loop so the
+loop-entry member has a premise to cite
+(`mdtests/loop_frame_at_loop_entry_through_folded_state.md`).
+
 ## Modeled instances in loops
 
 A loop header can also name a resource instance, with the binder syntax a
@@ -863,6 +879,13 @@ obligations raised so far, and each earlier clause as written. An earlier
 clause is a guard in its bare form rather than as the whole earlier member,
 so the bundle gains one guard per earlier declaration instead of doubling
 with each one (`mdtests/loop_frame_field_cells_at_constant_indices.md`).
+
+A written `close_invariants by { both { ... } and { ... } }` splits the
+bundle as it is. When the whole bundle has no source form, for instance
+because one member is at the loop entry beside members at the iteration
+entry, each member is spelled on its own at the one snapshot it names, the
+spelling the smart closer gives the leaf it closes, so `intro` names a
+member's quantified index as the expanded proof writes it.
 
 Successful initialization and preservation proofs certify and apply a
 verified loop rule. The enclosing proof is already at the loop exit when the

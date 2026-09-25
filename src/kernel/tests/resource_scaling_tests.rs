@@ -496,6 +496,148 @@ fn unmatched_instance_body_views_are_linear_in_the_body() {
     }
 }
 
+/// A field-bearing `holder(p)` whose unconditional, unmatched body owns one
+/// field-free composite child, `cells(p)`, which in turn owns `cells`
+/// one-element ranges of `p`: the shape of `arena_state` owning
+/// `arena_cells`, where the published cells sit one composite below the
+/// instance's body.
+fn holder_definitions(cells: u32) -> Vec<CCompositeResourceDefinition> {
+    let schema =
+        ResourceFieldSchema::new(vec![("start".into(), ResourceFieldType::C(CType::Int32))])
+            .unwrap();
+    let child_contains = (0..cells)
+        .map(|cell| {
+            CResourceSpec::owned_memory(CMemorySegment {
+                base: c_variable("p"),
+                start: c_int32_literal(cell),
+                end: c_int32_literal(cell + 1),
+                element_width: 4,
+                guard: None,
+            })
+        })
+        .collect();
+    vec![
+        CCompositeResourceDefinition::new(
+            "cells",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            child_contains,
+            vec![],
+        ),
+        CCompositeResourceDefinition::new(
+            "holder",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            vec![CResourceSpec::composite(
+                CResourceAccessMode::Own,
+                "cells".into(),
+                vec![c_variable("p")],
+                vec![CType::Int32Pointer],
+            )],
+            vec![],
+        )
+        .with_instance_schema(Some(schema)),
+    ]
+}
+
+fn holder_instance(block: u64, identity: u64) -> CResourceFact {
+    CResourceFact::own(CResource::Instance(
+        ResourceInstance::new(
+            Variable(identity),
+            "holder".into(),
+            vec![CValue::pointer(heap_base(block)).into()].into(),
+            ResourceFieldSchema::new(vec![("start".into(), ResourceFieldType::C(CType::Int32))])
+                .unwrap(),
+            vec![int32(0).into()].into(),
+        )
+        .unwrap(),
+    ))
+}
+
+/// A folded field-bearing instance publishes the cells its body's field-free
+/// composite children own, and that costs the instance's own body: the
+/// frame may hold any number of unrelated holders, none of them expanded.
+#[test]
+fn nested_composite_body_views_ignore_unrelated_instances() {
+    let definitions = holder_definitions(4);
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let frame = ResourceContext::new().unchecked_with_facts((0..size).flat_map(|index| {
+            [
+                owned_range(heap_base(index as u64 + 1), 0, 4),
+                holder_instance(index as u64 + 1, TARGET_HEAP + 1 + index as u64),
+            ]
+        }));
+        let state = CState::new().with_resource_context(frame);
+        let target = holder_instance(TARGET_HEAP, 2 * TARGET_HEAP);
+        let assumptions = PureFactContext::new();
+        let (supply, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::functions::resource_clause_section_supply(
+                &state,
+                std::slice::from_ref(&target),
+                &definitions,
+                &assumptions,
+            )
+        });
+        let published = supply
+            .facts()
+            .iter()
+            .filter(|fact| {
+                matches!(fact, CResourceFact::View(CResource::Memory(range))
+                    if range.base().block == PointerBlock::Heap(TARGET_HEAP))
+            })
+            .count();
+        assert!(
+            published >= 1,
+            "the target's nested cells are published: {:?}",
+            supply.facts()
+        );
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("nested composite body views", &samples, 4.0);
+}
+
+/// The same publication grows with the child's body: one expansion of the
+/// owned composite, and nothing more.
+#[test]
+fn nested_composite_body_views_are_linear_in_the_child_body() {
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let definitions = holder_definitions(size as u32);
+        let state = CState::new();
+        let target = holder_instance(TARGET_HEAP, 2 * TARGET_HEAP);
+        let assumptions = PureFactContext::new();
+        let (supply, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::functions::resource_clause_section_supply(
+                &state,
+                std::slice::from_ref(&target),
+                &definitions,
+                &assumptions,
+            )
+        });
+        let published = supply
+            .facts()
+            .iter()
+            .filter(|fact| matches!(fact, CResourceFact::View(CResource::Memory(_))))
+            .count();
+        assert!(published >= 1, "the child's cells are published");
+        samples.push((size, work));
+    }
+    eprintln!("nested composite body views by child size (N, units): {samples:?}");
+    let (smallest, base_work) = samples[0];
+    let per_clause = base_work as f64 / smallest as f64;
+    for (size, work) in &samples {
+        let allowed = 2.0 * per_clause * *size as f64 + 8.0;
+        assert!(
+            (*work as f64) <= allowed,
+            "a {size}-cell child charged {work} units, above {allowed:.1} (linear in the \
+             child): {samples:?}"
+        );
+    }
+}
+
 fn variable_range(base: Pointer, start: Bitvector32Term, end: Bitvector32Term) -> CResourceFact {
     CResourceFact::own_memory(CMemoryRange::new(base, start, end))
 }

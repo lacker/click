@@ -389,42 +389,7 @@ impl<'a> Proof<'a> {
         let Some(goal) = self.goal() else {
             return self.clone();
         };
-        let Some(context) = self.execution_context() else {
-            return self.clone();
-        };
-        let Some(execution) = self.execution() else {
-            return self.clone();
-        };
-        let Some(bundle) = context.constants.invariant_body_context.as_deref() else {
-            return self.clone();
-        };
-        let synthesize_at = |state: &CState, selector: &SnapshotSelector| {
-            crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
-                goal,
-                context.parsed_function.parameters(),
-                context.arguments,
-                context.old_reference_state(&execution.core.frontier, &execution.core.state),
-                &execution.core.state,
-                Some((state, selector)),
-            )
-            .filter(|surface| {
-                self.lower_surface_goal(surface, "loop invariant bundle member")
-                    .ok()
-                    .is_some_and(|lowered| {
-                        crate::kernel::proof::propositions_are_alpha_equal(&lowered, goal)
-                    })
-            })
-        };
-        let surface = bundle
-            .iteration_entry_selector
-            .as_ref()
-            .and_then(|selector| synthesize_at(&bundle.iteration_entry_state, selector))
-            .or_else(|| {
-                bundle
-                    .loop_entry_selector
-                    .as_ref()
-                    .and_then(|selector| synthesize_at(&bundle.loop_entry_state, selector))
-            });
+        let surface = self.synthesized_bundle_member_surface(goal);
         let Some(surface) = surface else {
             return self.clone();
         };
@@ -443,6 +408,48 @@ impl<'a> Proof<'a> {
             state,
             node: self.node.clone(),
         }
+    }
+
+    /// One bundle member's source form, synthesized at the current state
+    /// with the iteration entry, and failing that the loop entry, as the one
+    /// further snapshot, and kept only when it lowers alpha-equivalently to
+    /// `goal`. A member at the loop entry has no source form in the whole
+    /// bundle's synthesis, which names only the iteration entry, so a
+    /// written `both` over a bundle reaches its members through this too.
+    pub(in crate::surface::proof) fn synthesized_bundle_member_surface(
+        &self,
+        goal: &Proposition,
+    ) -> Option<ClickProposition> {
+        let context = self.execution_context()?;
+        let execution = self.execution()?;
+        let bundle = context.constants.invariant_body_context.as_deref()?;
+        let synthesize_at = |state: &CState, selector: &SnapshotSelector| {
+            crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
+                goal,
+                context.parsed_function.parameters(),
+                context.arguments,
+                context.old_reference_state(&execution.core.frontier, &execution.core.state),
+                &execution.core.state,
+                Some((state, selector)),
+            )
+            .filter(|surface| {
+                self.lower_surface_goal(surface, "loop invariant bundle member")
+                    .ok()
+                    .is_some_and(|lowered| {
+                        crate::kernel::proof::propositions_are_alpha_equal(&lowered, goal)
+                    })
+            })
+        };
+        bundle
+            .iteration_entry_selector
+            .as_ref()
+            .and_then(|selector| synthesize_at(&bundle.iteration_entry_state, selector))
+            .or_else(|| {
+                bundle
+                    .loop_entry_selector
+                    .as_ref()
+                    .and_then(|selector| synthesize_at(&bundle.loop_entry_state, selector))
+            })
     }
 
     /// The C local the call at the current frontier assigns its result to.

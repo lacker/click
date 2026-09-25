@@ -238,7 +238,10 @@ beside `owns r: arena_prefix_region(region)` returns `st` at the address `r`
 supplies, and contract certification reads a postcondition's cells inside
 the contract's folded instances, such as
 `result == region->arena->data[region->start + index]`, through the cells
-their bodies own. A guarded
+their bodies own. A field-free composite the body owns publishes its cells
+the same way, so `arena_state` publishes the occupancy map its
+`arena_cells` child owns and a postcondition may read `arena->occupied[k]`
+before and after the call. A guarded
 body publishes nothing, since its case is a proof obligation rather than a
 premise; a matched body publishes the arm its premises decide, described
 under [Modeled bodies and arm selection](#modeled-bodies-and-arm-selection);

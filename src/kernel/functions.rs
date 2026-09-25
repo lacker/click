@@ -19694,7 +19694,8 @@ fn instance_arm_read_authority(
         let Some(arm) = body.arms.iter().find(|arm| &arm.variant == variant) else {
             return Vec::new();
         };
-        let Some(views) = resource_clause_memory_views(&evaluation, &arm.contains, assumptions)
+        let Some(views) =
+            resource_clause_memory_views(&evaluation, &arm.contains, definitions, assumptions)
         else {
             return Vec::new();
         };
@@ -19760,15 +19761,23 @@ pub(crate) fn unmatched_instance_body_views(
     let Ok(evaluation) = instance_body_evaluation(state, instance, definition) else {
         return Vec::new();
     };
-    resource_clause_memory_views(&evaluation, &definition.contains, assumptions).unwrap_or_default()
+    resource_clause_memory_views(&evaluation, &definition.contains, definitions, assumptions)
+        .unwrap_or_default()
 }
 
 /// The cells a body's own memory clauses own at `evaluation`, as views, or
 /// `None` when those clauses cannot be evaluated there. Shared by a match
 /// arm's clauses and an unmatched instance body's.
+///
+/// A field-free composite the body owns, such as `arena_cells(...)` inside
+/// `arena_state`, owns its cells through the body as surely as a memory
+/// clause does, so its expansion publishes them too. The expansion is the
+/// body's own children and nothing else, so the work stays linear in the
+/// body.
 fn resource_clause_memory_views(
     evaluation: &CState,
     contains: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
     assumptions: &PureFactContext,
 ) -> Option<Vec<CResourceFact>> {
     crate::instrumentation::record_deterministic_work(1);
@@ -19787,9 +19796,25 @@ fn resource_clause_memory_views(
     ) else {
         return None;
     };
+    let body_resources = body_resources.0;
+    let expanded = if body_resources
+        .facts()
+        .iter()
+        .any(|fact| matches!(fact.resource(), CResource::Composite { .. }))
+    {
+        expand_all_composite_resource_facts(
+            &body_resources,
+            definitions,
+            evaluation.memory(),
+            &evaluation_assumptions,
+        )
+    } else {
+        None
+    };
     Some(
-        body_resources
-            .0
+        expanded
+            .as_ref()
+            .unwrap_or(&body_resources)
             .facts()
             .iter()
             .filter_map(|fact| match fact.resource() {

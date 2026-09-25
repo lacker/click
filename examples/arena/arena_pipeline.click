@@ -763,41 +763,34 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
                 both {
                     intro();
                     intro();
-                    simp();
+                    instantiate(forall (k: int32) {
+                        start <= k and k < i implies
+                            arena->occupied[k] == 1
+                    }, __click_q0) using {
+                        start <= __click_q0 and __click_q0 < i;
+                    }
+                    transport(
+                        arena->occupied[__click_q0] == 1,
+                        viewable((load_int32_pointer(
+                            byte_offset(arena, 8)
+                        ) + __click_q0)[0..1])
+                    ) using {
+                        arena->occupied[__click_q0] == 1;
+                        start <= __click_q0 and __click_q0 < i;
+                        start <= i and i <= end;
+                        0 <= start;
+                        end <= arena->capacity;
+                        arena->capacity <= 536870911;
+                    }
                 } and {
                     both {
                         intro();
-                        intro();
-                        instantiate(forall (k: int32) {
-                            start <= k and k < i implies
-                                arena->occupied[k] == 1
-                        }, __click_q0) using {
-                            start <= __click_q0 and __click_q0 < i;
-                        }
-                        transport(
-                            arena->occupied[__click_q0] == 1,
-                            viewable((load_int32_pointer(
-                                byte_offset(arena, 8)
-                            ) + __click_q0)[0..1])
-                        ) using {
-                            arena->occupied[__click_q0] == 1;
-                            start <= __click_q0 and __click_q0 < i;
-                            start <= i and i <= end;
-                            0 <= start;
-                            end <= arena->capacity;
-                            arena->capacity <= 536870911;
-                        }
+                        assumption();
                     } and {
                         both {
-                            intro();
-                            intro();
                             assumption();
                         } and {
-                            both {
-                                assumption();
-                            } and {
-                                assumption();
-                            }
+                            assumption();
                         }
                     }
                 }
@@ -1243,41 +1236,34 @@ void arena_free(struct region* region) {
                 both {
                     intro();
                     intro();
-                    simp();
+                    instantiate(forall (k: int32) {
+                        region->start <= k and k < i implies
+                            arena->occupied[k] == 0
+                    }, __click_q0) using {
+                        region->start <= __click_q0 and __click_q0 < i;
+                    }
+                    transport(
+                        arena->occupied[__click_q0] == 0,
+                        viewable((load_int32_pointer(
+                            byte_offset(arena, 8)
+                        ) + __click_q0)[0..1])
+                    ) using {
+                        arena->occupied[__click_q0] == 0;
+                        region->start <= __click_q0 and __click_q0 < i;
+                        region->start <= i and i <= region->end;
+                        0 <= region->start;
+                        region->end <= arena->capacity;
+                        arena->capacity <= 536870911;
+                    }
                 } and {
                     both {
                         intro();
-                        intro();
-                        instantiate(forall (k: int32) {
-                            region->start <= k and k < i implies
-                                arena->occupied[k] == 0
-                        }, __click_q0) using {
-                            region->start <= __click_q0 and __click_q0 < i;
-                        }
-                        transport(
-                            arena->occupied[__click_q0] == 0,
-                            viewable((load_int32_pointer(
-                                byte_offset(arena, 8)
-                            ) + __click_q0)[0..1])
-                        ) using {
-                            arena->occupied[__click_q0] == 0;
-                            region->start <= __click_q0 and __click_q0 < i;
-                            region->start <= i and i <= region->end;
-                            0 <= region->start;
-                            region->end <= arena->capacity;
-                            arena->capacity <= 536870911;
-                        }
+                        assumption();
                     } and {
                         both {
-                            intro();
-                            intro();
                             assumption();
                         } and {
-                            both {
-                                assumption();
-                            } and {
-                                assumption();
-                            }
+                            assumption();
                         }
                     }
                 }

@@ -842,7 +842,16 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         inherits_resource_derived_frame: resource_derived_mutable_frame,
         predicate_environment,
         click_function_environment,
-        entry_state,
+        // `old(...)` names the function entry. A frontier loop is annotated
+        // from the proof's execution start, which a proof that unfolds a
+        // resource before its first step has already moved past: the unfold
+        // names the body's cells in a new snapshot. Lowering `old` there
+        // would give the loop's entry-snapshot reads a snapshot the proof's
+        // own `old(...)` and `at(function.entry, ...)` never name, so the
+        // checked function entry is used when the proof recorded one.
+        entry_state: frame_entry
+            .and_then(|frame_entry| frame_entry.checked_entry_state)
+            .unwrap_or(entry_state),
         result_type: if parsed_function.return_struct_name().is_some() {
             CType::UInt8Pointer
         } else {
