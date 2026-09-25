@@ -893,7 +893,7 @@ fn execute_modeled_pthread_mutex_paths(
                 &path.facts,
                 &path.obligations,
             );
-            let transition = if initializing {
+            let transition: Result<CState, CRuntimeError> = if initializing {
                 let selected = environment.selected_call_binders.as_ref();
                 let identity = selected
                     .filter(|transport| {
@@ -924,16 +924,34 @@ fn execute_modeled_pthread_mutex_paths(
                             .publish(expected, fact, &current)
                             .map(|context| context.into_state())
                     })
+                    .map_err(|message| CRuntimeError::FunctionContract(message.to_string()))
             } else {
                 let context = super::mutexes::MutexContext::new(state.clone());
-                let result = if function_name == binding.mutex_lock_name {
-                    context.acquire_current(mutex.pointer(), &current)
+                if function_name == binding.mutex_lock_name {
+                    context
+                        .acquire_current(mutex.pointer(), &current)
+                        .map(|context| context.into_state())
+                        .map_err(|error| match error {
+                            super::mutexes::MutexAcquireError::MissingPublishedInvariant => {
+                                CRuntimeError::MissingMutexInvariant {
+                                    mutex: mutex.pointer().clone(),
+                                }
+                            }
+                            super::mutexes::MutexAcquireError::Refusal(message) => {
+                                CRuntimeError::FunctionContract(message.to_string())
+                            }
+                        })
                 } else if function_name == binding.mutex_unlock_name {
-                    context.release_current(mutex.pointer(), &current)
+                    context
+                        .release_current(mutex.pointer(), &current)
+                        .map(|context| context.into_state())
+                        .map_err(|message| CRuntimeError::FunctionContract(message.to_string()))
                 } else {
-                    context.destroy(mutex.pointer(), &current)
-                };
-                result.map(|context| context.into_state())
+                    context
+                        .destroy(mutex.pointer(), &current)
+                        .map(|context| context.into_state())
+                        .map_err(|message| CRuntimeError::FunctionContract(message.to_string()))
+                }
             };
             match transition {
                 Ok(mut next) => {
@@ -952,7 +970,7 @@ fn execute_modeled_pthread_mutex_paths(
                         CStatementOutcome::Normal(next)
                     }
                 }
-                Err(message) => refusal(message),
+                Err(error) => CStatementOutcome::RuntimeError(error),
             }
         };
         paths.push(CStatementExecutionPath {
@@ -1243,7 +1261,7 @@ fn execute_modeled_pthread_create_paths(
                         }
                         Err(message) => refusal(&message),
                     },
-                    Err(message) => refusal(message),
+                    Err(error) => CStatementOutcome::RuntimeError(error),
                 }
             } else {
                 refusal("modeled-pthread create requires a direct worker address")
@@ -1307,13 +1325,16 @@ fn execute_modeled_pthread_join_paths(
                 &path.facts,
                 &path.obligations,
             );
-            match super::threads::ThreadContext::new(state.clone()).and_then(|context| {
-                context.join(
-                    handle,
-                    super::threads::JoinRuntimeAssumption::ValidJoinSucceeds,
-                    &current,
-                )
-            }) {
+            let joined = super::threads::ThreadContext::new(state.clone()).and_then(|context| {
+                context
+                    .join(
+                        handle,
+                        super::threads::JoinRuntimeAssumption::ValidJoinSucceeds,
+                        &current,
+                    )
+                    .map_err(|message| CRuntimeError::FunctionContract(message.to_string()))
+            });
+            match joined {
                 Ok((joined, facts)) => {
                     path.facts.extend(facts);
                     let mut next = joined.parent().clone();
@@ -1332,7 +1353,7 @@ fn execute_modeled_pthread_join_paths(
                         CStatementOutcome::Normal(next)
                     }
                 }
-                Err(message) => refusal(message),
+                Err(error) => CStatementOutcome::RuntimeError(error),
             }
         } else {
             refusal("modeled-pthread join handle does not name a live child")

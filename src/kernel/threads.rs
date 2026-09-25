@@ -20,10 +20,10 @@ use crate::persistent::PersistentMap;
 use super::functions::suspend_verified_worker;
 use super::loans::{LoanLedger, LoanViewBinding, LoanViewBindings, StableViewTransferPlan};
 use super::{
-    Bitvector32Term, CExecutionEnvironment, CMemory, CMemoryRange, CResourceFact, CState, CValue,
-    CVerifiedFunctionRule, CVerifiedFunctionTerminationRule, ConditionTerm, ExecutionBudget,
-    ExecutionPureFact, ExecutionResult, Pointer, PointerBlock, Proposition, PureFactContext,
-    ResourceContext,
+    Bitvector32Term, CExecutionEnvironment, CMemory, CMemoryRange, CResourceFact, CRuntimeError,
+    CState, CValue, CVerifiedFunctionRule, CVerifiedFunctionTerminationRule, ConditionTerm,
+    ExecutionBudget, ExecutionPureFact, ExecutionResult, Pointer, PointerBlock, Proposition,
+    PureFactContext, ResourceContext,
 };
 
 /// A kernel identity, not the integer representation of `pthread_t`. The C
@@ -649,26 +649,30 @@ pub(super) struct ThreadContext {
 }
 
 impl ThreadContext {
-    pub(super) fn new(mut parent: CState) -> Result<Self, &'static str> {
+    pub(super) fn new(mut parent: CState) -> Result<Self, CRuntimeError> {
         if parent
             .mutex_ledger
             .as_ref()
             .is_some_and(super::mutexes::MutexLedger::has_any_mutex)
         {
-            return Err("modeled pthread workers cannot yet share an initialized mutex");
+            return Err(CRuntimeError::UnsupportedConcurrentMutex);
         }
         match (parent.loan_ledger(), parent.loan_participant()) {
             (None, None) => {
                 let ledger = LoanLedger::new();
-                let participant = ledger
-                    .fresh_participant()
-                    .map_err(|_| "invalid parent participant")?;
+                let participant = ledger.fresh_participant().map_err(|_| {
+                    CRuntimeError::FunctionContract("invalid parent participant".to_string())
+                })?;
                 parent = parent
                     .with_loan_ledger(Some(ledger))
                     .with_loan_participant(Some(participant));
             }
             (Some(ledger), Some(participant)) if ledger.contains_participant(participant) => {}
-            _ => return Err("inconsistent parent loan context"),
+            _ => {
+                return Err(CRuntimeError::FunctionContract(
+                    "inconsistent parent loan context".to_string(),
+                ));
+            }
         }
         if parent.thread_ledger.is_none() {
             parent.thread_ledger = Some(ThreadLedger::new());

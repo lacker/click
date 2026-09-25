@@ -1275,6 +1275,12 @@ pub(in crate::kernel) fn describe_certification_runtime_error(error: &CRuntimeEr
         }
         CRuntimeError::MissingReturn => "missing return".to_string(),
         CRuntimeError::MissingResource { .. } => "a required resource is not available".to_string(),
+        CRuntimeError::MissingMutexInvariant { .. } => {
+            "a required mutex invariant is not available".to_string()
+        }
+        CRuntimeError::UnsupportedConcurrentMutex => {
+            "Click cannot yet verify pthread workers sharing an initialized mutex".to_string()
+        }
         CRuntimeError::InvalidFree(_) => "an invalid free".to_string(),
         CRuntimeError::UnresolvedAllocationOutcome => {
             "an unresolved allocation outcome".to_string()

@@ -2774,9 +2774,24 @@ fn execute_step_from_frontier_position_selecting_path(
                 _ => None,
             })
         {
+            let kind = runtime_refusal_kind(error);
+            let unsupported = kind == crate::surface::ClickErrorKind::Internal;
+            let description = if unsupported {
+                "reached an unsupported modeled operation"
+            } else {
+                "could not verify C operation"
+            };
+            let detail = describe_runtime_error(error, parameters, arguments);
+            if matches!(
+                error,
+                crate::kernel::CRuntimeError::MissingMutexInvariant { .. }
+                    | crate::kernel::CRuntimeError::UnsupportedConcurrentMutex
+            ) {
+                return Err(ClickError::new(detail).with_kind(kind));
+            }
             return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced runtime error: {}\n  C operation: {}{}\n{}",
-                describe_runtime_error(error, parameters, arguments),
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` {description}: {}\n  C operation: {}{}\n{}",
+                detail,
                 describe_statement_head(&step_statement),
                 describe_call_bindings(&step_statement, function_environment),
                 describe_proof_context(
@@ -2786,7 +2801,8 @@ fn execute_step_from_frontier_position_selecting_path(
                     arguments,
                     &[]
                 )
-            )));
+            ))
+            .with_kind(kind));
         }
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires exactly one statement successor for `{}`, got {}\n{}{}{}",
@@ -3373,9 +3389,24 @@ fn execute_step_from_frontier_position_selecting_path(
             )));
         }
         CStatementOutcome::RuntimeError(error) => {
+            let kind = runtime_refusal_kind(&error);
+            let unsupported = kind == crate::surface::ClickErrorKind::Internal;
+            let description = if unsupported {
+                "reached an unsupported modeled operation"
+            } else {
+                "could not verify C operation"
+            };
+            let detail = describe_runtime_error(&error, parameters, arguments);
+            if matches!(
+                error,
+                crate::kernel::CRuntimeError::MissingMutexInvariant { .. }
+                    | crate::kernel::CRuntimeError::UnsupportedConcurrentMutex
+            ) {
+                return Err(ClickError::new(detail).with_kind(kind));
+            }
             return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced runtime error: {}\n  C operation: {}{}\n{}",
-                describe_runtime_error(&error, parameters, arguments),
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` {description}: {}\n  C operation: {}{}\n{}",
+                detail,
                 describe_statement_head(&step_statement),
                 describe_call_bindings(&step_statement, function_environment),
                 describe_proof_context(
@@ -3385,7 +3416,8 @@ fn execute_step_from_frontier_position_selecting_path(
                     arguments,
                     &execution_pure_facts
                 )
-            )));
+            ))
+            .with_kind(kind));
         }
     }
     execution

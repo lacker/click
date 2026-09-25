@@ -2210,8 +2210,10 @@ impl<'a> Proof<'a> {
         &self,
         error: ClickError,
     ) -> ClickError {
-        if error.kind() != crate::surface::ClickErrorKind::Proof
-            || error.proof_claim_label().is_some()
+        if !matches!(
+            error.kind(),
+            crate::surface::ClickErrorKind::Proof | crate::surface::ClickErrorKind::Internal
+        ) || error.proof_claim_label().is_some()
         {
             return error;
         }

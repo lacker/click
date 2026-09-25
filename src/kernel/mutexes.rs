@@ -17,6 +17,12 @@ use crate::persistent::PersistentMap;
 
 use super::{CResource, CResourceFact, CState, Pointer, PureFactContext};
 
+#[derive(Debug)]
+pub(super) enum MutexAcquireError {
+    MissingPublishedInvariant,
+    Refusal(&'static str),
+}
+
 #[derive(Clone)]
 enum MutexEntry {
     Unlocked(CResourceFact),
@@ -119,19 +125,23 @@ impl MutexContext {
         &self,
         mutex: &Pointer,
         assumptions: &PureFactContext,
-    ) -> Result<(Self, MutexGuard), &'static str> {
+    ) -> Result<(Self, MutexGuard), MutexAcquireError> {
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         let invariant = match ledger.get(mutex) {
             Some(MutexEntry::Unlocked(invariant)) => invariant.clone(),
-            Some(MutexEntry::Locked { .. }) => return Err("mutex is already guarded"),
-            None => return Err("mutex has no published invariant"),
+            Some(MutexEntry::Locked { .. }) => {
+                return Err(MutexAcquireError::Refusal("mutex is already guarded"));
+            }
+            None => return Err(MutexAcquireError::MissingPublishedInvariant),
         };
         let resources = self
             .state
             .resources
             .clone()
             .try_compose_with_fact(invariant.clone(), assumptions)
-            .map_err(|_| "mutex invariant conflicts with current authority")?;
+            .map_err(|_| {
+                MutexAcquireError::Refusal("mutex invariant conflicts with current authority")
+            })?;
         static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
         let epoch = NEXT_EPOCH.fetch_add(1, Ordering::Relaxed);
         let mut state = self.state.clone();
@@ -151,7 +161,7 @@ impl MutexContext {
         &self,
         mutex: &Pointer,
         assumptions: &PureFactContext,
-    ) -> Result<Self, &'static str> {
+    ) -> Result<Self, MutexAcquireError> {
         self.acquire(mutex, assumptions).map(|(context, _)| context)
     }
 

@@ -1,6 +1,89 @@
 use super::*;
 
 #[test]
+fn missing_mutex_invariant_is_a_named_proof_prerequisite() {
+    let c_source = r#"
+        #include <pthread.h>
+        struct cell { pthread_mutex_t mu; };
+        void use_mutex(struct cell *cell) { pthread_mutex_lock(&cell->mu); }
+    "#;
+    let click_source = r#"
+        target "x86_64-linux-userspace";
+        runtime "modeled-pthread";
+        verifying "mutex.c";
+        void use_mutex(struct cell *cell) { ensures 0 == 0; } by { step(); }
+    "#;
+    let error = verify_c0_sources(click_source, &[("mutex.c", c_source)]).unwrap_err();
+    assert_eq!(error.kind(), ClickErrorKind::Proof, "{}", error.message());
+    assert!(
+        error
+            .message()
+            .contains("could not prove that mutex `cell` has a published invariant"),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.concise_report_parts().0,
+        "proof error in `use_mutex`:\n  could not prove that mutex `cell` has a published invariant"
+    );
+    assert!(!error.message().contains("runtime error"), "{error:?}");
+}
+
+#[test]
+fn unsupported_shared_mutex_worker_is_an_internal_error() {
+    let c_source = r#"
+        #include <pthread.h>
+        #include <stddef.h>
+        struct box { pthread_mutex_t mu; int value; };
+        void *idle(void *arg) { return 0; }
+        void start(struct box *box) {
+            pthread_t handle;
+            int status;
+            pthread_mutex_init(&box->mu, 0);
+            status = pthread_create(&handle, NULL, idle, box);
+        }
+    "#;
+    let click_source = r#"
+        target "x86_64-linux-userspace";
+        runtime "modeled-pthread";
+        resource box_state(box: struct box*) {
+            field value: int32;
+            guarded_by box->mu;
+            owns box->value;
+            fact box->value == value;
+        }
+        verifying "mutex.c";
+        void *idle(void *arg) { ensures result == 0; } by { execute(); simp(); }
+        void start(struct box *box) {
+            owns state: box_state(box);
+            ensures 0 == 0;
+        } by {
+            step();
+            step();
+            step(pthread_mutex_init(&box->mu, 0), { invariant: state });
+            step();
+        }
+    "#;
+    let error = verify_c0_sources(click_source, &[("mutex.c", c_source)]).unwrap_err();
+    assert_eq!(
+        error.kind(),
+        ClickErrorKind::Internal,
+        "{}",
+        error.message()
+    );
+    assert!(
+        error
+            .message()
+            .contains("cannot yet verify pthread workers sharing an initialized mutex"),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.concise_report_parts().0,
+        "internal error in `start`:\n  Click cannot yet verify pthread workers sharing an initialized mutex"
+    );
+    assert!(!error.message().contains("runtime error"), "{error:?}");
+}
+
+#[test]
 fn concise_error_context_preserves_click_binder_colons() {
     assert_eq!(
         concise_error_segments("foo: exists (path: Path) { x: y }: qux"),

@@ -47,5 +47,5 @@ void caller() {
 ```
 
 ```expect
-fail: `caller.contract` tactic 0: `step()` produced runtime error: stable-view a required resource overlaps a live borrowed footprint refused during planning; selected resource `owns global:g@0[0..4]`
+fail: `caller.contract` tactic 0: `step()` could not verify C operation: stable-view a required resource overlaps a live borrowed footprint refused during planning; selected resource `owns global:g@0[0..4]`
 ```

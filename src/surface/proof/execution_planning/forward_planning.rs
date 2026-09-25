@@ -796,11 +796,12 @@ fn advance_execution_proof_statement(
                 }
                 CStatementOutcome::RuntimeError(error) => {
                     return Err(ClickError::new(format!(
-                        "execution proof traversal for {} statement({statement_index}) produced runtime error: {}\nresource facts in context: {}",
+                        "execution proof traversal for {} statement({statement_index}) could not verify C operation: {}\nresource facts in context: {}",
                         environment.function_block.signature().name(),
                         describe_runtime_error(&error, &[], &[]),
                         context.state.resources().facts().len()
-                    )));
+                    ))
+                    .with_kind(crate::surface::diagnostics::runtime_refusal_kind(&error)));
                 }
             }
         }

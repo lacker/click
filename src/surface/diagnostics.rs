@@ -716,12 +716,10 @@ pub(super) fn describe_function_outcome(
         CFunctionOutcome::UndefinedBehavior(kind) => {
             format!("undefined behavior: {}", kind.description())
         }
-        CFunctionOutcome::RuntimeError(error) => {
-            format!(
-                "runtime error: {}",
-                describe_runtime_error(error, parameters, arguments)
-            )
-        }
+        CFunctionOutcome::RuntimeError(error) => format!(
+            "C operation could not be verified: {}",
+            describe_runtime_error(error, parameters, arguments)
+        ),
     }
 }
 
@@ -778,6 +776,13 @@ pub(super) fn describe_runtime_error(
         ),
         crate::kernel::CRuntimeError::FunctionContract(message) => {
             format!("function contract could not be applied: {message}")
+        }
+        crate::kernel::CRuntimeError::MissingMutexInvariant { mutex } => format!(
+            "could not prove that mutex `{}` has a published invariant",
+            describe_pointer(mutex, parameters, arguments)
+        ),
+        crate::kernel::CRuntimeError::UnsupportedConcurrentMutex => {
+            "Click cannot yet verify pthread workers sharing an initialized mutex".to_string()
         }
         crate::kernel::CRuntimeError::InvalidFree(reason) => match reason {
             crate::kernel::CInvalidFree::InteriorPointer => {
@@ -839,6 +844,16 @@ pub(super) fn describe_runtime_error(
         crate::kernel::CRuntimeError::LoanRefusal(diagnostic) => {
             describe_loan_refusal(diagnostic, parameters, arguments)
         }
+    }
+}
+
+/// Kernel `RuntimeError` includes ordinary proof refusals, so its name is not
+/// a surface error category. Only explicitly marked verifier limitations are
+/// reported as internal errors.
+pub(super) fn runtime_refusal_kind(error: &crate::kernel::CRuntimeError) -> ClickErrorKind {
+    match error {
+        crate::kernel::CRuntimeError::UnsupportedConcurrentMutex => ClickErrorKind::Internal,
+        _ => ClickErrorKind::Proof,
     }
 }
 

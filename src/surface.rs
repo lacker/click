@@ -7403,6 +7403,18 @@ impl ClickError {
                 obligation.unwrap_or(detail),
                 obligation.is_some(),
             )
+        } else if (reason.starts_with("could not prove ")
+            || reason.starts_with("Click cannot yet verify "))
+            && let Some(function) = self
+                .proof_claim_label()
+                .and_then(|claim| claim.split_once('.'))
+                .map(|(function, _)| function)
+        {
+            (
+                format!("{} in `{function}`:", self.kind.label()),
+                reason,
+                false,
+            )
         } else {
             (format!("{}:", self.kind.label()), reason, false)
         };
