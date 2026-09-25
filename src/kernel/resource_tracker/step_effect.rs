@@ -141,7 +141,7 @@ pub(in crate::kernel) struct Evidence<'a> {
 /// | `CellsForgotten` | separate: the state is the same | **not shown separate** |
 /// | `LocalLifetimeEnded` | separate on proven distinctness | separate when the retired object is proven distinct; affected for this one |
 /// | `HeapFreed` | separate on two separation ladders | separate when the released allocation's object is proven distinct; affected when it is this one |
-/// | `CallHavoc` | separate on range disjointness | separate when every declared range's object is proven distinct |
+/// | `CallHavoc` | separate on range disjointness, or when a range the caller kept owning holds the cell | separate when every declared range's object is proven distinct |
 /// | `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | separate when every declared range's object is proven distinct |
 /// | `LoopHavoc(None)` | never separate | never separate |
 ///
@@ -498,7 +498,11 @@ fn cell_effect(
                 unknown()
             }
         }
-        CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
+        CMemoryDerivation::CallHavoc {
+            mutable_ranges,
+            kept_by_caller,
+            ..
+        } => {
             if let Some(ranges) = typed_ranges_disjoint_from_pointer_evidence(
                 mutable_ranges,
                 pointer,
@@ -513,6 +517,18 @@ fn cell_effect(
             ) {
                 hop(MemoryDagHopJustification::AssumptionDependent(
                     MemoryDagAssumptionKind::CallHavocRangeSeparation,
+                ))
+            } else if kept_by_caller
+                .as_ref()
+                .is_some_and(|kept| kept.holds_access(pointer, bytes, assumptions))
+            {
+                // Memory the caller kept owning outside the transfer: the
+                // callee owns none of it, so it wrote none of it. The ranges
+                // are the edge's own, spelled in its write-set marker, and
+                // placing the access inside one is decided here, in the
+                // querying context, as the producer decided it.
+                hop(MemoryDagHopJustification::AssumptionDependent(
+                    MemoryDagAssumptionKind::CallHavocKeptByCaller,
                 ))
             } else {
                 unknown()

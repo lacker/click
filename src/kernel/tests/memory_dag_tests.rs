@@ -227,12 +227,12 @@ fn checked_call_event_equality_requires_one_proof_owned_event_and_exact_query() 
     let loaded = arc_pointer(0);
     let mutable_ranges = [memory_range(loaded.clone(), 0, 1)];
     let base = CMemory::new().with_block("arg-memory", 16);
-    let left = base
-        .clone()
-        .with_call_memory_havoc(Variable(700), &mutable_ranges, &assumptions);
+    let left =
+        base.clone()
+            .with_call_memory_havoc(Variable(700), &mutable_ranges, &assumptions, None);
     let right = base
         .with_block_without_derivation("local:recomputed-view", 4)
-        .with_call_memory_havoc(Variable(700), &mutable_ranges, &assumptions);
+        .with_call_memory_havoc(Variable(700), &mutable_ranges, &assumptions, None);
     assert_ne!(left, right);
 
     let left_memory = crate::kernel::intern_c_memory_ref(&left);
@@ -1008,6 +1008,7 @@ fn check_call_havoc_path_local_evidence(empty_first: bool) {
             Variable(70_020),
             std::slice::from_ref(&range),
             context,
+            None,
         )
     };
     let load = |memory: &CMemory| {
@@ -1061,11 +1062,13 @@ fn call_havoc_marker_identity_includes_symbolic_write_set() {
         Variable(70_000),
         std::slice::from_ref(&first_range),
         &PureFactContext::new(),
+        None,
     );
     let second = base.with_call_memory_havoc(
         Variable(70_000),
         std::slice::from_ref(&second_range),
         &PureFactContext::new(),
+        None,
     );
     assert_ne!(
         first, second,
@@ -1161,6 +1164,7 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
         Variable(3),
         &[memory_range(arc_pointer(8), 0, 8)],
         &PureFactContext::new(),
+        None,
     );
     assert!(
         !memories_match_for_pointer_load_under_assumptions(
@@ -1310,6 +1314,7 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
             Variable(variable),
             &[memory_range(arc_pointer(8), 0, 8)],
             &PureFactContext::new(),
+            None,
         )
     };
     let (left, right) = (call_havoc(3), call_havoc(4));
@@ -1435,9 +1440,9 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
         memory_range(data.offset_by_int32_elements(len), 0, 2),
     ];
     let base = CMemory::new().with_block("arg-memory", 64);
-    let called = base
-        .clone()
-        .with_call_memory_havoc(Variable(204), &mutable_ranges, &assumptions);
+    let called =
+        base.clone()
+            .with_call_memory_havoc(Variable(204), &mutable_ranges, &assumptions, None);
     let load = |memory: &CMemory| {
         Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory_ref(memory),
@@ -1700,6 +1705,7 @@ fn sibling_materialization_cells_must_not_launder_a_havoc() {
             Bitvector32Term::Constant(1),
         )],
         &PureFactContext::new(),
+        None,
     );
 
     assert!(
@@ -1964,6 +1970,7 @@ fn a_retained_cell_keeps_its_load_variable_across_a_call_havoc() {
         Variable(88_100),
         std::slice::from_ref(&written),
         &separated,
+        None,
     );
     assert!(
         retained.cells.contains_key(&cell),
@@ -1983,6 +1990,7 @@ fn a_retained_cell_keeps_its_load_variable_across_a_call_havoc() {
         Variable(88_101),
         std::slice::from_ref(&written),
         &PureFactContext::new(),
+        None,
     );
     assert!(!forgotten.cells.contains_key(&cell));
     assert_ne!(
@@ -2543,7 +2551,7 @@ fn a_retirement_inside_its_calls_havoc_names_cells_at_the_call() {
         CMemory::new()
             .with_heap_allocation_claim(data.clone(), Bitvector32Term::Constant(4))
             .expect("a fresh claim")
-            .with_call_memory_havoc(Variable(variable), &ranges, &assumptions)
+            .with_call_memory_havoc(Variable(variable), &ranges, &assumptions, None)
     };
 
     let called = havoc(213);

@@ -129,6 +129,9 @@ pub(in crate::kernel) enum MemoryDagAssumptionKind {
     StoreGeneralDistinctness,
     HeapFreeResourceSeparation,
     CallHavocRangeSeparation,
+    /// A cell held by memory the caller kept owning across the call
+    /// (`CMemoryDerivation::CallHavoc::kept_by_caller`).
+    CallHavocKeptByCaller,
     LoopHavocRangeSeparation,
 }
 

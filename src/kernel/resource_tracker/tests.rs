@@ -177,7 +177,7 @@ fn a_call_havoc_carries_a_cell_outside_its_write_set_only() {
     let after =
         entry
             .clone()
-            .with_call_memory_havoc(Variable(901), &ranges, &PureFactContext::new());
+            .with_call_memory_havoc(Variable(901), &ranges, &PureFactContext::new(), None);
     let outside = at(block("global:h"), 0);
     assert_eq!(
         same(
@@ -225,7 +225,7 @@ fn a_call_havoc_carries_a_block_outside_its_write_set_only() {
     let after =
         entry
             .clone()
-            .with_call_memory_havoc(Variable(903), &ranges, &PureFactContext::new());
+            .with_call_memory_havoc(Variable(903), &ranges, &PureFactContext::new(), None);
     assert_eq!(
         same(
             Resource::Block(&block("global:h")),

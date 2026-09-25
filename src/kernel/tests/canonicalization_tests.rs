@@ -876,6 +876,7 @@ fn load_variables_are_congruent_through_ground_index_equalities() {
                 Bitvector32Term::Constant(1),
             )],
             &PureFactContext::new(),
+            None,
         ));
     let other_epoch_load = crate::kernel::eval::canonical_term(&Bitvector32Term::MemoryLoad(
         other_epoch,

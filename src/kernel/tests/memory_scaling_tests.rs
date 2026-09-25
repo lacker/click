@@ -363,9 +363,12 @@ fn one_call_havoc_and_its_check_are_logarithmic_in_unrelated_allocations() {
         let ranges = [target_range()];
         let assumptions = PureFactContext::new();
         let (havocked, work) = crate::instrumentation::measure_deterministic_work(|| {
-            memory
-                .clone()
-                .with_call_memory_havoc(Variable(TARGET_HEAP + 1), &ranges, &assumptions)
+            memory.clone().with_call_memory_havoc(
+                Variable(TARGET_HEAP + 1),
+                &ranges,
+                &assumptions,
+                None,
+            )
         });
         assert_eq!(
             havocked.cells.len(),
@@ -374,7 +377,7 @@ fn one_call_havoc_and_its_check_are_logarithmic_in_unrelated_allocations() {
         );
         produced.push((size, work));
         let (matches, work) = crate::instrumentation::measure_deterministic_work(|| {
-            havocked.matches_call_memory_havoc_result(&memory, &ranges, &assumptions)
+            havocked.matches_call_memory_havoc_result(&memory, &ranges, &assumptions, None)
         });
         assert!(matches, "the checker accepts the producer's result");
         checked.push((size, work));
@@ -674,6 +677,7 @@ fn consecutive_reallocating_calls_cost_the_same_each() {
                         Variable(variables + 5_000 + call as u64),
                         &ranges,
                         &assumptions,
+                        None,
                     )
                     .retire_contract_heap_allocation_claim(&data(call), &bytes, &assumptions)
                     .with_heap_allocation_claim(data(call + 1), bytes.clone())
@@ -924,4 +928,179 @@ fn condition_fact_queries_ignore_unrelated_facts() {
             .all(|(_, visits)| *visits == samples[0].1 && *visits <= 8),
         "condition-fact queries visited unrelated facts: {samples:?}"
     );
+}
+
+/// An object reached through a parameter: every such object shares the
+/// `ExternalArgument` block and differs by a symbolic base, as the arena's
+/// descriptors do, so no block distinctness separates them.
+fn external_object(identity: u64) -> Pointer {
+    Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(identity)), 4),
+    }
+}
+
+fn external_field(identity: u64, bytes: i64) -> Pointer {
+    Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Add(
+            Box::new(external_object(identity).offset),
+            Box::new(PointerOffsetTerm::Constant(bytes)),
+        ),
+    }
+}
+
+fn external_range(identity: u64, start: u32, end: u32) -> CMemoryRange {
+    CMemoryRange::new(
+        external_object(identity),
+        Bitvector32Term::Constant(start),
+        Bitvector32Term::Constant(end),
+    )
+}
+
+/// A call havoc finds the residual member that holds a cell through one
+/// lookup of the cell's base in the residual's base index: the unrelated
+/// ranges the caller also keeps add no work, to the producer or to its
+/// checker.
+#[test]
+fn a_call_kept_cell_is_placed_without_visiting_unrelated_residual_members() {
+    const KEPT: u64 = 2_000_000;
+    const LENT: u64 = 3_000_000;
+    let mut produced = Vec::new();
+    let mut checked = Vec::new();
+    for size in HEAP_SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let residual = ResourceContext::new().unchecked_with_facts(
+            (0..size)
+                .map(|index| CResourceFact::own_memory(external_range(index as u64 + 1, 0, 4)))
+                .chain([CResourceFact::own_memory(external_range(KEPT, 0, 4))]),
+        );
+        let assumptions = PureFactContext::new();
+        let kept = CallKeptOwnership::new(
+            residual,
+            CallKeptRanges::new(ResourceContext::new(), Vec::new()),
+            &assumptions,
+        );
+        let memory = CMemory::new().store(
+            external_field(KEPT, 8),
+            CValue::Int32(Bitvector32Term::Constant(5)),
+        );
+        // The callee's footprint shares the parameters' block, so the
+        // separation rule cannot keep the cell on its own.
+        let ranges = [external_range(LENT, 0, 16)];
+        let (havocked, work) = crate::instrumentation::measure_deterministic_work(|| {
+            memory.clone().with_call_memory_havoc(
+                Variable(LENT + 1),
+                &ranges,
+                &assumptions,
+                Some(&kept),
+            )
+        });
+        // The cached value goes, as for any cell in the footprint's block;
+        // the edge records the member that holds it, which is what names a
+        // later load of it across the call.
+        assert!(!havocked.has_known_cell_at(&external_field(KEPT, 8)));
+        assert!(
+            CallKeptRanges::recorded_on(&havocked).is_some_and(|kept| kept.holds_access(
+                &external_field(KEPT, 8),
+                4,
+                &assumptions
+            )),
+            "the residual member that holds the cell is recorded on the edge"
+        );
+        produced.push((size, work));
+        let (matches, work) = crate::instrumentation::measure_deterministic_work(|| {
+            havocked.matches_call_memory_havoc_result(&memory, &ranges, &assumptions, Some(&kept))
+        });
+        assert!(matches, "the checker re-derives the kept cell");
+        checked.push((size, work));
+        let dropped =
+            memory
+                .clone()
+                .with_call_memory_havoc(Variable(LENT + 1), &ranges, &assumptions, None);
+        assert!(
+            CallKeptRanges::recorded_on(&dropped).is_none(),
+            "without the residual nothing is recorded as kept"
+        );
+    }
+    assert_constant_plus_log_growth("a call havoc keeping a residual cell", &produced, 16.0);
+    assert_constant_plus_log_growth(
+        "checking a call havoc keeping a residual cell",
+        &checked,
+        16.0,
+    );
+}
+
+/// Placing a cell in a range an opened residual instance holds assumes that
+/// instance's own facts, the premises that relate its fields to its cells: the
+/// work is linear in the instance's body and nothing else.
+#[test]
+fn a_call_kept_instance_range_is_placed_in_work_linear_in_its_body() {
+    const REGION: u64 = 4_000_000;
+    const DATA: u64 = 4_100_000;
+    const START_FIELD: u64 = 4_200_000;
+    const START_LOAD: u64 = 4_300_000;
+    let mut samples = Vec::new();
+    for size in HEAP_SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let data = |index: Bitvector32Term| Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Add(
+                Box::new(external_object(DATA).offset),
+                Box::new(PointerOffsetTerm::scale_int32(index, 4)),
+            ),
+        };
+        // `data[start..start + 1]`, spelled through the instance's field.
+        let range = CMemoryRange::new(
+            external_object(DATA),
+            Bitvector32Term::Variable(Variable(START_FIELD)),
+            Bitvector32Term::add(
+                Bitvector32Term::Variable(Variable(START_FIELD)),
+                Bitvector32Term::Constant(1),
+            ),
+        );
+        // The body facts: `region->start == start` and `size` unrelated ones.
+        let premises = std::iter::once((
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(Variable(START_LOAD))),
+                Box::new(Bitvector32Term::Variable(Variable(START_FIELD))),
+            ),
+            true,
+        ))
+        .chain((0..size).map(|index| {
+            (
+                ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Variable(Variable(REGION + 1 + index as u64)),
+                ),
+                true,
+            )
+        }))
+        .collect();
+        let kept = CallKeptRanges::new(
+            ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(range)),
+            premises,
+        );
+        let assumptions = PureFactContext::new();
+        let cell = data(Bitvector32Term::Variable(Variable(START_LOAD)));
+        let (held, work) = crate::instrumentation::measure_deterministic_work(|| {
+            kept.holds_access(&cell, 4, &assumptions)
+        });
+        assert!(held, "the premise places the cell in the kept range");
+        let (outside, _) = crate::instrumentation::measure_deterministic_work(|| {
+            kept.holds_access(&external_field(REGION, 0), 4, &assumptions)
+        });
+        assert!(!outside, "a cell of another object is not held");
+        samples.push((size, work));
+    }
+    eprintln!("placing a cell in an opened residual range (N, units): {samples:?}");
+    for pair in samples.windows(2) {
+        let [(small, small_work), (large, large_work)] = pair else {
+            unreachable!()
+        };
+        assert!(
+            (*large_work as f64) <= 1.5 * (*large as f64 / *small as f64) * *small_work as f64,
+            "placement work grew faster than the instance body: {samples:?}"
+        );
+    }
 }

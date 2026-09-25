@@ -1012,12 +1012,12 @@ fn modeled_pthread_indeterminate_handle(
         8,
     );
     let marker = budget.allocate_kernel_variable()?;
-    state.set_memory(
-        state
-            .memory
-            .clone()
-            .with_call_memory_havoc(marker, &[range], assumptions),
-    );
+    state.set_memory(state.memory.clone().with_call_memory_havoc(
+        marker,
+        &[range],
+        assumptions,
+        None,
+    ));
     if let Some(name) = state.locals.slots.get(slot).cloned() {
         let binding = state.locals.binding(&name).cloned();
         if let Some(

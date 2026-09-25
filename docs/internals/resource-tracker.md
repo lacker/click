@@ -205,7 +205,7 @@ established.
 | `HeapAllocated` | separate under the extended-bridging gate when the block differs | separate when the fresh object is proven distinct | separate: a stated footprint names objects that already existed, so the fresh one's bytes are in no range of it |
 | `LocalLifetimeEnded` | separate under the extended-bridging gate, on general distinctness | separate when the retired object is proven distinct | separate when the retired object is proven distinct from the object every range is in |
 | `HeapFreed` | separate on two separation ladders, both inside the extended-bridging gate | separate when the released allocation's object is proven distinct | separate when the released bytes miss every range |
-| `CallHavoc` | separate on range disjointness | separate when every declared range's object is proven distinct | separate when every declared range misses every range |
+| `CallHavoc` | separate on range disjointness, or when a range the caller kept owning holds the cell | separate when every declared range's object is proven distinct | separate when every declared range misses every range |
 | `LoopHavoc(Some)` | separate under the extended-bridging and explicit-check gates, and never on the naming path | separate when every declared range's object is proven distinct | separate when every declared range misses every range |
 | `LoopHavoc(None)` | never separate | never separate | never separate |
 
@@ -431,7 +431,7 @@ edge exists. Each decides the same abstract question as the matching arm of
 
 | Site | Class | Why it differs |
 | --- | --- | --- |
-| `call_havoc_keeps_cell` `src/kernel/primitives/memory_state.rs` | disagrees | For ordinary cells, keeps a cell only when plain `ranges_proven_disjoint_from_pointer` proves the declared write set cannot reach it. A local cell whose block has a differently spelled write-range base is retained only when the pointer-equality graph does not resolve that base to the cell; this catches assumed aliases while preserving direct same-block construction transitions. The rule's `CallHavoc` arm uses typed range evidence and the `_for_frame` expansion, which looks through composite definitions, so the two remain weaker in different cases. |
+| `call_havoc_keeps_cell` `src/kernel/primitives/memory_state.rs` | disagrees | For ordinary cells, keeps a cell when plain `ranges_proven_disjoint_from_pointer` proves the declared write set cannot reach it. A cell an owned member of what the caller keeps owning holds (`CallKeptOwnership`) is dropped from the cache too, and that member is recorded on the edge with the premises that place the cell in it, where the rule's `CallHavoc` arm reads it. A local cell whose block has a differently spelled write-range base is retained only when the pointer-equality graph does not resolve that base to the cell; this catches assumed aliases while preserving direct same-block construction transitions. The rule's `CallHavoc` arm uses typed range evidence and the `_for_frame` expansion, which looks through composite definitions, so the two remain weaker in different cases. |
 | `CMemory::with_call_memory_havoc`, `CMemory::matches_call_memory_havoc_result` | disagrees | The producer that applies a call's write set and the checker that re-derives what it would have written. Both now ask `call_havoc_keeps_cell`, so the retain rule is one function: the checker has to stay identical to the producer, not to the rule, and sharing the function is what makes that structural instead of remembered. |
 | `loan_preserving_havoc_keeps_cell` | disagrees | Preserved-block membership **or** bytes `LoanLedger::permits_memory_access` refuses a write through. An ownership question, with fail-open polarity, and no pointer-alias reasoning at all — a loop body or a joined branch arm may write through any pointer it can reach, so separation has nothing to decide. The width it asks the ledger about is the wider of the cell's value and the widest typed overlay recorded there (`union_overlay_widths`), and an unknown width fails closed. |
 | `CMemory::with_loop_memory_havoc_preserving_loans`, `CMemory::with_interface_memory_havoc_preserving_loans` | disagrees | The loop head and the interface join, which both ask `loan_preserving_havoc_keeps_cell`. Neither records an edge, so no rule covers either; what used to be the same retain written twice is now one function asked twice. |
@@ -1193,6 +1193,46 @@ permitted stores or a transition that drops the fact:
   (`mdtests/loop_keeps_cells_the_function_keeps_owning.md`,
   `mdtests/loop_body_cannot_write_function_owned_cells.md`). The kept cells
   are found through the kept context's base index, one lookup per cell.
+- A call is the same argument at a call boundary. The callee's footprint
+  over-approximates what it owns, so a cell an owned member of the caller's
+  *residual* context holds keeps its value across the call: what the caller keeps
+  once the call's consumed and borrowed resources are transferred
+  (`CallKeptOwnership` in `src/kernel/primitives/memory_state.rs`, built by
+  `call_kept_ownership` in `src/kernel/functions.rs`). At the call the
+  transferred and residual resources form one valid composition, and owned
+  memory is exclusive, so a byte an owned residual member holds is disjoint
+  from every byte the callee can own, and a callee writes only what it owns.
+  A residual field-bearing instance is opened one layer, as `unfold` opens
+  it: its unconditional, unmatched body's owned memory, with field-free
+  composites expanded, and its own facts, which become the premises that
+  place a cell spelled through the instance's cells (`region->start`) in a
+  range spelled through its fields. A residual folded composite is
+  expanded. Only exactly held bytes count: a residual *view* keeps nothing
+  (the callee may hold its owner), an iterated clause in an opened body is
+  skipped rather than counted at its span, a nested instance is not opened
+  again, and an instance that cannot be opened (a matched body, decided or
+  not, a guarded, recursive or witness-bearing one) keeps nothing, so this
+  rule does not widen the open gap above. Flat residual members are found
+  through the residual's base index, one lookup per cell; opened ranges
+  through theirs, then among the opened ranges of the cell's block when a
+  reloaded base is proven equal to the opened one. The opening costs one
+  evaluation of each residual instance's own body per call.
+  The producer (`CMemory::with_call_memory_havoc`) and its checker
+  (`CMemory::matches_call_memory_havoc_result`) ask the same
+  `call_havoc_keeps_cell`; the havoc still drops such a cell's cached value,
+  and records the kept ranges and premises on the edge (`CallKeptRanges`),
+  which the write-set marker spells, so a snapshot is shared only by paths
+  that kept the same memory. The rule's `CallHavoc` arm and the
+  effect-summary route
+  (`memory_snapshots_directly_proven_equal_for_memory_resolution`) read those
+  ranges and name a cell they hold across the call at its pre-call value.
+  Retaining the cached values instead made later loads of the block compare
+  against more cached cells, and the arena pipeline's load resolution ran
+  past its time limit
+  (`mdtests/call_keeps_caller_object_beside_folded_state.md`,
+  `mdtests/call_keeps_region_beside_folded_arena_state.md`,
+  `mdtests/call_havocs_cell_the_caller_only_views.md`,
+  `mdtests/call_havocs_cell_of_unopened_residual_instance.md`).
 
 ### Queries
 

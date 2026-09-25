@@ -2701,10 +2701,20 @@ fn execute_verified_function_applications_with_suspension(
         let memory = if transfer.memory_effects.is_empty() {
             entry_state.memory.clone()
         } else {
+            // The caller keeps its residual resources outside the transfer,
+            // and the callee writes only memory it owns, so the havoc keeps
+            // every cell an owned residual member holds.
+            let kept = call_kept_ownership(
+                &transfer.caller_resources_after_requirements,
+                interface.composite_resource_definitions(),
+                &entry_state,
+                &effective_assumptions,
+            );
             entry_state.memory.clone().with_call_memory_havoc(
                 memory_identity,
                 &transfer.memory_effects,
                 &effective_assumptions,
+                Some(&kept),
             )
         };
         // A recognized byte-copy declaration transfers initialized typed
@@ -4753,6 +4763,7 @@ pub(super) fn prepare_contract_refinement_obligations(
         budget.allocate_kernel_variable().ok()?,
         &ranges,
         &assumptions,
+        None,
     );
     let result = symbolic_call_result(source.return_type(), context.result_variable);
     let mut post = entry.clone().with_memory(memory.clone());
@@ -5305,6 +5316,7 @@ fn function_refines_named_contract_in_case(
             memory_variable,
             &mutable_ranges,
             &preconditions,
+            None,
         )
     };
     let result = symbolic_contract_result(function_interface, context.result_variable);
@@ -5653,6 +5665,188 @@ pub(super) fn checked_owned_memory_ranges(
     let mut ranges = Vec::new();
     collect_checked_owned_memory_ranges(fact, definitions, state, assumptions, 0, &mut ranges)?;
     Some(ranges)
+}
+
+/// What a caller keeps owning across a call whose resource transfer left it
+/// `residual`: the residual itself, whose flat owned members the havoc finds
+/// through its base index, and the owned memory of each owned residual
+/// instance and folded composite, opened one body layer at `state` exactly as
+/// `unfold` opens it, with composites in that body expanded.
+///
+/// Only exactly held bytes count. An iterated fact in an opened body is
+/// skipped rather than counted at its span, a nested instance is not opened
+/// again, views never count, and an instance this layer cannot open --
+/// a matched body whose arm is not decided, a recursive or witness-bearing
+/// body -- contributes nothing, so the rule never keeps a cell on the
+/// strength of a body it could not read. The opening is paid once per call,
+/// one unit per visited residual instance or composite and its body.
+pub(super) fn call_kept_ownership(
+    residual: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> CallKeptOwnership {
+    let mut ranges = Vec::new();
+    let mut premises = Vec::new();
+    for fact in residual.owned_instances_and_composites() {
+        match fact.resource() {
+            CResource::Instance(_) => {
+                if let Some((body_ranges, body_premises)) =
+                    unmatched_instance_body_ownership(fact, definitions, state, assumptions)
+                {
+                    ranges.extend(body_ranges);
+                    premises.extend(body_premises);
+                }
+            }
+            CResource::Composite { .. } => {
+                let Some(expanded) = expand_all_composite_resource_facts(
+                    &ResourceContext::new().unchecked_with_fact(fact.clone()),
+                    definitions,
+                    state.memory(),
+                    assumptions,
+                ) else {
+                    continue;
+                };
+                ranges.extend(owned_memory_ranges_of(&expanded));
+            }
+            _ => {}
+        }
+    }
+    CallKeptOwnership::new(
+        residual.clone(),
+        CallKeptRanges::new(
+            ResourceContext::new()
+                .unchecked_with_facts(ranges.into_iter().map(CResourceFact::own_memory)),
+            premises,
+        ),
+        assumptions,
+    )
+}
+
+/// The owned memory ranges `context` holds directly, charged one unit each.
+fn owned_memory_ranges_of(context: &ResourceContext) -> Vec<CMemoryRange> {
+    context
+        .facts()
+        .iter()
+        .filter(|fact| {
+            crate::instrumentation::record_deterministic_work(1);
+            fact.is_own()
+        })
+        .filter_map(|fact| Some(canonical_memory_range(fact.memory_own_range()?.clone())))
+        .collect()
+}
+
+/// The memory an owned field-bearing instance's unconditional, unmatched
+/// body owns, one layer deep, evaluated at `state` with the instance's own
+/// fields and arguments as [`unmatched_instance_body_views`] evaluates it,
+/// with the body's field-free composites expanded, and the body's own facts
+/// as condition premises. Unlike those views this counts only what the body
+/// *owns*: a `views` clause, an iterated clause (whose span over-approximates
+/// what it holds) and a nested instance contribute nothing. A matched,
+/// guarded or witness-bearing body, or one whose clauses or facts cannot be
+/// evaluated here, contributes nothing at all.
+fn unmatched_instance_body_ownership(
+    fact: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> Option<(Vec<CMemoryRange>, Vec<(ConditionTerm, bool)>)> {
+    crate::instrumentation::record_deterministic_work(1);
+    let CResource::Instance(instance) = fact.resource() else {
+        return None;
+    };
+    let index = definitions
+        .binary_search_by(|definition| definition.name().cmp(instance.name()))
+        .ok()?;
+    let definition = &definitions[index];
+    if definition.matched.is_some()
+        || definition.condition.is_some()
+        || !definition.witnesses.is_empty()
+        || definition.contains.is_empty()
+    {
+        return None;
+    }
+    let evaluation = instance_body_evaluation(state, instance, definition).ok()?;
+    let evaluation_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    let mut budget = ExecutionBudget::beside_live_state();
+    let Ok(Ok(body_resources)) = evaluate_function_resource_context_with_normalization(
+        &evaluation,
+        &definition.contains,
+        &[],
+        &evaluation_assumptions,
+        &mut budget,
+        false,
+    ) else {
+        return None;
+    };
+    let body_resources = body_resources.0;
+    let expanded = if body_resources
+        .facts()
+        .iter()
+        .any(|fact| matches!(fact.resource(), CResource::Composite { .. }))
+    {
+        expand_all_composite_resource_facts(
+            &body_resources,
+            definitions,
+            evaluation.memory(),
+            &evaluation_assumptions,
+        )?
+    } else {
+        body_resources.clone()
+    };
+    // The facts read the body's own cells, as an unfold reads them: with the
+    // body as the evaluation's resources and its observable facts assumed.
+    let mut body_facts = body_resources.observable_facts_assuming_valid(assumptions);
+    for fact in body_resources.facts() {
+        let Some(range) = fact.memory_range() else {
+            continue;
+        };
+        body_facts.extend(crate::kernel::memory_range_extent_guard_spellings(range));
+        let width = range.element_width();
+        body_facts.push(Proposition::CMemoryLoadable {
+            memory: state.memory.clone(),
+            base: range
+                .base()
+                .offset_by_elements(range.start().clone(), width),
+            bytes: Bitvector32Term::multiply(
+                Bitvector32Term::subtract(range.end().clone(), range.start().clone()),
+                Bitvector32Term::Constant(width),
+            ),
+        });
+    }
+    body_facts.push(Proposition::CResourceComposition(body_resources.clone()));
+    let fact_assumptions = body_facts
+        .into_iter()
+        .fold(evaluation_assumptions, |facts, fact| {
+            facts.assume_proposition(fact)
+        });
+    let mut fact_evaluation = evaluation;
+    fact_evaluation.resources = body_resources;
+    let (clauses, _) = lower_selected_resource_body_clauses(
+        &fact_evaluation,
+        &definition.facts,
+        None,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &fact_assumptions,
+        None,
+        &mut budget,
+    )
+    .ok()?;
+    let premises = clauses
+        .into_iter()
+        .filter_map(|clause| match clause.proposition {
+            Proposition::ConditionIs(condition, value) => {
+                crate::instrumentation::record_deterministic_work(1);
+                Some((condition, value))
+            }
+            _ => None,
+        })
+        .collect();
+    Some((owned_memory_ranges_of(&expanded), premises))
 }
 
 /// How many field-bearing instance layers one footprint derivation opens.

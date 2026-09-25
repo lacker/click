@@ -381,23 +381,14 @@ and every other cell unchanged. What is still open is the per-cell pipeline
 and the frees out of allocation order it exists for; the prefix sidecars stay
 until it verifies.
 
-The pipeline is blocked by the call rule, not by the arena proofs. A call
-havocs the callee's footprint and keeps a caller cell only when a fact
-proves it apart from that footprint. Every pipeline call passes the folded
-`arena_state`, whose footprint spans the whole data buffer, and the caller's
-region descriptors and the other regions' data cells are proved apart from
-nothing, so the second `arena_write` loses the value written through `first`
-and each allocation and free loses the descriptors' fields. The caller keeps
-all of them outside the transfer, so the callee cannot write them; the rule
-does not use that partition even for a folded field-free composite beside a
-separately owned object
-(`mdtests/call_keeps_caller_object_beside_folded_state_frontier.md`, with the
-flat control `mdtests/call_keeps_caller_object_beside_flat_ranges.md`). The
-fix is the call counterpart of the loop rule above: the call havoc, its
-structural checker, and the memory-DAG hop across the call must keep a cell
-the caller's residual resources hold, opening a residual field-bearing
-instance one body layer so a region's descriptor and data range count. The
-first-fit acceptance fixture waits on the same fix. First fit itself is not
+The call rule that blocked the pipeline is fixed: a call havoc keeps a cell
+an owned member of the caller's residual resources holds, opening a residual
+field-bearing instance one body layer, so the pipeline's region descriptors
+and the other regions' data survive a call that lends the folded
+`arena_state` (`mdtests/call_keeps_caller_object_beside_folded_state.md`,
+`mdtests/call_keeps_region_beside_folded_arena_state.md`, with the flat
+control `mdtests/call_keeps_caller_object_beside_flat_ranges.md`). The
+first-fit acceptance fixture waits on the per-cell pipeline. First fit itself is not
 stated either: the scan would need an existential invariant (every earlier
 window of `count` cells contains an occupied cell); without it a caller can
 still show a same-size allocation reuses a freed middle region when the hole

@@ -161,6 +161,7 @@ fn call_havoc_preserves_initialization_of_a_heap_scalar() {
                 Variable(901),
                 &[range],
                 &PureFactContext::new(),
+                None,
             ));
     assert!(after_call.memory().is_uninitialized_heap_address(
         pointer.pointer(),
@@ -228,7 +229,8 @@ fn naming_an_initialized_heap_cell_preserves_its_initialization() {
         Bitvector32Term::Constant(1),
         4,
     );
-    let havoc = stored.with_call_memory_havoc(Variable(902), &[range], &PureFactContext::new());
+    let havoc =
+        stored.with_call_memory_havoc(Variable(902), &[range], &PureFactContext::new(), None);
     assert!(!havoc.has_known_cell_at(&address));
     let name = canonical_form_of_load(intern_c_memory(havoc.clone()), address.clone());
     let named = havoc

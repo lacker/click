@@ -146,13 +146,12 @@ its cells (`mdtests/loop_keeps_cells_the_function_keeps_owning.md`).
 What the per-cell sidecar does not yet verify is the pipeline; the prefix
 model below keeps verifying it. Every call in the pipeline passes the folded
 `arena_state`, and a call havocs the callee's footprint, here the whole data
-buffer through the iterated clause, keeping a caller cell only when a fact
-proves it apart. The caller keeps its region descriptors and the other
-regions' data outside the transfer, so the callee cannot write them, but the
-call rule does not use that partition: after the second `arena_write` the
-value written through `first` is gone, and so are the descriptors' fields
-after each allocation and free. The reduced gap is
-`mdtests/call_keeps_caller_object_beside_folded_state_frontier.md`.
+buffer through the iterated clause. The caller keeps its region descriptors
+and the other regions' data outside the transfer, so the callee cannot write
+them, and the call rule now keeps a cell an owned member of the caller's
+residual resources holds, opening a residual `arena_region` one layer
+(`mdtests/call_keeps_caller_object_beside_folded_state.md`,
+`mdtests/call_keeps_region_beside_folded_arena_state.md`).
 
 ## Sidecar layout
 

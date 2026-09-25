@@ -1,6 +1,6 @@
 # A call keeps a caller object its flat ranges are separate from
 
-The control for `call_keeps_caller_object_beside_folded_state_frontier.md`.
+The flat counterpart of `call_keeps_caller_object_beside_folded_state.md`.
 The caller owns `flags[0..n]`, `data[0..n]`, and `object(b)` directly and
 lends the two ranges to `touch`. Its composition holds each as its own
 member, so the call's havoc keeps `b->v` and `result == 5` verifies.

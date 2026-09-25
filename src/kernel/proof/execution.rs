@@ -2476,8 +2476,12 @@ fn memory_diff_is_covered_by_ranges(
     mutable_ranges: &[CMemoryRange],
     assumptions: &PureFactContext,
 ) -> bool {
-    let erased_cells_are_call_havoc_bookkeeping =
-        after.matches_call_memory_havoc_result(before, mutable_ranges, assumptions);
+    let erased_cells_are_call_havoc_bookkeeping = after.matches_call_memory_havoc_result(
+        before,
+        mutable_ranges,
+        assumptions,
+        crate::kernel::primitives::CallKeptOwnership::recorded_on(after, assumptions).as_ref(),
+    );
     if erased_cells_are_call_havoc_bookkeeping {
         return true;
     }
@@ -7985,6 +7989,7 @@ mod tests {
                 crate::kernel::Variable(700),
                 std::slice::from_ref(&range),
                 &assumptions,
+                None,
             ));
         let theorem = Theorem::new(Proposition::CStatementVerifies {
             state: before.clone(),
@@ -8009,6 +8014,7 @@ mod tests {
             crate::kernel::Variable(701),
             std::slice::from_ref(&range),
             &assumptions,
+            None,
         );
         let unrelated = CheckedCallEvent::new(crate::kernel::intern_c_memory(unrelated));
         assert_eq!(

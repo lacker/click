@@ -1967,6 +1967,36 @@ impl ResourceContext {
         });
     }
 
+    /// The owned field-bearing instances and folded composites of this
+    /// context, drawn from the instance and shape indexes rather than a scan
+    /// of every fact: flat memory, tokens, iterated facts and views are never
+    /// visited. Charges one work unit per visited fact.
+    pub(in crate::kernel) fn owned_instances_and_composites<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = &'a CResourceFact> + 'a {
+        let composites = self
+            .storage
+            .index
+            .exact_shapes
+            .iter()
+            .skip_while(|((family, _, _), _)| *family < ResourceFamily::Composite)
+            .take_while(|((family, _, _), _)| *family == ResourceFamily::Composite)
+            .flat_map(|(_, entries)| entries.iter());
+        let instances = self
+            .storage
+            .index
+            .instances
+            .iter()
+            .flat_map(|(_, entries)| entries.iter());
+        composites
+            .chain(instances)
+            .map(|entry| {
+                crate::instrumentation::record_deterministic_work(1);
+                self.fact(*entry)
+            })
+            .filter(|fact| fact.is_own())
+    }
+
     /// The facts `CResourceFact::may_refer_to_memory_block` selects for
     /// `block`, drawn from the indexes instead of a scan: the memory facts
     /// based in the block, then the composite facts with a pointer argument
@@ -2781,6 +2811,25 @@ impl ResourceContext {
                         && resource_fact_entails(self.fact(*right_entry), &right_view, assumptions)
                 })
         })
+    }
+
+    /// The owned memory members of this composition based in `block`, by the
+    /// block index. Charges one work unit per visited member.
+    pub(in crate::kernel) fn owned_memory_members_in_block<'a>(
+        &'a self,
+        block: &PointerBlock,
+    ) -> impl Iterator<Item = &'a CMemoryRange> + 'a {
+        crate::instrumentation::record_deterministic_work(1);
+        self.storage
+            .index
+            .owned_memory_by_block
+            .get(block)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter_map(|entry| {
+                crate::instrumentation::record_deterministic_work(1);
+                self.fact(*entry).memory_own_range()
+            })
     }
 
     /// The owned memory fact of this composition that structurally contains

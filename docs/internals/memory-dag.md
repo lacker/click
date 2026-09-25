@@ -87,7 +87,7 @@ kinds:
 | --- | --- |
 | `Store` | One pointer was assigned a value. No fact context is recorded on the edge. |
 | `LoopHavoc` | A loop may have changed memory; verified whole-loop effects carry a checked write set. |
-| `CallHavoc` | A call may have changed the callee's owned ranges. |
+| `CallHavoc` | A call may have changed the callee's owned ranges, and none of the memory its caller kept owning. |
 | `BlockDeclared` | A new non-havoc block entered the memory model. |
 | `CellsForgotten` | Possibly aliasing cached cells were discarded on a write path, or cells the loaded pointer is separate from were discarded on a read path. |
 | `HeapAllocationPending` | An allocation request has an unresolved base and extent but no successful storage yet. |
@@ -186,7 +186,12 @@ unchanged store. In particular:
   one edge, and one path's `length == 0` must not preserve another path's
   load;
 - a `CallHavoc` edge is crossed only with sufficient range-disjointness
-  evidence, likewise checked in the querying context;
+  evidence, likewise checked in the querying context, or when a range the
+  caller kept owning outside the transfer holds the cell. Those ranges, and
+  the facts of the residual instances they were opened from, are the edge's
+  own, and the write-set marker spells them, so every path that shares the
+  edge kept the same memory; placing the cell inside one is still decided
+  in the querying context;
 - a `LoopHavoc` edge with no checked footprint isn't crossed; a verified
   footprint is crossed only with range-disjointness evidence;
 - allocation and free preserve unrelated locations but don't preserve a load

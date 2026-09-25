@@ -1166,10 +1166,97 @@ impl PureFactContext {
         pointer: &Pointer,
         bytes: u32,
     ) -> bool {
-        additive_base_spellings(pointer).iter().any(|base| {
+        self.owned_member_holding_access(resources, pointer, bytes)
+            .is_some()
+    }
+
+    /// The owned memory member of `resources` that holds every byte of an
+    /// access of `bytes` at `pointer`, as [`Self::access_held_by_owned_member`]
+    /// finds it.
+    pub(in crate::kernel) fn owned_member_holding_access<'a>(
+        &self,
+        resources: &'a ResourceContext,
+        pointer: &Pointer,
+        bytes: u32,
+    ) -> Option<&'a CMemoryRange> {
+        additive_base_spellings(pointer).iter().find_map(|base| {
             resources
                 .owned_memory_members_with_base(base)
-                .any(|(_, range)| self.access_within_memory_range(pointer, bytes, range))
+                .find(|(_, range)| self.access_within_memory_range(pointer, bytes, range))
+                .map(|(_, range)| range)
+        })
+    }
+
+    /// The range of `ranges` -- memory a caller kept owning across a call --
+    /// that holds every byte of an access of `bytes` at `pointer`.
+    ///
+    /// Candidates are found without placing anything: the ranges based at one
+    /// of the access's additive base spellings, through the base index, and
+    /// the ranges of the access's block whose base this context proves equal
+    /// to one of those spellings (a pointer field reloaded after a call and
+    /// proven equal to its value before). Only when there is a candidate is
+    /// the placement context built, by `placement`, which may add premises
+    /// (the kept instance bodies' own facts) to this context; the endpoints
+    /// are then proved under it. Work is the access's spellings and the kept
+    /// ranges of its block, never the caller's context.
+    pub(in crate::kernel) fn kept_range_holding_access<'a>(
+        &self,
+        ranges: &'a ResourceContext,
+        placement: impl FnOnce() -> Option<PureFactContext>,
+        pointer: &Pointer,
+        bytes: u32,
+    ) -> Option<&'a CMemoryRange> {
+        let spellings = additive_base_spellings(pointer);
+        let mut candidates = Vec::new();
+        for base in &spellings {
+            candidates.extend(
+                ranges
+                    .owned_memory_members_with_base(base)
+                    .map(|(_, range)| range),
+            );
+        }
+        for range in ranges.owned_memory_members_in_block(&pointer.block) {
+            if candidates.contains(&range) || spellings.contains(range.base()) {
+                continue;
+            }
+            if spellings.iter().any(|base| {
+                crate::kernel::reasoning::pointers_proven_equal_for_memory_resolution(
+                    base,
+                    range.base(),
+                    self,
+                )
+            }) {
+                candidates.push(range);
+            }
+        }
+        if candidates.is_empty() {
+            return None;
+        }
+        let placement = placement();
+        let context = placement.as_ref().unwrap_or(self);
+        candidates.into_iter().find(|range| {
+            let width = range.element_width();
+            if width == 0 {
+                return false;
+            }
+            if context.access_within_memory_range(pointer, bytes, range) {
+                return true;
+            }
+            let contains = |pointer: &Pointer| {
+                context.pointer_in_range_with_width(
+                    pointer,
+                    range.base(),
+                    range.start(),
+                    range.end(),
+                    width,
+                )
+            };
+            let elements = bytes.max(1).div_ceil(width);
+            contains(pointer)
+                && (elements == 1
+                    || contains(
+                        &pointer.offset_by_elements(Bitvector32Term::Constant(elements - 1), width),
+                    ))
         })
     }
 

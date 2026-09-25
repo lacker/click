@@ -35,6 +35,8 @@ pub(crate) use alias_candidates::{AliasCandidates, BlockKeyed};
 mod derivations;
 mod memory_state;
 mod persistent_map;
+pub(in crate::kernel) use memory_state::CallKeptOwnership;
+pub use memory_state::CallKeptRanges;
 pub(crate) use memory_state::{
     block_is_never_address_taken_local, clear_block_alignment_registry,
     clear_never_address_taken_locals, register_block_alignment, registered_block_alignment,
@@ -4435,10 +4437,18 @@ pub enum CMemoryDerivation {
     /// querying proof context. Two paths with different assumptions (for
     /// example `length == 0` and `length == 1`) can produce this exact
     /// snapshot, so no path's assumptions may be attached to the edge.
+    ///
+    /// `kept_by_caller` is the owned memory the caller kept outside the
+    /// transfer, when it held any: the one-layer bodies of its residual owned
+    /// instances and composites, and the flat residual members that kept a
+    /// cell. The callee cannot write a byte of it, since owned memory is a
+    /// partition at the call; the write-set marker spells these ranges, so
+    /// the edge is shared only by paths that kept the same memory.
     CallHavoc {
         base: SharedCMemory,
         variable: Variable,
         mutable_ranges: Vec<CMemoryRange>,
+        kept_by_caller: Option<CallKeptRanges>,
     },
 }
 

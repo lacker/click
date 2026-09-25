@@ -694,6 +694,7 @@ fn execution_provenance_matches_only_equivalent_call_havoc() {
             Variable(41),
             std::slice::from_ref(&first_range),
             &assumptions,
+            None,
         )),
     };
     let equivalent = CFunctionOutcome::Return {
@@ -702,6 +703,7 @@ fn execution_provenance_matches_only_equivalent_call_havoc() {
             Variable(42),
             std::slice::from_ref(&first_range),
             &assumptions,
+            None,
         )),
     };
     let different = CFunctionOutcome::Return {
@@ -710,6 +712,7 @@ fn execution_provenance_matches_only_equivalent_call_havoc() {
             Variable(43),
             &[other_range],
             &assumptions,
+            None,
         )),
     };
 

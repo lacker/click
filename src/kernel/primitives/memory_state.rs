@@ -118,17 +118,36 @@ fn havoc_range_identity(range: &CMemoryRange) -> String {
     // their contents are unconstrained; fixed tags delimit every other node.
     // Registered load variables normally form an acyclic generation history,
     // but encode an exact variable back-edge if a malformed cycle appears.
-    let mut identity = String::from("range(");
-    let mut tasks = vec![
-        HavocIdentityTask::Text(")"),
-        HavocIdentityTask::Bitvector(Bitvector32Term::Constant(range.element_width())),
-        HavocIdentityTask::Text(","),
-        HavocIdentityTask::Bitvector(range.end().clone()),
-        HavocIdentityTask::Text(","),
-        HavocIdentityTask::Bitvector(range.start().clone()),
-        HavocIdentityTask::Text(","),
-        HavocIdentityTask::Pointer(range.base().clone()),
-    ];
+    write_havoc_identity(
+        String::from("range("),
+        vec![
+            HavocIdentityTask::Text(")"),
+            HavocIdentityTask::Bitvector(Bitvector32Term::Constant(range.element_width())),
+            HavocIdentityTask::Text(","),
+            HavocIdentityTask::Bitvector(range.end().clone()),
+            HavocIdentityTask::Text(","),
+            HavocIdentityTask::Bitvector(range.start().clone()),
+            HavocIdentityTask::Text(","),
+            HavocIdentityTask::Pointer(range.base().clone()),
+        ],
+    )
+}
+
+/// The structural key of one condition premise, in the havoc identity
+/// encoding.
+fn havoc_condition_identity(condition: &ConditionTerm, value: bool) -> String {
+    write_havoc_identity(
+        format!("condition{value}("),
+        vec![
+            HavocIdentityTask::Text(")"),
+            HavocIdentityTask::Condition(condition.clone()),
+        ],
+    )
+}
+
+/// Runs the havoc identity encoding of `tasks` (a stack, last task first)
+/// onto `identity`.
+fn write_havoc_identity(mut identity: String, mut tasks: Vec<HavocIdentityTask>) -> String {
     let mut active_loads = BTreeSet::new();
     while let Some(task) = tasks.pop() {
         match task {
@@ -732,6 +751,7 @@ mod call_havoc_local_retention_tests {
             Variable(944_010),
             std::slice::from_ref(&unrelated_range),
             &PureFactContext::new(),
+            None,
         );
         assert_eq!(retained.known_value(&local), Some(value));
 
@@ -739,6 +759,7 @@ mod call_havoc_local_retention_tests {
             Variable(944_011),
             std::slice::from_ref(&assumed_alias_range),
             &assumptions,
+            None,
         );
         assert_eq!(
             havocked.known_value(&local),
@@ -749,6 +770,7 @@ mod call_havoc_local_retention_tests {
             &before,
             std::slice::from_ref(&assumed_alias_range),
             &assumptions,
+            None,
         ));
     }
 }
@@ -789,11 +811,13 @@ mod havoc_identity_tests {
             Variable(95_000),
             std::slice::from_ref(&first_range),
             &PureFactContext::new(),
+            None,
         );
         let second = before.clone().with_call_memory_havoc(
             Variable(95_000),
             std::slice::from_ref(&second_range),
             &PureFactContext::new(),
+            None,
         );
         assert_ne!(
             first, second,
@@ -803,11 +827,13 @@ mod havoc_identity_tests {
             &before,
             std::slice::from_ref(&first_range),
             &PureFactContext::new(),
+            None,
         ));
         assert!(!first.matches_call_memory_havoc_result(
             &before,
             std::slice::from_ref(&second_range),
             &PureFactContext::new(),
+            None,
         ));
     }
 
@@ -1403,6 +1429,194 @@ fn call_havoc_candidates(mutable_ranges: &[CMemoryRange]) -> AliasCandidates {
     AliasCandidates::of_blocks(mutable_ranges.iter().map(|range| &range.base().block))
 }
 
+/// What a caller keeps owning across one call: the residual resource context
+/// left once the call's consumed and borrowed resources are transferred, the
+/// owned memory of that residual's owned instances and folded composites,
+/// opened one body layer at the call's entry state, and the opened bodies'
+/// own facts, which place a cell spelled through the instance's cells (such
+/// as `region->start`) in a range spelled through its fields.
+///
+/// At the call the transferred and residual resources form one valid
+/// composition, and owned memory is exclusive, so a byte an owned residual
+/// member holds is disjoint from every byte the callee can own -- and a
+/// callee writes only what it owns. Such a cell keeps its value across the
+/// call whatever the callee's footprint (an over-approximation of what it
+/// owns) covers: the havoc drops its cached value as it drops every candidate
+/// cell, and records the member that holds it on the edge, which is what
+/// names a later load of the cell across the call at its pre-call value.
+/// Retaining the cached value in the map instead made every later load of the
+/// block compare against more cached cells, and the arena pipeline's load
+/// resolution then ran past its time limit. A residual *view* keeps nothing, since the callee may hold its
+/// owner, and a residual instance that cannot be opened contributes nothing.
+/// The body facts hold wherever the instance is held, which is here.
+#[derive(Clone, Debug)]
+pub(in crate::kernel) struct CallKeptOwnership {
+    residual: ResourceContext,
+    opened: CallKeptRanges,
+    placement: Option<PureFactContext>,
+}
+
+/// The kept memory a call havoc records on its edge: owned ranges, and the
+/// condition premises that place a cell in them. See
+/// [`CMemoryDerivation::CallHavoc`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallKeptRanges {
+    ranges: ResourceContext,
+    premises: Vec<(ConditionTerm, bool)>,
+}
+
+impl CallKeptRanges {
+    pub(in crate::kernel) fn new(
+        ranges: ResourceContext,
+        premises: Vec<(ConditionTerm, bool)>,
+    ) -> Self {
+        Self { ranges, premises }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.ranges.is_pristine_semantically_empty()
+    }
+
+    /// `assumptions` with the premises assumed, charged one unit each.
+    fn placement(&self, assumptions: &PureFactContext) -> Option<PureFactContext> {
+        if self.premises.is_empty() {
+            return None;
+        }
+        Some(
+            self.premises
+                .iter()
+                .fold(assumptions.clone(), |facts, (condition, value)| {
+                    crate::instrumentation::record_deterministic_work(1);
+                    facts.assume_proposition(Proposition::ConditionIs(condition.clone(), *value))
+                }),
+        )
+    }
+
+    /// The kept memory recorded on the call havoc edge that derived `after`,
+    /// if that edge is one: what a call's effect summary may keep beside its
+    /// declared write set.
+    pub(in crate::kernel) fn recorded_on(after: &CMemory) -> Option<Self> {
+        let derivation = crate::kernel::intern_c_memory_ref(after).derivation()?;
+        let CMemoryDerivation::CallHavoc {
+            kept_by_caller: Some(kept),
+            ..
+        } = &*derivation
+        else {
+            return None;
+        };
+        Some(kept.clone())
+    }
+
+    /// Whether one kept range holds every byte of the access, placed under
+    /// `assumptions` and the recorded premises
+    /// ([`PureFactContext::kept_range_holding_access`]).
+    pub(in crate::kernel) fn holds_access(
+        &self,
+        pointer: &Pointer,
+        bytes: u32,
+        assumptions: &PureFactContext,
+    ) -> bool {
+        self.range_holding(assumptions, None, pointer, bytes)
+            .is_some()
+    }
+
+    /// The kept range holding the access. `placement` is the premises already
+    /// assumed into `assumptions`, when the caller has built it once.
+    fn range_holding<'a>(
+        &'a self,
+        assumptions: &PureFactContext,
+        placement: Option<&PureFactContext>,
+        pointer: &Pointer,
+        bytes: u32,
+    ) -> Option<&'a CMemoryRange> {
+        match placement {
+            Some(placement) => {
+                placement.kept_range_holding_access(&self.ranges, || None, pointer, bytes)
+            }
+            None => assumptions.kept_range_holding_access(
+                &self.ranges,
+                || self.placement(assumptions),
+                pointer,
+                bytes,
+            ),
+        }
+    }
+
+    fn identity(&self) -> String {
+        let ranges = self
+            .ranges
+            .facts()
+            .iter()
+            .filter_map(|fact| fact.memory_own_range().cloned())
+            .collect::<Vec<_>>();
+        let mut identity = memory_havoc_write_set_identity(&ranges);
+        let mut premises = self
+            .premises
+            .iter()
+            .map(|(condition, value)| havoc_condition_identity(condition, *value))
+            .collect::<Vec<_>>();
+        premises.sort();
+        let _ = write!(identity, "premises:{};", premises.len());
+        for premise in premises {
+            let _ = write!(identity, "{}:", premise.len());
+            identity.push_str(&premise);
+        }
+        identity
+    }
+}
+
+impl CallKeptOwnership {
+    pub(in crate::kernel) fn new(
+        residual: ResourceContext,
+        opened: CallKeptRanges,
+        assumptions: &PureFactContext,
+    ) -> Self {
+        let placement = opened.placement(assumptions);
+        Self {
+            residual,
+            opened,
+            placement,
+        }
+    }
+
+    /// The kept ownership a call havoc recorded on the edge that derived
+    /// `after`, for a checker that re-derives that havoc without the caller's
+    /// resources: the recorded ranges and premises stand in for the opened
+    /// bodies. The write-set marker spells both, so a content-equal snapshot
+    /// whose edge was recorded first carries the same ones.
+    pub(in crate::kernel) fn recorded_on(
+        after: &CMemory,
+        assumptions: &PureFactContext,
+    ) -> Option<Self> {
+        let kept = CallKeptRanges::recorded_on(after)?;
+        Some(Self::new(ResourceContext::new(), kept, assumptions))
+    }
+
+    /// The owned member that holds every byte of the access, from the opened
+    /// bodies or the residual's own flat members: one base-index lookup in
+    /// each, never a scan.
+    fn member_holding(
+        &self,
+        pointer: &Pointer,
+        bytes: u32,
+        assumptions: &PureFactContext,
+    ) -> Option<CMemoryRange> {
+        self.opened
+            .range_holding(assumptions, self.placement.as_ref(), pointer, bytes)
+            .or_else(|| assumptions.owned_member_holding_access(&self.residual, pointer, bytes))
+            .cloned()
+    }
+}
+
+/// How the call havoc rule treats one cell.
+enum CallHavocCellRule {
+    /// Kept by the separation rule, without the caller's ownership.
+    Separate,
+    /// Kept because this member of what the caller keeps owning holds it.
+    KeptByCaller(CMemoryRange),
+    Dropped,
+}
+
 /// Whether a call havoc keeps the cell at this address: the one rule, asked
 /// by the producer that applies it and by the checker that re-derives what the
 /// producer would have written.
@@ -1418,19 +1632,71 @@ fn call_havoc_candidates(mutable_ranges: &[CMemoryRange]) -> AliasCandidates {
 /// names the same local block directly. A different spelling cannot use the
 /// structural local-versus-argument separation rule: consult the proven
 /// pointer-equality graph before keeping the cell, so an assumed alias drops
-/// it. Other cells use the ordinary range-disjointness query.
+/// it. Other cells use the ordinary range-disjointness query, and then what
+/// the caller keeps owning ([`CallKeptOwnership`]).
 fn call_havoc_keeps_cell(
     pointer: &Pointer,
+    value: &CValue,
     mutable_ranges: &[CMemoryRange],
     assumptions: &PureFactContext,
-) -> bool {
+    kept: Option<&CallKeptOwnership>,
+) -> CallHavocCellRule {
     if pointer.block.starts_with("local:") {
-        return mutable_ranges.iter().all(|range| {
+        return if mutable_ranges.iter().all(|range| {
             range.base().block == pointer.block
                 || !pointers_proven_equal_for_memory_resolution(range.base(), pointer, assumptions)
-        });
+        }) {
+            CallHavocCellRule::Separate
+        } else {
+            CallHavocCellRule::Dropped
+        };
     }
-    assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+    if assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer) {
+        return CallHavocCellRule::Separate;
+    }
+    let bytes = crate::kernel::reasoning::cell_access_byte_width(value);
+    match kept.and_then(|kept| kept.member_holding(pointer, bytes, assumptions)) {
+        Some(range) => CallHavocCellRule::KeptByCaller(range),
+        None => CallHavocCellRule::Dropped,
+    }
+}
+
+/// The ranges a call havoc records as kept by its caller: every opened
+/// residual body range with the premises that place cells in them, and each
+/// flat residual member that kept a cell. The edge carries them so a later
+/// load of a cell they hold is named across the call, and the write-set
+/// marker spells them so two paths that keep different memory never share
+/// the resulting snapshot.
+fn call_havoc_kept_ranges(
+    kept: Option<&CallKeptOwnership>,
+    flat_hits: Vec<CMemoryRange>,
+) -> Option<CallKeptRanges> {
+    let kept = kept?;
+    let mut ranges = kept.opened.ranges.clone();
+    for range in flat_hits {
+        let fact = CResourceFact::own_memory(range);
+        if !ranges.facts().contains(&fact) {
+            ranges = ranges.unchecked_with_fact(fact);
+        }
+    }
+    let recorded = CallKeptRanges::new(ranges, kept.opened.premises.clone());
+    (!recorded.is_empty()).then_some(recorded)
+}
+
+fn call_write_set_marker(
+    variable: u64,
+    mutable_ranges: &[CMemoryRange],
+    kept_ranges: Option<&CallKeptRanges>,
+) -> PointerBlock {
+    let mut marker = format!(
+        "call-write-set:{variable}:{}",
+        memory_havoc_write_set_identity(mutable_ranges)
+    );
+    if let Some(kept_ranges) = kept_ranges {
+        marker.push_str(":kept:");
+        marker.push_str(&kept_ranges.identity());
+    }
+    marker.into()
 }
 
 /// Whether a havoc that preserves loans keeps the cell at this address: the
@@ -2422,24 +2688,43 @@ impl CMemory {
         variable: Variable,
         mutable_ranges: &[CMemoryRange],
         assumptions: &PureFactContext,
+        kept: Option<&CallKeptOwnership>,
     ) -> Self {
         let base = Some(intern_derivation_base(&mut self));
-        call_havoc_candidates(mutable_ranges)
-            .retain_map(std::sync::Arc::make_mut(&mut self.cells), |pointer, _| {
-                call_havoc_keeps_cell(pointer, mutable_ranges, assumptions)
-            });
+        let mut flat_hits = Vec::new();
+        call_havoc_candidates(mutable_ranges).retain_map(
+            std::sync::Arc::make_mut(&mut self.cells),
+            |pointer, value| match call_havoc_keeps_cell(
+                pointer,
+                value,
+                mutable_ranges,
+                assumptions,
+                kept,
+            ) {
+                CallHavocCellRule::Separate => true,
+                // The cached value is dropped as before; the edge records
+                // the member that holds it, and a load after the call is
+                // named across the edge at its pre-call value.
+                CallHavocCellRule::KeptByCaller(range) => {
+                    flat_hits.push(range);
+                    false
+                }
+                CallHavocCellRule::Dropped => false,
+            },
+        );
+        let kept_ranges = call_havoc_kept_ranges(kept, flat_hits);
         self.forget_zeroed_allocations_written_by(mutable_ranges, assumptions);
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("call-havoc:{}", variable.0).into(),
             CBlock::new(memory_havoc_write_set_fingerprint(mutable_ranges)),
         );
         // Keep the legacy marker's semantic shape and add a collision-free
-        // structural key for the checked write set. This key is intentionally
-        // not named as a havoc marker: canonical load snapshots must continue
-        // to treat the call-havoc edge as the only global memory barrier.
-        let identity = memory_havoc_write_set_identity(mutable_ranges);
+        // structural key for the checked write set, and for the memory the
+        // caller kept owning. This key is intentionally not named as a havoc
+        // marker: canonical load snapshots must continue to treat the
+        // call-havoc edge as the only global memory barrier.
         std::sync::Arc::make_mut(&mut self.blocks).insert(
-            format!("call-write-set:{}:{identity}", variable.0).into(),
+            call_write_set_marker(variable.0, mutable_ranges, kept_ranges.as_ref()),
             CBlock::new(0),
         );
         if let Some(base) = base {
@@ -2449,6 +2734,7 @@ impl CMemory {
                     base,
                     variable,
                     mutable_ranges: mutable_ranges.to_vec(),
+                    kept_by_caller: kept_ranges,
                 },
             );
         }
@@ -2465,6 +2751,7 @@ impl CMemory {
         before: &Self,
         mutable_ranges: &[CMemoryRange],
         assumptions: &PureFactContext,
+        kept: Option<&CallKeptOwnership>,
     ) -> bool {
         if self.heap != before.heap || self.blocks.len() != before.blocks.len() + 2 {
             return false;
@@ -2494,17 +2781,6 @@ impl CMemory {
         else {
             return false;
         };
-        let write_set_marker: PointerBlock = format!(
-            "call-write-set:{variable}:{}",
-            memory_havoc_write_set_identity(mutable_ranges)
-        )
-        .into();
-        if added_blocks.len() != 2
-            || **marker_block != CBlock::new(memory_havoc_write_set_fingerprint(mutable_ranges))
-            || self.blocks.get(&write_set_marker) != Some(&CBlock::new(0))
-        {
-            return false;
-        }
 
         // The producer's rule, over the same candidates: every cell outside
         // them is kept by `call_havoc_keeps_cell`, so the expected result is
@@ -2512,21 +2788,40 @@ impl CMemory {
         // walks only the paths the two snapshots do not share.
         let candidates = call_havoc_candidates(mutable_ranges);
         let mut visited = 0usize;
-        let dropped_cells = candidates
-            .entries(&before.cells)
-            .inspect(|_| visited += 1)
-            .filter(|(pointer, _)| !call_havoc_keeps_cell(pointer, mutable_ranges, assumptions))
-            .map(|(pointer, _)| pointer)
-            .collect::<Vec<_>>();
+        let mut flat_hits = Vec::new();
+        let mut dropped_cells = Vec::new();
+        for (pointer, value) in candidates.entries(&before.cells) {
+            visited += 1;
+            match call_havoc_keeps_cell(pointer, value, mutable_ranges, assumptions, kept) {
+                CallHavocCellRule::Separate => {}
+                CallHavocCellRule::KeptByCaller(range) => {
+                    flat_hits.push(range);
+                    dropped_cells.push(pointer);
+                }
+                CallHavocCellRule::Dropped => dropped_cells.push(pointer),
+            }
+        }
         let dropped_union_cells = candidates
             .entries(&before.union_cells)
             .inspect(|_| visited += 1)
-            .filter(|((pointer, _), _)| {
-                !call_havoc_keeps_cell(pointer, mutable_ranges, assumptions)
+            .filter(|((pointer, _), value)| {
+                !matches!(
+                    call_havoc_keeps_cell(pointer, value, mutable_ranges, assumptions, kept),
+                    CallHavocCellRule::Separate
+                )
             })
             .map(|(key, _)| key)
             .collect::<Vec<_>>();
         crate::instrumentation::record_deterministic_work(visited);
+        let kept_ranges = call_havoc_kept_ranges(kept, flat_hits);
+        let write_set_marker =
+            call_write_set_marker(variable, mutable_ranges, kept_ranges.as_ref());
+        if added_blocks.len() != 2
+            || **marker_block != CBlock::new(memory_havoc_write_set_fingerprint(mutable_ranges))
+            || self.blocks.get(&write_set_marker) != Some(&CBlock::new(0))
+        {
+            return false;
+        }
         self.cells.is_without(&before.cells, &dropped_cells)
             && self
                 .union_cells
