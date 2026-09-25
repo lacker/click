@@ -27,6 +27,23 @@ pub(in crate::surface) fn plan_signed_arithmetic_certificate(
     goal: &Proposition,
     premises: &[Proposition],
 ) -> Option<SignedArithmeticCertificate> {
+    plan_signed_arithmetic_certificate_with_mode(goal, premises, false)
+}
+
+/// Explicit `arithmetic() using` may request the extra checked weakening
+/// step without changing the certificates chosen by automatic proof search.
+pub(in crate::surface) fn plan_signed_arithmetic_certificate_with_weakening(
+    goal: &Proposition,
+    premises: &[Proposition],
+) -> Option<SignedArithmeticCertificate> {
+    plan_signed_arithmetic_certificate_with_mode(goal, premises, true)
+}
+
+fn plan_signed_arithmetic_certificate_with_mode(
+    goal: &Proposition,
+    premises: &[Proposition],
+    allow_weakening: bool,
+) -> Option<SignedArithmeticCertificate> {
     if premises.len() > MAX_SELECTED_PREMISES {
         return None;
     }
@@ -62,7 +79,8 @@ pub(in crate::surface) fn plan_signed_arithmetic_certificate(
     }
     if comparison_terms(goal).is_some_and(|(left, right, _)| {
         !contains_machine_operation(left) && !contains_machine_operation(right)
-    }) && let Some(plan) = plan_affine_from_selected_claims(premises, &claims, &expected)
+    }) && let Some(plan) =
+        plan_affine_from_selected_claims(premises, &claims, &expected, allow_weakening)
     {
         return Some(plan);
     }
@@ -82,9 +100,10 @@ fn plan_affine_from_selected_claims(
     premises: &[Proposition],
     claims: &[(usize, SignedArithmeticClaim)],
     expected: &SignedArithmeticClaim,
+    allow_weakening: bool,
 ) -> Option<SignedArithmeticCertificate> {
     let mut planner = Planner::new(premises, claims);
-    let conclusion = planner.affine_claim(expected)?;
+    let conclusion = planner.affine_claim(expected, allow_weakening)?;
     Some(certificate(planner.nodes, conclusion))
 }
 
@@ -494,7 +513,7 @@ fn plan_machine_affine_goal(
         Some(term) => Some(planner.build_interval_for_affine(term)?),
         None => None,
     };
-    let source = planner.affine_claim(&expected).or_else(|| {
+    let source = planner.affine_claim(&expected, false).or_else(|| {
         is_trivial(&expected).then(|| {
             planner.push(SignedArithmeticNode::Trivial {
                 result: expected.clone(),
@@ -887,7 +906,11 @@ impl<'a> Planner<'a> {
         Some(node)
     }
 
-    fn affine_claim(&mut self, target: &SignedArithmeticClaim) -> Option<usize> {
+    fn affine_claim(
+        &mut self,
+        target: &SignedArithmeticClaim,
+        allow_weakening: bool,
+    ) -> Option<usize> {
         for (index, claim) in self.claims {
             charge_work(1)?;
             charge_claim_comparison(claim)?;
@@ -951,27 +974,52 @@ impl<'a> Planner<'a> {
         if let Some(node) = self.strict_from_disequal(target, &index)? {
             return Some(node);
         }
+        // A strict premise can make the two-premise sum one unit stronger
+        // than a weak target. Probe that exact neighboring claim through the
+        // same index, then make the weakening explicit in the certificate.
+        let stronger = allow_weakening.then(|| SignedArithmeticClaim {
+            constant: &target.constant + BigInt::one(),
+            ..target.clone()
+        });
         for (left_index, left) in self.claims.iter() {
             if left.relation != SignedArithmeticRelation::LessEqual {
                 continue;
             }
-            let complement = subtract_affine_claims(target, left)?;
-            let Some(right_positions) = index.get(&claim_fingerprint(&complement)) else {
-                continue;
-            };
-            for right_position in right_positions {
-                charge_work(1)?;
-                let (right_index, right) = &self.claims[*right_position];
-                if *right_index == *left_index || add_affine_claims(left, right)? != *target {
+            for sum_goal in std::iter::once(target).chain(stronger.as_ref()) {
+                let complement = subtract_affine_claims(sum_goal, left)?;
+                let Some(right_positions) = index.get(&claim_fingerprint(&complement)) else {
                     continue;
+                };
+                for right_position in right_positions {
+                    charge_work(1)?;
+                    let (right_index, right) = &self.claims[*right_position];
+                    if *right_index == *left_index || add_affine_claims(left, right)? != *sum_goal {
+                        continue;
+                    }
+                    let left_node = self.premise(*left_index, left)?;
+                    let right_node = self.premise(*right_index, right)?;
+                    let sum_node = self.push(SignedArithmeticNode::Add {
+                        left: left_node,
+                        right: right_node,
+                        result: sum_goal.clone(),
+                    })?;
+                    if sum_goal == target {
+                        return Some(sum_node);
+                    }
+                    let weakening = self.push(SignedArithmeticNode::Trivial {
+                        result: SignedArithmeticClaim {
+                            carrier: target.carrier,
+                            relation: SignedArithmeticRelation::LessEqual,
+                            terms: BTreeMap::new(),
+                            constant: -BigInt::one(),
+                        },
+                    })?;
+                    return self.push(SignedArithmeticNode::Add {
+                        left: sum_node,
+                        right: weakening,
+                        result: target.clone(),
+                    });
                 }
-                let left_node = self.premise(*left_index, left)?;
-                let right_node = self.premise(*right_index, right)?;
-                return self.push(SignedArithmeticNode::Add {
-                    left: left_node,
-                    right: right_node,
-                    result: target.clone(),
-                });
             }
         }
         None
@@ -2061,6 +2109,26 @@ mod tests {
         plan.check(goal, premises)
             .expect("independent checker should accept planner output");
         plan
+    }
+
+    #[test]
+    fn strict_transitive_bound_weakens_in_one_checked_certificate() {
+        let j = var(93);
+        let hi = var(94);
+        let n = var(95);
+        let goal = le(j.clone(), n.clone());
+        let premises = vec![lt(j, hi.clone()), le(hi, n)];
+        let plan = plan_signed_arithmetic_certificate_with_weakening(&goal, &premises)
+            .expect("explicit arithmetic should find the weakened bound");
+        plan.check(&goal, &premises)
+            .expect("the kernel should accept the weakening certificate");
+        assert!(
+            plan.nodes
+                .iter()
+                .filter(|node| matches!(node, SignedArithmeticNode::Add { .. }))
+                .count()
+                >= 2
+        );
     }
 
     #[test]

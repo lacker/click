@@ -143,7 +143,7 @@ pub(crate) fn normalize_using_conditions(
     facts: &super::ProofFacts,
 ) -> Result<(), ConditionalNormalizationError> {
     let mut conditions = std::collections::HashMap::new();
-    // Integer equality is symmetric.  Keep the exact reverse spelling in
+    // Integer and int32 equality are symmetric. Keep the reverse spelling in
     // this selected-condition map so `normalize using` can close a goal
     // whose operands were lowered in the opposite order.  This is deliberately
     // built from the cited premises only; it never searches ambient facts.
@@ -172,6 +172,9 @@ pub(crate) fn normalize_using_conditions(
             }
             ConditionTerm::IntegerNotEqual(left, right) => {
                 Some(ConditionTerm::IntegerNotEqual(right.clone(), left.clone()))
+            }
+            ConditionTerm::Bitvector32Equal(left, right) => {
+                Some(ConditionTerm::Bitvector32Equal(right.clone(), left.clone()))
             }
             _ => None,
         };
@@ -2359,6 +2362,25 @@ mod integer_reflexivity_tests {
         ] {
             let premise = Proposition::ConditionIs(condition, true);
             let goal = Proposition::ConditionIs(reversed, true);
+            let facts =
+                crate::kernel::proof::ProofFacts::from_ordered(std::slice::from_ref(&premise));
+            assert!(normalize_using_conditions(&goal, &[premise], &facts).is_ok());
+        }
+    }
+
+    #[test]
+    fn normalize_using_reverses_int32_equality_and_disequality() {
+        let left = Bitvector32Term::Variable(Variable(95_302));
+        let right = Bitvector32Term::Variable(Variable(95_303));
+        for value in [true, false] {
+            let premise = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(Box::new(left.clone()), Box::new(right.clone())),
+                value,
+            );
+            let goal = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(Box::new(right.clone()), Box::new(left.clone())),
+                value,
+            );
             let facts =
                 crate::kernel::proof::ProofFacts::from_ordered(std::slice::from_ref(&premise));
             assert!(normalize_using_conditions(&goal, &[premise], &facts).is_ok());

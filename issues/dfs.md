@@ -37,11 +37,14 @@ index; `mdtests/loop_symbolic_disjoint_array_store_frame.md` checks that path.
 The earlier reduction in
 `design/dfs-gaps/reachability_needs_an_algebraic_loop_witness.md` is historical.
 
-The explicit quantified-transport, whole-array dependency,
-extent-restatement, and small diagnostic items below remain proof-language or tooling costs, but
+The whole-array dependency, extent-restatement, and small diagnostic items
+below remain proof-language or tooling costs, but
 none blocks the termination, memory-safety, or branch-local correctness claims.
 The shared-lemma gate gap is closed: the mdtest harness now verifies local
 `.click` modules as entries, and the unmarked lemmas have one checked source.
+The explicit quantified-transport gap is closed too: checked fixtures now
+carry the original bounded-value quantifier and a comparison through a
+separated store inside `have`, and reject a changed cell.
 
 Whole-array dependency refinement remains design work rather than a small
 finishing edit. The unchanged cyclic, two-successor C search now verifies
@@ -118,13 +121,17 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
 
 ## Gaps, ranked by the proof text they cost (reductions in `design/dfs-gaps/`)
 
-1. **A quantified fact cannot be explicitly transported to another program point**
-   (`a_universal_fact_does_not_transport.md`). `transport` refuses a quantified
-   proposition and a comparison (`unsupported proof operation transport`), so a
-   quantified precondition reaches a loop body one cell at a time — 19 lines per
-   premise. A top-level `transport` in a `preserve` body verifies while the same
-   `transport` inside a `have` there is refused. The automatic invariant route
-   used by `search` now passes, but the explicit language gap remains.
+1. **Resolved: explicit transport of quantified and comparison facts.** The
+   historical reduction is `a_universal_fact_does_not_transport.md`.
+   `mdtests/quantified_fact_explicit_transport_inside_have.md` carries both a
+   bounded-value precondition and a quantified snapshot equality through a
+   separated store inside `have`.
+   `mdtests/loop_symbolic_disjoint_array_store_frame.md` uses one quantified
+   transport inside a loop `preserve` proof in place of per-cell transport.
+   `mdtests/comparison_fact_explicit_transport_inside_have.md` checks the
+   comparison form, and
+   `mdtests/quantified_fact_explicit_transport_rejects_changed_cell.md` checks
+   that a write to the read cell is refused.
 2. **A fact about part of an array dies at a store outside that part.**
    `unmarked(visited, 0, i)` reads only cells below `i`, but Click records that it
    depends on the whole array, so `visited[i] = 1` discards it; the user pays with
@@ -148,11 +155,12 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    `using` list in a pure theorem must name them again (the C-proof route accepts
    a cited range's available guards). That checker promises to read only listed
    premises, so this is a design question.
-5. Small ones (`small_refusals_and_spellings.md`): no `!=` symmetry (forces
-   `unmarked_point_update`'s `below`/`above` split; not re-tested recently);
+5. Small ones (`small_refusals_and_spellings.md`): int32 `!=` symmetry is now
+   checked by `mdtests/int32_disequality_symmetry.md`. The point-update
+   theorem still splits below/above to cover both sides of the marked index.
    `have` cannot take a label; `assumption()` cannot close a `viewable` goal;
-   `arithmetic() using { j < hi; hi <= n }` will not weaken to `j <= n` and says
-   the premises are insufficient; `missing pure fact: constant condition is true`
+   `arithmetic() using { j < hi; hi <= n; }` now proves `j <= n` in one checked
+   step; `missing pure fact: constant condition is true`
    does not say which constant; a store refusal spells `owns b[0..1]` as
    `owns a[(v100001 - v100000)..]`.
 

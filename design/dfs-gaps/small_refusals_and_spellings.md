@@ -1,5 +1,11 @@
 # small gaps found while proving the marking search
 
+The int32 disequality symmetry refusal is resolved by
+`mdtests/int32_disequality_symmetry.md`. The `below`/`above` split in the
+point-update theorem remains necessary to cover indices on both sides of the
+updated cell. The mdtest shared-library gate described below is also resolved;
+`mdtests/unmarked_count_lemmas.click` is checked as an entry module.
+
 Each of these cost one to six lines of proof text. None blocks a stage on its
 own; together they are most of the bookkeeping in
 `mdtests/unmarked_count_lemmas.md` and
@@ -37,7 +43,9 @@ extent halves with it into an application the way it brings them into a proof.
 
 ## `arithmetic() using` will not weaken a bound it just derived
 
-Classification: **missing rule**, small.
+Resolved by `mdtests/arithmetic_weakens_transitive_bound.md` and the direct
+one-step uses in `mdtests/unmarked_count_lemmas.click` and
+`mdtests/branching_graph_dfs.md`. The refusal below is historical.
 
 `j < hi` and `hi <= n` give `j < n`, which is `j <= n - 1`, so `j <= n`
 follows. The planner refuses it in one step:
