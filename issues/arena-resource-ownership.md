@@ -355,26 +355,53 @@ Three kernel defects were fixed on the way, each with a regression:
   snapshot instead of the transition's own, and dropped the fact in a loop
   whose branch resets a local (`mdtests/iterated_ownership_survives_branch_reset.md`).
 
-What is still open is `arena_free`, the per-cell pipeline, and the frees out
-of allocation order the per-cell model exists for. With the footprint fixed,
-the mark and clear loops, which must own the whole occupancy map because
-the iterated fact's guard cells must be owned by the declaring body, havoc
-every occupancy cell. What they leave unchanged has to be a frame
-invariant. Its reduced shape now closes at the back edge with the map read
-through `arena->occupied`
-(`mdtests/loop_frame_through_field_over_folded_binder_cells.md`), but in
-`arena_alloc`'s mark loop the bundle also carries viewability members for
-the pointer field cell `&arena->occupied` under the frame's quantifier,
-which have no source spelling, so neither the smart closer nor an explicit
-closure closes it there. Until it does, `arena_alloc` cannot state the cells
-it leaves unchanged, `arena_free` cannot keep the descriptor's fields across its
-clearing store, and the pipeline cannot establish the all-free map
-`arena_destroy` requires; a middle-region free followed by a first-fit
-reuse of the hole cannot be stated either. Two ways to close it: discharge
-or spell the field-cell members so the frame invariant closes in place, or let
-an iterated fact split at an index (a design change to the exact-match
-family) so that a loop can own only the cells it writes and frame the rest
-by its footprint. The prefix sidecars stay until then.
+The loop-frame frontier is closed. The mark loop's bundle used to carry
+viewability members for the pointer field cell `&arena->occupied`, which an
+unfolded `arena_state` holds as the word carrying its load: spec lowering
+asked for the cell's viewability because the word is narrower than the
+pointer, while the C evaluator reads it with no premise. It now reads it the
+same way, so the field adds no member
+(`mdtests/loop_frame_through_folded_state_field_cells.md`, the two-hop twin,
+and a negative that rewrites the field). A loop written in a proof now reads
+`old(...)` at the checked function entry, a written `both` over a bundle
+spells each member alone, and a folded instance publishes the cells of its
+field-free composite children, so certification reads `arena->occupied[k]`
+inside `arena_state`. The clearing loop's window spans all of `data` through
+its iterated clause, which covered the region descriptor the C condition
+reads; a declaring loop now keeps the cells the function keeps owning,
+because its body can only view them
+(`mdtests/loop_keeps_cells_the_function_keeps_owning.md`).
+
+`arena_alloc` now states its occupancy: failure leaves every cell unchanged,
+success marks `[region->start, region->end)` and leaves every other cell
+unchanged. `arena_free` is verified with no prefix: it consumes any live
+region with the state, clears its cells, gives each data cell back to the
+iterated fact, and returns the state at `live - 1` with the cleared cells `0`
+and every other cell unchanged. What is still open is the per-cell pipeline
+and the frees out of allocation order it exists for; the prefix sidecars stay
+until it verifies.
+
+The pipeline is blocked by the call rule, not by the arena proofs. A call
+havocs the callee's footprint and keeps a caller cell only when a fact
+proves it apart from that footprint. Every pipeline call passes the folded
+`arena_state`, whose footprint spans the whole data buffer, and the caller's
+region descriptors and the other regions' data cells are proved apart from
+nothing, so the second `arena_write` loses the value written through `first`
+and each allocation and free loses the descriptors' fields. The caller keeps
+all of them outside the transfer, so the callee cannot write them; the rule
+does not use that partition even for a folded field-free composite beside a
+separately owned object
+(`mdtests/call_keeps_caller_object_beside_folded_state_frontier.md`, with the
+flat control `mdtests/call_keeps_caller_object_beside_flat_ranges.md`). The
+fix is the call counterpart of the loop rule above: the call havoc, its
+structural checker, and the memory-DAG hop across the call must keep a cell
+the caller's residual resources hold, opening a residual field-bearing
+instance one body layer so a region's descriptor and data range count. The
+first-fit acceptance fixture waits on the same fix. First fit itself is not
+stated either: the scan would need an existential invariant (every earlier
+window of `count` cells contains an occupied cell); without it a caller can
+still show a same-size allocation reuses a freed middle region when the hole
+is the only free run, through the frames.
 
 Two further limits of the per-cell contracts: nothing relates `live` to the
 number of occupied cells or regions (the kernel has no count of a guarded

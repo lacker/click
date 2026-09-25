@@ -109,41 +109,50 @@ Nothing mentions a prefix.
   cells, so this all-free precondition, not `live == 0`, is what makes the
   free safe.
 - `arena_alloc` places the region anywhere: failure returns the state at
-  the same `live` and the caller's descriptor; success returns the region
-  with `region->end == region->start + count` and
-  `region->end <= arena->capacity`, and the state at `live + 1`. The scan
-  loop carries its free run in an `arena_scan` window, so its per-cell run
-  fact is a resource fact checked at each fold; the mark loop owns an
-  `arena_window`, takes each cell's element out of the iterated fact, and
-  marks it, which the store rule closes. Because nothing ties `live` to the
-  number of regions, the increment's definedness is the precondition
-  `st.live < 2147483647`. The contract states nothing about occupancy
-  cells. Both frames are blocked by the frontier below; the failure frame
-  in particular does not close after the scan loop, which owns and havocs
-  the whole map. The marked run is not blocked by expansion any more, but
-  the success path's closing `simp` exhausts its smart budget on it, and an
-  explicit proof from the mark window's post-loop fact is not yet written.
+  the same `live` and the caller's descriptor, with every occupancy cell
+  unchanged; success returns the region with
+  `region->end == region->start + count` and
+  `region->end <= arena->capacity`, the state at `live + 1`, every cell of
+  `[region->start, region->end)` occupied, and every other cell unchanged.
+  The scan loop carries its free run in an `arena_scan` window, so its
+  per-cell run fact is a resource fact checked at each fold; the mark loop
+  owns an `arena_window`, takes each cell's element out of the iterated fact,
+  and marks it, which the store rule closes. Because nothing ties `live` to
+  the number of regions, the increment's definedness is the precondition
+  `st.live < 2147483647`.
+- `arena_free` consumes the region and the state, with `1 <= st.live` and
+  `r.end <= st.capacity`, clears `[start, end)` through an
+  `arena_clear_window` that gives each cell's element back to the iterated
+  fact after its flag is cleared, and produces the descriptor and the state
+  at `live - 1`, with every cleared cell `0` and every other cell unchanged.
+  It needs no prefix: any live region can be freed.
 - `arena_read`, `arena_write`, and `arena_region_length` borrow the region
   and the state.
 
-What the per-cell sidecar does not yet verify is `arena_free` and the
-pipeline. Both mark and clear loops must own the whole occupancy map,
-because the iterated fact's guard cells must be owned by the body that
-declares it, so each loop havocs every occupancy cell and the cells it never
-writes need a frame invariant. The reduced shape of that frame now closes at
-the back edge with the map reached through `arena->occupied`
-(`mdtests/loop_frame_through_field_over_folded_binder_cells.md`). In
-`arena_alloc` itself it does not yet: with the frame stated against the mark
-loop's entry, initialization and the per-iteration transport check, but the
-back-edge bundle also carries viewability members for the pointer field cell
-`&arena->occupied`, read under the frame's quantifier, which the reduced
-shape's directly owned `object(arena)` does not raise. Those members have no
-source spelling, so the bundle has none: the smart closer exhausts its budget
-and an explicit closure cannot name the quantified cell. Until that closes,
-`arena_alloc` cannot say what it leaves unchanged, `arena_free` cannot keep
-`region->start` across its clearing store, and the pipeline cannot establish
-the all-free map `arena_destroy` requires. The prefix model below keeps
-verifying the pipeline until then.
+Both loops that write the map must own all of it, because the iterated
+fact's guard cells must be owned by the body that declares it, so each loop
+havocs every occupancy cell. What a loop leaves alone is a frame invariant
+against the loop's entry, `arena->occupied[k] == at(mark_free_run.entry,
+arena->occupied[k])` below `start` and from `end` on, and the scan loop
+frames the whole map the same way; the contracts' frames chain those to the
+function entry. The bundles close with explicit closers: each map member is
+transported from the map's viewability stated just before the loop, and the
+field `&arena->occupied` the map is read through adds no member
+(`mdtests/loop_frame_through_folded_state_field_cells.md`). The clearing loop
+reads `region->end` in its condition while its window's iterated clause spans
+all of `data`; the descriptor stays with the function, so the loop head keeps
+its cells (`mdtests/loop_keeps_cells_the_function_keeps_owning.md`).
+
+What the per-cell sidecar does not yet verify is the pipeline; the prefix
+model below keeps verifying it. Every call in the pipeline passes the folded
+`arena_state`, and a call havocs the callee's footprint, here the whole data
+buffer through the iterated clause, keeping a caller cell only when a fact
+proves it apart. The caller keeps its region descriptors and the other
+regions' data outside the transfer, so the callee cannot write them, but the
+call rule does not use that partition: after the second `arena_write` the
+value written through `first` is gone, and so are the descriptors' fields
+after each allocation and free. The reduced gap is
+`mdtests/call_keeps_caller_object_beside_folded_state_frontier.md`.
 
 ## Sidecar layout
 
@@ -170,9 +179,9 @@ the files are split by what they share:
   `arena_free` over `arena_region`.
 - `arena_second_alloc.click` stays the fixed instance check of the pipeline's
   second two-cell allocation.
-- `arena_cells.click` holds the per-cell model: its resources, the two
-  loop windows, `arena_init`, `arena_alloc`, `arena_write`, `arena_read`,
-  `arena_destroy`, and `arena_region_length`. It declares its own resources
+- `arena_cells.click` holds the per-cell model: its resources, the three
+  loop windows, `arena_init`, `arena_alloc`, `arena_free`, `arena_write`,
+  `arena_read`, `arena_destroy`, and `arena_region_length`. It declares its own resources
   rather than importing `arena_resources.click`, because `arena.click`
   imports that module and already names a different `arena_region`.
 
