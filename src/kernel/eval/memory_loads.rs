@@ -956,16 +956,24 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
         }
         _ => return None,
     };
-    Some(CValue::typed_pointer(
+    // A load variable names the pointer value, not an offset in the
+    // storage object containing it. Fresh storage provenance must not
+    // manufacture disjointness from the actual pointee.
+    let loaded = if matches!(
+        pointer.block,
+        PointerBlock::Heap(_) | PointerBlock::Temporary(_)
+    ) {
+        Pointer::symbolic(fresh)
+    } else {
         Pointer {
             block: pointer.block.clone(),
             offset: PointerOffsetTerm::scale_int32(
                 Bitvector32Term::Variable(fresh),
                 i64::from(pointee_byte_width),
             ),
-        },
-        value_type,
-    ))
+        }
+    };
+    Some(CValue::typed_pointer(loaded, value_type))
 }
 
 fn should_use_symbolic_pointer_identity(
@@ -973,6 +981,8 @@ fn should_use_symbolic_pointer_identity(
     pointer: &Pointer,
     value_type: CType,
 ) -> bool {
+    // A pointer in fresh heap/temporary storage may target any object. Its
+    // storage block supplies no provenance for the loaded value.
     // After a call-havoc edge, an unknown pointer-sized cell may contain the
     // address of any live object, including an automatic local. Give that
     // value an opaque identity instead of deriving a fresh offset in the
@@ -983,9 +993,11 @@ fn should_use_symbolic_pointer_identity(
         PointerOffsetTerm::Int32Scaled { byte_width: 8, .. }
             | PointerOffsetTerm::Int64Scaled { byte_width: 8, .. }
     );
-    memory.has_call_memory_havoc()
+    (matches!(
+        pointer.block,
+        PointerBlock::Heap(_) | PointerBlock::Temporary(_)
+    ) || (memory.has_call_memory_havoc() && pointer_sized_load))
         && value_type.is_pointer()
-        && pointer_sized_load
         && memory.known_union_value(pointer, value_type).is_none()
         && memory.known_value(pointer).is_none()
 }
@@ -3090,6 +3102,103 @@ pub(in crate::kernel) fn symbolic_load_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_pointer_in_fresh_storage_does_not_inherit_storage_provenance() {
+        for block in [PointerBlock::Heap(8700), PointerBlock::Temporary(8701)] {
+            for offset in [0, 8] {
+                let cell = Pointer {
+                    block: block.clone(),
+                    offset: PointerOffsetTerm::Constant(offset),
+                };
+                let memory = CMemory::new().with_block(block.clone(), 16);
+                let value_type = CType::Int32Pointer;
+                let assumptions = PureFactContext::new()
+                    .assume_proposition(Proposition::CMemoryReadDefined {
+                        memory: memory.clone(),
+                        pointer: cell.clone(),
+                        value_type,
+                    })
+                    .assume_proposition(Proposition::CMemoryLoadable {
+                        memory: memory.clone(),
+                        base: cell.clone(),
+                        bytes: Bitvector32Term::Constant(8),
+                    });
+                for logical in [false, true] {
+                    let paths = if logical {
+                        evaluate_logical_memory_load_paths(
+                            &memory,
+                            cell.clone(),
+                            value_type,
+                            Vec::new(),
+                            Vec::new(),
+                            &assumptions,
+                        )
+                    } else {
+                        evaluate_spec_memory_load_paths(
+                            &memory,
+                            cell.clone(),
+                            value_type,
+                            Vec::new(),
+                            Vec::new(),
+                            &assumptions,
+                        )
+                    };
+                    let [path] = paths.as_slice() else {
+                        panic!("one typed read expected");
+                    };
+                    let CExpressionOutcome::Value(CValue::Pointer(value)) = &path.outcome else {
+                        panic!("pointer value expected");
+                    };
+                    assert!(matches!(value.pointer().block, PointerBlock::Symbolic(_)));
+                    assert!(
+                        !value
+                            .pointer()
+                            .block
+                            .proven_distinct(&PointerBlock::Heap(8702))
+                    );
+                    assert_eq!(value.c_type(), value_type);
+                }
+                let bits = Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory_ref(&memory),
+                    Box::new(cell.clone()),
+                );
+                let mut facts = Vec::new();
+                let cached = canonicalized_pointer_value_from_int_cell(
+                    &cell,
+                    &CValue::Int32(bits),
+                    value_type,
+                    &mut facts,
+                    &assumptions,
+                    None,
+                )
+                .unwrap();
+                let CValue::Pointer(cached) = cached else {
+                    panic!("cached pointer expected");
+                };
+                assert!(matches!(cached.pointer().block, PointerBlock::Symbolic(_)));
+                let target = Pointer {
+                    block: PointerBlock::Heap(8702),
+                    offset: PointerOffsetTerm::Constant(0),
+                };
+                let stored = memory.store(
+                    cell.clone(),
+                    CValue::typed_pointer(target.clone(), value_type),
+                );
+                let paths = evaluate_logical_memory_load_paths(
+                    &stored,
+                    cell,
+                    value_type,
+                    Vec::new(),
+                    Vec::new(),
+                    &assumptions,
+                );
+                assert!(
+                    matches!(&paths[0].outcome, CExpressionOutcome::Value(CValue::Pointer(value)) if value.pointer() == &target)
+                );
+            }
+        }
+    }
 
     #[test]
     fn indexed_local_load_uses_proven_alias_without_inventing_initialization() {

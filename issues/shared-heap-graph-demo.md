@@ -33,6 +33,14 @@ Failed allocation resolution now records such an edge. The complete positive
 `shared_heap_population_initialized_body_gap.md` intentionally omits the
 initialization contract and remains rejected.
 
+Unknown pointer reads from fresh heap/temporary storage no longer inherit
+the storage block's provenance. They use opaque load identities, while a
+known stored pointer retains its actual target. This prevents a parent's
+child-pointer field from being structurally separated from the child merely
+because the parent and child are different allocations. The focused positive
+and negative `heap_pointer_field_*` fixtures cover modular stores; the full
+caller frontier below remains open.
+
 The next caller frontier is payload/alias transport across detach and read.
 `mdtests/shared_heap_population_payload_frontier.md` embeds the frozen C,
 strengthened helpers, and a complete first-removal caller script. Verification

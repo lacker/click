@@ -225,6 +225,15 @@ so allocation-failure cleanup can retain a preceding initialization guarantee.
 older `shared_heap_population_initialized_body_gap.md` now documents the
 intentional rejection when the resource omits initialization guarantees.
 
+Unknown pointer values read from heap or temporary storage now receive opaque
+identities, including reads from materialized load-variable cells. They cannot
+inherit the fresh block identity of the object storing them: a parent's child
+pointer can target a different allocation. Known stored pointers keep their
+actual target. `heap_pointer_field_keeps_target_identity.md` and its negative
+counterpart check a modular store/read boundary; the kernel regression covers
+both logical and checked typed reads. This repairs a pointer-identity boundary
+encountered while proving the caller; it does not complete payload transport.
+
 The complete shared-parent callers remain unfinished.
 `shared_heap_population_payload_frontier.md` preserves the unchanged C and a
 complete first-removal caller proof that reaches `out == payload`; the
