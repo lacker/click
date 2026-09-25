@@ -142,6 +142,16 @@ cell's epoch — the last program point at which this cell holds the same value
 name it had; the mark decides the name only where the walk stops. It decides
 the *history* everywhere, which is the point.
 
+A cell the snapshot holds materialized is named by its value before any walk.
+An integer cell holding a load variable resolves to that variable through the
+canonical form. A pointer cell whose value is exactly the pointer a typed load
+of that cell produces (the cell's own block, offset `v * width` at the value's
+pointee width, `v` registered as a load of the same address) is named `v`.
+That is what keeps a struct field such as `arena->occupied` one name across a
+loop head: the walk is assumption-free and stops at the head's havoc, while
+the head's copy-back has already kept the cell's value because the checked
+footprint is disjoint from it.
+
 ## Structural invariants
 
 Every recorded parent identifier is smaller than its child identifier. The

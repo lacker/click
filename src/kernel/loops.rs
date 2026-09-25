@@ -3774,11 +3774,19 @@ fn collect_invariant_check_obligations_with_mode(
     without_search: bool,
     mut declarations: Option<&mut [Vec<ProofObligation>]>,
 ) -> ExecutionResult<Vec<ProofObligation>> {
-    let mut contexts = vec![(Vec::new(), Vec::new())];
+    // Each context carries, beside its facts and obligations, the guards a
+    // later declaration is wrapped with: the same list position for position,
+    // except that an earlier declaration's own entry is its lowered
+    // proposition rather than the member that proposition was wrapped into.
+    // The member's guards are a prefix of every later member's guards, so the
+    // bare proposition is equivalent there, and guarding with the wrapped
+    // member instead would nest every earlier member inside every later one,
+    // doubling the bundle with each declaration.
+    let mut contexts = vec![(Vec::new(), Vec::new(), Vec::<ProofObligation>::new())];
     let mut all_obligations = Vec::new();
     for (declaration_index, check) in invariant_checks.iter().enumerate() {
         let mut next_contexts = Vec::new();
-        for (facts, obligations) in contexts {
+        for (facts, obligations, guards) in contexts {
             let effective_assumptions = if without_search {
                 assumptions_with_path_context(assumptions, &facts, &obligations)
                     .defer_non_exact_condition_reasoning()
@@ -3807,6 +3815,10 @@ fn collect_invariant_check_obligations_with_mode(
                     continue;
                 };
                 let mut obligations = obligations;
+                // `merge` keeps the earlier obligations as a prefix and
+                // appends this path's own; those are their own guards.
+                let mut guards = guards.clone();
+                guards.extend(obligations.iter().skip(guards.len()).cloned());
                 let obligation_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
                 // The guards this wrap inserts, then the head chain the
@@ -3814,9 +3826,9 @@ fn collect_invariant_check_obligations_with_mode(
                 // obligation proposition, produced by the same wrap that
                 // built it, so a consumer introducing its head never pairs
                 // a hidden guard with a written connective.
-                let (proposition, guards) =
-                    wrap_path_context_with_introductions(path.proposition, &facts, &obligations);
-                let mut introductions = guards;
+                let (proposition, guard_introductions) =
+                    wrap_path_context_with_introductions(path.proposition.clone(), &facts, &guards);
+                let mut introductions = guard_introductions;
                 introductions.extend(path.introductions.iter().cloned());
                 let introductions = std::sync::Arc::new(introductions);
                 if let Some(declarations) = declarations.as_deref_mut() {
@@ -3827,6 +3839,7 @@ fn collect_invariant_check_obligations_with_mode(
                     }
                     declarations[declaration_index].push(goal);
                 }
+                let before = obligations.len();
                 if without_search {
                     add_required_proof_obligation_without_search(
                         &mut obligations,
@@ -3854,7 +3867,10 @@ fn collect_invariant_check_obligations_with_mode(
                         &obligations,
                     );
                 }
-                next_contexts.push((facts, obligations));
+                if obligations.len() > before {
+                    guards.push(ProofObligation::new(path.proposition));
+                }
+                next_contexts.push((facts, obligations, guards));
             }
         }
         contexts = next_contexts;

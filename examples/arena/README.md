@@ -130,13 +130,20 @@ What the per-cell sidecar does not yet verify is `arena_free` and the
 pipeline. Both mark and clear loops must own the whole occupancy map,
 because the iterated fact's guard cells must be owned by the body that
 declares it, so each loop havocs every occupancy cell and the cells it never
-writes need a frame invariant. That invariant does not close at the back
-edge when the map is reached through `arena->occupied`
-(`mdtests/loop_frame_invariant_over_folded_binder_cells.md`), and without
-it `arena_alloc` cannot say what it leaves unchanged, `arena_free` cannot
-keep `region->start` across its clearing store, and the pipeline cannot
-establish the all-free map `arena_destroy` requires. The prefix model below
-keeps verifying the pipeline until that frontier closes.
+writes need a frame invariant. The reduced shape of that frame now closes at
+the back edge with the map reached through `arena->occupied`
+(`mdtests/loop_frame_through_field_over_folded_binder_cells.md`). In
+`arena_alloc` itself it does not yet: with the frame stated against the mark
+loop's entry, initialization and the per-iteration transport check, but the
+back-edge bundle also carries viewability members for the pointer field cell
+`&arena->occupied`, read under the frame's quantifier, which the reduced
+shape's directly owned `object(arena)` does not raise. Those members have no
+source spelling, so the bundle has none: the smart closer exhausts its budget
+and an explicit closure cannot name the quantified cell. Until that closes,
+`arena_alloc` cannot say what it leaves unchanged, `arena_free` cannot keep
+`region->start` across its clearing store, and the pipeline cannot establish
+the all-free map `arena_destroy` requires. The prefix model below keeps
+verifying the pipeline until then.
 
 ## Sidecar layout
 

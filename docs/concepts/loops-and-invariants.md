@@ -427,6 +427,21 @@ The arithmetic invariants prove access bounds. The loop's owned resources
 summarize what memory the loop may write; with no clause of its own it may
 write exactly what the function owns.
 
+A loop that declares a resource havocs all memory the resource owns, so the
+cells such a loop never writes keep their values only through a frame
+invariant, for example
+`forall k in [0, start): arena->occupied[k] == old(arena->occupied[k])`.
+`old(...)` means the function's entry state here exactly as it does in the
+loop's proof bodies, so a body can restate or instantiate the clause as
+written. The map may be reached through a struct field the loop does not
+write: the field's cell stays with the enclosing frame, the loop head keeps
+its value, and every read of `arena->occupied` names the one pointer loaded
+at entry, so the frame closes at the back edge as it does for a map passed as
+a parameter (`mdtests/loop_frame_through_field_over_folded_binder_cells.md`,
+`mdtests/loop_frame_through_parameter_over_folded_binder_cells.md`). A loop
+that writes the field loses the frame
+(`mdtests/loop_frame_rejects_rewritten_base_field.md`).
+
 ## Modeled instances in loops
 
 A loop header can also name a resource instance, with the binder syntax a
@@ -838,6 +853,16 @@ Writing it is optional. If a `preserve` script does not close the bundle,
 Click appends the closer implicitly after the last written tactic. The
 expanded proof contains an explicit `close_invariants` leaf either way, so it
 always appears in an expanded proof.
+
+The bundle is a conjunction with one member per declared clause, in
+declaration order. A clause that reads memory is preceded by members for what
+its reads owe: the viewability of each cell it reads at the back edge, and at
+function entry for a read under `old`. A member is guarded by everything
+before it that it may rely on: the path facts of its lowering, the read
+obligations raised so far, and each earlier clause as written. An earlier
+clause is a guard in its bare form rather than as the whole earlier member,
+so the bundle gains one guard per earlier declaration instead of doubling
+with each one (`mdtests/loop_frame_field_cells_at_constant_indices.md`).
 
 Successful initialization and preservation proofs certify and apply a
 verified loop rule. The enclosing proof is already at the loop exit when the

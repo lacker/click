@@ -2779,3 +2779,215 @@ struct holder {
         );
     }
 }
+
+/// A loop that marks `arena->occupied[i]` for `i` in `[start, end)` and
+/// frames `cells` constant cells below `start`, one invariant per cell, each
+/// read through the struct field. The back edge is closed explicitly: the
+/// pure clause and the ranking pair by named arithmetic, and each framed
+/// cell's member by transporting the map's entry viewability to the cell at
+/// the back edge and at entry, then introducing the member's guards and
+/// citing the cell's frame fact, which the store frames at the step.
+fn framed_field_cells_loop(cells: usize) -> (String, String) {
+    let c_source = "struct arena {\n    int32* data;\n    int32* occupied;\n    int32 capacity;\n};\n\n\
+        void mark_tail(struct arena* arena, int32 start, int32 end) {\n    int32 i;\n    i = start;\n    \
+        while (i < end) {\n        arena->occupied[i] = 1;\n        i = i + 1;\n    }\n}\n"
+        .to_string();
+    let entry_view = "at(function.entry, viewable(arena->occupied[0..arena->capacity]))";
+    let transport_premises = format!(
+        "using {{ at(function.entry, {cells}) <= at(function.entry, start); \
+         at(statement(3).entry, start) <= at(statement(3).entry, i); \
+         end <= arena->capacity; \
+         at(statement(3).entry, i) < at(statement(3).entry, end); \
+         at(function.entry, arena->capacity) <= at(function.entry, 1073741823); \
+         {entry_view}; }}"
+    );
+    let ranking = "arithmetic() using { 0 <= at(statement(3).entry, i); \
+        at(statement(3).entry, i) < at(statement(3).entry, end); end <= 1000000; }";
+    let mut members = vec!["simp();".to_string()];
+    for cell in 0..cells {
+        members.push(format!(
+            "transport({entry_view}, viewable(arena->occupied[{cell}..{}])) {transport_premises}",
+            cell + 1
+        ));
+        members.push(format!(
+            "transport({entry_view}, at(function.entry, viewable(arena->occupied[{cell}..{}]))) \
+             {transport_premises}",
+            cell + 1
+        ));
+        // The member's guards: the first clause, then each earlier cell's
+        // two viewability obligations and clause, then its own two.
+        members.push(format!(
+            "{}arithmetic_certificate signed_int32 {{ premise 0: arena->occupied[{cell}] == \
+             old(arena->occupied[{cell}]) => arena->occupied[{cell}] == \
+             old(arena->occupied[{cell}]); conclusion 0; }}",
+            "intro(); ".repeat(3 + 3 * cell)
+        ));
+    }
+    members.push(ranking.to_string());
+    members.push(ranking.to_string());
+    let closure = members
+        .iter()
+        .rev()
+        .skip(1)
+        .fold(members.last().unwrap().clone(), |rest, member| {
+            format!("both {{ {member} }} and {{ {rest} }}")
+        });
+    let invariants = (0..cells)
+        .map(|cell| {
+            format!("        invariant arena->occupied[{cell}] == old(arena->occupied[{cell}]);\n")
+        })
+        .collect::<String>();
+    let click_source = format!(
+        "verifying \"mark_tail.c\";\n\n\
+         void mark_tail(struct arena* arena, int32 start, int32 end) {{\n\
+         \x20   owns object(arena);\n\
+         \x20   owns arena->occupied[0..arena->capacity];\n\
+         \x20   requires separate(\n\
+         \x20       memory(object(arena)),\n\
+         \x20       memory(arena->occupied[0..arena->capacity])\n\
+         \x20   );\n\
+         \x20   requires 0 <= start;\n\
+         \x20   requires {cells} <= start;\n\
+         \x20   requires start <= end;\n\
+         \x20   requires end <= arena->capacity;\n\
+         \x20   requires end <= 1000000;\n\
+         }} by {{\n\
+         \x20   step();\n\
+         \x20   step();\n\
+         \x20   loop {{\n\
+         \x20       owns arena->occupied[0..arena->capacity];\n\
+         \x20       invariant start <= i;\n\
+         {invariants}\
+         \x20       decreases end - i;\n\
+         \x20       initialize by simp;\n\
+         \x20       preserve by {{\n\
+         \x20           have 0 <= i by {{ simp(); }}\n\
+         \x20           step();\n\
+         \x20           step();\n\
+         \x20           close_invariants by {{ {closure} }}\n\
+         \x20       }}\n\
+         \x20   }}\n\
+         \x20   execute();\n\
+         \x20   simp();\n\
+         }}\n"
+    );
+    (c_source, click_source)
+}
+
+/// The number of simple steps in `framed_field_cells_loop`'s explicit
+/// back-edge closure: one `both` per member but the last, the members'
+/// closing steps, and the guard introductions each cell's member makes.
+fn framed_field_cells_closure_steps(cells: usize) -> usize {
+    let members = 1 + 3 * cells + 2;
+    let introductions = (0..cells).map(|cell| 3 + 3 * cell).sum::<usize>();
+    (members - 1) + members + introductions
+}
+
+/// Framing `N` cells of a map read through a struct field costs work in
+/// proportion to the explicit back-edge closure. Each cell's member is guarded
+/// by every earlier clause, so the closure itself has a quadratic number of
+/// introductions; the work must follow that certificate, not outgrow it.
+/// Before, a later member was guarded by each earlier member whole, so the
+/// bundle doubled with every declaration.
+///
+/// The remaining excess over the certificate is the order-fact fallback that
+/// matches a condition against every stated condition fact
+/// (`has_condition_fact`), which the growing set of framed-cell facts feeds.
+#[test]
+fn framed_field_cells_back_edge_closure_follows_its_certificate() {
+    let samples = [1, 2, 4, 8]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = framed_field_cells_loop(size);
+            let sources = [("mark_tail.c", c_source.as_str())];
+            let (verified, sample) =
+                scaling_sample(size, || verify_c0_sources(&click_source, &sources));
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} framed field cells fixture failed: {}",
+                    error.message()
+                )
+            });
+            sample
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        let steps = framed_field_cells_closure_steps(pair[1].size) as f64
+            / framed_field_cells_closure_steps(pair[0].size) as f64;
+        let work = pair[1].work as f64 / pair[0].work as f64;
+        assert!(
+            work <= 1.5 * steps,
+            "framed field cells: work grew {work:.2}x against a {steps:.2}x larger closure: \
+             {samples:?}; named work: {}",
+            named_growth_diagnostic(&samples),
+        );
+    }
+}
+
+/// A counting loop with `clauses` pure invariant declarations beside its
+/// bound, closed by the smart `close_invariants()`.
+fn many_clause_loop(clauses: usize) -> (String, String) {
+    let c_source =
+        "void count(int32 n) {\n    int32 i;\n    i = 0;\n    while (i < n) {\n        i = i + 1;\n    }\n}\n"
+            .to_string();
+    let invariants = (0..clauses)
+        .map(|clause| format!("        invariant 0 - {clause} <= i;\n"))
+        .collect::<String>();
+    let click_source = format!(
+        "verifying \"count.c\";\n\n\
+         void count(int32 n) {{\n\
+         \x20   requires 0 <= n;\n\
+         \x20   requires n <= 1000;\n\
+         \x20   ensures 0 == 0;\n\
+         }} by {{\n\
+         \x20   step();\n\
+         \x20   step();\n\
+         \x20   loop {{\n\
+         \x20       invariant 0 <= i;\n\
+         {invariants}\
+         \x20       decreases n - i;\n\
+         \x20       initialize by simp;\n\
+         \x20       preserve by {{\n\
+         \x20           step();\n\
+         \x20           close_invariants();\n\
+         \x20       }}\n\
+         \x20   }}\n\
+         \x20   execute();\n\
+         \x20   simp();\n\
+         }}\n"
+    );
+    (c_source, click_source)
+}
+
+/// The back-edge bundle guards each clause by the clauses declared before
+/// it, bare. Guarding by the earlier members whole doubled the bundle with
+/// every declaration: sixteen clauses exhausted the smart closer's budget.
+/// The guards now grow by one clause per declaration, so the bundle and the
+/// closer's work stay within a quadratic curve in the declarations.
+#[test]
+fn many_clause_bundle_grows_at_most_quadratically() {
+    let samples = [2, 4, 8, 16]
+        .into_iter()
+        .map(|size| {
+            let (c_source, click_source) = many_clause_loop(size);
+            let sources = [("count.c", c_source.as_str())];
+            let (verified, sample) =
+                scaling_sample(size, || verify_c0_sources(&click_source, &sources));
+            verified.unwrap_or_else(|error| {
+                panic!(
+                    "size {size} many-clause fixture failed: {}",
+                    error.message()
+                )
+            });
+            sample
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].work <= pair[0].work.saturating_mul(9) / 2,
+            "many invariant clauses: work more than quadrupled per doubling: {samples:?}; \
+             named work: {}",
+            named_growth_diagnostic(&samples),
+        );
+    }
+}

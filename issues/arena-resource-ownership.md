@@ -360,15 +360,18 @@ of allocation order the per-cell model exists for. With the footprint fixed,
 the mark and clear loops, which must own the whole occupancy map because
 the iterated fact's guard cells must be owned by the declaring body, havoc
 every occupancy cell. What they leave unchanged has to be a frame
-invariant, and that invariant does not close at the back edge when the map
-is read through `arena->occupied`
-(`mdtests/loop_frame_invariant_over_folded_binder_cells.md`, an expect-fail
-frontier). Until it does, `arena_alloc` cannot state the cells it leaves
-unchanged, `arena_free` cannot keep the descriptor's fields across its
+invariant. Its reduced shape now closes at the back edge with the map read
+through `arena->occupied`
+(`mdtests/loop_frame_through_field_over_folded_binder_cells.md`), but in
+`arena_alloc`'s mark loop the bundle also carries viewability members for
+the pointer field cell `&arena->occupied` under the frame's quantifier,
+which have no source spelling, so neither the smart closer nor an explicit
+closure closes it there. Until it does, `arena_alloc` cannot state the cells
+it leaves unchanged, `arena_free` cannot keep the descriptor's fields across its
 clearing store, and the pipeline cannot establish the all-free map
 `arena_destroy` requires; a middle-region free followed by a first-fit
-reuse of the hole cannot be stated either. Two ways to close it: resolve
-the field load across the back edge so the frame invariant closes, or let
+reuse of the hole cannot be stated either. Two ways to close it: discharge
+or spell the field-cell members so the frame invariant closes in place, or let
 an iterated fact split at an index (a design change to the exact-match
 family) so that a loop can own only the cells it writes and frame the rest
 by its footprint. The prefix sidecars stay until then.

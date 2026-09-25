@@ -2793,6 +2793,21 @@ pub(crate) fn load_variable_for_term(
 }
 
 fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, Bitvector32Term)> {
+    // A pointer cell this snapshot holds materialized, whose value is the
+    // pointer an earlier load of this same cell produced, already names this
+    // load: the materialized value is `cell.block + v * width` and `v` is
+    // registered as the load of this cell. The integer counterpart below
+    // resolves through the canonical form; a pointer cell's value is not an
+    // integer, so it is resolved here instead of falling through to the epoch
+    // walk. That walk is assumption-free, so it stops at a loop head's havoc
+    // even where the head copied the cell back as provably unwritten, and a
+    // field such as `arena->occupied` read again inside the loop would get a
+    // second name for the value its pointer already carries.
+    if let Bitvector32Term::MemoryLoad(memory, pointer) = bits
+        && let Some(variable) = materialized_pointer_cell_load_variable(memory, pointer)
+    {
+        return Some((variable, bits.clone()));
+    }
     let canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads(bits);
     if let Bitvector32Term::MemoryLoad(memory, pointer) = &canonical {
         let Bitvector32Term::MemoryLoad(origin, _) = bits else {
@@ -2833,6 +2848,41 @@ fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, 
         unreachable!("the pattern above matched a memory load");
     };
     Some((load_variable_for_cell(memory, pointer), bits.clone()))
+}
+
+/// The registered load variable a materialized pointer cell's value carries,
+/// when that value is exactly the pointer a typed load of this cell produces
+/// (`symbolic_pointer_load`): the cell's own block, offset `v * width` at the
+/// value's pointee width, with `v` registered as a load of this same address.
+/// One map lookup and one registry lookup.
+fn materialized_pointer_cell_load_variable(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+) -> Option<Variable> {
+    let CValue::Pointer(value) = memory.cells.get(pointer)? else {
+        return None;
+    };
+    let stored = value.pointer();
+    if stored.block != pointer.block {
+        return None;
+    }
+    let PointerOffsetTerm::Int32Scaled {
+        value: index,
+        byte_width,
+    } = &stored.offset
+    else {
+        return None;
+    };
+    // The scale must be the one a typed load of this cell applies, or the
+    // stored index would not be the loaded one.
+    if value.c_type().pointee_type()?.byte_width() != u32::try_from(*byte_width).ok()? {
+        return None;
+    }
+    let Bitvector32Term::Variable(variable) = index.as_ref() else {
+        return None;
+    };
+    let (_, registered) = registered_load_for_variable(variable)?;
+    (registered == *pointer).then_some(*variable)
 }
 
 /// Binds a load term to its load variable and records the defining

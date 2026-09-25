@@ -2772,7 +2772,15 @@ fn synthesize_parameter_field_indexed_int32_load(
         else {
             return None;
         };
-        let Bitvector32Term::MemoryLoad(_, field_pointer) = value.as_ref() else {
+        // The field's value is its load, or the load variable naming that
+        // load at this state.
+        let named_load = match value.as_ref() {
+            Bitvector32Term::Variable(variable) => registered_load_in_state(variable, state),
+            _ => None,
+        };
+        let Bitvector32Term::MemoryLoad(_, field_pointer) =
+            named_load.as_ref().unwrap_or(value.as_ref())
+        else {
             return None;
         };
         let field = synthesize_struct_field_load(
@@ -2789,6 +2797,11 @@ fn synthesize_parameter_field_indexed_int32_load(
                 byte_width: 4,
             }) => {
                 synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)?
+            }
+            Some(PointerOffsetTerm::Constant(bytes)) if bytes % 4 == 0 => {
+                ContractExpression::CFragment(CExpression::Value(int32(
+                    u32::try_from(bytes / 4).ok()?,
+                )))
             }
             Some(_) => return None,
         };
@@ -3283,17 +3296,15 @@ fn synthesize_surface_pointer(
     }) {
         return None;
     }
-    let ContractExpression::CFragment(expression) = synthesize_surface_pointer_offset(
+    // A pointer read from a struct field spells as that field, possibly
+    // displaced; the C expression it denotes is the field's lowered load.
+    contract_expression_to_c_fragment(&synthesize_surface_pointer_offset(
         &pointer.offset,
         parameters,
         arguments,
         state,
         bound_variables,
-    )?
-    else {
-        return None;
-    };
-    Some(expression)
+    )?)
 }
 
 fn synthesize_surface_pointer_expression(

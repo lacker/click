@@ -1,4 +1,4 @@
-# Frontier: framing cells a folded loop binder owns but the loop never writes
+# Framing cells a folded loop binder owns through a struct field
 
 `mark_run` marks the cells `[start, end)` of an occupancy map reached
 through a struct field, `arena->occupied`, in a loop that owns a
@@ -9,23 +9,22 @@ clear loops have exactly this shape. The loop never writes a cell below
 `start`, and the contract says so: every such cell keeps its entry value.
 
 A loop that declares a resource havocs all memory the resource owns, so the
-frame of the untouched cells has to be a loop invariant, here
+frame of the untouched cells is a loop invariant,
 `forall k in [0, start): arena->occupied[k] == old(arena->occupied[k])`.
-Initialization and the per-iteration step both check: the step is a
-transport across the one store the body makes. What fails is closing the
-invariant at the back edge, where the loop requires its binder folded. With
-the map passed as a parameter, `int32* occupied`, the same proof closes. Read
-through the field, the closure's viewability obligation for
-`arena->occupied[k]` names the cell through the field's value loaded at
-another snapshot than the one the obligation is stated at, and neither the
-smart closer nor an explicit transport from the cell's value fact finds
-evidence for it.
+Initialization and the per-iteration step check it, the step as a transport
+across the one store the body makes, and the back edge closes it with the
+binder folded again.
 
-The per-cell arena needs this frame to state what `arena_alloc` and
-`arena_free` leave unchanged, and so to establish the all-free map that
-`arena_destroy` requires after the pipeline's frees. Either resolving the
-field load across the back edge, or letting an iterated fact split at an
-index so that a loop can own only the cells it writes, would close it.
+The field `arena->occupied` is owned by the function through
+`object(arena)`, outside the loop's havoc, so the loop head copies its cell
+back unchanged and every read of it names the one pointer the function
+loaded at entry. The back edge's viewability obligation for
+`arena->occupied[k]` is stated over that pointer, and the smart closer
+discharges it from the entry viewability of the map, spelled through the
+field, exactly as it does when the map is a parameter
+(`loop_frame_through_parameter_over_folded_binder_cells.md`). Writing the
+field inside the loop breaks the frame
+(`loop_frame_rejects_rewritten_base_field.md`).
 
 ```c filename=loop_old_invariant_through_field_pointer.c
 struct arena {
@@ -253,5 +252,5 @@ void mark_run(struct arena* arena, int32 start, int32 end) {
 ```
 
 ```expect
-fail: closure body did not prove every invariant obligation
+pass
 ```

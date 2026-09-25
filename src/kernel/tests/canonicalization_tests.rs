@@ -1177,3 +1177,69 @@ fn variable_substitution_visits_each_snapshot_once_per_rewrite() {
         );
     }
 }
+
+/// A pointer cell a snapshot holds materialized is named by the pointer it
+/// holds when that value is exactly what a typed load of the cell produces:
+/// the cell's block, offset `v * 4` for an `int32*`, and `v` registered as a
+/// load of this cell. The epoch walk cannot cross a loop head's havoc, so a
+/// struct field the head copied back would otherwise take a second name.
+/// The same value in another cell, or at another pointee width, is not a
+/// load of this cell and keeps the walk's name.
+#[test]
+fn a_materialized_pointer_cell_is_named_by_the_load_it_holds() {
+    let field = Pointer {
+        block: "fields".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let other = Pointer {
+        block: "fields".into(),
+        offset: PointerOffsetTerm::Constant(8),
+    };
+    let entry = CMemory::new().with_block("fields", 16);
+    let Bitvector32Term::Variable(loaded) =
+        crate::kernel::canonical_form_of_load(intern_c_memory(entry.clone()), field.clone())
+    else {
+        panic!("a load of an opaque cell is named by a load variable");
+    };
+    let pointer_at = |c_type: CType| {
+        CValue::typed_pointer(
+            Pointer {
+                block: "fields".into(),
+                offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(loaded), 4),
+            },
+            c_type,
+        )
+    };
+    let name_at = |memory: CMemory, cell: &Pointer| {
+        crate::kernel::canonical_form_of_load(intern_c_memory(memory), cell.clone())
+    };
+
+    let held = entry
+        .clone()
+        .with_block("unrelated", 4)
+        .store(field.clone(), pointer_at(CType::Int32Pointer));
+    assert_eq!(
+        name_at(held, &field),
+        Bitvector32Term::Variable(loaded),
+        "the cell holds the pointer its own load produced"
+    );
+
+    let elsewhere = entry
+        .clone()
+        .with_block("unrelated", 4)
+        .store(other.clone(), pointer_at(CType::Int32Pointer));
+    assert_ne!(
+        name_at(elsewhere, &other),
+        Bitvector32Term::Variable(loaded),
+        "another cell holding that pointer is not a load of the first cell"
+    );
+
+    let rescaled = entry
+        .with_block("unrelated", 4)
+        .store(field.clone(), pointer_at(CType::UInt8Pointer));
+    assert_ne!(
+        name_at(rescaled, &field),
+        Bitvector32Term::Variable(loaded),
+        "a byte pointer scaled by four is not what a typed load of the cell produces"
+    );
+}
