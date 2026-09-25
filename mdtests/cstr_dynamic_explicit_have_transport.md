@@ -22,29 +22,20 @@ int32 read_terminator(uint8 bytes[], int32 known_len) {
         unfold(cstr_readable);
         unfold(cstr_readable_len);
         execute_until(statement(1));
+        have viewable(bytes[0..known_len + 1]) by {
+            transport(
+                at(function.entry, viewable(bytes[0..known_len + 1])),
+                viewable(bytes[0..known_len + 1])
+            ) using { at(function.entry, viewable(bytes[0..known_len + 1])); }
+        }
         have exists (len: int32) {
-            defined(len + 1) and
-                forall (k: int32) {
-                    0 <= k and k < len implies viewable((bytes + k)[0..1])
-                }
+            0 <= len and viewable(bytes[0..len + 1]) and
+            forall (k: int32) { 0 <= k and k < len implies bytes[k] != '\0' } and
+            bytes[len] == '\0' and
+            forall (k: int32) { 0 <= k and k < len + 1 implies defined(bytes[k]) }
         } by {
             witness(len = known_len);
-            both {
-                simp();
-            } and {
-                intro();
-                intro();
-                extract(0 <= k);
-                extract(k < known_len);
-                transport(
-                    at(function.entry, viewable(bytes[0..known_len + 1])),
-                    viewable((bytes + k)[0..1])
-                ) using {
-                    k < known_len;
-                    0 <= k;
-                    at(function.entry, viewable(bytes[0..known_len + 1]));
-                }
-            }
+            simp();
         }
         step();
         unfold(cstr_readable_len);

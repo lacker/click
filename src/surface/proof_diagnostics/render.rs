@@ -407,6 +407,15 @@ impl Renderer<'_> {
                 self.pointer(pointer);
                 self.fmt(format_args!(", bytes={byte_width})"));
             }
+            Proposition::CMemoryReadDefined {
+                memory, pointer, ..
+            } => {
+                self.push("defined-read(");
+                self.memory(memory);
+                self.push(", ");
+                self.pointer(pointer);
+                self.push(")");
+            }
             Proposition::CMemoryLoads {
                 memory,
                 pointer,

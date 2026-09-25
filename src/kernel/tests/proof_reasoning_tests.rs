@@ -3912,7 +3912,7 @@ fn field_derived_capacity_range_covers_a_shorter_live_prefix() {
 }
 
 #[test]
-fn quantified_int32_fact_certifies_an_instantiated_load() {
+fn quantified_int32_fact_does_not_certify_an_instantiated_load() {
     let memory = CMemory::new();
     let data = Pointer {
         block: "data".into(),
@@ -3970,7 +3970,10 @@ fn quantified_int32_fact_certifies_an_instantiated_load() {
         bytes: Bitvector32Term::Constant(4),
     };
 
-    assert!(assumptions.proves(&target));
+    assert!(
+        !assumptions.proves(&target),
+        "a logical value fact cannot grant viewability"
+    );
     crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
         assert!(!assumptions.proves(&target));
     });
@@ -4344,7 +4347,7 @@ fn quantified_copy_fact_certifies_concrete_pointer_indices() {
 }
 
 #[test]
-fn quantified_int32_fact_certifies_its_complete_guarded_range() {
+fn quantified_int32_fact_does_not_certify_its_complete_guarded_range() {
     let memory = CMemory::new();
     let data = Pointer {
         block: "data".into(),
@@ -4386,7 +4389,10 @@ fn quantified_int32_fact_certifies_its_complete_guarded_range() {
         bytes: Bitvector32Term::multiply(length.clone(), Bitvector32Term::Constant(4)),
     };
 
-    assert!(assumptions.proves(&target));
+    assert!(
+        !assumptions.proves(&target),
+        "a logical value fact cannot grant viewability"
+    );
     assert!(!assumptions.proves(&Proposition::CMemoryLoadable {
         memory: memory.with_block("other-state", 4),
         base: data.clone(),
@@ -6538,7 +6544,7 @@ fn quantified_fact_query_scales_near_linearly_with_unrelated_quantified_facts() 
             };
             let (proved, work) =
                 crate::instrumentation::measure_deterministic_work(|| assumptions.proves(&target));
-            assert!(proved, "the guarded quantified fact certifies the load");
+            assert!(!proved, "quantified value facts grant no loadability");
             (size, work)
         })
         .collect::<Vec<_>>();

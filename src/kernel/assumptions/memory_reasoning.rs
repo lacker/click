@@ -187,6 +187,103 @@ pub(in crate::kernel) fn signed_byte_sum_is_nonwrapping(
 }
 
 impl PureFactContext {
+    /// A validity premise frames only across a lifetime-preserving, value-
+    /// preserving memory edge. Value equalities alone are never authority.
+    pub(crate) fn has_memory_read_defined_evidence(
+        &self,
+        memory: &CMemory,
+        pointer: &Pointer,
+        value_type: CType,
+    ) -> bool {
+        let key = (
+            crate::kernel::api::canonicalize_pointer_loads(pointer),
+            value_type,
+        );
+        self.memory_read_defined_facts
+            .get(&key)
+            .is_some_and(|facts| {
+                facts.iter().any(|fact| {
+                    let Proposition::CMemoryReadDefined {
+                        memory: before,
+                        pointer: source,
+                        ..
+                    } = fact
+                    else {
+                        unreachable!()
+                    };
+                    if before == memory && source == pointer {
+                        return true;
+                    }
+                    before.read_region_identity(source) == memory.read_region_identity(pointer)
+                        && crate::kernel::api::atomic_loads_equal_along_memory_derivations(
+                            &Bitvector32Term::MemoryLoad(
+                                crate::kernel::intern_c_memory_ref(before),
+                                Box::new(source.clone()),
+                            ),
+                            &Bitvector32Term::MemoryLoad(
+                                crate::kernel::intern_c_memory_ref(memory),
+                                Box::new(pointer.clone()),
+                            ),
+                            self,
+                        )
+                })
+            })
+    }
+
+    /// A successful typed specification evaluation proves validity. Value
+    /// equalities are deliberately absent from the initialization authority.
+    pub(crate) fn proves_memory_read_defined(
+        &self,
+        memory: &CMemory,
+        pointer: &Pointer,
+        value_type: CType,
+    ) -> bool {
+        if self.has_memory_read_defined_evidence(memory, pointer, value_type) {
+            return true;
+        }
+        if memory
+            .known_value(pointer)
+            .is_some_and(|value| value_type.accepts(&value))
+            && !memory.is_ended_local_address(pointer)
+            && !memory.is_deallocated_heap_address(pointer, self)
+            && !memory.is_uninitialized_heap_address(pointer, value_type.byte_width(), self)
+        {
+            return true;
+        }
+        // With no range, alias, or allocation evidence, other materialized
+        // cells cannot justify this unknown address. This is also the empty
+        // context used by lowering to recognize structurally valid reads.
+        if self.condition_facts.is_empty()
+            && self.prop_facts.is_empty()
+            && self.resource_compositions.is_empty()
+            && memory.blocks.is_empty()
+        {
+            return false;
+        }
+        // Validity cannot hold without a covering byte range. Check that
+        // first: in particular, the empty context used by logical lowering
+        // must not resolve aliases across a whole symbolic memory merely to
+        // discover that no range was available.
+        if !self.proves_memory_access(memory, pointer, value_type.byte_width()) {
+            return false;
+        }
+        let paths = crate::kernel::eval::evaluate_spec_memory_load_paths(
+            memory,
+            pointer.clone(),
+            value_type,
+            Vec::new(),
+            Vec::new(),
+            self,
+        );
+        matches!(paths.as_slice(), [path]
+            if matches!(path.outcome, CExpressionOutcome::Value(_))
+                && path.facts.iter().all(|fact| self.proves_exact(fact.proposition())
+                    || crate::kernel::is_load_variable_defining_fact(fact.proposition()))
+                && path.obligations.iter().all(|obligation|
+                    self.proves_exact(obligation.proposition())
+                    || self.proves_atomic_memory_or_resource(obligation.proposition())))
+    }
+
     #[cfg(test)]
     pub(crate) fn reset_proof_aware_pointer_index_queries() {
         PROOF_AWARE_POINTER_INDEX_QUERIES.with(|queries| queries.set(0));
@@ -286,12 +383,6 @@ impl PureFactContext {
             .adjacent_loadable_region_facts(memory, base, bytes)
             .is_some()
         {
-            return true;
-        }
-
-        if crate::kernel::api::contract_certification::quantified_int32_fact_certifies_loadable_range(
-            self, memory, base, bytes,
-        ) {
             return true;
         }
 

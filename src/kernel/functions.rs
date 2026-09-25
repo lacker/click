@@ -4341,7 +4341,7 @@ impl ResourceCallApplication {
 /// a call precondition applies to.
 fn loadability_obligation_shape(proposition: &Proposition) -> bool {
     match proposition {
-        Proposition::CMemoryLoadable { .. } => true,
+        Proposition::CMemoryLoadable { .. } | Proposition::CMemoryReadDefined { .. } => true,
         Proposition::Implies(_, body) => loadability_obligation_shape(body),
         Proposition::And(left, right) => {
             loadability_obligation_shape(left) && loadability_obligation_shape(right)
@@ -22784,10 +22784,10 @@ mod provisional_ensure_obligation_tests {
             });
             result.expect("the provisional ensure should lower");
             assert!(
-                facts
+                !facts
                     .iter()
                     .any(|fact| fact.proposition() == &element_loadable),
-                "contextual viewability must remain an explicit provisional obligation"
+                "a value postcondition must not publish viewability"
             );
             work_by_size.push((unrelated_count, work));
         }

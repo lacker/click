@@ -42,7 +42,7 @@ int32* uaf_local(int32 fallback[], int32 j) {
     requires 0 <= j;
     requires j < 1;
     views fallback[0..1];
-    ensures result[j] == result[j];
+    ensures defined(result[j]);
 } by {
     execute();
     simp();
@@ -50,5 +50,5 @@ int32* uaf_local(int32 fallback[], int32 j) {
 ```
 
 ```expect
-fail: viewable
+fail: checked outcome `simp` search did not retain a complete proof
 ```

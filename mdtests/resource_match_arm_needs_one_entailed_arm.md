@@ -2,8 +2,8 @@
 
 Arm selection is entailment, not search. `model != Slot::Empty` leaves both
 `Slot::Reserved` and `Slot::Filled` possible, so no arm is selected, the
-instance stays folded, and `requires node->value >= 0` is refused exactly as
-it was before any arm could be selected at all.
+instance stays folded, and the actual C read of `node->value` is refused.
+The logical precondition `node->value >= 0` supplies no memory permission.
 
 There is no implicit proof by cases: the two surviving arms do not own the
 same cells, and Click does not split the contract to find out which one the
@@ -42,7 +42,7 @@ int32 read_cell(struct cell* node) {
 } by {
     match c.model {
         Slot::Empty => { contradiction(c.model == Slot::Empty); },
-        Slot::Reserved => { contradiction(c.model == Slot::Empty); },
+        Slot::Reserved => { execute(); },
         Slot::Filled(value) => {
             unfold(c);
             execute();
@@ -54,5 +54,5 @@ int32 read_cell(struct cell* node) {
 ```
 
 ```expect
-fail: `cell(node)` stays folded: the requirements leave the arms `Slot::Filled` and `Slot::Reserved` possible, and this cell is not owned by every one of them
+fail: missing resource fact
 ```

@@ -4889,8 +4889,10 @@ impl<'a> Proof<'a> {
         &self,
         surfaces: &[ClickProposition],
     ) -> Option<Self> {
-        if matches!(self.goal(), Some(Proposition::CMemoryLoadable { .. }))
-            && let Some(surface_goal) = self.surface_goal()
+        if matches!(
+            self.goal(),
+            Some(Proposition::CMemoryLoadable { .. } | Proposition::CMemoryReadDefined { .. })
+        ) && let Some(surface_goal) = self.surface_goal()
         {
             for source in surfaces
                 .iter()
@@ -5907,7 +5909,31 @@ impl<'a> Proof<'a> {
                         {
                             Ok(Some(candidate))
                         }
-                        Ok(_) | Err(_) => {
+                        Ok(lowered) => {
+                            // The checked call may carry a generated arithmetic
+                            // guard already discharged in this proof scope.
+                            // Proving its exact consequent is sufficient for
+                            // the subsequent ordinary checked-step retry.
+                            let mut target = &requirement.proposition;
+                            for introduction in &requirement.introductions {
+                                if !matches!(
+                                    introduction,
+                                    crate::kernel::LoweringIntroduction::ObligationGuard
+                                ) {
+                                    break;
+                                }
+                                let Proposition::Implies(_, consequent) = target else {
+                                    break;
+                                };
+                                target = consequent;
+                                if propositions_match_after_canonical_loads(&lowered, target) {
+                                    return Ok(Some(candidate));
+                                }
+                            }
+                            check_verification_deadline()?;
+                            Ok(None)
+                        }
+                        Err(_) => {
                             check_verification_deadline()?;
                             Ok(None)
                         }
@@ -5920,7 +5946,7 @@ impl<'a> Proof<'a> {
                             &execution.core.state,
                         )
                     };
-                    let direct_caller = requirement.call_site.as_ref().and_then(|_| {
+                    let mut direct_caller = requirement.call_site.as_ref().and_then(|_| {
                         source_backed_direct_caller_requirement(
                             &requirement,
                             &step,
@@ -5942,7 +5968,19 @@ impl<'a> Proof<'a> {
                         ) else {
                             return Err(error);
                         };
-                        if let Some(surface) = admit_candidate(registry_surface.proposition)? {
+                        let candidate = if let Some((predicate_name, _)) = &direct_caller {
+                            let mut unfolded = proof.active_unfolded_predicates();
+                            unfolded.push(predicate_name.clone());
+                            unfold_structural_invariant_proposition(
+                                context.predicate_environment,
+                                &registry_surface.proposition,
+                                &unfolded,
+                            )
+                            .map_err(|message| proof.step_error(message))?
+                        } else {
+                            registry_surface.proposition
+                        };
+                        if let Some(surface) = admit_candidate(candidate)? {
                             surface
                         } else {
                             let Some(synthesized) = synthesize_candidate() else {
@@ -5951,6 +5989,10 @@ impl<'a> Proof<'a> {
                             let Some(surface) = admit_candidate(synthesized)? else {
                                 return Err(error);
                             };
+                            // A synthesized generated guard is a different
+                            // goal from the written predicate's existential.
+                            // Its witness must be selected for this goal.
+                            direct_caller = None;
                             surface
                         }
                     } else {
@@ -5992,7 +6034,33 @@ impl<'a> Proof<'a> {
                         None => {
                             let mut surfaces = vec![surface.clone()];
                             surfaces.extend(collect_bounded_surface_conjunct_leaves(&surface)?);
-                            have.try_simp_closure_with_surfaces(&surfaces)?
+                            let closed = have.try_simp_closure_with_surfaces(&surfaces)?;
+                            if closed.is_some() {
+                                closed
+                            } else if let ClickProposition::Exists {
+                                click_type: ClickType::C(syntax::C0Type::Int32),
+                                name,
+                                written_name,
+                                ..
+                            } = &surface
+                            {
+                                let witnessed = attempt::candidate_outcome(have.apply_step(
+                                    ProofStep::Witness(ProofWitness {
+                                        name: written_name.as_ref().unwrap_or(name).clone(),
+                                        value: ContractExpression::CFragment(CExpression::Value(
+                                            CValue::Int32(Bitvector32Term::Constant(0)),
+                                        )),
+                                    }),
+                                ))?;
+                                match witnessed {
+                                    Some(witnessed) => {
+                                        witnessed.try_simp_closure_with_surfaces(&surfaces)?
+                                    }
+                                    None => None,
+                                }
+                            } else {
+                                None
+                            }
                         }
                     };
                     let Some(closed) = closed else {

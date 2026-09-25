@@ -63,7 +63,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
     step();
     step();
     loop {
-        decreases 2 - j;
+        decreases (2 - j);
         invariant j >= 0 and j <= 2;
         invariant all_le_range(p, 0, j, p[j]);
         initialize by {
@@ -142,104 +142,75 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                     }
                 }
                 close_invariants by {
+                    extract(at(statement(4).entry, j) >= at(statement(4).entry, 0));
+                    extract(at(statement(4).entry, j) <= at(statement(4).entry, 2));
                     both {
                         both {
-                            apply(int32_increment_greater_equal_lower_bound(at(statement(4).entry, j), at(statement(4).entry, 0), at(statement(4).entry, 2))) using {
-                                at(statement(4).entry, j) >= at(statement(4).entry, 0);
-                                at(statement(4).entry, j) < at(statement(4).entry, 2);
+                            arithmetic_certificate signed_int32 {
+                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                interval_intersect 2, 3 (0) (1);
+                                interval_atom (1) (1) (1);
+                                interval_add_bounded 4, 5 (1) (2);
+                                trivial => -1 <= 0;
+                                add 0, 7 => (at(statement(4).entry, 0) + -1) <= (at(statement(4).entry, j) + 0);
+                                affine_conclusion 8 6 => j >= 0;
+                                conclusion 9;
                             }
                         } and {
-                            apply(int32_increment_upper_bound(at(statement(4).entry, j), at(statement(4).entry, 2))) using {
-                                at(statement(4).entry, j) < at(statement(4).entry, 2);
+                            arithmetic_certificate signed_int32 {
+                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                interval_intersect 2, 3 (0) (1);
+                                interval_atom (1) (1) (1);
+                                interval_add_bounded 4, 5 (1) (2);
+                                affine_conclusion 1 6 => j <= 2;
+                                conclusion 7;
                             }
                         }
                     } and {
                         both {
                             intro();
-                            intro();
-                            extract(0 <= __click_q0);
-                            extract(0 <= __click_q0);
-                            extract(__click_q0 < j);
-                            if __click_q0 < (j - 1) {
-                                have __click_q0 != (j - 1) by {
-                                    apply(int32_lt_implies_neq(__click_q0, (j - 1))) using {
-                                        __click_q0 < (j - 1);
-                                    }
+                            assumption();
+                        } and {
+                            both {
+                                arithmetic_certificate signed_int32 {
+                                    premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                    premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                    interval_atom (0) (0) (0);
+                                    interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                    interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                    interval_intersect 3, 4 (0) (1);
+                                    interval_subtract 2, 5 2 (-1) (0);
+                                    interval_atom (1) (1) (1);
+                                    interval_add_bounded 6, 7 (0) (1);
+                                    affine_conclusion 1 8 => 0 <= ((0 - at(statement(4).entry, j)) + 1);
+                                    conclusion 9;
                                 }
-                                transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
-                                    __click_q0 < j;
-                                    0 <= __click_q0;
-                                    at(statement(4).entry, j) <= at(statement(4).entry, 2);
-                                    at(function.entry, viewable(p[0..3]));
-                                }
-                            } else {
-                                have __click_q0 == (j - 1) by {
-                                    have __click_q0 <= (j - 1) by {
-                                        apply(int32_lt_successor_implies_le(__click_q0, (j - 1))) using {
-                                            __click_q0 < j;
-                                        }
-                                    }
-                                    apply(int32_le_and_not_lt_implies_eq(__click_q0, (j - 1))) using {
-                                        __click_q0 <= (j - 1);
-                                        not __click_q0 < (j - 1);
-                                    }
-                                }
-                                transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
-                                    at(statement(4).entry, j) <= at(statement(4).entry, 2);
-                                    at(statement(4).entry, j) >= at(statement(4).entry, 0);
-                                    __click_q0 == (j - 1);
-                                    at(function.entry, viewable(p[0..3]));
+                            } and {
+                                arithmetic_certificate signed_int32 {
+                                    premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                    premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                    interval_atom (0) (0) (0);
+                                    interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                    interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                    interval_intersect 3, 4 (0) (1);
+                                    interval_subtract 2, 5 2 (-1) (0);
+                                    interval_atom (1) (1) (1);
+                                    interval_add_bounded 6, 7 (0) (1);
+                                    interval_subtract 2, 5 2 (-1) (0);
+                                    interval_atom (2) (2) (2);
+                                    interval_add_bounded 9, 10 (1) (2);
+                                    trivial => 0 <= 0;
+                                    affine_conclusion_pair 12 8 11 => ((0 - at(statement(4).entry, j)) + 1) < ((0 - at(statement(4).entry, j)) + 2);
+                                    conclusion 13;
                                 }
                             }
-                        } and {
-                                    both {
-                                                                    intro();
-                                                                    extract(j >= 0);
-                                                                    extract(j <= 2);
-                                                                    intro();
-                                                                    intro();
-                                                                    intro();
-                                                                    instantiate(forall (k: int32) { at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, k) < at(statement(10).entry, j) implies at(statement(10).entry, p[k]) <= at(statement(10).entry, p[j]) }, __click_q0) using {
-                                                                        0 <= __click_q0 and 0 <= __click_q0 and __click_q0 < j;
-                                                                    }
-                                                                    assumption();
-                                                                
-                                    } and {
-                                        both {
-                                            arithmetic_certificate signed_int32 {
-                                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
-                                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
-                                                interval_atom (0) (0) (0);
-                                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
-                                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
-                                                interval_intersect 3, 4 (0) (1);
-                                                interval_subtract 2, 5 2 (-1) (0);
-                                                interval_atom (1) (1) (1);
-                                                interval_add_bounded 6, 7 (0) (1);
-                                                affine_conclusion 1 8 => 0 <= ((0 - at(statement(4).entry, j)) + 1);
-                                                conclusion 9;
-                                            }
-                                        } and {
-                                            arithmetic_certificate signed_int32 {
-                                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
-                                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
-                                                interval_atom (0) (0) (0);
-                                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
-                                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
-                                                interval_intersect 3, 4 (0) (1);
-                                                interval_subtract 2, 5 2 (-1) (0);
-                                                interval_atom (1) (1) (1);
-                                                interval_add_bounded 6, 7 (0) (1);
-                                                interval_subtract 2, 5 2 (-1) (0);
-                                                interval_atom (2) (2) (2);
-                                                interval_add_bounded 9, 10 (1) (2);
-                                                trivial => 0 <= 0;
-                                                affine_conclusion_pair 12 8 11 => ((0 - at(statement(4).entry, j)) + 1) < ((0 - at(statement(4).entry, j)) + 2);
-                                                conclusion 13;
-                                            }
-                                        }
-                                    }
-}
+                        }
                     }
                 }
             } else {
@@ -304,117 +275,74 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                     }
                 }
                 close_invariants by {
+                    extract(at(statement(4).entry, j) >= at(statement(4).entry, 0));
+                    extract(at(statement(4).entry, j) <= at(statement(4).entry, 2));
                     both {
                         both {
-                            apply(int32_increment_greater_equal_lower_bound(at(statement(4).entry, j), at(statement(4).entry, 0), at(statement(4).entry, 2))) using {
-                                at(statement(4).entry, j) >= at(statement(4).entry, 0);
-                                at(statement(4).entry, j) < at(statement(4).entry, 2);
+                            arithmetic_certificate signed_int32 {
+                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                interval_intersect 2, 3 (0) (1);
+                                interval_atom (1) (1) (1);
+                                interval_add_bounded 4, 5 (1) (2);
+                                trivial => -1 <= 0;
+                                add 0, 7 => (at(statement(4).entry, 0) + -1) <= (at(statement(4).entry, j) + 0);
+                                affine_conclusion 8 6 => j >= 0;
+                                conclusion 9;
                             }
                         } and {
-                            apply(int32_increment_upper_bound(at(statement(4).entry, j), at(statement(4).entry, 2))) using {
-                                at(statement(4).entry, j) < at(statement(4).entry, 2);
+                            arithmetic_certificate signed_int32 {
+                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                interval_intersect 2, 3 (0) (1);
+                                interval_atom (1) (1) (1);
+                                interval_add_bounded 4, 5 (1) (2);
+                                affine_conclusion 1 6 => j <= 2;
+                                conclusion 7;
                             }
                         }
                     } and {
                         both {
                             intro();
-                            intro();
-                            extract(0 <= __click_q0);
-                            extract(0 <= __click_q0);
-                            extract(__click_q0 < j);
-                            if __click_q0 < (j - 1) {
-                                have __click_q0 != (j - 1) by {
-                                    apply(int32_lt_implies_neq(__click_q0, (j - 1))) using {
-                                        __click_q0 < (j - 1);
-                                    }
-                                }
-                                transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
-                                    __click_q0 < j;
-                                    0 <= __click_q0;
-                                    at(statement(4).entry, j) <= at(statement(4).entry, 2);
-                                    at(function.entry, viewable(p[0..3]));
-                                }
-                            } else {
-                                have __click_q0 == (j - 1) by {
-                                    have __click_q0 <= (j - 1) by {
-                                        apply(int32_lt_successor_implies_le(__click_q0, (j - 1))) using {
-                                            __click_q0 < j;
-                                        }
-                                    }
-                                    apply(int32_le_and_not_lt_implies_eq(__click_q0, (j - 1))) using {
-                                        __click_q0 <= (j - 1);
-                                        not __click_q0 < (j - 1);
-                                    }
-                                }
-                                transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
-                                    at(statement(4).entry, j) <= at(statement(4).entry, 2);
-                                    at(statement(4).entry, j) >= at(statement(4).entry, 0);
-                                    __click_q0 == (j - 1);
-                                    at(function.entry, viewable(p[0..3]));
-                                }
-                            }
+                            assumption();
                         } and {
                             both {
-                                intro();
-                                intro();
-                                extract(0 <= __click_q0);
-                                extract(0 <= __click_q0);
-                                extract(__click_q0 < j);
-                                transport(at(function.entry, viewable(p[0..3])), viewable((p + j)[0..1])) using {
-                                    at(statement(4).entry, j) < at(statement(4).entry, 2);
-                                    at(statement(4).entry, j) >= at(statement(4).entry, 0);
-                                    at(function.entry, viewable(p[0..3]));
+                                arithmetic_certificate signed_int32 {
+                                    premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                    premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                    interval_atom (0) (0) (0);
+                                    interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                    interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                    interval_intersect 3, 4 (0) (1);
+                                    interval_subtract 2, 5 2 (-1) (0);
+                                    interval_atom (1) (1) (1);
+                                    interval_add_bounded 6, 7 (0) (1);
+                                    affine_conclusion 1 8 => 0 <= ((0 - at(statement(4).entry, j)) + 1);
+                                    conclusion 9;
                                 }
                             } and {
-                                    both {
-                                                                        intro();
-                                                                        extract(j >= 0);
-                                                                        extract(j <= 2);
-                                                                        intro();
-                                                                        intro();
-                                                                        intro();
-                                                                        intro();
-                                                                        instantiate(forall (k: int32) { at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, 0) <= at(statement(10).entry, k) and at(statement(10).entry, k) < at(statement(10).entry, j) implies at(statement(10).entry, p[k]) <= at(statement(10).entry, p[j]) }, __click_q0) using {
-                                                                            0 <= __click_q0 and 0 <= __click_q0 and __click_q0 < j;
-                                                                        }
-                                                                        assumption();
-                                                                    
-                                    } and {
-                                        both {
-                                            arithmetic_certificate signed_int32 {
-                                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
-                                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
-                                                interval_atom (0) (0) (0);
-                                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
-                                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
-                                                interval_intersect 3, 4 (0) (1);
-                                                interval_subtract 2, 5 2 (-1) (0);
-                                                interval_atom (1) (1) (1);
-                                                interval_add_bounded 6, 7 (0) (1);
-                                                affine_conclusion 1 8 => 0 <= ((0 - at(statement(4).entry, j)) + 1);
-                                                conclusion 9;
-                                            }
-                                        } and {
-                                            arithmetic_certificate signed_int32 {
-                                                premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
-                                                premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
-                                                interval_atom (0) (0) (0);
-                                                interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
-                                                interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
-                                                interval_intersect 3, 4 (0) (1);
-                                                interval_subtract 2, 5 2 (-1) (0);
-                                                interval_atom (1) (1) (1);
-                                                interval_add_bounded 6, 7 (0) (1);
-                                                interval_subtract 2, 5 2 (-1) (0);
-                                                interval_atom (2) (2) (2);
-                                                interval_add_bounded 9, 10 (1) (2);
-                                                trivial => 0 <= 0;
-                                                affine_conclusion_pair 12 8 11 => ((0 - at(statement(4).entry, j)) + 1) < ((0 - at(statement(4).entry, j)) + 2);
-                                                conclusion 13;
-                                            }
-                                        }
-                                    }
-}
+                                arithmetic_certificate signed_int32 {
+                                    premise 0: at(statement(4).entry, j) >= at(statement(4).entry, 0) => at(statement(4).entry, j) >= at(statement(4).entry, 0);
+                                    premise 1: at(statement(4).entry, j) < at(statement(4).entry, 2) => at(statement(4).entry, j) < at(statement(4).entry, 2);
+                                    interval_atom (0) (0) (0);
+                                    interval_from_affine 0 (at(statement(4).entry, j)) (0) (2147483647);
+                                    interval_from_affine 1 (at(statement(4).entry, j)) (-2147483648) (1);
+                                    interval_intersect 3, 4 (0) (1);
+                                    interval_subtract 2, 5 2 (-1) (0);
+                                    interval_atom (1) (1) (1);
+                                    interval_add_bounded 6, 7 (0) (1);
+                                    interval_subtract 2, 5 2 (-1) (0);
+                                    interval_atom (2) (2) (2);
+                                    interval_add_bounded 9, 10 (1) (2);
+                                    trivial => 0 <= 0;
+                                    affine_conclusion_pair 12 8 11 => ((0 - at(statement(4).entry, j)) + 1) < ((0 - at(statement(4).entry, j)) + 2);
+                                    conclusion 13;
+                                }
+                            }
                         }
                     }
                 }
@@ -423,7 +351,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
     }
     step();
     loop {
-        decreases 1 - j;
+        decreases (1 - j);
         invariant j >= 0 and j <= 1;
         invariant all_le_range(p, 0, 2, p[2]);
         invariant all_le_range(p, 0, j, p[j]);
@@ -519,127 +447,36 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 }
                 close_invariants by {
                     both {
-                        rewrite(at(statement(17).entry, j) == at(statement(17).entry, 0));
                         both {
-                            normalize();
+                            extract(at(statement(12).entry, j) <= at(statement(12).entry, 1));
+                            extract(at(statement(12).entry, j) >= at(statement(12).entry, 0));
+                            apply(int32_increment_greater_equal_lower_bound(at(statement(12).entry, j), at(statement(12).entry, 0), at(statement(12).entry, 1))) using {
+                                at(statement(12).entry, j) >= at(statement(12).entry, 0);
+                                at(statement(12).entry, j) < at(statement(12).entry, 1);
+                            }
                         } and {
-                            normalize();
+                            extract(at(statement(12).entry, j) <= at(statement(12).entry, 1));
+                            extract(at(statement(12).entry, j) >= at(statement(12).entry, 0));
+                            apply(int32_increment_upper_bound(at(statement(12).entry, j), at(statement(12).entry, 1))) using {
+                                at(statement(12).entry, j) < at(statement(12).entry, 1);
+                            }
                         }
                     } and {
                         both {
-                            have viewable((p + 0)[0..1]) by {
-                                transport(at(function.entry, viewable(p[0..3])), viewable((p + 0)[0..1])) using {
-                                    at(function.entry, viewable(p[0..3]));
-                                }
-                            }
-                            have viewable((p + 1)[0..1]) by {
-                                transport(at(function.entry, viewable(p[0..3])), viewable((p + 1)[0..1])) using {
-                                    at(function.entry, viewable(p[0..3]));
-                                }
-                            }
-                            enumerate();
+                            intro();
+                            assumption();
                         } and {
                             both {
-                                have viewable((p + 2)[0..1]) by {
-                                    transport(at(function.entry, viewable(p[0..3])), viewable((p + 2)[0..1])) using {
-                                        at(function.entry, viewable(p[0..3]));
-                                    }
-                                }
-                                have viewable((p + 2)[0..1]) by {
-                                    assumption();
-                                }
-                                enumerate();
+                                intro();
+                                intro();
+                                assumption();
                             } and {
                                 both {
-                                    intro();
-                                    intro();
-                                    intro();
-                                    enumerate();
+                                    rewrite(at(statement(17).entry, j) == at(statement(17).entry, 0));
+                                    normalize();
                                 } and {
-                                    both {
-                                        intro();
-                                        intro();
-                                        extract(0 <= __click_q0);
-                                        extract(0 <= __click_q0);
-                                        extract(__click_q0 < j);
-                                        if __click_q0 < (j - 1) {
-                                            have __click_q0 != (j - 1) by {
-                                                apply(int32_lt_implies_neq(__click_q0, (j - 1))) using {
-                                                    __click_q0 < (j - 1);
-                                                }
-                                            }
-                                            transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
-                                                __click_q0 < j;
-                                                0 <= __click_q0;
-                                                at(function.entry, j) == at(function.entry, 1);
-                                                at(function.entry, viewable(p[0..3]));
-                                            }
-                                        } else {
-                                            have __click_q0 == (j - 1) by {
-                                                have __click_q0 <= (j - 1) by {
-                                                    apply(int32_lt_successor_implies_le(__click_q0, (j - 1))) using {
-                                                        __click_q0 < j;
-                                                    }
-                                                }
-                                                apply(int32_le_and_not_lt_implies_eq(__click_q0, (j - 1))) using {
-                                                    __click_q0 <= (j - 1);
-                                                    not __click_q0 < (j - 1);
-                                                }
-                                            }
-                                            transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
-                                                __click_q0 == (j - 1);
-                                                at(function.entry, j) == at(function.entry, 1);
-                                                at(function.entry, viewable(p[0..3]));
-                                            }
-                                        }
-                                    } and {
-                                    both {
-                                                                                intro();
-                                                                                extract(j >= 0);
-                                                                                extract(j <= 1);
-                                                                                intro();
-                                                                                intro();
-                                                                                intro();
-                                                                                intro();
-                                                                                intro();
-                                                                                intro();
-                                                                                instantiate(forall (k: int32) { at(statement(18).entry, 0) <= at(statement(18).entry, k) and at(statement(18).entry, 0) <= at(statement(18).entry, k) and at(statement(18).entry, k) < at(statement(18).entry, j) implies at(statement(18).entry, p[k]) <= at(statement(18).entry, p[j]) }, __click_q0) using {
-                                                                                    0 <= __click_q0 and 0 <= __click_q0 and __click_q0 < j;
-                                                                                }
-                                                                                assumption();
-                                                                            
-                                    } and {
-                                        both {
-                                            arithmetic_certificate signed_int32 {
-                                                premise 0: at(statement(17).entry, j) >= at(statement(17).entry, 0) => at(statement(17).entry, j) >= at(statement(17).entry, 0);
-                                                premise 1: at(statement(17).entry, j) < at(statement(17).entry, 1) => at(statement(17).entry, j) < at(statement(17).entry, 1);
-                                                interval_atom (0) (0) (0);
-                                                interval_from_affine 0 (at(statement(17).entry, j)) (0) (2147483647);
-                                                interval_from_affine 1 (at(statement(17).entry, j)) (-2147483648) (0);
-                                                interval_intersect 3, 4 (0) (0);
-                                                interval_subtract 2, 5 2 (0) (0);
-                                                affine_conclusion 1 6 => 0 <= (0 - at(statement(17).entry, j));
-                                                conclusion 7;
-                                            }
-                                        } and {
-                                            arithmetic_certificate signed_int32 {
-                                                premise 0: at(statement(17).entry, j) >= at(statement(17).entry, 0) => at(statement(17).entry, j) >= at(statement(17).entry, 0);
-                                                premise 1: at(statement(17).entry, j) < at(statement(17).entry, 1) => at(statement(17).entry, j) < at(statement(17).entry, 1);
-                                                interval_atom (0) (0) (0);
-                                                interval_from_affine 0 (at(statement(17).entry, j)) (0) (2147483647);
-                                                interval_from_affine 1 (at(statement(17).entry, j)) (-2147483648) (0);
-                                                interval_intersect 3, 4 (0) (0);
-                                                interval_subtract 2, 5 2 (0) (0);
-                                                interval_subtract 2, 5 2 (0) (0);
-                                                interval_atom (1) (1) (1);
-                                                interval_add_bounded 7, 8 (1) (1);
-                                                trivial => 0 <= 0;
-                                                affine_conclusion_pair 10 6 9 => (0 - at(statement(17).entry, j)) < ((0 - at(statement(17).entry, j)) + 1);
-                                                conclusion 11;
-                                            }
-                                        }
-                                    }
-}
+                                    rewrite(at(statement(17).entry, j) == at(statement(17).entry, 0));
+                                    normalize();
                                 }
                             }
                         }
@@ -680,11 +517,15 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                     at(before_swap, not p[(j + 1)] < p[j]);
                 }
                 have p[0] <= p[1] by {
-                    apply(int32_not_lt_implies_ge(p[1], p[0])) using {
-                        not p[1] < p[0];
+                    have p[0] <= p[1] by {
+                        apply(int32_not_lt_implies_ge(p[1], p[0])) using {
+                            not p[1] < p[0];
+                        }
                     }
-                    apply(int32_not_lt_implies_ge(at(statement(18).entry, p[1]), at(statement(18).entry, p[0]))) using {
-                        not at(statement(18).entry, p[1]) < at(statement(18).entry, p[0]);
+                    have p[0] <= p[1] by {
+                        apply(int32_not_lt_implies_ge(at(statement(18).entry, p[1]), at(statement(18).entry, p[0]))) using {
+                            not at(statement(18).entry, p[1]) < at(statement(18).entry, p[0]);
+                        }
                     }
                     apply(int32_ge_implies_reversed_le(at(statement(18).entry, p[1]), at(statement(18).entry, p[0]))) using {
                         at(statement(18).entry, p[1]) >= at(statement(18).entry, p[0]);
@@ -697,134 +538,36 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
                 }
                 close_invariants by {
                     both {
-                        rewrite(at(statement(17).entry, j) == at(statement(17).entry, 0));
                         both {
-                            normalize();
+                            extract(at(statement(12).entry, j) <= at(statement(12).entry, 1));
+                            extract(at(statement(12).entry, j) >= at(statement(12).entry, 0));
+                            apply(int32_increment_greater_equal_lower_bound(at(statement(12).entry, j), at(statement(12).entry, 0), at(statement(12).entry, 1))) using {
+                                at(statement(12).entry, j) >= at(statement(12).entry, 0);
+                                at(statement(12).entry, j) < at(statement(12).entry, 1);
+                            }
                         } and {
-                            normalize();
+                            extract(at(statement(12).entry, j) <= at(statement(12).entry, 1));
+                            extract(at(statement(12).entry, j) >= at(statement(12).entry, 0));
+                            apply(int32_increment_upper_bound(at(statement(12).entry, j), at(statement(12).entry, 1))) using {
+                                at(statement(12).entry, j) < at(statement(12).entry, 1);
+                            }
                         }
                     } and {
                         both {
-                            have viewable((p + 0)[0..1]) by {
-                                transport(at(function.entry, viewable(p[0..3])), viewable((p + 0)[0..1])) using {
-                                    at(function.entry, viewable(p[0..3]));
-                                }
-                            }
-                            have viewable((p + 1)[0..1]) by {
-                                transport(at(function.entry, viewable(p[0..3])), viewable((p + 1)[0..1])) using {
-                                    at(function.entry, viewable(p[0..3]));
-                                }
-                            }
-                            enumerate();
+                            intro();
+                            assumption();
                         } and {
                             both {
-                                have viewable((p + 2)[0..1]) by {
-                                    transport(at(function.entry, viewable(p[0..3])), viewable((p + 2)[0..1])) using {
-                                        at(function.entry, viewable(p[0..3]));
-                                    }
-                                }
-                                have viewable((p + 2)[0..1]) by {
-                                    assumption();
-                                }
-                                enumerate();
+                                intro();
+                                intro();
+                                assumption();
                             } and {
                                 both {
-                                    intro();
-                                    intro();
-                                    intro();
-                                    assumption();
+                                    rewrite(at(statement(17).entry, j) == at(statement(17).entry, 0));
+                                    normalize();
                                 } and {
-                                    both {
-                                        intro();
-                                        intro();
-                                        extract(0 <= __click_q0);
-                                        extract(0 <= __click_q0);
-                                        extract(__click_q0 < j);
-                                        if __click_q0 < (j - 1) {
-                                            have __click_q0 != (j - 1) by {
-                                                apply(int32_lt_implies_neq(__click_q0, (j - 1))) using {
-                                                    __click_q0 < (j - 1);
-                                                }
-                                            }
-                                            transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
-                                                __click_q0 < j;
-                                                0 <= __click_q0;
-                                                at(function.entry, j) == at(function.entry, 1);
-                                                at(function.entry, viewable(p[0..3]));
-                                            }
-                                        } else {
-                                            have __click_q0 == (j - 1) by {
-                                                have __click_q0 <= (j - 1) by {
-                                                    apply(int32_lt_successor_implies_le(__click_q0, (j - 1))) using {
-                                                        __click_q0 < j;
-                                                    }
-                                                }
-                                                apply(int32_le_and_not_lt_implies_eq(__click_q0, (j - 1))) using {
-                                                    __click_q0 <= (j - 1);
-                                                    not __click_q0 < (j - 1);
-                                                }
-                                            }
-                                            transport(at(function.entry, viewable(p[0..3])), viewable((p + __click_q0)[0..1])) using {
-                                                __click_q0 == (j - 1);
-                                                at(function.entry, j) == at(function.entry, 1);
-                                                at(function.entry, viewable(p[0..3]));
-                                            }
-                                        }
-                                    } and {
-                                        both {
-                                            intro();
-                                            intro();
-                                            extract(0 <= __click_q0);
-                                            extract(0 <= __click_q0);
-                                            extract(__click_q0 < j);
-                                            transport(at(function.entry, viewable(p[0..3])), viewable((p + j)[0..1])) using {
-                                                at(function.entry, j) == at(function.entry, 1);
-                                                at(function.entry, viewable(p[0..3]));
-                                            }
-                                        } and {
-                                    both {
-                                                                                    rewrite(at(statement(17).entry, j) == at(statement(17).entry, 0));
-                                                                                    intro();
-                                                                                    intro();
-                                                                                    intro();
-                                                                                    intro();
-                                                                                    intro();
-                                                                                    intro();
-                                                                                    enumerate();
-                                                                                
-                                    } and {
-                                        both {
-                                            arithmetic_certificate signed_int32 {
-                                                premise 0: at(statement(17).entry, j) >= at(statement(17).entry, 0) => at(statement(17).entry, j) >= at(statement(17).entry, 0);
-                                                premise 1: at(statement(17).entry, j) < at(statement(17).entry, 1) => at(statement(17).entry, j) < at(statement(17).entry, 1);
-                                                interval_atom (0) (0) (0);
-                                                interval_from_affine 0 (at(statement(17).entry, j)) (0) (2147483647);
-                                                interval_from_affine 1 (at(statement(17).entry, j)) (-2147483648) (0);
-                                                interval_intersect 3, 4 (0) (0);
-                                                interval_subtract 2, 5 2 (0) (0);
-                                                affine_conclusion 1 6 => 0 <= (0 - at(statement(17).entry, j));
-                                                conclusion 7;
-                                            }
-                                        } and {
-                                            arithmetic_certificate signed_int32 {
-                                                premise 0: at(statement(17).entry, j) >= at(statement(17).entry, 0) => at(statement(17).entry, j) >= at(statement(17).entry, 0);
-                                                premise 1: at(statement(17).entry, j) < at(statement(17).entry, 1) => at(statement(17).entry, j) < at(statement(17).entry, 1);
-                                                interval_atom (0) (0) (0);
-                                                interval_from_affine 0 (at(statement(17).entry, j)) (0) (2147483647);
-                                                interval_from_affine 1 (at(statement(17).entry, j)) (-2147483648) (0);
-                                                interval_intersect 3, 4 (0) (0);
-                                                interval_subtract 2, 5 2 (0) (0);
-                                                interval_subtract 2, 5 2 (0) (0);
-                                                interval_atom (1) (1) (1);
-                                                interval_add_bounded 7, 8 (1) (1);
-                                                trivial => 0 <= 0;
-                                                affine_conclusion_pair 10 6 9 => (0 - at(statement(17).entry, j)) < ((0 - at(statement(17).entry, j)) + 1);
-                                                conclusion 11;
-                                            }
-                                        }
-                                    }
-}
-                                    }
+                                    rewrite(at(statement(17).entry, j) == at(statement(17).entry, 0));
+                                    normalize();
                                 }
                             }
                         }

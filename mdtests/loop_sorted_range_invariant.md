@@ -1,10 +1,8 @@
 # loop_sorted_range_invariant unfolds a predicate invariant
 
-This checks that loop invariants can explicitly unfold a named predicate before
-the loop verification condition is generated. The loop does not write through
-`p`; it carries a sorted-range fact across iterations. Initialization explicitly
-introduces the two lowering-generated viewability guards, the two indices, and
-their range constraint, then instantiates the existing sortedness fact.
+Initialization introduces the two written indices and their range constraint,
+then instantiates the existing sortedness fact. No viewability guard is added
+by reading the array in the proposition.
 
 ```c filename=loop_sorted_range_invariant.c
 int32 loop_sorted_range_invariant(int32 p[3]) {
@@ -59,8 +57,6 @@ int32 loop_sorted_range_invariant(int32 p[3]) {
                 both { normalize(); } and { normalize(); }
             }
             have sorted(old(p), 3) by {
-                intro();
-                intro();
                 intro();
                 intro();
                 intro();

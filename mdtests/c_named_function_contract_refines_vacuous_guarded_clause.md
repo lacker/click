@@ -48,32 +48,17 @@ theorem increment_is_guarded_progress() {
         extract(0 <= old(cell[0]));
         extract(old(cell[0]) < 100);
         both {
-            both {
-                assumption();
-            } and {
-                apply(int32_lt_transitive(old(cell[0]), 100, 1000)) using {
-                    old(cell[0]) < 100;
-                }
+            apply(int32_lt_transitive(old(cell[0]), 100, 1000)) using {
+                old(cell[0]) < 100;
             }
         } and {
             intro();
-            extract(cell[0] == old(cell[0]) + 1);
             both {
-                both {
-                    both {
-                        assumption();
-                    } and {
-                        have not (old(cell[0]) < 0) by {
-                            arithmetic() using {
-                                0 <= old(cell[0]);
-                            }
-                        }
-                        intro();
-                        contradiction(not (old(cell[0]) < 0));
-                    }
-                } and {
-                    assumption();
+                have not (old(cell[0]) < 0) by {
+                    arithmetic() using { 0 <= old(cell[0]); }
                 }
+                intro();
+                contradiction(not (old(cell[0]) < 0));
             } and {
                 rewrite(cell[0] == old(cell[0]) + 1);
                 apply(int32_increment_strictly_increases(old(cell[0]), 100)) using {

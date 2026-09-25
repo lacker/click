@@ -76,9 +76,11 @@ Click has range forms for array-shaped facts:
 
 The range `0..n` is half-open: it includes `0` and excludes `n`.
 
-These forms are useful because Click can lower the body under the fact that
-`k` is in the range. That matters for memory safety: a read such as `p[k]` is
-safe only when Click knows `k` is within a viewable range.
+These forms lower the body under the fact that `k` is in the range. A logical
+read such as `p[k]` denotes a value without a hidden validity guard. To claim
+that reads throughout the range are valid, write `defined(p[k])` in the body;
+the validity claim then uses the same bound `k`. Actual C reads also require
+the appropriate memory permission. See [Viewable ranges](viewability.md).
 
 ## Model payloads
 

@@ -891,55 +891,10 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
                     }
                 }
                 close_invariants by {
-                    both {
-                        simp();
-                    } and {
-                        both {
-                            simp();
-                        } and {
-                            both {
-                                intro();
-                                intro();
-                                extract(0 <= __click_q0);
-                                extract(__click_q0 < arena->capacity);
-                                transport(
-                                    viewable(arena->occupied[0..arena->capacity]),
-                                    viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1])
-                                ) using {
-                                    0 <= __click_q0;
-                                    __click_q0 < arena->capacity;
-                                    viewable(arena->occupied[0..arena->capacity]);
-                                }
-                            } and {
-                                both {
-                                    intro();
-                                    intro();
-                                    extract(0 <= __click_q0);
-                                    extract(__click_q0 < arena->capacity);
-                                    transport(
-                                        at(loop(0).entry, viewable(arena->occupied[0..arena->capacity])),
-                                        at(loop(0).entry, viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1]))
-                                    ) using {
-                                        0 <= __click_q0;
-                                        __click_q0 < arena->capacity;
-                                        at(loop(0).entry, viewable(arena->occupied[0..arena->capacity]));
-                                    }
-                                } and {
-                                    both {
-                                        intro();
-                                        intro();
-                                        intro();
-                                        intro();
-                                        intro();
-                                        assumption();
-                                    } and {
-                                        both {
-                                            simp();
-                                        } and {
-                                            simp();
-                                        }
-                                    }
-                                }
+                    both { simp(); } and {
+                        both { simp(); } and {
+                            both { simp(); } and {
+                                both { simp(); } and { simp(); }
                             }
                         }
                     }
@@ -1556,137 +1511,10 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
                 }
             }
             close_invariants by {
-                both {
-                    normalize();
-                } and {
-                    both {
-                        intro();
-                        intro();
-                        extract(0 <= __click_q0);
-                        extract(__click_q0 < start);
-                        have __click_q0 < end by {
-                            apply(int32_lt_le_transitive(__click_q0, start, end)) using {
-                                __click_q0 < start;
-                                start <= end;
-                            }
-                        }
-                        have __click_q0 < arena->capacity by {
-                            apply(int32_lt_le_transitive(__click_q0, end, arena->capacity)) using {
-                                __click_q0 < end;
-                                end <= arena->capacity;
-                            }
-                        }
-                        transport(
-                            viewable(arena->occupied[0..arena->capacity]),
-                            viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1])
-                        ) using {
-                            0 <= __click_q0;
-                            __click_q0 < arena->capacity;
-                            viewable(arena->occupied[0..arena->capacity]);
-                        }
-                    } and {
-                        both {
-                            intro();
-                            intro();
-                            extract(0 <= __click_q0);
-                            extract(__click_q0 < start);
-                            have __click_q0 < end by {
-                                apply(int32_lt_le_transitive(__click_q0, start, end)) using {
-                                    __click_q0 < start;
-                                    start <= end;
-                                }
-                            }
-                            have __click_q0 < arena->capacity by {
-                                apply(int32_lt_le_transitive(__click_q0, end, arena->capacity)) using {
-                                    __click_q0 < end;
-                                    end <= arena->capacity;
-                                }
-                            }
-                            transport(
-                                at(loop(1).entry, viewable(arena->occupied[0..arena->capacity])),
-                                at(loop(1).entry, viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1]))
-                            ) using {
-                                0 <= __click_q0;
-                                __click_q0 < arena->capacity;
-                                at(loop(1).entry, viewable(arena->occupied[0..arena->capacity]));
-                            }
-                        } and {
-                            both {
-                                intro();
-                                intro();
-                                intro();
-                                assumption();
-                            } and {
-                                both {
-                                    intro();
-                                    intro();
-                                    extract(end <= __click_q0);
-                                    extract(__click_q0 < arena->capacity);
-                                    have 0 <= end by {
-                                        apply(int32_le_transitive(0, start, end)) using {
-                                            0 <= start;
-                                            start <= end;
-                                        }
-                                    }
-                                    have 0 <= __click_q0 by {
-                                        apply(int32_le_transitive(0, end, __click_q0)) using {
-                                            0 <= end;
-                                            end <= __click_q0;
-                                        }
-                                    }
-                                    transport(
-                                        viewable(arena->occupied[0..arena->capacity]),
-                                        viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1])
-                                    ) using {
-                                        0 <= __click_q0;
-                                        __click_q0 < arena->capacity;
-                                        viewable(arena->occupied[0..arena->capacity]);
-                                    }
-                                } and {
-                                    both {
-                                        intro();
-                                        intro();
-                                        extract(end <= __click_q0);
-                                        extract(__click_q0 < arena->capacity);
-                                        have 0 <= end by {
-                                            apply(int32_le_transitive(0, start, end)) using {
-                                                0 <= start;
-                                                start <= end;
-                                            }
-                                        }
-                                        have 0 <= __click_q0 by {
-                                            apply(int32_le_transitive(0, end, __click_q0)) using {
-                                                0 <= end;
-                                                end <= __click_q0;
-                                            }
-                                        }
-                                        transport(
-                                            at(loop(1).entry, viewable(arena->occupied[0..arena->capacity])),
-                                            at(loop(1).entry, viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1]))
-                                        ) using {
-                                            0 <= __click_q0;
-                                            __click_q0 < arena->capacity;
-                                            at(loop(1).entry, viewable(arena->occupied[0..arena->capacity]));
-                                        }
-                                    } and {
-                                        both {
-                                            intro();
-                                            intro();
-                                            intro();
-                                            intro();
-                                            intro();
-                                            intro();
-                                            assumption();
-                                        } and {
-                                            both {
-                                                simp();
-                                            } and {
-                                                simp();
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                both { normalize(); } and {
+                    both { simp(); } and {
+                        both { simp(); } and {
+                            both { simp(); } and { simp(); }
                         }
                     }
                 }
@@ -2382,147 +2210,20 @@ void arena_free(struct region* region) {
                 }
             }
             close_invariants by {
-                both {
-                    normalize();
-                } and {
-                    both {
-                        intro();
-                        intro();
-                        extract(0 <= __click_q0);
-                        extract(__click_q0 < region->start);
-                        have __click_q0 < region->end by {
-                            apply(int32_lt_le_transitive(__click_q0, region->start, region->end)) using {
-                                __click_q0 < region->start;
-                                region->start <= region->end;
-                            }
-                        }
-                        have __click_q0 < arena->capacity by {
-                            apply(int32_lt_le_transitive(__click_q0, region->end, arena->capacity)) using {
-                                __click_q0 < region->end;
+                both { normalize(); } and {
+                    both { simp(); } and {
+                        both { simp(); } and {
+                            both { arithmetic() using {
+                                at(opened, i) < region->end;
+                                0 <= at(opened, i);
                                 region->end <= arena->capacity;
-                            }
-                        }
-                        transport(
-                            viewable(arena->occupied[0..arena->capacity]),
-                            viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1])
-                        ) using {
-                            0 <= __click_q0;
-                            __click_q0 < arena->capacity;
-                            viewable(arena->occupied[0..arena->capacity]);
-                        }
-                    } and {
-                        both {
-                            intro();
-                            intro();
-                            extract(0 <= __click_q0);
-                            extract(__click_q0 < region->start);
-                            have __click_q0 < region->end by {
-                                apply(int32_lt_le_transitive(__click_q0, region->start, region->end)) using {
-                                    __click_q0 < region->start;
-                                    region->start <= region->end;
-                                }
-                            }
-                            have __click_q0 < arena->capacity by {
-                                apply(int32_lt_le_transitive(__click_q0, region->end, arena->capacity)) using {
-                                    __click_q0 < region->end;
-                                    region->end <= arena->capacity;
-                                }
-                            }
-                            transport(
-                                at(loop(0).entry, viewable(arena->occupied[0..arena->capacity])),
-                                at(loop(0).entry, viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1]))
-                            ) using {
-                                0 <= __click_q0;
-                                __click_q0 < arena->capacity;
-                                at(loop(0).entry, viewable(arena->occupied[0..arena->capacity]));
-                            }
-                        } and {
-                            both {
-                                intro();
-                                intro();
-                                intro();
-                                assumption();
-                            } and {
-                                both {
-                                    intro();
-                                    intro();
-                                    extract(region->end <= __click_q0);
-                                    extract(__click_q0 < arena->capacity);
-                                    have 0 <= region->end by {
-                                        apply(int32_le_transitive(0, region->start, region->end)) using {
-                                            0 <= region->start;
-                                            region->start <= region->end;
-                                        }
-                                    }
-                                    have 0 <= __click_q0 by {
-                                        apply(int32_le_transitive(0, region->end, __click_q0)) using {
-                                            0 <= region->end;
-                                            region->end <= __click_q0;
-                                        }
-                                    }
-                                    transport(
-                                        viewable(arena->occupied[0..arena->capacity]),
-                                        viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1])
-                                    ) using {
-                                        0 <= __click_q0;
-                                        __click_q0 < arena->capacity;
-                                        viewable(arena->occupied[0..arena->capacity]);
-                                    }
-                                } and {
-                                    both {
-                                        intro();
-                                        intro();
-                                        extract(region->end <= __click_q0);
-                                        extract(__click_q0 < arena->capacity);
-                                        have 0 <= region->end by {
-                                            apply(int32_le_transitive(0, region->start, region->end)) using {
-                                                0 <= region->start;
-                                                region->start <= region->end;
-                                            }
-                                        }
-                                        have 0 <= __click_q0 by {
-                                            apply(int32_le_transitive(0, region->end, __click_q0)) using {
-                                                0 <= region->end;
-                                                region->end <= __click_q0;
-                                            }
-                                        }
-                                        transport(
-                                            at(loop(0).entry, viewable(arena->occupied[0..arena->capacity])),
-                                            at(loop(0).entry, viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1]))
-                                        ) using {
-                                            0 <= __click_q0;
-                                            __click_q0 < arena->capacity;
-                                            at(loop(0).entry, viewable(arena->occupied[0..arena->capacity]));
-                                        }
-                                    } and {
-                                        both {
-                                            intro();
-                                            intro();
-                                            intro();
-                                            intro();
-                                            intro();
-                                            intro();
-                                            assumption();
-                                        } and {
-                                            both {
-                                                arithmetic() using {
-                                                    at(opened, i) < region->end;
-                                                    0 <= at(opened, i);
-                                                    region->end <= arena->capacity;
-                                                    arena->capacity <= 536870911;
-                                                }
-                                            } and {
-                                                arithmetic() using {
-                                                    at(opened, i) < region->end;
-                                                    0 <= at(opened, i);
-                                                    region->end <= arena->capacity;
-                                                    arena->capacity <= 536870911;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                                arena->capacity <= 536870911;
+                            } } and { arithmetic() using {
+                                at(opened, i) < region->end;
+                                0 <= at(opened, i);
+                                region->end <= arena->capacity;
+                                arena->capacity <= 536870911;
+                            } }
                         }
                     }
                 }

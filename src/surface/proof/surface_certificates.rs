@@ -2752,18 +2752,23 @@ pub(super) fn plan_explicit_loadability_transport(
     surface_goal: &ClickProposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    if !matches!(goal, Proposition::CMemoryLoadable { .. }) {
-        return None;
-    }
-    let Proposition::CMemoryLoadable {
-        bytes: goal_bytes, ..
-    } = goal
-    else {
-        unreachable!()
+    let goal_width;
+    let goal_bytes = match goal {
+        Proposition::CMemoryLoadable { bytes, .. } => bytes,
+        Proposition::CMemoryReadDefined { value_type, .. } => {
+            goal_width = Bitvector32Term::Constant(value_type.byte_width());
+            &goal_width
+        }
+        _ => return None,
     };
     let mut sources = premise_pairs
         .iter()
-        .filter(|(kernel, _)| matches!(kernel, Proposition::CMemoryLoadable { .. }))
+        .filter(|(kernel, _)| {
+            matches!(
+                kernel,
+                Proposition::CMemoryLoadable { .. } | Proposition::CMemoryReadDefined { .. }
+            )
+        })
         .collect::<Vec<_>>();
     let surface_is_range = |surface: &ClickProposition| match surface {
         ClickProposition::At { proposition, .. } => {
@@ -2783,6 +2788,7 @@ pub(super) fn plan_explicit_loadability_transport(
             (!surface_is_range(surface)) as u8,
             (bytes == goal_bytes) as u8,
         ),
+        Proposition::CMemoryReadDefined { .. } => (0, 0),
         _ => unreachable!(),
     });
     for (source, surface_source) in sources {
@@ -2791,7 +2797,9 @@ pub(super) fn plan_explicit_loadability_transport(
             .filter(|(kernel, _)| {
                 matches!(
                     kernel,
-                    Proposition::CMemoryLoadable { .. } | Proposition::ConditionIs(_, _)
+                    Proposition::CMemoryLoadable { .. }
+                        | Proposition::CMemoryReadDefined { .. }
+                        | Proposition::ConditionIs(_, _)
                 )
             })
             .collect::<Vec<_>>();

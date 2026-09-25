@@ -5,12 +5,9 @@ point, so it must not contain a fact that is no longer in scope. A nested
 `have` body is its own scope: what it proves justifies its own statement and
 nothing else, and once it closes only that statement survives.
 
-Here `lo <= hi - 1` — one of the two order facts the read `p[hi - 1]` needs —
-is proved only inside the body of `have 0 <= hi`. The body's own statement
-`0 <= hi` does reach the later step, and is listed among the premises
-consulted; `lo <= hi - 1` is not, and the read is refused exactly as it is when
-nobody proved that fact at all. Add the same `have` at the outer level, as
-`mdtests/pure_have_sees_proved_facts.md` does, and the read goes through.
+Here `lo <= hi - 1` is proved only inside the body of `have 0 <= hi`.
+That private fact must not help establish the later explicit claim
+`viewable(p[hi - 1..hi])`. Logical reads themselves need no such claim.
 
 ```click
 theorem last_cell(p: int32[], lo: int32, hi: int32) {
@@ -24,14 +21,12 @@ theorem last_cell(p: int32[], lo: int32, hi: int32) {
             have lo <= hi - 1 by { arithmetic() using { lo < hi; 0 < hi; } }
             arithmetic() using { 0 <= lo; 0 < hi; }
         }
-        have to_integer(p[hi - 1]) == to_integer(p[hi - 1]) by { simp(); }
+        have viewable(p[hi - 1..hi]) by { simp(); }
         assumption();
     }
 }
 ```
 
 ```expect
-fail: not established: the 4 bytes at `p[hi - 1]` must be viewable
-  established: `hi - 1` must not overflow; the read at `p[hi - 1]` must denote the value this state holds
-  premises consulted (9, a premise that is a conjunction counted as its conjuncts): `0 < hi`, `lo < hi`, `(hi - 1) < hi`, `0 <= lo`, `0 <= hi`, `0 <= (hi - lo)`, `(hi - lo) <= 1073741823`, `hi >= 0`, `viewable(p[lo..hi])`
+fail: narrowing that range needs `lo <= (hi - 1)`
 ```

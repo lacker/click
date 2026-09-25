@@ -238,6 +238,11 @@ impl PureFactContext {
         proposition: &Proposition,
     ) -> bool {
         match proposition {
+            Proposition::CMemoryReadDefined {
+                memory,
+                pointer,
+                value_type,
+            } => self.proves_memory_read_defined(memory, pointer, *value_type),
             Proposition::CMemoryLoadable {
                 memory,
                 base,
@@ -308,6 +313,11 @@ impl PureFactContext {
                         || self.prop_facts.contains(proposition)
                 }
             },
+            Proposition::CMemoryReadDefined {
+                memory,
+                pointer,
+                value_type,
+            } => self.proves_memory_read_defined(memory, pointer, *value_type),
             Proposition::CMemoryLoadable {
                 memory,
                 base,

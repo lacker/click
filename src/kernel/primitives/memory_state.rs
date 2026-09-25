@@ -2840,6 +2840,11 @@ impl CMemory {
         if self.cells.contains_key(&pointer) {
             return self;
         }
+        // A logical name does not initialize an automatic object either.
+        // A real local store has already materialized its cell above.
+        if pointer.block.starts_with("local:") && self.has_block(&pointer.block) {
+            return self;
+        }
         // A named load must not turn fresh malloc storage into a value.  The
         // exact typed-cell mark is the authority that a prior C store
         // initialized this address; the lookup is local to its heap block.

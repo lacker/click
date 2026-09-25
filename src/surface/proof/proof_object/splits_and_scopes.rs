@@ -357,6 +357,30 @@ impl<'a> Proof<'a> {
                     },
                 ]);
             }
+            if witness_refinement_kernel.is_some_and(|recorded| {
+                crate::kernel::proof::propositions_are_alpha_equal(
+                    recorded,
+                    &Proposition::And(
+                        Box::new(kernel_children[0].clone()),
+                        Box::new(kernel_children[1].clone()),
+                    ),
+                )
+            }) {
+                // Substituting a witness can simplify arithmetic guards in
+                // the surface spelling without changing the recorded kernel
+                // goal. Keep that checked goal and omit a misleading child
+                // spelling, just as when re-lowering the body fails above.
+                return Ok([
+                    CheckedBothSurfaceChild {
+                        surface: None,
+                        introductions: None,
+                    },
+                    CheckedBothSurfaceChild {
+                        surface: None,
+                        introductions: None,
+                    },
+                ]);
+            }
             return Err(self.step_error(
                 "`both` cannot preserve its written goal: the kernel child correspondence is ambiguous",
             ));

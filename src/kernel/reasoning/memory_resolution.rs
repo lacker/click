@@ -760,20 +760,53 @@ fn indexed_field_offsets_use_exact_displacements() {
     );
 }
 
-/// The value stored at `pointer` or at a pointer proven equal to it: the
-/// exact cell, then one lookup per member of the element index's recorded
-/// equality class, then the observable cells through the memoized pointer
-/// equality query, so a pair is resolved once per fact set.
-///
-/// The last search is filtered by `observable_by_load`, the one filter the
-/// load-framing routes share, and not by block name. A cell in another block
-/// can be the cell this pointer reads whenever the two are not proven distinct:
-/// `ensures result == &g[0]` makes the store to `g[0]` the store this load
-/// reads, and a name filter here would answer "no stored value" for it. The
-/// pointer equality is still what decides; the filter only says which cells are
-/// worth asking about. Keeping a cell that is proven distinct would be wasted
-/// work, never a wrong answer, and dropping one that may alias is what used to
-/// lose the read.
+/// Substitute only stated scalar constants in an address, then use the
+/// cell map's exact index. Work is proportional to this address expression.
+fn pointer_with_exact_index_constants(pointer: &Pointer, assumptions: &PureFactContext) -> Pointer {
+    enum Task<'a> {
+        Visit(&'a PointerOffsetTerm),
+        Add,
+    }
+    let mut work = vec![Task::Visit(&pointer.offset)];
+    let mut values = Vec::new();
+    while let Some(task) = work.pop() {
+        crate::instrumentation::record_deterministic_work(1);
+        match task {
+            Task::Visit(PointerOffsetTerm::Add(left, right)) => {
+                work.push(Task::Add);
+                work.push(Task::Visit(right));
+                work.push(Task::Visit(left));
+            }
+            Task::Visit(offset @ PointerOffsetTerm::Int32Scaled { value, byte_width }) => {
+                values.push(
+                    crate::kernel::assumptions::exact_signed_constant(value, assumptions)
+                        .and_then(|index| i32::try_from(index).ok())
+                        .and_then(|index| i64::from(index).checked_mul(*byte_width))
+                        .map(PointerOffsetTerm::Constant)
+                        .unwrap_or_else(|| offset.clone()),
+                );
+            }
+            Task::Visit(offset) => values.push(offset.clone()),
+            Task::Add => {
+                let right = values.pop().expect("right offset");
+                let left = values.pop().expect("left offset");
+                if let (Some(left), Some(right)) = (left.as_const(), right.as_const())
+                    && left.checked_add(right).is_none()
+                {
+                    return pointer.clone();
+                }
+                values.push(PointerOffsetTerm::add(left, right));
+            }
+        }
+    }
+    Pointer {
+        block: pointer.block.clone(),
+        offset: values.pop().expect("pointer offset"),
+    }
+}
+
+/// Resolve this address through exact cells, recorded scalar/pointer aliases,
+/// and the indexed interval of cells with the same base address.
 fn stored_value_at_equal_pointer(
     memory: &CMemory,
     pointer: &Pointer,
@@ -783,6 +816,14 @@ fn stored_value_at_equal_pointer(
         return Some(value);
     }
     if let Some(value) = memory.known_union_value(pointer, CType::Int32) {
+        return Some(value);
+    }
+    let normalized = pointer_with_exact_index_constants(pointer, assumptions);
+    if normalized != *pointer
+        && let Some(value) = memory
+            .known_value(&normalized)
+            .or_else(|| memory.known_union_value(&normalized, CType::Int32))
+    {
         return Some(value);
     }
     if let PointerOffsetTerm::Int32Scaled {
@@ -817,24 +858,38 @@ fn stored_value_at_equal_pointer(
     {
         return Some(value);
     }
-    memory
-        .cells
-        .iter()
-        .find(|(stored, _)| {
-            stored.block.observable_by_load(&pointer.block)
-                && pointers_proven_equal_for_memory_resolution(pointer, stored, assumptions)
-        })
-        .map(|(_, value)| value.clone())
-        .or_else(|| {
+    // A load equality asks about this address and its stated aliases, not
+    // every stored cell. Recursively trying every cell here makes a failed
+    // equality query branch again at each nested load in a pointer.
+    assumptions
+        .exact_pointer_aliases(pointer)
+        .cloned()
+        .chain(assumptions.exact_pointer_offset_aliases(pointer))
+        .find_map(|alias| {
+            crate::instrumentation::record_deterministic_work(1);
             memory
-                .union_cells
-                .iter()
-                .find(|((stored, value_type), _)| {
-                    *value_type == CType::Int32
-                        && stored.block.observable_by_load(&pointer.block)
-                        && pointers_proven_equal_for_memory_resolution(pointer, stored, assumptions)
+                .known_value(&alias)
+                .or_else(|| memory.known_union_value(&alias, CType::Int32))
+        })
+        .or_else(|| {
+            // Add(root, displacement) occupies one contiguous map interval.
+            // Query that interval instead of visiting unrelated objects in
+            // the shared ExternalArgument block.
+            let mut root = &pointer.offset;
+            while let PointerOffsetTerm::Add(left, _) = root { root = left; }
+            if matches!(root, PointerOffsetTerm::Constant(_)) { return None; }
+            let first = Pointer {
+                block: pointer.block.clone(),
+                offset: PointerOffsetTerm::Add(Box::new(root.clone()), Box::new(PointerOffsetTerm::Constant(i64::MIN))),
+            };
+            memory.cells.range(first..)
+                .take_while(|(stored, _)| stored.block == pointer.block
+                    && matches!(&stored.offset, PointerOffsetTerm::Add(left, _) if left.as_ref() == root))
+                .find_map(|(stored, value)| {
+                    crate::instrumentation::record_deterministic_work(1);
+                    pointers_proven_equal_for_memory_resolution(pointer, stored, assumptions)
+                        .then(|| value.clone())
                 })
-                .map(|(_, value)| value.clone())
         })
 }
 
@@ -2571,4 +2626,52 @@ pub(in crate::kernel) fn collect_memory_effect_write_pointers(
         .into_iter()
         .map(|(pointer, _)| pointer)
         .collect()
+}
+
+#[cfg(test)]
+#[test]
+fn stored_load_alias_lookup_ignores_unrelated_cells() {
+    let target = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(8_991_001)), 4),
+    };
+    let alias = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(8_991_002)), 4),
+    };
+    let assumptions = PureFactContext::new().assume_condition(
+        ConditionTerm::pointer_offset_equal(target.offset.clone(), alias.offset.clone()),
+        true,
+    );
+    let mut samples = Vec::new();
+    for count in [8, 32, 128, 512] {
+        let mut memory = CMemory::new();
+        for index in 0..count {
+            memory = memory.store(
+                Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: PointerOffsetTerm::Constant(index * 4),
+                },
+                CValue::Int32(Bitvector32Term::Constant(0)),
+            );
+        }
+        // Snapshot construction/interning belongs to the producer. Measure
+        // only a lookup in the already established snapshot.
+        crate::kernel::intern_c_memory_ref(&memory);
+        let (absent, work) = crate::instrumentation::measure_deterministic_work(|| {
+            stored_value_at_equal_pointer(&memory, &target, &assumptions)
+        });
+        assert!(absent.is_none());
+        samples.push(work);
+        let value = CValue::Int32(Bitvector32Term::Constant(17));
+        memory = memory.store(alias.clone(), value.clone());
+        assert_eq!(
+            stored_value_at_equal_pointer(&memory, &target, &assumptions),
+            Some(value)
+        );
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[1] <= pair[0] + 16),
+        "{samples:?}"
+    );
 }

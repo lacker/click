@@ -3423,6 +3423,7 @@ impl PureFactContext {
         self.algebraic_variable_constructors = crate::persistent::PersistentMap::default();
         self.algebraic_variable_variant_evidence = crate::persistent::PersistentMap::default();
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
+        self.memory_read_defined_facts = crate::persistent::PersistentMap::default();
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_object_facts = crate::persistent::PersistentMap::default();
         self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
@@ -3516,6 +3517,33 @@ impl PureFactContext {
     }
 
     fn adjust_memory_loadable_fact(&mut self, proposition: &Proposition, insert: bool) {
+        if let Proposition::CMemoryReadDefined {
+            pointer,
+            value_type,
+            ..
+        } = proposition
+        {
+            let key = (
+                crate::kernel::api::canonicalize_pointer_loads(pointer),
+                *value_type,
+            );
+            let facts = self
+                .memory_read_defined_facts
+                .get(&key)
+                .cloned()
+                .unwrap_or_default();
+            let facts = if insert {
+                facts.with_value(proposition.clone())
+            } else {
+                facts.without_value(proposition)
+            };
+            self.memory_read_defined_facts = if facts.is_empty() {
+                self.memory_read_defined_facts.without_key(&key)
+            } else {
+                self.memory_read_defined_facts.with_inserted(key, facts)
+            };
+            return;
+        }
         let Proposition::CMemoryLoadable { base, .. } = proposition else {
             return;
         };
@@ -3559,6 +3587,7 @@ impl PureFactContext {
     }
 
     fn rebuild_memory_loadable_facts(&mut self) {
+        self.memory_read_defined_facts = crate::persistent::PersistentMap::default();
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_object_facts = crate::persistent::PersistentMap::default();
         self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
@@ -4430,12 +4459,20 @@ impl PureFactContext {
     }
 
     /// Answers whether a requirement is already stated in this context.
-    /// Only an explicit fact or an explicit conjunction of such facts is
-    /// accepted; this query never selects a disjunction arm, instantiates a
+    /// Accepts explicit facts, conjunctions of them, and implications whose
+    /// consequent is already stated. This query never selects a disjunction arm, instantiates a
     /// universal, or invents an existential witness.
     pub(crate) fn states_required_goal(&self, goal: &Proposition) -> bool {
         if let Proposition::And(left, right) = goal {
             return self.states_required_goal(left) && self.states_required_goal(right);
+        }
+        if let Proposition::Implies(_, consequent) = goal
+            && self.states_required_goal(consequent)
+        {
+            // A proved conclusion also proves any guarded version of it.
+            // This is needed when lowering has already discharged a generated
+            // arithmetic guard in the surface spelling of a call requirement.
+            return true;
         }
         // Loads emitted from a callee contract may retain its entry snapshot
         // while the caller's retained fact uses the registered load variable.
@@ -6463,6 +6500,9 @@ mod stated_requirement_tests {
         let disjunction = Proposition::Or(Box::new(left.clone()), Box::new(right.clone()));
         assert!(context.states_required_goal(&conjunction));
         assert!(!context.states_required_goal(&disjunction));
+        let guarded = Proposition::Implies(Box::new(disjunction), Box::new(conjunction));
+        assert!(context.states_required_goal(&guarded));
+        assert!(!PureFactContext::new().states_required_goal(&guarded));
     }
 
     #[test]

@@ -14,5 +14,5 @@ void leak(int32 value, int32** out) {
 ```
 
 ```expect
-fail: the proposition reads memory that is not viewable here
+fail: checked outcome `simp` search did not retain a complete proof
 ```

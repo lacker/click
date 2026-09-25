@@ -2781,46 +2781,24 @@ struct holder {
 }
 
 /// A loop that marks `arena->occupied[i]` for `i` in `[start, end)` and
-/// frames `cells` constant cells below `start`, one invariant per cell, each
-/// read through the struct field. The back edge is closed explicitly: the
-/// pure clause and the ranking pair by named arithmetic, and each framed
-/// cell's member by transporting the map's entry viewability to the cell at
-/// the back edge and at entry, then introducing the member's guards and
-/// citing the cell's frame fact, which the store frames at the step.
+/// frames `cells` constant cells below `start`, one invariant per cell.
+/// The explicit back-edge closure cites each cell's frame fact after
+/// introducing the preceding written invariant clauses. Logical reads do
+/// not add viewability goals or introductions to that certificate.
 fn framed_field_cells_loop(cells: usize) -> (String, String) {
     let c_source = "struct arena {\n    int32* data;\n    int32* occupied;\n    int32 capacity;\n};\n\n\
         void mark_tail(struct arena* arena, int32 start, int32 end) {\n    int32 i;\n    i = start;\n    \
         while (i < end) {\n        arena->occupied[i] = 1;\n        i = i + 1;\n    }\n}\n"
         .to_string();
-    let entry_view = "at(function.entry, viewable(arena->occupied[0..arena->capacity]))";
-    let transport_premises = format!(
-        "using {{ at(function.entry, {cells}) <= at(function.entry, start); \
-         at(statement(3).entry, start) <= at(statement(3).entry, i); \
-         end <= arena->capacity; \
-         at(statement(3).entry, i) < at(statement(3).entry, end); \
-         at(function.entry, arena->capacity) <= at(function.entry, 1073741823); \
-         {entry_view}; }}"
-    );
     let ranking = "arithmetic() using { 0 <= at(statement(3).entry, i); \
         at(statement(3).entry, i) < at(statement(3).entry, end); end <= 1000000; }";
     let mut members = vec!["simp();".to_string()];
     for cell in 0..cells {
         members.push(format!(
-            "transport({entry_view}, viewable(arena->occupied[{cell}..{}])) {transport_premises}",
-            cell + 1
-        ));
-        members.push(format!(
-            "transport({entry_view}, at(function.entry, viewable(arena->occupied[{cell}..{}]))) \
-             {transport_premises}",
-            cell + 1
-        ));
-        // The member's guards: the first clause, then each earlier cell's
-        // two viewability obligations and clause, then its own two.
-        members.push(format!(
             "{}arithmetic_certificate signed_int32 {{ premise 0: arena->occupied[{cell}] == \
              old(arena->occupied[{cell}]) => arena->occupied[{cell}] == \
              old(arena->occupied[{cell}]); conclusion 0; }}",
-            "intro(); ".repeat(3 + 3 * cell)
+            "intro(); ".repeat(1 + cell)
         ));
     }
     members.push(ranking.to_string());
@@ -2876,10 +2854,10 @@ fn framed_field_cells_loop(cells: usize) -> (String, String) {
 
 /// The number of simple steps in `framed_field_cells_loop`'s explicit
 /// back-edge closure: one `both` per member but the last, the members'
-/// closing steps, and the guard introductions each cell's member makes.
+/// closing steps, and the preceding-clause introductions each cell makes.
 fn framed_field_cells_closure_steps(cells: usize) -> usize {
-    let members = 1 + 3 * cells + 2;
-    let introductions = (0..cells).map(|cell| 3 + 3 * cell).sum::<usize>();
+    let members = 1 + cells + 2;
+    let introductions = (0..cells).map(|cell| 1 + cell).sum::<usize>();
     (members - 1) + members + introductions
 }
 

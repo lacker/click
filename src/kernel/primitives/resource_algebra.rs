@@ -4979,8 +4979,8 @@ enum ResourceNormalizationKey {
     /// Every anchored token or composite of one shape, for the unanchored
     /// facts that may still name the same block.
     ExactShapeAnchoredAll(ResourceFamily, String, usize),
-    MemoryStart(PointerBlock, bool, Bitvector32Term),
-    MemoryEnd(PointerBlock, bool, Bitvector32Term),
+    MemoryStart(MemoryBaseRoot, bool, Bitvector32Term),
+    MemoryEnd(MemoryBaseRoot, bool, Bitvector32Term),
 }
 
 /// The adjacency coordinate one memory bound contributes to the
@@ -5020,12 +5020,12 @@ impl ResourceNormalizationIndex {
             CResource::Iterated(_) => {}
             CResource::Memory(range) => {
                 keys.push(ResourceNormalizationKey::MemoryStart(
-                    range.base().block.clone(),
+                    memory_base_root(range.base()),
                     fact.is_own(),
                     memory_normalization_position(range, range.start()),
                 ));
                 keys.push(ResourceNormalizationKey::MemoryEnd(
-                    range.base().block.clone(),
+                    memory_base_root(range.base()),
                     fact.is_own(),
                     memory_normalization_position(range, range.end()),
                 ));
@@ -5076,6 +5076,9 @@ impl ResourceNormalizationIndex {
     /// equality: `data[0..n]` and `data[m..4]` under `n == m` are one range,
     /// and a lookup by the written spelling alone would never offer them to
     /// each other. The extra lookups cost the endpoint's equality class.
+    /// Memory keys also include the base root and its recorded aliases: an
+    /// endpoint such as zero alone must not pair every external object with
+    /// every other object in the same block.
     fn candidates_after(
         &self,
         position: usize,
@@ -5089,25 +5092,35 @@ impl ResourceNormalizationIndex {
             }
             CResource::Iterated(_) => {}
             CResource::Memory(range) => {
-                let block = range.base().block.clone();
+                let mut roots = related_memory_base_roots(range.base(), assumptions);
+                for alias in assumptions.exact_pointer_aliases(range.base()) {
+                    roots.extend(related_memory_base_roots(alias, assumptions));
+                }
+                for alias in assumptions.exact_pointer_offset_aliases(range.base()) {
+                    roots.extend(related_memory_base_roots(&alias, assumptions));
+                }
                 let owned = fact.is_own();
                 for start in std::iter::once(range.start().clone())
                     .chain(assumptions.bitvector_equality_class(range.start()))
                 {
-                    keys.push(ResourceNormalizationKey::MemoryEnd(
-                        block.clone(),
-                        owned,
-                        memory_normalization_position(range, &start),
-                    ));
+                    for root in &roots {
+                        keys.push(ResourceNormalizationKey::MemoryEnd(
+                            root.clone(),
+                            owned,
+                            memory_normalization_position(range, &start),
+                        ));
+                    }
                 }
                 for end in std::iter::once(range.end().clone())
                     .chain(assumptions.bitvector_equality_class(range.end()))
                 {
-                    keys.push(ResourceNormalizationKey::MemoryStart(
-                        block.clone(),
-                        owned,
-                        memory_normalization_position(range, &end),
-                    ));
+                    for root in &roots {
+                        keys.push(ResourceNormalizationKey::MemoryStart(
+                            root.clone(),
+                            owned,
+                            memory_normalization_position(range, &end),
+                        ));
+                    }
                 }
             }
             CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
@@ -7057,6 +7070,28 @@ fn combine_memory_resource_facts(
     ) && memory_ranges_structurally_disjoint(left_range, right_range)
     {
         return None;
+    }
+    // The normalization index selects adjacent endpoints. Join that pair
+    // directly before trying either direction of containment, whose alias
+    // reasoning can revisit the full history of a loaded base.
+    match (left, right) {
+        (
+            CResourceFact::View(CResource::Memory(left)),
+            CResourceFact::View(CResource::Memory(right)),
+        ) => {
+            if let Some(merged) = merge_memory_ranges(left, right, assumptions) {
+                return Some(CResourceFact::view_memory(merged));
+            }
+        }
+        (
+            CResourceFact::Own(CResource::Memory(left), _),
+            CResourceFact::Own(CResource::Memory(right), _),
+        ) => {
+            if let Some(merged) = merge_memory_ranges(left, right, assumptions) {
+                return Some(CResourceFact::own_memory(merged));
+            }
+        }
+        _ => {}
     }
     match (left, right) {
         _ if memory_resource_fact_entails(left, right, assumptions) => Some(left.clone()),

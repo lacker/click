@@ -1650,6 +1650,48 @@ fn synthesize_surface_atomic_proposition(
             )?,
         });
     }
+    if let Proposition::CMemoryReadDefined {
+        memory,
+        pointer,
+        value_type,
+    } = proposition
+    {
+        let pointer =
+            synthesize_surface_pointer(pointer, parameters, arguments, state, bound_variables)?;
+        let validity = ClickProposition::Defined {
+            expression: ContractExpression::CFragment(CExpression::TypedLoad {
+                pointer: Box::new(pointer),
+                value_type: *value_type,
+                volatile: false,
+                pointee_constant: false,
+                source: crate::kernel::CExpressionLoadSource::none(),
+            }),
+        };
+        if state.memory() == memory {
+            return Some(validity);
+        }
+        let at_entry = SYNTHESIS_ENTRY_STATE.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .is_some_and(|entry| entry.memory() == memory)
+        });
+        let selector = if at_entry {
+            SnapshotSelector::ProgramPoint(ProgramPointRef {
+                region: CodeRegionRef::Function,
+                kind: ProgramPointKind::Entry,
+            })
+        } else {
+            SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+                let slot = slot.borrow();
+                let (snapshot, selector) = slot.as_ref()?;
+                (snapshot.memory() == memory).then(|| selector.clone())
+            })?
+        };
+        return Some(ClickProposition::At {
+            selector,
+            proposition: Box::new(validity),
+        });
+    }
     if let Proposition::CMemoryLoadable {
         memory,
         base,

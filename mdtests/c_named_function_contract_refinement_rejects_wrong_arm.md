@@ -41,29 +41,19 @@ theorem increment_is_stable() {
     ensures Stable(&increment) by {
         unfold(Stable);
         intro();
-        extract(old(*cell) < 100);
         both {
-            both {
-                assumption();
-            } and {
-                apply(int32_lt_transitive(old(*cell), 100, 1000)) using {
-                    old(*cell) < 100;
-                }
+            apply(int32_lt_transitive(old(*cell), 100, 1000)) using {
+                old(*cell) < 100;
             }
         } and {
             intro();
-            extract(*cell == (old(*cell) + 1));
-            both {
-                assumption();
-            } and {
-                have old(*cell) < *cell by {
-                    rewrite(*cell == (old(*cell) + 1));
-                    apply(int32_increment_strictly_increases(old(*cell), 100)) using {
-                        old(*cell) < 100;
-                    }
+            have old(*cell) < *cell by {
+                rewrite(*cell == (old(*cell) + 1));
+                apply(int32_increment_strictly_increases(old(*cell), 100)) using {
+                    old(*cell) < 100;
                 }
-                left();
             }
+            left();
         }
     }
 }

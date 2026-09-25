@@ -1057,3 +1057,36 @@ fn one_parameter_separation_query_is_linear_in_the_owned_objects() {
     assert_at_most_linear_growth("a proved parameter separation", &proved, 64);
     assert_at_most_linear_growth("a refused parameter separation", &refused, 64);
 }
+
+#[test]
+fn normalizing_external_ranges_compares_only_related_bases() {
+    let mut samples = Vec::new();
+    for size in [8_u64, 16, 32, 64] {
+        let mut facts = Vec::new();
+        for index in 0..size {
+            let base = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::Variable(Variable(9 * TARGET_HEAP + index)),
+                    4,
+                ),
+            };
+            facts.push(owned_range(base.clone(), 0, 1));
+            facts.push(owned_range(base, 1, 2));
+        }
+        let context = ResourceContext::new().unchecked_with_facts(facts);
+        let (normalized, work) = crate::instrumentation::measure_deterministic_work(|| {
+            context.normalized(&PureFactContext::new())
+        });
+        assert_eq!(normalized.facts().len(), size as usize);
+        assert!(normalized.facts().iter().all(|fact| {
+            let range = fact.memory_own_range().unwrap();
+            range.start().as_const() == Some(0) && range.end().as_const() == Some(2)
+        }));
+        samples.push(work);
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[1] <= 3 * pair[0] + 32),
+        "{samples:?}"
+    );
+}

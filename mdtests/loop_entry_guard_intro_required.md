@@ -1,10 +1,7 @@
 # Deleting a loop-entry guard introduction is rejected
 
-This is `loop_entry_guard_intro.md` with the `intro()` deleted from the second
-invariant's initialization certificate. The lowering guard in front of that
-entry obligation is derivable but not exactly available, so it is part of the
-goal that validation checks; without the introduction the certificate no longer
-discharges the obligation it was retained for.
+A quantified entry claim still requires a proof of the written quantifier;
+`normalize()` alone cannot discharge it. There is no implicit read guard.
 
 ```c filename=loop_entry_guard_intro_required.c
 int32 loop_entry_guard_intro_required(int32 p[3]) {

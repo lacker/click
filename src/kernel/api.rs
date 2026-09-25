@@ -2403,6 +2403,32 @@ pub(crate) fn c_evaluate_spec_expression_with_checked_obligations(
     Ok((path.value.clone(), path.obligations.clone()))
 }
 
+pub(crate) fn c_evaluate_spec_resource_expression_with_checked_obligations(
+    state: &CState,
+    expression: &SpecExpression,
+    entry_state: Option<&CState>,
+    assumptions: &PureFactContext,
+) -> Result<(CValue, Vec<ProofObligation>), String> {
+    let lowering_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads()
+        .defer_non_exact_loadability_obligations();
+    let mut budget = ExecutionBudget::beside_live_state();
+    let paths = crate::kernel::spec::evaluate_spec_expression_checked_paths_with_loop_entry(
+        state,
+        expression,
+        entry_state,
+        &lowering_assumptions,
+        &mut budget,
+    )
+    .map_err(|limit| describe_spec_lowering_limit("evaluation", limit))?;
+    let [path] = paths.as_slice() else {
+        return Err(no_single_path_message("evaluation", &paths, &budget));
+    };
+    Ok((path.value.clone(), path.obligations.clone()))
+}
+
 pub fn c_function_entry_state(
     caller_state: &CState,
     function: &CFunction,

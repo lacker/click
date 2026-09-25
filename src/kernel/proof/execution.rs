@@ -438,18 +438,14 @@ fn memory_only_adds_named_cells(
         return Err(format!("changed non-cell memory state ({changed})"));
     }
     let base = crate::kernel::intern_c_memory(before.clone());
-    for (pointer, value) in after.cells.iter() {
-        match before.cells.get(pointer) {
-            Some(existing) if existing == value => {}
-            Some(_) => {
-                return Err(format!("rewrote the existing cell at {pointer:?}"));
-            }
-            None => {
-                let load = crate::kernel::canonical_form_of_load(base.clone(), pointer.clone());
-                if !cell_value_is_exactly_load(value, &load, pointer) {
-                    return Err(describe_unnamed_cell_addition(&base, pointer, value, &load));
-                }
-            }
+    for change in before.cells.diff(&after.cells) {
+        let crate::kernel::SnapshotMapChange::Added(pointer) = change else {
+            return Err("removed or rewrote an existing cell".into());
+        };
+        let value = after.cells.get(pointer).expect("added cell exists");
+        let load = crate::kernel::canonical_form_of_load(base.clone(), pointer.clone());
+        if !cell_value_is_exactly_load(value, &load, pointer) {
+            return Err(describe_unnamed_cell_addition(&base, pointer, value, &load));
         }
     }
     Ok(())
@@ -1333,11 +1329,12 @@ impl CheckedResourceObservation {
         concrete_after.set_memory(before_state.memory.clone());
         concrete_after = concrete_after.with_resource_context(before_state.resources.clone());
         if concrete_after != *before_state
-            || !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
-                before_state.memory(),
-                after_state.memory(),
-                assumptions,
-            )
+            || (memory_only_adds_named_cells(before_state.memory(), after_state.memory()).is_err()
+                && !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
+                    before_state.memory(),
+                    after_state.memory(),
+                    assumptions,
+                ))
         {
             return Err("resource observation changed concrete execution state");
         }
@@ -7035,6 +7032,45 @@ pub(crate) fn old_reference_state<'a>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn named_cell_check_rejects_removals_and_ignores_unchanged_cells() {
+        use crate::kernel::{CMemory, Pointer, PointerBlock, PointerOffsetTerm};
+        let target = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let mut samples = Vec::new();
+        for count in [8, 32, 128, 512] {
+            let mut before = CMemory::new();
+            for index in 0..count {
+                before = before.store(
+                    Pointer {
+                        block: PointerBlock::Heap(index),
+                        offset: PointerOffsetTerm::Constant(0),
+                    },
+                    CValue::Int32(Bitvector32Term::Constant(7)),
+                );
+            }
+            let name = crate::kernel::canonical_form_of_load(
+                crate::kernel::intern_c_memory(before.clone()),
+                target.clone(),
+            );
+            let after = before
+                .clone()
+                .materialize_named_cell(target.clone(), CValue::Int32(name));
+            let (checked, work) = crate::instrumentation::measure_deterministic_work(|| {
+                super::memory_only_adds_named_cells(&before, &after)
+            });
+            checked.unwrap();
+            samples.push(work);
+            assert!(super::memory_only_adds_named_cells(&after, &before).is_err());
+        }
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] + 32),
+            "{samples:?}"
+        );
+    }
+
     use super::*;
     // The proposition search is Surface planning now; see
     // `src/surface/planning/proposition_search.rs`. Only these tests reach
@@ -9443,7 +9479,7 @@ mod tests {
     }
 
     #[test]
-    fn interface_lowering_retains_generated_facts_and_read_obligations() {
+    fn interface_logical_read_does_not_establish_validity() {
         use crate::kernel::{CPointerValue, SpecMemory};
         let state = CState::new();
         let pointer = crate::kernel::Pointer {
@@ -9461,32 +9497,27 @@ mod tests {
         let spec = SpecProposition::Comparison {
             left: load.clone(),
             operator: CComparisonOperator::Equal,
-            right: load,
+            right: load.clone(),
         };
         let path = interface_spec_paths(&spec, &state, &state)
             .unwrap()
             .remove(0);
-        assert!(
-            !path.facts.is_empty(),
-            "retain the load-variable definition, not just the asserted equality"
-        );
-        assert!(
-            !path.obligations.is_empty(),
-            "reflexivity does not establish read safety"
-        );
+        assert!(path.facts.is_empty());
+        assert!(path.obligations.is_empty());
         let mut facts = ProofFacts::default().with_fact(path.proposition.clone());
         for fact in &path.facts {
             facts = facts.with_fact(fact.proposition().clone());
         }
         assert!(
             CheckedInterfaceLowering::check(
-                &spec,
+                &SpecProposition::Defined(load),
                 &state,
                 &state,
                 &facts,
-                &InterfaceReadPremises::default()
+                &InterfaceReadPremises::default(),
             )
-            .is_none()
+            .is_none(),
+            "logical reflexivity grants no read validity"
         );
         for obligation in &path.obligations {
             facts = facts.with_fact(obligation.proposition().clone());

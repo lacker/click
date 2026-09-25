@@ -582,6 +582,11 @@ enum AlphaPropositionKey {
         name: String,
         arguments: Vec<AlphaPredicateArgumentKey>,
     },
+    CMemoryReadDefined {
+        memory: AlphaSnapshotKey,
+        pointer: AlphaPointerKey,
+        value_type: CType,
+    },
     CMemoryLoadable {
         memory: AlphaSnapshotKey,
         base: AlphaPointerKey,
@@ -3072,6 +3077,33 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
                 })
                 .collect::<Option<Vec<_>>>()?,
         },
+        Proposition::CMemoryReadDefined {
+            memory,
+            pointer,
+            value_type,
+        } => {
+            if !ALLOW_LOADS {
+                return None;
+            }
+            bindings.raw_snapshot_load_seen = true;
+            let prior_snapshot_aware = bindings.snapshot_aware;
+            bindings.snapshot_aware = true;
+            let key = (|| -> Option<AlphaPropositionKey> {
+                alpha_work_checkpoint(bindings, 1)?;
+                let snapshot = crate::kernel::intern_c_memory_ref(memory);
+                Some(AlphaPropositionKey::CMemoryReadDefined {
+                    memory: AlphaSnapshotKey::new(&snapshot),
+                    pointer: alpha_pointer_key_with_bindings::<ALLOW_LOADS>(
+                        pointer,
+                        bindings,
+                        next_binder,
+                    )?,
+                    value_type: *value_type,
+                })
+            })();
+            bindings.snapshot_aware = prior_snapshot_aware;
+            key?
+        }
         Proposition::CMemoryLoadable {
             memory,
             base,
@@ -3320,7 +3352,7 @@ fn checked_proposition_contains_memory_loadability(proposition: &Proposition) ->
         return Err(());
     }
     match proposition {
-        Proposition::CMemoryLoadable { .. } => Ok(true),
+        Proposition::CMemoryLoadable { .. } | Proposition::CMemoryReadDefined { .. } => Ok(true),
         Proposition::And(left, right)
         | Proposition::Or(left, right)
         | Proposition::Implies(left, right) => {

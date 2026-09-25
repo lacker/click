@@ -976,6 +976,53 @@ fn source_range_universal_is_supported(proposition: &Proposition) -> bool {
         && is_one_byte_external_range(bytes)
 }
 
+/// A whole written existential range can require a caller-witness projection
+/// even when lowering produced no implicit per-cell read obligations. This
+/// only enables proof search; the retained source projection and transport
+/// steps still check every premise and snapshot independently.
+fn has_explicit_existential_byte_range(proposition: &Proposition) -> bool {
+    let proposition = match proposition {
+        Proposition::Implies(_, body) => body.as_ref(),
+        proposition => proposition,
+    };
+    let Proposition::Exists {
+        var,
+        sort: Sort::CInt32,
+        body,
+        ..
+    } = proposition
+    else {
+        return false;
+    };
+    let width = Bitvector32Term::add(
+        Bitvector32Term::Variable(*var),
+        Bitvector32Term::Constant(1),
+    );
+    let mut work = vec![body.as_ref()];
+    let mut visited = 0;
+    while let Some(part) = work.pop() {
+        visited += 1;
+        crate::instrumentation::record_deterministic_work(1);
+        if visited > SOURCE_CAPABILITY_MAX_NODES {
+            return false;
+        }
+        match part {
+            Proposition::And(left, right) => {
+                work.push(left);
+                work.push(right);
+            }
+            Proposition::CMemoryLoadable { base, bytes, .. }
+                if base.block == crate::kernel::PointerBlock::ExternalArgument
+                    && *bytes == width =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 pub(in crate::surface) fn source_backed_requirement_is_supported(
     proposition: &Proposition,
     source_requirement_ordinal: Option<usize>,
@@ -985,7 +1032,11 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
     if source_requirement_ordinal.is_none() {
         return Ok(false);
     }
-    let range_kind = if source_requirement_is_state_independent {
+    let explicit_range = !source_requirement_is_state_independent
+        && has_explicit_existential_byte_range(proposition);
+    let range_kind = if explicit_range {
+        Some(true)
+    } else if source_requirement_is_state_independent {
         None
     } else {
         match proposition {
@@ -1070,11 +1121,23 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
             Work::Proposition(Proposition::CMemoryLoadable { base, bytes, .. }, _)
                 if quantified_external_range
                     && matches!(base.block, crate::kernel::PointerBlock::ExternalArgument)
-                    && is_one_byte_external_range(bytes) =>
+                    && (is_one_byte_external_range(bytes) || explicit_range) =>
             {
                 saw_external_range = true;
                 work.push(Work::Bitvector(bytes));
                 work.push(Work::PointerOffset(&base.offset));
+            }
+            Work::Proposition(
+                Proposition::CMemoryReadDefined {
+                    pointer,
+                    value_type: CType::UInt8,
+                    ..
+                },
+                _,
+            ) if explicit_range
+                && matches!(pointer.block, crate::kernel::PointerBlock::ExternalArgument) =>
+            {
+                work.push(Work::PointerOffset(&pointer.offset));
             }
             Work::Proposition(_, _) => return Ok(false),
             Work::Condition(ConditionTerm::Bitvector32SignedAddOverflows(left, right)) => {

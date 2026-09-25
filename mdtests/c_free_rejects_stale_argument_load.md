@@ -1,4 +1,4 @@
-# a postcondition may not read an argument array the function freed
+# a postcondition may not claim validity for an array the function freed
 
 `data` is an external allocation whose block outlives `free` in the memory
 model, so the entry-state view of `data[0..count]` must not transport
@@ -24,7 +24,7 @@ int32 free_then_read(int32 data[], int32 count) {
     requires 1 <= count;
     requires count <= 536870911;
     consumes allocated_int32s(data, count);
-    ensures stale: data[0] == data[0];
+    ensures stale: defined(data[0]);
 } by {
     unfold(allocated_int32s(data, count));
     execute();
@@ -33,5 +33,5 @@ int32 free_then_read(int32 data[], int32 count) {
 ```
 
 ```expect
-fail: viewable
+fail: checked outcome `simp` search did not retain a complete proof
 ```

@@ -697,7 +697,8 @@ predicate cstr_readable_len(bytes: uint8[], len: int32) {
         forall (k: int32) {
             0 <= k and k < len implies bytes[k] != '\0'
         } and
-        bytes[len] == '\0'
+        bytes[len] == '\0' and
+        forall (k: int32) { 0 <= k and k < len + 1 implies defined(bytes[k]) }
 }
 
 theorem cstr_readable_len_unique(bytes: uint8[], left: int32, right: int32) {
@@ -761,7 +762,8 @@ predicate cstr_readable(bytes: uint8[]) {
             forall (k: int32) {
                 0 <= k and k < len implies bytes[k] != '\0'
             } and
-            bytes[len] == '\0'
+            bytes[len] == '\0' and
+        forall (k: int32) { 0 <= k and k < len + 1 implies defined(bytes[k]) }
     }
 }
 
@@ -818,6 +820,7 @@ extern int32 memcmp(uint8 left[], uint8 right[], int32 bytes) {
     requires 0 <= bytes;
     requires viewable(left[0..bytes]);
     requires viewable(right[0..bytes]);
+    requires forall (k: int32) { 0 <= k and k < bytes implies defined(left[k]) and defined(right[k]) };
     ensures result == 0 implies bytes_equal(left, 0, right, 0, bytes);
     ensures result != 0 implies not bytes_equal(left, 0, right, 0, bytes);
 }
@@ -829,7 +832,7 @@ extern uint8* memset(uint8 destination[], int32 value, int32 bytes) {
     owns destination[0..bytes];
     ensures result == destination;
     ensures (0..bytes).all(|k| {
-        destination[k] == value
+        defined(destination[k]) and destination[k] == value
     });
 }
 

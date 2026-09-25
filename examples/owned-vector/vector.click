@@ -110,8 +110,6 @@ int32 vector_copy(
             have forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) } by {
                 intro();
                 intro();
-                intro();
-                intro();
                 extract(0 <= k);
                 extract(k < i);
                 have i == 0 by {

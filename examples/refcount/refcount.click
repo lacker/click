@@ -1,6 +1,7 @@
 resource object_ref(obj: struct object*) {
     contains allocation(obj, sizeof(struct object));
     owns object(obj);
+    fact defined(obj->refs);
     fact obj->refs == count(object_ref(obj));
 }
 

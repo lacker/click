@@ -1625,6 +1625,18 @@ fn rewrite_atomic_proposition_by_exact_equality(
             parent: rewrite_resource_term(parent),
             child: rewrite_resource_term(child),
         },
+        Proposition::CMemoryReadDefined {
+            memory,
+            pointer,
+            value_type,
+        } => Proposition::CMemoryReadDefined {
+            memory: memory.clone(),
+            pointer: Pointer {
+                block: pointer.block.clone(),
+                offset: rewrite_offset_term(&pointer.offset, left, right),
+            },
+            value_type: *value_type,
+        },
         Proposition::CMemoryLoadable {
             memory,
             base,
@@ -1981,6 +1993,7 @@ pub(in crate::surface) fn simp_proposition(
         | Proposition::CFunctionSatisfiesSpecification { .. }
         | Proposition::CFunctionPartiallySatisfiesSpecification { .. }
         | Proposition::CMemoryLoads { .. }
+        | Proposition::CMemoryReadDefined { .. }
         | Proposition::CMemoryLoadable { .. }
         | Proposition::CMemoryCanStore { .. }
         | Proposition::CResourceSeparate { .. }

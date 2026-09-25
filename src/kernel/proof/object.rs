@@ -2753,8 +2753,8 @@ mod tests {
             ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition,
         };
         use crate::kernel::{
-            CComparisonOperator, CLoopInvariantCheck, CState, CType, CValue, Pointer,
-            PointerOffsetTerm, SpecExpression, SpecMemory, SpecProposition,
+            CLoopInvariantCheck, CState, CType, CValue, Pointer, PointerOffsetTerm, SpecExpression,
+            SpecMemory, SpecProposition,
         };
         type TestProof = ProofObject<
             (),
@@ -2774,14 +2774,10 @@ mod tests {
             ))),
             value_type: CType::Int32,
         };
-        // The value is reflexively equal, but evaluating it still requires a
-        // read proof. No memory resource or safety premise is available.
+        // An explicit validity claim needs evidence even though logical
+        // reflexivity at this address would hold without memory permission.
         let checks = [CLoopInvariantCheck::new(
-            SpecProposition::Comparison {
-                left: load.clone(),
-                operator: CComparisonOperator::Equal,
-                right: load,
-            },
+            SpecProposition::Defined(load),
             None,
             None,
         )];

@@ -1880,3 +1880,180 @@ fn store_union_forgets_aliased_raw_cell() {
     assert_eq!(memory.known_value(&alias), Some(int32(7)));
     assert!(!memory.has_union_overlay_at(&base));
 }
+
+#[test]
+fn logical_heap_value_does_not_initialize_a_c_read() {
+    let state = successful_heap_allocation_state();
+    let Some(CValue::Pointer(pointer)) = state.locals().get("p") else {
+        panic!("allocation should assign a pointer");
+    };
+    let logical = crate::kernel::eval::evaluate_logical_memory_load_paths(
+        state.memory(),
+        pointer.pointer().clone(),
+        CType::Int32,
+        Vec::new(),
+        Vec::new(),
+        &PureFactContext::new(),
+    );
+    let [path] = logical.as_slice() else {
+        panic!("one logical read");
+    };
+    let CExpressionOutcome::Value(CValue::Int32(value)) = &path.outcome else {
+        panic!("logical read must have a value");
+    };
+    assert!(path.obligations.is_empty());
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+        ConditionTerm::equal(value.clone(), Bitvector32Term::Constant(7)),
+        true,
+    ));
+    assert!(!assumptions.proves_memory_read_defined(
+        state.memory(),
+        pointer.pointer(),
+        CType::Int32
+    ));
+    let reads = evaluate_c_expression_paths(
+        &state,
+        &c_load(c_variable("p")),
+        &assumptions,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("C evaluation should report the invalid read");
+    assert!(matches!(
+        reads.as_slice(),
+        [CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn explicit_read_validity_is_typed_and_does_not_cross_havoc() {
+    let state = successful_heap_allocation_state();
+    let Some(CValue::Pointer(pointer)) = state.locals().get("p") else {
+        panic!("allocated pointer");
+    };
+    let address = pointer.pointer().clone();
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryReadDefined {
+        memory: state.memory().clone(),
+        pointer: address.clone(),
+        value_type: CType::Int32,
+    });
+    assert!(assumptions.proves_memory_read_defined(state.memory(), &address, CType::Int32));
+    assert!(!assumptions.has_memory_read_defined_evidence(state.memory(), &address, CType::Int64));
+    let range = CMemoryRange::new(
+        address.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    );
+    let changed = state.memory().clone().with_call_memory_havoc(
+        Variable(903),
+        &[range],
+        &PureFactContext::new(),
+        None,
+    );
+    assert!(!assumptions.has_memory_read_defined_evidence(&changed, &address, CType::Int32));
+}
+
+#[test]
+fn read_validity_lookup_ignores_unrelated_cells() {
+    let memory = CMemory::new();
+    let pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let validity = Proposition::CMemoryReadDefined {
+        memory: memory.clone(),
+        pointer: pointer.clone(),
+        value_type: CType::Int32,
+    };
+    let mut samples = Vec::new();
+    for count in [0, 16, 64, 256] {
+        let mut assumptions = PureFactContext::new().assume_proposition(validity.clone());
+        for index in 1..=count {
+            assumptions = assumptions.assume_proposition(Proposition::CMemoryReadDefined {
+                memory: memory.clone(),
+                pointer: Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: PointerOffsetTerm::Constant(index * 4),
+                },
+                value_type: CType::Int32,
+            });
+        }
+        let (proved, work) = crate::instrumentation::measure_deterministic_work(|| {
+            assumptions.has_memory_read_defined_evidence(&memory, &pointer, CType::Int32)
+        });
+        assert!(proved);
+        samples.push(work);
+        assert!(
+            !assumptions
+                .without_exact_fact(&validity)
+                .has_memory_read_defined_evidence(&memory, &pointer, CType::Int32)
+        );
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[1] <= pair[0] + 16),
+        "{samples:?}"
+    );
+}
+
+#[test]
+fn unknown_read_validity_does_not_resolve_unrelated_cells() {
+    let target = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(770))),
+            byte_width: 4,
+        },
+    };
+    let mut samples = Vec::new();
+    for count in [0, 16, 64, 256] {
+        let mut memory = CMemory::new();
+        for index in 0..count {
+            memory = memory.store(
+                Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: PointerOffsetTerm::Constant(index * 4),
+                },
+                int32(index as u32),
+            );
+        }
+        let (proved, work) = crate::instrumentation::measure_deterministic_work(|| {
+            PureFactContext::new().proves_memory_read_defined(&memory, &target, CType::Int32)
+        });
+        assert!(!proved);
+        samples.push(work);
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[1] <= pair[0] + 16),
+        "{samples:?}"
+    );
+}
+
+#[test]
+fn naming_an_uninitialized_local_cell_does_not_initialize_it() {
+    let address = Pointer {
+        block: "local:uninitialized".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new().with_block("local:uninitialized", 4);
+    let name = canonical_form_of_load(intern_c_memory(memory.clone()), address.clone());
+    let named = memory.materialize_named_cell(address.clone(), CValue::Int32(name));
+    let state = CState::new()
+        .with_memory(named)
+        .with_local("p", CValue::pointer(address));
+    let reads = evaluate_c_expression_paths(
+        &state,
+        &c_load(c_variable("p")),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .unwrap();
+    assert!(matches!(
+        reads.as_slice(),
+        [CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
+            ..
+        }]
+    ));
+}

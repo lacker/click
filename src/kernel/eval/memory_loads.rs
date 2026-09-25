@@ -78,8 +78,7 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
         obligations,
         assumptions,
         has_external_read_resource,
-        false,
-        true,
+        LoadPurpose::Program,
         &mut alias_cache,
         source,
         byte_order,
@@ -121,14 +120,105 @@ pub(in crate::kernel) fn evaluate_spec_memory_load_paths(
         obligations,
         assumptions,
         false,
-        true,
-        false,
+        LoadPurpose::Validity,
         &mut alias_cache,
         None,
         // A specification load denotes a snapshot's cell, not a C access;
         // it has no byte view of a wider cell.
         None,
     )
+}
+
+/// Construct the value of a logical read using the shared typed load model.
+/// No C access occurs and no validity evidence is introduced.
+pub(in crate::kernel) fn evaluate_logical_memory_load_paths(
+    memory: &CMemory,
+    pointer: Pointer,
+    value_type: CType,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Vec<CExpressionPath> {
+    if assumptions.should_keep_spec_loads_symbolic() {
+        let _assumptions_id_scope = assumptions.enter_id_scope();
+        let mut paths = evaluate_c_memory_load_paths_with_alias_cache(
+            memory,
+            pointer.clone(),
+            value_type,
+            facts,
+            obligations,
+            assumptions,
+            false,
+            LoadPurpose::Logical,
+            &mut MemoryLoadAliasCache::default(),
+            None,
+            None,
+        );
+        for path in &mut paths {
+            // An invalid typed read still denotes a logical value. The C
+            // evaluator's refusal is retained only by checked evaluation.
+            if matches!(path.outcome, CExpressionOutcome::RuntimeError(_))
+                && let Some(value) = canonicalized_symbolic_load_value_with_identity(
+                    memory,
+                    &pointer,
+                    value_type,
+                    &mut path.facts,
+                    assumptions,
+                    should_use_symbolic_pointer_identity(memory, &pointer, value_type),
+                    None,
+                )
+            {
+                path.outcome = CExpressionOutcome::Value(value);
+            }
+            path.facts
+                .retain(|fact| !is_load_variable_defining_fact(fact.proposition()));
+        }
+        return paths;
+    }
+    let mut facts = facts;
+    let value = memory
+        .known_union_value(&pointer, value_type)
+        .filter(|value| value_type.accepts(value))
+        .or_else(|| {
+            memory.known_value(&pointer).and_then(|stored| {
+                canonicalized_pointer_value_from_int_cell(
+                    &pointer,
+                    &stored,
+                    value_type,
+                    &mut facts,
+                    assumptions,
+                    None,
+                )
+                .or_else(|| value_type.accepts(&stored).then_some(stored))
+            })
+        })
+        .or_else(|| {
+            canonicalized_symbolic_load_value_with_identity(
+                memory,
+                &pointer,
+                value_type,
+                &mut facts,
+                assumptions,
+                should_use_symbolic_pointer_identity(memory, &pointer, value_type),
+                None,
+            )
+        });
+    facts.retain(|fact| !is_load_variable_defining_fact(fact.proposition()));
+    value
+        .into_iter()
+        .map(|value| CExpressionPath {
+            outcome: CExpressionOutcome::Value(value),
+            facts: facts.clone(),
+            obligations: obligations.clone(),
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoadPurpose {
+    Program,
+    Logical,
+    Validity,
 }
 
 fn has_pending_reallocation_for_pointer(memory: &CMemory, pointer: &Pointer) -> bool {
@@ -164,16 +254,16 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     mut obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
     has_external_read_resource: bool,
-    preserve_provisional_loadability: bool,
-    branches_on_unresolved_aliases: bool,
+    purpose: LoadPurpose,
     alias_cache: &mut MemoryLoadAliasCache,
     source: Option<&LoadSourceId>,
     byte_order: Option<ByteOrder>,
 ) -> Vec<CExpressionPath> {
+    let branches_on_unresolved_aliases = purpose == LoadPurpose::Program;
     let use_symbolic_pointer_identity =
         should_use_symbolic_pointer_identity(memory, &pointer, value_type);
     let mut facts = facts;
-    if memory.is_ended_local_address(&pointer) {
+    if purpose != LoadPurpose::Logical && memory.is_ended_local_address(&pointer) {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
             facts,
@@ -429,8 +519,10 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     // Unlike external argument memory, a fresh heap block has a known
     // initialization history. Permission authorizes a read but cannot turn a
     // never-written heap cell into an unconstrained initialized value.
-    if memory.is_uninitialized_heap_address(&pointer, value_type.byte_width(), assumptions)
-        && !load_has_established_value(memory, &pointer, value_type, assumptions)
+    if purpose != LoadPurpose::Logical
+        && memory.is_uninitialized_heap_address(&pointer, value_type.byte_width(), assumptions)
+        && !memory.has_initialized_cell_at(&pointer, value_type.byte_width())
+        && !assumptions.has_memory_read_defined_evidence(memory, &pointer, value_type)
     {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
@@ -439,7 +531,8 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }];
     }
 
-    if memory.is_deallocated_heap_address(&pointer, assumptions) {
+    if purpose != LoadPurpose::Logical && memory.is_deallocated_heap_address(&pointer, assumptions)
+    {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
             facts,
@@ -679,8 +772,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 obligations,
                 assumptions,
                 has_external_read_resource,
-                preserve_provisional_loadability,
-                branches_on_unresolved_aliases,
+                purpose,
                 alias_cache,
                 source,
                 byte_order,
@@ -755,7 +847,11 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     // uninitialized read rather than an unconstrained value. A symbolic
     // offset must not bypass this check: allocation bounds are independent
     // of whether the addressed element has ever been written.
-    if pointer.block.starts_with("local:") && memory.has_block(&pointer.block) {
+    if purpose != LoadPurpose::Logical
+        && pointer.block.starts_with("local:")
+        && memory.has_block(&pointer.block)
+        && !assumptions.has_memory_read_defined_evidence(&memory, &pointer, value_type)
+    {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
             facts,
@@ -763,13 +859,13 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }];
     }
 
-    if !has_external_read_resource {
+    if purpose != LoadPurpose::Logical && !has_external_read_resource {
         let proposition = Proposition::CMemoryLoadable {
             memory: memory.clone(),
             base: pointer.clone(),
             bytes: Bitvector32Term::Constant(value_type.byte_width()),
         };
-        if preserve_provisional_loadability {
+        if purpose == LoadPurpose::Validity {
             if add_proof_obligation(&mut obligations, assumptions, proposition).is_none() {
                 return Vec::new();
             }
@@ -815,44 +911,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         facts,
         obligations,
     }]
-}
-
-/// A verified call may leave a mutable cell initialized even when its concrete
-/// value does not survive the call boundary. The memory snapshot records that
-/// history separately, while an established value fact can also prove the
-/// load. Ownership or loadability alone is not an initialization marker. The
-/// normalization walk is deliberately limited to values represented by the
-/// shared 32-bit term arena; the indexed condition witness also accepts a
-/// proven symbolic value such as a resource invariant.
-fn load_has_established_value(
-    memory: &CMemory,
-    pointer: &Pointer,
-    value_type: CType,
-    assumptions: &PureFactContext,
-) -> bool {
-    if !matches!(
-        value_type,
-        CType::Int8
-            | CType::Int16
-            | CType::Int32
-            | CType::UInt8
-            | CType::UInt16
-            | CType::UInt32
-            | CType::Float32
-    ) {
-        return false;
-    }
-    let load = Bitvector32Term::MemoryLoad(
-        crate::kernel::intern_c_memory_ref(memory),
-        Box::new(pointer.clone()),
-    );
-    assumptions
-        .known_signed_constant_after_normalization(&load)
-        .is_some()
-        || assumptions
-            .exact_memory_load_condition_candidates(pointer)
-            .any(|(_, value)| value)
-        || memory.has_initialized_cell_at(pointer, value_type.byte_width())
 }
 
 /// Reinterprets an int cell's loaded value as a pointer without letting the
@@ -908,29 +966,6 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
         },
         value_type,
     ))
-}
-
-/// The canonicalizing form of [`symbolic_load_value`]: a pointer loaded from
-/// an opaque cell is written through a minted kernel variable instead
-/// of embedding the `MemoryLoad` term in its offset. Non-pointer loads pass
-/// through unchanged — the invariant governs pointer-offset positions, where
-/// arithmetic must stay over small terms.
-pub(in crate::kernel) fn canonicalized_symbolic_load_value(
-    memory: &CMemory,
-    pointer: &Pointer,
-    value_type: CType,
-    facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &PureFactContext,
-) -> Option<CValue> {
-    canonicalized_symbolic_load_value_with_identity(
-        memory,
-        pointer,
-        value_type,
-        facts,
-        assumptions,
-        should_use_symbolic_pointer_identity(memory, pointer, value_type),
-        None,
-    )
 }
 
 fn should_use_symbolic_pointer_identity(
@@ -3173,8 +3208,7 @@ mod tests {
             Vec::new(),
             &distinct,
             true,
-            false,
-            false,
+            LoadPurpose::Validity,
             &mut cache,
             None,
             None,
@@ -3203,8 +3237,7 @@ mod tests {
             Vec::new(),
             &aliasing,
             true,
-            false,
-            false,
+            LoadPurpose::Validity,
             &mut cache,
             None,
             None,

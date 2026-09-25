@@ -281,6 +281,11 @@ impl PropositionSearch for PureFactContext {
                 self.proves_finite_forall(proposition)
                     || self.without_free_bitvector_variable(*var).proves(body)
             }
+            Proposition::CMemoryReadDefined {
+                memory,
+                pointer,
+                value_type,
+            } => self.proves_memory_read_defined(memory, pointer, *value_type),
             Proposition::CMemoryLoadable {
                 memory,
                 base,
@@ -478,6 +483,10 @@ impl PropositionSearch for PureFactContext {
         }
 
         let candidate_family = |fact: &Proposition| match proposition {
+            Proposition::CMemoryReadDefined { .. } => matches!(
+                fact,
+                Proposition::CMemoryReadDefined { .. } | Proposition::CMemoryLoadable { .. }
+            ),
             Proposition::CMemoryLoadable { .. } | Proposition::CMemoryCanStore { .. } => {
                 matches!(fact, Proposition::CMemoryLoadable { .. })
             }

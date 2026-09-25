@@ -946,18 +946,14 @@ theorem indexed_integer_exists(values: int32[]) {
     } by {
         witness(z = 0);
         both {
+            both { simp(); } and { simp(); }
+        } and {
             both {
                 both { simp(); } and { simp(); }
             } and {
-                both { assumption(); } and {
-                    both { simp(); } and {
-                        both { simp(); } and { assumption(); }
-                    }
-                }
+                rewrite(values[0] == 0);
+                simp();
             }
-        } and {
-            rewrite(values[0] == 0);
-            simp();
         }
     }
 }
@@ -14157,12 +14153,7 @@ fn stable_loop_invariant_export_expands_and_reverifies() {
 }
 
 #[test]
-fn loop_entry_lowering_guard_expands_to_an_explicit_introduction() {
-    // Lowering wraps this loop's quantified entry obligation in a loadability
-    // guard that has no Surface connective. The guard is derivable at entry
-    // but is not exactly available, so it stays part of the goal that planning
-    // and independent validation both compute, and the retained certificate
-    // must discharge it with an explicit introduction.
+fn loop_entry_logical_read_expands_without_hidden_introductions() {
     let c_source = r#"
         int32 fill3_entry_guard(int32 p[3]) {
             int32 i;
@@ -14210,20 +14201,12 @@ fn loop_entry_lowering_guard_expands_to_an_explicit_introduction() {
         .expect("the expansion keeps the preservation proof");
     assert!(initialize < preserve, "{expanded}");
     assert!(
-        expanded[initialize..preserve].contains("intro();"),
-        "the initialization certificate must introduce the lowering guard: {expanded}"
+        !expanded[initialize..preserve].contains("intro();"),
+        "the initialization certificate must not invent a read guard: {expanded}"
     );
     verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
         panic!("expanded entry-guard proof failed independent verification: {error:?}\n{expanded}")
     });
-    let missing_intro = format!(
-        "{}{}",
-        expanded[..preserve].replacen("intro();", "", 1),
-        &expanded[preserve..]
-    );
-    assert_ne!(missing_intro, expanded, "{expanded}");
-    verify_c0_sources(&missing_intro, &sources)
-        .expect_err("deleting the retained guard introduction must be rejected at validation");
 }
 
 /// A specification `if` whose condition holds only under an ambient fact.

@@ -120,37 +120,39 @@ fn guard_holds_for(
     Some(equal == iterated.guard().holds_when_equal())
 }
 
-/// The value of the guard cell at `index` in `state`, read the way a C load
-/// of that cell reads it, so the term is the one the proof's facts name.
+/// The logical guard value in this snapshot. Gathering ownership does not
+/// execute a C read: it needs the guard's truth, while the surrounding rule
+/// separately requires ownership of the guard range. A logical value fact
+/// never establishes that a subsequent C load is initialized.
 fn guard_cell_value(
     state: &CState,
     iterated: &CIteratedMemory,
     index: &Bitvector32Term,
     assumptions: &PureFactContext,
 ) -> Result<Bitvector32Term, String> {
-    let cell = iterated.guard_cell(index);
-    let load = CExpression::TypedLoad {
-        pointer: Box::new(CExpression::Value(CValue::typed_pointer(
-            cell,
-            CType::Int32Pointer,
-        ))),
-        value_type: iterated.guard().cell_type,
-        volatile: false,
-        pointee_constant: false,
-        source: CExpressionLoadSource::none(),
-    };
-    let mut budget = ExecutionBudget::beside_live_state();
-    match super::loops::evaluate_loop_effect_segment_value(
-        state,
-        &load,
+    let paths = crate::kernel::eval::evaluate_logical_memory_load_paths(
+        state.memory(),
+        iterated.guard_cell(index),
+        iterated.guard().cell_type,
+        Vec::new(),
+        Vec::new(),
         assumptions,
-        "iterated guard cell",
-        &mut budget,
-    ) {
-        Ok(Ok(CValue::Int32(value))) => Ok(value),
-        Ok(Ok(_)) => Err("the guard cell is not an `int32`".to_string()),
-        Ok(Err(message)) => Err(message),
-        Err(_) => Err("reading the guard cell exceeded its budget".to_string()),
+    );
+    match paths.as_slice() {
+        [
+            CExpressionPath {
+                outcome: CExpressionOutcome::Value(CValue::Int32(value)),
+                facts,
+                obligations,
+            },
+        ] if facts
+            .iter()
+            .all(|fact| assumptions.proves_exact(fact.proposition()))
+            && obligations.is_empty() =>
+        {
+            Ok(value.clone())
+        }
+        _ => Err("the iterated guard does not denote one logical int32 value".into()),
     }
 }
 
@@ -531,24 +533,7 @@ fn every_guard(
             ),
             true,
         ));
-    let cell = match guard_cell_value(state, iterated, &index, &hypotheses) {
-        Ok(cell) => cell,
-        Err(message) => {
-            // A cell of a fresh heap block reads only once a fact
-            // establishes its value, and here the only such fact is the
-            // quantified one. Instantiate it at the cell's logical load, the
-            // term the fact names, and read the cell again under the result:
-            // the read itself still decides initialization.
-            let logical = Bitvector32Term::MemoryLoad(
-                crate::kernel::intern_c_memory_ref(state.memory()),
-                Box::new(iterated.guard_cell(&index)),
-            );
-            let instantiated = instantiate_guard(&hypotheses, iterated, &logical);
-            let cell =
-                guard_cell_value(state, iterated, &index, &instantiated).map_err(|_| message)?;
-            return Ok(guard_holds_for(&instantiated, iterated, &cell));
-        }
-    };
+    let cell = guard_cell_value(state, iterated, &index, &hypotheses)?;
     if let Some(value) = guard_holds_for(&hypotheses, iterated, &cell) {
         return Ok(Some(value));
     }

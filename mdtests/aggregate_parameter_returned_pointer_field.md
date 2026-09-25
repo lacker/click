@@ -19,5 +19,5 @@ struct output leak(struct packet input) {
 ```
 
 ```expect
-fail: the proposition reads memory that is not viewable here
+fail: checked outcome `simp` search did not retain a complete proof
 ```

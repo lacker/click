@@ -28,5 +28,5 @@ int32* return_input(int32* input) {
 ```
 
 ```expect
-fail: the proposition reads memory that is not viewable here
+fail: a local's lifetime ended in between
 ```

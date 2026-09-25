@@ -21,10 +21,10 @@ verifying for the second theorem to be the interesting one.
 
 The second theorem is the false one. It proves that same vacuous fact itself
 rather than assuming it, so it holds no valid-extent fact about `0..n`, and
-reading `v[0]` through it is refused: the extent `n * 4` is not a valid one, so
+claiming `defined(v[0])` through it is refused: the extent `n * 4` is not a valid one, so
 reading it as `n` elements is not what the fact says. The order facts `0 <= 0`
 and `0 < n` are both true and both stated, and they are still not enough. Its
-`ensures` is deliberately trivial — the refusal is the cell read in the middle
+`ensures` is deliberately trivial — the refusal is the explicit read-validity claim in the middle
 of the proof, not the conclusion.
 
 ```click
@@ -44,12 +44,12 @@ theorem a_wrapped_extent_yields_a_cell(v: int32[], n: int32) {
         have viewable(v[0..n]) by { simp(); }
         have 0 <= 0 by { simp(); }
         have 0 < n by { arithmetic() using { n == 1073741824; } }
-        have to_integer(v[0]) == to_integer(v[0]) by { simp(); }
+        have defined(v[0]) by { simp(); }
         assumption();
     }
 }
 ```
 
 ```expect
-fail: it is not a valid 32-bit byte extent in this scope
+fail: simplified proposition was not true
 ```

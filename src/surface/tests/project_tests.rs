@@ -757,10 +757,8 @@ int32 pipeline(struct counter* owner) {
     )
     .expect("the mixed-snapshot frontier-local fact should expand");
     assert!(!have_expanded.contains("have owner->value == 1 by simp"));
-    assert!(
-        have_expanded.contains("at(statement("),
-        "the explicit certificate should retain a source statement anchor"
-    );
+    // Value-only proofs can now cite the current logical read directly;
+    // only validity transport needs the historical read's source anchor.
     verify_c0_sources(&have_expanded, &sources)
         .expect("the mixed-snapshot frontier-local expansion should check");
 

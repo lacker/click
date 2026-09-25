@@ -994,7 +994,10 @@ pub(in crate::surface::proof) fn certified_fact_transport_reaches(
         }
         _ => {}
     }
-    if matches!(target, Proposition::CMemoryLoadable { .. }) {
+    if matches!(
+        target,
+        Proposition::CMemoryLoadable { .. } | Proposition::CMemoryReadDefined { .. }
+    ) {
         return assumptions.derive_atomic_proposition(target).is_some();
     }
     // Two forms of the same condition fact — for example an element load

@@ -446,6 +446,15 @@ pub(crate) fn substitute_bitvector_variable_in_proposition(
             pointer: substitute_bitvector_variable_in_pointer(pointer, from, to),
             outcome: substitute_bitvector_variable_in_c_expression_outcome(outcome, from, to),
         },
+        Proposition::CMemoryReadDefined {
+            memory,
+            pointer,
+            value_type,
+        } => Proposition::CMemoryReadDefined {
+            memory: substitute_bitvector_variable_in_memory(memory, from, to),
+            pointer: substitute_bitvector_variable_in_pointer(pointer, from, to),
+            value_type: *value_type,
+        },
         Proposition::CMemoryCanStore {
             memory,
             pointer,
@@ -880,7 +889,10 @@ fn collect_proposition_bound_variables_one(
             collect_pointer_bound_variables(pointer, variables);
             collect_expression_outcome_bound_variables(outcome, variables);
         }
-        Proposition::CMemoryCanStore {
+        Proposition::CMemoryReadDefined {
+            memory, pointer, ..
+        }
+        | Proposition::CMemoryCanStore {
             memory, pointer, ..
         } => {
             collect_memory_bound_variables(memory, variables);
@@ -2012,7 +2024,7 @@ fn validate_integer_pure_proposition(
         Proposition::ConditionIs(condition, _) => {
             validate_integer_pure_condition(condition, collector)
         }
-        Proposition::CMemoryLoadable { .. } => {
+        Proposition::CMemoryReadDefined { .. } | Proposition::CMemoryLoadable { .. } => {
             // A symbolic array read contributes this obligation to the
             // existential body.  It is a supported C carrier as long as its
             // pointer and byte-count expressions are rewritten by the same
@@ -2211,7 +2223,8 @@ fn substitute_integer_pure_proposition_with_walker(
                             *value,
                         ));
                     }
-                    Proposition::CMemoryLoadable { .. } => {
+                    Proposition::CMemoryReadDefined { .. }
+                    | Proposition::CMemoryLoadable { .. } => {
                         rewritten.push(rewrite_integer_memory_loadable_with_walker(
                             proposition,
                             walker,
@@ -2429,6 +2442,30 @@ fn rewrite_integer_memory_loadable_with_walker(
     proposition: &Proposition,
     walker: &mut crate::kernel::proof::term_rewrite::TermRewrite<'_>,
 ) -> Result<Proposition, IntegerPureSubstitutionError> {
+    if let Proposition::CMemoryReadDefined {
+        memory,
+        pointer,
+        value_type,
+    } = proposition
+    {
+        integer_work(1)?;
+        let Term::CValue(CValue::Pointer(pointer)) = walker.term(&Term::CValue(CValue::Pointer(
+            CPointerValue::new(pointer.clone(), CType::VoidPointer),
+        ))) else {
+            unreachable!("pointer rewrite changed its carrier")
+        };
+        if walker.integer_work_exhausted {
+            return Err(IntegerPureSubstitutionError::WorkLimitExceeded);
+        }
+        if walker.unsupported_integer_scope {
+            return Err(IntegerPureSubstitutionError::UnsupportedCarrier);
+        }
+        return Ok(Proposition::CMemoryReadDefined {
+            memory: memory.clone(),
+            pointer: pointer.pointer().clone(),
+            value_type: *value_type,
+        });
+    }
     let Proposition::CMemoryLoadable {
         memory,
         base,
@@ -5310,6 +5347,15 @@ pub(crate) fn substitute_pointer_variable_in_proposition(
             memory: substitute_pointer_variable_in_memory(memory, from, to),
             pointer: substitute_pointer_variable_in_pointer(pointer, from, to),
             outcome: substitute_pointer_variable_in_c_expression_outcome(outcome, from, to),
+        },
+        Proposition::CMemoryReadDefined {
+            memory,
+            pointer,
+            value_type,
+        } => Proposition::CMemoryReadDefined {
+            memory: substitute_pointer_variable_in_memory(memory, from, to),
+            pointer: substitute_pointer_variable_in_pointer(pointer, from, to),
+            value_type: *value_type,
         },
         Proposition::CMemoryCanStore {
             memory,

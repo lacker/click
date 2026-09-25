@@ -872,17 +872,17 @@ fn single_cell_adt_initializers_reject_invalid_models() {
             "accepted stale {initializer}"
         );
     }
-    // An unconstrained field must not hide an invalid read either.
+    // A ghost model can name a total logical read without claiming validity.
     let unconstrained = source.replace("fact model == Mark::Set(p[0]);", "");
     assert!(
         verify_c0_sources(
             &unconstrained.replace("INITIALIZER", "Mark::Set(q[0])"),
             &sources
         )
-        .is_err()
+        .is_ok()
     );
     let scalar = unconstrained.replace("field model: Mark;", "field model: int32;");
-    assert!(verify_c0_sources(&scalar.replace("INITIALIZER", "q[0]"), &sources).is_err());
+    assert!(verify_c0_sources(&scalar.replace("INITIALIZER", "q[0]"), &sources).is_ok());
 }
 
 #[test]

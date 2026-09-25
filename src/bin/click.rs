@@ -532,7 +532,7 @@ int32 parent(int32 *a, int32 *visited, int32 cur) {
     }
 
     #[test]
-    fn trace_shows_call_guarantee_source_without_claiming_an_exact_instantiation() {
+    fn trace_accepts_an_exact_historical_call_guarantee() {
         let directory =
             std::env::temp_dir().join(format!("click-trace-call-guarantee-{}", std::process::id()));
         if directory.exists() {
@@ -579,55 +579,14 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
 "#,
         )
         .unwrap();
-        let report = entry([
+        entry([
             "verify".to_string(),
             "--trace-proof".to_string(),
             "parent".to_string(),
             sidecar.display().to_string(),
         ])
-        .unwrap_err();
-        assert!(
-            report.contains("tactic@21: let r = step(child("),
-            "{report}"
-        );
-        assert!(!report.contains("argument x = a[i]"), "{report}");
-        assert!(
-            report.contains("adds (surface view): exists (path: Path) { pick("),
-            "{report}"
-        );
-        assert!(!report.contains("checked fact snapshot(s)"), "{report}");
-        assert!(!report.contains("kernel detail: ∃path"), "{report}");
-        let plain = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
-        assert!(plain.contains("goal: exists (path: Path)"), "{plain}");
-        let source = fs::read_to_string(&sidecar).unwrap();
-        let line = source
-            .lines()
-            .position(|line| line.trim() == "assumption();")
-            .unwrap()
-            + 1;
-        assert!(
-            plain.contains(&format!("tactic@{line}:\n  assumption();")),
-            "{plain}"
-        );
-        assert!(!plain.contains("-->"), "{plain}");
-        assert!(
-            plain.contains("help: choose a witness with `witness(path = <value>);`"),
-            "{plain}"
-        );
-        assert!(
-            plain.starts_with("proof error:\n  `assumption` requires"),
-            "{plain}"
-        );
-        assert!(
-            plain.contains("\n  current goal is an existential proposition"),
-            "{plain}"
-        );
-        assert!(!plain.contains("recent premises"), "{plain}");
-        assert!(
-            !plain.contains("internal (no exact Click spelling)"),
-            "{plain}"
-        );
-        assert!(!plain.contains("failed under its"), "{plain}");
+        .expect("a call-produced existential has an exact historical spelling");
+        entry(["verify".to_string(), sidecar.display().to_string()]).unwrap();
         fs::remove_dir_all(directory).unwrap();
     }
 

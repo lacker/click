@@ -78,8 +78,7 @@ pub(crate) use memory_loads::{
     begin_load_origin_epoch, clear_load_canonicalization_caches, clear_load_variable_registry,
 };
 pub(super) use memory_loads::{
-    canonical_offset_term, canonicalized_pointer_value_from_int_cell,
-    canonicalized_symbolic_load_value, evaluate_c_memory_load_paths,
+    canonical_offset_term, evaluate_c_memory_load_paths, evaluate_logical_memory_load_paths,
     evaluate_spec_memory_load_paths, symbolic_load_value,
 };
 #[cfg(test)]

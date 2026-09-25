@@ -1,11 +1,7 @@
 # Dropping one recorded loop-entry introduction is rejected
 
-This is `loop_entry_guard_before_written_implication.md` with one `intro()`
-removed from the second invariant's initialization certificate. The entry
-obligation's recorded chain has three introducible nodes — the hidden
-viewability guard, the written universal, and the written implication — so two
-introductions leave the written implication as the goal, and `normalize` does
-not close it.
+The initialization omits the introduction of the written implication.
+Logical reads do not add hidden connective nodes.
 
 ```c filename=loop_entry_guard_before_written_implication_rejects.c
 int32 loop_entry_guard_before_written_implication_rejects(int32 p[3]) {
@@ -43,7 +39,6 @@ int32 loop_entry_guard_before_written_implication_rejects(int32 p[3]) {
                 }
             }
             have forall (k: int32) { 0 <= k and k < i implies p[k] == p[k] } by {
-                intro();
                 intro();
                 normalize();
             }

@@ -4652,12 +4652,9 @@ mod ranking_member_tests {
         );
     }
 
-    /// A pure component owes what its reads owe. The loadability obligations
-    /// the evaluator raises join the same bundle, ahead of the ranking
-    /// members, so the closer discharges them beside the invariants about
-    /// those cells rather than the kernel assuming them.
+    /// Logical ranking values impose only their ranking obligations.
     #[test]
-    fn a_pure_component_publishes_its_loadability_obligations() {
+    fn a_pure_component_does_not_publish_read_validity() {
         let cell = int32_cell("counter");
         let entry = CState::new();
         let back_edge = CState::new();
@@ -4684,24 +4681,11 @@ mod ranking_member_tests {
                 )
             })
             .count();
-        assert!(
-            loadable > 0,
-            "the read's viewability is a member, not an assumption: {:?}",
-            obligations
-                .iter()
-                .map(ProofObligation::proposition)
-                .collect::<Vec<_>>()
-        );
-        assert!(
-            obligations[..loadable].iter().all(|obligation| obligation
-                .context()
-                .is_some_and(|context| context.contains("viewable"))),
-            "viewability members come first and say what they are"
-        );
+        assert_eq!(loadable, 0, "logical ranking terms grant no validity");
         assert_eq!(
             obligations.len(),
-            loadable + 2,
-            "the ranking members follow the viewability members"
+            2,
+            "nonnegativity and strict decrease remain required"
         );
     }
 

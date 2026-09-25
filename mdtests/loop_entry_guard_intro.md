@@ -1,14 +1,7 @@
 # A loop-entry guard is introduced explicitly
 
-Lowering wraps this loop's quantified entry obligation in a viewability guard
-that has no Surface connective. The guard is derivable at entry but is not
-exactly among the available facts, so it stays part of the checked goal and the
-initialization certificate discharges it with an explicit `intro()`.
-
-Planning and independent validation compute that goal the same way, so the
-certificate written below is checked against the goal it was built for. See
-`loop_entry_guard_intro_required.md` for the same certificate with the
-introduction deleted.
+The quantified loop entry claim can be enumerated directly. Logical reads
+do not insert an extra viewability guard before the universal.
 
 ```c filename=loop_entry_guard_intro.c
 int32 loop_entry_guard_intro(int32 p[3]) {
@@ -47,7 +40,6 @@ int32 loop_entry_guard_intro(int32 p[3]) {
                 }
             }
             have forall (k: int32) { 0 <= k and k < i implies p[k] == k } by {
-                intro();
                 enumerate();
             }
         }

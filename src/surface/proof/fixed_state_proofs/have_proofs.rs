@@ -1008,12 +1008,13 @@ fn evaluate_c_fragment_with_binding_policy(
         std::collections::BTreeSet::new(),
         BTreeMap::new(),
     )?;
-    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_with_checked_obligations(
-        &states.lowering_state,
-        &spec,
-        Some(&states.entry_state),
-        assumptions,
-    )?;
+    let (value, obligations) =
+        crate::kernel::c_evaluate_spec_resource_expression_with_checked_obligations(
+            &states.lowering_state,
+            &spec,
+            Some(&states.entry_state),
+            assumptions,
+        )?;
     refuse_unproved_conversion_bounds(
         &obligations,
         assumptions,

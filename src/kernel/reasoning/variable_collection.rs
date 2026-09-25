@@ -150,7 +150,10 @@ fn collect_proposition_bitvector_variables_one(
             collect_pointer_bitvector_variables(pointer, variables);
             collect_c_expression_outcome_bitvector_variables(outcome, variables);
         }
-        Proposition::CMemoryCanStore {
+        Proposition::CMemoryReadDefined {
+            memory, pointer, ..
+        }
+        | Proposition::CMemoryCanStore {
             memory, pointer, ..
         } => {
             collect_memory_bitvector_variables(memory, variables);

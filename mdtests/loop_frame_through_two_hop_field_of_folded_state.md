@@ -89,35 +89,49 @@ void mark_run(struct region* region, int32 start, int32 end) {
     let w = fold(window(arena->occupied, arena->capacity, start, end), { next: start });
     mark pre;
     loop {
+        decreases (end - i);
         owns w: window(arena->occupied, arena->capacity, start, end);
         invariant w.next == i;
-        invariant forall (k: int32) {
-            0 <= k and k < start implies region->arena->occupied[k] == old(region->arena->occupied[k])
-        };
-        decreases end - i;
+        invariant forall (k: int32) { 0 <= k and k < start implies region->arena->occupied[k] == old(region->arena->occupied[k]) };
         initialize by {
-            have forall (k: int32) {
-                0 <= k and k < start implies region->arena->occupied[k] == old(region->arena->occupied[k])
-            } by {
-                intro();
-                intro();
-                extract(0 <= k);
-                extract(k < start);
-                transport(
-                    old(region->arena->occupied[k]) == old(region->arena->occupied[k]),
-                    region->arena->occupied[k] == old(region->arena->occupied[k])
-                ) using {
-                    0 <= k;
-                    k < start;
+            have w.next == i by {
+                have forall (k: int32) { 0 <= k and k < start implies region->arena->occupied[k] == old(region->arena->occupied[k]) } by {
+                    intro();
+                    intro();
+                    extract(0 <= k);
+                    extract(k < start);
+                    transport(old(region->arena->occupied[k]) == old(region->arena->occupied[k]), region->arena->occupied[k] == old(region->arena->occupied[k])) using {
+                        0 <= k;
+                        k < start;
+                    }
                 }
+                normalize();
             }
-            simp();
+            have forall (k: int32) { 0 <= k and k < start implies region->arena->occupied[k] == old(region->arena->occupied[k]) } by {
+                have forall (k: int32) { 0 <= k and k < start implies region->arena->occupied[k] == old(region->arena->occupied[k]) } by {
+                    intro();
+                    intro();
+                    extract(0 <= k);
+                    extract(k < start);
+                    transport(old(region->arena->occupied[k]) == old(region->arena->occupied[k]), region->arena->occupied[k] == old(region->arena->occupied[k])) using {
+                        0 <= k;
+                        k < start;
+                    }
+                }
+                assumption();
+            }
         }
         preserve by {
             let { next: m } = unfold(w);
-            have m == i by simp;
-            have i < end by simp;
-            have start <= m by simp;
+            have m == i by {
+                assumption();
+            }
+            have i < end by {
+                assumption();
+            }
+            have start <= m by {
+                assumption();
+            }
             have 0 <= m by {
                 apply(int32_le_transitive(0, start, m)) using {
                     0 <= start;
@@ -137,27 +151,29 @@ void mark_run(struct region* region, int32 start, int32 end) {
             mark opened;
             step();
             step();
-            have forall (k: int32) {
-                start <= k and k < at(opened, i) + 1 implies arena->occupied[k] == 1
-            } by {
+            have forall (k: int32) { start <= k and k < (at(opened, i) + 1) implies arena->occupied[k] == 1 } by {
                 intro();
                 intro();
                 extract(start <= k);
-                extract(k < at(opened, i) + 1);
+                extract(k < (at(opened, i) + 1));
                 if k < at(opened, i) {
-                    have k < m by simp;
+                    have k < m by {
+                        rewrite(at(statement(6).entry, m) == at(statement(6).entry, i));
+                        assumption();
+                    }
                     have at(opened, arena->occupied[k]) == 1 by {
-                        instantiate(forall (j: int32) {
-                            at(opened, start) <= at(opened, j) and
-                                at(opened, j) < at(opened, m) implies
-                                at(opened, arena->occupied[j]) == at(opened, 1)
-                        }, k) using {
+                        instantiate(forall (j: int32) { at(opened, start) <= at(opened, j) and at(opened, j) < at(opened, m) implies at(opened, arena->occupied[j]) == at(opened, 1) }, k) using {
                             start <= k;
                             k < m;
                         }
                         assumption();
                     }
-                    have 0 <= k by simp;
+                    have 0 <= k by {
+                        apply(int32_le_transitive(at(function.entry, 0), at(function.entry, start), k)) using {
+                            at(function.entry, 0) <= at(function.entry, start);
+                            start <= k;
+                        }
+                    }
                     transport(at(opened, arena->occupied[k]) == 1, arena->occupied[k] == 1) using {
                         at(opened, arena->occupied[k]) == 1;
                         k < at(opened, i);
@@ -168,13 +184,13 @@ void mark_run(struct region* region, int32 start, int32 end) {
                 } else {
                     have k <= at(opened, i) by {
                         apply(int32_lt_successor_implies_le(k, at(opened, i))) using {
-                            k < at(opened, i) + 1;
+                            k < (at(opened, i) + 1);
                         }
                     }
                     have k == at(opened, i) by {
                         apply(int32_le_and_not_lt_implies_eq(k, at(opened, i))) using {
                             k <= at(opened, i);
-                            not (k < at(opened, i));
+                            not k < at(opened, i);
                         }
                     }
                     rewrite(k == at(opened, i));
@@ -185,19 +201,13 @@ void mark_run(struct region* region, int32 start, int32 end) {
                 rewrite(at(opened, i) == m);
                 assumption();
             }
-            have forall (k: int32) {
-                0 <= k and k < start implies region->arena->occupied[k] == old(region->arena->occupied[k])
-            } by {
+            have forall (k: int32) { 0 <= k and k < start implies region->arena->occupied[k] == old(region->arena->occupied[k]) } by {
                 intro();
                 intro();
                 extract(0 <= k);
                 extract(k < start);
                 have at(opened, region->arena->occupied[k]) == old(region->arena->occupied[k]) by {
-                    instantiate(forall (j: int32) {
-                        at(opened, 0) <= at(opened, j) and
-                            at(opened, j) < at(opened, start) implies
-                            at(opened, region->arena->occupied[j]) == old(region->arena->occupied[j])
-                    }, k) using {
+                    instantiate(forall (j: int32) { at(opened, 0) <= at(opened, j) and at(opened, j) < at(opened, start) implies at(opened, region->arena->occupied[j]) == old(region->arena->occupied[j]) }, k) using {
                         0 <= k;
                         k < start;
                     }
@@ -209,10 +219,7 @@ void mark_run(struct region* region, int32 start, int32 end) {
                         start <= at(opened, i);
                     }
                 }
-                transport(
-                    at(opened, region->arena->occupied[k]) == old(region->arena->occupied[k]),
-                    region->arena->occupied[k] == old(region->arena->occupied[k])
-                ) using {
+                transport(at(opened, region->arena->occupied[k]) == old(region->arena->occupied[k]), region->arena->occupied[k] == old(region->arena->occupied[k])) using {
                     at(opened, region->arena->occupied[k]) == old(region->arena->occupied[k]);
                     k < at(opened, i);
                     0 <= k;
@@ -220,32 +227,46 @@ void mark_run(struct region* region, int32 start, int32 end) {
                     at(opened, i) < arena->capacity;
                 }
             }
-            have start <= at(opened, i) + 1 by {
+            have start <= (at(opened, i) + 1) by {
                 apply(int32_increment_lower_bound(at(opened, i), start, end)) using {
                     start <= at(opened, i);
                     at(opened, i) < end;
                 }
             }
-            have at(opened, i) + 1 <= end by {
+            have (at(opened, i) + 1) <= end by {
                 apply(int32_increment_upper_bound(at(opened, i), end)) using {
                     at(opened, i) < end;
                 }
             }
-            let w = fold(window(arena->occupied, arena->capacity, start, end), {
-                next: at(opened, i) + 1
-            });
-            have 0 <= end - at(opened, i) - 1 by {
-                arithmetic() using {
-                    at(opened, i) < end;
-                    0 <= at(opened, i);
-                    end <= arena->capacity;
+            let w = fold(window(arena->occupied, arena->capacity, start, end), { next: (at(opened, i) + 1) });
+            have 0 <= ((end - at(opened, i)) - 1) by {
+                arithmetic_certificate signed_int32 {
+                    premise 0: at(opened, i) < end => at(opened, i) < end;
+                    premise 1: 0 <= at(opened, i) => 0 <= at(opened, i);
+                    add 0, 1 => (at(opened, i) + 0) < (end + at(opened, i));
+                    interval_from_affine 2 (end) (1) (2147483647);
+                    interval_from_affine 1 (at(opened, i)) (0) (2147483647);
+                    interval_subtract 3, 4 3 (-2147483646) (2147483647);
+                    interval_atom (1) (1) (1);
+                    interval_subtract 5, 6 5 (-2147483647) (2147483646);
+                    affine_conclusion 0 7 => 0 <= ((end - at(opened, i)) - 1);
+                    conclusion 8;
                 }
             }
-            have end - at(opened, i) - 1 < end - at(opened, i) by {
-                arithmetic() using {
-                    at(opened, i) < end;
-                    0 <= at(opened, i);
-                    end <= arena->capacity;
+            have ((end - at(opened, i)) - 1) < (end - at(opened, i)) by {
+                arithmetic_certificate signed_int32 {
+                    premise 0: at(statement(5).entry, i) < at(statement(5).entry, end) => at(statement(5).entry, i) < at(statement(5).entry, end);
+                    premise 1: at(statement(5).entry, 0) <= at(statement(5).entry, i) => at(statement(5).entry, 0) <= at(statement(5).entry, i);
+                    add 0, 1 => (at(statement(5).entry, i) + at(statement(5).entry, 0)) < (at(statement(5).entry, end) + at(statement(5).entry, i));
+                    interval_from_affine 2 (end) (1) (2147483647);
+                    interval_from_affine 1 (at(statement(5).entry, i)) (0) (2147483647);
+                    interval_subtract 3, 4 3 (-2147483646) (2147483647);
+                    interval_atom (1) (1) (1);
+                    interval_subtract 5, 6 5 (-2147483647) (2147483646);
+                    interval_subtract 3, 4 3 (-2147483646) (2147483647);
+                    trivial => 0 <= 0;
+                    affine_conclusion_pair 9 7 8 => ((end - at(opened, i)) - 1) < (end - at(opened, i));
+                    conclusion 10;
                 }
             }
             close_invariants by {
@@ -254,78 +275,23 @@ void mark_run(struct region* region, int32 start, int32 end) {
                 } and {
                     both {
                         intro();
-                        intro();
-                        extract(0 <= __click_q0);
-                        extract(__click_q0 < start);
-                        have __click_q0 < end by {
-                            apply(int32_lt_transitive(__click_q0, start, end)) using {
-                                __click_q0 < start;
-                                start < end;
-                            }
-                        }
-                        have __click_q0 < arena->capacity by {
-                            apply(int32_lt_le_transitive(__click_q0, end, arena->capacity)) using {
-                                __click_q0 < end;
-                                end <= arena->capacity;
-                            }
-                        }
-                        transport(
-                            at(function.entry, viewable(region->arena->occupied[0..region->arena->capacity])),
-                            viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1])
-                        ) using {
-                            0 <= __click_q0;
-                            __click_q0 < arena->capacity;
-                            at(function.entry, viewable(region->arena->occupied[0..region->arena->capacity]));
-                        }
+                        assumption();
                     } and {
-                    both {
-                        intro();
-                        intro();
-                        extract(0 <= __click_q0);
-                        extract(__click_q0 < start);
-                        have __click_q0 < end by {
-                            apply(int32_lt_transitive(__click_q0, start, end)) using {
-                                __click_q0 < start;
-                                start < end;
-                            }
-                        }
-                        have __click_q0 < arena->capacity by {
-                            apply(int32_lt_le_transitive(__click_q0, end, arena->capacity)) using {
-                                __click_q0 < end;
-                                end <= arena->capacity;
-                            }
-                        }
-                        transport(
-                            at(function.entry, viewable(region->arena->occupied[0..region->arena->capacity])),
-                            at(function.entry, viewable((load_int32_pointer(byte_offset(arena, 8)) + __click_q0)[0..1]))
-                        ) using {
-                            0 <= __click_q0;
-                            __click_q0 < arena->capacity;
-                            at(function.entry, viewable(region->arena->occupied[0..region->arena->capacity]));
-                        }
-                    } and {
-                        both {
-                            intro();
-                            intro();
-                            intro();
-                            assumption();
-                        } and {
-                            both {
-                                simp();
-                            } and {
-                                simp();
-                            }
-                        }
-                    }
+                        split();
                     }
                 }
             }
         }
     }
     let { next: n } = unfold(w);
-    execute();
+    step();
     let st = fold(state(region->arena), { capacity: c });
-    simp();
+    have forall (k: int32) { 0 <= k and k < start implies region->arena->occupied[k] == old(region->arena->occupied[k]) } by {
+        assumption();
+    }
+    assumption();
+    assumption();
+    assumption();
 }
 ```
 

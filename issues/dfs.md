@@ -162,71 +162,33 @@ claim is not a general current limitation;
 guard reading a folded owned composite. Re-reduce any particular recursive
 resource refusal before treating it as a verifier defect.
 
-## Current blocker: lowering a historical read inside an existential
+## Historical-read lowering resolved (2026-09-25)
 
-The 2026-09-23 reachability attempt reached the left recursive-success
-branch. `Path::Here` proves the direct-success return. At the left recursive
-call, C evaluates `left[cur]` before the call. The relevant callee contract is:
+Logical memory reads are now total terms. Lowering an ordinary proposition
+no longer inserts read-validity or viewability guards. A call-produced
+existential using an evaluated C argument therefore has the same denotation
+as its historical surface spelling, including beneath a written implication.
 
-```click
-ensures result != 0 implies exists (path: Path) {
-    walk(left, right, cur, path) == to
-};
-```
+`mdtests/call_existential_evaluated_load_guard.md` is a positive regression:
+it cites the call guarantee with `at(before_call, a[i])` and opens its path
+witness with `let satisfy`. The conditional variant in
+`mdtests/conditional_call_existential_historical_read.md` establishes the
+nonzero branch, cites the implication, and opens its consequent. Neither
+changes the callee contract to carry proof-only validity guards.
 
-At the call site, `cur` is instantiated with the already-evaluated argument
-value and `result` with `left_result`. The success branch establishes
-`left_result != 0`. The caller needs the
-consequent existential so `let (rest: Path) satisfy { ... };` can open it and
-construct the longer path. In source Click, the pre-call argument is naturally
-spelled `at(before_left_call, left[cur])`; a current-state `left[cur]` could
-name a different read after the call. The trace shows the callee's guarantee,
-but a proof-side citation of
+Validity is explicit: `defined(p[k])` names typed read validity at the selected
+snapshot. `mdtests/explicit_read_validity_uses_the_selected_witness.md` rejects
+using validity at a different witness. Logical value facts cannot grant C
+read permission or initialize heap memory, and validity does not survive a
+free. Resource footprint evaluation and actual C loads remain checked.
+Partial C arithmetic still has its existing definedness obligations.
 
-```click
-exists (rest: Path) {
-    walk(left, right, at(before_left_call, left[cur]), rest) == to
-}
-```
-
-does not lower to the same kernel proposition. Lowering that *written*
-existential evaluates its body read at `before_left_call` and puts a
-viewability/loadability condition inside the existential. The call-produced
-fact already uses the evaluated C argument value and has no corresponding
-condition in its existential body; the call checked the argument evaluation
-separately. Thus `extract` cannot use the implication as the cited rule, and
-`let satisfy` cannot find the exact existential. This is a mismatch between
-two routes through the same lowering machinery, not evidence that the callee
-contract lacks a path witness or that `left_result != 0` is unavailable.
-
-The design challenge is to keep *what proposition a Click fact denotes*
-stable enough that a certified fact can be spelled and cited in surface Click,
-while checking that expressions used to establish or invoke it are defined.
-Moving viewability out of proposition lowering may be the right direction,
-but it cannot simply drop the check: a body read that depends on an
-existential witness must be valid for the *same* witness. Today
-`src/kernel/spec.rs` deliberately folds evaluation facts and obligations into
-each existential branch (`existential_body_branch`) to retain that scope.
-The next design should identify where these definedness obligations belong
-without silently strengthening a cited fact, allowing an undefined read, or
-introducing a second, inconsistent lowering. In particular, distinguish the
-already-checked evaluation of a C call argument from evaluating an arbitrary
-proof expression under a binder; establish how snapshot identity and witness
-scope survive call substitution, printing, citation, and certificate checking.
-
-The immediate target is narrow: turn the unchanged
-`mdtests/call_existential_evaluated_load_guard.md` into a positive regression
-where the call-produced existential can be cited with its historical Click
-spelling, the known nonzero result discharges the implication, and the
-`let satisfy` tactic opens the resulting fact. Add a negative regression for an
-unviewable/witness-dependent read so the fix cannot prove an ill-defined
-existential. Then resume the unchanged DFS C and resolve this one
-left-recursive-success case, before tackling the right-success branch or the
-rest of reachability. The precise proof attempts are in
-`design/dfs-gaps/branching_graph_dfs.md`; use `click verify --trace-proof dfs
---trace-to LINE` to inspect the checked facts at the
-failing tactic. Do not change the C or add a proof-only stronger contract to
-hide the mismatch.
+The full DFS reachability proof remains follow-up work. The saved design
+records the historical left-success failure, but that citation mismatch is
+now covered by positive regressions. Resume the unchanged C from the
+left-success branch; proving the longer path and transporting its graph
+snapshot are separate proof steps. The fold-range design in item 2 above is
+still unapproved and is outside this refactor.
 
 ## Acceptance
 

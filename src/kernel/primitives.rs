@@ -6457,6 +6457,13 @@ pub enum Proposition {
         base: Pointer,
         bytes: Bitvector32Term,
     },
+    /// A typed read is valid in this snapshot, including initialization.
+    /// This is a pure fact; it grants no resource access permission.
+    CMemoryReadDefined {
+        memory: CMemory,
+        pointer: Pointer,
+        value_type: CType,
+    },
     CResourceSeparate {
         left: CResource,
         right: CResource,
@@ -7308,6 +7315,10 @@ pub struct PureFactContext {
     /// unrelated proposition in the context.
     pub(super) disjunction_facts: std::sync::Arc<BTreeSet<Proposition>>,
     pub(super) resource_compositions: std::sync::Arc<BTreeSet<ResourceContext>>,
+    pub(super) memory_read_defined_facts: crate::persistent::PersistentMap<
+        (Pointer, CType),
+        crate::persistent::PersistentSet<Proposition>,
+    >,
     pub(super) memory_loadable_facts: std::sync::Arc<BTreeMap<PointerBlock, BTreeSet<Proposition>>>,
     /// Loadability facts keyed by the C object identity carried by their
     /// base. Pointer provenance queries use this persistent index instead of
@@ -7333,9 +7344,8 @@ pub struct PureFactContext {
     pub(super) allow_symbolic_contract_loads: bool,
     pub(super) require_owned_expression_loads: bool,
     pub(super) transport_memory_load_condition_facts: bool,
-    /// Proof-side specification lowering keeps an unresolved load as one
-    /// symbolic term. Executable invariant checking leaves this false so it
-    /// can still enumerate alias cases.
+    /// Select alias normalization for loads captured by pure functions.
+    /// This affects representation only, never validity obligations.
     pub(super) keep_spec_loads_symbolic: bool,
 }
 

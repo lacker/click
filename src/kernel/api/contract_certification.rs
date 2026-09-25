@@ -257,11 +257,6 @@ fn split_additive_constant(term: &Bitvector32Term) -> (Bitvector32Term, u32) {
 /// Certifies a loadability goal from an assumed wider loadable fact over the
 /// same memory snapshot: the goal's base must sit at a provably in-bounds
 /// byte offset within the fact's span.
-/// Whether a lowering's loadability obligation names memory the state
-/// itself shows cannot be loaded: a freed heap address. Such a load is not a
-/// proposition at this state. Every other obligation is left to claim
-/// certification, which discharges it from the path's facts; this is one
-/// lookup in the memory, not a fact search.
 /// Whether `state` justifies a load obligation a lowering left open: the
 /// assumptions state the loadability exactly, the memory holds the cells, or
 /// the resources permit the read. A load under a premise is judged with the
@@ -281,6 +276,25 @@ pub fn c_state_justifies_loadability_obligation(
         Proposition::And(left, right) => {
             c_state_justifies_loadability_obligation(state, left, assumptions)
                 && c_state_justifies_loadability_obligation(state, right, assumptions)
+        }
+        Proposition::CMemoryReadDefined {
+            memory,
+            pointer,
+            value_type,
+        } => {
+            if assumptions.proves_exact(obligation) {
+                return true;
+            }
+            let loadable = Proposition::CMemoryLoadable {
+                memory: memory.clone(),
+                base: pointer.clone(),
+                bytes: Bitvector32Term::Constant(value_type.byte_width()),
+            };
+            c_state_justifies_loadability_obligation(state, &loadable, assumptions)
+                && assumptions
+                    .clone()
+                    .assume_proposition(loadable)
+                    .proves_memory_read_defined(memory, pointer, *value_type)
         }
         Proposition::CMemoryLoadable {
             memory,
@@ -524,202 +538,8 @@ fn forall_loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Proposi
     loadable_covered_by_fact(&premise_assumptions, conclusion)
 }
 
-/// Certifies a quantified single-byte loadability obligation from an assumed
-/// quantified fact that constrains a load of the same address under premises
-/// the obligation also assumes. Facts enter assumptions only through
-/// safety-checked lowering, so a stated fact about `load(p)` witnesses that
-/// the first byte at `p` is loadable.
-fn quantified_load_fact_certifies_loadable(
-    assumptions: &PureFactContext,
-    goal: &Proposition,
-) -> bool {
-    fn implication_parts(body: &Proposition) -> (Vec<Proposition>, &Proposition) {
-        let mut premises = Vec::new();
-        let mut conclusion = body;
-        while let Proposition::Implies(premise, rest) = conclusion {
-            proposition_conjuncts(premise, &mut premises);
-            conclusion = rest.as_ref();
-        }
-        (premises, conclusion)
-    }
-    let Proposition::ForAll { var, sort, body } = goal else {
-        return false;
-    };
-    let (goal_premises, conclusion) = implication_parts(body);
-    let Proposition::CMemoryLoadable {
-        memory,
-        base,
-        bytes,
-    } = conclusion
-    else {
-        return false;
-    };
-    // A load of any width witnesses its first byte.
-    if bytes.as_const() != Some(1) {
-        return false;
-    }
-    assumptions.prop_facts.iter().any(|fact| {
-        let Proposition::ForAll {
-            var: fact_var,
-            sort: fact_sort,
-            body: fact_body,
-        } = fact
-        else {
-            return false;
-        };
-        if fact_sort != sort {
-            return false;
-        }
-        let Some(fact_body) =
-            substitute_quantified_body_capture_free(fact_body, *fact_var, *var, sort)
-        else {
-            return false;
-        };
-        let (fact_premises, fact_conclusion) = implication_parts(&fact_body);
-        // The fact applies whenever its premises hold, so they must be among
-        // the obligation's assumed premises.
-        if !fact_premises.iter().all(|fact_premise| {
-            goal_premises.iter().any(|goal_premise| {
-                goal_premise == fact_premise
-                    || propositions_alpha_equivalent(fact_premise, goal_premise)
-            })
-        }) {
-            return false;
-        }
-        condition_fact_mentions_load_of(fact_conclusion, memory, base, assumptions)
-    })
-}
-
-/// True when a condition fact constrains a load of exactly this pointer in
-/// a snapshot where the pointer's block is still available in `memory`, so
-/// the fact witnesses that the pointer's first byte is loadable in `memory`.
-/// A load taken before the block was freed says nothing about loads after.
-fn condition_fact_mentions_load_of(
-    fact: &Proposition,
-    memory: &CMemory,
-    base: &Pointer,
-    assumptions: &PureFactContext,
-) -> bool {
-    fn collect_loads(term: &Bitvector32Term, loads: &mut Vec<(SharedCMemory, Pointer)>) {
-        match term {
-            Bitvector32Term::MemoryLoad(load_memory, pointer) => {
-                loads.push((load_memory.clone(), pointer.as_ref().clone()));
-            }
-            // A load variable mentions the load it represents.
-            Bitvector32Term::Variable(variable) => {
-                if let Some(load) = crate::kernel::eval::registered_load_for_variable(variable) {
-                    loads.push(load);
-                }
-            }
-            Bitvector32Term::Add(left, right)
-            | Bitvector32Term::Subtract(left, right)
-            | Bitvector32Term::Multiply(left, right)
-            | Bitvector32Term::Divide(left, right)
-            | Bitvector32Term::UnsignedDivide(left, right)
-            | Bitvector32Term::Remainder(left, right)
-            | Bitvector32Term::UnsignedRemainder(left, right)
-            | Bitvector32Term::ShiftLeft(left, right)
-            | Bitvector32Term::ArithmeticShiftRight(left, right)
-            | Bitvector32Term::LogicalShiftRight(left, right)
-            | Bitvector32Term::BitwiseAnd(left, right)
-            | Bitvector32Term::BitwiseOr(left, right)
-            | Bitvector32Term::BitwiseXor(left, right) => {
-                collect_loads(left, loads);
-                collect_loads(right, loads);
-            }
-            _ => {}
-        }
-    }
-    let Proposition::ConditionIs(condition, _) = fact else {
-        return false;
-    };
-    let mut loads = Vec::new();
-    match condition {
-        ConditionTerm::AlgebraicEqual(left, right) => {
-            left.for_each_bitvector_term(|term| collect_loads(term, &mut loads));
-            right.for_each_bitvector_term(|term| collect_loads(term, &mut loads));
-        }
-        ConditionTerm::Bitvector32SignedLessThan(left, right)
-        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
-        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
-        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
-        | ConditionTerm::Bitvector32Equal(left, right)
-        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
-        | ConditionTerm::Bitvector64SignedLessThan(left, right)
-        | ConditionTerm::Bitvector64SignedLessEqual(left, right)
-        | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
-        | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
-        | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
-        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
-        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
-        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
-        | ConditionTerm::Bitvector64Equal(left, right)
-        | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
-        | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
-        | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
-        | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
-            collect_loads(left, &mut loads);
-            collect_loads(right, &mut loads);
-        }
-        ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
-            float_condition.for_each_bitvector_term(|term| collect_loads(term, &mut loads));
-        }
-        ConditionTerm::PointerOffsetEqual(_, _)
-        | ConditionTerm::PointerEqual(_, _)
-        | ConditionTerm::IntegerLessThan(_, _)
-        | ConditionTerm::IntegerLessEqual(_, _)
-        | ConditionTerm::IntegerGreaterThan(_, _)
-        | ConditionTerm::IntegerGreaterEqual(_, _)
-        | ConditionTerm::IntegerEqual(_, _)
-        | ConditionTerm::IntegerNotEqual(_, _)
-        | ConditionTerm::Constant(_)
-        | ConditionTerm::Variable(_) => {}
-    }
-    loads.iter().any(|(load_memory, pointer)| {
-        if crate::kernel::assumptions::reasoning_interrupted() {
-            return false;
-        }
-        crate::kernel::reasoning::memory_range_still_available(
-            load_memory,
-            memory,
-            pointer,
-            assumptions,
-        ) && (canonicalize_pointer_loads(pointer) == canonicalize_pointer_loads(base)
-            || pointers_proven_equal_for_memory_resolution(pointer, base, assumptions))
-    })
-}
-
-/// The leaf form of the load-fact witness: a single-byte loadability goal is
-/// certified by any assumed condition fact constraining a load of the same
-/// pointer.
-fn load_fact_certifies_loadable(assumptions: &PureFactContext, goal: &Proposition) -> bool {
-    let Proposition::CMemoryLoadable {
-        memory,
-        base,
-        bytes,
-    } = goal
-    else {
-        return false;
-    };
-    if bytes.as_const() != Some(1) {
-        return false;
-    }
-    assumptions
-        .pure_facts()
-        .iter()
-        .any(|fact| condition_fact_mentions_load_of(fact, memory, base, assumptions))
-}
-
-/// An instantiated int32 load from an already-certified quantified fact is
-/// loadable whenever that fact's guard holds for the requested index. This is
-/// the pointwise form used while lowering another quantified proposition: the
-/// bound variable has become an ordinary symbolic variable and its guard is
-/// already present in `assumptions`.
+/// An explicitly quantified loadability fact supplies a cell when its guard
+/// holds. A proposition about a load's value supplies no validity evidence.
 pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
     assumptions: &PureFactContext,
     memory: &CMemory,
@@ -931,267 +751,10 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
                                             assumptions,
                                         ))
                             }
-                            _ => condition_fact_mentions_load_of(
-                                conclusion,
-                                memory,
-                                base,
-                                assumptions,
-                            ),
+                            _ => false,
                         }
                 })
         })
-}
-
-/// A checked universal fact that reads every int32 cell in a guarded prefix
-/// certifies that complete prefix as loadable. This is the range form needed
-/// after modular initialization helpers: their postcondition can expose the
-/// value of each written cell without returning a separate ad-hoc loadability
-/// proposition.
-pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
-    assumptions: &PureFactContext,
-    memory: &CMemory,
-    base: &Pointer,
-    bytes: &Bitvector32Term,
-) -> bool {
-    if crate::kernel::assumptions::reasoning_interrupted() {
-        return false;
-    }
-
-    let element_count = match bytes {
-        Bitvector32Term::Multiply(left, right) if right.as_const() == Some(4) => left.as_ref(),
-        Bitvector32Term::Multiply(left, right) if left.as_const() == Some(4) => right.as_ref(),
-        _ => return false,
-    };
-
-    fn conjunct_refs<'a>(proposition: &'a Proposition, output: &mut Vec<&'a Proposition>) {
-        match proposition {
-            Proposition::And(left, right) => {
-                conjunct_refs(left, output);
-                conjunct_refs(right, output);
-            }
-            proposition => output.push(proposition),
-        }
-    }
-
-    fn implication_parts(body: &Proposition) -> (Vec<&Proposition>, &Proposition) {
-        let mut premises = Vec::new();
-        let mut conclusion = body;
-        while let Proposition::Implies(premise, rest) = conclusion {
-            conjunct_refs(premise, &mut premises);
-            conclusion = rest.as_ref();
-        }
-        (premises, conclusion)
-    }
-
-    /// A load the conclusion reads, represented by either a load term or a
-    /// load variable.
-    enum ConclusionLoad {
-        Term(SharedCMemory, Pointer),
-        Variable(Variable, Pointer),
-    }
-    fn collect_loads(term: &Bitvector32Term, loads: &mut Vec<ConclusionLoad>) {
-        match term {
-            Bitvector32Term::MemoryLoad(memory, pointer) => {
-                loads.push(ConclusionLoad::Term(
-                    memory.clone(),
-                    pointer.as_ref().clone(),
-                ));
-            }
-            Bitvector32Term::PointerAddress(_) => {}
-            Bitvector32Term::Variable(variable) => {
-                if let Some((_, pointer)) =
-                    crate::kernel::eval::registered_load_for_variable(variable)
-                {
-                    loads.push(ConclusionLoad::Variable(*variable, pointer));
-                }
-            }
-            Bitvector32Term::Add(left, right)
-            | Bitvector32Term::Subtract(left, right)
-            | Bitvector32Term::Multiply(left, right)
-            | Bitvector32Term::Divide(left, right)
-            | Bitvector32Term::UnsignedDivide(left, right)
-            | Bitvector32Term::Remainder(left, right)
-            | Bitvector32Term::UnsignedRemainder(left, right)
-            | Bitvector32Term::ShiftLeft(left, right)
-            | Bitvector32Term::ArithmeticShiftRight(left, right)
-            | Bitvector32Term::LogicalShiftRight(left, right)
-            | Bitvector32Term::BitwiseAnd(left, right)
-            | Bitvector32Term::BitwiseOr(left, right)
-            | Bitvector32Term::BitwiseXor(left, right) => {
-                collect_loads(left, loads);
-                collect_loads(right, loads);
-            }
-            Bitvector32Term::Float32Binary { left, right, .. }
-            | Bitvector32Term::Float64Binary { left, right, .. } => {
-                collect_loads(left, loads);
-                collect_loads(right, loads);
-            }
-            Bitvector32Term::BitwiseNot(inner)
-            | Bitvector32Term::Float32Negate(inner)
-            | Bitvector32Term::Float64Negate(inner) => collect_loads(inner, loads),
-            Bitvector32Term::If {
-                then_term,
-                else_term,
-                ..
-            } => {
-                collect_loads(then_term, loads);
-                collect_loads(else_term, loads);
-            }
-            Bitvector32Term::RangeFold {
-                start,
-                end,
-                initial,
-                body,
-                ..
-            } => {
-                collect_loads(start, loads);
-                collect_loads(end, loads);
-                collect_loads(initial, loads);
-                collect_loads(body, loads);
-            }
-            Bitvector32Term::PureFunctionApplication { arguments, .. } => {
-                for argument in arguments {
-                    collect_loads(argument, loads);
-                }
-            }
-            Bitvector32Term::ClickFunctionApplication { .. }
-            | Bitvector32Term::AlgebraicMatch { .. } => {}
-            Bitvector32Term::Constant(_)
-            | Bitvector32Term::Int64Constant(_)
-            | Bitvector32Term::UInt64Constant(_)
-            | Bitvector32Term::Int64From32(_)
-            | Bitvector32Term::Int64FromUInt32(_)
-            | Bitvector32Term::UInt64From32(_)
-            | Bitvector32Term::UInt32From64(_)
-            | Bitvector32Term::UInt64FromInt32(_)
-            | Bitvector32Term::UInt64FromInt64(_)
-            | Bitvector32Term::Int64Add(_, _)
-            | Bitvector32Term::Int64Subtract(_, _)
-            | Bitvector32Term::Int64Multiply(_, _)
-            | Bitvector32Term::Int64Divide(_, _)
-            | Bitvector32Term::Int64Remainder(_, _)
-            | Bitvector32Term::Int64ShiftLeft(_, _)
-            | Bitvector32Term::Int64ArithmeticShiftRight(_, _)
-            | Bitvector32Term::Int64BitwiseAnd(_, _)
-            | Bitvector32Term::Int64BitwiseOr(_, _)
-            | Bitvector32Term::Int64BitwiseXor(_, _)
-            | Bitvector32Term::Int64BitwiseNot(_)
-            | Bitvector32Term::UInt64Add(_, _)
-            | Bitvector32Term::UInt64Subtract(_, _)
-            | Bitvector32Term::UInt64Multiply(_, _)
-            | Bitvector32Term::UInt64Divide(_, _)
-            | Bitvector32Term::UInt64Remainder(_, _)
-            | Bitvector32Term::UInt64ShiftLeft(_, _)
-            | Bitvector32Term::UInt64LogicalShiftRight(_, _)
-            | Bitvector32Term::UInt64BitwiseAnd(_, _)
-            | Bitvector32Term::UInt64BitwiseOr(_, _)
-            | Bitvector32Term::UInt64BitwiseXor(_, _)
-            | Bitvector32Term::UInt64BitwiseNot(_)
-            | Bitvector32Term::IntegerToMachine { .. } => {}
-        }
-    }
-
-    fn condition_loads(proposition: &Proposition, loads: &mut Vec<ConclusionLoad>) {
-        let Proposition::ConditionIs(condition, _) = proposition else {
-            return;
-        };
-        match condition {
-            ConditionTerm::AlgebraicEqual(left, right) => {
-                left.for_each_bitvector_term(|term| collect_loads(term, loads));
-                right.for_each_bitvector_term(|term| collect_loads(term, loads));
-            }
-            ConditionTerm::Bitvector32SignedLessThan(left, right)
-            | ConditionTerm::Bitvector32SignedLessEqual(left, right)
-            | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
-            | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
-            | ConditionTerm::Bitvector32Equal(left, right)
-            | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
-            | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
-            | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
-            | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-            | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
-            | ConditionTerm::Bitvector64SignedLessThan(left, right)
-            | ConditionTerm::Bitvector64SignedLessEqual(left, right)
-            | ConditionTerm::Bitvector64SignedGreaterThan(left, right)
-            | ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
-            | ConditionTerm::Bitvector64UnsignedLessThan(left, right)
-            | ConditionTerm::Bitvector64UnsignedLessEqual(left, right)
-            | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right)
-            | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right)
-            | ConditionTerm::Bitvector64Equal(left, right)
-            | ConditionTerm::Bitvector64SignedAddOverflows(left, right)
-            | ConditionTerm::Bitvector64SignedSubtractOverflows(left, right)
-            | ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right)
-            | ConditionTerm::Bitvector64SignedDivideOverflows(left, right)
-            | ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
-                collect_loads(left, loads);
-                collect_loads(right, loads);
-            }
-            ConditionTerm::Float32(float_condition) | ConditionTerm::Float64(float_condition) => {
-                float_condition.for_each_bitvector_term(|term| collect_loads(term, loads));
-            }
-            ConditionTerm::PointerOffsetEqual(_, _)
-            | ConditionTerm::PointerEqual(_, _)
-            | ConditionTerm::IntegerLessThan(_, _)
-            | ConditionTerm::IntegerLessEqual(_, _)
-            | ConditionTerm::IntegerGreaterThan(_, _)
-            | ConditionTerm::IntegerGreaterEqual(_, _)
-            | ConditionTerm::IntegerEqual(_, _)
-            | ConditionTerm::IntegerNotEqual(_, _)
-            | ConditionTerm::Constant(_)
-            | ConditionTerm::Variable(_) => {}
-        }
-    }
-
-    let guard_matches = |premises: &[&Proposition], target: &ConditionTerm| {
-        premises.iter().any(|premise| {
-            matches!(premise, Proposition::ConditionIs(condition, true)
-                if condition == target || assumptions.condition_matches(condition, target))
-        })
-    };
-
-    assumptions.prop_facts.iter().any(|fact| {
-        if crate::kernel::assumptions::reasoning_interrupted() {
-            return false;
-        }
-        let Proposition::ForAll {
-            var,
-            sort: Sort::CInt32 | Sort::Bitvector32,
-            body,
-        } = fact
-        else {
-            return false;
-        };
-        let (premises, conclusion) = implication_parts(body);
-        let index = Bitvector32Term::Variable(*var);
-        let lower = ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone());
-        let upper = ConditionTerm::signed_less_than(index.clone(), element_count.clone());
-        if !guard_matches(&premises, &lower) || !guard_matches(&premises, &upper) {
-            return false;
-        }
-        let mut loads = Vec::new();
-        condition_loads(conclusion, &mut loads);
-        loads.iter().any(|load| {
-            let (pointer, at_this_memory) = match load {
-                ConclusionLoad::Term(load_memory, pointer) => {
-                    (pointer, load_memory.memory() == memory)
-                }
-                // The name denotes this memory's cell exactly when this
-                // memory's own name for the cell is that name.
-                ConclusionLoad::Variable(variable, pointer) => (
-                    pointer,
-                    crate::kernel::canonical_term(&Bitvector32Term::MemoryLoad(
-                        crate::kernel::intern_c_memory(memory.clone()),
-                        Box::new(pointer.clone()),
-                    )) == Bitvector32Term::Variable(*variable),
-                ),
-            };
-            at_this_memory
-                && pointer
-                    .element_index_from_base(base)
-                    .is_some_and(|load_index| load_index == index)
-        })
-    })
 }
 
 /// Certifies an existential requirement side-obligation (typically the
@@ -1236,8 +799,6 @@ fn certification_proves_exists_obligation_from_facts(
         goals.iter().all(|goal| {
             certification_proves_proposition(&witness_assumptions, goal)
                 || loadable_covered_by_fact(&witness_assumptions, goal)
-                || quantified_load_fact_certifies_loadable(&witness_assumptions, goal)
-                || load_fact_certifies_loadable(&witness_assumptions, goal)
                 // Nested existentials recurse: the inner obligation matches
                 // an inner assumed existential the same way.
                 || certification_proves_exists_obligation_from_facts(&witness_assumptions, goal)

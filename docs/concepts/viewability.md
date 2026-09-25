@@ -1,10 +1,26 @@
 # Viewable ranges
 
-Pointer proofs start with viewability. Before Click can prove what a memory access
-returns, it must know that the access is in bounds. For external memory, Click
-also needs permission to access the range; see
-[Resources and memory permissions](resources.md).
+A logical memory read such as `p[k]` denotes a value even when the proof has
+no viewable range for it. The term is total: it can appear in an equality, a
+function argument, or under a quantifier without silently adding a validity
+condition. In particular, `p[k] == p[k]` is true without granting any right to
+read `p[k]` in C.
 
+Use `defined(p[k])` to claim that the typed read is valid at that snapshot.
+This checks bounds, lifetime, and initialization. A value equality does not
+prove validity: even `p[k] == 7` cannot initialize fresh heap memory. An
+explicit validity claim under an existential belongs to that same witness.
+`at(mark, defined(p[k]))` concerns the marked snapshot and does not by itself
+establish validity after a free or a memory change.
+
+C execution still checks every actual read, including call arguments. For
+external memory it also needs a resource permitting the access; neither a
+logical value nor a pure validity claim grants that permission. Resource
+expressions that read memory to identify their footprint use checked reads.
+See [Resources and memory permissions](resources.md).
+
+This separation applies to memory reads. Existing conditions for partial C
+arithmetic, such as signed overflow and division by zero, remain in force.
 For an array parameter:
 
 <!-- verified-example: mdtests/pointer_range.md -->

@@ -2304,14 +2304,16 @@ impl SurfacePropositionMap {
                     body: surface_body, ..
                 },
                 Proposition::ForAll { body, .. },
-            )
-            | (
-                ClickProposition::Exists {
-                    body: surface_body, ..
-                },
-                Proposition::Exists { body, .. },
             ) => {
                 pending.push((surface_body, body));
+                Ok(())
+            }
+            (ClickProposition::Exists { .. }, Proposition::Exists { .. }) => {
+                // The existential's kernel body may include arithmetic
+                // obligations scoped to its witness. It is not a lowering of
+                // the written body alone, and that body is not usable outside
+                // the binder. Record instantiated children when the witness
+                // is opened, rather than assigning them incorrect spellings.
                 Ok(())
             }
             // A connective's kernel form may collapse when one leg resolves
