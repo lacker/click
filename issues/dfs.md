@@ -158,7 +158,8 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
 5. Small ones (`small_refusals_and_spellings.md`): int32 `!=` symmetry is now
    checked by `mdtests/int32_disequality_symmetry.md`. The point-update
    theorem still splits below/above to cover both sides of the marked index.
-   `have` cannot take a label; `assumption()` cannot close a `viewable` goal;
+   `have` cannot take a label; `assumption()` closes an identical `viewable`
+   fact (`mdtests/assumption_closes_an_established_viewable_fact.md`);
    `arithmetic() using { j < hi; hi <= n; }` now proves `j <= n` in one checked
    step; a constant-true `using` premise such as `0 <= 0` is accepted
    (`mdtests/apply_using_accepts_a_constant_true_premise.md`) and a false one

@@ -69,20 +69,15 @@ it used to say only `missing pure fact: constant condition is true`.
 
 ## `assumption()` does not close a `viewable` goal
 
-Classification: **missing rule**.
-
-A `viewable` fact established by `transport ... using` does not close the
-identical `viewable` goal:
-
-```text
-`assumption` requires the current goal as an available semantic fact: current
-goal is a memory-viewability fact
-```
-
-So a narrowing has to be the *last* tactic of its `have` body, closing the goal
-directly with `simp()`, rather than being established and then cited. In a
-`both { ... }` arm of a `close_invariants by` bundle, where the goal is handed
-to the arm, that leaves no way to finish.
+Does not reproduce on master: `assumption()` closes a `viewable` goal from the
+identical fact established by `transport ... using`, from a `both` arm and
+under a universal, through the same exact indexed lookup as any other goal.
+`mdtests/assumption_closes_an_established_viewable_fact.md` pins it; a wider
+range or another snapshot still refuses
+(`mdtests/assumption_does_not_close_a_viewable_goal_at_another_range.md`,
+`mdtests/assumption_does_not_close_a_viewable_goal_at_another_snapshot.md`).
+The original `close_invariants by` arm was not rebuilt: a loop invariant
+`viewable(a[0..i])` is refused at the loop head for its unsigned extent bound.
 
 ## The owned range in a store refusal is spelled against the wrong base
 
