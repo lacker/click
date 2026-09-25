@@ -338,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn trace_reports_contract_certification_snapshot_gap() {
+    fn tautological_ensure_preserves_population_certification() {
         let directory =
             std::env::temp_dir().join(format!("click-certification-trace-{}", std::process::id()));
         if directory.exists() {
@@ -357,57 +357,51 @@ mod tests {
             "    produces &p->kid;\n    ensures old(p->kid) == old(p->kid);\n} by {\n    match link.link {",
             1,
         );
+        assert!(source.contains("ensures old(p->kid) == old(p->kid);"));
         fs::write(&sidecar, source).unwrap();
-
-        let plain = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
-        assert!(
-            plain.starts_with("proof error in `parent_detach` during contract certification:\n"),
-            "{plain}"
-        );
-        assert!(!plain.contains("could not certify contract for"), "{plain}");
-        let (failure, trace) = plain.split_once("\n\nTo get a trace:\n  ").expect(&plain);
-        assert_eq!(
-            failure,
-            "proof error in `parent_detach` during contract certification:\n  could not prove `fact obj->refs == count(child_ref(obj));` of resource `child_ref` at return from `parent_detach`"
-        );
-        assert!(
-            trace
-                == format!(
-                    "click verify --trace-proof parent_detach {}",
-                    sidecar.display()
-                ),
-            "{plain}"
-        );
-        let traced = entry([
+        entry(["verify".to_string(), sidecar.display().to_string()]).unwrap();
+        entry([
             "verify".to_string(),
             "--trace-proof".to_string(),
             "parent_detach".to_string(),
             sidecar.display().to_string(),
         ])
+        .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    // Known tooling gap: ordinary verification succeeds, but expanding the
+    // nonfinal release's last simp loses the retained allocation obligation.
+    // Keep the frozen C as the regression until expansion transports that
+    // evidence; this test must become a successful expansion/recheck then.
+    #[test]
+    fn shared_population_release_expansion_records_lifetime_gap() {
+        let directory = std::env::temp_dir().join(format!(
+            "click-population-release-expansion-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("shared_parent.c"),
+            include_str!("../../design/shared-heap-probes/shared_parent.c"),
+        )
+        .unwrap();
+        let sidecar = directory.join("shared_parent.click");
+        let source = include_str!("../../design/shared-heap-probes/shared_parent.click");
+        fs::write(&sidecar, source).unwrap();
+        entry(["verify".to_string(), sidecar.display().to_string()]).unwrap();
+        let release_end = source.find("void parent_attach(").unwrap();
+        let simp = source[..release_end].rfind("        simp();").unwrap();
+        let line = source[..simp].bytes().filter(|byte| *byte == b'\n').count() + 1;
+        let error = entry([
+            "expand".to_string(),
+            format!("{}:{line}:9", sidecar.display()),
+        ])
         .unwrap_err();
         assert!(
-            traced.starts_with("proof error in `parent_detach` during contract certification:"),
-            "{traced}"
+            error.contains("live allocation obligation was neither returned nor freed"),
+            "{error}"
         );
-        assert!(
-            !traced.contains("stage: contract certification"),
-            "{traced}"
-        );
-        assert!(
-            traced.contains("could not prove `fact obj->refs == count(child_ref(obj));`"),
-            "{traced}"
-        );
-        assert!(
-            traced.contains("same address and required value"),
-            "{traced}"
-        );
-        assert!(traced.contains("snapshot reads agree"), "{traced}");
-        assert!(traced.contains("checked facts (showing"), "{traced}");
-        assert!(
-            !traced.contains("<no checked simple steps recorded"),
-            "{traced}"
-        );
-        assert!(!traced.contains("CMemory {"), "{traced}");
         fs::remove_dir_all(directory).unwrap();
     }
 

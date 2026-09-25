@@ -126,7 +126,7 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("contract resource effects require an execution proof"));
         };
 
-        let (outcome, _obligations) = crate::kernel::apply_c_function_contract_resource_transition(
+        let outcome = crate::kernel::checked_c_function_contract_resource_transition(
             pre_state,
             function,
             context.arguments,

@@ -2863,6 +2863,35 @@ pub fn apply_c_function_contract_resource_transition(
     }
 }
 
+/// Commits a proposed return-resource exchange only after its verification
+/// conditions have been established in the supplied checked context. The
+/// proposal API above also serves callers that retain explicit obligations.
+pub(crate) fn checked_c_function_contract_resource_transition(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    outcome: CFunctionOutcome,
+    assumptions: &PureFactContext,
+) -> Result<CFunctionOutcome, String> {
+    let (outcome, obligations) = apply_c_function_contract_resource_transition(
+        caller_state,
+        function,
+        arguments,
+        outcome,
+        assumptions,
+    )?;
+    if let Some(obligation) = obligations
+        .iter()
+        .find(|obligation| !certification_proves_proposition(assumptions, obligation.proposition()))
+    {
+        return Err(format!(
+            "unproved contract resource obligation: {}",
+            obligation.context().unwrap_or("resource transition"),
+        ));
+    }
+    Ok(outcome)
+}
+
 /// Prepares the count interpretation used to prove a function's return
 /// resource invariants, without transferring the body's ownership. This
 /// creates no theorem or invariant facts: the eventual specification must

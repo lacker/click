@@ -1090,3 +1090,40 @@ fn normalizing_external_ranges_compares_only_related_bases() {
         "{samples:?}"
     );
 }
+
+#[test]
+fn population_call_partition_is_logarithmic_in_unrelated_resources() {
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let frame = frame_with_unrelated_allocations(size);
+        let body = owned_range(heap_base(TARGET_HEAP), 8, 12);
+        let callee = ResourceContext::new().unchecked_with_fact(body.clone());
+        let assumptions = assumptions_aliasing_the_target();
+        let (partition, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::functions::retained_population_call_partition(
+                &frame,
+                &callee,
+                &assumptions,
+            )
+        });
+        assert!(partition.unwrap().satisfies_fact(&body, &assumptions));
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("retaining a population call partition", &samples, 4.0);
+}
+
+#[test]
+fn population_call_partition_rejects_aliasing_memory() {
+    let frame =
+        ResourceContext::new().unchecked_with_fact(owned_range(heap_base(TARGET_HEAP), 0, 8));
+    let callee =
+        ResourceContext::new().unchecked_with_fact(owned_range(heap_base(TARGET_HEAP), 4, 12));
+    assert!(
+        crate::kernel::functions::retained_population_call_partition(
+            &frame,
+            &callee,
+            &PureFactContext::new(),
+        )
+        .is_none()
+    );
+}

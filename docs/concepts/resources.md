@@ -1133,3 +1133,8 @@ Not implemented yet:
 
 The current resource layer is intentionally small. Its memory family is the
 foundation for broader memory-permission logic, not the final ownership model.
+
+For the planned relationship between population counts, access authority,
+and mutexes, see the internal
+[resource invariant design](../internals/resource-invariants.md). That record
+separates implemented sequential checks from future concurrency rules.

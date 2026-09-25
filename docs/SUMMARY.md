@@ -62,6 +62,7 @@
 - [Kernel](internals/kernel.md)
 - [Separation logic](internals/separation-logic.md)
 - [Stable views](internals/stable-views.md)
+- [Resource invariants and synchronization](internals/resource-invariants.md)
 - [Byte representation](internals/byte-representation.md)
 - [Memory derivation DAG](internals/memory-dag.md)
   - [The resource tracker](internals/resource-tracker.md)

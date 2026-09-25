@@ -1,43 +1,37 @@
 # P1: Shared heap graph and resource invariants
 
-## Next task: settle the invariant semantics
+## Design chosen; next task: repair release expansion, then caller observations
 
-The next task is a **design decision**, not another proof-script tweak. Click
-needs a precise rule for when a counted resource's declared facts hold, when a
-proof may temporarily open that invariant, and which other execution contexts
-may observe the resource while it is open. The rule must support both:
+The target semantics are recorded in
+[Resource invariants, counting, and synchronization](../docs/internals/resource-invariants.md).
+Membership units, authoritative population state, and access authority are
+separate. Counted facts hold at closed boundaries. Sequential populations
+remain thread confined; mutex and atomic access protocols are later work.
 
-1. A sequential, non-thread-safe reference-counted child with ordinary C
-   `int32 refs`, as in the frozen probe below.
-2. A genuinely thread-safe reference-counted child, using an explicit lock or
-   atomic protocol and safe final reclamation. A sequential proof must not
-   silently become a concurrent proof.
+The first implementation checkpoint checks counted invariants at observing
+call boundaries and checks returned transition obligations before the surface
+records a checked return-resource exchange. It preserves checked partition
+evidence across a consuming call so a later disjoint store can transport the
+population invariant. The tautological-ensure reducer now passes in the
+normal gate, as do regressions rejecting broken call-entry invariants and
+wrong count updates. Explicit access-authority representation remains open.
 
-Decide and document these points before changing contract certification:
+The next tooling blocker is expansion of `child_release`'s final `simp()`
+on its nonfinal branch. Ordinary verification succeeds, but expansion loses
+retained allocation-lifetime evidence. This also fails with the pre-checkpoint
+verifier. `shared_population_release_expansion_records_lifetime_gap` in
+`src/bin/click.rs` records the ordinary-pass/expansion-failure pair against
+the unchanged frozen source. The repaired `parent_detach` claim passes its
+three-site audit; the complete helper audit remains blocked. Repair expansion
+first under the tooling-first rule.
 
-- Is a population-wide `fact` required at every C statement, or at defined
-  closed-state boundaries? If temporary violation is allowed, what checked
-  authority excludes other observers, and what operation must restore it?
-- What does holding one `child_ref(obj)` unit let a thread observe while other
-  units exist? The current resource body owns the child's allocation and
-  object once for the population; it does not describe synchronization.
-- At which exact transition does `consumes child_ref(obj)` change the logical
-  population count? Distinguish transfer of a unit into a callee, consumption
-  by a verified call, and certification of the enclosing function's net
-  contract effect.
-- What evidence about the population invariant is recorded at that transition,
-  and how is it carried across later, demonstrably disjoint C writes and
-  memory snapshots? Final certification must check the actual returned
-  resource state without assuming an unproved invariant.
-- How would the concurrent version protect the C counter, payload access, and
-  final free? State the selected memory/synchronization model and the
-  relationship to the [P1 concurrency demo](concurrency-demo.md) and
-  [broader atomics issue](concurrency-and-atomics.md).
-
-A rule that accepts a resource merely because its unit is absent at return is
-insufficient: the remaining population may still exist, and `obj->refs` must
-agree with its logical count. Conversely, reconstructing a transition at a fresh
-snapshot should not lose already checked evidence from the consuming call.
+The subsequent caller blocker is initialized-memory observation after producing
+a counted body. The normal-gate expected-failure fixture
+`mdtests/shared_heap_population_initialized_body_gap.md` embeds the unchanged
+frozen C and a caller proof prefix. `child_init` initializes the counter and
+produces `child_ref`; when the first parent allocation fails, the subsequent
+`child_release` precondition reports `read of uninitialized storage`. Repair
+that kernel observation boundary and finish both callers without changing C.
 
 ## Frozen program and current evidence
 
@@ -52,25 +46,12 @@ advanced through both detaches and parent frees; its remaining success-path
 claim was `out == payload`. The complete lifecycle sidecar is not yet in the
 normal gate.
 
-The present certification reducer adds only
-`ensures old(p->kid) == old(p->kid);` to `parent_detach`. That tautology makes
-contract certification report an unproved
-`fact obj->refs == count(child_ref(obj));` of `child_ref` at return. The trace
-shows a matching fact at one memory snapshot and the required fact at another;
-`p->kid = 0` follows the verified `child_release(kid)` call. The unmodified
-helper verifies. A proposition that changes no contract meaning should not
-change whether the resource transition is certified.
-
-Code inspection found a specific authority boundary to audit:
-`apply_outcome_contract_resources` calls the kernel transition and discards its
-returned proof obligations. A path can record `checked_resource_transition =
-true` while retaining a `resource population invariant` obligation. The
-resource-claim certification shortcut reuses the checked transition, while an
-additional pure claim prepares the path and encounters that obligation. Do not
-remove the obligation or extend the shortcut until a negative regression shows
-that incorrect C counter updates remain rejected. The exact proof failure may
-also need sound transport of the post-call fact across the later parent-link
-store; investigate that under the invariant semantics chosen above.
+The certification reducer adds only
+`ensures old(p->kid) == old(p->kid);` to `parent_detach`. It previously lost
+the checked population invariant across the later `p->kid = 0` store. The
+positive `shared_heap_population_certification.md` regression now verifies
+all six helpers with that ensure. The helper-side repair is not evidence
+that the complete caller lifecycle or concurrent use is verified.
 
 The existing [resource documentation](../docs/concepts/resources.md) says a
 population body belongs to the population as a whole and that retain/release

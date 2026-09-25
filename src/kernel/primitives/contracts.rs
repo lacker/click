@@ -840,6 +840,16 @@ impl CFunctionContractInterface {
         &self.composite_resource_definitions
     }
 
+    pub(crate) fn composite_resource_definition(
+        &self,
+        name: &str,
+    ) -> Option<&CCompositeResourceDefinition> {
+        self.composite_resource_definitions
+            .binary_search_by(|definition| definition.name().cmp(name))
+            .ok()
+            .map(|index| &self.composite_resource_definitions[index])
+    }
+
     pub fn predicate_unfoldings(&self) -> &[CPredicateUnfolding] {
         &self.predicate_unfoldings
     }
@@ -1163,11 +1173,7 @@ impl CFunction {
         &self,
         name: &str,
     ) -> Option<&CCompositeResourceDefinition> {
-        self.contract_interface
-            .composite_resource_definitions
-            .binary_search_by(|definition| definition.name().cmp(name))
-            .ok()
-            .map(|index| &self.contract_interface.composite_resource_definitions[index])
+        self.contract_interface.composite_resource_definition(name)
     }
 
     pub fn with_predicate_unfoldings(mut self, unfoldings: Vec<CPredicateUnfolding>) -> Self {

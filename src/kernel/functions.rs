@@ -3501,6 +3501,29 @@ fn source_load_snapshot_for_proposition(
     Ok(snapshot)
 }
 
+/// Retains only the transfer's explicit memory delta beside the persistent
+/// caller frame. No expansion or scan of unrelated frame resources is needed.
+/// An aliasing or otherwise invalid composition supplies no separation fact.
+pub(super) fn retained_population_call_partition(
+    caller_frame: &ResourceContext,
+    callee_resources: &ResourceContext,
+    assumptions: &PureFactContext,
+) -> Option<ResourceContext> {
+    let mut partition = caller_frame.clone();
+    for fact in callee_resources
+        .facts()
+        .iter()
+        .filter(|fact| fact.is_own() && matches!(fact.resource(), CResource::Memory(_)))
+    {
+        if !partition.contains_exact_representation(fact) {
+            partition = partition
+                .try_compose_with_fact(fact.clone(), assumptions)
+                .ok()?;
+        }
+    }
+    Some(partition)
+}
+
 fn prepare_verified_function_call<'a>(
     caller_state: &CState,
     application: CFunctionContractApplication<'a>,
@@ -3698,6 +3721,76 @@ fn prepare_verified_function_call<'a>(
         entry_contract_state.clone()
     };
     let mut obligations = argument_obligations;
+    // A population unit is membership, not an unconditional license to
+    // assume the shared body's invariant at a new memory snapshot. In
+    // particular a call from inside an open update must restore the body
+    // before another contract can observe it. Ordinary folded heads still
+    // own their bodies internally and require no separate population check.
+    let population_inputs = ResourceContext::new().unchecked_with_facts(
+        transfer
+            .borrowed_inputs
+            .iter()
+            .chain(&transfer.consumed_inputs)
+            .filter(|input| match input.fact.resource() {
+                CResource::Composite { name, .. } | CResource::Token { name, .. } => {
+                    contract_interface
+                        .composite_resource_definition(name)
+                        .is_some_and(|definition| {
+                            definition.is_counted_population() && !definition.facts().is_empty()
+                        })
+                }
+                _ => false,
+            })
+            .map(|input| input.fact.clone()),
+    );
+    let Some(population_facts) = evaluate_resource_population_fact_propositions(
+        &population_inputs,
+        contract_interface.composite_resource_definitions(),
+        &entry_contract_state,
+        &path_assumptions,
+        false,
+    ) else {
+        return Ok(Err(CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                "could not evaluate population invariant at call entry".to_string(),
+            )),
+            facts,
+            obligations,
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        }));
+    };
+    let has_population_invariant = population_facts.iter().any(|fact| fact.is_body_fact);
+    for fact in population_facts {
+        if fact.is_body_fact
+            && !super::api::contract_certification::certification_proves_proposition(
+                &path_assumptions,
+                &fact.proposition,
+            )
+        {
+            add_required_proof_obligation_with_context(
+                &mut obligations,
+                &path_assumptions,
+                fact.proposition,
+                Some("population invariant at call entry"),
+                None,
+            );
+        }
+    }
+    if has_population_invariant {
+        // The transfer's exposed population body and its untouched caller
+        // frame are parts of the same checked ownership partition. Retain
+        // that partition before consumption hides the body, so a later
+        // disjoint caller store can transport the callee's returned facts.
+        if let Some(partition) = retained_population_call_partition(
+            &transfer.caller_resources_after_requirements,
+            &transfer.callee_resources,
+            &path_assumptions,
+        ) {
+            facts.push(ExecutionPureFact::new(Proposition::CResourceComposition(
+                partition,
+            )));
+        }
+    }
     let mut established_requirements = Vec::new();
     let requirement_timing = crate::instrumentation::OperationTiming::new(
         application.name,
@@ -15021,6 +15114,7 @@ fn apply_counted_population_transitions_with_interface(
     for EvaluatedResourcePopulationFact {
         proposition,
         source_fact,
+        ..
     } in population_facts
     {
         if let Proposition::ConditionIs(
@@ -17678,6 +17772,8 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
 pub(super) struct EvaluatedResourcePopulationFact {
     pub(super) proposition: Proposition,
     pub(super) source_fact: Option<String>,
+    // Semantic provenance must not depend on optional source diagnostics.
+    pub(super) is_body_fact: bool,
 }
 
 pub(super) fn evaluate_resource_population_fact_propositions(
@@ -17727,7 +17823,13 @@ pub(super) fn evaluate_resource_population_fact_propositions(
         if definition.parameters().len() != arguments.len() {
             return None;
         }
-        let population_count = state.counted_population(&name, &arguments);
+        // Contract arguments can name a population through a checked alias
+        // (for example parent->kid instead of kid). Use the same equality
+        // interpretation as resource transfer, without minting another total.
+        let population_count = state
+            .counted_population_proven_equal(&name, &arguments, assumptions)
+            .map(|(_, _, count)| count);
+        let population_count = population_count.as_ref();
         if let (Some(population_count), Some(visible_quantity)) =
             (population_count, visible_quantity)
         {
@@ -17740,6 +17842,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                     true,
                 ),
                 source_fact: None,
+                is_body_fact: false,
             });
         }
         // Resource expansion checks ownership relations, but a composite's
@@ -17947,6 +18050,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                         propositions.push(EvaluatedResourcePopulationFact {
                             proposition: proposition.clone(),
                             source_fact: source_fact.clone(),
+                            is_body_fact: true,
                         });
                     }
                     fact_assumptions = fact_assumptions.assume_proposition(proposition);
@@ -17958,6 +18062,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
                     propositions.push(EvaluatedResourcePopulationFact {
                         proposition: path.proposition.clone(),
                         source_fact,
+                        is_body_fact: true,
                     });
                 }
                 fact_assumptions = fact_assumptions.assume_proposition(path.proposition.clone());
