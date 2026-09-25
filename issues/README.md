@@ -24,7 +24,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (8)
+## P1: before launch (5)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -53,21 +53,16 @@ dependency marker, not a prescribed implementation order. An unsound rule is
 P1 whatever it is about: the claim is worthless if the verifier accepts false
 contracts, so soundness bugs come first even when rbtree does not exercise
 them. A gap that only a different program would hit is normally P2. The
-explicitly selected stable-views, concurrency, byte-representation,
-control-flow, and shared-heap-graph milestones are also P1: they check the
-architecture before launch while rbtree remains the key demo. The basic C++
-milestone has landed with a bounded support claim; broader language,
-concurrency, and graph coverage remain P2.
+remaining concurrency and shared-heap milestones are also P1: they check the
+architecture before launch while rbtree remains the key demo. The selected
+control-flow, byte-representation, arena, and basic C++ milestones have
+landed with bounded support claims; broader language, synchronization, and
+graph coverage remain P2.
 
 Soundness and kernel shape:
 
 - [Design resource invariants for sequential and concurrent shared heaps](shared-heap-graph-demo.md)
-- [Contract retire keeps the zeroed reading](../bugs/contract-retire-keeps-zeroed-reading.md)
-- [store_union keeps a stale raw cell under an equal spelling](../bugs/store-union-keeps-aliased-raw-cell.md)
-- [spec-fold binder identities collide with the quantifier bands](../bugs/spec-fold-binders-collide-with-quantifier-band.md)
-- [Byte-extent residue comparison certifies wrapped loads](../bugs/byte-extent-residue-compare-certifies-wrapped-loads.md)
-- [Footprint refusals drop fact-aliased writes](../bugs/footprint-check-drops-fact-aliased-writes.md)
-- [Loop and call footprints skip instances they cannot open](../bugs/loop-and-call-footprints-skip-unopenable-instances.md)
+- [Repair loop and call footprints for unopenable instances](../bugs/loop-and-call-footprints-skip-unopenable-instances.md)
 
 Program import and execution:
 
