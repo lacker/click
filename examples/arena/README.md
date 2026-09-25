@@ -88,6 +88,56 @@ second allocation fails. Destruction requires an `arena_empty` resource with
 `live_regions == 0`, consumes both allocation authorities, and returns the
 zeroed descriptor.
 
+## The per-cell model
+
+`arena_cells.click` verifies the same fixed C over the per-cell occupancy
+representation, the one that expresses frees in any order. `arena_state`
+owns the arena's four fields, the allocation authority, and an
+`arena_cells` child: the whole occupancy map plus, through iterated guarded
+ownership, exactly the data cells whose occupancy is `0`. Its fields are
+`live` and `capacity`; its facts are `0 <= live`, the capacity bound, and
+the separations of the arena object and the two backing ranges.
+`arena_region` owns the descriptor and exactly `data[start..end]`, with
+`region->start == start`, `region->end == end`, and `0 <= start < end`.
+Nothing mentions a prefix.
+
+- `arena_init` zeroes the map, forms the iterated fact with `gather`, and
+  returns `arena_init_outcome`: the untouched descriptor on failure, the
+  state at `live == 0` on success, with every occupancy cell `0`.
+- `arena_destroy` requires every occupancy cell `0`, dissolves the fact with
+  `scatter`, and frees both allocations. The state cannot count occupied
+  cells, so this all-free precondition, not `live == 0`, is what makes the
+  free safe.
+- `arena_alloc` places the region anywhere: failure returns the state at
+  the same `live` and the caller's descriptor; success returns the region
+  with `region->end == region->start + count` and
+  `region->end <= arena->capacity`, and the state at `live + 1`. The scan
+  loop carries its free run in an `arena_scan` window, so its per-cell run
+  fact is a resource fact checked at each fold; the mark loop owns an
+  `arena_window`, takes each cell's element out of the iterated fact, and
+  marks it, which the store rule closes. Because nothing ties `live` to the
+  number of regions, the increment's definedness is the precondition
+  `st.live < 2147483647`. The contract states nothing about occupancy
+  cells: the success frame is blocked by the frontier below, and even the
+  failure frame and the marked run, which verify, cannot be expanded,
+  because `click expand` renders the post-exit `simp` that closes a
+  quantified postcondition over the state's cells as an `assumption` that
+  does not recheck.
+- `arena_read`, `arena_write`, and `arena_region_length` borrow the region
+  and the state.
+
+What the per-cell sidecar does not yet verify is `arena_free` and the
+pipeline. Both mark and clear loops must own the whole occupancy map,
+because the iterated fact's guard cells must be owned by the body that
+declares it, so each loop havocs every occupancy cell and the cells it never
+writes need a frame invariant. That invariant does not close at the back
+edge when the map is reached through `arena->occupied`
+(`mdtests/loop_frame_invariant_over_folded_binder_cells.md`), and without
+it `arena_alloc` cannot say what it leaves unchanged, `arena_free` cannot
+keep `region->start` across its clearing store, and the pipeline cannot
+establish the all-free map `arena_destroy` requires. The prefix model below
+keeps verifying the pipeline until that frontier closes.
+
 ## Sidecar layout
 
 A caller can use a callee's contract only when the callee is verified earlier
@@ -113,6 +163,11 @@ the files are split by what they share:
   `arena_free` over `arena_region`.
 - `arena_second_alloc.click` stays the fixed instance check of the pipeline's
   second two-cell allocation.
+- `arena_cells.click` holds the per-cell model: its resources, the two
+  loop windows, `arena_init`, `arena_alloc`, `arena_write`, `arena_read`,
+  `arena_destroy`, and `arena_region_length`. It declares its own resources
+  rather than importing `arena_resources.click`, because `arena.click`
+  imports that module and already names a different `arena_region`.
 
 ## The pipeline
 

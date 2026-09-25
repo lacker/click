@@ -277,7 +277,8 @@ behaviors are covered by the pipeline's paths and the negative mdtests
 (`arena_use_after_free.md`, `arena_destroy_with_live_region.md`,
 `arena_prefix_region_double_free.md`, `arena_prefix_regions_reject_overlap.md`).
 The remaining open item is the representation question below, which the
-reverse-order pipeline does not exercise.
+reverse-order pipeline does not exercise; the per-cell section after it
+records how far the chosen representation has come.
 
 ## Open design question: frees out of allocation order
 
@@ -311,6 +312,69 @@ coalescing an explicit list normalization the C never performs, and relating
 first-fit to the earliest hole large enough requires the list to stay sorted
 and merged, so the scan proof inherits the partition model's list reasoning
 anyway.
+
+## The per-cell model
+
+The per-cell occupancy representation was chosen and the kernel has it as
+iterated guarded ownership. `examples/arena/arena_cells.click` verifies the
+fixed `arena_init`, `arena_alloc`, `arena_write`, `arena_read`,
+`arena_destroy`, and `arena_region_length` over it: `arena_state` owns the
+fields, the allocation authority, and an `arena_cells` child holding the map
+and the data cells whose occupancy is `0`; `arena_region` owns the
+descriptor and `data[start..end]`. Initialization forms the iterated fact
+with `gather`, destruction requires an all-free map and dissolves it with
+`scatter`, and allocation places the region anywhere, with the scan's run
+held in a loop window and the mark loop taking each element out of the fact
+before marking it. `examples/arena/README.md` has the contracts. The
+allocation contract states nothing about occupancy cells: the failure
+frame and the marked run verify, but `click expand` renders the post-exit
+`simp` that closes a quantified postcondition over memory as an
+`assumption` that does not recheck, so they are left out.
+
+Three kernel defects were fixed on the way, each with a regression:
+
+- A loop binder or a callee's resource-derived frame that holds a
+  field-bearing instance or an iterated fact was summarized as writing none
+  of its memory, so `transport` carried a stale value across a loop or call
+  that wrote the cell. This was a soundness bug: both regressions prove a
+  false postcondition on the earlier kernel
+  (`mdtests/loop_binder_instance_footprint_includes_its_memory.md`,
+  `mdtests/call_through_instance_footprint_includes_its_memory.md`). The
+  footprint now opens an instance one layer and spans an iterated fact. An
+  instance that cannot be opened from one state (an undecided matched arm, a
+  recursive body) and a recursive composite still contribute nothing; that
+  gap is open.
+- `gather` over a freshly allocated, loop-zeroed map read the guard cell as
+  an uninitialized heap cell before consulting the quantified fact
+  (`mdtests/iterated_ownership_gather_fresh_heap_map.md`).
+- Iterated-fact invalidation walked the recorded history of a content-equal
+  snapshot instead of the transition's own, and dropped the fact in a loop
+  whose branch resets a local (`mdtests/iterated_ownership_survives_branch_reset.md`).
+
+What is still open is `arena_free`, the per-cell pipeline, and the frees out
+of allocation order the per-cell model exists for. With the footprint fixed,
+the mark and clear loops, which must own the whole occupancy map because
+the iterated fact's guard cells must be owned by the declaring body, havoc
+every occupancy cell. What they leave unchanged has to be a frame
+invariant, and that invariant does not close at the back edge when the map
+is read through `arena->occupied`
+(`mdtests/loop_frame_invariant_over_folded_binder_cells.md`, an expect-fail
+frontier). Until it does, `arena_alloc` cannot state the cells it leaves
+unchanged, `arena_free` cannot keep the descriptor's fields across its
+clearing store, and the pipeline cannot establish the all-free map
+`arena_destroy` requires; a middle-region free followed by a first-fit
+reuse of the hole cannot be stated either. Two ways to close it: resolve
+the field load across the back edge so the frame invariant closes, or let
+an iterated fact split at an index (a design change to the exact-match
+family) so that a loop can own only the cells it writes and frame the rest
+by its footprint. The prefix sidecars stay until then.
+
+Two further limits of the per-cell contracts: nothing relates `live` to the
+number of occupied cells or regions (the kernel has no count of a guarded
+population), so `arena_alloc` requires `st.live < 2147483647` and
+`arena_destroy` requires the all-free map rather than `live == 0`; and
+first-fit is not stated, because a resource fact cannot yet read cells under
+a nested quantifier's guard.
 
 ## Violated invariant
 

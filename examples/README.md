@@ -57,8 +57,11 @@ Current projects:
   transitions over an occupied prefix and live count held in plain resource
   fields, and the end-to-end `arena_pipeline` over them, with resources
   shared through the declaration module `arena_resources.click`;
-  `arena.click` keeps the fixed-interval region model. Arbitrary free
-  intervals are tracked by the arena resource-ownership issue.
+  `arena.click` keeps the fixed-interval region model, and
+  `arena_cells.click` verifies initialization, allocation anywhere, reads,
+  writes, and destruction over per-cell occupancy with iterated guarded
+  ownership. Frees in any order and the per-cell pipeline are tracked by the
+  arena resource-ownership issue.
 - `input-cursor/` verifies independently mutable cursors over a shared viewed
   input resource.
 - `jsonc-refcount/` verifies synthetic json-c-shaped field reads and writes on
