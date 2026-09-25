@@ -133,6 +133,14 @@ use expansion::{
 };
 use lowering::*;
 pub use modules::resolve_click_project;
+
+/// Whether a `.click` source is a declaration module: it declares only
+/// imports, specification types, predicates, pure functions, and resources,
+/// so it owns no claim and is verified only through the sidecars that import
+/// it. Directory targets do not select such a file as an entry.
+pub fn click_source_is_declaration_module(source: &str) -> bool {
+    parser::declares_only_definitions(source)
+}
 use parser::ContractLetBinding;
 pub use printing::{format_proof_certificate, format_proof_tactics};
 use proof::*;

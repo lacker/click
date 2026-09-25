@@ -3566,6 +3566,14 @@ impl<'a> Proof<'a> {
                 // denoting it, so only the orientation is open here.
                 let reverse = reverse_surface_equality(&surface);
                 for oriented in std::iter::once(surface).chain(reverse) {
+                    // Every candidate is a checked rewrite followed by three
+                    // closers, for each equality mentioning the goal, at
+                    // each link of the chain. Observe the tactic's deadline
+                    // and work budget between candidates, so a search that
+                    // cannot close stops when its tactic's bound runs out.
+                    if crate::instrumentation::deadline_exceeded() {
+                        return None;
+                    }
                     let rewrite = proof.apply_step(ProofStep::Rewrite(oriented));
                     let Ok(rewritten) = rewrite else {
                         continue;
@@ -3660,6 +3668,12 @@ impl<'a> Proof<'a> {
                 for oriented in
                     std::iter::once(surface.clone()).chain(reverse_surface_equality(surface))
                 {
+                    // Each candidate rewrite applies a checked step and a
+                    // closure, quadratically in the equalities; observe the
+                    // tactic's deadline and budget between candidates.
+                    if crate::instrumentation::deadline_exceeded() {
+                        return None;
+                    }
                     if let Ok(rewritten) = proof.apply_step(ProofStep::Rewrite(oriented)) {
                         let closed = if restricted {
                             rewritten.try_typed_atomic_simp_from_selected_premises(premise_pairs)

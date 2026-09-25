@@ -1109,8 +1109,8 @@ impl PureFactContext {
     ///
     /// This is the partition law of a valid composition, the one
     /// [`crate::kernel::memory_provenance::owned_composition_store_separated_evidence`]
-    /// and the projected pairs in `composition_separation_facts` already
-    /// apply; only the route to the two members differs. Both memberships
+    /// and [`Self::composition_separated_members`] already apply; only the
+    /// route to the two members differs. Both memberships
     /// are full, assumption-checked containments of the whole access, not
     /// of its first element, and the same guards apply: the two addresses
     /// must not be proven equal, and ranges whose distinct base spellings
@@ -1206,7 +1206,7 @@ impl PureFactContext {
         }
         let direct = self
             .memory_separation_candidates(&left.block, &right.block)
-            .find_map(|(proposition, left_range, right_range, _)| {
+            .find_map(|(proposition, left_range, right_range)| {
                 let contained = self.pointer_in_range_with_width(
                     left,
                     left_range.base(),
@@ -1240,6 +1240,30 @@ impl PureFactContext {
             record_implicit_reasoning_provenance(self, proposition);
             return true;
         }
+        let contains = |pointer: &Pointer, range: &CMemoryRange| {
+            self.pointer_in_range_with_width(
+                pointer,
+                range.base(),
+                range.start(),
+                range.end(),
+                range.element_width(),
+            )
+        };
+        if let Some((resources, _, _)) = self.composition_separated_members(
+            &left.block,
+            &right.block,
+            |range| contains(left, range),
+            |range| contains(right, range),
+            |left_range, right_range| {
+                !self.memory_ranges_overlap_after_base_equality(left_range, right_range)
+            },
+        ) {
+            record_implicit_reasoning_provenance(
+                self,
+                &Proposition::CResourceComposition(resources.clone()),
+            );
+            return true;
+        }
         false
     }
 
@@ -1251,8 +1275,17 @@ impl PureFactContext {
         if self.pointers_proven_equal_ignoring_memory_separation(left, right) {
             return false;
         }
+        let contains = |pointer: &Pointer, range: &CMemoryRange| {
+            self.pointer_in_range_by_shallow_fact_graph_with_width(
+                pointer,
+                range.base(),
+                range.start(),
+                range.end(),
+                range.element_width(),
+            )
+        };
         self.memory_separation_candidates(&left.block, &right.block)
-            .any(|(proposition, left_range, right_range, composition)| {
+            .any(|(proposition, left_range, right_range)| {
                 let proved = self.pointer_in_range_by_shallow_fact_graph_with_width(
                     left,
                     left_range.base(),
@@ -1281,14 +1314,27 @@ impl PureFactContext {
                 let proved = proved
                     && !self.memory_ranges_overlap_after_base_equality(left_range, right_range);
                 if proved {
-                    let authority = composition.map_or_else(
-                        || proposition.clone(),
-                        |resources| Proposition::CResourceComposition(resources.clone()),
-                    );
-                    record_implicit_reasoning_provenance(self, &authority);
+                    record_implicit_reasoning_provenance(self, proposition);
                 }
                 proved
             })
+            || self
+                .composition_separated_members(
+                    &left.block,
+                    &right.block,
+                    |range| contains(left, range),
+                    |range| contains(right, range),
+                    |left_range, right_range| {
+                        !self.memory_ranges_overlap_after_base_equality(left_range, right_range)
+                    },
+                )
+                .inspect(|(resources, _, _)| {
+                    record_implicit_reasoning_provenance(
+                        self,
+                        &Proposition::CResourceComposition((*resources).clone()),
+                    );
+                })
+                .is_some()
             || self
                 .resource_compositions
                 .iter()
@@ -1412,14 +1458,33 @@ impl PureFactContext {
         // snapshot-aware containment prover, which may itself inspect memory
         // loads and is deliberately the more expensive second phase.
         let mut candidates = self.memory_separation_candidates(&left.block, &right.block);
-        let record_candidate =
-            |proposition: &Proposition, composition: Option<&ResourceContext>| {
-                let authority = composition.map_or_else(
-                    || proposition.clone(),
-                    |resources| Proposition::CResourceComposition(resources.clone()),
+        let record_candidate = |proposition: &Proposition| {
+            record_implicit_reasoning_provenance(self, proposition);
+        };
+        // The same law asked of each held composition, with a phase's own
+        // membership relation: two owned members, one holding each pointer.
+        let composition_candidate = |contains: &dyn Fn(&Pointer, &CMemoryRange) -> bool| {
+            let found = self.composition_separated_members(
+                &left.block,
+                &right.block,
+                |range| {
+                    #[cfg(test)]
+                    MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
+                    contains(left, range)
+                },
+                |range| contains(right, range),
+                |left_range, right_range| {
+                    !self.memory_ranges_overlap_after_base_equality(left_range, right_range)
+                },
+            );
+            if let Some((resources, _, _)) = found {
+                record_implicit_reasoning_provenance(
+                    self,
+                    &Proposition::CResourceComposition(resources.clone()),
                 );
-                record_implicit_reasoning_provenance(self, &authority);
-            };
+            }
+            found.is_some()
+        };
         if crate::instrumentation::measure_operation(
             "kernel",
             "explicit range arms",
@@ -1427,7 +1492,7 @@ impl PureFactContext {
             || {
                 candidates
                     .clone()
-                    .any(|(proposition, left_range, right_range, composition)| {
+                    .any(|(proposition, left_range, right_range)| {
                         #[cfg(test)]
                         MEMORY_SEPARATION_CANDIDATE_CHECKS
                             .with(|checks| checks.set(checks.get() + 1));
@@ -1449,9 +1514,12 @@ impl PureFactContext {
                             && !self
                                 .memory_ranges_overlap_after_base_equality(left_range, right_range);
                         if proved {
-                            record_candidate(proposition, composition);
+                            record_candidate(proposition);
                         }
                         proved
+                    })
+                    || composition_candidate(&|pointer, range| {
+                        pointer_in_memory_range_shallow_with_facts(pointer, range, self)
                     })
             },
         ) {
@@ -1464,7 +1532,7 @@ impl PureFactContext {
             || {
                 candidates
                     .clone()
-                    .any(|(proposition, left_range, right_range, composition)| {
+                    .any(|(proposition, left_range, right_range)| {
                         #[cfg(test)]
                         MEMORY_SEPARATION_CANDIDATE_CHECKS
                             .with(|checks| checks.set(checks.get() + 1));
@@ -1476,9 +1544,12 @@ impl PureFactContext {
                             && !self
                                 .memory_ranges_overlap_after_base_equality(left_range, right_range);
                         if proved {
-                            record_candidate(proposition, composition);
+                            record_candidate(proposition);
                         }
                         proved
+                    })
+                    || composition_candidate(&|pointer, range| {
+                        self.pointer_in_range_by_exact_facts(pointer, range)
                     })
             },
         ) {
@@ -1541,7 +1612,7 @@ impl PureFactContext {
             "explicit range arms",
             "explicit range: recursive candidates",
             || {
-                candidates.any(|(proposition, left_range, right_range, composition)| {
+                candidates.any(|(proposition, left_range, right_range)| {
                     #[cfg(test)]
                     {
                         MEMORY_SEPARATION_CANDIDATE_CHECKS
@@ -1566,9 +1637,11 @@ impl PureFactContext {
                     let proved = proved
                         && !self.memory_ranges_overlap_after_base_equality(left_range, right_range);
                     if proved {
-                        record_candidate(proposition, composition);
+                        record_candidate(proposition);
                     }
                     proved
+                }) || composition_candidate(&|pointer, range| {
+                    pointer_in_memory_range_for_memory_resolution(pointer, range, self)
                 })
             },
         )
@@ -1760,7 +1833,7 @@ impl PureFactContext {
             || self.decide(&condition) == Some(true)
     }
 
-    fn pointer_in_range_with_width(
+    pub(in crate::kernel) fn pointer_in_range_with_width(
         &self,
         pointer: &Pointer,
         base: &Pointer,
@@ -1774,31 +1847,14 @@ impl PureFactContext {
         // equality once to the concrete argument block. Restricting the
         // transport to symbolic blocks keeps this bounded and avoids walking
         // equality cycles back into the havoced pointer.
+        // The true pointer equalities naming this pointer are filed under it
+        // (`pointer_block_aliases`), so the hop reads them by key.
         if matches!(pointer.block, PointerBlock::Symbolic(_))
-            && self.condition_facts.iter().any(|(condition, value)| {
-                let ConditionTerm::PointerEqual(left, right) = condition else {
-                    return false;
-                };
-                if !*value {
-                    return false;
-                }
-                let equivalent = if left.as_ref() == pointer {
-                    Some(right.as_ref())
-                } else if right.as_ref() == pointer {
-                    Some(left.as_ref())
-                } else {
-                    None
-                };
-                equivalent.is_some_and(|equivalent| {
-                    !matches!(equivalent.block, PointerBlock::Symbolic(_))
-                        && self.pointer_in_range_with_width(
-                            equivalent,
-                            base,
-                            start,
-                            end,
-                            element_width,
-                        )
-                })
+            && self.exact_pointer_aliases(pointer).any(|equivalent| {
+                crate::instrumentation::record_deterministic_work(1);
+                super::count_condition_fact_visit();
+                !matches!(equivalent.block, PointerBlock::Symbolic(_))
+                    && self.pointer_in_range_with_width(equivalent, base, start, end, element_width)
             })
         {
             return true;
@@ -1834,33 +1890,34 @@ impl PureFactContext {
     /// a recorded snapshot while the query carries the placeholder load or
     /// the load variable, and all of those are one atom. Bounded by
     /// the exact fact set and term size.
-    fn exact_ordering_modulo_canonical_atoms(&self, condition: &ConditionTerm) -> bool {
-        let query = match condition {
-            ConditionTerm::Bitvector32SignedLessEqual(left, right)
-            | ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, right),
-            _ => return false,
+    pub(in crate::kernel) fn exact_ordering_modulo_canonical_atoms(
+        &self,
+        condition: &ConditionTerm,
+    ) -> bool {
+        if !matches!(
+            condition,
+            ConditionTerm::Bitvector32SignedLessEqual(_, _)
+                | ConditionTerm::Bitvector32SignedLessThan(_, _)
+        ) {
+            return false;
+        }
+        // A fact matches when each side has the query side's canonical form
+        // (a load-free term is its own canonical form), so the facts that
+        // match are among the ones filed under the query's canonical key,
+        // which also holds the mirrored `>=`/`>` spellings. The lookup is
+        // keyed; each fact filed there is one unit.
+        let Some(key) = crate::kernel::assumptions::condition_match_key(condition) else {
+            return false;
         };
-        self.condition_facts.iter().any(|(fact, value)| {
-            if !*value {
-                return false;
-            }
-            let operands = match (condition, fact) {
-                (
-                    ConditionTerm::Bitvector32SignedLessEqual(_, _),
-                    ConditionTerm::Bitvector32SignedLessEqual(left, right),
-                )
-                | (
-                    ConditionTerm::Bitvector32SignedLessThan(_, _),
-                    ConditionTerm::Bitvector32SignedLessThan(left, right),
-                ) => (left, right),
-                _ => return false,
-            };
-            let left_match =
-                crate::kernel::eval::terms_have_same_canonical_form(query.0, operands.0);
-            let right_match =
-                crate::kernel::eval::terms_have_same_canonical_form(query.1, operands.1);
-            left_match && right_match
-        })
+        self.condition_facts_by_sides
+            .get(&key)
+            .is_some_and(|facts| {
+                facts.iter().any(|(fact, value)| {
+                    crate::instrumentation::record_deterministic_work(1);
+                    super::count_condition_fact_visit();
+                    *value && std::mem::discriminant(fact) == std::mem::discriminant(condition)
+                })
+            })
     }
 
     /// Proves `0 <= t + 1` from two exact facts: `0 <= t` and any exact
@@ -2130,18 +2187,42 @@ impl PureFactContext {
         if residual_hit {
             return true;
         }
-        // The same candidates, projected from the compact compositions
-        // instead of materialized propositions; two owned facts of one valid
-        // composition are separate by the composition law.
+        // The stated memory separations of this block pair, then the same law
+        // asked of each held composition: two owned members of one valid
+        // composition are separate.
         if let (CResource::Memory(left_range), CResource::Memory(right_range)) = (left, right)
-            && self
+            && (self
                 .memory_separation_candidates(&left_range.base().block, &right_range.base().block)
-                .any(|(_, fact_left, fact_right, _)| {
+                .any(|(_, fact_left, fact_right)| {
                     separation_fact_entails(
                         &CResource::Memory(fact_left.clone()),
                         &CResource::Memory(fact_right.clone()),
                     )
                 })
+                || self
+                    .composition_separated_members(
+                        &left_range.base().block,
+                        &right_range.base().block,
+                        |member| {
+                            self.proves_resource_contains_inner(
+                                &CResource::Memory(member.clone()),
+                                left,
+                            )
+                        },
+                        |member| {
+                            self.proves_resource_contains_inner(
+                                &CResource::Memory(member.clone()),
+                                right,
+                            )
+                        },
+                        |member_left, member_right| {
+                            !self.resource_separation_conflicts_with_equalities(
+                                &CResource::Memory(member_left.clone()),
+                                &CResource::Memory(member_right.clone()),
+                            )
+                        },
+                    )
+                    .is_some())
         {
             return true;
         }

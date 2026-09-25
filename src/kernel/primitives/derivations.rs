@@ -1091,10 +1091,6 @@ impl PureFactContext {
                 &self.memory_separation_facts,
                 &other.memory_separation_facts,
             )
-            && std::sync::Arc::ptr_eq(
-                &self.composition_separation_facts,
-                &other.composition_separation_facts,
-            )
     }
 }
 

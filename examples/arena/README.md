@@ -94,18 +94,18 @@ A caller can use a callee's contract only when the callee is verified earlier
 in the same sidecar, and imports carry resources but not C function specs. So
 the files are split by what they share:
 
-- `shared/arena_resources.click` is resources only: the lifecycle resources
+- `arena_resources.click` is a declaration module: the lifecycle resources
   (`arena_initialized_storage`, `arena_initialized_access`,
   `arena_init_result`, `arena_empty`) and the prefix resources
-  (`arena_prefix_partition`, `arena_prefix_state`, `arena_prefix_region`). It
-  sits in a subdirectory because it names `object(arena)`: struct layouts come
-  from the entry sidecar's `verifying` sources, so a resources-only module
-  selected as its own directory entry has no layout for `struct arena`.
-  Importers resolve it within the project root.
+  (`arena_prefix_partition`, `arena_prefix_state`, `arena_prefix_region`),
+  and nothing to verify on its own. It names `object(arena)`, whose struct
+  layout comes from an importer's `verifying` sources, so it is checked where
+  `arena.click` and `arena_pipeline.click` import it; a directory target does
+  not select a declaration module as an entry.
 - `arena_pipeline.click` proves every contract the pipeline calls:
   `arena_init`, the symbolic `arena_alloc`, the prefix-shrink `arena_free`,
-  `arena_write`, `arena_read`, and `arena_destroy`, in that order, and declares
-  `arena_pipeline.c`. It holds the `ArenaPrefixAllocOutcome` enum and
+  `arena_write`, `arena_read`, and `arena_destroy`, in that order, then
+  `arena_pipeline` itself, and declares `arena_pipeline.c`. It holds the `ArenaPrefixAllocOutcome` enum and
   `arena_prefix_alloc_result`, which only the symbolic allocation uses.
 - `arena.click` keeps the fixed-interval model: `arena_metadata`,
   `arena_region`, `arena_available`, the specialized first allocation of
@@ -116,12 +116,30 @@ the files are split by what they share:
 
 ## The pipeline
 
-`arena_pipeline` has no proof in the gate yet. Its every path ends in
-`arena_destroy(arena)` while the caller still owns its region descriptors;
-that call verifies (`mdtests/arena_destroy_beside_region_descriptors.md`).
-A full proof against the contracts in `arena_pipeline.click` now checks every
-step on every path, but the unit takes about 28 seconds and one path's final
-claim closing exceeds its smart time limit, so it is not landed;
-`issues/arena-resource-ownership.md` records how far it got, the remaining
-kernel costs, and the open representation question for frees out of
-allocation order.
+`arena_pipeline` verifies on all five paths: initialization failure, each of
+the three allocation failures, and success, which returns `33`
+(`ensures result == 0 or result == 33`). Every path ends in
+`arena_destroy(arena)` while the caller still owns its region descriptors
+(`mdtests/arena_destroy_beside_region_descriptors.md` is that call alone).
+
+- Initialization converts to `arena_prefix_state` at `prefix == 0,
+  live == 0` with checked folds: unfold the result, access, and storage,
+  refold storage at `1`, prove the two separations, and fold the partition
+  and state. Each path back to `arena_destroy` converts the other way with
+  `unfold(state)`, `unfold(partition)`,
+  `fold(arena_initialized_access(..., 1))`, and `fold(arena_empty(arena))`.
+  A theorem cannot transform resources, so these are inline folds on each of
+  the four destroy paths.
+- Each call's fresh state fields are carried with `mark` before the call and
+  `have x == at(mark, x)`, `have at(mark, x) == c`, and a `simp() using` of
+  the two after it.
+- The allocation's `region->start == old(before.prefix)` has no caller
+  spelling; `extract(combined->start == at(a3, s4.prefix))` names it.
+  `defined(combined->start + 3)`, which guards the write and read
+  postconditions at index 3, needs the descriptor's cells readable: unfold
+  the state and then the region, `rewrite` and `normalize`, and refold both.
+  The value read back at index 3 is then `33`.
+
+The pipeline frees in reverse order, which the prefix model expresses as
+shrinks. Frees out of allocation order are the open representation question
+in `issues/arena-resource-ownership.md`.

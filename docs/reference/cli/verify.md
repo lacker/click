@@ -47,6 +47,16 @@ contains sidecars. Otherwise, it discovers projects in immediate
 subdirectories. It prints one progress line per verified sidecar and a final
 sidecar and project count.
 
+A project's entries are its `.click` files except its declaration modules. A
+declaration module declares only imports, specification types, predicates,
+pure functions, and resources: no `verifying` or `target` source, no
+`runtime`, no theorem, no named contract, and no C function proof. It owns no
+claim, and the struct layouts its resources name come from an importer's
+`verifying` sources, so it is checked where a sidecar imports it and is not
+verified on its own. A file with a theorem or any other claim is an entry
+even when others import it, because importing assumes its theorem statements
+rather than checking their proofs.
+
 ## Options
 
 | Option | Meaning |

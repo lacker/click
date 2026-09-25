@@ -104,6 +104,50 @@ pub(super) fn parse_with_layouts_and_aggregate_objects(
     parser.parse_file()
 }
 
+/// Whether a Click source declares only definitions for importers:
+/// imports, specification types, predicates, pure functions, and resources,
+/// with no `verifying` or `target` source, no `runtime`, no theorem, no
+/// named contract, and no C function proof. Such a module has no claim of
+/// its own to verify; it is checked where it is imported, in the importer's
+/// C layouts. Anything this scan does not recognize (including a source that
+/// does not tokenize) counts as an entry, so a module is never skipped by
+/// mistake for a file that owns a proof.
+pub(super) fn declares_only_definitions(source: &str) -> bool {
+    let Ok((tokens, _)) = tokenizer::tokenize(source) else {
+        return false;
+    };
+    let mut depth = 0_usize;
+    let mut item_start = true;
+    for token in &tokens {
+        match token {
+            Token::LBrace | Token::LParen | Token::LBracket => {
+                item_start = false;
+                depth += 1;
+            }
+            Token::RBrace | Token::RParen | Token::RBracket => {
+                let Some(inner) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = inner;
+                item_start = depth == 0 && *token == Token::RBrace;
+            }
+            Token::Semicolon if depth == 0 => item_start = true,
+            Token::Ident(name) if depth == 0 && item_start => {
+                if !matches!(
+                    name.as_str(),
+                    "import" | "spec" | "predicate" | "function" | "resource" | "abstract"
+                ) {
+                    return false;
+                }
+                item_start = false;
+            }
+            _ if depth == 0 && item_start => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
 pub(super) fn parse_file_items(source: &str) -> Result<ClickFile, ClickError> {
     let mut parser =
         Parser::new(source).map_err(|error| error.with_kind(ClickErrorKind::Syntax))?;

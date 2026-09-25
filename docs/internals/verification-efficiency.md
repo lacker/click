@@ -180,17 +180,34 @@ into a cached success.
 ## Lazy separation and compact composition carriers
 
 Resource contexts never materialize pairwise `CResourceSeparate`
-propositions. A multi-owner context exposes one compact
-`CResourceComposition` carrier, and separation queries — range and pointer
-disjointness, subrange inheritance — are answered from the carrier's
-projection with indexed per-query work
-(`symbolic_same_block_ranges_emit_no_pairs_with_near_linear_work` pins the
-projection curve). Consumers that need a separation *proposition* — a
-  explicit premise, a have-proof `assumption` goal — ask the prover, which
-serves it from the carrier on demand; the proposition is materialized only
-at that ask, never into ambient fact sets. Adding a valid carrier must be
-monotone for already-provable snapshot premises
-(`added_composition_carrier_keeps_snapshot_premise_work_bounded`).
+propositions, and neither do the fact contexts that hold them. A multi-owner
+context exposes one compact `CResourceComposition` carrier. Holding it states
+nothing further: a separation query — range and pointer disjointness,
+subrange inheritance, a store crossing a cached cell, two distinct range
+anchors — asks each held composition for two distinct owned members of the
+query's block, one holding each side
+(`ResourceContext::separated_owned_members_in_block`, and
+`separates_owned_anchors` for anchors). Each owned member of that block is
+asked once whether it holds the first side and, only when one does, once
+whether it holds the second, so a query costs the block's members and never
+their pairs. The anchor question is two keyed lookups in the composition's
+anchor index. The candidates are exactly the pairs the carrier used to
+project into every fact context at insertion (two owned ranges of a block
+holding two or more, not already structurally separate, in a block whose
+ranges do not all share one concrete base), so the answers are unchanged;
+only the pairwise projection, `N(N-1)/2` entries for `N` owned ranges of one
+block, is gone. The `ExternalArgument` block makes that cost real: every
+object a pointer parameter reaches shares it
+(`holding_a_parameter_composition_states_no_pairs` and
+`one_parameter_separation_query_is_linear_in_the_owned_objects` in
+`src/kernel/tests/resource_scaling_tests.rs`: 37, 137, 529, and 2,081 units
+to hold 8, 16, 32, and 64 owned parameter objects, now 0; a refused
+separation query 985 to 68,801 units, now 321 to 2,617). Consumers that need
+a separation *proposition* — an explicit premise, a have-proof `assumption`
+goal — ask the prover, which serves it from the carrier on demand; the
+proposition is materialized only at that ask, never into ambient fact sets.
+Adding a valid carrier must be monotone for already-provable snapshot
+premises (`added_composition_carrier_keeps_snapshot_premise_work_bounded`).
 
 Deciding that a context is a valid partition reads the same indexes. Only an
 identity held twice or with invalid access, a block owning two or more
@@ -198,6 +215,34 @@ ranges, or a base that an exact pointer equality joins to another block can
 hold a violation, so a call composing its ensured resources into a caller
 frame never visits the caller's unrelated allocations
 (`src/kernel/tests/resource_scaling_tests.rs`).
+
+Within one block, an owned range is compared only with the owned ranges a
+fact could relate it to (`ResourceContext::owned_validity_candidates`). A
+base's *root* is its block and the first symbolic atom of its offset in
+canonical form (`p` for `p`, `p + 8`, and `p + 4*i`; nothing for a constant
+offset), and the ranges are indexed by root. A range is compared with the
+ranges at its own root, at the roots its base's same-block exact aliases
+have, at the roots that scale a member of its root index term's
+recorded-equality class (a member pinned to a constant reaches the block's
+constant-offset bases), at a base with a same-block exact alias at one of
+those roots, and at the exact bases of its cross-block aliases. Two ranges
+at unrelated roots — two pointer parameters `4*a` and `4*b` with no fact
+relating `a` and `b` — are not compared. The overlap decision
+(`memory_ranges_proven_overlapping`) rebases through exact aliases and then
+proves the endpoints under the structural base delta, here `b - a`, which is
+bounded only by a fact relating the two index terms. They may alias, but
+validity is a refusal of a *proven* overlap, not a proof of disjointness, so
+an overlap no fact states needs no work: skipping it can only admit a
+composition whose overlap nothing proves, and every resource in a
+composition comes from a transfer rule that never duplicates ownership, so
+no authority is created. The explicit-separation veto inside the decision
+runs only after the endpoints prove an overlap, which a valid composition
+never does. Composing one more parameter object costs 2 units at 8 to 64
+owned parameter objects (959 to 61,439 before, each pair searching the
+projected pairs), and a whole-frame check is linear
+(`composing_a_parameter_object_ignores_unrelated_parameters`,
+`validity_of_parameter_objects_is_linear`); the relating facts are pinned
+by `parameter_validity_still_refuses_related_overlaps`.
 
 The pairs' accidental effectiveness came from restating each fact in every
 term form that ever existed, so lookup never proved cross-snapshot equality.
@@ -260,6 +305,24 @@ resolution chains beyond the former depth-six cutoff, cross-snapshot
 canonical forms, and graph-equal addends inside the add rule. Same-residue
 contexts are still compared pairwise; that width is bounded by rule-relevant
 facts, not by the ambient context.
+
+A condition-fact query reads the facts filed under the keys it spells
+(`PureFactContext::has_condition_fact`). The fact itself is an exact lookup.
+A differently spelled fact that `condition_matches` accepts is filed under
+its kind and the canonical forms of its two sides (an equality under its
+unordered sides, a signed order under its strictness and its lower and upper
+side whichever way it was written), and the query reads the keys its own
+sides and their recorded-equality classes spell. A fact with a side that is
+not an atom (a load, a sum, a conditional) can match through reasoning its
+key does not spell, such as a load's stored value, so those facts of the
+query's kind stay a scanned fallback, charged one unit each; a fact of two
+atoms is never visited by a query that does not spell its key. The ordering
+that matches modulo canonical load atoms is the query's own canonical key,
+and the symbolic-block hop of range membership reads the exact pointer
+equalities filed under its pointer. With 64 to 512 unrelated atomic facts,
+the five queries of `condition_fact_queries_ignore_unrelated_facts`
+(`src/kernel/tests/memory_scaling_tests.rs`) examine 3 facts in all; they
+examined 265 to 2,057 before.
 
 Condition premise search tries single candidates, then candidate pairs that
 some derivation could connect: two facts sharing a bitvector variable

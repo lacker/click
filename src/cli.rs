@@ -870,7 +870,7 @@ pub fn select_sidecars(path: &Path) -> Result<SidecarSelection, String> {
     };
     let mut projects = Vec::with_capacity(project_paths.len());
     for project in project_paths {
-        let sidecars = files_with_extension(&project, "click")?;
+        let sidecars = project_sidecars(&project)?;
         projects.push(SelectedProject {
             path: project,
             sidecars,
@@ -1028,6 +1028,25 @@ pub fn contains_click_file(path: &Path) -> Result<bool, String> {
             .extension()
             .is_some_and(|extension| extension == "click")
     }))
+}
+
+/// The sidecars a project directory verifies: its `.click` files, sorted,
+/// less the declaration modules
+/// ([`crate::surface::click_source_is_declaration_module`]). A module that
+/// only declares resources, types, predicates, and pure functions for its
+/// importers owns no claim, and it names struct layouts only its importers'
+/// `verifying` sources supply, so it is checked where it is imported rather
+/// than as an entry of its own.
+pub fn project_sidecars(project: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut sidecars = Vec::new();
+    for path in files_with_extension(project, "click")? {
+        let source = fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
+        if !crate::surface::click_source_is_declaration_module(&source) {
+            sidecars.push(path);
+        }
+    }
+    Ok(sidecars)
 }
 
 /// Lists the files in `directory` (non-recursively) with the extension.
@@ -1552,6 +1571,43 @@ mod tests {
         assert_eq!(containing_directory(Path::new("/")), Path::new("."));
         let selection = select_sidecars(Path::new("a.click")).unwrap();
         assert_eq!(selection.project_root, Path::new("."));
+    }
+
+    /// A declaration module beside its importers is not a directory entry:
+    /// it owns no claim, and a sidecar that owns any (a `verifying` source,
+    /// a theorem, a C function proof) is still selected.
+    #[test]
+    fn directory_selection_skips_declaration_modules() {
+        let root = std::env::temp_dir().join(format!(
+            "click-declaration-modules-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let module = "# Shared resources.\nimport \"other.click\";\n\
+            spec enum Shade { Light, Dark(int32) }\n\
+            abstract resource token(p: int32*);\n\
+            resource cell(p: int32*) { owns p[0..1]; }\n\
+            function twice(x: int32) -> int32 { x + x }\n";
+        let theorem = "theorem reflexive(x: int32) { ensures x == x by { simp(); } }\n";
+        let entry = "import \"module.click\";\nverifying \"answer.c\";\n\
+            int32 answer() { ensures result == 1; } by { execute(); simp(); }\n";
+        fs::write(root.join("module.click"), module).unwrap();
+        fs::write(root.join("theorems.click"), theorem).unwrap();
+        fs::write(root.join("entry.click"), entry).unwrap();
+        assert!(crate::surface::click_source_is_declaration_module(module));
+        assert!(!crate::surface::click_source_is_declaration_module(theorem));
+        assert!(!crate::surface::click_source_is_declaration_module(entry));
+        assert!(!crate::surface::click_source_is_declaration_module(
+            "resource cell(p: int32*) { owns p[0..1]; }\nint32 f() { ensures result == 0; } by { execute(); }\n"
+        ));
+        let selection = select_sidecars(&root).unwrap();
+        assert_eq!(
+            selection.sidecars().collect::<Vec<_>>(),
+            vec![root.join("entry.click"), root.join("theorems.click")]
+        );
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

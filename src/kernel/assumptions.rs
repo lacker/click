@@ -7,6 +7,16 @@ thread_local! {
     static MEMORY_SEPARATION_RECURSIVE_CANDIDATE_CHECKS: Cell<usize> = const { Cell::new(0) };
     static BITVECTOR_EQUALITY_INDEX_FACT_VISITS: Cell<usize> = const { Cell::new(0) };
     static EXACT_CONSTANT_FACT_VISITS: Cell<usize> = const { Cell::new(0) };
+    static CONDITION_FACT_VISITS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Counts one condition fact examined by a condition-fact query
+/// (`has_condition_fact`, `exact_ordering_modulo_canonical_atoms`, the
+/// symbolic pointer-equality hop), for the scaling regressions.
+#[inline]
+pub(in crate::kernel) fn count_condition_fact_visit() {
+    #[cfg(test)]
+    CONDITION_FACT_VISITS.with(|visits| visits.set(visits.get() + 1));
 }
 use std::cell::{Cell, RefCell};
 
@@ -217,7 +227,74 @@ pub fn conditions_equal_ignoring_memories(left: &ConditionTerm, right: &Conditio
 /// The anchor is computed the way any element address is, which also
 /// normalizes a range that a composition re-expressed against another
 /// object's base back to the address the pointer itself carries.
-fn memory_range_anchor(range: &CMemoryRange) -> Option<PointerOffsetTerm> {
+/// The kind and canonical sides a condition fact is filed under in
+/// `condition_facts_by_sides`, or `None` for a kind
+/// `PureFactContext::condition_matches` relates only to itself.
+pub(in crate::kernel) fn condition_match_key(
+    condition: &ConditionTerm,
+) -> Option<crate::kernel::primitives::ConditionMatchKey> {
+    use crate::kernel::primitives::ConditionMatchKey;
+    let canonical = crate::kernel::eval::canonical_term;
+    let ordered = |left: Bitvector32Term, right: Bitvector32Term| {
+        if left <= right {
+            (left, right)
+        } else {
+            (right, left)
+        }
+    };
+    Some(match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            let (left, right) = ordered(canonical(left), canonical(right));
+            ConditionMatchKey::Equal(left, right)
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            let left = crate::kernel::eval::canonical_offset_term(left);
+            let right = crate::kernel::eval::canonical_offset_term(right);
+            if left <= right {
+                ConditionMatchKey::OffsetEqual(left, right)
+            } else {
+                ConditionMatchKey::OffsetEqual(right, left)
+            }
+        }
+        ConditionTerm::Bitvector32SignedLessThan(lower, upper)
+        | ConditionTerm::Bitvector32SignedGreaterThan(upper, lower) => {
+            ConditionMatchKey::Order(true, canonical(lower), canonical(upper))
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(lower, upper)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(upper, lower) => {
+            ConditionMatchKey::Order(false, canonical(lower), canonical(upper))
+        }
+        _ => return None,
+    })
+}
+
+/// Whether a side of this condition is not an atom: see
+/// `PureFactContext::open_condition_facts`.
+fn condition_has_an_open_side(condition: &ConditionTerm) -> bool {
+    let open = |term: &Bitvector32Term| match term {
+        Bitvector32Term::Constant(_) => false,
+        Bitvector32Term::Variable(variable) => {
+            crate::kernel::eval::registered_load_for_variable(variable).is_some()
+        }
+        _ => true,
+    };
+    let open_offset = |offset: &PointerOffsetTerm| match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
+        PointerOffsetTerm::Int32Scaled { value, .. } => open(value),
+        _ => true,
+    };
+    match condition {
+        ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => open(left) || open(right),
+        ConditionTerm::PointerOffsetEqual(left, right) => open_offset(left) || open_offset(right),
+        _ => false,
+    }
+}
+
+pub(in crate::kernel) fn memory_range_anchor(range: &CMemoryRange) -> Option<PointerOffsetTerm> {
     let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const()) else {
         return None;
     };
@@ -2438,6 +2515,18 @@ impl PureFactContext {
         EXACT_CONSTANT_FACT_VISITS.with(Cell::get)
     }
 
+    /// How many condition facts the condition-fact queries have examined on
+    /// this thread since the last reset.
+    #[cfg(test)]
+    pub(crate) fn condition_fact_visits() -> usize {
+        CONDITION_FACT_VISITS.with(Cell::get)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_condition_fact_visits() {
+        CONDITION_FACT_VISITS.with(|visits| visits.set(0));
+    }
+
     #[cfg(test)]
     pub(crate) fn reset_exact_constant_fact_visits() {
         EXACT_CONSTANT_FACT_VISITS.with(|visits| visits.set(0));
@@ -2725,6 +2814,24 @@ impl PureFactContext {
             } else {
                 aliases.without_value(alias)
             };
+            let root = crate::kernel::primitives::offset_root_atom(alias);
+            let rooted = self
+                .pointer_offset_aliases_by_root
+                .get(&root)
+                .cloned()
+                .unwrap_or_default();
+            let pair = (key.clone(), alias.clone());
+            let rooted = if insert {
+                rooted.with_value(pair)
+            } else {
+                rooted.without_value(&pair)
+            };
+            self.pointer_offset_aliases_by_root = if rooted.is_empty() {
+                self.pointer_offset_aliases_by_root.without_key(&root)
+            } else {
+                self.pointer_offset_aliases_by_root
+                    .with_inserted(root, rooted)
+            };
             self.pointer_offset_aliases = if aliases.is_empty() {
                 self.pointer_offset_aliases.without_key(key)
             } else {
@@ -2732,6 +2839,30 @@ impl PureFactContext {
                     .with_inserted(key.clone(), aliases)
             };
         }
+    }
+
+    /// The offsets with a same-block exact alias whose root atom is `root`
+    /// (`resource_algebra::offset_root_atom`): by symmetry of the stated
+    /// equalities, the bases one hop from an address at that root. Keyed by
+    /// the root, so the answer costs the equalities naming it.
+    pub(in crate::kernel) fn offsets_with_an_alias_at_root(
+        &self,
+        root: &Option<PointerOffsetTerm>,
+    ) -> Vec<PointerOffsetTerm> {
+        self.pointer_offset_aliases_by_root
+            .get(root)
+            .into_iter()
+            .flat_map(|pairs| pairs.iter())
+            .map(|(aliased, _)| {
+                crate::instrumentation::record_deterministic_work(1);
+                aliased.clone()
+            })
+            .collect()
+    }
+
+    /// Whether any exact equality joins two blocks.
+    pub(in crate::kernel) fn has_pointer_block_aliases(&self) -> bool {
+        !self.pointer_block_aliases.is_empty()
     }
 
     pub(crate) fn exact_pointer_offset_aliases(
@@ -2869,9 +3000,8 @@ impl PureFactContext {
         };
     }
 
-    /// Rebuilds the anchor separation index from the two sources it mirrors:
-    /// the stated memory separations and the same-block pairs projected from
-    /// the resource compositions.
+    /// Rebuilds the anchor separation index from the stated memory
+    /// separations it mirrors.
     pub(super) fn rebuild_separated_anchor_offsets(&mut self) {
         self.separated_anchor_offsets = crate::persistent::PersistentMap::default();
         let stated = self
@@ -2882,13 +3012,7 @@ impl PureFactContext {
                     .map(|(left, right)| (proposition.clone(), left, right))
             })
             .collect::<Vec<_>>();
-        let projected = self
-            .composition_separation_facts
-            .values()
-            .flatten()
-            .map(|(proposition, left, right, _)| (proposition.clone(), left.clone(), right.clone()))
-            .collect::<Vec<_>>();
-        for (proposition, left, right) in stated.into_iter().chain(projected) {
+        for (proposition, left, right) in stated {
             self.adjust_separated_anchor_offsets(&proposition, &left, &right, true);
         }
     }
@@ -2915,6 +3039,71 @@ impl PureFactContext {
         for (condition, value) in conditions.iter() {
             self.adjust_bitvector64_equality(condition, *value, true);
             self.adjust_exact_constant_equality(condition, *value, true);
+        }
+    }
+
+    /// Rebuilds the condition-match indexes from `condition_facts`, for a
+    /// context whose condition facts were replaced wholesale.
+    ///
+    /// The exact pointer-alias indexes are derived from the same facts and
+    /// are rebuilt with them: a restricted context must not answer an alias
+    /// query from an equality it no longer holds.
+    fn rebuild_condition_match_indexes(&mut self) {
+        self.condition_facts_by_sides = crate::persistent::PersistentMap::default();
+        self.open_condition_facts = crate::persistent::PersistentMap::default();
+        self.pointer_block_aliases = crate::persistent::PersistentMap::default();
+        self.pointer_offset_aliases = crate::persistent::PersistentMap::default();
+        self.pointer_offset_aliases_by_root = crate::persistent::PersistentMap::default();
+        let conditions = self.condition_facts.clone();
+        for (condition, value) in conditions.iter() {
+            self.adjust_condition_match_indexes(condition, *value, true);
+            self.adjust_pointer_block_alias(condition, *value, true);
+            self.adjust_pointer_offset_alias(condition, *value, true);
+        }
+    }
+
+    /// Files or withdraws one condition fact under its match key and, when
+    /// a side is not an atom, among the open facts of its family.
+    fn adjust_condition_match_indexes(
+        &mut self,
+        condition: &ConditionTerm,
+        value: bool,
+        insert: bool,
+    ) {
+        if let Some(key) = condition_match_key(condition) {
+            let family = key.family();
+            let facts = self
+                .condition_facts_by_sides
+                .get(&key)
+                .cloned()
+                .unwrap_or_default();
+            let facts = if insert {
+                facts.with_inserted(condition.clone(), value)
+            } else {
+                facts.without_key(condition)
+            };
+            self.condition_facts_by_sides = if facts.is_empty() {
+                self.condition_facts_by_sides.without_key(&key)
+            } else {
+                self.condition_facts_by_sides.with_inserted(key, facts)
+            };
+            if condition_has_an_open_side(condition) {
+                let facts = self
+                    .open_condition_facts
+                    .get(&family)
+                    .cloned()
+                    .unwrap_or_default();
+                let facts = if insert {
+                    facts.with_inserted(condition.clone(), value)
+                } else {
+                    facts.without_key(condition)
+                };
+                self.open_condition_facts = if facts.is_empty() {
+                    self.open_condition_facts.without_key(&family)
+                } else {
+                    self.open_condition_facts.with_inserted(family, facts)
+                };
+            }
         }
     }
 
@@ -3234,7 +3423,6 @@ impl PureFactContext {
         self.algebraic_variable_constructors = crate::persistent::PersistentMap::default();
         self.algebraic_variable_variant_evidence = crate::persistent::PersistentMap::default();
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
-        self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_facts = std::sync::Arc::new(BTreeMap::new());
         self.memory_loadable_object_facts = crate::persistent::PersistentMap::default();
         self.memory_loadable_shape_facts = std::sync::Arc::new(std::sync::OnceLock::new());
@@ -3742,9 +3930,7 @@ impl PureFactContext {
             self.adjust_memory_separation_fact(&proposition, true);
             self.adjust_nonmemory_separation_fact(&proposition, true);
         }
-        // The projected composition pairs survive this rebuild, so restore
-        // the anchor index from both of its sources rather than from the
-        // stated facts alone.
+        // The anchor index mirrors the stated separations just rebuilt.
         self.rebuild_separated_anchor_offsets();
     }
 
@@ -3770,68 +3956,52 @@ impl PureFactContext {
         }
     }
 
-    fn extend_composition_separation_facts(&mut self, resources: &ResourceContext) {
-        let entries = resources.same_block_separation_candidates();
-        if entries.is_empty() {
-            return;
-        }
-        let index = std::sync::Arc::make_mut(&mut self.composition_separation_facts);
-        let mut added = Vec::new();
-        for entry in entries {
-            let key = Self::memory_separation_key(&entry.1.base().block, &entry.2.base().block);
-            let bucket = index.entry(key).or_default();
-            if !bucket.iter().any(|existing| existing.0 == entry.0) {
-                added.push((entry.0.clone(), entry.1.clone(), entry.2.clone()));
-                bucket.push((entry.0, entry.1, entry.2, resources.clone()));
-            }
-        }
-        // Mirror only the pairs this projection added, so the anchor index
-        // costs what the new composition states and not what the context
-        // already held.
-        for (proposition, left, right) in added {
-            self.adjust_separated_anchor_offsets(&proposition, &left, &right, true);
-        }
-    }
-
+    /// The stated memory separations between these two blocks, from the
+    /// block-pair index. A composition's same-block separations are not
+    /// here: they are asked of the composition when a query needs one
+    /// ([`Self::composition_separated_members`]).
     pub(super) fn memory_separation_candidates(
         &self,
         left: &PointerBlock,
         right: &PointerBlock,
-    ) -> impl Iterator<
-        Item = (
-            &Proposition,
-            &CMemoryRange,
-            &CMemoryRange,
-            Option<&ResourceContext>,
-        ),
-    > + Clone {
-        // The fourth item is present only for a projection. Keeping that
-        // source on the existing block-pair index lets an evidence producer
-        // retain the exact owning composition at no additional search cost.
+    ) -> impl Iterator<Item = (&Proposition, &CMemoryRange, &CMemoryRange)> + Clone {
         let key = Self::memory_separation_key(left, right);
-        let direct = self
-            .memory_separation_facts
+        self.memory_separation_facts
             .get(&key)
             .map(Vec::as_slice)
             .unwrap_or(&[])
             .iter()
-            .map(|(proposition, left, right)| (proposition, left, right, None));
-        let projected = self
-            .composition_separation_facts
-            .get(&key)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
-            .iter()
-            .map(|(proposition, left, right, composition)| {
-                (proposition, left, right, Some(composition))
-            });
-        direct.chain(projected)
+            .map(|(proposition, left, right)| (proposition, left, right))
+    }
+
+    /// The composition law, asked on demand: the first held composition with
+    /// two distinct owned members of one block that it separates, `left`
+    /// accepting the first, `right` the second, and `admit` the pair
+    /// (`ResourceContext::separated_owned_members_in_block`). Only a
+    /// same-block pair has such members. Each composition asks its members
+    /// of that block, so the query costs the members it reads and never
+    /// their pairs, and nothing is stated into this context beforehand.
+    pub(in crate::kernel) fn composition_separated_members<'a>(
+        &'a self,
+        left_block: &PointerBlock,
+        right_block: &PointerBlock,
+        left: impl Fn(&CMemoryRange) -> bool,
+        right: impl Fn(&CMemoryRange) -> bool,
+        admit: impl Fn(&CMemoryRange, &CMemoryRange) -> bool,
+    ) -> Option<(&'a ResourceContext, &'a CMemoryRange, &'a CMemoryRange)> {
+        if left_block != right_block {
+            return None;
+        }
+        self.resource_compositions.iter().find_map(|resources| {
+            resources
+                .separated_owned_members_in_block(left_block, &left, &right, &admit)
+                .map(|(left, right)| (resources, left, right))
+        })
     }
 
     pub(super) fn insert_proposition_fact(&mut self, proposition: Proposition) {
         if let Proposition::CResourceComposition(resources) = proposition {
             if std::sync::Arc::make_mut(&mut self.resource_compositions).insert(resources.clone()) {
-                self.extend_composition_separation_facts(&resources);
                 self.content_fingerprint ^= Self::fingerprint(3, &resources);
             }
             return;
@@ -4002,7 +4172,6 @@ impl PureFactContext {
 
     pub(crate) fn without_explicit_separation_facts(mut self) -> Self {
         self.resource_compositions = std::sync::Arc::new(BTreeSet::new());
-        self.composition_separation_facts = std::sync::Arc::new(BTreeMap::new());
         self.separated_anchor_offsets = crate::persistent::PersistentMap::default();
         self.retain_proposition_facts(|proposition| {
             !matches!(proposition, Proposition::CResourceSeparate { .. })
@@ -4187,6 +4356,7 @@ impl PureFactContext {
             );
             self.adjust_bitvector64_equality(&condition, old, false);
             self.adjust_exact_constant_equality(&condition, old, false);
+            self.adjust_condition_match_indexes(&condition, old, false);
             self.adjust_algebraic_predicate_fact(&condition, old, false);
             self.adjust_signed_order_bound(&condition, old, false);
             self.adjust_null_pointer_offset(&condition, old, false);
@@ -4205,6 +4375,7 @@ impl PureFactContext {
         self.adjust_pointer_offset_alias(&condition, value, true);
         self.adjust_bitvector64_equality(&condition, value, true);
         self.adjust_exact_constant_equality(&condition, value, true);
+        self.adjust_condition_match_indexes(&condition, value, true);
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
         self
     }
@@ -4318,6 +4489,7 @@ impl PureFactContext {
         restricted.rebuild_signed_order_bounds();
         restricted.rebuild_null_pointer_offsets();
         restricted.rebuild_memory_load_condition_facts();
+        restricted.rebuild_condition_match_indexes();
         restricted.recompute_content_fingerprint();
         restricted
     }
@@ -4367,6 +4539,7 @@ impl PureFactContext {
 
     fn forget_condition_fact(&mut self, condition: &ConditionTerm, assumed: bool) {
         self.condition_facts = self.condition_facts.without_key(condition);
+        self.adjust_condition_match_indexes(condition, assumed, false);
         self.adjust_stated_proposition_index(
             &Proposition::ConditionIs(condition.clone(), assumed),
             false,
@@ -4409,6 +4582,7 @@ impl PureFactContext {
         assumptions.rebuild_signed_order_bounds();
         assumptions.rebuild_null_pointer_offsets();
         assumptions.rebuild_memory_load_condition_facts();
+        assumptions.rebuild_condition_match_indexes();
         assumptions.retain_proposition_facts(|proposition| {
             !proposition_has_free_bitvector_variable(proposition, variable)
         });

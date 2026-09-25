@@ -1758,9 +1758,9 @@ pub(in crate::kernel) fn typed_store_separated_ranges_evidence(
     ) {
         return None;
     }
-    assumptions
+    let stated = assumptions
         .memory_separation_candidates(&write.block, &pointer.block)
-        .find_map(|(proposition, left, right, composition)| {
+        .find_map(|(proposition, left, right)| {
             if !matches!(
                 proposition,
                 Proposition::CResourceSeparate {
@@ -1795,29 +1795,42 @@ pub(in crate::kernel) fn typed_store_separated_ranges_evidence(
             if assumptions.memory_ranges_overlap_after_base_equality(left, right) {
                 return None;
             }
-            let authority = composition.map_or_else(
-                || StoreSeparatedRangesAuthority::ExactProposition(proposition.clone()),
-                |resources| StoreSeparatedRangesAuthority::ResourceComposition(resources.clone()),
-            );
-            let authority_proposition = match &authority {
-                StoreSeparatedRangesAuthority::ExactProposition(proposition) => proposition.clone(),
-                StoreSeparatedRangesAuthority::ResourceComposition(resources) => {
-                    Proposition::CResourceComposition(resources.clone())
-                }
-            };
-            crate::kernel::record_implicit_reasoning_provenance(
-                assumptions,
-                &authority_proposition,
-            );
+            crate::kernel::record_implicit_reasoning_provenance(assumptions, proposition);
             Some(MemoryDagHopJustification::StoreSeparatedRanges {
-                authority,
+                authority: StoreSeparatedRangesAuthority::ExactProposition(proposition.clone()),
                 left: left.clone(),
                 right: right.clone(),
                 orientation,
                 write_membership,
                 load_membership,
             })
-        })
+        });
+    if stated.is_some() {
+        return stated;
+    }
+    // The composition law asked on demand: an owned member holding the
+    // written address and a different one holding the read.
+    let (resources, left, right) = assumptions.composition_separated_members(
+        &write.block,
+        &pointer.block,
+        |range| PointerInRangeEvidence::for_pointer(write, range, assumptions).is_some(),
+        |range| PointerInRangeEvidence::for_pointer(pointer, range, assumptions).is_some(),
+        |left, right| !assumptions.memory_ranges_overlap_after_base_equality(left, right),
+    )?;
+    let write_membership = PointerInRangeEvidence::for_pointer(write, left, assumptions)?;
+    let load_membership = PointerInRangeEvidence::for_pointer(pointer, right, assumptions)?;
+    crate::kernel::record_implicit_reasoning_provenance(
+        assumptions,
+        &Proposition::CResourceComposition(resources.clone()),
+    );
+    Some(MemoryDagHopJustification::StoreSeparatedRanges {
+        authority: StoreSeparatedRangesAuthority::ResourceComposition(resources.clone()),
+        left: left.clone(),
+        right: right.clone(),
+        orientation: StoreSeparatedRangeOrientation::WriteLeftLoadRight,
+        write_membership,
+        load_membership,
+    })
 }
 
 /// Whether one separating resource composition in the context tells a store

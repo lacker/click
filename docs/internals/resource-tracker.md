@@ -840,8 +840,8 @@ an indexed form. Every pointer parameter shares the one `ExternalArgument`
 block, so neither `AliasCandidates` nor the block-pair separation index
 narrows a store through one parameter, and every cached cell of every other
 parameter reaches the ladder, where the range rungs fail slowly: each failing
-search walks the composition's projected pairs, which grow with the square of
-the owned objects. So the store computes once which owned members hold its
+search asks every owned member of the composition whether it holds the
+access. So the store computes once which owned members hold its
 written bytes (`PureFactContext::owned_store_footprint`), and each cached cell
 then asks whether a *different* member of one of those compositions holds all
 of its bytes (`access_owned_apart_from_store`). Both lookups go through each

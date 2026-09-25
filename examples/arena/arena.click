@@ -1,4 +1,4 @@
-import "shared/arena_resources.click";
+import "arena_resources.click";
 
 resource arena_metadata(arena: struct arena*) {
     owns &arena->data;

@@ -1,4 +1,4 @@
-import "shared/arena_resources.click";
+import "arena_resources.click";
 
 spec enum ArenaPrefixAllocOutcome {
     Failure(int32, int32),
@@ -1583,3 +1583,792 @@ void arena_destroy(struct arena* arena) {
 }
 
 verifying "arena_pipeline.c";
+
+int32 arena_pipeline(
+    struct arena* arena,
+    struct region* first,
+    struct region* second,
+    struct region* combined
+) {
+    owns object(arena);
+    owns object(first);
+    owns object(second);
+    owns object(combined);
+
+    ensures result == 0 or result == 33;
+} by {
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    branch {
+        then {
+            unfold(arena_init_result(arena, initialized));
+            unfold(arena_initialized_storage(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                initialized
+            ));
+            step();
+            have result == 0 by {
+                normalize();
+            }
+            have result == 0 or result == 33 by {
+                left();
+            }
+            simp();
+        }
+        else {}
+    }
+    have initialized == 1 by {
+        cases(initialized == 0 or initialized == 1) {
+            contradiction(initialized == 0);
+        } {
+            assumption();
+        }
+    }
+    unfold(arena_init_result(arena, initialized));
+    unfold(arena_initialized_access(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        initialized
+    ));
+    unfold(arena_initialized_storage(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        initialized
+    ));
+    have 0 <= arena->capacity by {
+        simp();
+    }
+    have arena->capacity <= 536870911 by {
+        simp();
+    }
+    have arena->live_regions == 0 by {
+        simp();
+    }
+    have arena->capacity <= 1073741823 by {
+        arithmetic() using { arena->capacity <= 536870911; }
+    }
+    have separate(
+        memory(object(arena)),
+        memory(arena->data[0..arena->capacity])
+    ) by {
+        both {
+            split();
+        } and {
+            assumption();
+        }
+    }
+    have separate(
+        memory(object(arena)),
+        memory(arena->occupied[0..arena->capacity])
+    ) by {
+        both {
+            split();
+        } and {
+            assumption();
+        }
+    }
+    fold(arena_initialized_storage(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        1
+    ));
+    have forall (k: int32) {
+        0 <= k and k < 0 implies arena->occupied[k] == 1
+    } by {
+        intro();
+        intro();
+        extract(0 <= k);
+        extract(k < 0);
+        have not (k < 0) by {
+            arithmetic() using { 0 <= k; }
+        }
+        contradiction(k < 0);
+    }
+    have forall (k: int32) {
+        0 <= k and k < arena->capacity implies arena->occupied[k] == 0
+    } by {
+        simp();
+    }
+    let partition = fold(arena_prefix_partition(
+        arena->data,
+        arena->occupied,
+        arena->capacity
+    ), {
+        prefix: 0
+    });
+    let s0 = fold(arena_prefix_state(arena), {
+        prefix: 0, live: 0
+    }, { partition: partition });
+    let { outcome: o1 } = step(arena_alloc(arena, 2, first), { before: s0 });
+    branch {
+        then {
+            have o1.model == ArenaPrefixAllocOutcome::Failure(0, 0) by {
+                simp();
+            }
+            let { state: f1 } = unfold(o1);
+            let { partition: partition_f1, prefix: prefix_f1, live: live_f1 } =
+                unfold(f1);
+            unfold(partition_f1);
+            fold(arena_initialized_access(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                1
+            ));
+            fold(arena_empty(arena));
+            step();
+            step();
+            have result == 0 by {
+                normalize();
+            }
+            have result == 0 or result == 33 by {
+                left();
+            }
+            simp();
+        }
+        else {}
+    }
+    have allocated == 1 by {
+        cases(allocated == 0 or allocated == 1) {
+            contradiction(allocated == 0);
+        } {
+            assumption();
+        }
+    }
+    have o1.model == ArenaPrefixAllocOutcome::Success(2, 1, 0, 2) by {
+        simp();
+    }
+    let { state: s1, allocated: r1 } = unfold(o1);
+    have first->arena == arena by {
+        simp();
+    }
+    let { outcome: o2 } = step(arena_alloc(arena, 2, second), { before: s1 });
+    branch {
+        then {
+            have o2.model == ArenaPrefixAllocOutcome::Failure(2, 1) by {
+                simp();
+            }
+            let { state: f2 } = unfold(o2);
+            have first->arena == arena by {
+                simp();
+            }
+            have r1.start == 0 by {
+                simp();
+            }
+            have r1.end == f2.prefix by {
+                simp();
+            }
+            have 1 <= f2.live by {
+                simp();
+            }
+            have f2.live - 1 <= r1.start by {
+                simp();
+            }
+            let { after: g2 } = step(arena_free(first), { freed: r1, before: f2 });
+            have g2.prefix == 0 by {
+                simp();
+            }
+            have g2.live == 0 by {
+                simp();
+            }
+            let { partition: partition_g2, prefix: prefix_g2, live: live_g2 } =
+                unfold(g2);
+            unfold(partition_g2);
+            fold(arena_initialized_access(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                1
+            ));
+            fold(arena_empty(arena));
+            step();
+            step();
+            have result == 0 by {
+                normalize();
+            }
+            have result == 0 or result == 33 by {
+                left();
+            }
+            simp();
+        }
+        else {}
+    }
+    have allocated == 1 by {
+        cases(allocated == 0 or allocated == 1) {
+            contradiction(allocated == 0);
+        } {
+            assumption();
+        }
+    }
+    have o2.model == ArenaPrefixAllocOutcome::Success(4, 2, 2, 4) by {
+        simp();
+    }
+    let { state: s2, allocated: r2 } = unfold(o2);
+    have r1.start == 0 by {
+        simp();
+    }
+    have r1.end == 2 by {
+        simp();
+    }
+    have r2.start == 2 by {
+        simp();
+    }
+    have r2.end == 4 by {
+        simp();
+    }
+    have s2.prefix == 4 by {
+        simp();
+    }
+    have s2.live == 2 by {
+        simp();
+    }
+    have first->arena == arena by {
+        simp();
+    }
+    have second->arena == arena by {
+        simp();
+    }
+    mark w1;
+    step(arena_write(first, 0, 11), { r: r1, st: s2 });
+    have r1.start == at(w1, r1.start) by {
+        simp();
+    }
+    have r1.start == 0 by {
+        simp();
+    }
+    have r1.end == at(w1, r1.end) by {
+        simp();
+    }
+    have r1.end == 2 by {
+        simp();
+    }
+    have s2.prefix == at(w1, s2.prefix) by {
+        simp();
+    }
+    have s2.prefix == 4 by {
+        simp();
+    }
+    have s2.live == at(w1, s2.live) by {
+        simp();
+    }
+    have s2.live == 2 by {
+        simp();
+    }
+    have first->arena->data[first->start + 0] == 11 by {
+        simp();
+    }
+    mark w2;
+    step(arena_write(second, 0, 22), { r: r2, st: s2 });
+    have r2.start == at(w2, r2.start) by {
+        simp();
+    }
+    have r2.start == 2 by {
+        simp();
+    }
+    have r2.end == at(w2, r2.end) by {
+        simp();
+    }
+    have r2.end == 4 by {
+        simp();
+    }
+    have s2.prefix == at(w2, s2.prefix) by {
+        simp();
+    }
+    have s2.prefix == 4 by {
+        simp();
+    }
+    have s2.live == at(w2, s2.live) by {
+        simp();
+    }
+    have s2.live == 2 by {
+        simp();
+    }
+    have first->arena->data[first->start + 0] == 11 by {
+        simp();
+    }
+    have second->arena->data[second->start + 0] == 22 by {
+        simp();
+    }
+    have r1.start == 0 by {
+        simp();
+    }
+    have r1.end == 2 by {
+        simp();
+    }
+    mark rd1;
+    step(arena_read(first, 0), { r: r1, st: s2 });
+    have r1.start == at(rd1, r1.start) by {
+        simp();
+    }
+    have r1.start == 0 by {
+        simp();
+    }
+    have r1.end == at(rd1, r1.end) by {
+        simp();
+    }
+    have r1.end == 2 by {
+        simp();
+    }
+    have s2.prefix == at(rd1, s2.prefix) by {
+        simp();
+    }
+    have s2.prefix == 4 by {
+        simp();
+    }
+    have s2.live == at(rd1, s2.live) by {
+        simp();
+    }
+    have s2.live == 2 by {
+        simp();
+    }
+    have second->arena->data[second->start + 0] == 22 by {
+        simp();
+    }
+    have r2.start == 2 by {
+        simp();
+    }
+    have r2.end == 4 by {
+        simp();
+    }
+    mark rd2;
+    step(arena_read(second, 0), { r: r2, st: s2 });
+    have r2.start == at(rd2, r2.start) by {
+        simp();
+    }
+    have r2.start == 2 by {
+        simp();
+    }
+    have r2.end == at(rd2, r2.end) by {
+        simp();
+    }
+    have r2.end == 4 by {
+        simp();
+    }
+    have s2.prefix == at(rd2, s2.prefix) by {
+        simp();
+    }
+    have s2.prefix == 4 by {
+        simp();
+    }
+    have s2.live == at(rd2, s2.live) by {
+        simp();
+    }
+    have s2.live == 2 by {
+        simp();
+    }
+    have first_value == 11 by {
+        simp();
+    }
+    have second_value == 22 by {
+        simp();
+    }
+    step();
+    have value == 33 by {
+        simp() using {
+            value == first_value + second_value;
+            first_value == 11;
+            second_value == 22;
+        }
+    }
+    have second->arena == arena by {
+        simp();
+    }
+    have r2.end == s2.prefix by {
+        simp();
+    }
+    have 1 <= s2.live by {
+        simp();
+    }
+    have s2.live - 1 <= r2.start by {
+        simp();
+    }
+    mark f2;
+    let { after: s3 } = step(arena_free(second), { freed: r2, before: s2 });
+    have s3.prefix == at(f2, r2.start) by {
+        simp();
+    }
+    have at(f2, r2.start) == 2 by {
+        simp();
+    }
+    have s3.prefix == 2 by {
+        simp() using {
+            s3.prefix == at(f2, r2.start);
+            at(f2, r2.start) == 2;
+        }
+    }
+    have s3.live == at(f2, s2.live) - 1 by {
+        simp();
+    }
+    have at(f2, s2.live) == 2 by {
+        simp();
+    }
+    have s3.live == 1 by {
+        simp() using {
+            s3.live == at(f2, s2.live) - 1;
+            at(f2, s2.live) == 2;
+        }
+    }
+    have first->arena == arena by {
+        simp();
+    }
+    have r1.start == 0 by {
+        simp();
+    }
+    have r1.end == 2 by {
+        simp();
+    }
+    have r1.end == s3.prefix by {
+        simp();
+    }
+    have 1 <= s3.live by {
+        simp();
+    }
+    have s3.live - 1 <= r1.start by {
+        simp();
+    }
+    mark f1;
+    let { after: s4 } = step(arena_free(first), { freed: r1, before: s3 });
+    have s4.prefix == at(f1, r1.start) by {
+        simp();
+    }
+    have at(f1, r1.start) == 0 by {
+        simp();
+    }
+    have s4.prefix == 0 by {
+        simp() using {
+            s4.prefix == at(f1, r1.start);
+            at(f1, r1.start) == 0;
+        }
+    }
+    have s4.live == at(f1, s3.live) - 1 by {
+        simp();
+    }
+    have at(f1, s3.live) == 1 by {
+        simp();
+    }
+    have s4.live == 0 by {
+        simp() using {
+            s4.live == at(f1, s3.live) - 1;
+            at(f1, s3.live) == 1;
+        }
+    }
+    have value == 33 by {
+        simp();
+    }
+    mark a3;
+    let { outcome: o3 } = step(arena_alloc(arena, 4, combined), { before: s4 });
+    have at(a3, s4.prefix) == 0 by {
+        simp();
+    }
+    have at(a3, s4.live) == 0 by {
+        simp();
+    }
+    branch {
+        then {
+            have o3.model == ArenaPrefixAllocOutcome::Failure(
+                at(a3, s4.prefix),
+                at(a3, s4.live)
+            ) by {
+                simp();
+            }
+            let { state: f3 } = unfold(o3);
+            have f3.prefix == 0 by {
+                simp() using {
+                    f3.prefix == at(a3, s4.prefix);
+                    at(a3, s4.prefix) == 0;
+                }
+            }
+            have f3.live == 0 by {
+                simp() using {
+                    f3.live == at(a3, s4.live);
+                    at(a3, s4.live) == 0;
+                }
+            }
+            let { partition: partition_f3, prefix: prefix_f3, live: live_f3 } =
+                unfold(f3);
+            unfold(partition_f3);
+            fold(arena_initialized_access(
+                arena->data,
+                arena->occupied,
+                arena->capacity,
+                1
+            ));
+            fold(arena_empty(arena));
+            step();
+            step();
+            have result == 0 by {
+                normalize();
+            }
+            have result == 0 or result == 33 by {
+                left();
+            }
+            simp();
+        }
+        else {}
+    }
+    have allocated == 1 by {
+        cases(allocated == 0 or allocated == 1) {
+            contradiction(allocated == 0);
+        } {
+            assumption();
+        }
+    }
+    have o3.model == ArenaPrefixAllocOutcome::Success(
+        at(a3, s4.prefix) + 4,
+        at(a3, s4.live) + 1,
+        at(a3, s4.prefix),
+        at(a3, s4.prefix) + 4
+    ) by {
+        simp();
+    }
+    let { state: s5, allocated: r3 } = unfold(o3);
+    have r3.start == 0 by {
+        simp() using {
+            r3.start == at(a3, s4.prefix);
+            at(a3, s4.prefix) == 0;
+        }
+    }
+    have r3.end == 4 by {
+        simp() using {
+            r3.end == at(a3, s4.prefix) + 4;
+            at(a3, s4.prefix) == 0;
+        }
+    }
+    have s5.prefix == 4 by {
+        simp() using {
+            s5.prefix == at(a3, s4.prefix) + 4;
+            at(a3, s4.prefix) == 0;
+        }
+    }
+    have s5.live == 1 by {
+        simp() using {
+            s5.live == at(a3, s4.live) + 1;
+            at(a3, s4.live) == 0;
+        }
+    }
+    have combined->arena == arena by {
+        simp();
+    }
+    have value == 33 by {
+        simp();
+    }
+    have combined->start == at(a3, s4.prefix) by {
+        extract(combined->start == at(a3, s4.prefix));
+    }
+    have combined->start == 0 by {
+        simp() using {
+            combined->start == at(a3, s4.prefix);
+            at(a3, s4.prefix) == 0;
+        }
+    }
+    let { partition: q5, prefix: p5, live: n5 } = unfold(s5);
+    let { start: c0, end: c1 } = unfold(r3);
+    have defined(combined->start + 3) by {
+        rewrite(combined->start == 0);
+        normalize();
+    }
+    let r3 = fold(arena_prefix_region(combined), { start: c0, end: c1 });
+    let s5 = fold(arena_prefix_state(arena), {
+        prefix: p5, live: n5
+    }, { partition: q5 });
+    mark w3;
+    step(arena_write(combined, 3, value), { r: r3, st: s5 });
+    have r3.start == at(w3, r3.start) by {
+        simp();
+    }
+    have at(w3, r3.start) == 0 by {
+        simp();
+    }
+    have r3.start == 0 by {
+        simp() using {
+            r3.start == at(w3, r3.start);
+            at(w3, r3.start) == 0;
+        }
+    }
+    have r3.end == at(w3, r3.end) by {
+        simp();
+    }
+    have at(w3, r3.end) == 4 by {
+        simp();
+    }
+    have r3.end == 4 by {
+        simp() using {
+            r3.end == at(w3, r3.end);
+            at(w3, r3.end) == 4;
+        }
+    }
+    have s5.prefix == at(w3, s5.prefix) by {
+        simp();
+    }
+    have at(w3, s5.prefix) == 4 by {
+        simp();
+    }
+    have s5.prefix == 4 by {
+        simp() using {
+            s5.prefix == at(w3, s5.prefix);
+            at(w3, s5.prefix) == 4;
+        }
+    }
+    have s5.live == at(w3, s5.live) by {
+        simp();
+    }
+    have at(w3, s5.live) == 1 by {
+        simp();
+    }
+    have s5.live == 1 by {
+        simp() using {
+            s5.live == at(w3, s5.live);
+            at(w3, s5.live) == 1;
+        }
+    }
+    have combined->start == 0 by {
+        simp();
+    }
+    have defined(combined->start + 3) by {
+        rewrite(combined->start == 0);
+        normalize();
+    }
+    have combined->arena->data[combined->start + 3] == value by {
+        simp();
+    }
+    have value == 33 by {
+        simp();
+    }
+    have combined->arena->data[combined->start + 3] == 33 by {
+        simp() using {
+            combined->arena->data[combined->start + 3] == value;
+            value == 33;
+        }
+    }
+    mark r3m;
+    step(arena_read(combined, 3), { r: r3, st: s5 });
+    have value == combined->arena->data[combined->start + 3] by {
+        simp();
+    }
+    have combined->arena->data[combined->start + 3] == 33 by {
+        simp();
+    }
+    have r3.start == at(r3m, r3.start) by {
+        simp();
+    }
+    have at(r3m, r3.start) == 0 by {
+        simp();
+    }
+    have r3.start == 0 by {
+        simp() using {
+            r3.start == at(r3m, r3.start);
+            at(r3m, r3.start) == 0;
+        }
+    }
+    have r3.end == at(r3m, r3.end) by {
+        simp();
+    }
+    have at(r3m, r3.end) == 4 by {
+        simp();
+    }
+    have r3.end == 4 by {
+        simp() using {
+            r3.end == at(r3m, r3.end);
+            at(r3m, r3.end) == 4;
+        }
+    }
+    have s5.prefix == at(r3m, s5.prefix) by {
+        simp();
+    }
+    have at(r3m, s5.prefix) == 4 by {
+        simp();
+    }
+    have s5.prefix == 4 by {
+        simp() using {
+            s5.prefix == at(r3m, s5.prefix);
+            at(r3m, s5.prefix) == 4;
+        }
+    }
+    have s5.live == at(r3m, s5.live) by {
+        simp();
+    }
+    have at(r3m, s5.live) == 1 by {
+        simp();
+    }
+    have s5.live == 1 by {
+        simp() using {
+            s5.live == at(r3m, s5.live);
+            at(r3m, s5.live) == 1;
+        }
+    }
+    have value == 33 by {
+        simp() using {
+            value == combined->arena->data[combined->start + 3];
+            combined->arena->data[combined->start + 3] == 33;
+        }
+    }
+    have r3.end == s5.prefix by {
+        simp() using {
+            r3.end == 4;
+            s5.prefix == 4;
+        }
+    }
+    have 1 <= s5.live by {
+        simp() using { s5.live == 1; }
+    }
+    have s5.live - 1 <= r3.start by {
+        simp() using {
+            s5.live == 1;
+            r3.start == 0;
+        }
+    }
+    mark f3;
+    let { after: s6 } = step(arena_free(combined), { freed: r3, before: s5 });
+    have s6.prefix == at(f3, r3.start) by {
+        simp();
+    }
+    have at(f3, r3.start) == 0 by {
+        simp();
+    }
+    have s6.prefix == 0 by {
+        simp() using {
+            s6.prefix == at(f3, r3.start);
+            at(f3, r3.start) == 0;
+        }
+    }
+    have s6.live == at(f3, s5.live) - 1 by {
+        simp();
+    }
+    have at(f3, s5.live) == 1 by {
+        simp();
+    }
+    have s6.live == 0 by {
+        simp() using {
+            s6.live == at(f3, s5.live) - 1;
+            at(f3, s5.live) == 1;
+        }
+    }
+    let { partition: partition_s6, prefix: prefix_s6, live: live_s6 } =
+        unfold(s6);
+    unfold(partition_s6);
+    fold(arena_initialized_access(
+        arena->data,
+        arena->occupied,
+        arena->capacity,
+        1
+    ));
+    fold(arena_empty(arena));
+    step();
+    step();
+    have result == 33 by {
+        simp();
+    }
+    have result == 0 or result == 33 by {
+        right();
+    }
+    simp();
+}

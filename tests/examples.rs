@@ -4,8 +4,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use click::cli::{
-    CInput, files_with_extension, read_c_inputs_for_project, read_click_project_at_root,
-    read_verifying_sources, run_parallel, source_refs,
+    CInput, files_with_extension, project_sidecars, read_c_inputs_for_project,
+    read_click_project_at_root, read_verifying_sources, run_parallel, source_refs,
 };
 use click::instrumentation::{self, ArtifactReuseRejection};
 use click::languages::refresh_compiler_import;
@@ -243,7 +243,7 @@ fn run_example_project(project: &Path) -> Result<(), String> {
         );
     }
 
-    let mut click_paths = files_with_extension(project, "click")?;
+    let mut click_paths = project_sidecars(project)?;
 
     if click_paths.is_empty() {
         return Err(format!(

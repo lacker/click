@@ -474,8 +474,23 @@ impl PureFactContext {
             return None;
         }
         let key = Self::separated_anchor_key(left.clone(), right.clone());
-        let separation = self.separated_anchor_offsets.get(&key)?.iter().next()?;
-        record_implicit_reasoning_provenance(self, separation);
+        if let Some(separation) = self
+            .separated_anchor_offsets
+            .get(&key)
+            .and_then(|facts| facts.iter().next())
+        {
+            record_implicit_reasoning_provenance(self, separation);
+            return Some(false);
+        }
+        // Two owned members of one composition, anchored at these offsets.
+        let resources = self
+            .resource_compositions
+            .iter()
+            .find(|resources| resources.separates_owned_anchors(left, right))?;
+        record_implicit_reasoning_provenance(
+            self,
+            &Proposition::CResourceComposition(resources.clone()),
+        );
         Some(false)
     }
 
@@ -542,20 +557,92 @@ impl PureFactContext {
         condition: ConditionTerm,
         value: bool,
     ) -> bool {
-        let matched = self
-            .condition_facts
-            .iter()
-            .find(|(fact, fact_value)| {
-                **fact_value == value
-                    && (*fact == &condition || self.condition_matches(fact, &condition))
-            })
-            .map(|(fact, fact_value)| Proposition::ConditionIs(fact.clone(), *fact_value));
+        // The fact itself, by key; then the facts filed under the keys this
+        // query's sides spell, directly or through their recorded-equality
+        // classes, each confirmed by `condition_matches`.
+        let matched = if self.condition_facts.get(&condition) == Some(&value) {
+            Some(Proposition::ConditionIs(condition.clone(), value))
+        } else {
+            self.condition_match_candidate_keys(&condition)
+                .into_iter()
+                .find_map(|key| {
+                    self.condition_facts_by_sides
+                        .get(&key)?
+                        .iter()
+                        .find(|(fact, fact_value)| {
+                            crate::instrumentation::record_deterministic_work(1);
+                            crate::kernel::assumptions::count_condition_fact_visit();
+                            **fact_value == value && self.condition_matches(fact, &condition)
+                        })
+                        .map(|(fact, fact_value)| {
+                            Proposition::ConditionIs(fact.clone(), *fact_value)
+                        })
+                })
+                .or_else(|| {
+                    let family =
+                        crate::kernel::assumptions::condition_match_key(&condition)?.family();
+                    self.open_condition_facts
+                        .get(&family)?
+                        .iter()
+                        .find(|(fact, fact_value)| {
+                            crate::instrumentation::record_deterministic_work(1);
+                            crate::kernel::assumptions::count_condition_fact_visit();
+                            **fact_value == value && self.condition_matches(fact, &condition)
+                        })
+                        .map(|(fact, fact_value)| {
+                            Proposition::ConditionIs(fact.clone(), *fact_value)
+                        })
+                })
+        };
         if let Some(proposition) = matched {
             record_implicit_reasoning_provenance(self, &proposition);
             true
         } else {
             false
         }
+    }
+
+    /// The `condition_facts_by_sides` keys a fact matching `condition`
+    /// can be filed under: the query's own key, and the keys its sides'
+    /// recorded-equality classes spell. The classes are what
+    /// `condition_matches` relates through equality facts; each side's class
+    /// is read once from the indexed equality graph.
+    fn condition_match_candidate_keys(
+        &self,
+        condition: &ConditionTerm,
+    ) -> Vec<crate::kernel::primitives::ConditionMatchKey> {
+        use crate::kernel::primitives::ConditionMatchKey;
+        let Some(key) = crate::kernel::assumptions::condition_match_key(condition) else {
+            return Vec::new();
+        };
+        let spellings = |term: &Bitvector32Term| {
+            let mut terms = vec![term.clone()];
+            terms.extend(self.bitvector_equality_class(term));
+            terms
+        };
+        let mut keys = BTreeSet::from([key.clone()]);
+        match &key {
+            ConditionMatchKey::Equal(left, right) => {
+                for left in spellings(left) {
+                    for right in spellings(right) {
+                        keys.insert(if left <= right {
+                            ConditionMatchKey::Equal(left.clone(), right)
+                        } else {
+                            ConditionMatchKey::Equal(right, left.clone())
+                        });
+                    }
+                }
+            }
+            ConditionMatchKey::Order(strict, lower, upper) => {
+                for lower in spellings(lower) {
+                    for upper in spellings(upper) {
+                        keys.insert(ConditionMatchKey::Order(*strict, lower.clone(), upper));
+                    }
+                }
+            }
+            ConditionMatchKey::OffsetEqual(_, _) => {}
+        }
+        keys.into_iter().collect()
     }
 
     /// The exact recorded value of `condition` (or of its mirrored form),

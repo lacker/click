@@ -630,3 +630,249 @@ fn retirement_stale_check_ignores_unrelated_kept_resources() {
     }
     assert_constant_plus_log_growth("retirement stale check", &samples, 4.0);
 }
+
+/// A pointer parameter: every one lives in the single `ExternalArgument`
+/// block, at four times its own index variable.
+fn parameter_base(identity: u64) -> Pointer {
+    Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(identity)), 4),
+    }
+}
+
+fn parameter_object(identity: u64) -> CResourceFact {
+    CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        parameter_base(identity),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(3),
+        4,
+    ))
+}
+
+const FIRST_PARAMETER: u64 = 98_000;
+
+/// A frame owning `count` three-field objects of distinct pointer
+/// parameters and one folded composite, and the fact context a call sees
+/// it through: the frame is a held composition. This is the shape of
+/// `examples/arena`'s pipeline, whose four parameters, their regions, and
+/// the objects the callees return all share one block.
+fn parameter_frame(count: usize) -> (ResourceContext, PureFactContext) {
+    let frame = ResourceContext::new()
+        .unchecked_with_facts(
+            (0..count as u64).map(|index| parameter_object(FIRST_PARAMETER + index)),
+        )
+        .unchecked_with_fact(CResourceFact::own_composite(
+            "holder".into(),
+            vec![CValue::pointer(parameter_base(FIRST_PARAMETER - 1))],
+        ));
+    let assumptions =
+        PureFactContext::new().assume_proposition(Proposition::CResourceComposition(frame.clone()));
+    (frame, assumptions)
+}
+
+const PARAMETER_SIZES: [usize; 4] = [8, 16, 32, 64];
+
+fn assert_at_most_linear_growth(what: &str, samples: &[(usize, usize)], per_item: usize) {
+    eprintln!("{what} (N, units): {samples:?}");
+    for (size, work) in samples {
+        assert!(
+            *work <= per_item * size + 64,
+            "{what}: {size} owned parameter objects charged {work} units, above \
+             {per_item}·N + 64: {samples:?}"
+        );
+    }
+    for pair in samples.windows(2) {
+        let [(small, small_work), (large, large_work)] = pair else {
+            unreachable!()
+        };
+        let ratio = *large_work as f64 / (*small_work).max(1) as f64;
+        assert!(
+            ratio <= 2.5,
+            "{what}: work grew by {ratio:.2} from {small} to {large} owned parameter \
+             objects, above linear: {samples:?}"
+        );
+    }
+}
+
+/// Composing one more parameter object into the frame compares it only
+/// with owned ranges a fact could relate it to: its own root, the roots of
+/// its aliases, and the members of its index term's equality class. The
+/// other parameters' objects are structurally distinct symbolic bases no
+/// fact relates, so an overlap with them cannot be proved and is not asked
+/// (validity refuses a proven overlap). Each pair used to be compared, and
+/// each comparison searched the composition's projected pairs: cubic.
+#[test]
+fn composing_a_parameter_object_ignores_unrelated_parameters() {
+    let mut samples = Vec::new();
+    for size in PARAMETER_SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (frame, assumptions) = parameter_frame(size);
+        let added = parameter_object(FIRST_PARAMETER + size as u64);
+        let (composed, work) = crate::instrumentation::measure_deterministic_work(|| {
+            frame
+                .clone()
+                .try_compose_into_valid_context_delaying_normalization(
+                    [added.clone()],
+                    &assumptions,
+                )
+        });
+        assert!(composed.is_ok(), "a new parameter's object is disjoint");
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("composing one parameter object", &samples, 8.0);
+}
+
+/// The whole-frame validity check is linear: each owned range asks its own
+/// keys once.
+#[test]
+fn validity_of_parameter_objects_is_linear() {
+    let mut samples = Vec::new();
+    for size in PARAMETER_SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (frame, assumptions) = parameter_frame(size);
+        let (error, work) = crate::instrumentation::measure_deterministic_work(|| {
+            frame.validity_error(&assumptions)
+        });
+        assert_eq!(error, None, "the frame is a partition");
+        samples.push((size, work));
+    }
+    assert_at_most_linear_growth("validity of a parameter frame", &samples, 16);
+}
+
+/// Pruning to related roots must still refuse every overlap a fact proves:
+/// the same object twice, a shifted spelling of one object, an object at a
+/// parameter an index equality or an exact pointer equality identifies with
+/// another, beside many unrelated parameters.
+#[test]
+fn parameter_validity_still_refuses_related_overlaps() {
+    let size = 32;
+    let (frame, _) = parameter_frame(size);
+    let target = FIRST_PARAMETER + 5;
+    let overlaps = |extra: &CResourceFact, assumptions: &PureFactContext| {
+        let whole = matches!(
+            frame
+                .clone()
+                .unchecked_with_fact(extra.clone())
+                .validity_error(assumptions),
+            Some(ResourceContextValidityError::OverlappingOwnedMemoryResources { .. })
+        );
+        let incremental = matches!(
+            frame
+                .clone()
+                .try_compose_into_valid_context_delaying_normalization(
+                    [extra.clone()],
+                    assumptions
+                ),
+            Err(ResourceContextValidityError::OverlappingOwnedMemoryResources { .. })
+        );
+        assert_eq!(whole, incremental, "both checks decide {extra:?} alike");
+        whole
+    };
+    let none = PureFactContext::new();
+
+    assert!(
+        overlaps(&parameter_object(target), &none),
+        "the same object owned twice"
+    );
+
+    let field = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        parameter_base(target).offset_by_elements(Bitvector32Term::Constant(2), 4),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+        4,
+    ));
+    assert!(overlaps(&field, &none), "a field of an owned object");
+
+    let other = 2 * FIRST_PARAMETER;
+    let aliased = parameter_object(other);
+    assert!(!overlaps(&aliased, &none), "an unrelated parameter");
+    // Both index terms pinned to one constant: the equality class relates
+    // the two roots, and the endpoints then decide the overlap.
+    let pinned = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::equal(
+                Bitvector32Term::Variable(Variable(other)),
+                Bitvector32Term::Constant(7),
+            ),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::equal(
+                Bitvector32Term::Variable(Variable(target)),
+                Bitvector32Term::Constant(7),
+            ),
+            true,
+        );
+    assert!(
+        overlaps(&aliased, &pinned),
+        "a parameter pinned to the address of an owned one"
+    );
+    let equal_pointer = PureFactContext::new().assume_condition(
+        ConditionTerm::pointer_equal(parameter_base(other), parameter_base(target)),
+        true,
+    );
+    assert!(
+        overlaps(&aliased, &equal_pointer),
+        "a parameter an exact pointer equality identifies with an owned one"
+    );
+}
+
+/// Holding a composition no longer states its pairwise separations into the
+/// fact context: `N` owned ranges of one block used to project `N(N-1)/2`
+/// candidate pairs at insertion.
+#[test]
+fn holding_a_parameter_composition_states_no_pairs() {
+    let mut samples = Vec::new();
+    for size in PARAMETER_SIZES {
+        let (frame, _) = parameter_frame(size);
+        let (assumptions, work) = crate::instrumentation::measure_deterministic_work(|| {
+            PureFactContext::new()
+                .assume_proposition(Proposition::CResourceComposition(frame.clone()))
+        });
+        assert_eq!(
+            assumptions.memory_separation_candidate_count(
+                &PointerBlock::ExternalArgument,
+                &PointerBlock::ExternalArgument
+            ),
+            0
+        );
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("holding a parameter composition", &samples, 4.0);
+}
+
+/// Asking whether fields of two owned parameter objects are disjoint reads
+/// the composition's members of that block once each, not their pairs. The
+/// failing query (a pointer no member holds) is the one every ladder that
+/// tries this rung and moves on pays.
+#[test]
+fn one_parameter_separation_query_is_linear_in_the_owned_objects() {
+    let mut proved = Vec::new();
+    let mut refused = Vec::new();
+    for size in PARAMETER_SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (_, assumptions) = parameter_frame(size);
+        let field = |identity: u64| {
+            parameter_base(identity).offset_by_elements(Bitvector32Term::Constant(1), 4)
+        };
+        let (left, right) = (
+            field(FIRST_PARAMETER + size as u64 - 2),
+            field(FIRST_PARAMETER + size as u64 - 1),
+        );
+        let (separate, work) = crate::instrumentation::measure_deterministic_work(|| {
+            assumptions
+                .pointers_proven_disjoint_by_explicit_range_for_memory_resolution(&left, &right)
+        });
+        assert!(separate, "two owned members hold the two fields");
+        proved.push((size, work));
+        let outside = field(3 * FIRST_PARAMETER);
+        let (separate, work) = crate::instrumentation::measure_deterministic_work(|| {
+            assumptions
+                .pointers_proven_disjoint_by_explicit_range_for_memory_resolution(&left, &outside)
+        });
+        assert!(!separate, "no member holds the second pointer");
+        refused.push((size, work));
+    }
+    assert_at_most_linear_growth("a proved parameter separation", &proved, 64);
+    assert_at_most_linear_growth("a refused parameter separation", &refused, 64);
+}

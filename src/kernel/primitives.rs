@@ -5119,7 +5119,48 @@ pub(super) struct ResourceContextIndex {
     /// every range there is and its overlapping neighbour was never probed.
     pub(super) concrete_memory: PersistentMap<(Pointer, bool, i64, i64), ResourceEntryIds>,
     pub(super) concrete_memory_by_base: PersistentMap<(Pointer, bool), usize>,
+    /// Owned memory ranges keyed by their base's root: the block and the
+    /// first symbolic atom of the base offset, in canonical form (absent for
+    /// a wholly constant offset). Two owned ranges whose bases share no
+    /// root, no recorded-equality class of a root, and no exact alias have
+    /// no fact the overlap decision could relate them by, so validity
+    /// compares a range only with the ranges these keys select
+    /// (`owned_validity_candidates`).
+    pub(super) owned_memory_by_root: PersistentMap<MemoryBaseRoot, ResourceEntryIds>,
+    /// Owned memory ranges with a first element, keyed by that element's
+    /// offset (the range's anchor). Two distinct owned members of one block
+    /// have different anchors, which a pointer comparison asks by key
+    /// rather than through every pair of members.
+    pub(super) owned_memory_by_anchor: PersistentMap<PointerOffsetTerm, ResourceEntryIds>,
 }
+
+/// A condition fact's kind and canonical sides; see
+/// `PureFactContext::condition_facts_by_sides`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(super) enum ConditionMatchKey {
+    /// A 32-bit equality, sides in ascending order.
+    Equal(Bitvector32Term, Bitvector32Term),
+    /// An offset equality, sides in ascending order.
+    OffsetEqual(PointerOffsetTerm, PointerOffsetTerm),
+    /// A signed order: strict, then its lower and its upper side.
+    Order(bool, Bitvector32Term, Bitvector32Term),
+}
+
+impl ConditionMatchKey {
+    /// The family of kinds a fact under this key can match: equalities,
+    /// offset equalities, or signed orders.
+    pub(super) fn family(&self) -> u8 {
+        match self {
+            Self::Equal(_, _) => 0,
+            Self::OffsetEqual(_, _) => 1,
+            Self::Order(_, _, _) => 2,
+        }
+    }
+}
+
+/// The block and first symbolic atom (canonical) of a memory base; see
+/// `ResourceContextIndex::owned_memory_by_root`.
+pub(super) type MemoryBaseRoot = (PointerBlock, Option<PointerOffsetTerm>);
 
 impl std::fmt::Debug for ResourceContext {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -7088,6 +7129,30 @@ pub struct PureFactContext {
         crate::persistent::PersistentMap<Bitvector32Term, ConditionTerm>,
     >,
     pub(super) condition_facts: crate::persistent::PersistentMap<ConditionTerm, bool>,
+    /// The condition facts `condition_matches` can relate to a query spelled
+    /// differently, keyed by their kind and the canonical forms of their two
+    /// sides (`condition_match_key`): an equality under its unordered pair of
+    /// sides, a signed order under its strictness and its lower and upper
+    /// side, whichever way it was written. Any other fact matches a query
+    /// only when it is that query, which is the exact lookup. A query then
+    /// reads the keys its own sides and their recorded-equality classes
+    /// spell, so `has_condition_fact` never visits an unrelated fact.
+    /// Derived incrementally from `condition_facts`.
+    pub(super) condition_facts_by_sides: crate::persistent::PersistentMap<
+        ConditionMatchKey,
+        crate::persistent::PersistentMap<ConditionTerm, bool>,
+    >,
+    /// The facts of `condition_facts_by_sides` with a side that is not an
+    /// atom (a constant, or a variable that no load names): a load, a sum,
+    /// a conditional. `condition_matches` can prove such a side equal to a
+    /// query side by reasoning its key does not spell (a load's stored
+    /// value, additive rearrangement), so a query that misses every key
+    /// still asks these. A fact of two atoms is matched only through its
+    /// key.
+    /// Keyed by the family of kinds that can match one another
+    /// (`condition_match_family`).
+    pub(super) open_condition_facts:
+        crate::persistent::PersistentMap<u8, crate::persistent::PersistentMap<ConditionTerm, bool>>,
     /// True `Bitvector32Equal` and `Bitvector64Equal` facts that pin a term
     /// to a constant, keyed by that term and carrying, per fact, the constant
     /// it names. Derived incrementally from `condition_facts`; ordered by
@@ -7128,13 +7193,21 @@ pub struct PureFactContext {
         PointerOffsetTerm,
         crate::persistent::PersistentSet<PointerOffsetTerm>,
     >,
+    /// `pointer_offset_aliases` again, keyed by the alias offset's root atom
+    /// (`resource_algebra::offset_root_atom`).
+    pub(super) pointer_offset_aliases_by_root: crate::persistent::PersistentMap<
+        Option<PointerOffsetTerm>,
+        crate::persistent::PersistentSet<(PointerOffsetTerm, PointerOffsetTerm)>,
+    >,
     /// Addresses of the first elements of two separated memory ranges of
     /// one block, keyed by the unordered pair and carrying the separation
-    /// facts that state it. Mirrors `memory_separation_facts` and
-    /// `composition_separation_facts` under a key a pointer comparison can
-    /// build. Each range holds the element at its own anchor, so two
-    /// separated ranges cannot share one anchor -- again a statement about
-    /// the offset terms alone, whatever block the comparison came from.
+    /// facts that state it. Mirrors `memory_separation_facts` under a key a
+    /// pointer comparison can build. Each range holds the element at its own
+    /// anchor, so two separated ranges cannot share one anchor -- again a
+    /// statement about the offset terms alone, whatever block the comparison
+    /// came from. Two owned members of a held composition are asked the same
+    /// question of the composition's own anchor index
+    /// (`ResourceContext::separates_owned_anchors`).
     pub(super) separated_anchor_offsets: crate::persistent::PersistentMap<
         (PointerOffsetTerm, PointerOffsetTerm),
         crate::persistent::PersistentSet<Proposition>,
@@ -7234,20 +7307,6 @@ pub struct PureFactContext {
     /// memory separation through its body. Kept small and scanned
     /// linearly; memory-memory facts live in the index above instead.
     pub(super) nonmemory_separation_facts: std::sync::Arc<Vec<Proposition>>,
-    /// Same-block separation candidates projected from the compact resource
-    /// compositions, keyed and maintained incrementally like
-    /// `memory_separation_facts`. Two owned facts of one valid composition
-    /// are separate by the composition law, so these entries carry the same
-    /// authority the formerly materialized pair propositions did, without
-    /// living in any ambient proposition set. Each projection retains its
-    /// owning shared context so checked consumers can name the logical
-    /// authority without scanning all ambient compositions.
-    pub(super) composition_separation_facts: std::sync::Arc<
-        BTreeMap<
-            (PointerBlock, PointerBlock),
-            Vec<(Proposition, CMemoryRange, CMemoryRange, ResourceContext)>,
-        >,
-    >,
     pub(super) content_fingerprint: u64,
     pub(super) defer_non_exact_loadability_obligations: bool,
     pub(super) defer_non_exact_condition_reasoning: bool,

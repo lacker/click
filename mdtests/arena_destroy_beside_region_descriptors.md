@@ -3,7 +3,7 @@
 `examples/arena`'s `arena_pipeline` ends every path in `arena_destroy(arena)`
 while it still owns its region descriptors. This is that call in isolation,
 with `arena_destroy`'s contract copied from `examples/arena/arena_pipeline.click`
-and the resources it needs from `examples/arena/shared/arena_resources.click`: the caller lends `arena_empty(arena)`, which
+and the resources it needs from `examples/arena/arena_resources.click`: the caller lends `arena_empty(arena)`, which
 owns both backing arrays and their allocation authority, and keeps
 `object(first)` and `object(second)`.
 

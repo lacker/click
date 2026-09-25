@@ -184,6 +184,97 @@ pub(crate) fn memory_interval_ancestors(
         .collect()
 }
 
+/// The root of a memory base: its block and the first symbolic atom of its
+/// offset, read left to right through additions and put in canonical form,
+/// or `None` when the offset is wholly constant.
+///
+/// A base is its object's root plus displacements (`p`, `p + 8`,
+/// `p + 4*i`): offsets are built by adding a displacement to the base they
+/// displace, so the object's own spelling comes first. Two bases with
+/// different roots are different symbolic objects as far as their spelling
+/// goes; only a fact can relate them (an exact alias, or a recorded
+/// equality between the roots' index terms), and
+/// [`related_memory_base_roots`] adds the roots such facts select.
+pub(in crate::kernel) fn memory_base_root(base: &Pointer) -> MemoryBaseRoot {
+    (base.block.clone(), offset_root_atom(&base.offset))
+}
+
+/// The offset half of [`memory_base_root`].
+pub(in crate::kernel) fn offset_root_atom(offset: &PointerOffsetTerm) -> Option<PointerOffsetTerm> {
+    let mut pending = vec![offset];
+    while let Some(offset) = pending.pop() {
+        match offset {
+            PointerOffsetTerm::Add(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            PointerOffsetTerm::Constant(_) => {}
+            PointerOffsetTerm::Variable(_) => return Some(offset.clone()),
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                if value.as_const().is_some() {
+                    continue;
+                }
+                return Some(PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(crate::kernel::eval::canonical_term(value)),
+                    byte_width: *byte_width,
+                });
+            }
+            PointerOffsetTerm::Int64Scaled {
+                value,
+                byte_width,
+                unsigned,
+            } => {
+                return Some(PointerOffsetTerm::Int64Scaled {
+                    value: Box::new(crate::kernel::eval::canonical_term(value)),
+                    byte_width: *byte_width,
+                    unsigned: *unsigned,
+                });
+            }
+        }
+    }
+    None
+}
+
+/// The roots a base is related to by facts: its own root, and for a root
+/// that scales an index term, the roots that scale each member of that
+/// term's recorded-equality class (a member pinned to a constant relates
+/// the base to the block's constant-offset bases).
+fn related_memory_base_roots(
+    base: &Pointer,
+    assumptions: &PureFactContext,
+) -> BTreeSet<MemoryBaseRoot> {
+    let root = memory_base_root(base);
+    let mut roots = BTreeSet::from([root.clone()]);
+    let (block, Some(atom)) = root else {
+        return roots;
+    };
+    let (value, rescale): (
+        &Bitvector32Term,
+        &dyn Fn(Bitvector32Term) -> PointerOffsetTerm,
+    ) = match &atom {
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => (value, &|member| {
+            PointerOffsetTerm::scale_int32(member, *byte_width)
+        }),
+        PointerOffsetTerm::Int64Scaled {
+            value,
+            byte_width,
+            unsigned,
+        } => (value, &|member| {
+            PointerOffsetTerm::scale_int64(member, *byte_width, *unsigned)
+        }),
+        _ => return roots,
+    };
+    for member in assumptions.recorded_equality_class(value) {
+        crate::instrumentation::record_deterministic_work(1);
+        let scaled = rescale(member);
+        roots.insert(memory_base_root(&Pointer {
+            block: block.clone(),
+            offset: scaled,
+        }));
+    }
+    roots
+}
+
 /// A range's two endpoints as the signed `int32` numbers they are, present
 /// only when both are constant.
 ///
@@ -275,6 +366,15 @@ impl ResourceContextIndex {
             result.memory_by_base =
                 insert_resource_index_entry(&result.memory_by_base, range.base().clone(), entry);
             if mode {
+                result.owned_memory_by_root = insert_resource_index_entry(
+                    &result.owned_memory_by_root,
+                    memory_base_root(range.base()),
+                    entry,
+                );
+                if let Some(anchor) = crate::kernel::assumptions::memory_range_anchor(range) {
+                    result.owned_memory_by_anchor =
+                        insert_resource_index_entry(&result.owned_memory_by_anchor, anchor, entry);
+                }
                 result.owned_memory_by_block = insert_resource_index_entry(
                     &result.owned_memory_by_block,
                     block.clone(),
@@ -376,6 +476,15 @@ impl ResourceContextIndex {
             result.memory_by_base =
                 remove_resource_index_entry(&result.memory_by_base, range.base(), entry);
             if mode {
+                result.owned_memory_by_root = remove_resource_index_entry(
+                    &result.owned_memory_by_root,
+                    &memory_base_root(range.base()),
+                    entry,
+                );
+                if let Some(anchor) = crate::kernel::assumptions::memory_range_anchor(range) {
+                    result.owned_memory_by_anchor =
+                        remove_resource_index_entry(&result.owned_memory_by_anchor, &anchor, entry);
+                }
                 result.owned_memory_by_block =
                     remove_resource_index_entry(&result.owned_memory_by_block, &block, entry);
                 if !result
@@ -2776,71 +2885,152 @@ impl ResourceContext {
             .is_some_and(|(left, right)| left != right)
     }
 
-    /// The same-block separation candidates this valid composition supports:
-    /// one entry per unordered pair of distinct owned memory facts sharing a
-    /// block, skipping pairs the kernel proves separate from their
-    /// constructors alone and blocks whose ranges all share one concrete
-    /// base. These are exactly the pair propositions the composition used to
-    /// materialize eagerly, now projected on demand.
-    ///
-    /// A block with one owned range has no pair, so only the blocks the index
-    /// records as holding two or more are visited, each in entry order.
-    pub(in crate::kernel) fn same_block_separation_candidates(
-        &self,
-    ) -> Vec<(Proposition, CMemoryRange, CMemoryRange)> {
+    /// Whether the composition law gives this composition same-block
+    /// separations in `block`: the block holds two or more owned ranges, and
+    /// they do not all share one concrete base with constant bounds (validity
+    /// orders those, and the kernel separates them from their constants
+    /// without a premise). Linear in the block's owned ranges.
+    fn separates_owned_members_in_block(&self, block: &PointerBlock) -> bool {
         crate::instrumentation::record_deterministic_work(1);
-        let by_block = self
+        if !self
             .storage
             .index
             .shared_owned_memory_blocks
-            .keys()
-            .map(|block| {
-                self.storage
-                    .index
-                    .owned_memory_by_block
-                    .get(block)
-                    .into_iter()
-                    .flat_map(ResourceEntryIds::iter)
-                    .filter_map(|entry| self.fact(*entry).memory_own_range())
-                    .inspect(|_| crate::instrumentation::record_deterministic_work(1))
-                    .collect::<Vec<_>>()
+            .contains_key(block)
+        {
+            return false;
+        }
+        let mut owned = self
+            .storage
+            .index
+            .owned_memory_by_block
+            .get(block)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter_map(|entry| self.fact(*entry).memory_own_range());
+        let Some(first) = owned.next() else {
+            return false;
+        };
+        let concrete = |range: &CMemoryRange| {
+            crate::instrumentation::record_deterministic_work(1);
+            range.base() == first.base()
+                && range.start().as_const().is_some()
+                && range.end().as_const().is_some()
+        };
+        !(concrete(first) && owned.all(concrete))
+    }
+
+    /// Two distinct owned members of `block`, the first accepted by `left`
+    /// and the second by `right`, that the composition law separates: the
+    /// on-demand form of the same-block separations a valid composition
+    /// supports, asked by the query that needs one.
+    ///
+    /// The candidates are exactly the pairs the composition used to project
+    /// eagerly into every fact context holding it (`N(N-1)/2` of them for
+    /// `N` owned ranges of one block): two owned ranges of a block that
+    /// [`Self::separates_owned_members_in_block`] admits, not already
+    /// structurally separate, and accepted by `admit`. Instead of visiting
+    /// the pairs, each owned member is asked once whether `left` accepts it
+    /// and, only when some member did, once whether `right` does, so a
+    /// query costs work linear in the block's owned members.
+    pub(in crate::kernel) fn separated_owned_members_in_block(
+        &self,
+        block: &PointerBlock,
+        mut left: impl FnMut(&CMemoryRange) -> bool,
+        mut right: impl FnMut(&CMemoryRange) -> bool,
+        mut admit: impl FnMut(&CMemoryRange, &CMemoryRange) -> bool,
+    ) -> Option<(&CMemoryRange, &CMemoryRange)> {
+        if !self.separates_owned_members_in_block(block) {
+            return None;
+        }
+        let owned = self
+            .storage
+            .index
+            .owned_memory_by_block
+            .get(block)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .filter_map(|entry| {
+                crate::instrumentation::record_deterministic_work(1);
+                self.fact(*entry)
+                    .memory_own_range()
+                    .map(|range| (*entry, range))
             })
             .collect::<Vec<_>>();
-        let mut entries = Vec::new();
-        for owned in &by_block {
-            let one_concrete_base = owned.first().is_some_and(|first| {
-                owned.iter().all(|range| {
-                    range.base() == first.base()
-                        && range.start().as_const().is_some()
-                        && range.end().as_const().is_some()
-                })
-            });
-            if one_concrete_base {
-                // Validity already established that these ordered intervals
-                // do not overlap, and the kernel proves their concrete
-                // separation without a premise.
-                continue;
-            }
-            for (position, left) in owned.iter().enumerate() {
-                for right in &owned[position + 1..] {
-                    crate::instrumentation::record_deterministic_work(1);
-                    let left_resource = CResource::Memory((*left).clone());
-                    let right_resource = CResource::Memory((*right).clone());
-                    if resources_structurally_separate(&left_resource, &right_resource) {
-                        continue;
-                    }
-                    entries.push((
-                        Proposition::CResourceSeparate {
-                            left: left_resource,
-                            right: right_resource,
-                        },
-                        (*left).clone(),
-                        (*right).clone(),
-                    ));
+        let lefts = owned
+            .iter()
+            .filter(|(_, range)| left(range))
+            .collect::<Vec<_>>();
+        if lefts.is_empty() {
+            return None;
+        }
+        let rights = owned
+            .iter()
+            .filter(|(_, range)| right(range))
+            .collect::<Vec<_>>();
+        for (left_entry, left_range) in &lefts {
+            for (right_entry, right_range) in &rights {
+                if left_entry == right_entry {
+                    continue;
+                }
+                crate::instrumentation::record_deterministic_work(1);
+                if resources_structurally_separate(
+                    &CResource::Memory((*left_range).clone()),
+                    &CResource::Memory((*right_range).clone()),
+                ) {
+                    continue;
+                }
+                if admit(left_range, right_range) {
+                    return Some((left_range, right_range));
                 }
             }
         }
-        entries
+        None
+    }
+
+    /// Whether two distinct owned members of one block that the composition
+    /// law separates have their first elements at `left` and `right`: the
+    /// anchor form of [`Self::separated_owned_members_in_block`], read from
+    /// the anchor index by two keyed lookups.
+    pub(in crate::kernel) fn separates_owned_anchors(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+    ) -> bool {
+        crate::instrumentation::record_deterministic_work(1);
+        let index = &self.storage.index;
+        let (Some(lefts), Some(rights)) = (
+            index.owned_memory_by_anchor.get(left),
+            index.owned_memory_by_anchor.get(right),
+        ) else {
+            return false;
+        };
+        for left_entry in lefts.iter() {
+            for right_entry in rights.iter() {
+                crate::instrumentation::record_deterministic_work(1);
+                if left_entry == right_entry {
+                    continue;
+                }
+                let (Some(left_range), Some(right_range)) = (
+                    self.fact(*left_entry).memory_own_range(),
+                    self.fact(*right_entry).memory_own_range(),
+                ) else {
+                    continue;
+                };
+                if left_range.base().block != right_range.base().block
+                    || resources_structurally_separate(
+                        &CResource::Memory(left_range.clone()),
+                        &CResource::Memory(right_range.clone()),
+                    )
+                {
+                    continue;
+                }
+                if self.separates_owned_members_in_block(&left_range.base().block) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Pointer projection using an explicitly bounded caller-supplied
@@ -3500,25 +3690,6 @@ impl ResourceContext {
             let Some(right_range) = right.memory_own_range() else {
                 continue;
             };
-            // Same-block ranges are selected below. Exact pointer equalities
-            // also connect bases across blocks, so check only the entries at
-            // each directly stated alias using the exact-base index.
-            for alias in assumptions.exact_pointer_aliases(right_range.base()) {
-                if alias.block == right_range.base().block {
-                    continue;
-                }
-                if let Some(entries) = self.storage.index.memory_by_base.get(alias) {
-                    for left_entry in entries.iter().copied().filter(|entry| *entry < right_entry) {
-                        crate::instrumentation::record_deterministic_work(1);
-                        let left = self.fact(left_entry);
-                        if let Some(error) = resource_family_algebra(left.family())
-                            .pair_validity_error(left, right, assumptions)
-                        {
-                            return Err(error);
-                        }
-                    }
-                }
-            }
             let (start, end) = signed_range_endpoints(right_range);
             let same_base_concrete = start.zip(end).and_then(|(start, end)| {
                 let owned_in_block = self
@@ -3561,6 +3732,20 @@ impl ResourceContext {
                 {
                     candidates.insert(*entry);
                 }
+                // Every owned range of this block is at this base, so the two
+                // neighbours stand for the block; ranges an exact alias
+                // relates from other blocks are still compared.
+                if assumptions.has_pointer_block_aliases() {
+                    candidates.extend(
+                        self.owned_validity_candidates(
+                            right_range,
+                            Some(&right_range.base().block),
+                            assumptions,
+                        )
+                        .into_iter()
+                        .filter(|entry| *entry < right_entry),
+                    );
+                }
                 for left_entry in candidates {
                     crate::instrumentation::record_deterministic_work(1);
                     let left = self.fact(left_entry);
@@ -3574,16 +3759,10 @@ impl ResourceContext {
                 }
                 continue;
             }
-            for left_entry in self
-                .storage
-                .index
-                .memory_by_block
-                .get(&right_range.base().block)
-                .into_iter()
-                .flat_map(ResourceEntryIds::iter)
-                .copied()
-                .take_while(|entry| *entry != right_entry)
-            {
+            for left_entry in self.owned_validity_candidates(right_range, None, assumptions) {
+                if left_entry >= right_entry {
+                    break;
+                }
                 crate::instrumentation::record_deterministic_work(1);
                 let left = self.fact(left_entry);
                 if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
@@ -3596,6 +3775,85 @@ impl ResourceContext {
             }
         }
         Ok(self)
+    }
+
+    /// The owned memory entries whose overlap with `range` the facts could
+    /// prove, in entry order: the owned ranges of its block at a root related
+    /// to its base or to a same-block exact alias of it
+    /// ([`related_memory_base_roots`]), the owned ranges whose own base has a
+    /// same-block exact alias at such a root, and the owned ranges based
+    /// exactly at a cross-block exact alias of its base.
+    ///
+    /// These are the pairs `memory_ranges_proven_overlapping` can answer
+    /// through a relating fact. It rebases through exact aliases and then
+    /// asks the endpoints under a structural base delta, and a delta between
+    /// two different roots, such as `4*a - 4*b` for two pointer parameters,
+    /// is bounded only by a fact that relates the two index terms. Pairs
+    /// without one are not visited: validity refuses a *proven* overlap, so
+    /// an overlap nothing states needs no work, and the ranges of every
+    /// other object in the block (for `ExternalArgument`, every object a
+    /// parameter reaches) cost nothing. The work is the keys (this base's
+    /// aliases and equality classes) and the entries they select.
+    ///
+    /// `skip_block` leaves out one block's entries, for a caller that has
+    /// already covered that block another way.
+    fn owned_validity_candidates(
+        &self,
+        range: &CMemoryRange,
+        skip_block: Option<&PointerBlock>,
+        assumptions: &PureFactContext,
+    ) -> BTreeSet<ResourceEntryId> {
+        let index = &self.storage.index;
+        let base = range.base();
+        let mut candidates = BTreeSet::new();
+        let add_owned_at_base = |candidates: &mut BTreeSet<ResourceEntryId>, at: &Pointer| {
+            if Some(&at.block) == skip_block {
+                return;
+            }
+            crate::instrumentation::record_deterministic_work(1);
+            if let Some(entries) = index.memory_by_base.get(at) {
+                for entry in entries.iter() {
+                    crate::instrumentation::record_deterministic_work(1);
+                    if self.fact(*entry).memory_own_range().is_some() {
+                        candidates.insert(*entry);
+                    }
+                }
+            }
+        };
+        for alias in assumptions.exact_pointer_aliases(base) {
+            add_owned_at_base(&mut candidates, alias);
+        }
+        if Some(&base.block) == skip_block {
+            return candidates;
+        }
+        let mut roots = related_memory_base_roots(base, assumptions);
+        for alias in assumptions.exact_pointer_offset_aliases(base) {
+            crate::instrumentation::record_deterministic_work(1);
+            roots.extend(related_memory_base_roots(&alias, assumptions));
+        }
+        for root in &roots {
+            crate::instrumentation::record_deterministic_work(1);
+            if let Some(entries) = index.owned_memory_by_root.get(root) {
+                for entry in entries.iter() {
+                    crate::instrumentation::record_deterministic_work(1);
+                    candidates.insert(*entry);
+                }
+            }
+            // The other direction: an owned range whose own base has a
+            // same-block exact alias at this root. The equalities are
+            // symmetric and indexed by the root of each side, so this is
+            // one keyed lookup that costs the equalities naming the root.
+            for aliased in assumptions.offsets_with_an_alias_at_root(&root.1) {
+                add_owned_at_base(
+                    &mut candidates,
+                    &Pointer {
+                        block: root.0.clone(),
+                        offset: aliased,
+                    },
+                );
+            }
+        }
+        candidates
     }
 
     /// Extends a valid context with one already-certified valid resource
@@ -3679,12 +3937,16 @@ impl ResourceContext {
                 .memory_by_block
                 .get(block)
                 .expect("a block with owned ranges has memory entries");
-            let owned = entries
+            let owned_entries = entries
                 .iter()
                 .filter_map(|entry| {
                     let fact = self.fact(*entry);
-                    fact.memory_own_range().map(|range| (fact, range))
+                    fact.memory_own_range().map(|range| (*entry, range))
                 })
+                .collect::<Vec<_>>();
+            let owned = owned_entries
+                .iter()
+                .map(|(entry, range)| (self.fact(*entry), *range))
                 .collect::<Vec<_>>();
             // The sweep replaces the pairwise scan below, and it is sound
             // only on the order it assumes. Sorted by *signed* start, an
@@ -3730,25 +3992,29 @@ impl ResourceContext {
                 }
                 continue;
             }
-            let entries = entries.iter().copied().collect::<Vec<_>>();
-            for (offset, left_entry) in entries.iter().enumerate() {
-                let left = self.fact(*left_entry);
-                if left.memory_own_range().is_none() {
-                    continue;
+            // Otherwise each owned range is compared with the owned ranges
+            // a fact could relate it to (`owned_validity_candidates`), in the
+            // pair order of a pairwise scan.
+            let mut pairs = BTreeSet::new();
+            for (right_entry, right_range) in &owned_entries {
+                let right_entry = *right_entry;
+                for left_entry in self.owned_validity_candidates(right_range, None, assumptions) {
+                    if left_entry >= right_entry {
+                        break;
+                    }
+                    pairs.insert((left_entry, right_entry));
                 }
-                for right_entry in &entries[offset + 1..] {
-                    crate::instrumentation::record_deterministic_work(1);
-                    let right = self.fact(*right_entry);
-                    if right.memory_own_range().is_none() {
-                        continue;
-                    }
-                    if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
-                        left,
-                        right,
-                        assumptions,
-                    ) {
-                        return Some(error);
-                    }
+            }
+            for (left_entry, right_entry) in pairs {
+                crate::instrumentation::record_deterministic_work(1);
+                let left = self.fact(left_entry);
+                let right = self.fact(right_entry);
+                if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
+                    left,
+                    right,
+                    assumptions,
+                ) {
+                    return Some(error);
                 }
             }
         }
@@ -5439,10 +5705,10 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
         facts: &[&CResourceFact],
         _assumptions: &PureFactContext,
     ) -> Vec<Proposition> {
-        // Same-block separation is no longer materialized into ambient
-        // propositions; `PureFactContext` projects the identical candidate
-        // set lazily from the retained compact composition when a separation
-        // query for the block pair actually occurs.
+        // Same-block separation is never materialized into ambient
+        // propositions: a separation query asks the retained compact
+        // composition for two owned members that hold its two sides
+        // (`ResourceContext::separated_owned_members_in_block`).
         let _ = facts;
         Vec::new()
     }
@@ -6381,11 +6647,6 @@ fn memory_ranges_proven_overlapping_without_aliases(
         let right = byte_normalized_memory_range(right);
         return memory_ranges_proven_overlapping_without_aliases(&left, &right, assumptions);
     }
-    if assumptions
-        .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(left, right)
-    {
-        return false;
-    }
     let Some(base_delta) = right
         .base()
         .element_index_from_base_with_width(left.base(), left.element_width())
@@ -6395,6 +6656,9 @@ fn memory_ranges_proven_overlapping_without_aliases(
     let right_start = Bitvector32Term::add(base_delta.clone(), right.start().clone());
     let right_end = Bitvector32Term::add(base_delta, right.end().clone());
 
+    // An explicit separation only vetoes an overlap the endpoints prove, and
+    // a valid composition proves none: ask it last, so the ordinary answer
+    // (no proven overlap) never pays for the separation search.
     assumptions.decide(&ConditionTerm::signed_less_than(
         left.start().clone(),
         right_end,
@@ -6403,6 +6667,8 @@ fn memory_ranges_proven_overlapping_without_aliases(
             right_start,
             left.end().clone(),
         )) == Some(true)
+        && !assumptions
+            .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(left, right)
 }
 
 /// The same containment as [`memory_range_structurally_covers`], for a base

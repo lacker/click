@@ -228,61 +228,56 @@ What made these expressible, each with its own regression:
   `int32` index of a struct-pointer local, which had made the clearing loop's
   invariant closer refuse its own bundle.
 
-## Next chunk: the pipeline
+## The pipeline
 
-The sidecar layout is in place. `examples/arena/shared/arena_resources.click`
-holds the lifecycle and prefix resources; `examples/arena/arena_pipeline.click`
-proves `arena_init`, the symbolic `arena_alloc`, the prefix-shrink
-`arena_free`, `arena_write`, `arena_read`, and `arena_destroy` (the lifecycle
-proofs moved out of `arena.click`) and declares `arena_pipeline.c`. The store
-cost that used to depend on the lifecycle proofs being verified first in the
-same sidecar is gone: the sidecar verifies in about the same time as before.
+`arena_pipeline` now verifies in the examples gate, on all five paths
+(initialization failure, each allocation failure, and success returning
+`33`), in `examples/arena/arena_pipeline.click` after the callee proofs it
+uses. `examples/arena/README.md` describes the proof: inline conversions
+between `arena_initialized_access`/`arena_empty` and `arena_prefix_state`
+on each path, `mark` and `at` to carry each call's fresh state fields, and
+`extract` to name the new region's start. The resources-only module is back
+beside its importers as `examples/arena/arena_resources.click`: a directory
+target no longer selects a declaration module (imports, types, predicates,
+pure functions, and resources only) as an entry.
 
-`arena_pipeline` itself is still unverified. A proof against these contracts
-now checks every step on every path, but not fast enough to land:
+Landing it needed the kernel to stop growing with the pipeline's owned
+objects and accumulated facts, which all sit in the one `ExternalArgument`
+block:
 
-- Initialization converts to `arena_prefix_state` at `prefix == 0, live == 0`
-  with checked folds as described before (unfold the result, access, and
-  storage; refold storage at `1`; prove the two separations; fold the
-  partition and state). Every path back to `arena_destroy` converts with
-  `unfold(state)`, `unfold(partition)`, `fold(arena_initialized_access(..., 1))`,
-  `fold(arena_empty(arena))`. Resources cannot be transformed by a theorem, so
-  these are inline folds on each of the four destroy paths.
-- Every borrowed call's fresh fields are carried with `mark` before the call
-  and `have x == at(mark, x)`, `have at(mark, x) == c`, and a `simp() using`
-  of the two after it.
-- The allocation's `region->start == old(before.prefix)` has no caller
-  spelling, so `simp` cannot use it; `extract(combined->start == at(a3,
-  s4.prefix))` can. `defined(combined->start + 3)`, which the write and read
-  postconditions at index 3 are guarded by, needs the descriptor's cells
-  readable: unfold the state and then the region, `rewrite` and `normalize`,
-  refold both. With that, the value read back at index 3 is `33`.
-- A smart `simp` for `value == 33` ran 12 seconds (33 seconds when it failed
-  on a nearby goal) in `simp closure: indexed goal equality rewrite` before
-  its real-time limit stopped it; `simp() using` the three equalities is
-  immediate. The rewrite loop has no deadline checkpoint of its own.
+- Composition validity compares an owned range only with the ranges a fact
+  could relate it to (same base root, an exact alias, or a recorded-equality
+  class of the root's index term), and asks the explicit-separation veto
+  only after the endpoints prove an overlap. Validity refuses a proven
+  overlap, so an overlap nothing states needs no work
+  (`composing_a_parameter_object_ignores_unrelated_parameters`,
+  `validity_of_parameter_objects_is_linear`,
+  `parameter_validity_still_refuses_related_overlaps`).
+- A held composition no longer projects its `N(N-1)/2` same-block pairs into
+  every fact context; separation queries ask its owned members once each
+  (`holding_a_parameter_composition_states_no_pairs`,
+  `one_parameter_separation_query_is_linear_in_the_owned_objects`).
+- `has_condition_fact`, the ordering modulo canonical load atoms, and the
+  symbolic pointer-equality hop read condition facts by key instead of
+  scanning them (`condition_fact_queries_ignore_unrelated_facts`).
+- The smart `simp` equality-rewrite loops observe their tactic's deadline
+  and work budget (`equality_rewrite_search_observes_the_deadline`).
 
-Three kernel costs found on the way are fixed, each with a regression:
-the retirement check admits a kept view of a kept owned descriptor by exact
-lookup (`retirement_admits_a_view_of_a_kept_owned_range`), a contract section
-whose clauses all evaluate on the first pass no longer expands the caller's
-frame (`first_pass_resource_section_does_not_expand_the_frame`), and nested
-lower-bound searches read indexed bounds instead of rescanning every order
-fact (`lower_bound_search_ignores_unrelated_facts`).
+The unit took 36.6 s (the pipeline 33.8 s, 6.6 s of it smart) and missed the
+30 s project limit; it now takes about 11 s with no smart tactic near its
+budget. Most of what remains is proof-aware pointer equality between
+parameter fields (`range membership: offset equality`, `explicit range:
+recursive candidates`), linear per query in the owned members of the block.
 
-What still blocks landing it is cost, not a missing rule. With those fixes the
-whole unit takes about 28 seconds, and the second allocation's failure path
-fails its final claim closing when the smart closer passes its 2 s limit. A
-`perf` profile puts most of the remaining time in resource-composition
-validity (`pair_validity_error` asking `memory_ranges_proven_overlapping` for
-each pair of owned ranges in the one `ExternalArgument` block every parameter
-and backing array lives in, which recurses through explicit-separation range
-containment into `pointers_proven_equal_for_memory_resolution` and the cell
-scan in `stored_value_at_equal_pointer`) and in `has_condition_fact`, which
-compares a condition with every ambient fact proof-aware. Both grow with the
-pipeline's accumulated facts and ranges. A deterministic multi-size
-regression for each (owned ranges in one symbolic block; condition facts
-over loads) is the next step, before the pipeline is retried.
+Acceptance re-audit: all eight C functions, including the pipeline, have
+checked contracts and proofs and verify under the examples gate; allocation
+and free are checked transformations of user-declared resources; no
+arena-specific language extension was added; the intended-regression
+behaviors are covered by the pipeline's paths and the negative mdtests
+(`arena_use_after_free.md`, `arena_destroy_with_live_region.md`,
+`arena_prefix_region_double_free.md`, `arena_prefix_regions_reject_overlap.md`).
+The remaining open item is the representation question below, which the
+reverse-order pipeline does not exercise.
 
 ## Open design question: frees out of allocation order
 

@@ -810,3 +810,118 @@ fn retirement_admits_a_view_of_a_kept_owned_range() {
         "without lent owners covering the allocation, the kept object needs a separation"
     );
 }
+
+/// `count` unrelated atomic condition facts: a bound and an equality over
+/// fresh variables for each index, the ambient facts a long proof path
+/// accumulates about objects a query does not name.
+fn unrelated_condition_facts(count: usize) -> PureFactContext {
+    (0..count as u64).fold(PureFactContext::new(), |facts, index| {
+        let variable =
+            |offset: u64| Bitvector32Term::Variable(Variable(96_000 + 3 * index + offset));
+        facts
+            .assume_condition(
+                ConditionTerm::signed_less_equal(variable(0), Bitvector32Term::Constant(1_000)),
+                true,
+            )
+            .assume_condition(ConditionTerm::equal(variable(1), variable(2)), true)
+    })
+}
+
+/// A condition-fact query reads the fact it asks about by key: the fact
+/// itself, a fact filed under a spelling its sides' equality classes make
+/// equal, or none at all, beside `N` unrelated facts. Each of the three
+/// queries used to scan every condition fact (uncharged, so only the visit
+/// counter shows it): 2N visits per query on the base. The symbolic
+/// pointer-equality hop of range membership reads the equalities naming its
+/// pointer, and the ordering modulo canonical load atoms reads the facts
+/// filed under the query's canonical sides.
+#[test]
+fn condition_fact_queries_ignore_unrelated_facts() {
+    let (low, high, alias) = (
+        Bitvector32Term::Variable(Variable(95_001)),
+        Bitvector32Term::Variable(Variable(95_002)),
+        Bitvector32Term::Variable(Variable(95_003)),
+    );
+    let symbolic = Pointer {
+        block: PointerBlock::Symbolic(Variable(95_004)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let argument = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(95_005)), 4),
+    };
+    let mut samples = Vec::new();
+    for size in [64, 128, 256, 512] {
+        let facts = unrelated_condition_facts(size)
+            .assume_condition(
+                ConditionTerm::signed_less_than(low.clone(), high.clone()),
+                true,
+            )
+            .assume_condition(ConditionTerm::equal(alias.clone(), low.clone()), true)
+            .assume_condition(
+                ConditionTerm::pointer_equal(symbolic.clone(), argument.clone()),
+                true,
+            );
+        let visits = |query: &dyn Fn() -> bool, expected: bool| {
+            PureFactContext::reset_condition_fact_visits();
+            assert_eq!(query(), expected);
+            PureFactContext::condition_fact_visits()
+        };
+        let exact = visits(
+            &|| {
+                facts.has_condition_fact(
+                    ConditionTerm::signed_less_than(low.clone(), high.clone()),
+                    true,
+                )
+            },
+            true,
+        );
+        let through_class = visits(
+            &|| {
+                facts.has_condition_fact(
+                    ConditionTerm::signed_less_than(alias.clone(), high.clone()),
+                    true,
+                )
+            },
+            true,
+        );
+        let miss = visits(
+            &|| {
+                facts.has_condition_fact(
+                    ConditionTerm::signed_less_than(high.clone(), low.clone()),
+                    true,
+                )
+            },
+            false,
+        );
+        let canonical = visits(
+            &|| {
+                facts.exact_ordering_modulo_canonical_atoms(&ConditionTerm::signed_less_than(
+                    low.clone(),
+                    high.clone(),
+                ))
+            },
+            true,
+        );
+        let hop = visits(
+            &|| {
+                facts.pointer_in_range_with_width(
+                    &symbolic,
+                    &argument,
+                    &Bitvector32Term::Constant(0),
+                    &Bitvector32Term::Constant(1),
+                    4,
+                )
+            },
+            true,
+        );
+        samples.push((size, exact + through_class + miss + canonical + hop));
+    }
+    eprintln!("condition-fact queries beside N unrelated facts (N, visits): {samples:?}");
+    assert!(
+        samples
+            .iter()
+            .all(|(_, visits)| *visits == samples[0].1 && *visits <= 8),
+        "condition-fact queries visited unrelated facts: {samples:?}"
+    );
+}

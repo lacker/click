@@ -1752,6 +1752,14 @@ pub(in crate::surface) fn plan_explicit_equality_rewrites_from(
         is_available: &impl Fn(&Proposition) -> bool,
         closer: &impl Fn(&Proposition) -> Option<Vec<ProofTactic>>,
     ) -> bool {
+        // The search tries premise orders depth first, so its node count is
+        // factorial in the equalities it may use. Each node observes the
+        // enclosing tactic's deadline and work budget, so a search that
+        // cannot close fails when its tactic's bound runs out rather than
+        // running on to finish.
+        if crate::instrumentation::deadline_exceeded() {
+            return false;
+        }
         if is_available(&current) {
             tactics.push(ProofTactic::Assumption);
             return true;
@@ -2555,6 +2563,69 @@ mod tests {
     use crate::kernel::{
         IntegerRangeFoldIndex, IntegerTerm, MachineIntegerType, SharedIntegerRangeEndpoint,
     };
+
+    /// The equality-rewrite search visits premise orders depth first, and a
+    /// goal it cannot close makes it visit all of them. Under an exhausted
+    /// deadline it stops at its first node.
+    #[test]
+    fn equality_rewrite_search_observes_the_deadline() {
+        let variable = |index: u64| Bitvector32Term::Variable(Variable(93_400 + index));
+        let count = 6;
+        let sum = (1..count).fold(variable(0), |sum, index| {
+            Bitvector32Term::add(sum, variable(index))
+        });
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessThan(
+                Box::new(sum),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let premises = (0..count)
+            .map(|index| {
+                let kernel = Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(
+                        Box::new(variable(index)),
+                        Box::new(variable(100 + index)),
+                    ),
+                    true,
+                );
+                let surface = ClickProposition::Comparison {
+                    left: ContractExpression::IntegerLiteral(index.to_string()),
+                    operator: ComparisonOperator::Equal,
+                    right: ContractExpression::IntegerLiteral((100 + index).to_string()),
+                };
+                (kernel, surface)
+            })
+            .collect::<Vec<_>>();
+        let available = premises
+            .iter()
+            .map(|(kernel, _)| kernel.clone())
+            .collect::<Vec<_>>();
+        let nodes = std::cell::Cell::new(0_usize);
+        let closer = |_: &Proposition| {
+            nodes.set(nodes.get() + 1);
+            None
+        };
+        let unbounded =
+            plan_explicit_equality_rewrites_from(&goal, &premises, &available, &|_| false, &closer);
+        assert!(unbounded.is_none());
+        assert!(
+            nodes.get() > 1_000,
+            "an unclosable goal visits every premise order: {} nodes",
+            nodes.get()
+        );
+        nodes.set(0);
+        let expired = crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
+            plan_explicit_equality_rewrites_from(&goal, &premises, &available, &|_| false, &closer)
+        });
+        assert!(expired.is_none());
+        assert_eq!(
+            nodes.get(),
+            0,
+            "an exhausted deadline stops the search at once"
+        );
+    }
 
     #[test]
     fn pointer_rewrite_changes_every_matching_field_load_at_one_snapshot() {

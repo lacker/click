@@ -538,6 +538,10 @@ location scheme `click profile`, `click expand`, and `click audit` use, and the
 targeted entry point the audit's cold reverification runs. A directory verifies
 every sidecar in it: the directory
 itself when it holds sidecars, otherwise each immediate subdirectory that does.
+A declaration module (imports, types, predicates, pure functions, and
+resources only) is checked through its importers and is not an entry
+(`click::cli::project_sidecars`); the examples gate selects entries the same
+way.
 Every sidecar or selected proof unit has an independent 30-second limit. Use
 `--time-limit DURATION` to override it. A timeout exits unsuccessfully and
 names both the target and the active phase or tactic; one slow project cannot
