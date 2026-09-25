@@ -1598,7 +1598,7 @@ pub(super) fn finish_ordered_proof<'a>(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof: Proof<'a>,
     source_path: &str,
-    function_block: &FunctionBlock,
+    function_block: &std::sync::Arc<FunctionBlock>,
     parsed_function: &syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
     require_explicit_closers: bool,
@@ -1609,7 +1609,7 @@ pub(super) fn finish_ordered_proof<'a>(
     function_environment: &CExecutionEnvironment,
     function: &CFunction,
     arguments: &[CExpression],
-    certificate_tactics: &[ProofTactic],
+    certificate_tactics: &std::sync::Arc<[ProofTactic]>,
     claim_surface_builders: &mut Vec<(VerifiedClaim, ProofCertificateBuilder)>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let proof_label = if require_explicit_closers {
@@ -1749,7 +1749,9 @@ pub(super) fn finish_ordered_proof<'a>(
         certification_facts = requirements_with_structural_unfolds(
             predicate_environment,
             click_function_environment,
-            frontier_function_block.as_ref().unwrap_or(function_block),
+            frontier_function_block
+                .as_ref()
+                .unwrap_or(&**function_block),
             &certification_facts,
         )
         .map_err(|message| {
@@ -4610,10 +4612,14 @@ pub(super) fn finish_ordered_proof<'a>(
                             artifact_identity: None,
                             target: crate::languages::c::target::CTarget::SUPPORTED,
                             selection: None,
-                            function_block: function_block.clone(),
+                            // Every theorem of this proof shares one copy of
+                            // the function block and of the proof text, so
+                            // issuing a theorem per path and claim does not
+                            // multiply the proof's size by their number.
+                            function_block: std::sync::Arc::clone(function_block),
                             claim: claim.verified_claim(),
                             proof_kind: ProofKind::TacticScript,
-                            proof_tactics: Some(certificate_tactics.to_vec()),
+                            proof_tactics: Some(std::sync::Arc::clone(certificate_tactics)),
                             expanded_proof: retained_certificate.clone(),
                             expansion_blocker: retained_surface.blocker.clone(),
                             specification: specification.clone(),

@@ -1,8 +1,8 @@
 # An arena region cannot be freed twice
 
-`arena_prefix_region` is the live-region resource of the symbolic arena
-allocation in `examples/arena/arena_pipeline.click`: the descriptor
-object and the exact data interval `[start, end)` it names. A free consumes
+`arena_prefix_region` is the live-region resource of the arena example's
+earlier prefix model: the descriptor object and the exact data interval
+`[start, end)` it names, as the per-cell model's `arena_region` is. A free consumes
 that instance. The caller owns one instance, so the first call takes it and
 the second call has no instance to hand over: the double free is refused at
 the second call, where the named binder `allocated` is no longer owned.

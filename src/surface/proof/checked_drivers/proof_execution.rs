@@ -2284,6 +2284,17 @@ fn advance_focused_execution_arm<'a>(
             )?;
             continue;
         }
+        // Each arm tactic is its own source operation, exactly as in the
+        // linear continuation: time it under its source site so the profiler
+        // charges its work to the tactic rather than to shared verifier work.
+        let statement_index = proof.execution_frontier_index().unwrap_or_default();
+        let _timing = TacticTiming::new(
+            proof.claim_label(),
+            indexed.index,
+            indexed.source_index,
+            &indexed.tactic,
+            statement_index,
+        );
         let checkpoint = proof.checkpoint();
         let next = if matches!(indexed.tactic, ProofTactic::CloseInvariants) {
             proof.apply_close_invariants_body(&[ProofTactic::Simp])?

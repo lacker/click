@@ -458,10 +458,22 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
             .fold(transport_assumptions.clone(), |assumptions, fact| {
                 assumptions.assume_proposition(fact.clone())
             });
-        if super::super::fact_reasoning::premise_bridged_by_load_variable_chain_with_origins(
-            &target,
-            &chain_facts,
+        let bridge_propositions = std::iter::once(&target)
+            .chain(chain_facts.iter())
+            .collect::<Vec<_>>();
+        if crate::kernel::closure_memoized_fact_check(
+            crate::kernel::ClosureFactCheck::LoadVariableBridge,
+            &bridge_propositions,
+            None,
             &chain_assumptions,
+            &[],
+            || {
+                super::super::fact_reasoning::premise_bridged_by_load_variable_chain_with_origins(
+                    &target,
+                    &chain_facts,
+                    &chain_assumptions,
+                )
+            },
         ) {
             return Ok(CheckedFixedStateFactTransport { source, target });
         }
@@ -848,6 +860,31 @@ pub(in crate::surface::proof) fn proposition_outer_load_memory(
 /// through the transition facts' certified stores, so a fact written in
 /// pre-store terms can reach a post-store form.
 pub(in crate::surface::proof) fn certified_fact_transport_reaches_through(
+    source: &Proposition,
+    target: &Proposition,
+    after: &CMemory,
+    assumptions: &PureFactContext,
+    transitions: &[ExecutionPureFact],
+) -> bool {
+    crate::kernel::closure_memoized_fact_check(
+        crate::kernel::ClosureFactCheck::Reachability,
+        &[source, target],
+        Some(after),
+        assumptions,
+        transitions,
+        || {
+            certified_fact_transport_reaches_through_unmemoized(
+                source,
+                target,
+                after,
+                assumptions,
+                transitions,
+            )
+        },
+    )
+}
+
+fn certified_fact_transport_reaches_through_unmemoized(
     source: &Proposition,
     target: &Proposition,
     after: &CMemory,

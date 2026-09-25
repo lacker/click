@@ -36,6 +36,30 @@ because their proofs transport facts across calls that hold recursive
 composites which the callee does not in fact write. So the fix has to be
 precise, not merely conservative.
 
+## Confirmed false proof: a finite instance chain past the depth limit
+
+A concrete call proof demonstrated the bug. Define ten field-bearing resources,
+`layer0` through `layer9`. `layer0(p)` owns `p->value`; each `layerN(p)` for
+`N > 0` owns a named child instance `layerN-1(p)`. The caller and callee each
+hold `layer9(p)`, so the owned cell is nine child-instance edges below the
+resource passed to the call.
+
+The C callee `overwrite(p)` executes only `p->value = 1`. Its proof unfolds the
+chain down to `layer0` to authorize that store, then folds the resources back.
+Its contract preserves the outer resource field but makes no promise about
+`p->value`. The caller's C body first sets `p->value = 0`, then calls
+`overwrite(p)`. Its proof marks the state after the initialization, applies the
+call, and transports `p->value == at(before, p->value)` across it. The caller
+then claims `p->value == 0` as its postcondition.
+
+The kernel accepts that proof even though the call has changed the final value
+to `1`. The footprint walk stops at `OWNED_FOOTPRINT_INSTANCE_DEPTH` before
+reaching `layer0`, so the call's havoc omits `p->value`; `transport` therefore
+finds no write to invalidate the saved value. A no-write call with the same
+resource is a positive control: transporting the value across it should remain
+valid. The regression belongs in the gate as an `expect-fail` fixture, with the
+false postcondition rejected at the transport after footprint repair.
+
 ## Intended regression
 
 For each unopenable shape, a small program whose loop or callee holds the

@@ -2819,8 +2819,13 @@ fn verify_c0_sources_with_context(
         // theorem-application bookkeeping. Select those authorities from the
         // exact source proofs as well as any retained checked tactics.
         collect_function_theorem_dependencies(&function_block, &mut certification_theorems);
+        // The theorems of one proof share its proof text; read each distinct
+        // text once rather than once per theorem.
+        let mut read_proof_texts = BTreeSet::new();
         for verified in &function_verified {
-            if let Some(tactics) = &verified.proof_tactics {
+            if let Some(tactics) = &verified.proof_tactics
+                && read_proof_texts.insert(Arc::as_ptr(tactics) as *const ProofTactic)
+            {
                 collect_applied_theorems(tactics, &mut certification_theorems);
             }
         }

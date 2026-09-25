@@ -1330,6 +1330,42 @@ fn call_binder_transport_prints_and_expands_its_map_unchanged() {
     .unwrap();
 }
 
+/// A `let` naming a call's outputs is parsed only with a binder map, so a
+/// call that lends no instance prints its empty map, the spelling the source
+/// above parsed from: expansion emits exactly this printing.
+#[test]
+fn call_output_binding_without_lent_instances_prints_its_empty_map() {
+    let source = r#"
+        resource Counter() { field revision: int32; }
+        void make(int32* state) {
+            produces made: Counter();
+        }
+        int32 get(int32* state) {
+            ensures result == 1;
+        }
+        void caller(int32* state) {
+            owns c: Counter();
+            ensures c.revision == 1;
+        } by {
+            let { made: m } = step(make(state), {});
+            let value = step(get(state), {});
+        }
+    "#;
+    let file = parser::parse(source).unwrap();
+    let SourceProof::Script(tactics) = file.function_blocks()[2].grouped_proof().unwrap() else {
+        panic!("expected script")
+    };
+    let printed = printing::format_proof_tactics(tactics).unwrap();
+    assert!(
+        printed.contains("let { made: m } = step(make(state), {});"),
+        "{printed}"
+    );
+    assert!(
+        printed.contains("let value = step(get(state), {});"),
+        "{printed}"
+    );
+}
+
 #[test]
 fn call_binder_transport_rejects_a_frontier_call_to_another_function() {
     let source = r#"verifying "increment.c";

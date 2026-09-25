@@ -1353,6 +1353,13 @@ impl<'a> Proof<'a> {
     /// advances this same `Proof`; no semantic result is produced before
     /// those proof steps have been accepted.
     pub(in crate::surface::proof) fn try_simp_closure(&self) -> Result<Option<Self>, ClickError> {
+        // simp reaches the same failing frame question through several of
+        // its strategies and candidates; one closure attempt answers each
+        // exact failed question once (`with_closure_failure_memo`).
+        crate::kernel::with_closure_failure_memo(|| self.try_simp_closure_strategies())
+    }
+
+    fn try_simp_closure_strategies(&self) -> Result<Option<Self>, ClickError> {
         let mut scope = attempt::search_scope("simp closure");
         if let Some(proof) = self.try_direct_logical_closure()? {
             scope.succeed();
@@ -2427,6 +2434,18 @@ impl<'a> Proof<'a> {
     /// recorded-snapshot index, not the ambient fact set; every accepted source
     /// and target is checked by `TransportUsing` on this immutable Proof.
     pub(super) fn try_snapshot_transport_closure(
+        &self,
+        surface_goal: &ClickProposition,
+    ) -> Result<Option<Self>, ClickError> {
+        // Every candidate below lowers the same goal, so a failing question
+        // about the goal's own loads repeats per candidate; remember those
+        // failures for this closure (`with_closure_failure_memo`).
+        crate::kernel::with_closure_failure_memo(|| {
+            self.try_snapshot_transport_closure_candidates(surface_goal)
+        })
+    }
+
+    fn try_snapshot_transport_closure_candidates(
         &self,
         surface_goal: &ClickProposition,
     ) -> Result<Option<Self>, ClickError> {

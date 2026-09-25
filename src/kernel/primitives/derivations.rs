@@ -1080,7 +1080,7 @@ impl PureFactContext {
             && self
                 .bitvector64_equality_facts
                 .shares_root_with(&other.bitvector64_equality_facts)
-            && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
+            && self.prop_facts.ptr_eq(&other.prop_facts)
             && std::sync::Arc::ptr_eq(&self.resource_compositions, &other.resource_compositions)
             && std::sync::Arc::ptr_eq(&self.memory_loadable_facts, &other.memory_loadable_facts)
             && std::sync::Arc::ptr_eq(

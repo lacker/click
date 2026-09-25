@@ -1115,3 +1115,65 @@ fn decrement_contract_checks_nonnegative_and_equality_certificates() {
     verify_c0_sources(click_source, &[("decrement.c", c_source)])
         .expect("decrement arithmetic should search and check consistently");
 }
+
+/// A source tactic inside a checked branch arm, including the continuation
+/// that follows a `branch`, is its own source operation: the profiler must
+/// time it under its source site. Untimed, its work was reported as the
+/// function's shared verifier work, which made a smart `simp` look like
+/// kernel core cost.
+#[test]
+fn branch_continuation_tactics_are_timed_as_source_operations() {
+    let c_source = r#"
+        int32 pick(int32 a) {
+            int32 x;
+            if (a == 0) {
+                return 0;
+            }
+            x = a;
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "pick.c";
+
+        int32 pick(int32 a) {
+            requires 0 <= a;
+            requires a <= 10;
+            ensures result == a;
+        } by {
+            step();
+            branch {
+                then {
+                    execute();
+                    simp();
+                }
+                else {}
+            }
+            step();
+            have x == a by {
+                simp();
+            }
+            execute();
+            simp();
+        }
+    "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("pick.c", c_source)])
+    });
+    verified.expect("the branch-continuation proof should verify");
+    let timed = events
+        .iter()
+        .filter_map(|event| match event {
+            crate::instrumentation::VerificationEvent::TacticFinished { tactic, .. }
+                if tactic.claim == "pick.contract" =>
+            {
+                Some((tactic.tactic_name.as_str(), tactic.source_index))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        timed.contains(&("step", 4)) && timed.contains(&("have", 5)),
+        "the continuation's `step` and `have` must be timed at their source sites: {timed:?}"
+    );
+}

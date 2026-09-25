@@ -1549,7 +1549,19 @@ pub(in crate::surface::proof) fn finish_ordered_proof_units<'a>(
     arguments: &[CExpression],
     tactics: &[ProofTactic],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let mut verified = Vec::new();
+    // Every theorem the contexts issue shares these two copies. A theorem is
+    // issued per path and claim, and each used to carry its own copy of the
+    // grouped proof, so finishing cost the proof's size times the number of
+    // theorems.
+    let shared_function_block = std::sync::Arc::new(function_block.clone());
+    let shared_tactics: std::sync::Arc<[ProofTactic]> = std::sync::Arc::from(tactics);
+    let mut verified: Vec<VerifiedCTheorem> = Vec::new();
+    // The positions of `verified` by claim and by claim and theorem. A
+    // theorem already issued by another context equals one filed under its
+    // own claim and theorem, so a duplicate is found there instead of by
+    // comparing it with every theorem issued so far.
+    let mut verified_by_claim: BTreeMap<(bool, usize), Vec<usize>> = BTreeMap::new();
+    let mut verified_by_theorem: BTreeMap<(bool, usize, Theorem), Vec<usize>> = BTreeMap::new();
     let mut captured_paths = Vec::new();
     let mut context_count = 0;
     let mut claim_surface_builders: Vec<(VerifiedClaim, Vec<ProofCertificateBuilder>)> = Vec::new();
@@ -1580,7 +1592,7 @@ pub(in crate::surface::proof) fn finish_ordered_proof_units<'a>(
                     expansion_capture.as_deref_mut(),
                     proof,
                     source_path,
-                    function_block,
+                    &shared_function_block,
                     parsed_function,
                     claims,
                     require_explicit_closers,
@@ -1591,7 +1603,7 @@ pub(in crate::surface::proof) fn finish_ordered_proof_units<'a>(
                     function_environment,
                     function,
                     arguments,
-                    tactics,
+                    &shared_tactics,
                     &mut context_surface_builders,
                 )
             },
@@ -1606,9 +1618,18 @@ pub(in crate::surface::proof) fn finish_ordered_proof_units<'a>(
             }
         }
         for theorem in theorems {
-            if !verified.contains(&theorem) {
-                verified.push(theorem);
+            let claim_key = verified_claim_key(&theorem.claim);
+            let theorem_key = (claim_key.0, claim_key.1, theorem.theorem.clone());
+            let issued = verified_by_theorem.entry(theorem_key).or_default();
+            if issued.iter().any(|position| verified[*position] == theorem) {
+                continue;
             }
+            issued.push(verified.len());
+            verified_by_claim
+                .entry(claim_key)
+                .or_default()
+                .push(verified.len());
+            verified.push(theorem);
         }
         let path_finished_capture = path_had_deferred_capture
             && !result_before
@@ -1658,28 +1679,36 @@ pub(in crate::surface::proof) fn finish_ordered_proof_units<'a>(
                     } else {
                         synthesize_surface_alternatives(builders)
                     };
-                    for theorem in &mut verified {
+                    // The claim's record is admitted once and shared by each
+                    // of its theorems; admitting it per theorem cost the
+                    // record's size times the claim's paths.
+                    let mut admitted = None;
+                    for position in verified_by_claim
+                        .get(&verified_claim_key(&claim))
+                        .map(Vec::as_slice)
+                        .unwrap_or_default()
+                    {
+                        let theorem = &mut verified[*position];
                         if theorem.claim != claim {
                             continue;
                         }
-                        match &merged {
+                        let admitted = admitted.get_or_insert_with(|| match &merged {
                             // A merged record that is not a certificate blocks
                             // this claim's expansion; it never becomes one.
-                            Ok(steps) => match ProofCertificate::from_steps(steps.clone()) {
-                                Ok(certificate) => {
-                                    theorem.expanded_proof = Some(certificate);
-                                    theorem.expansion_blocker = None;
-                                }
-                                Err(error) => {
-                                    theorem.expanded_proof = None;
-                                    theorem.expansion_blocker = Some(error.message().to_string());
-                                }
-                            },
-                            Err(message) => {
+                            Ok(steps) => ProofCertificate::from_steps(steps.clone())
+                                .map_err(|error| error.message().to_string()),
+                            Err(message) => Err(format!(
+                                "could not merge the claim's surface record across branch contexts: {message}"
+                            )),
+                        });
+                        match admitted {
+                            Ok(certificate) => {
+                                theorem.expanded_proof = Some(certificate.clone());
+                                theorem.expansion_blocker = None;
+                            }
+                            Err(blocker) => {
                                 theorem.expanded_proof = None;
-                                theorem.expansion_blocker = Some(format!(
-                                    "could not merge the claim's surface record across branch contexts: {message}"
-                                ));
+                                theorem.expansion_blocker = Some(blocker.clone());
                             }
                         }
                     }
@@ -1711,4 +1740,12 @@ pub(in crate::surface::proof) fn finish_ordered_proof_units<'a>(
         );
     }
     Ok(verified)
+}
+
+/// A verified claim's kind and clause position: equal claims have equal keys.
+fn verified_claim_key(claim: &VerifiedClaim) -> (bool, usize) {
+    match claim {
+        VerifiedClaim::Ensure { index, .. } => (false, *index),
+        VerifiedClaim::ExceptionalEnsure { index, .. } => (true, *index),
+    }
 }
