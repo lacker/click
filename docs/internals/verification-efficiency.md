@@ -155,6 +155,10 @@ The complexity contract implies several design constraints:
   Kernel memory snapshots follow this: their maps are persistent B-trees
   with cached content hashes, so a store and the interning of its result are
   logarithmic in unrelated memory (see [Memory derivation DAG](memory-dag.md)).
+  A fact context's stated propositions are a persistent ordered set too:
+  lowering and planning clone a context and extend it by a fact at every
+  path, and a shared copy-on-write set made each extension copy every stated
+  proposition.
 - Propositions, terms, memories, functions, and environments used as cache
   keys need stable interned identities or cached content fingerprints. Cache
   lookup must not traverse the object whose computation it is intended to
@@ -284,6 +288,15 @@ explicit:
   attempt, so the memo changes a failing search's cost, never its outcome
   (`mdtests/simp_frame_failure_through_region_arena_is_prompt.md`, pinned
   below the default budget by the mdtest harness).
+- **Decide an overlap before searching for a separation.** A walk across a
+  call asks whether each cell it names is separate from the callee's write
+  set. A cell the write set contains, such as a field of an object that a
+  range spells through an alias (`arena + 16` against `x[4..5)` under
+  `arena == x`), is decided inside it by that one alias and the constant
+  displacement, before any range's separation search runs, and a call's
+  kept ranges are placed by the ranges spelled through the access's own
+  bases first, with each proved base equality to another kept range asked
+  once per fact set.
 - **Write-set fingerprints.** Call-havoc markers carry a representation-invariant
   fingerprint of their write set in the marker block size, so
   alpha-colliding claims whose same-named havocs wrote different shapes stay

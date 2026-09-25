@@ -136,6 +136,71 @@ thread_local! {
 pub(crate) fn clear_memory_resolution_memos() {
     RESOLUTION_QUERY_POSITIVE_MEMO.with(|memo| memo.borrow_mut().clear());
     RESOLUTION_QUERY_NEGATIVE_MEMO.with(|memo| memo.borrow_mut().clear());
+    KEPT_RANGE_BASE_EQUALITIES.with(|memo| memo.borrow_mut().clear());
+}
+
+/// One kept-range base-equality question: the unsalted content id of the
+/// fact set, the cell lookups in progress, the memory-DAG generation, the DAG
+/// scope modes, and the two bases.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct KeptRangeBaseEqualityKey {
+    assumptions: u64,
+    lookups: u64,
+    generation: u64,
+    bridging: bool,
+    explicit: bool,
+    access_base: Pointer,
+    range_base: Pointer,
+}
+
+thread_local! {
+    static KEPT_RANGE_BASE_EQUALITIES: std::cell::RefCell<
+        std::collections::HashMap<KeptRangeBaseEqualityKey, bool>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Whether one of an access's base spellings is proven equal to a kept
+/// range's base: [`pointers_proven_equal_for_memory_resolution`], asked once
+/// per fact set, memory-DAG generation, scope mode and set of cell lookups in
+/// progress.
+///
+/// A call havoc's kept ranges are asked about by every walk that crosses its
+/// edge, for every cell the walk names; the ambient resolution memo does not
+/// serve those walks (they run inside a cell lookup), so the same failing
+/// equality between a cell's base and a kept descriptor's base was proved
+/// afresh on each crossing. The key includes everything the answer depends
+/// on, and a negative answer that met a cycle cut or a limit is not kept, so
+/// the memo returns exactly what recomputing would.
+pub(in crate::kernel) fn kept_range_bases_proven_equal(
+    access_base: &Pointer,
+    range_base: &Pointer,
+    assumptions: &PureFactContext,
+) -> bool {
+    let key = KeptRangeBaseEqualityKey {
+        assumptions: crate::kernel::assumptions::unsalted_assumptions_memo_id(assumptions),
+        lookups: crate::kernel::resource_tracker::cell_source::memory_dag_cell_lookups_fingerprint(
+        ),
+        generation: crate::kernel::primitives::c_memory_derivation_generation(),
+        bridging: crate::kernel::api::extended_dag_bridging_active(),
+        explicit: crate::kernel::api::explicit_dag_check_active(),
+        access_base: access_base.clone(),
+        range_base: range_base.clone(),
+    };
+    if let Some(known) = KEPT_RANGE_BASE_EQUALITIES.with(|memo| memo.borrow().get(&key).copied()) {
+        return known;
+    }
+    let epoch_before = crate::kernel::assumptions::incomplete_reasoning_epoch();
+    let equal = pointers_proven_equal_for_memory_resolution(access_base, range_base, assumptions);
+    if equal || crate::kernel::assumptions::incomplete_reasoning_epoch() == epoch_before {
+        KEPT_RANGE_BASE_EQUALITIES.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.len() >= RESOLUTION_QUERY_MEMO_LIMIT {
+                memo.clear();
+            }
+            memo.insert(key, equal);
+        });
+    }
+    equal
 }
 
 pub(crate) fn clear_canonical_memory_cache() {

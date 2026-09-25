@@ -1298,57 +1298,79 @@ impl PureFactContext {
         bytes: u32,
     ) -> Option<&'a CMemoryRange> {
         let spellings = additive_base_spellings(pointer);
-        let mut candidates = Vec::new();
+        let mut spelled = Vec::new();
         for base in &spellings {
-            candidates.extend(
+            spelled.extend(
                 ranges
                     .owned_memory_members_with_base(base)
                     .map(|(_, range)| range),
             );
         }
+        // The ranges stated over one of the access's own spellings are
+        // placed first: they need no base equality, and a kept cell is
+        // almost always spelled through its own range's base. Only when none
+        // of them holds the access are the block's other kept ranges asked
+        // for a proved base equality, each question once per fact set
+        // (`kept_range_bases_proven_equal`).
+        let mut placement = Some(placement);
+        let mut placed: Option<PureFactContext> = None;
+        let mut placement_built = false;
+        let mut holding = |candidates: Vec<&'a CMemoryRange>| -> Option<&'a CMemoryRange> {
+            if candidates.is_empty() {
+                return None;
+            }
+            if !placement_built {
+                placed = placement.take().and_then(|placement| placement());
+                placement_built = true;
+            }
+            let context = placed.as_ref().unwrap_or(self);
+            candidates
+                .into_iter()
+                .find(|range| context.kept_range_holds_access(range, pointer, bytes))
+        };
+        if let Some(range) = holding(spelled.clone()) {
+            return Some(range);
+        }
+        let mut aliased = Vec::new();
         for range in ranges.owned_memory_members_in_block(&pointer.block) {
-            if candidates.contains(&range) || spellings.contains(range.base()) {
+            if spelled.contains(&range) || spellings.contains(range.base()) {
                 continue;
             }
             if spellings.iter().any(|base| {
-                crate::kernel::reasoning::pointers_proven_equal_for_memory_resolution(
-                    base,
-                    range.base(),
-                    self,
-                )
+                crate::kernel::reasoning::kept_range_bases_proven_equal(base, range.base(), self)
             }) {
-                candidates.push(range);
+                aliased.push(range);
             }
         }
-        if candidates.is_empty() {
-            return None;
+        holding(aliased)
+    }
+
+    /// Whether every byte of an access of `bytes` at `pointer` lies in the
+    /// kept `range`, decided in this context: the placement step of
+    /// [`Self::kept_range_holding_access`].
+    fn kept_range_holds_access(&self, range: &CMemoryRange, pointer: &Pointer, bytes: u32) -> bool {
+        let width = range.element_width();
+        if width == 0 {
+            return false;
         }
-        let placement = placement();
-        let context = placement.as_ref().unwrap_or(self);
-        candidates.into_iter().find(|range| {
-            let width = range.element_width();
-            if width == 0 {
-                return false;
-            }
-            if context.access_within_memory_range(pointer, bytes, range) {
-                return true;
-            }
-            let contains = |pointer: &Pointer| {
-                context.pointer_in_range_with_width(
-                    pointer,
-                    range.base(),
-                    range.start(),
-                    range.end(),
-                    width,
-                )
-            };
-            let elements = bytes.max(1).div_ceil(width);
-            contains(pointer)
-                && (elements == 1
-                    || contains(
-                        &pointer.offset_by_elements(Bitvector32Term::Constant(elements - 1), width),
-                    ))
-        })
+        if self.access_within_memory_range(pointer, bytes, range) {
+            return true;
+        }
+        let contains = |pointer: &Pointer| {
+            self.pointer_in_range_with_width(
+                pointer,
+                range.base(),
+                range.start(),
+                range.end(),
+                width,
+            )
+        };
+        let elements = bytes.max(1).div_ceil(width);
+        contains(pointer)
+            && (elements == 1
+                || contains(
+                    &pointer.offset_by_elements(Bitvector32Term::Constant(elements - 1), width),
+                ))
     }
 
     /// Whether every byte of an access of `bytes` at `pointer` lies in
@@ -2281,16 +2303,42 @@ impl PureFactContext {
         if pointer_in_memory_range_shallow_with_facts(pointer, range, self) {
             return true;
         }
-        if !self.pointers_proven_equal_ignoring_memory_separation(pointer, range.base()) {
-            return false;
+        if self.pointers_proven_equal_ignoring_memory_separation(pointer, range.base()) {
+            let (Some(start), Some(end)) = (
+                signed_bitvector_constant(range.start()),
+                signed_bitvector_constant(range.end()),
+            ) else {
+                return true;
+            };
+            return start <= 0 && 0 < end && range.element_width() > 0;
         }
-        let (Some(start), Some(end)) = (
+        // A field of an object the range is spelled through another alias of:
+        // `arena + 16` against `x[4..5)` of width 4 under `arena == x`. The
+        // displacement is a constant, so the element it lands on is decided
+        // without a search, and a cell inside the range is never separate
+        // from it.
+        let PointerOffsetTerm::Add(object, displacement) = &pointer.offset else {
+            return false;
+        };
+        let (PointerOffsetTerm::Constant(displacement), Some(start), Some(end)) = (
+            displacement.as_ref(),
             signed_bitvector_constant(range.start()),
             signed_bitvector_constant(range.end()),
         ) else {
-            return true;
+            return false;
         };
-        start <= 0 && 0 < end && range.element_width() > 0
+        let width = i64::from(range.element_width());
+        if width == 0 || displacement % width != 0 {
+            return false;
+        }
+        let element = displacement / width;
+        let object = Pointer {
+            block: pointer.block.clone(),
+            offset: object.as_ref().clone(),
+        };
+        start <= element
+            && element < end
+            && self.pointers_proven_equal_ignoring_memory_separation(&object, range.base())
     }
 
     pub(in crate::kernel) fn resource_separation_conflicts_with_equalities(
@@ -2871,6 +2919,9 @@ impl PureFactContext {
         if self.ranges_proven_disjoint_from_pointer(ranges, pointer) {
             return true;
         }
+        if self.pointer_overlaps_one_of_ranges(ranges, pointer) {
+            return false;
+        }
         let expanded = self.frame_frontier_compositions(memory);
         if expanded.is_empty() {
             return false;
@@ -2903,9 +2954,23 @@ impl PureFactContext {
         ranges: &[CMemoryRange],
         pointer: &Pointer,
     ) -> bool {
-        ranges
-            .iter()
-            .all(|range| self.range_proven_disjoint_from_pointer(range, pointer))
+        // A range the pointer is decided to lie in is never separate from
+        // it; find one before any range's separation search runs, since
+        // `all` would otherwise search the ranges ahead of it first.
+        !self.pointer_overlaps_one_of_ranges(ranges, pointer)
+            && ranges
+                .iter()
+                .all(|range| self.range_proven_disjoint_from_pointer(range, pointer))
+    }
+
+    /// Whether the pointer is decided to lie inside one of `ranges` by the
+    /// cheap overlap rules of [`Self::pointer_overlaps_range_after_path_equality`].
+    /// Linear in the ranges, with no separation search.
+    fn pointer_overlaps_one_of_ranges(&self, ranges: &[CMemoryRange], pointer: &Pointer) -> bool {
+        ranges.iter().any(|range| {
+            !range.base.blocks_proven_distinct(pointer)
+                && self.pointer_overlaps_range_after_path_equality(pointer, range)
+        })
     }
 
     pub(in crate::kernel) fn ranges_directly_disjoint_from_pointer(

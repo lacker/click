@@ -3421,7 +3421,7 @@ impl PureFactContext {
     }
 
     pub(super) fn clear_proposition_facts(&mut self) {
-        self.prop_facts = std::sync::Arc::new(BTreeSet::new());
+        self.prop_facts = imbl::OrdSet::new();
         self.rebuild_stated_proposition_index();
         self.function_contract_facts = std::sync::Arc::new(BTreeMap::new());
         self.disjunction_facts = std::sync::Arc::new(BTreeSet::new());
@@ -3441,7 +3441,13 @@ impl PureFactContext {
     }
 
     pub(super) fn retain_proposition_facts(&mut self, keep: impl FnMut(&Proposition) -> bool) {
-        std::sync::Arc::make_mut(&mut self.prop_facts).retain(keep);
+        let mut keep = keep;
+        self.prop_facts = self
+            .prop_facts
+            .iter()
+            .filter(|proposition| keep(proposition))
+            .cloned()
+            .collect();
         self.rebuild_stated_proposition_index();
         self.disjunction_facts = std::sync::Arc::new(
             self.prop_facts
@@ -4042,8 +4048,10 @@ impl PureFactContext {
             }
             return;
         }
-        if std::sync::Arc::make_mut(&mut self.prop_facts)
+        if self
+            .prop_facts
             .insert(crate::kernel::clone_proposition_iteratively(&proposition))
+            .is_none()
         {
             self.adjust_stated_proposition_index(&proposition, true);
             if matches!(proposition, Proposition::Or(_, _)) {
@@ -4063,7 +4071,7 @@ impl PureFactContext {
     }
 
     pub(super) fn remove_proposition_fact(&mut self, proposition: &Proposition) {
-        if std::sync::Arc::make_mut(&mut self.prop_facts).remove(proposition) {
+        if self.prop_facts.remove(proposition).is_some() {
             self.adjust_stated_proposition_index(proposition, false);
             if matches!(proposition, Proposition::Or(_, _)) {
                 std::sync::Arc::make_mut(&mut self.disjunction_facts).remove(proposition);
@@ -4141,7 +4149,7 @@ impl PureFactContext {
                 &self.memory_load_condition_facts,
                 &other.memory_load_condition_facts,
             )
-            && std::sync::Arc::ptr_eq(&self.prop_facts, &other.prop_facts)
+            && self.prop_facts.ptr_eq(&other.prop_facts)
             && self
                 .stated_proposition_index
                 .shares_storage_with(&other.stated_proposition_index)

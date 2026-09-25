@@ -7268,7 +7268,10 @@ pub struct PureFactContext {
     pub(super) bitvector_equality_facts: std::sync::Arc<
         std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>>,
     >,
-    pub(super) prop_facts: std::sync::Arc<BTreeSet<Proposition>>,
+    /// A persistent set: a context is cloned and extended by one fact at
+    /// each lowering path and planning probe, so an extension must copy
+    /// only a search path, not the whole set.
+    pub(super) prop_facts: imbl::OrdSet<Proposition>,
     /// Alpha/load identity index for propositions that may be stated as a
     /// call requirement.  The key retains memory epochs and canonicalizes
     /// only binders; the persistent buckets keep updates local to one key.

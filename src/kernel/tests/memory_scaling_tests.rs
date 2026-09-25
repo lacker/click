@@ -1162,3 +1162,104 @@ fn symbolic_range_membership_ignores_unrelated_index_bounds() {
         "symbolic membership scanned unrelated bounds: {samples:?}"
     );
 }
+
+/// A kept range whose base is not one of the access's own spellings is
+/// related to it by a proved base equality, asked once per fact set: every
+/// walk across the call asks the same question about the same kept range,
+/// and the repeats cost a keyed lookup, however many facts the proof holds.
+#[test]
+fn a_kept_range_base_equality_is_proved_once_per_fact_set() {
+    const KEPT: u64 = 6_000_000;
+    const ACCESS: u64 = 6_100_000;
+    let mut repeats = Vec::new();
+    for size in HEAP_SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let mut assumptions = PureFactContext::new();
+        for index in 0..size as u64 {
+            assumptions = assumptions.assume_proposition(Proposition::ConditionIs(
+                ConditionTerm::pointer_equal(
+                    external_object(2 * index + 1),
+                    external_object(2 * index + 2),
+                ),
+                true,
+            ));
+        }
+        let kept = CallKeptRanges::new(
+            ResourceContext::new()
+                .unchecked_with_facts([CResourceFact::own_memory(external_range(KEPT, 0, 4))]),
+            Vec::new(),
+        );
+        let access = external_field(ACCESS, 8);
+        assert!(
+            !kept.holds_access(&access, 4, &assumptions),
+            "nothing relates the access's object to the kept one"
+        );
+        let (held, work) = crate::instrumentation::measure_deterministic_work(|| {
+            kept.holds_access(&access, 4, &assumptions)
+        });
+        assert!(!held);
+        repeats.push((size, work));
+    }
+    assert_constant_plus_log_growth("asking a kept range's base equality again", &repeats, 16.0);
+}
+
+/// A cell of an object the queried range is spelled through an alias of is
+/// inside the range, so it is never separate from it. `arena + 16` against
+/// `x[4..5)` of four-byte elements under `arena == x` is decided from the
+/// constant displacement and the one alias fact, before any separation fact
+/// is visited: a call havoc lending an arena state asks this about every
+/// arena field on every walk across it.
+#[test]
+fn an_aliased_field_inside_a_range_is_not_searched_for_a_separation() {
+    const OBJECT: u64 = 5_000_000;
+    const ALIAS: u64 = 5_100_000;
+    let mut samples = Vec::new();
+    for size in HEAP_SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let mut assumptions = PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(external_object(OBJECT), external_object(ALIAS)),
+            true,
+        ));
+        for index in 0..size as u64 {
+            assumptions = assumptions.assume_proposition(Proposition::CResourceSeparate {
+                left: CResource::Memory(external_range(2 * index + 1, 0, 4)),
+                right: CResource::Memory(external_range(2 * index + 2, 0, 4)),
+            });
+        }
+        let ranges = [external_range(ALIAS, 4, 5)];
+        let pointer = external_field(OBJECT, 16);
+        let (disjoint, work) = crate::instrumentation::measure_deterministic_work(|| {
+            assumptions.ranges_proven_disjoint_from_pointer(&ranges, &pointer)
+        });
+        assert!(
+            !disjoint,
+            "a field inside the range is not separate from it"
+        );
+        samples.push((size, work));
+        let outside = external_field(OBJECT, 20);
+        assert!(
+            !assumptions.pointer_overlaps_range_after_path_equality(&outside, &ranges[0]),
+            "the next field lies past the range"
+        );
+    }
+    assert_constant_plus_log_growth("an aliased field inside a queried range", &samples, 16.0);
+}
+
+/// A fact context's stated propositions are a persistent set: a clone shares
+/// it, and extending the clone leaves the original's set untouched.
+#[test]
+fn extending_a_cloned_context_leaves_the_original_propositions() {
+    let separation = |index: u64| Proposition::CResourceSeparate {
+        left: CResource::Memory(external_range(2 * index + 1, 0, 4)),
+        right: CResource::Memory(external_range(2 * index + 2, 0, 4)),
+    };
+    let original = (0..64).fold(PureFactContext::new(), |context, index| {
+        context.assume_proposition(separation(index))
+    });
+    let clone = original.clone();
+    assert!(clone.prop_facts.ptr_eq(&original.prop_facts));
+    let extended = clone.assume_proposition(separation(64));
+    assert_eq!(original.prop_facts.len(), 64);
+    assert_eq!(extended.prop_facts.len(), 65);
+    assert!(!original.prop_facts.contains(&separation(64)));
+}
