@@ -41,10 +41,10 @@ void caller(int32 *v, int32 i, int32 n) {
     have zeros(at(entry, v), 0, i) == zeros(at(entry, v), 0, i) by { normalize(); }
     have i <= n by { arithmetic() using { i < n; } }
     step();
-    have zeros(at(entry, v), 0, i) == zeros(v, 0, i) by {
+    have zeros(v, 0, i) == zeros(at(entry, v), 0, i) by {
         transport(
             zeros(at(entry, v), 0, i) == zeros(at(entry, v), 0, i),
-            zeros(at(entry, v), 0, i) == zeros(v, 0, i)
+            zeros(v, 0, i) == zeros(at(entry, v), 0, i)
         ) using {
             zeros(at(entry, v), 0, i) == zeros(at(entry, v), 0, i);
             i <= n;

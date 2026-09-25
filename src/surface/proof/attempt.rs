@@ -55,6 +55,11 @@ thread_local! {
     static SEARCH_SCOPES: RefCell<Vec<SearchFailureFrame>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Whether any smart search scope is open on this thread.
+pub(super) fn inside_search_scope() -> bool {
+    SEARCH_SCOPES.with(|scopes| !scopes.borrow().is_empty())
+}
+
 /// Starts a bounded transactional search-diagnostic scope. A successful scope
 /// discards its candidate explanations; a failed nested scope contributes its
 /// bounded representatives to the enclosing search.

@@ -525,6 +525,13 @@ pub(crate) fn with_closure_failure_memo<T>(body: impl FnOnce() -> T) -> T {
     body()
 }
 
+/// Whether a smart closure (`with_closure_failure_memo`) is running on this
+/// thread. Proof authority that is reserved for explicit source steps reads
+/// this to stay out of smart search.
+pub(crate) fn closure_failure_memo_active() -> bool {
+    CLOSURE_DISTINCTNESS_FAILURES.with(|failures| failures.borrow().is_some())
+}
+
 fn closure_distinctness_failure_key(
     left: &Pointer,
     right: &Pointer,

@@ -10,7 +10,10 @@ below; automatic reuse (step 3) still does. Kernel pointer offsets are exact
 sums of sign-extended scaled `int32` terms, so the framing rule needs no
 representable-extent bound: it reads the written offset exactly and asks one
 exact order fact (`end <= j` or `j < start`), or a stated separation with
-exact membership facts. Regressions: the kernel tests in
+exact membership facts. The rule is not consulted inside a smart search
+scope or closure, so `simp`'s snapshot transport closure does not reuse it;
+the existing `mdtests/array_fact_does_not_survive_*.md` fixtures pin that.
+Regressions: the kernel tests in
 `src/kernel/fold_read_summary/tests.rs` (every unsupported read pattern,
 byte-width boundary overlap, aliasing, lifetime and call edges, session
 poisoning, and deterministic scaling over body size, application count,
