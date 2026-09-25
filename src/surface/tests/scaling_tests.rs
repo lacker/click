@@ -3238,3 +3238,142 @@ fn counter_call_chain_ensure_lowering_stays_flat_per_call() {
     );
     assert_near_linear_scaling("counter call chain", &totals);
 }
+
+/// A copy loop whose preservation `simp` reaches a fact transport the
+/// explicit-premise planner cannot view: the element just stored is named
+/// `dst[k]` under `k == i - 1`, so `old(src[k]) == old(src[k])` does not
+/// transport to it until `k` is rewritten. Each unrelated `requires` joins
+/// the planner's candidate list. The planner decides the complete list
+/// before it grows a prefix, so the failing plan costs the same number of
+/// checks (six) at every size. It used to check once per growing prefix,
+/// about 15k units per unrelated fact in each preservation attempt; the
+/// remaining linear cost of lowering and offering a candidate is about 1k.
+fn copy_loop_with_unrelated_requirements(fact_count: usize) -> String {
+    let unrelated = (0..fact_count)
+        .map(|index| format!("    requires length != {};\n", index + 100_000))
+        .collect::<String>();
+    format!(
+        "verifying \"transport_copy.c\";\n\
+         \n\
+         int32 transport_copy(int32 dst[], int32 src[], int32 length) {{\n    \
+             requires 0 <= length;\n    \
+             requires ((uint32)length) <= 1073741823u32;\n    \
+             owns dst[0..length];\n    \
+             views src[0..length];\n    \
+             requires separate(memory(dst[0..length]), memory(src[0..length]));\n\
+         {unrelated}    \
+             ensures result == length;\n\
+         }} by {{\n    \
+             step();\n    \
+             step();\n    \
+             loop {{\n        \
+                 decreases length - i;\n        \
+                 invariant 0 <= i;\n        \
+                 invariant i <= length;\n        \
+                 invariant forall (k: int32) {{ 0 <= k and k < i implies dst[k] == old(src[k]) }};\n        \
+                 owns dst[0..length];\n        \
+                 initialize by {{\n            \
+                     have 0 <= i by {{\n                normalize();\n            }}\n            \
+                     have i <= length by {{\n                assumption();\n            }}\n            \
+                     have forall (k: int32) {{ 0 <= k and k < i implies dst[k] == old(src[k]) }} by {{\n                \
+                         intro();\n                \
+                         intro();\n                \
+                         extract(0 <= k);\n                \
+                         extract(k < i);\n                \
+                         have i == 0 by {{\n                    normalize();\n                }}\n                \
+                         have not (0 <= k) by {{\n                    \
+                             arithmetic() using {{\n                        k < i;\n                        i == 0;\n                    }}\n                \
+                         }}\n                \
+                         contradiction(0 <= k);\n            \
+                     }}\n        \
+                 }}\n        \
+                 preserve by {{\n            step();\n            step();\n            simp();\n        }}\n    \
+             }}\n    \
+             have i == length by {{\n        \
+                 apply(int32_le_and_not_lt_implies_eq(at(loop(0).exit, i), at(loop(0).exit, length))) using {{\n            \
+                     at(loop(0).exit, i) <= at(loop(0).exit, length);\n            \
+                     not at(loop(0).exit, i) < at(loop(0).exit, length);\n        \
+                 }}\n        \
+                 assumption();\n    \
+             }}\n    \
+             step();\n    \
+             simp();\n\
+         }}\n"
+    )
+}
+
+#[test]
+fn failing_fact_transport_plan_ignores_unrelated_candidates() {
+    const COPY_SOURCE: &str = "int32 transport_copy(int32 dst[], int32 src[], int32 length) {\n    \
+                               int32 i;\n    i = 0;\n    while (i < length) {\n        \
+                               dst[i] = src[i];\n        i = i + 1;\n    }\n    return i;\n}\n";
+    let mut samples = Vec::new();
+    let mut plan_checks = Vec::new();
+    let mut simp_work = Vec::new();
+    for size in [6, 12, 24, 48] {
+        let click_source = copy_loop_with_unrelated_requirements(size);
+        let ((verified, work), events) = crate::instrumentation::collect(|| {
+            crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&click_source, &[("transport_copy.c", COPY_SOURCE)])
+            })
+        });
+        verified.unwrap_or_else(|error| {
+            panic!(
+                "size {size} fact-transport scaling fixture failed: {}",
+                error.message()
+            )
+        });
+        let mut named_work = BTreeMap::<String, usize>::new();
+        let mut checks = 0;
+        let mut simp = 0;
+        for event in events {
+            match event {
+                crate::instrumentation::VerificationEvent::OperationFinished {
+                    name, work, ..
+                } => {
+                    if name == "explicit fact transport: premise check" {
+                        checks += 1;
+                    }
+                    *named_work.entry(format!("operation `{name}`")).or_default() += work;
+                }
+                crate::instrumentation::VerificationEvent::TacticFinished {
+                    tactic, work, ..
+                } => {
+                    if tactic.tactic_name == "simp" {
+                        simp += work;
+                    }
+                    *named_work
+                        .entry(format!("{} tactic `{}`", tactic.class, tactic.tactic_name))
+                        .or_default() += work;
+                }
+                _ => {}
+            }
+        }
+        plan_checks.push(checks);
+        simp_work.push(simp);
+        samples.push(ScalingSample {
+            size,
+            work,
+            named_work,
+        });
+    }
+    assert!(
+        plan_checks[0] > 0,
+        "the preservation simp never planned a fact transport: {plan_checks:?}"
+    );
+    assert!(
+        plan_checks.iter().all(|checks| *checks == plan_checks[0]),
+        "fact-transport planning checked once per unrelated candidate: {plan_checks:?}; \
+         named work: {}",
+        named_growth_diagnostic(&samples)
+    );
+    // Each unrelated requirement is still read, lowered, and offered as a
+    // candidate, which is linear; a check per candidate cost an order of
+    // magnitude more per fact.
+    let per_fact = (simp_work[3] - simp_work[0]) / (48 - 6);
+    assert!(
+        per_fact <= 4_000,
+        "simp work grew by {per_fact} units per unrelated requirement: {simp_work:?}"
+    );
+    assert_near_linear_scaling("fact-transport plan unrelated candidates", &samples);
+}
