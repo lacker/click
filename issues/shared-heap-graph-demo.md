@@ -1,6 +1,6 @@
 # P1: Shared heap graph and resource invariants
 
-## Sequential lifecycles verified; explicit access authority remains
+## Sequential lifecycles and exclusive opening verified; mutex authority remains
 
 The target semantics are recorded in
 [Resource invariants, counting, and synchronization](../docs/internals/resource-invariants.md).
@@ -14,7 +14,7 @@ records a checked return-resource exchange. It preserves checked partition
 evidence across a consuming call so a later disjoint store can transport the
 population invariant. The tautological-ensure reducer now passes in the
 normal gate, as do regressions rejecting broken call-entry invariants and
-wrong count updates. Explicit access-authority representation remains open.
+wrong count updates. Sequential opening now suspends access independently of membership.
 
 The release expansion blocker is fixed. Every completed path now applies
 its checked return-resource exchange, including a simple proof of a consuming
@@ -47,8 +47,11 @@ complete callers. Proved argument aliases now use the same ledger key for
 Count observations and transitions, including final removal. All eight claims
 pass all 42 expansion/reverification sites. No C changes were needed.
 
-The next design work is explicit access authority and suspension/restoration
-for sequential, lock-protected, and atomic protocols. Membership alone still
+Sequential scopes now carry checked exclusive access and restoration identities.
+Nested/aliased opens and population-based callbacks during an open scope are
+rejected; explicit body-piece helper calls remain supported. The next design
+work is composing mutex guards with declared resources, then shared and atomic
+access protocols. Membership alone still
 must not authorize concurrent access. The sequential result is not a mutex or
 concurrent-reclamation proof.
 

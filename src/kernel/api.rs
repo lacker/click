@@ -5123,6 +5123,9 @@ pub(crate) fn counted_populations_definitionally_equal(
     definitions: &[CCompositeResourceDefinition],
     assumptions: &PureFactContext,
 ) -> bool {
+    if left.population_access != right.population_access {
+        return false;
+    }
     let is_observable = |population: &CCountedPopulation| {
         population.family_observation_marker
             || definitions.iter().any(|definition| {

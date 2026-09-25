@@ -1,4 +1,4 @@
-# A restored population body may cross a call boundary
+# Restoring a value does not restore suspended access authority
 
 ```c filename=reopen.c
 struct object { int32 refs; };
@@ -20,12 +20,13 @@ void restored(struct object* obj) {
 } by {
     open(reference(obj)) {
         step();
+        step();
+        execute();
     }
-    execute();
     simp();
 }
 ```
 
 ```expect
-pass
+fail: population body is open
 ```

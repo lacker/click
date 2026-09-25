@@ -2885,6 +2885,7 @@ fn execute_verified_function_applications_with_suspension(
             }
         };
         drop(population_timing);
+        post_state.population_access = transition_state.population_access.clone();
         post_state.counted_populations = transition_state.counted_populations;
         for obligation in &population_transition.postcondition_obligations {
             // The kernel issues `CVerifiedFunctionRule` only after exact
@@ -3253,6 +3254,7 @@ fn execute_verified_function_applications_with_suspension(
         return_state = return_state.with_loan_view_bindings(return_view_bindings);
         return_state.thread_ledger = post_state.thread_ledger.clone();
         return_state.mutex_ledger = post_state.mutex_ledger.clone();
+        return_state.population_access = post_state.population_access.clone();
         return_state.counted_populations = post_state.counted_populations;
         return_state.next_local_frame = post_state.next_local_frame;
         return_state.next_local_lifetime = post_state.next_local_lifetime;
@@ -3743,6 +3745,22 @@ fn prepare_verified_function_call<'a>(
             })
             .map(|input| input.fact.clone()),
     );
+    for input in transfer
+        .borrowed_inputs
+        .iter()
+        .chain(&transfer.consumed_inputs)
+    {
+        if let CResource::Composite { name, arguments } | CResource::Token { name, arguments } =
+            input.fact.resource()
+            && caller_state.population_body_is_open(name, arguments, &path_assumptions)
+        {
+            return Ok(Err(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    "population body is open; pass explicit body pieces instead of population membership".into(),
+                )), facts, obligations, loan_evidence: empty_checked_loan_evidence_sequence(),
+            }));
+        }
+    }
     let Some(population_facts) = evaluate_resource_population_fact_propositions(
         &population_inputs,
         contract_interface.composite_resource_definitions(),
@@ -10767,6 +10785,7 @@ pub(super) fn bind_c_function_arguments(
         .with_enclosing_frame_holds_locals(
             caller_state.enclosing_frame_holds_locals() || !caller_state.locals.is_empty(),
         );
+    callee_state.population_access = caller_state.population_access.clone();
     callee_state.counted_populations = caller_state.counted_populations.clone();
     // A function entry is a lexical/frame rebind, not an authority reset.
     // Preserve an already-active candidate loan through calls whose resource
@@ -10881,6 +10900,7 @@ fn bind_c_contract_arguments(
         .with_enclosing_frame_holds_locals(
             caller_state.enclosing_frame_holds_locals() || !caller_state.locals.is_empty(),
         );
+    callee_state.population_access = caller_state.population_access.clone();
     callee_state.counted_populations = caller_state.counted_populations.clone();
     callee_state.loan_ledger = caller_state.loan_ledger.clone();
     callee_state.loan_participant = caller_state.loan_participant;
@@ -18528,6 +18548,7 @@ pub(super) fn function_return_resources_definitionally_established(
     let assumptions = assumptions_with_propositions(assumptions, &post_resource_facts);
     let mut post_state = callee_state.with_memory(exit_memory);
     post_state.resources = post_resources;
+    post_state.population_access = return_state.population_access.clone();
     post_state.counted_populations = return_state.counted_populations.clone();
     if function.return_type() != CType::Void {
         post_state
@@ -22387,6 +22408,7 @@ fn function_outcome_from_body_with_resource_transfer(
     return_state = return_state.with_loan_view_bindings(return_view_bindings);
     return_state.thread_ledger = state.thread_ledger.clone();
     return_state.mutex_ledger = state.mutex_ledger.clone();
+    return_state.population_access = state.population_access.clone();
     return_state.counted_populations = state.counted_populations;
     return_state.next_local_frame = state.next_local_frame;
     return_state.next_local_lifetime = state.next_local_lifetime;
@@ -22805,6 +22827,7 @@ pub(super) fn function_outcome_from_body(
             }
             caller_state = caller_state
                 .with_resource_context(return_resources.cloned().unwrap_or(state.resources));
+            caller_state.population_access = state.population_access.clone();
             caller_state.counted_populations = state.counted_populations;
             caller_state.next_local_frame = state.next_local_frame;
             caller_state.next_local_lifetime = state.next_local_lifetime;
@@ -22846,6 +22869,7 @@ pub(super) fn function_outcome_from_body(
             }
             caller_state = caller_state
                 .with_resource_context(return_resources.cloned().unwrap_or(state.resources));
+            caller_state.population_access = state.population_access.clone();
             caller_state.counted_populations = state.counted_populations;
             caller_state.next_local_frame = state.next_local_frame;
             caller_state.next_local_lifetime = state.next_local_lifetime;

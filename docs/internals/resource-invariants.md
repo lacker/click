@@ -195,13 +195,28 @@ profiling, and audit must agree at each completed example checkpoint.
 
 ## Implemented checkpoint and remaining work
 
-The first checkpoint enforces the counted body's invariant before a modular
-call may observe it, including a call made inside `open`. Restoring the
-invariant permits a sequential helper call; this is a checked boundary, not
-independent authority for a second observer. Ordinary folded resources are
-unchanged: their bodies remain inside their heads. The explicit access token
-and suspension model described above is still future work, particularly for
-nested access and concurrency.
+Sequential `open` now records suspended access separately from membership.
+Each opening has a fresh restoration identity and an indexed active-scope
+set. A second open or finalizing unfold of the same population, including a
+proved pointer alias, is rejected. Scopes close in order only after the body
+resources and assertions are restored; closing recovers the exact preceding
+authority state. Branch copies represent alternative states, not additional
+owners. The kernel checks each selected access transition alongside the
+resource rewrite, and state comparisons retain the access state.
+
+A modular call cannot obtain the suspended body through a population clause,
+even if the current memory happens to satisfy its invariant. Close the scope
+before calling such a helper, or pass explicit owned/borrowed body pieces.
+The positive and hostile `population_call_*`, `population_open_calls_explicit_piece`,
+and nested-open fixtures cover these alternatives. Deterministic multi-size
+checks bound the scope index updates logarithmically and restoration by a
+constant-time return to the preceding authority state. Resource artifacts
+use a new semantics version so earlier certificates cannot bypass this rule.
+
+This checkpoint supplies sequential suspension and restoration. Mutex guards
+are not yet ordinary resource ingredients; live-use and lifecycle authority,
+conditional guard ownership, same-thread guard return, and shared interference
+remain later work. It does not add concurrent population access.
 
 The surface's return-resource adapter now checks the obligations returned by
 the kernel before marking its transition checked. Calls involving counted
@@ -259,7 +274,7 @@ aggregated aliases still undergo the count-overflow check. This changes
 accounting, not the requirement to restore every remaining population's body.
 
 All eight claims pass the complete 42-site expansion and independent
-reverification audit. Explicit access-authority representation and mutex
+reverification audit. Composable mutex access authority and mutex
 integration remain later work; this checkpoint proves sequential lifecycles,
 not concurrent reclamation.
 

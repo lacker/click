@@ -1,4 +1,4 @@
-# A restored population body may cross a call boundary
+# An open body may lend an explicit piece to a helper
 
 ```c filename=reopen.c
 struct object { int32 refs; };
@@ -13,15 +13,16 @@ resource reference(obj: struct object*) {
 }
 verifying "reopen.c";
 void inspect(struct object* obj) {
-    owns reference(obj);
+    owns obj->refs;
 } by { execute(); simp(); }
 void restored(struct object* obj) {
     owns reference(obj);
 } by {
     open(reference(obj)) {
         step();
+        step();
+        execute();
     }
-    execute();
     simp();
 }
 ```

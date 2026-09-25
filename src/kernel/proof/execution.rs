@@ -736,10 +736,26 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
                 "the rewritten composite definition is not registered on the function".to_string()
             })?;
 
+        let crate::kernel::CResource::Composite { arguments, .. } = selected.resource() else {
+            unreachable!()
+        };
+        let access_key = before_state
+            .counted_population_proven_equal(name, arguments, assumptions)
+            .map(|(name, arguments, _)| (name, arguments))
+            .unwrap_or_else(|| (name.clone(), arguments.clone()));
+        if !before_state
+            .population_access
+            .checks_rewrite(&after_state.population_access, &access_key)
+        {
+            return Err("resource rewrite changed another population's access authority".into());
+        }
+        let mut population_after = after_state.clone();
+        population_after.population_access = before_state.population_access.clone();
         let mut concrete_after = after_state.clone();
         concrete_after.set_memory(before_state.memory.clone());
         concrete_after = concrete_after.with_resource_context(before_state.resources.clone());
         concrete_after.counted_populations = before_state.counted_populations.clone();
+        concrete_after.population_access = before_state.population_access.clone();
         if concrete_after != *before_state
             || !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
                 before_state.memory(),
@@ -748,7 +764,7 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
             )
             || !crate::kernel::api::counted_populations_definitionally_equal(
                 before_state,
-                after_state,
+                &population_after,
                 function.composite_resource_definitions(),
                 assumptions,
             )

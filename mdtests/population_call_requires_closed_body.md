@@ -28,5 +28,5 @@ void broken(struct object* obj) {
 ```
 
 ```expect
-fail: population invariant at call entry
+fail: population body is open
 ```

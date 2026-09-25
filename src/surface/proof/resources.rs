@@ -3078,6 +3078,9 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
             Bitvector32Term::Constant(1),
         ),
     };
+    if state.population_body_is_open(&population_name, &population_arguments, &assumptions) {
+        return Err(ClickError::new("population body is already open"));
+    }
     if access == ResourceBodyAccess::Finalize {
         let count = population_count;
         let final_unit = Proposition::ConditionIs(
@@ -3527,7 +3530,11 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     // it does not itself perform the function contract's logical consumption.
     // Keep the population identity/count so execution certification and the
     // eventual resource effect can check that transition exactly.
-    let _ = (population_name, population_arguments);
+    if access == ResourceBodyAccess::Open {
+        state = state
+            .open_population_body(population_name, population_arguments)
+            .map_err(ClickError::new)?;
+    }
 
     Ok(UnfoldedCompositeResource {
         state,
@@ -4179,6 +4186,26 @@ fn fold_composite_resources_on_outcome_with_facts(
                         post_state.memory(),
                     );
                 post_state = post_state.with_resource_context(resources);
+            }
+        }
+        if matches!(closure, ResourceBodyClosure::CloseOpen { .. }) {
+            let selected = lower_resource_clause_at_state_with_result(
+                resource,
+                parameters,
+                arguments,
+                &post_state,
+                &value,
+            )?;
+            if let CResource::Composite { name, arguments } | CResource::Token { name, arguments } =
+                selected.resource()
+            {
+                let (name, arguments) = post_state
+                    .counted_population_proven_equal(name, arguments, pure_facts.assumptions())
+                    .map(|(name, arguments, _)| (name, arguments))
+                    .unwrap_or_else(|| (name.clone(), arguments.clone()));
+                post_state = post_state
+                    .close_population_body(name, arguments)
+                    .map_err(ClickError::new)?;
             }
         }
         outcome = CFunctionOutcome::Return {

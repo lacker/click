@@ -4839,6 +4839,7 @@ pub struct CState {
     /// only authority safe in either outcome; this record selects the exact
     /// checked delta when a C condition establishes the returned status.
     pub(super) pending_thread_create: Option<super::threads::PendingThreadCreate>,
+    pub(super) population_access: super::population_access::PopulationAccess,
     pub(super) counted_populations: std::sync::Arc<Vec<CCountedPopulation>>,
     /// Monotonic identity source for stack frames created by nested calls.
     /// Keeping this in the symbolic state makes frame identities deterministic

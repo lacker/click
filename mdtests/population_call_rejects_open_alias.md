@@ -1,9 +1,9 @@
-# A restored population body may cross a call boundary
+# Restoring a value does not restore suspended access authority
 
 ```c filename=reopen.c
 struct object { int32 refs; };
 void inspect(struct object* obj) { }
-void restored(struct object* obj) { obj->refs = obj->refs; inspect(obj); }
+void restored(struct object* obj, struct object* alias) { obj->refs = obj->refs; inspect(alias); }
 ```
 
 ```click
@@ -15,17 +15,19 @@ verifying "reopen.c";
 void inspect(struct object* obj) {
     owns reference(obj);
 } by { execute(); simp(); }
-void restored(struct object* obj) {
+void restored(struct object* obj, struct object* alias) {
     owns reference(obj);
+    requires alias == obj;
 } by {
     open(reference(obj)) {
         step();
+        step();
+        execute();
     }
-    execute();
     simp();
 }
 ```
 
 ```expect
-pass
+fail: population body is open
 ```
