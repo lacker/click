@@ -265,6 +265,7 @@ fn unsupported_proof_shape(
     // driver topology to users.
     let _ = take_driver_declines();
     let depth_declined = take_region_depth_decline();
+    let short_of_exit = take_short_of_exit_decline();
     if let Some(error) = proof_region_nesting_bound_error(proof_label, tactics) {
         return error;
     }
@@ -274,6 +275,14 @@ fn unsupported_proof_shape(
         // continuing arm. Say so, rather than calling the shape unsupported.
         return ClickError::new(format!(
             "`{proof_label}`: this proof nests execution regions more deeply than the checked proof drivers support, at most {MAX_CHECKED_PROOF_REGION_NESTING}. When one arm of a `branch` or call outcome returns and the other continues, or a proof `if` case continues past its arm, the proof after that split runs inside the continuing arm, one region deeper. Move an inner `match`, `branch`, or proof `if` into a contracted helper, or prove part of it in a `have`."
+        ));
+    }
+    if short_of_exit {
+        // The written shape is supported; what stopped the drivers is a path
+        // the proof left open. Say which, rather than calling the shape
+        // unimplemented, since the fix is in the proof script.
+        return ClickError::new(format!(
+            "`{proof_label}`: a `branch` or proof `if` split the path, one arm returned, and the tactics after the split ran out before the continuing arm reached the function exit, so that path is still open. The proof after the split runs inside the continuing arm; finish it there (for example with `execute();` and `simp();`), or check the continuation's last tactics."
         ));
     }
     let claim_description = if claim_labels.len() == 1 {
@@ -460,6 +469,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
     // then satisfied, must not colour this claim's diagnostic.
     let _ = take_driver_declines();
     let _ = take_region_depth_decline();
+    let _ = take_short_of_exit_decline();
     let structural = try_check_structural_function_proof(
         &initial,
         &pure_facts,
@@ -696,6 +706,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
     // then satisfied, must not colour this claim's diagnostic.
     let _ = take_driver_declines();
     let _ = take_region_depth_decline();
+    let _ = take_short_of_exit_decline();
     let structural = try_check_structural_function_proof(
         &initial,
         &pure_facts,

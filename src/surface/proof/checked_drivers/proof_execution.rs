@@ -8,6 +8,9 @@ thread_local! {
     /// Whether a driver declined because the proof's regions nest past the
     /// checked bound, so the terminal diagnostic can name that bound.
     static REGION_DEPTH_DECLINED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether a driver declined because the arm that continues past a split
+    /// ran out of tactics before the function exits.
+    static SHORT_OF_EXIT_DECLINED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The deepest region depth the structural driver entered, for the
     /// depth-accounting regression tests.
     #[cfg(test)]
@@ -20,6 +23,22 @@ fn decline<T>() -> Result<Option<T>, ClickError> {
     let location = std::panic::Location::caller();
     DRIVER_DECLINES.with(|declines| declines.borrow_mut().push(location));
     Ok(None)
+}
+
+/// Declines because the arm that continues past a split, a `branch` or a
+/// proof `if` whose other arm returned, ran out of tactics before the
+/// function exits. The reason is recorded so the terminal diagnostic says
+/// the path was left open instead of calling the shape unimplemented.
+#[track_caller]
+fn decline_short_of_exit<T>() -> Result<Option<T>, ClickError> {
+    SHORT_OF_EXIT_DECLINED.with(|declined| declined.set(true));
+    decline()
+}
+
+/// Takes whether any driver declined because a continuing arm stopped short
+/// of the function exit since the last take, and clears it.
+pub(in crate::surface::proof) fn take_short_of_exit_decline() -> bool {
+    SHORT_OF_EXIT_DECLINED.with(|declined| declined.replace(false))
 }
 
 /// Declines because the proof nests execution regions past
@@ -1451,7 +1470,7 @@ fn try_check_structural_function_proof_inner<'a>(
                         consumed_continuation = true;
                     }
                     if !next.is_at_function_exit() {
-                        return decline();
+                        return decline_short_of_exit();
                     }
                     advanced = next;
                 }
@@ -3004,7 +3023,7 @@ fn advance_focused_execution_region_with_branch_continuation<'a>(
                         consumed_continuation = true;
                     }
                     if !next.is_at_function_exit() {
-                        return decline();
+                        return decline_short_of_exit();
                     }
                     advanced = next;
                 }
@@ -3195,7 +3214,7 @@ fn advance_checked_branch_arms<'a>(
                 return decline();
             };
             if !next.is_at_function_exit() {
-                return decline();
+                return decline_short_of_exit();
             }
             advanced = next;
             consumed_continuation = true;
@@ -3526,7 +3545,7 @@ fn advance_checked_open_scope<'a>(
                 consumed_continuation = true;
             }
             if !next.is_at_function_exit() {
-                return decline();
+                return decline_short_of_exit();
             }
             advanced = next;
         }
