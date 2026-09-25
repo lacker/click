@@ -4761,6 +4761,25 @@ pub(super) fn prepare_loop_top_state(
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
     }
+    // A declaring loop's body holds only its declared resources and views of
+    // the rest, and a store needs ownership, so memory the enclosing function
+    // keeps owning is memory the loop cannot write, whatever its footprint
+    // covers. The footprint over-approximates what the loop owns (an
+    // iterated fact counts every element it could ever hold), so a cell the
+    // function owns can sit inside it without being writable; the partition
+    // at entry is what keeps it apart.
+    let withheld = if resource_specs.is_empty() || summaries.is_empty() {
+        None
+    } else {
+        loop_declared_and_withheld_resources(entry_state, resource_specs, assumptions, budget)?
+            .ok()
+            .map(|(_, withheld)| withheld)
+    };
+    let kept_by_function = |pointer: &Pointer, bytes: u32| {
+        withheld.as_ref().is_some_and(|withheld| {
+            assumptions.access_held_by_owned_member(withheld, pointer, bytes)
+        })
+    };
     for (pointer, value) in entry_state.memory().cells.iter() {
         if pointer.block.starts_with("local:") {
             continue;
@@ -4770,7 +4789,10 @@ pub(super) fn prepare_loop_top_state(
                 return false;
             };
             assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
-        });
+        }) || kept_by_function(
+            pointer,
+            crate::kernel::reasoning::cell_access_byte_width(value),
+        );
         if is_stable {
             std::sync::Arc::make_mut(&mut framed_memory.cells)
                 .insert(pointer.clone(), value.clone());
@@ -4937,16 +4959,16 @@ fn with_selected_arm_views(
 /// fails at the store for want of a resource, and the loop's havoc footprint
 /// is the memory it owns. A loop that declares views of its own keeps no
 /// ambient read authority either.
-fn loop_body_resource_context(
+/// A declaring loop's resources as its clauses evaluate at `entry_state`,
+/// and what the enclosing function keeps: the entry context with those
+/// resources taken out. The body sees the kept part only as views, so it
+/// can write none of it. `Err` names a clause the function does not hold.
+fn loop_declared_and_withheld_resources(
     entry_state: &CState,
-    top_state: &CState,
     resource_specs: &[CResourceSpec],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<(CState, Vec<String>)> {
-    if resource_specs.is_empty() {
-        return Ok((top_state.clone(), Vec::new()));
-    }
+) -> ExecutionResult<Result<(ResourceContext, ResourceContext), String>> {
     let declared = match evaluate_function_resource_context(
         entry_state,
         resource_specs,
@@ -4959,26 +4981,42 @@ fn loop_body_resource_context(
     )? {
         Ok(declared) => declared,
         Err(error) => {
-            return Ok((
-                top_state.clone(),
-                vec![format!(
-                    "loop declares a resource the enclosing function does not hold: {error:?}"
-                )],
-            ));
+            return Ok(Err(format!(
+                "loop declares a resource the enclosing function does not hold: {error:?}"
+            )));
         }
     };
     let mut withheld = entry_state.resources().clone();
     for fact in declared.facts() {
         let Some(remaining) = withheld.clone().without_fact(fact, assumptions) else {
-            return Ok((
-                top_state.clone(),
-                vec![format!(
-                    "loop declares a resource the enclosing function does not hold: {fact:?}"
-                )],
-            ));
+            return Ok(Err(format!(
+                "loop declares a resource the enclosing function does not hold: {fact:?}"
+            )));
         };
         withheld = remaining;
     }
+    Ok(Ok((declared, withheld)))
+}
+
+fn loop_body_resource_context(
+    entry_state: &CState,
+    top_state: &CState,
+    resource_specs: &[CResourceSpec],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<(CState, Vec<String>)> {
+    if resource_specs.is_empty() {
+        return Ok((top_state.clone(), Vec::new()));
+    }
+    let (declared, withheld) = match loop_declared_and_withheld_resources(
+        entry_state,
+        resource_specs,
+        assumptions,
+        budget,
+    )? {
+        Ok(split) => split,
+        Err(failure) => return Ok((top_state.clone(), vec![failure])),
+    };
     let mut body_resources = declared.clone();
     if !resource_specs.iter().any(resource_spec_is_view) {
         for fact in withheld.facts() {

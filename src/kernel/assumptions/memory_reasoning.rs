@@ -1156,6 +1156,23 @@ impl PureFactContext {
         true
     }
 
+    /// Whether one owned memory member of `resources` holds every byte of an
+    /// access of `bytes` at `pointer`, found through the composition's base
+    /// index under the access's additive base spellings, as
+    /// [`Self::owned_store_footprint`] finds a store's member.
+    pub(in crate::kernel) fn access_held_by_owned_member(
+        &self,
+        resources: &ResourceContext,
+        pointer: &Pointer,
+        bytes: u32,
+    ) -> bool {
+        additive_base_spellings(pointer).iter().any(|base| {
+            resources
+                .owned_memory_members_with_base(base)
+                .any(|(_, range)| self.access_within_memory_range(pointer, bytes, range))
+        })
+    }
+
     /// Whether every byte of an access of `bytes` at `pointer` lies in
     /// `range`: its first element and, for an access wider than one element,
     /// its last. Element membership places `pointer` exactly on an element

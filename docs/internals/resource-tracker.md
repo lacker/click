@@ -1185,6 +1185,14 @@ permitted stores or a transition that drops the fact:
   a recursive or witness-bearing body -- and a recursive composite the
   expansion leaves folded still contribute nothing, so a loop or call that
   holds one is still summarized as not writing its memory. That gap is open.
+  The span over-approximates what a loop can write, so the loop head does
+  not havoc a cell the enclosing function keeps owning outside the loop's
+  declared resources: the body holds that cell only as a view and a store
+  needs ownership, so the partition at the loop entry keeps it apart from
+  anything the loop can come to hold
+  (`mdtests/loop_keeps_cells_the_function_keeps_owning.md`,
+  `mdtests/loop_body_cannot_write_function_owned_cells.md`). The kept cells
+  are found through the kept context's base index, one lookup per cell.
 
 ### Queries
 

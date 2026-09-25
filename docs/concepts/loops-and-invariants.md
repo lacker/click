@@ -458,6 +458,15 @@ arena->occupied[k])`, with its viewability stated just before the loop so the
 loop-entry member has a premise to cite
 (`mdtests/loop_frame_at_loop_entry_through_folded_state.md`).
 
+A loop that declares a resource havocs what the resource may own, and an
+iterated clause counts every element it could hold, so the footprint can
+cover memory the loop never holds. A cell the function keeps owning outside
+the loop's declarations is kept at the head anyway: the body sees it only as
+a view and cannot store to it. A descriptor the C condition reads, such as
+`span->end` beside a window over a map with iterated ownership, therefore
+reads the same value at every iteration
+(`mdtests/loop_keeps_cells_the_function_keeps_owning.md`).
+
 ## Modeled instances in loops
 
 A loop header can also name a resource instance, with the binder syntax a

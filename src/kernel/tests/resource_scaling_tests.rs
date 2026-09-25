@@ -638,6 +638,45 @@ fn nested_composite_body_views_are_linear_in_the_child_body() {
     }
 }
 
+/// Whether a loop head keeps a cell because the function keeps owning it is
+/// one lookup of the cell's base in the kept context's base index: the
+/// unrelated ranges the function also keeps add no work.
+#[test]
+fn a_kept_cell_is_placed_without_visiting_unrelated_ranges() {
+    // Objects reached through parameters share one block and differ by a
+    // symbolic base, as the arena's descriptors do.
+    let object = |identity: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(identity)), 4),
+    };
+    let field = |identity: u64, bytes: i64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Add(
+            Box::new(object(identity).offset),
+            Box::new(PointerOffsetTerm::Constant(bytes)),
+        ),
+    };
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let kept = ResourceContext::new().unchecked_with_facts(
+            (0..size)
+                .map(|index| owned_range(object(index as u64 + 1), 0, 16))
+                .chain([owned_range(object(TARGET_HEAP), 0, 16)]),
+        );
+        let assumptions = PureFactContext::new();
+        let (held, work) = crate::instrumentation::measure_deterministic_work(|| {
+            assumptions.access_held_by_owned_member(&kept, &field(TARGET_HEAP, 8), 4)
+        });
+        assert!(held, "the kept range holds the cell");
+        let (outside, _) = crate::instrumentation::measure_deterministic_work(|| {
+            assumptions.access_held_by_owned_member(&kept, &field(TARGET_HEAP, 64), 4)
+        });
+        assert!(!outside, "a cell past the kept range is not held");
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("kept cell placement", &samples, 4.0);
+}
+
 fn variable_range(base: Pointer, start: Bitvector32Term, end: Bitvector32Term) -> CResourceFact {
     CResourceFact::own_memory(CMemoryRange::new(base, start, end))
 }
