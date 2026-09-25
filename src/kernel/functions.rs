@@ -14540,10 +14540,9 @@ fn counted_population_quantities(
         let has_declared_body = definitions.iter().any(|definition| {
             definition.name() == name && definition_has_population_wide_body(definition)
         });
-        let population_is_observed = tracked_state.observes_population_family(name)
-            || tracked_state
-                .counted_population_proven_equal(name, arguments, assumptions)
-                .is_some();
+        let tracked = tracked_state.counted_population_proven_equal(name, arguments, assumptions);
+        let population_is_observed =
+            tracked_state.observes_population_family(name) || tracked.is_some();
         if !has_declared_body && !population_is_observed {
             continue;
         }
@@ -14556,7 +14555,14 @@ fn counted_population_quantities(
         // `-294967296`; `population_quantity_sum` forms the total only where
         // it is exact, and a contract whose own clauses do not add up is
         // refused rather than summarized by a smaller number than they say.
-        match quantities.entry((name.clone(), arguments.clone())) {
+        // Count observations and resource transfer already recognize checked
+        // aliases. Aggregate the transition under that same ledger identity:
+        // consuming ref(parent->kid) must update ref(kid), not initialize a
+        // second population and leave the original body active after free.
+        let key = tracked
+            .map(|(name, arguments, _)| (name, arguments))
+            .unwrap_or_else(|| (name.clone(), arguments.clone()));
+        match quantities.entry(key) {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 entry.insert(quantity.clone());
             }
@@ -14570,6 +14576,86 @@ fn counted_population_quantities(
         }
     }
     Ok(quantities)
+}
+
+#[cfg(test)]
+mod counted_population_alias_tests {
+    use super::*;
+
+    #[test]
+    fn quantities_share_a_tracked_key_only_with_checked_argument_equality() {
+        let child = Pointer::symbolic(Variable(7_310_001));
+        let alias = Pointer::symbolic(Variable(7_310_002));
+        let other = Pointer::symbolic(Variable(7_310_003));
+        let args = |pointer: &Pointer| -> ResourceArguments {
+            vec![CValue::pointer(pointer.clone()).into()].into()
+        };
+        let state = CState::new()
+            .with_counted_population("ref", args(&child), Bitvector32Term::Constant(3))
+            .with_counted_population("ref", args(&other), Bitvector32Term::Constant(5));
+        let resources = ResourceContext::new().unchecked_with_facts(vec![
+            CResourceFact::own_composite("ref".into(), vec![CValue::pointer(child.clone())]),
+            CResourceFact::own_composite("ref".into(), vec![CValue::pointer(alias.clone())]),
+            CResourceFact::own_composite("ref".into(), vec![CValue::pointer(other.clone())]),
+        ]);
+        let definitions = vec![CCompositeResourceDefinition::counted_population(
+            "ref",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            Vec::new(),
+            Vec::new(),
+        )];
+        let unknown = counted_population_quantities(
+            &resources,
+            &definitions,
+            &state,
+            &PureFactContext::new(),
+        )
+        .expect("three independent argument spellings");
+        assert_eq!(unknown.len(), 3);
+        let assumptions = PureFactContext::new()
+            .assume_condition(ConditionTerm::pointer_equal(alias, child.clone()), true);
+        let known = counted_population_quantities(&resources, &definitions, &state, &assumptions)
+            .expect("checked aliases aggregate before computing the transition delta");
+        assert_eq!(known.len(), 2);
+        assert_eq!(
+            known.get(&("ref".into(), args(&child))),
+            Some(&Bitvector32Term::Constant(2))
+        );
+        assert_eq!(
+            known.get(&("ref".into(), args(&other))),
+            Some(&Bitvector32Term::Constant(1))
+        );
+        let oversized = ResourceContext::new().unchecked_with_facts(vec![
+            CResourceFact::own_quantity(
+                CResource::Composite {
+                    name: "ref".into(),
+                    arguments: args(&child),
+                },
+                Bitvector32Term::Constant(2_000_000_000),
+            ),
+            CResourceFact::own_quantity(
+                CResource::Composite {
+                    name: "ref".into(),
+                    arguments: args(&Pointer::symbolic(Variable(7_310_002))),
+                },
+                Bitvector32Term::Constant(2_000_000_000),
+            ),
+        ]);
+        assert!(
+            counted_population_quantities(&oversized, &definitions, &state, &assumptions,).is_err(),
+            "equal aliases must not bypass the total's overflow check"
+        );
+        // Resolving the clauses neither changes nor duplicates ledger totals.
+        assert_eq!(
+            state.counted_population("ref", &args(&child)),
+            Some(&Bitvector32Term::Constant(3))
+        );
+        assert_eq!(
+            state.counted_population("ref", &args(&other)),
+            Some(&Bitvector32Term::Constant(5))
+        );
+    }
 }
 
 /// Why a population's clauses could not be added up.

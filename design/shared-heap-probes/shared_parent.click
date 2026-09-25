@@ -152,3 +152,105 @@ void parent_detach(struct parent* p) {
         },
     }
 }
+
+int32 run_first_destroyed(int32 payload) {
+    ensures result == -1 or result == payload;
+} by {
+    step();
+    step();
+    branch { then { step(); simp(); } else {} }
+    step();
+    step();
+    step();
+    branch { then { step(); step(); simp(); } else {} }
+    step();
+    step();
+    branch { then { step(); step(); step(); simp(); } else {} }
+    let { link: first_link } = step(parent_attach(first, kid), {});
+    let { link: second_link } = step(parent_attach(second, kid), {});
+    step(child_release(kid), {});
+    have first->kid == kid by { simp(); }
+    have kid->payload == payload by { simp(); }
+    have count(child_ref(first->kid)) > 1 by { simp(); }
+    have first->kid->payload == payload by { rewrite(first->kid == kid); simp(); }
+    mark detaching;
+    step(parent_detach(first), { link: first_link });
+    have at(detaching, first->kid) == kid by { assumption(); }
+    have at(detaching, first->kid)->payload == at(detaching, first->kid->payload) by { simp(); }
+    have at(detaching, first->kid->payload) == payload by { assumption(); }
+    have at(detaching, first->kid)->payload == payload by {
+        simp() using {
+            at(detaching, first->kid)->payload == at(detaching, first->kid->payload);
+            at(detaching, first->kid->payload) == payload;
+        }
+    }
+    have kid->payload == payload by {
+        have kid == at(detaching, first->kid) by { simp() using { at(detaching, first->kid) == kid; } }
+        rewrite(kid == at(detaching, first->kid));
+        assumption();
+    }
+    step();
+    have second->kid == kid by { simp(); }
+    have second->kid->payload == payload by { rewrite(second->kid == kid); simp(); }
+    mark reading;
+    step(parent_read_payload(second), { link: second_link });
+    have at(reading, second->kid->payload) == payload by { assumption(); }
+    have out == at(reading, second->kid->payload) by { simp(); }
+    have out == payload by { simp(); }
+    step(parent_detach(second), { link: second_link });
+    step();
+    step();
+    step();
+    simp();
+}
+
+int32 run_second_destroyed(int32 payload) {
+    ensures result == -1 or result == payload;
+} by {
+    step();
+    step();
+    branch { then { step(); simp(); } else {} }
+    step();
+    step();
+    step();
+    branch { then { step(); step(); simp(); } else {} }
+    step();
+    step();
+    branch { then { step(); step(); step(); simp(); } else {} }
+    let { link: first_link } = step(parent_attach(first, kid), {});
+    let { link: second_link } = step(parent_attach(second, kid), {});
+    step(child_release(kid), {});
+    have second->kid == kid by { simp(); }
+    have kid->payload == payload by { simp(); }
+    have count(child_ref(second->kid)) > 1 by { simp(); }
+    have second->kid->payload == payload by { rewrite(second->kid == kid); simp(); }
+    mark detaching;
+    step(parent_detach(second), { link: second_link });
+    have at(detaching, second->kid) == kid by { assumption(); }
+    have at(detaching, second->kid)->payload == at(detaching, second->kid->payload) by { simp(); }
+    have at(detaching, second->kid->payload) == payload by { assumption(); }
+    have at(detaching, second->kid)->payload == payload by {
+        simp() using {
+            at(detaching, second->kid)->payload == at(detaching, second->kid->payload);
+            at(detaching, second->kid->payload) == payload;
+        }
+    }
+    have kid->payload == payload by {
+        have kid == at(detaching, second->kid) by { simp() using { at(detaching, second->kid) == kid; } }
+        rewrite(kid == at(detaching, second->kid));
+        assumption();
+    }
+    step();
+    have first->kid == kid by { simp(); }
+    have first->kid->payload == payload by { rewrite(first->kid == kid); simp(); }
+    mark reading;
+    step(parent_read_payload(first), { link: first_link });
+    have at(reading, first->kid->payload) == payload by { assumption(); }
+    have out == at(reading, first->kid->payload) by { simp(); }
+    have out == payload by { simp(); }
+    step(parent_detach(first), { link: first_link });
+    step();
+    step();
+    step();
+    simp();
+}

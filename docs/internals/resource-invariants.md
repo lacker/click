@@ -232,31 +232,38 @@ pointer can target a different allocation. Known stored pointers keep their
 actual target. `heap_pointer_field_keeps_target_identity.md` and its negative
 counterpart check a modular store/read boundary; the kernel regression covers
 both logical and checked typed reads. This repairs a pointer-identity boundary
-encountered while proving the caller; it does not complete payload transport.
+encountered while proving the caller.
 
 The attachment contract now exports `p->kid == kid` as well as the abstract
 `ParentLink::Linked(kid)` state. A caller can retain this pointer identity at a
-named snapshot and establish the detach contract's count guard. The frontier
+named snapshot and establish the detach contract's count guard. The lifecycle
 regression checks that both the recorded identity and conditional payload
 preservation are available after detach. Neither pointer equality nor a
 membership count grants access to the body.
 
-The complete shared-parent callers remain unfinished.
-`shared_heap_population_payload_frontier.md` preserves the unchanged C and a
-complete first-removal caller proof that now proves `out == payload` and the
-pure return claim. Pointer rewriting uses a registered load's observed
-execution snapshot rather than its projected identity snapshot, retaining the
-history needed to connect the equal addresses. The focused
-`rewrite_heap_alias_after_modular_call.md` regression passes; its negative
-counterpart rejects an overwritten payload. The remaining caller failure is
-resource certification: a `child_ref` initialization obligation is still
-requested at final return after both detaches and parent frees.
-Finish both caller proofs before claiming the sequential migration complete
-or proceeding to shared mutex integration. No mutex runtime or concurrent
-reclamation rule changes in this checkpoint.
+Both complete shared-parent callers now verify against the unchanged C.
+`shared_heap_population_lifecycles.md` covers both parent destruction orders,
+allocation failures, the surviving parent's payload, and final reclamation.
+Pointer rewriting uses a registered load's observed execution snapshot rather
+than its projected identity snapshot, retaining the history needed to connect
+equal addresses. The focused `rewrite_heap_alias_after_modular_call.md`
+regression passes; its negative counterpart rejects an overwritten payload.
 
-All six shared-parent helper claims pass the complete 18-site expansion
-and independent-reverification audit. Path completion performs the checked
+Population transitions now resolve their resource arguments to the same
+checked ledger identity as Count observations. Previously, consuming
+`child_ref(parent->kid)` could create/remove an alias entry while leaving
+`child_ref(kid)` active, so certification demanded its initialization after
+free. Quantities are aggregated under the proved identity before calculating
+the transition delta. Unproved aliases and distinct children remain separate;
+aggregated aliases still undergo the count-overflow check. This changes
+accounting, not the requirement to restore every remaining population's body.
+
+All eight claims pass the complete 42-site expansion and independent
+reverification audit. Explicit access-authority representation and mutex
+integration remain later work; this checkpoint proves sequential lifecycles,
+not concurrent reclamation.
+
+Path completion performs the checked
 return-resource exchange after open bodies and deferred invariants have been
 restored, even when simple tactics close every pure claim and no resource is
 returned. This removes the dependence on a final `simp()` to discharge the

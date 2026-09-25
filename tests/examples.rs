@@ -36,7 +36,7 @@ const QUARANTINED: &[(&str, &str)] = &[(
 const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[];
 
 #[test]
-fn frozen_shared_heap_helpers_verify() {
+fn frozen_shared_heap_lifecycles_verify() {
     let project = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("design")
         .join("shared-heap-probes");

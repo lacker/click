@@ -1,14 +1,10 @@
-# Shared-parent final cleanup remains a certification frontier
+# Shared-parent lifecycles preserve the payload and reclaim the final child
 
-The frozen C and complete first-removal caller now prove the surviving
-parent's `out == payload` and finish the pure return claim. Explicit pointer
-rewrites use the observed load snapshot, retaining the modular payload
-preservation facts across detach and read. Keep the C fixed when repairing
-this proof/contract boundary.
-
-Certification still rejects a `child_ref` initialization obligation at final
-return after both parent detaches and frees. This fixture is not a verified
-lifecycle example: the pure proof and resource certification must both pass.
+The unchanged C exercises both destruction orders, all allocation failures,
+the surviving parent's payload read, and final reclamation. Count observations
+and transitions resolve proved aliases to the same population ledger entry.
+The final detach removes that entry rather than leaving a stale body invariant
+for certification to demand after free.
 
 ```c filename=shared_parent.c
 struct child {
@@ -316,8 +312,59 @@ int32 run_first_destroyed(int32 payload) {
     step();
     simp();
 }
+
+int32 run_second_destroyed(int32 payload) {
+    ensures result == -1 or result == payload;
+} by {
+    step();
+    step();
+    branch { then { step(); simp(); } else {} }
+    step();
+    step();
+    step();
+    branch { then { step(); step(); simp(); } else {} }
+    step();
+    step();
+    branch { then { step(); step(); step(); simp(); } else {} }
+    let { link: first_link } = step(parent_attach(first, kid), {});
+    let { link: second_link } = step(parent_attach(second, kid), {});
+    step(child_release(kid), {});
+    have second->kid == kid by { simp(); }
+    have kid->payload == payload by { simp(); }
+    have count(child_ref(second->kid)) > 1 by { simp(); }
+    have second->kid->payload == payload by { rewrite(second->kid == kid); simp(); }
+    mark detaching;
+    step(parent_detach(second), { link: second_link });
+    have at(detaching, second->kid) == kid by { assumption(); }
+    have at(detaching, second->kid)->payload == at(detaching, second->kid->payload) by { simp(); }
+    have at(detaching, second->kid->payload) == payload by { assumption(); }
+    have at(detaching, second->kid)->payload == payload by {
+        simp() using {
+            at(detaching, second->kid)->payload == at(detaching, second->kid->payload);
+            at(detaching, second->kid->payload) == payload;
+        }
+    }
+    have kid->payload == payload by {
+        have kid == at(detaching, second->kid) by { simp() using { at(detaching, second->kid) == kid; } }
+        rewrite(kid == at(detaching, second->kid));
+        assumption();
+    }
+    step();
+    have first->kid == kid by { simp(); }
+    have first->kid->payload == payload by { rewrite(first->kid == kid); simp(); }
+    mark reading;
+    step(parent_read_payload(first), { link: first_link });
+    have at(reading, first->kid->payload) == payload by { assumption(); }
+    have out == at(reading, first->kid->payload) by { simp(); }
+    have out == payload by { simp(); }
+    step(parent_detach(first), { link: first_link });
+    step();
+    step();
+    step();
+    simp();
+}
 ```
 
 ```expect
-fail: could not prove `fact defined(obj->refs);` of resource `child_ref` at return from `run_first_destroyed`
+pass
 ```

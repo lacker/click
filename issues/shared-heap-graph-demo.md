@@ -1,6 +1,6 @@
 # P1: Shared heap graph and resource invariants
 
-## Design chosen; next task: complete sequential caller observations
+## Sequential lifecycles verified; explicit access authority remains
 
 The target semantics are recorded in
 [Resource invariants, counting, and synchronization](../docs/internals/resource-invariants.md).
@@ -39,14 +39,18 @@ known stored pointer retains its actual target. This prevents a parent's
 child-pointer field from being structurally separated from the child merely
 because the parent and child are different allocations. The focused positive
 and negative `heap_pointer_field_*` fixtures cover modular stores; the full
-caller frontier below remains open.
+caller proofs below now verify.
 
-The next caller frontier is payload/alias transport across detach and read.
-`mdtests/shared_heap_population_payload_frontier.md` embeds the frozen C,
-strengthened helpers, and a complete first-removal caller script. Verification
-reaches `have out == payload` and fails promptly there. Complete that proof
-and the reverse order without changing C; do not treat logical value equality
-as initialization or count membership as access authority.
+The payload bridge and final population accounting are fixed.
+`mdtests/shared_heap_population_lifecycles.md` embeds the frozen C and both
+complete callers. Proved argument aliases now use the same ledger key for
+Count observations and transitions, including final removal. All eight claims
+pass all 42 expansion/reverification sites. No C changes were needed.
+
+The next design work is explicit access authority and suspension/restoration
+for sequential, lock-protected, and atomic protocols. Membership alone still
+must not authorize concurrent access. The sequential result is not a mutex or
+concurrent-reclamation proof.
 
 ## Frozen program and current evidence
 
@@ -56,11 +60,9 @@ parents sharing one child, one branch-on-count `child_release`, both parent
 removal orders, allocation-failure cleanup, a read through the surviving
 parent, and exact final deallocation. Do not reshape this C to suit the proof.
 [`shared_parent.click`](../design/shared-heap-probes/shared_parent.click) verifies
-all six modular helper bodies against those bytes. The first-removal caller
-proof now establishes `out == payload`, both detaches, parent frees, and the
-pure return claim. Certification still requests a `child_ref` initialization
-obligation at final return. The complete lifecycle remains an expected-failure
-regression in the normal gate, rather than a verified example.
+all six modular helper bodies and both complete caller lifecycles against
+those bytes, including the payload claim and final resource certification.
+The positive lifecycle fixture runs in the normal gate.
 
 The certification reducer adds only
 `ensures old(p->kid) == old(p->kid);` to `parent_detach`. It previously lost
