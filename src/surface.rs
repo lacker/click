@@ -988,6 +988,10 @@ impl std::fmt::Display for CallBinderTransport {
                 write!(f, "{}: {}", binding.binder, binding.instance)?;
             }
             write!(f, " }}")?;
+        } else if !self.produced.is_empty() || self.result.is_some() {
+            // A `let` output binding is parsed only with a binder map, so a
+            // call that lends no instance keeps its empty map.
+            write!(f, ", {{}}")?;
         }
         write!(f, ")")
     }

@@ -579,8 +579,256 @@ fn expand_declared_resource_tactic(
         tactic @ (ProofTactic::Both(_) | ProofTactic::CloseInvariantsBy(_)) => {
             expand_declared_resource_tactic_with_plain_scripts(tactic, resource_definitions)
         }
+        ProofTactic::ArithmeticCertificate(certificate) => Ok(ProofTactic::ArithmeticCertificate(
+            expand_declared_resource_certificate(certificate, resource_definitions)?,
+        )),
         tactic => Ok(tactic),
     }
+}
+
+/// An explicit arithmetic certificate names resource fields in its premises,
+/// definedness terms, and stated results exactly as the tactic `arithmetic()`
+/// it expands does, so they are resolved against the declared resources the
+/// same way: an expanded certificate over a field such as `r.start` lowers
+/// its definedness premise as the smart tactic's own premise did.
+#[inline(never)]
+fn expand_declared_resource_certificate(
+    certificate: ArithmeticCertificate,
+    resource_definitions: &DeclaredResourceScope,
+) -> Result<ArithmeticCertificate, ClickError> {
+    let proposition =
+        |proposition| expand_declared_resource_proposition(proposition, resource_definitions);
+    let expression =
+        |expression| expand_declared_resource_expression(expression, resource_definitions);
+    let family = match certificate.family {
+        ArithmeticCertificateFamily::Integer(integer) => {
+            ArithmeticCertificateFamily::Integer(IntegerCertificate {
+                nodes: integer
+                    .nodes
+                    .into_iter()
+                    .map(|node| {
+                        Ok(match node {
+                            IntegerCertificateNode::Premise {
+                                index,
+                                proposition: premise,
+                                result,
+                            } => IntegerCertificateNode::Premise {
+                                index,
+                                proposition: proposition(premise)?,
+                                result: proposition(result)?,
+                            },
+                            IntegerCertificateNode::Scale {
+                                source,
+                                coefficient,
+                                result,
+                            } => IntegerCertificateNode::Scale {
+                                source,
+                                coefficient: expression(coefficient)?,
+                                result: proposition(result)?,
+                            },
+                            IntegerCertificateNode::Add {
+                                left,
+                                right,
+                                result,
+                            } => IntegerCertificateNode::Add {
+                                left,
+                                right,
+                                result: proposition(result)?,
+                            },
+                            IntegerCertificateNode::EqualityToLessEqual {
+                                source,
+                                reverse,
+                                result,
+                            } => IntegerCertificateNode::EqualityToLessEqual {
+                                source,
+                                reverse,
+                                result: proposition(result)?,
+                            },
+                            IntegerCertificateNode::EqualityFromBounds {
+                                lower,
+                                upper,
+                                result,
+                            } => IntegerCertificateNode::EqualityFromBounds {
+                                lower,
+                                upper,
+                                result: proposition(result)?,
+                            },
+                            IntegerCertificateNode::Trivial { result } => {
+                                IntegerCertificateNode::Trivial {
+                                    result: proposition(result)?,
+                                }
+                            }
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ClickError>>()?,
+                conclusion: integer.conclusion,
+            })
+        }
+        ArithmeticCertificateFamily::SignedInt32(signed) => {
+            ArithmeticCertificateFamily::SignedInt32(SignedInt32Certificate {
+                nodes: signed
+                    .nodes
+                    .into_iter()
+                    .map(|node| expand_declared_resource_signed_step(node, resource_definitions))
+                    .collect::<Result<Vec<_>, ClickError>>()?,
+                conclusion: signed.conclusion,
+            })
+        }
+        ArithmeticCertificateFamily::Special(mut special) => {
+            special.premises = special
+                .premises
+                .into_iter()
+                .map(proposition)
+                .collect::<Result<Vec<_>, ClickError>>()?;
+            ArithmeticCertificateFamily::Special(special)
+        }
+    };
+    Ok(ArithmeticCertificate { family })
+}
+
+fn expand_declared_resource_signed_step(
+    step: SignedArithmeticStep,
+    resource_definitions: &DeclaredResourceScope,
+) -> Result<SignedArithmeticStep, ClickError> {
+    let proposition =
+        |proposition| expand_declared_resource_proposition(proposition, resource_definitions);
+    let expression =
+        |expression| expand_declared_resource_expression(expression, resource_definitions);
+    Ok(match step {
+        SignedArithmeticStep::Premise {
+            index,
+            proposition: premise,
+            result,
+        } => SignedArithmeticStep::Premise {
+            index,
+            proposition: proposition(premise)?,
+            result: proposition(result)?,
+        },
+        SignedArithmeticStep::Scale {
+            source,
+            coefficient,
+            result,
+        } => SignedArithmeticStep::Scale {
+            source,
+            coefficient: expression(coefficient)?,
+            result: proposition(result)?,
+        },
+        SignedArithmeticStep::Add {
+            left,
+            right,
+            result,
+        } => SignedArithmeticStep::Add {
+            left,
+            right,
+            result: proposition(result)?,
+        },
+        SignedArithmeticStep::EqualityToLessEqual {
+            source,
+            reverse,
+            result,
+        } => SignedArithmeticStep::EqualityToLessEqual {
+            source,
+            reverse,
+            result: proposition(result)?,
+        },
+        SignedArithmeticStep::EqualityFromBounds {
+            lower,
+            upper,
+            result,
+        } => SignedArithmeticStep::EqualityFromBounds {
+            lower,
+            upper,
+            result: proposition(result)?,
+        },
+        SignedArithmeticStep::StrictFromDisequal {
+            bound,
+            disequal,
+            result,
+        } => SignedArithmeticStep::StrictFromDisequal {
+            bound,
+            disequal,
+            result: proposition(result)?,
+        },
+        SignedArithmeticStep::Trivial { result } => SignedArithmeticStep::Trivial {
+            result: proposition(result)?,
+        },
+        SignedArithmeticStep::IntervalFromAffine {
+            source,
+            term,
+            lower,
+            upper,
+        } => SignedArithmeticStep::IntervalFromAffine {
+            source,
+            term: expression(term)?,
+            lower,
+            upper,
+        },
+        SignedArithmeticStep::IntervalFromAffineDirect {
+            source,
+            term,
+            lower,
+            upper,
+        } => SignedArithmeticStep::IntervalFromAffineDirect {
+            source,
+            term: expression(term)?,
+            lower,
+            upper,
+        },
+        SignedArithmeticStep::IntervalAtom { term, lower, upper } => {
+            SignedArithmeticStep::IntervalAtom {
+                term: expression(term)?,
+                lower,
+                upper,
+            }
+        }
+        SignedArithmeticStep::DefinedPremise { index, term } => {
+            SignedArithmeticStep::DefinedPremise {
+                index,
+                term: expression(term)?,
+            }
+        }
+        SignedArithmeticStep::IntervalCompare {
+            left,
+            right,
+            comparison,
+            result,
+        } => SignedArithmeticStep::IntervalCompare {
+            left,
+            right,
+            comparison,
+            result: proposition(result)?,
+        },
+        SignedArithmeticStep::AffineConclusion {
+            source,
+            evidence,
+            result,
+        } => SignedArithmeticStep::AffineConclusion {
+            source,
+            evidence,
+            result: proposition(result)?,
+        },
+        SignedArithmeticStep::AffineConclusionWithEvidence {
+            source,
+            left_evidence,
+            right_evidence,
+            result,
+        } => SignedArithmeticStep::AffineConclusionWithEvidence {
+            source,
+            left_evidence,
+            right_evidence,
+            result: proposition(result)?,
+        },
+        step @ (SignedArithmeticStep::IntervalIntersect { .. }
+        | SignedArithmeticStep::IntervalAdd { .. }
+        | SignedArithmeticStep::IntervalAddBounded { .. }
+        | SignedArithmeticStep::IntervalSubtract { .. }
+        | SignedArithmeticStep::IntervalMultiply { .. }
+        | SignedArithmeticStep::IntervalRemainder { .. }
+        | SignedArithmeticStep::IntervalShiftLeft { .. }
+        | SignedArithmeticStep::IntervalArithmeticShiftRight { .. }
+        | SignedArithmeticStep::IntervalBitwiseAnd { .. }
+        | SignedArithmeticStep::IntervalSignBitFlip { .. }) => step,
+    })
 }
 
 /// A tactic whose children are ordinary scripts and nothing else.
