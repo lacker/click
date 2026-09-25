@@ -464,6 +464,40 @@ fn guarded_quantified_postcondition_expands_and_reverifies() {
     }
 }
 
+/// A guarded call postcondition closed by `simp` expands to the discharge
+/// it performed: a `have` of the definedness guard, the checked `extract`
+/// of the consequent, and the rewrite that uses it. The rewrite re-verifies
+/// with no smart tactic left in the claim.
+#[test]
+fn guarded_postcondition_consequent_expands_and_reverifies() {
+    let relative = "mdtests/guarded_postcondition_closes_after_call.md";
+    let (click_source, c_sources) = mdtest_sources(relative);
+    let c_sources = c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    for function in ["caller", "restricted"] {
+        let expanded =
+            expand_c0_claim_source(&click_source, &c_sources, function, CProofClaim::Grouped)
+                .unwrap_or_else(|error| panic!("`{function}` should expand: {}", error.message()));
+        let claim = &expanded[expanded
+            .find(&format!("int32 {function}("))
+            .expect("claim proof")..];
+        let claim = &claim[claim.find("} by {").expect("claim proof body")..];
+        let claim = &claim[..claim[1..].find("\n}").expect("claim end")];
+        assert!(!claim.contains("execute()"), "{expanded}");
+        assert!(!claim.contains("simp()"), "{expanded}");
+        assert!(claim.contains("have defined((1 + "), "{expanded}");
+        assert!(claim.contains("extract(st.live == "), "{expanded}");
+        if let Err(error) = verify_c0_sources(&expanded, &c_sources) {
+            panic!(
+                "the expanded `{function}` should re-verify: {}\n{expanded}",
+                error.message()
+            );
+        }
+    }
+}
+
 #[test]
 fn branch_continuation_match_expands_and_reverifies() {
     for relative in [

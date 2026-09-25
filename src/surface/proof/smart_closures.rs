@@ -1556,6 +1556,9 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(instantiated));
         }
+        if let Some(guarded) = self.try_guarded_consequent_closure()? {
+            return Ok(Some(guarded));
+        }
         // The atomic helpers still classify their internal candidate misses
         // as `Option`; surface a deadline that fired inside them here rather
         // than continuing into structural search with it exceeded.
@@ -4911,6 +4914,13 @@ impl<'a> Proof<'a> {
                 .then_some((kernel, surface.clone()))
             })
             .collect::<Option<Vec<_>>>()?;
+        // A listed equality under a definedness guard the list does not
+        // state: prove the guard from the other listed premises, extract the
+        // consequent, and continue from the list with the consequent in the
+        // implication's place.
+        if let Some(closed) = proof.try_restricted_guarded_consequent(surfaces, &premise_pairs) {
+            return Some(closed);
+        }
         // A listed implication and its listed antecedent justify extracting
         // the consequent. Keep this route explicitly tied to `using`, rather
         // than allowing an unrelated ambient implication to discharge it.

@@ -45,7 +45,7 @@ pub(crate) use fact_keys::{
 pub(crate) use fact_keys::{alpha_proposition_key_visits, reset_alpha_proposition_key_visits};
 #[cfg(test)]
 pub(crate) use facts::take_fact_entry_counts;
-pub(crate) use facts::{ProofFacts, PropositionSource};
+pub(crate) use facts::{ProofFacts, PropositionSource, is_definedness_guard};
 pub(crate) use object::{
     ExecutionUpdateError, FrontierSplitError, ProofFocusError, ProofJoinError, ProofObject,
     ProofState, PropositionAssumptionContext, PropositionCloseError, PropositionIntroduction,

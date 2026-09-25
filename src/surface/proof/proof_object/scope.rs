@@ -540,6 +540,16 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
+    pub(in crate::surface::proof) fn try_restricted_simp_closure(
+        &self,
+        surfaces: &[ClickProposition],
+    ) -> Option<Self> {
+        let body = self.body.try_restricted_simp_closure(surfaces)?;
+        let mut next = self.clone();
+        next.body = body;
+        Some(next)
+    }
+
     pub(in crate::surface::proof) fn try_simp_closure_with_surfaces(
         &self,
         introduced_surfaces: &[ClickProposition],

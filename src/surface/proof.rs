@@ -30,6 +30,7 @@ pub(in crate::surface) use proof_object::{
 };
 mod checked_drivers;
 mod execution_state;
+mod guarded_consequents;
 mod pure_theorems;
 mod resources;
 mod smart_closures;

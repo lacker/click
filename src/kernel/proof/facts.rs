@@ -59,6 +59,13 @@ pub(crate) struct ProofFacts {
     /// the goal and their buckets.
     bitvector_equalities_by_atom:
         PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>>,
+    /// Implications whose antecedent is only a C definedness guard (the
+    /// no-overflow conditions a lowered `old(x) + result` carries) and whose
+    /// consequent is an int32 or int64 equality, keyed by the consequent's
+    /// atomic operands. A goal-local smart closer selects the guarded
+    /// equalities that could rewrite the goal from these buckets alone.
+    guarded_equalities_by_atom:
+        PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>>,
     /// True finite-float classifications retain their shared fact identity so
     /// a reflexive comparison does not publish the same premise twice.
     finite_classifications_by_key:
@@ -317,6 +324,7 @@ impl ProofFacts {
         let mut by_snapshot_blind = PersistentMap::default();
         let mut by_integer_condition_alpha = PersistentMap::default();
         let mut bitvector_equalities_by_atom = PersistentMap::default();
+        let mut guarded_equalities_by_atom = PersistentMap::default();
         let mut finite_classifications_by_key = PersistentMap::default();
         let mut algebraic_equalities_by_term = PersistentMap::default();
         let mut by_quantified_equivalence = PersistentMap::default();
@@ -368,6 +376,8 @@ impl ProofFacts {
                 }
             }
             let fact = Arc::new(crate::kernel::clone_proposition_iteratively(fact));
+            guarded_equalities_by_atom =
+                index_guarded_equality_fact(guarded_equalities_by_atom, &fact);
             by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact.as_ref());
             by_integer_condition_alpha =
                 index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
@@ -393,6 +403,7 @@ impl ProofFacts {
             by_snapshot_blind,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
+            guarded_equalities_by_atom,
             finite_classifications_by_key,
             algebraic_equalities_by_term,
             by_quantified_equivalence,
@@ -473,6 +484,8 @@ impl ProofFacts {
             }
         }
         let fact = Arc::new(fact);
+        let guarded_equalities_by_atom =
+            index_guarded_equality_fact(self.guarded_equalities_by_atom.clone(), &fact);
         by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact.as_ref());
         by_integer_condition_alpha =
             index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
@@ -503,6 +516,7 @@ impl ProofFacts {
             by_snapshot_blind,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
+            guarded_equalities_by_atom,
             finite_classifications_by_key,
             algebraic_equalities_by_term,
             by_quantified_equivalence,
@@ -1174,6 +1188,31 @@ impl ProofFacts {
             .collect()
     }
 
+    /// Definedness-guarded equalities (`defined(e) implies a == b`) whose
+    /// consequent shares an atomic operand with `proposition`, oldest first
+    /// within each atom and deduplicated by identity. The lookup visits only
+    /// the buckets of the atoms the proposition names.
+    pub(crate) fn guarded_equalities_mentioning(
+        &self,
+        proposition: &Proposition,
+    ) -> Vec<Proposition> {
+        let mut atoms = BTreeSet::new();
+        collect_proposition_bitvector_atoms(proposition, &mut atoms);
+        let mut seen = BTreeSet::new();
+        let mut implications = Vec::new();
+        for atom in atoms {
+            if let Some(bucket) = self.guarded_equalities_by_atom.get(&atom) {
+                for implication in bucket.iter() {
+                    crate::instrumentation::record_deterministic_work(1);
+                    if seen.insert(Arc::as_ptr(implication) as usize) {
+                        implications.push(implication.as_ref().clone());
+                    }
+                }
+            }
+        }
+        implications
+    }
+
     /// The same query retaining the compact identity of each indexed fact.
     /// One fact may occur in both operand buckets; pointer identity removes
     /// that duplicate without recursively comparing proposition payloads.
@@ -1537,6 +1576,58 @@ fn index_bitvector_equality_fact(
         _ => return index,
     };
     for term in [left, right] {
+        let Some(key) = bitvector_equality_atom_key(term) else {
+            continue;
+        };
+        let mut bucket = index.get(&key).cloned().unwrap_or_default();
+        if !bucket.iter().any(|candidate| Arc::ptr_eq(candidate, fact)) {
+            bucket.push(fact.clone());
+            index = index.with_inserted(key, bucket);
+        }
+    }
+    index
+}
+
+/// Whether a proposition is only a C definedness guard: a conjunction of
+/// the no-overflow conditions lowering attaches to partial arithmetic.
+pub(crate) fn is_definedness_guard(proposition: &Proposition) -> bool {
+    match proposition {
+        Proposition::And(left, right) => is_definedness_guard(left) && is_definedness_guard(right),
+        Proposition::ConditionIs(condition, false) => matches!(
+            condition,
+            ConditionTerm::Bitvector32SignedAddOverflows(..)
+                | ConditionTerm::Bitvector32SignedSubtractOverflows(..)
+                | ConditionTerm::Bitvector32SignedMultiplyOverflows(..)
+                | ConditionTerm::Bitvector32SignedDivideOverflows(..)
+                | ConditionTerm::Bitvector32SignedShiftLeftOverflows(..)
+                | ConditionTerm::Bitvector64SignedAddOverflows(..)
+                | ConditionTerm::Bitvector64SignedSubtractOverflows(..)
+                | ConditionTerm::Bitvector64SignedMultiplyOverflows(..)
+                | ConditionTerm::Bitvector64SignedDivideOverflows(..)
+                | ConditionTerm::Bitvector64SignedShiftLeftOverflows(..)
+        ),
+        _ => false,
+    }
+}
+
+fn index_guarded_equality_fact(
+    mut index: PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>>,
+    fact: &Arc<Proposition>,
+) -> PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Arc<Proposition>>> {
+    let Proposition::Implies(guard, consequent) = fact.as_ref() else {
+        return index;
+    };
+    let Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(left, right) | ConditionTerm::Bitvector64Equal(left, right),
+        true,
+    ) = consequent.as_ref()
+    else {
+        return index;
+    };
+    if !is_definedness_guard(guard) {
+        return index;
+    }
+    for term in [left.as_ref(), right.as_ref()] {
         let Some(key) = bitvector_equality_atom_key(term) else {
             continue;
         };
