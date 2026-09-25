@@ -117,29 +117,33 @@ impl Default for TacticWorkLimits {
     /// units on any machine under any load, and a scaling measurement and a
     /// budget verdict count the same units.
     ///
-    /// Calibration (2026-09-25, base `021ca511` plus the unified work
-    /// counter; `scripts/measure-tactic-work.sh`, which runs both fixture
-    /// harnesses with budgets disabled so no cost is clipped): the corpus is
-    /// 35 example sidecars and 2,084 mdtests (1,648 with tactics), counting
-    /// every tactic including the gate's generated-certificate checks.
+    /// Calibration (2026-09-25, base `57ee1ebf`: the unified work counter
+    /// plus the constant-normalization classes that removed the cubic
+    /// call-step ensure lowering; `scripts/measure-tactic-work.sh`, which
+    /// runs both fixture harnesses with budgets disabled so no cost is
+    /// clipped): the corpus is 35 example sidecars and 2,084 mdtests,
+    /// counting every tactic including the gate's generated-certificate
+    /// checks.
     ///
-    /// - simple: 7,866 tactics, p95 = 1,640, p99 = 5,050, second-largest =
-    ///   209,526, max = 230,969 (arena `arena_pipeline` `step`s at
-    ///   arena_cells.click:4306 and :4041). 750,000 gives the maximum 3.2x
-    ///   margin; the next largest are also arena_pipeline steps (143,965,
-    ///   88,933, 77,883), and every other simple tactic is below 75,000,
-    ///   which the budget exceeds by 10x.
-    /// - smart: 11,173 tactics, p95 = 3,361, p99 = 21,313, second-largest =
-    ///   626,422, max = 669,938 (both owned-vector `vector_copy`'s `simp` at
+    /// - simple: 7,990 tactics, p95 = 1,651, p99 = 5,368, second-largest =
+    ///   71,392, max = 83,759 (arena `arena_pipeline` `step`s at
+    ///   arena_cells.click:4041 and :5092). 750,000 gives the maximum 9.0x
+    ///   margin and the second-largest 10.5x; every simple tactic is now at
+    ///   least 9x under the budget. The budget is kept at 750,000 rather than
+    ///   lowered so that the arena's call steps, which are ordinary
+    ///   contract applications, keep the documented 10x headroom.
+    /// - smart: 11,280 tactics, p95 = 3,340, p99 = 20,565, second-largest =
+    ///   627,309, max = 671,115 (both owned-vector `vector_copy`'s `simp` at
     ///   vector.click:130, run twice). 2,000,000 gives it 3.0x; below it sit
-    ///   an mdtest `close_invariants` (490,467), the arena `have`s (483,814
-    ///   down to 223,596), and copy_n_segment_invariant's `simp` (217,930);
-    ///   every other smart tactic is below 200,000 (10x).
-    /// - control: 1,747 tactics, p95 = 5,340, p99 = 32,927, second-largest =
-    ///   610,181, max = 815,089 (arena `arena_pipeline` `have`s at
-    ///   arena_cells.click:3440 and :3134). 2,500,000 gives the maximum 3.1x;
+    ///   an mdtest `close_invariants` (494,596), the arena `have`s (450,033
+    ///   down to 198,757), branching_graph_dfs's `simp` (263,926), and
+    ///   copy_n_segment_invariant's `simp` (218,751); every other smart
+    ///   tactic is below 200,000 (10x).
+    /// - control: 1,778 tactics, p95 = 5,523, p99 = 33,069, second-largest =
+    ///   541,736, max = 745,173 (arena `arena_pipeline` `have`s at
+    ///   arena_cells.click:3440 and :3134). 2,500,000 gives the maximum 3.4x;
     ///   the only other control tactic above 250,000 (10x) is the arena
-    ///   `have` at :3591 (415,937).
+    ///   `have` at :3591 (422,691).
     ///
     /// The tactics named above are the corpus's genuinely slow steps, not
     /// headroom to spend. Changing a budget requires a fresh run of the
