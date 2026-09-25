@@ -54,8 +54,8 @@ an in-bounds target that was unmarked at entry. The recursive contract also
 preserves each previously marked node. Failure completeness from all-unmarked
 entry is also checked, using the closed-successor summary described below.
 Both recursive success branches and their snapshot framing are checked; see
-`design/dfs-gaps/branching_graph_dfs.md`. Discuss the fold-read-range design in
-item 2 with the user before implementing it.
+`design/dfs-gaps/branching_graph_dfs.md`. The proposed fold-read-range design is recorded in
+`design/dfs-gaps/fold-read-range-inference.md`; implementation is still pending.
 
 This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
 Those files include historical diagnostics, and other small gaps/tooling notes
@@ -69,8 +69,8 @@ Preserve the user's design constraints: keep the C fixed, avoid proof hacks,
 and discuss a proof-language migration when it offers a simpler design.
 Direct aggregate `views` remain restricted; use declared resources and the
 accepted pointer/array forms documented in `docs/concepts/resources.md` and
-`docs/concepts/viewability.md`. The fold-read-range design in item 2
-still needs discussion before implementation. No scratch files or conversation
+`docs/concepts/viewability.md`. The fold-read-range design in item 2 now has a written proposal; its
+application-range representation still needs implementation review. No scratch files or conversation
 history are required to reproduce the current blocker.
 
 ---
@@ -129,14 +129,14 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    `unmarked(visited, 0, i)` reads only cells below `i`, but Click records that it
    depends on the whole array, so `visited[i] = 1` discards it; the user pays with
    a frame lemma plus a quantified per-cell transport (about 110 of the sweep
-   example's 190 lines). Design idea, **not approved by the user — ask first**:
-   derive the read range from a fold-shaped definition (`(lo..hi).fold` whose body
-   reads `v[k]` at exactly the binder; anything else falls back to the whole
-   array, default-deny because a too-small range is a false theorem), carry it on
-   the array argument, and let the resource tracker's assumption-free walk decide
-   that a store to `a[i]` misses `a[0..i)` because the stored index is the same
-   term as the upper bound. It would not help `search` itself (that store is
-   inside the range; `unmarked_point_update` is genuinely needed).
+   example's 190 lines). Design proposal (implementation pending):
+   The requested design is now in `design/dfs-gaps/fold-read-range-inference.md`.
+   It proposes no new syntax: derive a kernel-checked summary for a narrow
+   fold subset, attach support to the application rather than the array, and
+   establish explicit framing before automatic reuse. It records byte-range,
+   aliasing, snapshot, and scaling requirements. Implementation is not yet
+   authorized. This would simplify the sweep prefix proof; it would not
+   remove the DFS point-update lemma for an in-range write.
 3. **No gate-checked shared lemma library for mdtests.** `import` supplies
    theorem statements and assumes their proofs by design, and nothing in
    `scripts/check.sh` selects a library `.click` file, so lemmas are copied
@@ -207,7 +207,7 @@ framing across a separated call, and
 of a proved conditional algebraic existential. Kernel regressions reject
 missing index/extent bounds, changed graph snapshots, captured free witnesses,
 and different witness sorts, and pin indexed lookup scaling. The fold-range
-design in item 2 is still unapproved and was not implemented.
+design in item 2 now has a written proposal and has not been implemented.
 
 The completeness contract additionally checks reported algebraic universal
 introductions and typed alpha matching of quantified conditional facts in

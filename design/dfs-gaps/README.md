@@ -15,8 +15,9 @@ behavior lives in `mdtests/`. The checked examples include
 `mdtests/sweep_maintains_a_zero_unmarked_count.md` (the counting invariant
 across the store that changes it), and
 `mdtests/search_terminates_by_unmarked_count.md` (the complete search proof).
-`branching_graph_dfs.md` records the next fixed C reduction; it is not yet a
-verified mdtest. `mdtests/unmarked_count_lemmas.md` now also checks the
+`branching_graph_dfs.md` records the unchanged branching C search, now checked
+for termination, memory safety, success reachability, and failure completeness
+from all-unmarked entry in `mdtests/branching_graph_dfs.md`. `mdtests/unmarked_count_lemmas.md` now also checks the
 count-monotonicity lemma required between its two recursive calls.
 
 The `decreases unmarked(visited, 0, n)` measure itself is **not** a gap any
@@ -52,3 +53,8 @@ decrease there. Neither is the fold law after a store, which
   `assumption()` not closing a `viewable` goal, a store refusal spelling the
   owned range against the other parameter's base, `have` not taking a label,
   and theorem proofs not being shareable between mdtests.
+
+- `fold-read-range-inference.md` — requested design proposal, not implemented.
+  No new syntax is proposed; checked application-specific fold support would
+  simplify the sweep's prefix framing. The document separates explicit
+  framing from automatic range naming and specifies soundness and scaling gates.
