@@ -374,6 +374,26 @@ fn resource_is_direct_observed_core(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The pure facts a step refusal lists as its proof context.
+///
+/// A step run inside a proof context hands the kernel that context as its
+/// assumptions and passes the fact slice only as the statement-local delta,
+/// so listing the slice alone shows `pure facts: []` beside a `requires` the
+/// step did see. List the context the kernel checked against.
+fn listed_context_pure_facts(
+    delta: &[Proposition],
+    context: Option<&PureFactContext>,
+) -> Vec<Proposition> {
+    let Some(context) = context else {
+        return delta.to_vec();
+    };
+    let mut facts = context.pure_facts();
+    facts.extend_from_slice(delta);
+    facts.sort();
+    facts.dedup();
+    facts
+}
+
 pub(super) fn execute_branch_step_from_frontier_position(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
@@ -497,7 +517,7 @@ pub(super) fn execute_branch_step_from_frontier_position(
             describe_c_expression(&condition),
             condition_transitions.len(),
             describe_proof_context(
-                available_pure_facts,
+                &listed_context_pure_facts(available_pure_facts, context),
                 &current_resources,
                 parameters,
                 arguments,
@@ -2759,7 +2779,7 @@ fn execute_step_from_frontier_position_selecting_path(
                 "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced {}\n{}",
                 describe_function_outcome(&outcome, parameters, arguments),
                 describe_proof_context(
-                    available_pure_facts,
+                    &listed_context_pure_facts(available_pure_facts, context),
                     &current_resources,
                     parameters,
                     arguments,
@@ -2799,7 +2819,7 @@ fn execute_step_from_frontier_position_selecting_path(
                 describe_statement_head(&step_statement),
                 describe_call_bindings(&step_statement, function_environment),
                 describe_proof_context(
-                    available_pure_facts,
+                    &listed_context_pure_facts(available_pure_facts, context),
                     &current_resources,
                     parameters,
                     arguments,
@@ -2815,7 +2835,7 @@ fn execute_step_from_frontier_position_selecting_path(
             describe_undecided_statement_successors(&transitions, parameters, arguments),
             describe_multiple_statement_successors_guidance(&step_statement, transitions.len()),
             describe_proof_context(
-                available_pure_facts,
+                &listed_context_pure_facts(available_pure_facts, context),
                 &current_resources,
                 parameters,
                 arguments,
@@ -3384,7 +3404,7 @@ fn execute_step_from_frontier_position_selecting_path(
                 "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced {}\n{}",
                 describe_function_outcome(&outcome, parameters, arguments),
                 describe_proof_context(
-                    available_pure_facts,
+                    &listed_context_pure_facts(available_pure_facts, context),
                     &current_resources,
                     parameters,
                     arguments,
@@ -3418,7 +3438,7 @@ fn execute_step_from_frontier_position_selecting_path(
                 describe_statement_head(&step_statement),
                 describe_call_bindings(&step_statement, function_environment),
                 describe_proof_context(
-                    available_pure_facts,
+                    &listed_context_pure_facts(available_pure_facts, context),
                     &current_resources,
                     parameters,
                     arguments,

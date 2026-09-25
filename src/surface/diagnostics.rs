@@ -119,7 +119,7 @@ fn describe_context_pure_and_execution_facts(
                 .map(ExecutionPureFact::proposition),
         )
         .take(item_limit)
-        .map(|fact| describe_pure_fact(fact, parameters, arguments))
+        .map(|fact| describe_stated_fact(fact, parameters, arguments))
         .collect::<Vec<_>>();
     if total > item_limit {
         entries.push(format!("… {} more omitted", total - item_limit));
@@ -683,12 +683,7 @@ pub(super) fn describe_loop_head_refusal(
         .map(|(name, value)| (name.to_string(), value.clone()))
         .collect();
     let (parameters, arguments) = value_naming_tables(&values);
-    let fact = match proposition {
-        Proposition::ConditionIs(condition, true) => {
-            describe_condition_with_context(condition, &parameters, &arguments)
-        }
-        other => describe_pure_fact_spelled(other, &parameters, &arguments),
-    };
+    let fact = describe_stated_fact(proposition, &parameters, &arguments);
     let context = context
         .as_ref()
         .map(|context| format!(" ({context})"))
@@ -4318,6 +4313,22 @@ pub(super) fn describe_pure_fact_spelled(
             describe_condition_with_context(condition, parameters, arguments)
         ),
         other => describe_pure_fact(other, parameters, arguments),
+    }
+}
+
+/// A fact as a proof would state it: a true condition is the condition
+/// itself, spelled through the C names, rather than the kind of comparison
+/// [`describe_pure_fact`] names, so a list of several reads as what each says.
+pub(super) fn describe_stated_fact(
+    fact: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    match fact {
+        Proposition::ConditionIs(condition, true) => {
+            describe_condition_with_context(condition, parameters, arguments)
+        }
+        other => describe_pure_fact_spelled(other, parameters, arguments),
     }
 }
 
