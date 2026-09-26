@@ -1,258 +1,153 @@
 # Verify a pointer-chasing search over an index array (the "DFS" example)
 
-P1. This issue tracks the DFS forcing-function example and the language gaps it
-found. Kernel soundness findings discovered during the same campaign are
-tracked in `bugs/`. Everything needed for this example is here and in
-`design/dfs-gaps/`; nothing depends on anyone's scratch files.
+P1. This issue tracks the DFS forcing-function example. Its acceptance
+criteria are met; what remains is proof cost, measured below as the basis for
+deciding whether to close it. `design/dfs-gaps/` holds the saved reductions
+and design notes and is deleted with this issue. Keep the user's constraints:
+the C is fixed, no proof hacks, and a true claim Click cannot prove is a
+Click gap.
 
-## Handoff checkpoint — 2026-09-25, after branching failure completeness
+## Acceptance (met)
 
-The complete unmodified search now verifies termination and memory safety in
-`mdtests/search_terminates_by_unmarked_count.md`. Its `Integer`-valued fold
-measure, quantified `next` invariant, early return, checked store, point-update
-lemma, nonnegativity proof, and strict back-edge decrease all pass together in
-the gate. The same proof establishes that `result == 1` implies `to` is in
-bounds, `visited[to] == 0`, and some finite `walk(next, from, fuel)` reaches
-`to`: success can only use the `cur == to` return, which precedes the marking
-store. `unmarked_nonnegative` also lives with the other checked counting lemmas
-in `mdtests/unmarked_count_lemmas.md`.
+- `mdtests/search_terminates_by_unmarked_count.md`: the unchanged
+  `next`-chasing loop terminates on `decreases unmarked(visited, 0, n)`, is
+  memory safe, and `result == 1` implies an in-bounds, unmarked target reached
+  by a finite `walk`.
+- `mdtests/branching_graph_dfs.md`: the unchanged cyclic two-successor
+  recursive search terminates, is memory safe, a nonzero result gives a finite
+  `Path` in the entry graph to an in-bounds target unmarked at entry, and from
+  an all-unmarked entry state zero means no finite path reaches the target.
+- `mdtests/sweep_maintains_a_zero_unmarked_count.md`: a marking loop keeps
+  `unmarked(visited, 0, i) == 0`.
+- Shared checked modules: `mdtests/unmarked_count_lemmas.click`
+  (`unmarked_nonnegative`, `unmarked_frame`, `unmarked_point_update`) and
+  `mdtests/branching_graph_paths.click` (`Path`, `walk`, `walk_frame`,
+  `closed_marks_exclude_target`, `exhausted_zero_entry`). The mdtest gate
+  verifies each `.click` file as an entry.
 
-Graph reachability now has first-class algebraic quantifiers and ghost
-witnesses. `mdtests/algebraic_existential_witness.md` checks algebraic
-`exists`, `forall`, `witness`, and `choose`, including reuse beneath
-`Nat::Succ`; `mdtests/algebraic_existential_loop_witness.md` opens an explicit
-`invariant N` source and rebuilds a changing `Nat` witness at the back edge.
-No C bookkeeping or produced token is involved.
+## Step 4 of the fold read-range design (landed)
 
-The complete search now carries an existential `walk` witness through the
-loop. It uses the inductive `walk_frame` lemma from
-`mdtests/recursive_walk_survives_unrelated_store.md` to relate iteration-entry
-and post-store `next` snapshots, then constructs `Nat::Succ(previous)` at the
-back edge. `mdtests/algebraic_existential_backedge_snapshot.md` covers the
-previous `close_invariants()` failure: alpha-equivalent quantified facts now
-match through a typed, snapshot-aware key for array-dependent function
-applications, while changed array snapshots do not. Symbolic frame transport
-also needs explicit bounds for both its read index and the store's write
-index; `mdtests/loop_symbolic_disjoint_array_store_frame.md` checks that path.
-The earlier reduction in
-`design/dfs-gaps/reachability_needs_an_algebraic_loop_witness.md` is historical.
+`design/dfs-gaps/fold-read-range-inference.md` step 4 removed the sweep's
+prefix-frame scaffolding: one explicit `transport` carries
+`unmarked(visited, 0, i) == 0` across `visited[i] = 1` through the kernel's
+fold read frame. The same pass removed bookkeeping the other recent
+capabilities make obsolete: C-proof `apply` now selects premises (including a
+stated range's extent halves) instead of restating them, reflexive transport
+sources and constant-true premises need no `have`, loop-head extents need no
+`have`, and restatements of call guarantees are gone. The DFS point-update
+lemma stays: its store is inside the counted range.
 
-The whole-array dependency, extent-restatement, and small diagnostic items
-below remain proof-language or tooling costs, but
-none blocks the termination, memory-safety, or branch-local correctness claims.
-The shared-lemma gate gap is closed: the mdtest harness now verifies local
-`.click` modules as entries, and the unmarked lemmas have one checked source.
-The explicit quantified-transport gap is closed too: checked fixtures now
-carry the original bounded-value quantifier and a comparison through a
-separated store inside `have`, and reject a changed cell.
+| File | Lines before | Lines after | C-proof work before | after |
+| --- | ---: | ---: | ---: | ---: |
+| `sweep_maintains_a_zero_unmarked_count.md` | 113 | 88 | 80,122 | 68,499 |
+| `sweep_prefix_survives_its_endpoint_store_by_transport.md` | 82 | deleted (now identical to the sweep) | | |
+| `search_terminates_by_unmarked_count.md` | 369 | 309 | 69,611 | 53,172 |
+| `branching_graph_dfs.md` | 1,147 | 587 | 424,502 | 411,941 |
+| `branching_graph_path_witness.md` | 202 | 21, plus 185 in `branching_graph_paths.click` | | |
+| `unmarked_count_lemmas.click` | 440 | 273 | 71 ms | 41 ms |
 
-Whole-array dependency refinement remains design work rather than a small
-finishing edit. The unchanged cyclic, two-successor C search now verifies
-termination and memory safety in `mdtests/branching_graph_dfs.md`. Its recursive
-contract establishes that `unmarked` cannot increase; the local marking store
-decreases it by one, so the second call still descends after the first call may
-mark more nodes. The successor bounds live in a viewed resource and are
-re-observed after the mutating call. Success-path reachability for this graph
-search now verifies too, with a finite `Path` witness in the entry graph and
-an in-bounds target that was unmarked at entry. The recursive contract also
-preserves each previously marked node. Failure completeness from all-unmarked
-entry is also checked, using the closed-successor summary described below.
-Both recursive success branches and their snapshot framing are checked; see
-`design/dfs-gaps/branching_graph_dfs.md`. The fold-read-range design is recorded in
-`design/dfs-gaps/fold-read-range-inference.md`; its delivery steps 1 and 2
-(checked read summary, explicit transport framing) have landed, and automatic
-reuse (steps 3 and 4) is pending.
+Work is deterministic units summed over the C proof's tactics
+(`CLICK_TACTIC_WORK_REPORT`); pure-theorem tactics are not instrumented, so
+the lemma library shows wall time. The DFS lost 560 lines mostly by importing
+the two modules instead of copying their lemmas. `unmarked_monotone` and
+`unmarked_after_first_call_decreases` had no user and were deleted.
 
-This file is the index; `design/dfs-gaps/` contains the saved C/Click sources.
-Those files include historical diagnostics, and other small gaps/tooling notes
-below have not all been retested on this commit. In particular, the old
-`a_second_universal_have_cannot_narrow_a_stated_range.md` defect was fixed in
-`88b05d28`; its checked regression is
-`mdtests/a_second_universal_have_narrows_a_stated_range.md`. Do not reopen it
-merely because an old reduction mentions its former filename.
+## Where the remaining proof text goes
 
-Preserve the user's design constraints: keep the C fixed, avoid proof hacks,
-and discuss a proof-language migration when it offers a simpler design.
-Direct aggregate `views` remain restricted; use declared resources and the
-accepted pointer/array forms documented in `docs/concepts/resources.md` and
-`docs/concepts/viewability.md`. The fold-read-range design in item 2 has explicit framing implemented; its
-automatic application-range representation still needs implementation review. No scratch files or conversation
-history are required to reproduce the current blocker.
+`branching_graph_dfs.md`, 587 lines (about 555 of Click):
 
----
+| Category | Lines | Kind |
+| --- | ---: | --- |
+| Failure completeness: compose the two calls' closure summaries, then `exhausted_zero_entry` | ~128 | half inherent; ~70 are instantiations of snapshot equalities for `left`/`right` |
+| Framing `visited` across the marking store (target cell, prior marks, prefix/suffix for the point update, `k != cur`) | ~80 | bookkeeping |
+| Success paths: open the callee's witness, prepend the edge, frame the path to the entry graph | ~63 | ~40 inherent, rest framing |
+| Framing read-only `left`/`right` across the store and the left call | ~60 | bookkeeping |
+| Composing call guarantees (target cell unchanged, `cur` still marked, `marked_transitive`, opening `left_result == 0 implies ...`) | ~56 | mixed |
+| Ranking arithmetic (point update, nonnegativity, strict decrease, chains through `old`) | ~43 | mostly inherent |
+| Early returns (vacuous failure summaries, `Path::Here`) | ~35 | inherent but trivial |
+| Resource declaration and `marked_transitive` | ~28 | inherent |
+| Contract statement (8 `ensures`) | ~26 | inherent |
+| Resource re-observation and successor-bound instantiation for call arguments | ~22 | bookkeeping |
 
-# The DFS example
-
-An `int next[n]` array whose entries are all in `0..n` (indexes used as
-pointers), a `visited[n]` array, and a search that follows `next`, marks
-`visited`, and reports whether `to` is reached. Prove it terminates (termination
-is the only C judgment), is memory safe, and then a correctness claim. The C is
-fixed; a true claim Click cannot prove is a Click gap.
-
-```c
-int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
-    int32 cur = from;
-    while (visited[cur] == 0) {
-        if (cur == to) return 1;
-        visited[cur] = 1;
-        cur = next[cur];
-    }
-    return 0;
-}
-```
-
-The measure is a user-defined `Integer`-valued fold (not the prelude `count`,
-which clashes with the built-in `count(resource(args))`; not `int32`, whose `+`
-is partial in specs), used as `decreases unmarked(visited, 0, n)`:
+Representative framing text (repeated for `right` and again across the call):
 
 ```click
-function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
-    (lo..hi).fold(0, |acc, k| { acc + to_integer(if v[k] == 0 { 1 } else { 0 }) })
+have forall (k: int32) {
+    0 <= k and k < n implies old(left[k]) == at(after_mark, left[k])
+} by {
+    intro(); intro();
+    extract(0 <= k); extract(k < n);
+    transport(old(left[k]) == old(left[k]), old(left[k]) == at(after_mark, left[k])) using {
+        old(left[k]) == old(left[k]);
+        0 <= k; k < n;
+        separate(memory(left[0..n]), memory(visited[0..n]));
+    };
+    assumption();
 }
 ```
 
-## State
+and, in the completeness proof, six instantiations of the form
+`instantiate(forall (k) { ... old(left[k]) == at(before_right, left[k]) }, k)`
+followed by `rewrite`s from `old(left[k])` to the snapshot the callee spoke
+about.
 
-- On master and verifying: `mdtests/unmarked_count_lemmas.click`
-  (`unmarked_frame`, `unmarked_point_update`, by `induct(hi)`) and
-  `mdtests/sweep_maintains_a_zero_unmarked_count.md` (a marking loop keeping
-  `invariant unmarked(visited, 0, i) == 0`; it imports the checked lemma).
-- `mdtests/search_terminates_by_unmarked_count.md` checks the complete C and
-  sidecar for `search`, including the success-path result claim. The formerly
-  saved blocked proof now verifies without changing the C.
+`search_terminates_by_unmarked_count.md`, 309 lines: `walk` and its two
+theorems 96 (`walk_frame` alone 56, used only to frame `next` across the
+`visited` store), framing `next` across the store 40, framing `visited` for
+the point update 44, witness extension 16 (half framing), contract, loop
+header, and ranking 42, setup and statement steps 25.
 
-## Gaps, ranked by the proof text they cost (reductions in `design/dfs-gaps/`)
+What a language or tooling change could remove, largest first:
 
-1. **Resolved: explicit transport of quantified and comparison facts.** The
-   historical reduction is `a_universal_fact_does_not_transport.md`.
-   `mdtests/quantified_fact_explicit_transport_inside_have.md` carries both a
-   bounded-value precondition and a quantified snapshot equality through a
-   separated store inside `have`.
-   `mdtests/loop_symbolic_disjoint_array_store_frame.md` uses one quantified
-   transport inside a loop `preserve` proof in place of per-cell transport.
-   `mdtests/comparison_fact_explicit_transport_inside_have.md` checks the
-   comparison form, and
-   `mdtests/quantified_fact_explicit_transport_rejects_changed_cell.md` checks
-   that a write to the read cell is refused.
-2. **A fact about part of an array dies at a store outside that part.**
-   `unmarked(visited, 0, i)` reads only cells below `i`, but Click records that it
-   depends on the whole array, so `visited[i] = 1` discards it; the user pays with
-   a frame lemma plus a quantified per-cell transport (about 110 of the sweep
-   example's 190 lines). The design is `design/dfs-gaps/fold-read-range-inference.md`.
-   Delivery steps 1 and 2 have landed: the kernel checks a read summary for the
-   narrow fold subset from the declared body (`src/kernel/fold_read_summary.rs`),
-   and explicit `transport(P, Q) using { ... }` frames a fact about such an
-   application across a store or checked call write set that an exact order
-   fact or stated separation places outside its `lo..hi` cells.
-   `mdtests/sweep_prefix_survives_its_endpoint_store_by_transport.md` carries
-   the unchanged sweep's prefix across `visited[i] = 1` with one transport and
-   no `unmarked_frame` lemma. The regressions are the `mdtests/fold_read_transport_*.md`
-   fixtures (positive: endpoint store, below a nonzero start, checked empty
-   fold, separated alias, reads in both arms, historical endpoint, a call's
-   write set, surface restatement of the equality; negative: store inside the
-   range, unchecked emptiness, unseparated alias, a global that may be the
-   array, missing bound, changed endpoint and base pointer, a call writing the
-   range, shifted/outside/helper reads, and no granted C read), the kernel
-   tests in `src/kernel/fold_read_summary/tests.rs`, and the scaling tests
-   named in the design's status line. The rule answers the same for every
-   caller, so `simp` reaches it through its snapshot transport closure:
-   `mdtests/sweep_prefix_survives_its_endpoint_store_by_simp.md` closes the
-   same prefix with `simp()`, which `click expand` rewrites into the explicit
-   transport. Steps 3 (automatic reuse across
-   statement effects) and 4 (removing the sweep sidecar's prefix-frame
-   scaffolding) are not started. This does not remove the DFS point-update
-   lemma for an in-range write.
-3. **Resolved: gate-checked shared lemma library for mdtests.** `import` still
-   supplies theorem statements without checking imported proof bodies. The
-   mdtest harness now selects every local `.click` file as its own entry, so
-   `mdtests/unmarked_count_lemmas.click` checks the proof bodies while the
-   search and sweep import their statements. The three copies of
-   `unmarked_frame` and the search's other copied unmarked lemmas are removed.
-4. **Extent bounds restated at every pure-theorem `apply … using`.** A stated
-   range carries `0 <= n - lo` and `n - lo <= 1073741823` for the proof, but a
-   `using` list in a pure theorem must name them again (the C-proof route accepts
-   a cited range's available guards). That checker promises to read only listed
-   premises, so this is a design question.
-5. Small ones (`small_refusals_and_spellings.md`): int32 `!=` symmetry is now
-   checked by `mdtests/int32_disequality_symmetry.md`. The point-update
-   theorem still splits below/above to cover both sides of the marked index.
-   `have` cannot take a label; `assumption()` closes an identical `viewable`
-   fact (`mdtests/assumption_closes_an_established_viewable_fact.md`);
-   `arithmetic() using { j < hi; hi <= n; }` now proves `j <= n` in one checked
-   step; a constant-true `using` premise such as `0 <= 0` is accepted
-   (`mdtests/apply_using_accepts_a_constant_true_premise.md`) and a false one
-   names itself; a store refusal now spells `owns b[0..1]` against its own
-   base (`mdtests/a_store_refusal_names_the_stores_own_base.md`).
+1. **Snapshot stability of a viewed, separated array** (about 60 DFS lines,
+   most of the ~70 instantiation lines in completeness, both `walk_frame`
+   applications, and in the search `walk_frame` plus ~40 lines). `left`,
+   `right`, and `next` are only viewed, and every write in scope is to a
+   separated `visited` or through a callee that only views them. The resource
+   tracker could answer that the array snapshots are the same resource state,
+   so `walk(old(left), ...)` and `walk(at(after_mark, left), ...)` would be
+   one term. This is the resource-tracker direction already under design.
+2. **A store's frame as one checked fact** (about 80 DFS and 44 search lines).
+   After `visited[cur] = 1`, every quantified fact about `visited[k]` with
+   `k != cur` needs its own transport, and the point-update lemma wants two
+   half-range agreements. A checked store summary
+   (`forall k: k != cur implies at(before, visited[k]) == visited[k]`) that
+   quantified facts can cite, or `transport` of a whole quantified fact whose
+   binder guard excludes the written index without a reflexive source, would
+   remove most of it.
+3. **Path-condition use of call guarantees** (about 25 DFS lines). Inside the
+   branch where `left_result == 0`, opening `left_result == 0 implies X`
+   takes an `extract`/`assumption` block each time.
+4. **Pure-theorem extent halves** (6 `using` lines per `apply` in the lemma
+   library). A pure `apply`, smart or explicit, must still name
+   `0 <= n - lo; n - lo <= 1073741823` for a `views` requirement; the C-proof
+   route no longer does. This remains the design question of which premises a
+   pure checker may read.
 
-The unchanged two-successor graph search now checks termination, memory
-safety, and success-path reachability in `mdtests/branching_graph_dfs.md`,
-including the right recursive call after the left has changed `visited`.
-Failure-path completeness now checks too: from an all-unmarked entry state,
-returning zero implies that every finite `Path` misses the target. The recursive
-contract still permits arbitrary initial marks. It preserves the target cell,
-marks the failed call's root, and makes every newly marked node's successors
-marked. This summary composes across both calls; path induction gives the
-public theorem. Arbitrary initial marks cannot support ordinary completeness,
-since a previsited node can block exploration of a reachable target. A binary-tree recursive search is also
-verified in `examples/modeled-binary-tree/`, but that resource-ranked acyclic
-case does not cover cycles or sharing. The older folded-resource loop-guard
-claim is not a general current limitation;
-`mdtests/composite_resource_vector_fill_loop_snapshot.md` already checks a
-guard reading a folded owned composite. Re-reduce any particular recursive
-resource refusal before treating it as a verifier defect.
+The remaining ~250 DFS lines (contract, ranking, witness construction, the
+closure-summary case analysis) are the claim's own content. If items 1 and 2
+land, the DFS would be roughly 400 lines, dominated by inherent content; that
+is a reasonable point to close this issue.
 
-## Historical-read lowering resolved (2026-09-25)
+## Findings from the step 4 pass (reported, not filed)
 
-Logical memory reads are now total terms. Lowering an ordinary proposition
-no longer inserts read-validity or viewability guards. A call-produced
-existential using an evaluated C argument therefore has the same denotation
-as its historical surface spelling, including beneath a written implication.
-
-`mdtests/call_existential_evaluated_load_guard.md` is a positive regression:
-it cites the call guarantee with `at(before_call, a[i])` and opens its path
-witness with `let satisfy`. The conditional variant in
-`mdtests/conditional_call_existential_historical_read.md` establishes the
-nonzero branch, cites the implication, and opens its consequent. Neither
-changes the callee contract to carry proof-only validity guards.
-
-Validity is explicit: `defined(p[k])` names typed read validity at the selected
-snapshot. `mdtests/explicit_read_validity_uses_the_selected_witness.md` rejects
-using validity at a different witness. Logical value facts cannot grant C
-read permission or initialize heap memory, and validity does not survive a
-free. Resource footprint evaluation and actual C loads remain checked.
-Partial C arithmetic still has its existing definedness obligations.
-
-The follow-up reachability proof now verifies in `mdtests/branching_graph_dfs.md`.
-`walk_frame` in `mdtests/branching_graph_path_witness.md` proves that bounded
-successor arrays equal on `0..n` give equal endpoints for every finite path.
-The DFS proof opens each recursive call's historical witness, prepends its
-edge, and frames the longer path back to the entry graph. Its per-node
-marking summary recovers the target's entry-state zero from the recursive
-call's entry-state zero.
-
-Two focused regressions protect the verifier fixes needed by this composition:
-`mdtests/graph_view_survives_marked_summary_call.md` checks symbolic-index
-framing across a separated call, and
-`mdtests/conditional_algebraic_witness_contract.md` checks final certification
-of a proved conditional algebraic existential. Kernel regressions reject
-missing index/extent bounds, changed graph snapshots, captured free witnesses,
-and different witness sorts, and pin indexed lookup scaling. The fold-range
-design in item 2 has its explicit framing steps implemented; automatic reuse
-is pending.
-
-The completeness contract additionally checks reported algebraic universal
-introductions and typed alpha matching of quantified conditional facts in
-`mdtests/conditional_algebraic_universal_contract.md`. Kernel regressions
-protect guards, graph snapshots, endpoint values, binder sorts, and indexed
-lookup scaling. Its expansion regression also checks quantified `have` source
-mapping and explicit assumption checking with renamed quantified guards.
-No fold-range inference was added.
-
-## Acceptance
-
-Termination, memory safety, and success-path reachability of the unmodified C
-are checked by `mdtests/search_terminates_by_unmarked_count.md` and
-`mdtests/branching_graph_dfs.md`. The branching DFS also checks failure-path
-completeness from an all-unmarked entry state. Remaining work concerns the
-proof-language and tooling costs ranked above; each fixed gap has a minimal regression mdtest, and
-`design/dfs-gaps/` is deleted with this issue.
+- `click expand` on a C mdtest that imports a local `.click` module failed
+  with the imported declarations unknown; fixed on this branch (commit
+  "Load an importing C mdtest as a project in click expand") with a
+  regression in `src/bin/click-expand.rs`.
+- In a pure theorem, smart `apply(walk_in_range(a, n, from, previous));`
+  refuses a `views` requirement with "`0 <= n is true` is not an available
+  fact" after `have 0 <= n`, `have 0 <= n - 0`, and
+  `have n - 0 <= 1073741823` all succeed; the explicit `using` form passes.
+  The search selected a candidate its checker rejected.
+- The loop's `close_invariants()` closes the quantified `next` bound itself
+  when its explicit transport is omitted, but its work rises from about 13k
+  to about 250k units; the search keeps the explicit transport.
+- Diagnostics: a smart C-proof `apply` missing a `viewable` premise says only
+  that the preservation driver declined it; a missing
+  `at(iter, viewable(...))` is rendered identically to the available current
+  `viewable(...)`; a `simp` refusal about `visited[k]` after a store to
+  `visited[cur]` says the store to `next[…]` may have written it.
+- `unfold(...) using` still refuses a constant-true premise such as `0 <= 0`
+  that `apply using` now accepts; `n <= n` is not constant-folded and still
+  needs a `have`.

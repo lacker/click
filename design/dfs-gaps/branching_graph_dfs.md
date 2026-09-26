@@ -71,7 +71,7 @@ C under the stronger contract. Direct success constructs `Path::Here`.
 Left and right success open the corresponding call's historical existential,
 prepend `Path::Left(rest)` or `Path::Right(rest)`, and apply `walk_frame` to
 move the endpoint equality to the original graph snapshot. The standalone
-lemma is checked in `mdtests/branching_graph_path_witness.md`; its induction
+lemma is checked in `mdtests/branching_graph_paths.click`; its induction
 uses successor bounds and cell equality only within `0..n`, never equality
 of whole memory snapshots or implicit read-validity claims.
 
@@ -101,7 +101,7 @@ right call. This accounts for shared nodes and cycles without changing C.
 marked node cannot leave a successor-closed marked set excluding the target.
 `exhausted_zero_entry` constructs that set from the failure summary and the
 all-zero entry array. Both are checked independently in
-`mdtests/branching_graph_path_witness.md` and used in the complete C proof.
+`mdtests/branching_graph_paths.click` and used in the complete C proof.
 The zero-entry condition is essential: a previsited intermediate node can
 block exploration of a reachable target.
 

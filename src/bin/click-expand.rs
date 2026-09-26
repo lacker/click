@@ -15,13 +15,14 @@ use click::surface::{
     c0_prepared_project_tactic_source_position, c0_prepared_smart_tactic_source_sites,
     c0_prepared_tactic_source_position, c0_project_smart_tactic_source_sites,
     c0_project_tactic_source_position, c0_smart_tactic_source_sites, c0_tactic_source_position,
-    cpp_prepared_project_smart_tactic_source_sites, cpp_prepared_project_tactic_source_position,
-    cpp_prepared_smart_tactic_source_sites, cpp_prepared_tactic_source_position,
-    expand_c0_claim_source_by_label, expand_c0_prepared_claim_source_by_label,
-    expand_c0_prepared_project_claim_source_by_label, expand_c0_prepared_project_tactic_source_at,
-    expand_c0_prepared_tactic_source_at, expand_c0_project_claim_source_by_label,
-    expand_c0_project_tactic_source_at, expand_c0_tactic_source_at,
-    expand_cpp_prepared_claim_source_by_label, expand_cpp_prepared_project_claim_source_by_label,
+    click_import_sites, cpp_prepared_project_smart_tactic_source_sites,
+    cpp_prepared_project_tactic_source_position, cpp_prepared_smart_tactic_source_sites,
+    cpp_prepared_tactic_source_position, expand_c0_claim_source_by_label,
+    expand_c0_prepared_claim_source_by_label, expand_c0_prepared_project_claim_source_by_label,
+    expand_c0_prepared_project_tactic_source_at, expand_c0_prepared_tactic_source_at,
+    expand_c0_project_claim_source_by_label, expand_c0_project_tactic_source_at,
+    expand_c0_tactic_source_at, expand_cpp_prepared_claim_source_by_label,
+    expand_cpp_prepared_project_claim_source_by_label,
     expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
     map_verifying_source_paths, smart_have_body_tactic_at, verify_c0_prepared_project_at,
     verify_c0_prepared_sources_at, verify_c0_project_at, verify_c0_sources_at,
@@ -367,7 +368,19 @@ fn run_mdtest(arguments: &Arguments) -> Result<ExpandedArtifact, String> {
         )
     })?;
     let inputs = prepare_mdtest_inputs(&mdtest)?;
-    let project = if matches!(inputs, CInput::PreparedCpp(_)) {
+    // An mdtest that imports a local Click module is a project, exactly as
+    // `click verify` and `click profile` load it; without one the imported
+    // declarations are unknown to the expansion.
+    let has_imports = !click_import_sites(click_source)
+        .map_err(|error| {
+            format!(
+                "could not read imports in mdtest `{}`: {}",
+                arguments.click_path.display(),
+                error.report()
+            )
+        })?
+        .is_empty();
+    let project = if has_imports || matches!(inputs, CInput::PreparedCpp(_)) {
         Some(read_click_project(&arguments.click_path, click_source)?)
     } else {
         None
@@ -777,6 +790,19 @@ mod tests {
         assert!(expanded.contains("outcomes {"));
         let parsed = click::cli::parse_mdtest(&path, &expanded).unwrap();
         assert_eq!(parsed.cpp_source.unwrap().filename, "caller.cpp");
+    }
+
+    #[test]
+    fn c_mdtest_expansion_sees_an_imported_local_module() {
+        // `unmarked` is declared only in the imported `unmarked_count_lemmas.click`.
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests/sweep_prefix_survives_its_endpoint_store_by_simp.md");
+        let arguments = parse_arguments(
+            ["--claim", "sweep.contract", path.to_str().unwrap()].map(str::to_string),
+        )
+        .unwrap();
+        let expanded = run(&arguments).expect("expand and reverify an importing C mdtest");
+        assert!(expanded.contains("transport("), "{expanded}");
     }
 
     #[test]

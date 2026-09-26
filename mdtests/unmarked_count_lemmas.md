@@ -2,18 +2,18 @@
 
 `unmarked(v, lo, hi)` counts the cells of `v[lo..hi]` that hold zero. It is the
 measure a pointer-chasing search that marks cells as it visits them descends
-on, so the four facts such a proof needs are that the count is nonnegative
-(`unmarked_nonnegative`), does not see cells outside its range
-(`unmarked_frame`), cannot increase when marking only zero cells
-(`unmarked_monotone`), and drops by exactly one when a previously unmarked cell
-inside the range is marked (`unmarked_point_update`). All four are ordinary
-`induct(hi)` proofs over the append-last-cell law
-`unfold(unmarked(..)) using { lo <= hi - 1; hi - 1 < 2147483647; }` opens.
-`unmarked_after_first_call_decreases` composes them into the ranking obligation
-for a second recursive branch after the first branch has marked more cells.
+on, so such a proof needs that the count is nonnegative
+(`unmarked_nonnegative`) and drops by exactly one when a previously unmarked
+cell inside the range is marked (`unmarked_point_update`). Its boundary case
+uses `unmarked_frame`: two arrays that agree below the marked cell count the
+same prefix. All three are ordinary `induct(hi)` proofs over the
+append-last-cell law `unfold(unmarked(..)) using { lo <= hi - 1; hi - 1 <
+2147483647; }` opens. A C proof does not need `unmarked_frame` for a store
+outside the counted range: the kernel's fold read frame carries the
+application across it (`sweep_maintains_a_zero_unmarked_count.md`).
 Their proof bodies live in `unmarked_count_lemmas.click`, which the mdtest gate
 checks as an entry module. This fixture imports the same declarations used by
-the search and sweep proofs.
+the search, sweep, and branching DFS proofs.
 
 Two things about the statements are forced rather than chosen.
 
