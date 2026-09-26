@@ -5,7 +5,7 @@ use std::process::Command;
 
 use click::cli::{
     CInput, files_with_extension, project_sidecars, read_c_inputs_for_project,
-    read_click_project_at_root, read_verifying_sources, run_parallel, source_refs,
+    read_click_project_at_root, read_verifying_sources, source_refs,
 };
 use click::instrumentation::{self, ArtifactReuseRejection};
 use click::languages::refresh_compiler_import;
@@ -15,6 +15,8 @@ use click::surface::{
     verify_c0_prepared_project, verify_c0_project, verify_c0_sources, verify_cpp_prepared_project,
 };
 
+#[path = "support/limits.rs"]
+mod limits;
 #[path = "support/tactic_work.rs"]
 mod tactic_work;
 
@@ -37,190 +39,198 @@ const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[
 
 #[test]
 fn frozen_shared_heap_lifecycles_verify() {
-    let project = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("design")
-        .join("shared-heap-probes");
-    run_example_in_thread(&project).unwrap_or_else(|error| panic!("{error}"));
+    limits::deterministic(|| {
+        let project = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("design")
+            .join("shared-heap-probes");
+        run_example_in_thread(&project).unwrap_or_else(|error| panic!("{error}"));
+    })
 }
 
 #[test]
 fn example_projects() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let examples_dir = manifest_dir.join("examples");
-    let requested = std::env::var_os("CLICK_EXAMPLE");
-    let run_quarantined = requested.is_some() || std::env::var_os(RUN_QUARANTINED).is_some();
-    let mut projects = fs::read_dir(&examples_dir)
-        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", examples_dir.display()))
-        .map(|entry| {
-            entry
-                .unwrap_or_else(|error| panic!("failed to read examples directory entry: {error}"))
-                .path()
-        })
-        .filter(|path| path.is_dir())
-        .filter(|path| {
-            requested.as_ref().is_none_or(|requested| {
-                path.file_name()
-                    .is_some_and(|name| name == requested.as_os_str())
+    limits::deterministic(|| {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let examples_dir = manifest_dir.join("examples");
+        let requested = std::env::var_os("CLICK_EXAMPLE");
+        let run_quarantined = requested.is_some() || std::env::var_os(RUN_QUARANTINED).is_some();
+        let mut projects = fs::read_dir(&examples_dir)
+            .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", examples_dir.display()))
+            .map(|entry| {
+                entry
+                    .unwrap_or_else(|error| {
+                        panic!("failed to read examples directory entry: {error}")
+                    })
+                    .path()
             })
-        })
-        .collect::<Vec<_>>();
-    projects.sort();
+            .filter(|path| path.is_dir())
+            .filter(|path| {
+                requested.as_ref().is_none_or(|requested| {
+                    path.file_name()
+                        .is_some_and(|name| name == requested.as_os_str())
+                })
+            })
+            .collect::<Vec<_>>();
+        projects.sort();
 
-    if !run_quarantined {
-        projects.retain(|path| {
-            let name = path.file_name().and_then(|name| name.to_str());
-            let quarantine = name.and_then(|name| {
-                QUARANTINED
-                    .iter()
-                    .find(|(quarantined, _)| *quarantined == name)
-            });
-            match quarantine {
-                Some((name, reason)) => {
-                    println!("SKIPPING quarantined example `{name}`: {reason}");
-                    false
+        if !run_quarantined {
+            projects.retain(|path| {
+                let name = path.file_name().and_then(|name| name.to_str());
+                let quarantine = name.and_then(|name| {
+                    QUARANTINED
+                        .iter()
+                        .find(|(quarantined, _)| *quarantined == name)
+                });
+                match quarantine {
+                    Some((name, reason)) => {
+                        println!("SKIPPING quarantined example `{name}`: {reason}");
+                        false
+                    }
+                    None => true,
                 }
-                None => true,
-            }
-        });
+            });
+            assert!(
+                !projects.is_empty(),
+                "every example project is quarantined; run them with {RUN_QUARANTINED}=1",
+            );
+        }
+
         assert!(
             !projects.is_empty(),
-            "every example project is quarantined; run them with {RUN_QUARANTINED}=1",
+            "expected at least one matching example project in `{}`",
+            examples_dir.display(),
         );
-    }
 
-    assert!(
-        !projects.is_empty(),
-        "expected at least one matching example project in `{}`",
-        examples_dir.display(),
-    );
-
-    // Verify projects on every core. Deterministic tactic work budgets decide
-    // correctness, so concurrency cannot change a verdict; the test runner
-    // owns hang containment.
-    let _ = instrumentation::take_artifact_reuse_rejection_census();
-    let workers = std::thread::available_parallelism().map_or(1, usize::from);
-    let failures = run_parallel(&projects, workers, |project| {
-        // One line as each project starts and one as it finishes, on stderr
-        // so the gate can stream them: a stall shows as a started project
-        // that never finishes, and a slow project is visible while it runs.
-        eprintln!("example project `{}` started", project.display());
-        let started = std::time::Instant::now();
-        run_example_in_thread(project)?;
-        eprintln!(
-            "example project `{}` verified in {:.2}s",
-            project.display(),
-            started.elapsed().as_secs_f64()
-        );
-        Ok(())
-    });
-    if !failures.is_empty() {
-        let mut message = format!(
-            "{} of {} example projects failed:\n",
-            failures.len(),
-            projects.len()
-        );
-        for (index, diagnostics) in failures {
-            message.push_str(&format!(
-                "\nexample project `{}` {diagnostics}\n",
-                projects[index].display()
-            ));
+        // Verify projects on every core. Deterministic tactic work budgets decide
+        // correctness, so concurrency cannot change a verdict; the test runner
+        // owns hang containment.
+        let _ = instrumentation::take_artifact_reuse_rejection_census();
+        let workers = std::thread::available_parallelism().map_or(1, usize::from);
+        let failures = limits::run_parallel(&projects, workers, |project| {
+            // One line as each project starts and one as it finishes, on stderr
+            // so the gate can stream them: a stall shows as a started project
+            // that never finishes, and a slow project is visible while it runs.
+            eprintln!("example project `{}` started", project.display());
+            let started = std::time::Instant::now();
+            run_example_in_thread(project)?;
+            eprintln!(
+                "example project `{}` verified in {:.2}s",
+                project.display(),
+                started.elapsed().as_secs_f64()
+            );
+            Ok(())
+        });
+        if !failures.is_empty() {
+            let mut message = format!(
+                "{} of {} example projects failed:\n",
+                failures.len(),
+                projects.len()
+            );
+            for (index, diagnostics) in failures {
+                message.push_str(&format!(
+                    "\nexample project `{}` {diagnostics}\n",
+                    projects[index].display()
+                ));
+            }
+            panic!("{message}");
         }
-        panic!("{message}");
-    }
-    let census = instrumentation::take_artifact_reuse_rejection_census();
-    if requested.is_none()
-        && !run_quarantined
-        && let Some(mismatch) = instrumentation::artifact_reuse_rejection_census_mismatch(
-            &census,
-            ARTIFACT_REUSE_REJECTION_BASELINE,
-        )
-    {
-        panic!("artifact reuse rejection ratchet (tests/examples.rs baselines):\n{mismatch}");
-    }
+        let census = instrumentation::take_artifact_reuse_rejection_census();
+        if requested.is_none()
+            && !run_quarantined
+            && let Some(mismatch) = instrumentation::artifact_reuse_rejection_census_mismatch(
+                &census,
+                ARTIFACT_REUSE_REJECTION_BASELINE,
+            )
+        {
+            panic!("artifact reuse rejection ratchet (tests/examples.rs baselines):\n{mismatch}");
+        }
+    })
 }
 
 #[test]
 fn rbtree_insert_frontier_remains_explicit_and_uses_the_shared_model() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for (relative, expected) in [
-        (
-            "examples/rbtree-insert/rbtree.h",
-            "69fc7419118e4a37fb46a2469b981646a733b1a7c247094d0b48aa643575cee3",
-        ),
-        (
-            "examples/rbtree-insert/rb_insert_color.c",
-            "b20d68f309682bdcebcf2176d655b92b582f2c88bcc0f4645a7384c0760df111",
-        ),
-    ] {
-        let bytes = fs::read(root.join(relative)).expect("the unchanged insert C input exists");
-        assert_eq!(hex_digest(sha256(&bytes)), expected, "changed {relative}");
-    }
-    let path = root.join("examples/rbtree-insert/rbtree_insert.frontier");
-    let source = fs::read_to_string(&path).expect("the insert frontier sidecar should exist");
-    assert!(source.contains("import \"../rbtree-model/rbtree_model.click\";"));
-    assert!(!source.contains("spec enum RbTree"));
-    let c_sources =
-        read_verifying_sources(&path, &source).expect("the unchanged insert C bundle should load");
-    let project = read_click_project_at_root(&path, &source, &root.join("examples"))
-        .expect("the insert frontier should resolve the shared model");
-    let error = click::surface::verify_c0_project(&project, &source_refs(&c_sources))
-        .expect_err("the insert proof frontier is deliberately unfinished");
-    assert!(
+    limits::deterministic(|| {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for (relative, expected) in [
+            (
+                "examples/rbtree-insert/rbtree.h",
+                "69fc7419118e4a37fb46a2469b981646a733b1a7c247094d0b48aa643575cee3",
+            ),
+            (
+                "examples/rbtree-insert/rb_insert_color.c",
+                "b20d68f309682bdcebcf2176d655b92b582f2c88bcc0f4645a7384c0760df111",
+            ),
+        ] {
+            let bytes = fs::read(root.join(relative)).expect("the unchanged insert C input exists");
+            assert_eq!(hex_digest(sha256(&bytes)), expected, "changed {relative}");
+        }
+        let path = root.join("examples/rbtree-insert/rbtree_insert.frontier");
+        let source = fs::read_to_string(&path).expect("the insert frontier sidecar should exist");
+        assert!(source.contains("import \"../rbtree-model/rbtree_model.click\";"));
+        assert!(!source.contains("spec enum RbTree"));
+        let c_sources = read_verifying_sources(&path, &source)
+            .expect("the unchanged insert C bundle should load");
+        let project = read_click_project_at_root(&path, &source, &root.join("examples"))
+            .expect("the insert frontier should resolve the shared model");
+        let error = click::surface::verify_c0_project(&project, &source_refs(&c_sources))
+            .expect_err("the insert proof frontier is deliberately unfinished");
+        assert!(
         error.message().contains(
             "the frontier is at statement 23, `tmp = load_int32_pointer(byte_offset(parent, 8))`"
         ),
         "unexpected insert frontier: {}",
         error.message()
     );
+    })
 }
 
 #[test]
 fn concurrency_fork_join_source_is_frozen() {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples/concurrency-fork-join/fork_join.c");
-    let bytes = fs::read(&source).expect("the frozen fork/join C source exists");
-    assert_eq!(
-        hex_digest(sha256(&bytes)),
-        "818486bb827c4ae7c7ad5638fd75bb0bb12fd7fb9796babaa2111f594609e9a6",
-        "the concurrency proof must use the selected C source unchanged"
-    );
+    limits::deterministic(|| {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples/concurrency-fork-join/fork_join.c");
+        let bytes = fs::read(&source).expect("the frozen fork/join C source exists");
+        assert_eq!(
+            hex_digest(sha256(&bytes)),
+            "818486bb827c4ae7c7ad5638fd75bb0bb12fd7fb9796babaa2111f594609e9a6",
+            "the concurrency proof must use the selected C source unchanged"
+        );
+    })
 }
 
 #[test]
 fn concurrency_mutex_counter_source_is_frozen() {
-    let source =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("design/concurrency-probes/mutex_counter.c");
-    let bytes = fs::read(&source).expect("the frozen mutex counter C source exists");
-    assert_eq!(
-        hex_digest(sha256(&bytes)),
-        "8bc4121624978882c13c2736ccc93097f2c7065e4e8d2cb9bfa9066a6170fa2c",
-        "the mutex counter proof must use the selected C source unchanged"
-    );
+    limits::deterministic(|| {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("design/concurrency-probes/mutex_counter.c");
+        let bytes = fs::read(&source).expect("the frozen mutex counter C source exists");
+        assert_eq!(
+            hex_digest(sha256(&bytes)),
+            "8bc4121624978882c13c2736ccc93097f2c7065e4e8d2cb9bfa9066a6170fa2c",
+            "the mutex counter proof must use the selected C source unchanged"
+        );
+    })
 }
 
 #[test]
 fn byte_representation_source_is_frozen() {
-    let source =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/byte-representation/rep_copy.c");
-    let bytes = fs::read(&source).expect("the frozen byte-representation C source exists");
-    assert_eq!(
-        hex_digest(sha256(&bytes)),
-        "4d5a08408323753ddae195ae33c4a776a4499a7aa9e8d0abf68c491245fe6847",
-        "the byte-representation proof must use the selected C source unchanged"
-    );
+    limits::deterministic(|| {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples/byte-representation/rep_copy.c");
+        let bytes = fs::read(&source).expect("the frozen byte-representation C source exists");
+        assert_eq!(
+            hex_digest(sha256(&bytes)),
+            "4d5a08408323753ddae195ae33c4a776a4499a7aa9e8d0abf68c491245fe6847",
+            "the byte-representation proof must use the selected C source unchanged"
+        );
+    })
 }
 
 fn run_example_in_thread(project: &Path) -> Result<(), String> {
     let project = project.to_path_buf();
-    std::thread::Builder::new()
-        .name("click-example".to_string())
-        .stack_size(64 * 1024 * 1024)
-        .spawn(move || {
-            instrumentation::without_tactic_time_limits(|| run_example_project(&project))
-        })
-        .map_err(|error| format!("failed to start example verifier: {error}"))?
-        .join()
-        .map_err(|_| "example verifier panicked".to_string())?
+    limits::spawn("example verifier", "click-example".to_string(), move || {
+        run_example_project(&project)
+    })?
 }
 
 fn run_example_project(project: &Path) -> Result<(), String> {
@@ -679,55 +689,59 @@ mod tests {
 
     #[test]
     fn sha256_matches_known_vector() {
-        assert_eq!(
-            hex_digest(sha256(b"abc")),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
+        limits::deterministic(|| {
+            assert_eq!(
+                hex_digest(sha256(b"abc")),
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            );
+        })
     }
 
     #[test]
     fn source_manifest_rejects_modified_file() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock should be after the Unix epoch")
-            .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "click-source-integrity-{}-{unique}",
-            std::process::id()
-        ));
-        fs::create_dir(&directory).expect("temporary source directory should be creatable");
-        fs::write(directory.join(SOURCE_METADATA), "status: verified\n").unwrap();
-        let source = b"int32 unchanged(void) { return 0; }\n";
-        fs::write(directory.join("fixture.c"), source).unwrap();
-        let header = b"#define VERSION 17\n";
-        fs::write(directory.join("fixture.h"), header).unwrap();
-        fs::write(directory.join("COPYING"), b"license\n").unwrap();
-        fs::write(
-            directory.join(SOURCE_MANIFEST),
-            format!(
-                "{}  fixture.c\n{}  fixture.h\n{}  COPYING\n",
-                hex_digest(sha256(source)),
-                hex_digest(sha256(header)),
-                hex_digest(sha256(b"license\n"))
-            ),
-        )
-        .unwrap();
+        limits::deterministic(|| {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after the Unix epoch")
+                .as_nanos();
+            let directory = std::env::temp_dir().join(format!(
+                "click-source-integrity-{}-{unique}",
+                std::process::id()
+            ));
+            fs::create_dir(&directory).expect("temporary source directory should be creatable");
+            fs::write(directory.join(SOURCE_METADATA), "status: verified\n").unwrap();
+            let source = b"int32 unchanged(void) { return 0; }\n";
+            fs::write(directory.join("fixture.c"), source).unwrap();
+            let header = b"#define VERSION 17\n";
+            fs::write(directory.join("fixture.h"), header).unwrap();
+            fs::write(directory.join("COPYING"), b"license\n").unwrap();
+            fs::write(
+                directory.join(SOURCE_MANIFEST),
+                format!(
+                    "{}  fixture.c\n{}  fixture.h\n{}  COPYING\n",
+                    hex_digest(sha256(source)),
+                    hex_digest(sha256(header)),
+                    hex_digest(sha256(b"license\n"))
+                ),
+            )
+            .unwrap();
 
-        assert_eq!(
-            verify_source_integrity(&directory).unwrap(),
-            Some(SourceFixtureStatus::Verified)
-        );
-        fs::write(directory.join("fixture.h"), b"#define VERSION 18\n").unwrap();
-        let error = verify_source_integrity(&directory).unwrap_err();
-        assert!(error.contains("source integrity mismatch"), "{error}");
-        fs::write(directory.join("fixture.h"), header).unwrap();
-        fs::write(
-            directory.join("fixture.c"),
-            b"int32 changed(void) { return 1; }\n",
-        )
-        .unwrap();
-        let error = verify_source_integrity(&directory).unwrap_err();
-        assert!(error.contains("source integrity mismatch"), "{error}");
-        fs::remove_dir_all(directory).unwrap();
+            assert_eq!(
+                verify_source_integrity(&directory).unwrap(),
+                Some(SourceFixtureStatus::Verified)
+            );
+            fs::write(directory.join("fixture.h"), b"#define VERSION 18\n").unwrap();
+            let error = verify_source_integrity(&directory).unwrap_err();
+            assert!(error.contains("source integrity mismatch"), "{error}");
+            fs::write(directory.join("fixture.h"), header).unwrap();
+            fs::write(
+                directory.join("fixture.c"),
+                b"int32 changed(void) { return 1; }\n",
+            )
+            .unwrap();
+            let error = verify_source_integrity(&directory).unwrap_err();
+            assert!(error.contains("source integrity mismatch"), "{error}");
+            fs::remove_dir_all(directory).unwrap();
+        })
     }
 }

@@ -21,6 +21,9 @@ use click::surface::{
     expand_cpp_prepared_project_tactic_source_at, verify_cpp_prepared_project,
 };
 
+#[path = "support/limits.rs"]
+mod limits;
+
 const SOURCE: &str = include_str!("../examples/basic-cpp/increment.cpp");
 const SIDECAR: &str = include_str!("../examples/basic-cpp/increment.click");
 const BRANCH_SOURCE: &str = include_str!("fixtures/cpp-verification/branch-return/choose.cpp");
@@ -486,474 +489,494 @@ impl Drop for Project {
 
 #[test]
 fn clang_export_is_deterministic_typed_and_loads_without_clang() {
-    let project = Project::new();
-    let output = Command::new(env!("CARGO_BIN_EXE_click"))
-        .args([
-            "import",
-            "lock",
-            project.directory.join("demo.click").to_str().unwrap(),
-        ])
-        .output()
-        .expect("run the ordinary import command");
-    assert!(
-        output.status.success(),
-        "click import failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let first_artifact = fs::read(project.artifact()).unwrap();
-    let first_lock = fs::read(project.lock()).unwrap();
-    refresh_import(&project.config()).expect("repeat the same semantic export");
-    assert_eq!(fs::read(project.artifact()).unwrap(), first_artifact);
-    assert_eq!(fs::read(project.lock()).unwrap(), first_lock);
+    limits::deterministic(|| {
+        let project = Project::new();
+        let output = Command::new(env!("CARGO_BIN_EXE_click"))
+            .args([
+                "import",
+                "lock",
+                project.directory.join("demo.click").to_str().unwrap(),
+            ])
+            .output()
+            .expect("run the ordinary import command");
+        assert!(
+            output.status.success(),
+            "click import failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let first_artifact = fs::read(project.artifact()).unwrap();
+        let first_lock = fs::read(project.lock()).unwrap();
+        refresh_import(&project.config()).expect("repeat the same semantic export");
+        assert_eq!(fs::read(project.artifact()).unwrap(), first_artifact);
+        assert_eq!(fs::read(project.lock()).unwrap(), first_lock);
 
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
-    let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 20);
-    assert!(prepared.export().reachable_functions.is_empty());
-    assert_eq!(prepared.logical_source(), "increment.cpp");
-    assert_eq!(prepared.identity().len(), 64);
-    assert_eq!(
-        prepared.export().profile.compilation_directory,
-        project.directory.to_string_lossy()
-    );
-    assert_eq!(
-        prepared.export().profile.compilation_file,
-        project.source_name
-    );
-    assert_eq!(
-        prepared.export().profile.compilation_command,
-        project.compilation_arguments()
-    );
-    let function = &prepared.export().function;
-    assert_eq!(function.name, "increment");
-    assert!(function.declaration_id.starts_with("c:@F@increment#"));
-    assert_eq!(
-        function.parameters[0].value_type,
-        CppType::LvalueReference {
-            pointee: Box::new(CppType::Integer {
-                bits: 32,
-                signed: true,
-                is_const: false,
-                source_aliases: Vec::new(),
-            }),
-        }
-    );
-    let CppStatement::Assign { value, .. } = &function.body[0] else {
-        panic!("first semantic operation was not assignment")
-    };
-    assert!(matches!(
-        value,
-        CppExpression::Binary {
-            operator: CppBinaryOperator::Add,
-            left,
-            right,
-            ..
-        } if matches!(left.as_ref(), CppExpression::Load { .. })
-            && matches!(right.as_ref(), CppExpression::IntegerLiteral { value, .. } if value == "1")
-    ));
-    assert!(matches!(
-        function.body[1],
-        CppStatement::Return {
-            value: CppExpression::Load { .. },
-            ..
-        }
-    ));
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+        let prepared =
+            load_import(&project.config()).expect("locked loading must not execute Clang");
+        assert_eq!(prepared.export().schema, 20);
+        assert!(prepared.export().reachable_functions.is_empty());
+        assert_eq!(prepared.logical_source(), "increment.cpp");
+        assert_eq!(prepared.identity().len(), 64);
+        assert_eq!(
+            prepared.export().profile.compilation_directory,
+            project.directory.to_string_lossy()
+        );
+        assert_eq!(
+            prepared.export().profile.compilation_file,
+            project.source_name
+        );
+        assert_eq!(
+            prepared.export().profile.compilation_command,
+            project.compilation_arguments()
+        );
+        let function = &prepared.export().function;
+        assert_eq!(function.name, "increment");
+        assert!(function.declaration_id.starts_with("c:@F@increment#"));
+        assert_eq!(
+            function.parameters[0].value_type,
+            CppType::LvalueReference {
+                pointee: Box::new(CppType::Integer {
+                    bits: 32,
+                    signed: true,
+                    is_const: false,
+                    source_aliases: Vec::new(),
+                }),
+            }
+        );
+        let CppStatement::Assign { value, .. } = &function.body[0] else {
+            panic!("first semantic operation was not assignment")
+        };
+        assert!(matches!(
+            value,
+            CppExpression::Binary {
+                operator: CppBinaryOperator::Add,
+                left,
+                right,
+                ..
+            } if matches!(left.as_ref(), CppExpression::Load { .. })
+                && matches!(right.as_ref(), CppExpression::IntegerLiteral { value, .. } if value == "1")
+        ));
+        assert!(matches!(
+            function.body[1],
+            CppStatement::Return {
+                value: CppExpression::Load { .. },
+                ..
+            }
+        ));
+    })
 }
 
 #[test]
 fn out_of_tree_compilation_locks_dependency_root_and_rtti_profile() {
-    let project = Project::constexpr_coin();
-    let build = project.directory.join("build");
-    fs::create_dir(&build).unwrap();
-    let mut arguments = project.exception_enabled_compilation_arguments();
-    for argument in &mut arguments {
-        if argument == "-fno-rtti" {
-            *argument = "-frtti".into();
-        } else if argument == &project.source_name {
-            *argument = project.source().to_string_lossy().into_owned();
+    limits::deterministic(|| {
+        let project = Project::constexpr_coin();
+        let build = project.directory.join("build");
+        fs::create_dir(&build).unwrap();
+        let mut arguments = project.exception_enabled_compilation_arguments();
+        for argument in &mut arguments {
+            if argument == "-fno-rtti" {
+                *argument = "-frtti".into();
+            } else if argument == &project.source_name {
+                *argument = project.source().to_string_lossy().into_owned();
+            }
         }
-    }
-    arguments.insert(1, format!("-I{}", project.directory.display()));
-    let database = serde_json::json!([{
-        "directory": build,
-        "file": project.source(),
-        "arguments": arguments,
-        "output": "fixture.o"
-    }]);
-    fs::write(
-        build.join("compile_commands.json"),
-        serde_json::to_vec_pretty(&database).unwrap(),
-    )
-    .unwrap();
-    let mut config: serde_json::Value =
-        serde_json::from_slice(&fs::read(project.config()).unwrap()).unwrap();
-    config["compilation_database"] = "build/compile_commands.json".into();
-    config["rtti"] = true.into();
-    fs::write(
-        project.config(),
-        serde_json::to_vec_pretty(&config).unwrap(),
-    )
-    .unwrap();
+        arguments.insert(1, format!("-I{}", project.directory.display()));
+        let database = serde_json::json!([{
+            "directory": build,
+            "file": project.source(),
+            "arguments": arguments,
+            "output": "fixture.o"
+        }]);
+        fs::write(
+            build.join("compile_commands.json"),
+            serde_json::to_vec_pretty(&database).unwrap(),
+        )
+        .unwrap();
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&fs::read(project.config()).unwrap()).unwrap();
+        config["compilation_database"] = "build/compile_commands.json".into();
+        config["rtti"] = true.into();
+        fs::write(
+            project.config(),
+            serde_json::to_vec_pretty(&config).unwrap(),
+        )
+        .unwrap();
 
-    refresh_import(&project.config()).expect("export with out-of-tree build directory");
-    let prepared = load_import(&project.config()).expect("offline import");
-    assert!(prepared.export().profile.exceptions);
-    assert!(prepared.export().profile.rtti);
-    assert_eq!(prepared.export().dependencies, ["cstdint"]);
-    assert_eq!(
-        prepared.export().profile.compilation_directory,
-        build.to_string_lossy()
-    );
+        refresh_import(&project.config()).expect("export with out-of-tree build directory");
+        let prepared = load_import(&project.config()).expect("offline import");
+        assert!(prepared.export().profile.exceptions);
+        assert!(prepared.export().profile.rtti);
+        assert_eq!(prepared.export().dependencies, ["cstdint"]);
+        assert_eq!(
+            prepared.export().profile.compilation_directory,
+            build.to_string_lossy()
+        );
 
-    fs::write(
-        project.directory.join("cstdint"),
-        "typedef long int64_t;\n// changed\n",
-    )
-    .unwrap();
-    assert!(
-        load_import(&project.config())
-            .unwrap_err()
-            .contains("dependency inventory differs")
-    );
+        fs::write(
+            project.directory.join("cstdint"),
+            "typedef long int64_t;\n// changed\n",
+        )
+        .unwrap();
+        assert!(
+            load_import(&project.config())
+                .unwrap_err()
+                .contains("dependency inventory differs")
+        );
+    })
 }
 
 #[test]
 fn every_opened_header_is_locked_even_outside_the_reachable_graph() {
-    let project = Project::new();
-    let header = project.directory.join("prelude.h");
-    fs::write(&header, "#define PRELUDE 1\n").unwrap();
-    fs::write(
-        project.source(),
-        format!("#include \"prelude.h\"\n{SOURCE}"),
-    )
-    .unwrap();
+    limits::deterministic(|| {
+        let project = Project::new();
+        let header = project.directory.join("prelude.h");
+        fs::write(&header, "#define PRELUDE 1\n").unwrap();
+        fs::write(
+            project.source(),
+            format!("#include \"prelude.h\"\n{SOURCE}"),
+        )
+        .unwrap();
 
-    refresh_import(&project.config()).expect("lock all opened headers");
-    let prepared = load_import(&project.config()).expect("load unmodified header");
-    assert!(prepared.export().dependencies.is_empty());
-    let canonical_header = header.canonicalize().unwrap();
-    assert!(
-        prepared
-            .export()
-            .preprocessor_files
-            .iter()
-            .any(|file| { file.canonical_path == canonical_header.to_string_lossy() })
-    );
+        refresh_import(&project.config()).expect("lock all opened headers");
+        let prepared = load_import(&project.config()).expect("load unmodified header");
+        assert!(prepared.export().dependencies.is_empty());
+        let canonical_header = header.canonicalize().unwrap();
+        assert!(
+            prepared
+                .export()
+                .preprocessor_files
+                .iter()
+                .any(|file| { file.canonical_path == canonical_header.to_string_lossy() })
+        );
 
-    fs::write(&header, "#define PRELUDE 2\n").unwrap();
-    assert!(
-        load_import(&project.config())
-            .unwrap_err()
-            .contains("preprocessor input inventory differs")
-    );
+        fs::write(&header, "#define PRELUDE 2\n").unwrap();
+        assert!(
+            load_import(&project.config())
+                .unwrap_err()
+                .contains("preprocessor input inventory differs")
+        );
+    })
 }
 
 #[cfg(unix)]
 #[test]
 fn opened_header_symlink_target_is_locked() {
-    use std::os::unix::fs::symlink;
+    limits::deterministic(|| {
+        use std::os::unix::fs::symlink;
 
-    let project = Project::new();
-    let header = project.directory.join("prelude.h");
-    let first = project.directory.join("first.h");
-    let second = project.directory.join("second.h");
-    fs::write(&first, "#define PRELUDE 1\n").unwrap();
-    fs::write(&second, "#define PRELUDE 1\n").unwrap();
-    symlink(&first, &header).unwrap();
-    fs::write(
-        project.source(),
-        format!("#include \"prelude.h\"\n{SOURCE}"),
-    )
-    .unwrap();
+        let project = Project::new();
+        let header = project.directory.join("prelude.h");
+        let first = project.directory.join("first.h");
+        let second = project.directory.join("second.h");
+        fs::write(&first, "#define PRELUDE 1\n").unwrap();
+        fs::write(&second, "#define PRELUDE 1\n").unwrap();
+        symlink(&first, &header).unwrap();
+        fs::write(
+            project.source(),
+            format!("#include \"prelude.h\"\n{SOURCE}"),
+        )
+        .unwrap();
 
-    refresh_import(&project.config()).expect("lock symlinked header");
-    let prepared = load_import(&project.config()).expect("load original target");
-    assert!(prepared.export().preprocessor_files.iter().any(|file| {
-        file.accessed_path.ends_with("/prelude.h")
-            && file.canonical_path == first.canonicalize().unwrap().to_string_lossy()
-    }));
+        refresh_import(&project.config()).expect("lock symlinked header");
+        let prepared = load_import(&project.config()).expect("load original target");
+        assert!(prepared.export().preprocessor_files.iter().any(|file| {
+            file.accessed_path.ends_with("/prelude.h")
+                && file.canonical_path == first.canonicalize().unwrap().to_string_lossy()
+        }));
 
-    fs::remove_file(&header).unwrap();
-    symlink(&second, &header).unwrap();
-    assert!(
-        load_import(&project.config())
-            .unwrap_err()
-            .contains("changed its resolved target")
-    );
+        fs::remove_file(&header).unwrap();
+        symlink(&second, &header).unwrap();
+        assert!(
+            load_import(&project.config())
+                .unwrap_err()
+                .contains("changed its resolved target")
+        );
+    })
 }
 
 #[test]
 fn compilation_database_command_is_selected_locked_and_validated() {
-    let project = Project::new();
-    refresh_import(&project.config()).expect("export through the selected compilation command");
-    let first = load_import(&project.config()).expect("load the locked compilation command");
-    let first_identity = first.identity().to_string();
-    let lock: serde_json::Value =
-        serde_json::from_slice(&fs::read(project.lock()).unwrap()).unwrap();
-    assert_eq!(
-        lock["compilation_database_sha256"].as_str().unwrap().len(),
-        64
-    );
-    assert_eq!(
-        lock["profile"]["compilation_command"],
-        serde_json::json!(project.compilation_arguments())
-    );
-
-    let mut changed = project.compilation_arguments();
-    changed.insert(changed.len() - 4, "-DCLICK_COMMAND_VARIANT=1".into());
-    project.write_compilation_database_commands(&[changed.clone()]);
-    let error = load_import(&project.config()).unwrap_err();
-    assert!(error.contains("compilation database differs"), "{error}");
-    refresh_import(&project.config()).expect("refresh after an explicit command change");
-    let refreshed = load_import(&project.config()).unwrap();
-    assert_ne!(refreshed.identity(), first_identity);
-    assert_eq!(refreshed.export().profile.compilation_command, changed);
-
-    let command_string = Project::new();
-    let arguments = command_string.compilation_arguments();
-    command_string.write_compilation_database_command_string(&arguments.join(" "));
-    refresh_import(&command_string.config()).expect("parse a CMake-style command string entry");
-    assert_eq!(
-        load_import(&command_string.config())
-            .unwrap()
-            .export()
-            .profile
-            .compilation_command,
-        arguments
-    );
-
-    let missing = Project::new();
-    missing.write_compilation_database_commands(&[]);
-    let error = refresh_import(&missing.config()).unwrap_err();
-    assert!(error.contains("has no command"), "{error}");
-    assert!(!missing.artifact().exists());
-
-    let ambiguous = Project::new();
-    let command = ambiguous.compilation_arguments();
-    ambiguous.write_compilation_database_commands(&[command.clone(), command]);
-    let error = refresh_import(&ambiguous.config()).unwrap_err();
-    assert!(error.contains("exactly one is required"), "{error}");
-    assert!(!ambiguous.artifact().exists());
-
-    let wrong_driver = Project::new();
-    let mut command = wrong_driver.compilation_arguments();
-    command[0] = "g++".into();
-    wrong_driver.write_compilation_database_commands(&[command]);
-    let error = refresh_import(&wrong_driver.config()).unwrap_err();
-    assert!(error.contains("pinned Clang driver"), "{error}");
-    assert!(!wrong_driver.artifact().exists());
-
-    for untracked in ["@flags.rsp", "-include-pch", "-ivfsoverlay"] {
+    limits::deterministic(|| {
         let project = Project::new();
-        let mut command = project.compilation_arguments();
-        command.insert(1, untracked.into());
-        project.write_compilation_database_commands(&[command]);
-        let error = refresh_import(&project.config()).unwrap_err();
+        refresh_import(&project.config()).expect("export through the selected compilation command");
+        let first = load_import(&project.config()).expect("load the locked compilation command");
+        let first_identity = first.identity().to_string();
+        let lock: serde_json::Value =
+            serde_json::from_slice(&fs::read(project.lock()).unwrap()).unwrap();
+        assert_eq!(
+            lock["compilation_database_sha256"].as_str().unwrap().len(),
+            64
+        );
+        assert_eq!(
+            lock["profile"]["compilation_command"],
+            serde_json::json!(project.compilation_arguments())
+        );
+
+        let mut changed = project.compilation_arguments();
+        changed.insert(changed.len() - 4, "-DCLICK_COMMAND_VARIANT=1".into());
+        project.write_compilation_database_commands(&[changed.clone()]);
+        let error = load_import(&project.config()).unwrap_err();
+        assert!(error.contains("compilation database differs"), "{error}");
+        refresh_import(&project.config()).expect("refresh after an explicit command change");
+        let refreshed = load_import(&project.config()).unwrap();
+        assert_ne!(refreshed.identity(), first_identity);
+        assert_eq!(refreshed.export().profile.compilation_command, changed);
+
+        let command_string = Project::new();
+        let arguments = command_string.compilation_arguments();
+        command_string.write_compilation_database_command_string(&arguments.join(" "));
+        refresh_import(&command_string.config()).expect("parse a CMake-style command string entry");
+        assert_eq!(
+            load_import(&command_string.config())
+                .unwrap()
+                .export()
+                .profile
+                .compilation_command,
+            arguments
+        );
+
+        let missing = Project::new();
+        missing.write_compilation_database_commands(&[]);
+        let error = refresh_import(&missing.config()).unwrap_err();
+        assert!(error.contains("has no command"), "{error}");
+        assert!(!missing.artifact().exists());
+
+        let ambiguous = Project::new();
+        let command = ambiguous.compilation_arguments();
+        ambiguous.write_compilation_database_commands(&[command.clone(), command]);
+        let error = refresh_import(&ambiguous.config()).unwrap_err();
+        assert!(error.contains("exactly one is required"), "{error}");
+        assert!(!ambiguous.artifact().exists());
+
+        let wrong_driver = Project::new();
+        let mut command = wrong_driver.compilation_arguments();
+        command[0] = "g++".into();
+        wrong_driver.write_compilation_database_commands(&[command]);
+        let error = refresh_import(&wrong_driver.config()).unwrap_err();
+        assert!(error.contains("pinned Clang driver"), "{error}");
+        assert!(!wrong_driver.artifact().exists());
+
+        for untracked in ["@flags.rsp", "-include-pch", "-ivfsoverlay"] {
+            let project = Project::new();
+            let mut command = project.compilation_arguments();
+            command.insert(1, untracked.into());
+            project.write_compilation_database_commands(&[command]);
+            let error = refresh_import(&project.config()).unwrap_err();
+            assert!(
+                error.contains("untracked preprocessor input mode"),
+                "{error}"
+            );
+            assert!(!project.artifact().exists());
+        }
+
+        let wrong_standard = Project::new();
+        let command = wrong_standard
+            .compilation_arguments()
+            .into_iter()
+            .map(|argument| {
+                if argument == "-std=c++20" {
+                    "-std=gnu++20".into()
+                } else {
+                    argument
+                }
+            })
+            .collect::<Vec<_>>();
+        wrong_standard.write_compilation_database_commands(&[command]);
+        let error = refresh_import(&wrong_standard.config()).unwrap_err();
         assert!(
-            error.contains("untracked preprocessor input mode"),
+            error.contains("profile must match the configured"),
             "{error}"
         );
-        assert!(!project.artifact().exists());
-    }
+        assert!(!wrong_standard.artifact().exists());
 
-    let wrong_standard = Project::new();
-    let command = wrong_standard
-        .compilation_arguments()
-        .into_iter()
-        .map(|argument| {
-            if argument == "-std=c++20" {
-                "-std=gnu++20".into()
-            } else {
-                argument
-            }
-        })
-        .collect::<Vec<_>>();
-    wrong_standard.write_compilation_database_commands(&[command]);
-    let error = refresh_import(&wrong_standard.config()).unwrap_err();
-    assert!(
-        error.contains("profile must match the configured"),
-        "{error}"
-    );
-    assert!(!wrong_standard.artifact().exists());
-
-    let wrong_target = Project::new();
-    let command = wrong_target
-        .compilation_arguments()
-        .into_iter()
-        .map(|argument| {
-            if argument == "--target=x86_64-unknown-linux-gnu" {
-                "--target=aarch64-unknown-linux-gnu".into()
-            } else {
-                argument
-            }
-        })
-        .collect::<Vec<_>>();
-    wrong_target.write_compilation_database_commands(&[command]);
-    let error = refresh_import(&wrong_target.config()).unwrap_err();
-    assert!(
-        error.contains("profile must match the configured"),
-        "{error}"
-    );
-    assert!(!wrong_target.artifact().exists());
+        let wrong_target = Project::new();
+        let command = wrong_target
+            .compilation_arguments()
+            .into_iter()
+            .map(|argument| {
+                if argument == "--target=x86_64-unknown-linux-gnu" {
+                    "--target=aarch64-unknown-linux-gnu".into()
+                } else {
+                    argument
+                }
+            })
+            .collect::<Vec<_>>();
+        wrong_target.write_compilation_database_commands(&[command]);
+        let error = refresh_import(&wrong_target.config()).unwrap_err();
+        assert!(
+            error.contains("profile must match the configured"),
+            "{error}"
+        );
+        assert!(!wrong_target.artifact().exists());
+    })
 }
 
 #[test]
 fn included_header_definition_is_selected_locked_and_validated() {
-    let project = Project::header_function();
-    refresh_import(&project.config()).expect("export the selected header definition");
-    let lock: serde_json::Value =
-        serde_json::from_slice(&fs::read(project.lock()).unwrap()).unwrap();
-    assert_eq!(lock["logical_source_sha256"].as_str().unwrap().len(), 64);
+    limits::deterministic(|| {
+        let project = Project::header_function();
+        refresh_import(&project.config()).expect("export the selected header definition");
+        let lock: serde_json::Value =
+            serde_json::from_slice(&fs::read(project.lock()).unwrap()).unwrap();
+        assert_eq!(lock["logical_source_sha256"].as_str().unwrap().len(), 64);
 
-    let prepared = load_import(&project.config()).expect("load the locked header definition");
-    assert_eq!(prepared.logical_source(), "selected.h");
-    assert_eq!(prepared.export().logical_source, "selected.h");
-    assert_eq!(prepared.export().profile.compilation_file, "driver.cpp");
-    assert_eq!(prepared.export().function.name, "header_increment");
-    assert_eq!(prepared.export().function.span.file, "selected.h");
+        let prepared = load_import(&project.config()).expect("load the locked header definition");
+        assert_eq!(prepared.logical_source(), "selected.h");
+        assert_eq!(prepared.export().logical_source, "selected.h");
+        assert_eq!(prepared.export().profile.compilation_file, "driver.cpp");
+        assert_eq!(prepared.export().function.name, "header_increment");
+        assert_eq!(prepared.export().function.span.file, "selected.h");
 
-    let sidecar = project.directory.join("demo.click");
-    let sidecar_source = SIDECAR
-        .replace("increment.cpp", "selected.h")
-        .replace("increment", "header_increment");
-    fs::write(&sidecar, &sidecar_source).unwrap();
-    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
-    let inputs = read_c_inputs(&sidecar, &sidecar_source).expect("load the header import offline");
-    let CInput::PreparedCpp(import) = inputs else {
-        panic!("language=c++ must select the C++ prepared-input path")
-    };
-    let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify the selected header function through the ordinary workflow");
+        let sidecar = project.directory.join("demo.click");
+        let sidecar_source = SIDECAR
+            .replace("increment.cpp", "selected.h")
+            .replace("increment", "header_increment");
+        fs::write(&sidecar, &sidecar_source).unwrap();
+        fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+        let inputs =
+            read_c_inputs(&sidecar, &sidecar_source).expect("load the header import offline");
+        let CInput::PreparedCpp(import) = inputs else {
+            panic!("language=c++ must select the C++ prepared-input path")
+        };
+        let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify the selected header function through the ordinary workflow");
 
-    let stale = Project::header_function();
-    refresh_import(&stale.config()).expect("lock the original header contents");
-    let original_identity = load_import(&stale.config()).unwrap().identity().to_string();
-    fs::write(
+        let stale = Project::header_function();
+        refresh_import(&stale.config()).expect("lock the original header contents");
+        let original_identity = load_import(&stale.config()).unwrap().identity().to_string();
+        fs::write(
         stale.logical_header(),
         "inline int header_increment(int& value) noexcept {\n    value = value + 1;\n    return value;\n}\n\n",
     )
     .unwrap();
-    let error = load_import(&stale.config()).unwrap_err();
-    assert!(error.contains("logical source differs"), "{error}");
-    refresh_import(&stale.config()).expect("refresh after changing the selected header");
-    assert_ne!(
-        load_import(&stale.config()).unwrap().identity(),
-        original_identity
-    );
+        let error = load_import(&stale.config()).unwrap_err();
+        assert!(error.contains("logical source differs"), "{error}");
+        refresh_import(&stale.config()).expect("refresh after changing the selected header");
+        assert_ne!(
+            load_import(&stale.config()).unwrap().identity(),
+            original_identity
+        );
 
-    let wrong_location = Project::header_function();
-    fs::write(
-        wrong_location.directory.join("wrong.h"),
-        "// not selected\n",
-    )
-    .unwrap();
-    wrong_location.write_config_with_logical_source("header_increment", "wrong.h");
-    let error = refresh_import(&wrong_location.config()).unwrap_err();
-    assert!(error.contains("was not found"), "{error}");
-    assert!(!wrong_location.artifact().exists());
+        let wrong_location = Project::header_function();
+        fs::write(
+            wrong_location.directory.join("wrong.h"),
+            "// not selected\n",
+        )
+        .unwrap();
+        wrong_location.write_config_with_logical_source("header_increment", "wrong.h");
+        let error = refresh_import(&wrong_location.config()).unwrap_err();
+        assert!(error.contains("was not found"), "{error}");
+        assert!(!wrong_location.artifact().exists());
 
-    let ambiguous = Project::header_function();
-    fs::write(
+        let ambiguous = Project::header_function();
+        fs::write(
         ambiguous.logical_header(),
         "inline int header_increment(int& value) noexcept { return value; }\ninline int header_increment(const int& value) noexcept { return value; }\n",
     )
     .unwrap();
-    let error = refresh_import(&ambiguous.config()).unwrap_err();
-    assert!(error.contains("is overloaded"), "{error}");
-    assert!(!ambiguous.artifact().exists());
+        let error = refresh_import(&ambiguous.config()).unwrap_err();
+        assert!(error.contains("is overloaded"), "{error}");
+        assert!(!ambiguous.artifact().exists());
+    })
 }
 
 #[test]
 fn exception_enabled_profile_verifies_a_checked_normal_only_header_graph() {
-    let project = Project::exception_enabled_header_function();
-    refresh_import(&project.config()).expect("export the exception-enabled normal-only function");
-    let prepared = load_import(&project.config()).expect("load the locked semantic artifact");
-    assert!(prepared.export().profile.exceptions);
-    assert_eq!(
-        prepared.export().exception_behavior,
-        CppExceptionBehavior::NormalOnly
-    );
-    assert!(!prepared.export().function.declared_noexcept);
-    assert!(prepared.export().records.is_empty());
+    limits::deterministic(|| {
+        let project = Project::exception_enabled_header_function();
+        refresh_import(&project.config())
+            .expect("export the exception-enabled normal-only function");
+        let prepared = load_import(&project.config()).expect("load the locked semantic artifact");
+        assert!(prepared.export().profile.exceptions);
+        assert_eq!(
+            prepared.export().exception_behavior,
+            CppExceptionBehavior::NormalOnly
+        );
+        assert!(!prepared.export().function.declared_noexcept);
+        assert!(prepared.export().records.is_empty());
 
-    let sidecar = project.directory.join("demo.click");
-    let sidecar_source = SIDECAR
-        .replace("increment.cpp", "selected.h")
-        .replace("increment", "header_increment");
-    fs::write(&sidecar, &sidecar_source).unwrap();
-    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
-    let inputs = read_c_inputs(&sidecar, &sidecar_source)
-        .expect("load the exception-enabled header import offline");
-    let CInput::PreparedCpp(import) = inputs else {
-        panic!("language=c++ must select the C++ prepared-input path")
-    };
-    let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify the normal-only function through the ordinary workflow");
+        let sidecar = project.directory.join("demo.click");
+        let sidecar_source = SIDECAR
+            .replace("increment.cpp", "selected.h")
+            .replace("increment", "header_increment");
+        fs::write(&sidecar, &sidecar_source).unwrap();
+        fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+        let inputs = read_c_inputs(&sidecar, &sidecar_source)
+            .expect("load the exception-enabled header import offline");
+        let CInput::PreparedCpp(import) = inputs else {
+            panic!("language=c++ must select the C++ prepared-input path")
+        };
+        let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify the normal-only function through the ordinary workflow");
 
-    let graph = Project::direct_call();
-    fs::write(
+        let graph = Project::direct_call();
+        fs::write(
         graph.source(),
         "int set_seven(int& value) {\n    value = 7;\n    return value;\n}\n\nint call_set_seven(int& value) {\n    set_seven(value);\n    return value;\n}\n",
     )
     .unwrap();
-    graph.write_exception_enabled_compilation_database();
-    graph.write_config_with_profile("call_set_seven", "call_set_seven.cpp", true);
-    refresh_import(&graph.config()).expect("export a closed normal-only direct-call graph");
-    let graph = load_import(&graph.config()).unwrap();
-    assert!(!graph.export().function.declared_noexcept);
-    assert_eq!(graph.export().reachable_functions.len(), 1);
-    assert!(!graph.export().reachable_functions[0].declared_noexcept);
+        graph.write_exception_enabled_compilation_database();
+        graph.write_config_with_profile("call_set_seven", "call_set_seven.cpp", true);
+        refresh_import(&graph.config()).expect("export a closed normal-only direct-call graph");
+        let graph = load_import(&graph.config()).unwrap();
+        assert!(!graph.export().function.declared_noexcept);
+        assert_eq!(graph.export().reachable_functions.len(), 1);
+        assert!(!graph.export().reachable_functions[0].declared_noexcept);
+    })
 }
 
 #[test]
 fn scalar_int32_profile_verifies_a_typed_throw_and_keeps_its_lock_identity() {
-    let project = Project::new();
-    fs::write(project.source(), "int increment(int& value) { throw 7; }\n").unwrap();
-    project.write_exception_enabled_compilation_database();
-    project.write_config_with_exception_behavior(
-        "increment",
-        "increment.cpp",
-        true,
-        "scalar_int32",
-    );
-    refresh_import(&project.config()).expect("export a typed scalar throw");
-    let prepared = load_import(&project.config()).expect("load the locked scalar exception");
-    assert_eq!(
-        prepared.export().exception_behavior,
-        CppExceptionBehavior::ScalarInt32
-    );
-    assert!(matches!(
-        prepared.export().function.body.as_slice(),
-        [CppStatement::Throw { .. }]
-    ));
+    limits::deterministic(|| {
+        let project = Project::new();
+        fs::write(project.source(), "int increment(int& value) { throw 7; }\n").unwrap();
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_exception_behavior(
+            "increment",
+            "increment.cpp",
+            true,
+            "scalar_int32",
+        );
+        refresh_import(&project.config()).expect("export a typed scalar throw");
+        let prepared = load_import(&project.config()).expect("load the locked scalar exception");
+        assert_eq!(
+            prepared.export().exception_behavior,
+            CppExceptionBehavior::ScalarInt32
+        );
+        assert!(matches!(
+            prepared.export().function.body.as_slice(),
+            [CppStatement::Throw { .. }]
+        ));
 
-    let sidecar_source = "verifying \"increment.cpp\";\n\
+        let sidecar_source = "verifying \"increment.cpp\";\n\
         int32 increment(int32* value) throws int32 {\n\
             ensures result == 0;\n\
             exceptional ensures exception == 7;\n\
         }\n";
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, sidecar_source).unwrap();
-    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
-    let click_project = read_click_project(&sidecar, sidecar_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &prepared)
-        .expect("a source throw must establish the declared exceptional outcome");
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, sidecar_source).unwrap();
+        fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+        let click_project = read_click_project(&sidecar, sidecar_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &prepared)
+            .expect("a source throw must establish the declared exceptional outcome");
 
-    let missing_signature = "verifying \"increment.cpp\";\n\
+        let missing_signature = "verifying \"increment.cpp\";\n\
         int32 increment(int32* value) { ensures result == 0; }\n";
-    let missing_signature_project = read_click_project(&sidecar, missing_signature).unwrap();
-    verify_cpp_prepared_project(&missing_signature_project, &prepared)
-        .expect_err("a source throw cannot cross an undeclared exceptional boundary");
+        let missing_signature_project = read_click_project(&sidecar, missing_signature).unwrap();
+        verify_cpp_prepared_project(&missing_signature_project, &prepared)
+            .expect_err("a source throw cannot cross an undeclared exceptional boundary");
+    })
 }
 
 #[test]
 fn scalar_int32_profile_propagates_a_modular_throw_past_a_normal_call_continuation() {
-    let project = Project::with_fixture(
-        "caller.cpp",
-        "caller",
-        "int helper(bool should_throw) {\n\
+    limits::deterministic(|| {
+        let project = Project::with_fixture(
+            "caller.cpp",
+            "caller",
+            "int helper(bool should_throw) {\n\
              if (should_throw) { throw 7; }\n\
              return 5;\n\
          }\n\
@@ -962,13 +985,13 @@ fn scalar_int32_profile_propagates_a_modular_throw_past_a_normal_call_continuati
              result = 5;\n\
              return result;\n\
          }\n",
-    );
-    project.write_exception_enabled_compilation_database();
-    project.write_config_with_exception_behavior("caller", "caller.cpp", true, "scalar_int32");
-    refresh_import(&project.config()).expect("export both reachable outcomes");
-    let prepared = load_import(&project.config()).expect("load the locked call graph");
-    assert_eq!(prepared.export().reachable_functions.len(), 1);
-    let sidecar_source = "verifying \"caller.cpp\";\n\
+        );
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_exception_behavior("caller", "caller.cpp", true, "scalar_int32");
+        refresh_import(&project.config()).expect("export both reachable outcomes");
+        let prepared = load_import(&project.config()).expect("load the locked call graph");
+        assert_eq!(prepared.export().reachable_functions.len(), 1);
+        let sidecar_source = "verifying \"caller.cpp\";\n\
         int32 helper(bool should_throw) throws int32 {\n\
             ensures result == 5;\n\
             exceptional ensures exception == 7;\n\
@@ -977,53 +1000,55 @@ fn scalar_int32_profile_propagates_a_modular_throw_past_a_normal_call_continuati
             ensures result == 5;\n\
             exceptional ensures exception == 7;\n\
         }\n";
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, sidecar_source).unwrap();
-    let click_project = read_click_project(&sidecar, sidecar_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &prepared)
-        .expect("the caller must preserve the helper's exceptional exit");
-    let expanded = expand_cpp_prepared_project_claim_source_by_label(
-        &click_project,
-        &prepared,
-        "caller.exceptional_ensures_0",
-    )
-    .expect("expand the caller's exceptional proof");
-    let rewritten = click_project.with_entry_source(expanded.clone());
-    verify_cpp_prepared_project(&rewritten, &prepared)
-        .expect("the expanded exceptional proof must reverify");
-    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&rewritten, &prepared)
-        .expect("retain the expanded scalar exception environment");
-    let site = cpp_prepared_project_tactic_source_position(
-        &rewritten,
-        &prepared,
-        "caller.exceptional_ensures_0",
-        0,
-    )
-    .expect("locate the expanded exceptional proof");
-    session
-        .verify_at_project(&expanded, site.line, site.column)
-        .expect("retained audit must accept the expanded exceptional proof");
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, sidecar_source).unwrap();
+        let click_project = read_click_project(&sidecar, sidecar_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &prepared)
+            .expect("the caller must preserve the helper's exceptional exit");
+        let expanded = expand_cpp_prepared_project_claim_source_by_label(
+            &click_project,
+            &prepared,
+            "caller.exceptional_ensures_0",
+        )
+        .expect("expand the caller's exceptional proof");
+        let rewritten = click_project.with_entry_source(expanded.clone());
+        verify_cpp_prepared_project(&rewritten, &prepared)
+            .expect("the expanded exceptional proof must reverify");
+        let (session, _) = C0VerificationSession::new_cpp_prepared_project(&rewritten, &prepared)
+            .expect("retain the expanded scalar exception environment");
+        let site = cpp_prepared_project_tactic_source_position(
+            &rewritten,
+            &prepared,
+            "caller.exceptional_ensures_0",
+            0,
+        )
+        .expect("locate the expanded exceptional proof");
+        session
+            .verify_at_project(&expanded, site.line, site.column)
+            .expect("retained audit must accept the expanded exceptional proof");
 
-    let mut false_caller_claim = sidecar_source.to_string();
-    let claim = "exceptional ensures exception == 7;";
-    let caller_claim = false_caller_claim
-        .rfind(claim)
-        .expect("caller exception claim");
-    false_caller_claim.replace_range(
-        caller_claim..caller_claim + claim.len(),
-        "exceptional ensures exception == 8;",
-    );
-    let false_project = read_click_project(&sidecar, &false_caller_claim).unwrap();
-    verify_cpp_prepared_project(&false_project, &prepared)
-        .expect_err("the caller cannot claim a different exception payload");
+        let mut false_caller_claim = sidecar_source.to_string();
+        let claim = "exceptional ensures exception == 7;";
+        let caller_claim = false_caller_claim
+            .rfind(claim)
+            .expect("caller exception claim");
+        false_caller_claim.replace_range(
+            caller_claim..caller_claim + claim.len(),
+            "exceptional ensures exception == 8;",
+        );
+        let false_project = read_click_project(&sidecar, &false_caller_claim).unwrap();
+        verify_cpp_prepared_project(&false_project, &prepared)
+            .expect_err("the caller cannot claim a different exception payload");
+    })
 }
 
 #[test]
 fn scalar_int32_profile_catches_a_modular_throw_with_a_typed_payload() {
-    let project = Project::with_fixture(
-        "caller.cpp",
-        "caller",
-        "int helper(bool should_throw) {\n\
+    limits::deterministic(|| {
+        let project = Project::with_fixture(
+            "caller.cpp",
+            "caller",
+            "int helper(bool should_throw) {\n\
              if (should_throw) { throw 7; }\n\
              return 7;\n\
          }\n\
@@ -1032,37 +1057,37 @@ fn scalar_int32_profile_catches_a_modular_throw_with_a_typed_payload() {
              catch (int caught) { return caught; }\n\
              return 7;\n\
          }\n",
-    );
-    project.write_exception_enabled_compilation_database();
-    project.write_config_with_exception_behavior("caller", "caller.cpp", true, "scalar_int32");
-    refresh_import(&project.config()).expect("export the exact scalar handler");
-    let prepared = load_import(&project.config()).expect("load the typed handler offline");
-    let [
-        CppStatement::TryCatchInt32 {
-            binding,
-            try_body,
-            handler,
-            ..
-        },
-        CppStatement::Return { .. },
-    ] = prepared.export().function.body.as_slice()
-    else {
-        panic!("the source try/catch was not retained as a typed handler");
-    };
-    assert_eq!(binding.name, "caught");
-    assert!(matches!(
-        binding.value_type,
-        CppType::Integer {
-            bits: 32,
-            signed: true,
-            is_const: false,
-            ..
-        }
-    ));
-    assert!(matches!(try_body.as_slice(), [CppStatement::Call { .. }]));
-    assert!(matches!(handler.as_slice(), [CppStatement::Return { .. }]));
+        );
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_exception_behavior("caller", "caller.cpp", true, "scalar_int32");
+        refresh_import(&project.config()).expect("export the exact scalar handler");
+        let prepared = load_import(&project.config()).expect("load the typed handler offline");
+        let [
+            CppStatement::TryCatchInt32 {
+                binding,
+                try_body,
+                handler,
+                ..
+            },
+            CppStatement::Return { .. },
+        ] = prepared.export().function.body.as_slice()
+        else {
+            panic!("the source try/catch was not retained as a typed handler");
+        };
+        assert_eq!(binding.name, "caught");
+        assert!(matches!(
+            binding.value_type,
+            CppType::Integer {
+                bits: 32,
+                signed: true,
+                is_const: false,
+                ..
+            }
+        ));
+        assert!(matches!(try_body.as_slice(), [CppStatement::Call { .. }]));
+        assert!(matches!(handler.as_slice(), [CppStatement::Return { .. }]));
 
-    let sidecar_source = "verifying \"caller.cpp\";\n\
+        let sidecar_source = "verifying \"caller.cpp\";\n\
         int32 helper(bool should_throw) throws int32 {\n\
             ensures result == 7;\n\
             exceptional ensures exception == 7;\n\
@@ -1070,67 +1095,73 @@ fn scalar_int32_profile_catches_a_modular_throw_with_a_typed_payload() {
         int32 caller(bool should_throw) {\n\
             ensures result == 7;\n\
         }\n";
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, sidecar_source).unwrap();
-    fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
-    let click_project = read_click_project(&sidecar, sidecar_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &prepared)
-        .expect("a caught modular throw should satisfy a nonthrowing caller signature");
-    let expanded = expand_cpp_prepared_project_claim_source_by_label(
-        &click_project,
-        &prepared,
-        "caller.ensures_0",
-    )
-    .expect("expand the handler proof");
-    let returned_proof = expanded
-        .split_once("returned {")
-        .and_then(|(_, rest)| rest.split_once("threw {"))
-        .map(|(returned, _)| returned)
-        .expect("the expansion must keep a returned certificate");
-    let threw_proof = expanded
-        .split_once("threw {")
-        .map(|(_, threw)| threw)
-        .expect("the expansion must keep a threw certificate");
-    assert!(
-        expanded.contains("outcomes {")
-            && returned_proof.contains("normalize();")
-            && threw_proof.contains("assumption();")
-            && !threw_proof.contains("normalize();")
-            && !expanded.contains("trivial();"),
-        "distinct exact path closers should retain returned/threw certificates: {expanded}"
-    );
-    let rewritten = click_project.with_entry_source(expanded.clone());
-    verify_cpp_prepared_project(&rewritten, &prepared)
-        .expect("the expanded handler proof must reverify");
-    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&rewritten, &prepared)
-        .expect("retain the expanded handler environment");
-    let site =
-        cpp_prepared_project_tactic_source_position(&rewritten, &prepared, "caller.ensures_0", 0)
-            .expect("locate the expanded handler proof");
-    session
-        .verify_at_project(&expanded, site.line, site.column)
-        .expect("retained audit must accept the handler proof");
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, sidecar_source).unwrap();
+        fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
+        let click_project = read_click_project(&sidecar, sidecar_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &prepared)
+            .expect("a caught modular throw should satisfy a nonthrowing caller signature");
+        let expanded = expand_cpp_prepared_project_claim_source_by_label(
+            &click_project,
+            &prepared,
+            "caller.ensures_0",
+        )
+        .expect("expand the handler proof");
+        let returned_proof = expanded
+            .split_once("returned {")
+            .and_then(|(_, rest)| rest.split_once("threw {"))
+            .map(|(returned, _)| returned)
+            .expect("the expansion must keep a returned certificate");
+        let threw_proof = expanded
+            .split_once("threw {")
+            .map(|(_, threw)| threw)
+            .expect("the expansion must keep a threw certificate");
+        assert!(
+            expanded.contains("outcomes {")
+                && returned_proof.contains("normalize();")
+                && threw_proof.contains("assumption();")
+                && !threw_proof.contains("normalize();")
+                && !expanded.contains("trivial();"),
+            "distinct exact path closers should retain returned/threw certificates: {expanded}"
+        );
+        let rewritten = click_project.with_entry_source(expanded.clone());
+        verify_cpp_prepared_project(&rewritten, &prepared)
+            .expect("the expanded handler proof must reverify");
+        let (session, _) = C0VerificationSession::new_cpp_prepared_project(&rewritten, &prepared)
+            .expect("retain the expanded handler environment");
+        let site = cpp_prepared_project_tactic_source_position(
+            &rewritten,
+            &prepared,
+            "caller.ensures_0",
+            0,
+        )
+        .expect("locate the expanded handler proof");
+        session
+            .verify_at_project(&expanded, site.line, site.column)
+            .expect("retained audit must accept the handler proof");
 
-    let mut false_claim = sidecar_source.to_string();
-    let caller_claim = false_claim
-        .rfind("ensures result == 7;")
-        .expect("caller claim");
-    false_claim.replace_range(
-        caller_claim..caller_claim + "ensures result == 7;".len(),
-        "ensures result == 8;",
-    );
-    assert_ne!(false_claim, sidecar_source);
-    let false_project = read_click_project(&sidecar, &false_claim).unwrap();
-    verify_cpp_prepared_project(&false_project, &prepared)
-        .expect_err("the handler cannot prove a false result claim");
+        let mut false_claim = sidecar_source.to_string();
+        let caller_claim = false_claim
+            .rfind("ensures result == 7;")
+            .expect("caller claim");
+        false_claim.replace_range(
+            caller_claim..caller_claim + "ensures result == 7;".len(),
+            "ensures result == 8;",
+        );
+        assert_ne!(false_claim, sidecar_source);
+        let false_project = read_click_project(&sidecar, &false_claim).unwrap();
+        verify_cpp_prepared_project(&false_project, &prepared)
+            .expect_err("the handler cannot prove a false result claim");
+    })
 }
 
 #[test]
 fn scalar_int32_profile_joins_a_caught_throw_inside_conditional_cleanup() {
-    let project = Project::with_fixture(
-        "caller.cpp",
-        "caller",
-        "struct Restore {\n\
+    limits::deterministic(|| {
+        let project = Project::with_fixture(
+            "caller.cpp",
+            "caller",
+            "struct Restore {\n\
              int* pointer;\n\
              int saved;\n\
              explicit Restore(int* slot) noexcept : pointer(slot), saved(*slot) { *pointer = 9; }\n\
@@ -1151,19 +1182,20 @@ fn scalar_int32_profile_joins_a_caught_throw_inside_conditional_cleanup() {
              }\n\
              return value;\n\
          }\n",
-    );
-    project.write_exception_enabled_compilation_database();
-    project.write_config_with_exception_behavior("caller", "caller.cpp", true, "scalar_int32");
-    refresh_import(&project.config()).expect("export conditional cleanup and catch");
-    let prepared = load_import(&project.config()).expect("load the conditional cleanup artifact");
-    assert!(matches!(
-        prepared.export().function.body.as_slice(),
-        [CppStatement::If { then_branch, else_branch, .. }, CppStatement::Return { .. }]
-            if matches!(then_branch.as_slice(), [CppStatement::TryCatchInt32 { .. }])
-                && else_branch.is_empty()
-    ));
+        );
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_exception_behavior("caller", "caller.cpp", true, "scalar_int32");
+        refresh_import(&project.config()).expect("export conditional cleanup and catch");
+        let prepared =
+            load_import(&project.config()).expect("load the conditional cleanup artifact");
+        assert!(matches!(
+            prepared.export().function.body.as_slice(),
+            [CppStatement::If { then_branch, else_branch, .. }, CppStatement::Return { .. }]
+                if matches!(then_branch.as_slice(), [CppStatement::TryCatchInt32 { .. }])
+                    && else_branch.is_empty()
+        ));
 
-    let sidecar_source = r#"verifying "caller.cpp";
+        let sidecar_source = r#"verifying "caller.cpp";
         void Restore_constructor(struct Restore* self, int32* slot) {
             owns &self->pointer;
             owns self->saved;
@@ -1206,127 +1238,148 @@ fn scalar_int32_profile_joins_a_caught_throw_inside_conditional_cleanup() {
             simp();
         }
 "#;
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, sidecar_source).unwrap();
-    fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
-    let click_project = read_click_project(&sidecar, sidecar_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &prepared)
-        .expect("the mixed conditional cleanup join should verify");
-    let expanded = expand_cpp_prepared_project_claim_source_by_label(
-        &click_project,
-        &prepared,
-        "caller.contract",
-    )
-    .expect("expand the mixed outcome proof");
-    let rewritten = click_project.with_entry_source(expanded.clone());
-    verify_cpp_prepared_project(&rewritten, &prepared)
-        .expect("the expanded mixed outcome proof must reverify");
-    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &prepared)
-        .expect("retain the mixed outcome verification environment");
-    let site =
-        cpp_prepared_project_tactic_source_position(&rewritten, &prepared, "caller.contract", 0)
-            .expect("locate the rewritten branch proof");
-    session
-        .verify_at_project(&expanded, site.line, site.column)
-        .expect("retained audit must accept the expanded mixed outcome proof");
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, sidecar_source).unwrap();
+        fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
+        let click_project = read_click_project(&sidecar, sidecar_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &prepared)
+            .expect("the mixed conditional cleanup join should verify");
+        let expanded = expand_cpp_prepared_project_claim_source_by_label(
+            &click_project,
+            &prepared,
+            "caller.contract",
+        )
+        .expect("expand the mixed outcome proof");
+        let rewritten = click_project.with_entry_source(expanded.clone());
+        verify_cpp_prepared_project(&rewritten, &prepared)
+            .expect("the expanded mixed outcome proof must reverify");
+        let (session, _) =
+            C0VerificationSession::new_cpp_prepared_project(&click_project, &prepared)
+                .expect("retain the mixed outcome verification environment");
+        let site = cpp_prepared_project_tactic_source_position(
+            &rewritten,
+            &prepared,
+            "caller.contract",
+            0,
+        )
+        .expect("locate the rewritten branch proof");
+        session
+            .verify_at_project(&expanded, site.line, site.column)
+            .expect("retained audit must accept the expanded mixed outcome proof");
+    })
 }
 
 #[test]
 fn scalar_int32_profile_rejects_unsupported_handler_shapes() {
-    let cases = [
-        (
-            "catch_all",
-            "try { throw 7; } catch (...) { return 7; }",
-            "named by-value `int` binding",
-        ),
-        (
-            "bool_binding",
-            "try { throw 7; } catch (bool caught) { return 7; }",
-            "named by-value `int` binding",
-        ),
-        (
-            "multiple_handlers",
-            "try { throw 7; } catch (int caught) { return caught; } catch (...) { return 7; }",
-            "exactly one handler",
-        ),
-        (
-            "try_local",
-            "try { int local = 7; throw local; } catch (int caught) { return caught; }",
-            "automatic C++ locals are currently supported only in the function body",
-        ),
-        (
-            "handler_local",
-            "try { throw 7; } catch (int caught) { int local = caught; return local; }",
-            "automatic C++ locals are currently supported only in the function body",
-        ),
-        (
-            "nested_handler",
-            "try { try { throw 7; } catch (int inner) { return inner; } } catch (int caught) { return caught; }",
-            "nested try/catch is outside the scalar int32 exception profile",
-        ),
-    ];
-    for (name, handler, expected) in cases {
-        let source = format!("int caller() {{ {handler} return 7; }}\n");
-        let project = Project::with_fixture("caller.cpp", "caller", &source);
-        project.write_exception_enabled_compilation_database();
-        project.write_config_with_exception_behavior("caller", "caller.cpp", true, "scalar_int32");
-        let error = refresh_import(&project.config())
-            .expect_err(&format!("{name} must not enter a locked artifact"));
-        assert!(error.contains(expected), "{name}: {error}");
-        assert!(
-            !project.artifact().exists(),
-            "{name} was unexpectedly locked"
-        );
-    }
+    limits::deterministic(|| {
+        let cases = [
+            (
+                "catch_all",
+                "try { throw 7; } catch (...) { return 7; }",
+                "named by-value `int` binding",
+            ),
+            (
+                "bool_binding",
+                "try { throw 7; } catch (bool caught) { return 7; }",
+                "named by-value `int` binding",
+            ),
+            (
+                "multiple_handlers",
+                "try { throw 7; } catch (int caught) { return caught; } catch (...) { return 7; }",
+                "exactly one handler",
+            ),
+            (
+                "try_local",
+                "try { int local = 7; throw local; } catch (int caught) { return caught; }",
+                "automatic C++ locals are currently supported only in the function body",
+            ),
+            (
+                "handler_local",
+                "try { throw 7; } catch (int caught) { int local = caught; return local; }",
+                "automatic C++ locals are currently supported only in the function body",
+            ),
+            (
+                "nested_handler",
+                "try { try { throw 7; } catch (int inner) { return inner; } } catch (int caught) { return caught; }",
+                "nested try/catch is outside the scalar int32 exception profile",
+            ),
+        ];
+        for (name, handler, expected) in cases {
+            let source = format!("int caller() {{ {handler} return 7; }}\n");
+            let project = Project::with_fixture("caller.cpp", "caller", &source);
+            project.write_exception_enabled_compilation_database();
+            project.write_config_with_exception_behavior(
+                "caller",
+                "caller.cpp",
+                true,
+                "scalar_int32",
+            );
+            let error = refresh_import(&project.config())
+                .expect_err(&format!("{name} must not enter a locked artifact"));
+            assert!(error.contains(expected), "{name}: {error}");
+            assert!(
+                !project.artifact().exists(),
+                "{name} was unexpectedly locked"
+            );
+        }
+    })
 }
 
 #[test]
 fn scalar_int32_profile_unwinds_one_guard_on_both_paths() {
-    let mdtest = parse_mdtest(
-        Path::new("cpp_one_guard_unwind.md"),
-        ONE_GUARD_UNWIND_MDTEST,
-    )
-    .unwrap();
-    let cpp = mdtest.cpp_source.unwrap();
-    let sidecar_source = mdtest.click_source.unwrap();
-    let project = Project::with_fixture(&cpp.filename, &cpp.function, &cpp.source);
-    project.write_exception_enabled_compilation_database();
-    project.write_config_with_exception_behavior(&cpp.function, &cpp.filename, true, &cpp.profile);
-    refresh_import(&project.config()).expect("export a guard local to the try block");
-    let prepared = load_import(&project.config()).expect("load the guard artifact offline");
-    let [
-        CppStatement::TryCatchInt32 { try_body, .. },
-        CppStatement::Return { .. },
-    ] = prepared.export().function.body.as_slice()
-    else {
-        panic!("the source try/catch was not retained");
-    };
-    let [CppStatement::Scope { body, cleanups, .. }] = try_body.as_slice() else {
-        panic!("the guard's lifetime was not retained inside the try block");
-    };
-    assert!(matches!(
-        body.as_slice(),
-        [CppStatement::Declare { .. }, CppStatement::Call { .. }]
-    ));
-    assert!(matches!(
-        cleanups.as_slice(),
-        [CppCleanup::Destructor { .. }]
-    ));
+    limits::deterministic(|| {
+        let mdtest = parse_mdtest(
+            Path::new("cpp_one_guard_unwind.md"),
+            ONE_GUARD_UNWIND_MDTEST,
+        )
+        .unwrap();
+        let cpp = mdtest.cpp_source.unwrap();
+        let sidecar_source = mdtest.click_source.unwrap();
+        let project = Project::with_fixture(&cpp.filename, &cpp.function, &cpp.source);
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_exception_behavior(
+            &cpp.function,
+            &cpp.filename,
+            true,
+            &cpp.profile,
+        );
+        refresh_import(&project.config()).expect("export a guard local to the try block");
+        let prepared = load_import(&project.config()).expect("load the guard artifact offline");
+        let [
+            CppStatement::TryCatchInt32 { try_body, .. },
+            CppStatement::Return { .. },
+        ] = prepared.export().function.body.as_slice()
+        else {
+            panic!("the source try/catch was not retained");
+        };
+        let [CppStatement::Scope { body, cleanups, .. }] = try_body.as_slice() else {
+            panic!("the guard's lifetime was not retained inside the try block");
+        };
+        assert!(matches!(
+            body.as_slice(),
+            [CppStatement::Declare { .. }, CppStatement::Call { .. }]
+        ));
+        assert!(matches!(
+            cleanups.as_slice(),
+            [CppCleanup::Destructor { .. }]
+        ));
 
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, &sidecar_source).unwrap();
-    fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
-    let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &prepared)
-        .expect("normal and caught exceptional paths must restore the original value");
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, &sidecar_source).unwrap();
+        fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
+        let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &prepared)
+            .expect("normal and caught exceptional paths must restore the original value");
+    })
 }
 
 #[test]
 fn scalar_int32_profile_emits_function_scope_cleanup_edges_for_escaping_throws() {
-    let project = Project::with_fixture(
-        "escaping.cpp",
-        "escaping",
-        "struct Restore {\n\
+    limits::deterministic(|| {
+        let project = Project::with_fixture(
+            "escaping.cpp",
+            "escaping",
+            "struct Restore {\n\
              int* pointer;\n\
              explicit Restore(int* slot) noexcept : pointer(slot) { *pointer = 9; }\n\
              ~Restore() noexcept { *pointer = 42; }\n\
@@ -1341,100 +1394,112 @@ fn scalar_int32_profile_emits_function_scope_cleanup_edges_for_escaping_throws()
              int ignored = helper(initializer_throws);\n\
              return value;\n\
          }\n",
-    );
-    project.write_exception_enabled_compilation_database();
-    project.write_config_with_exception_behavior("escaping", "escaping.cpp", true, "scalar_int32");
-    refresh_import(&project.config()).expect("export the escaping throw and initializer paths");
-    let prepared = load_import(&project.config()).expect("load the checked C++ artifact");
-    let lowered = lower_import(&prepared).expect("lower function-scope unwind edges");
+        );
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_exception_behavior(
+            "escaping",
+            "escaping.cpp",
+            true,
+            "scalar_int32",
+        );
+        refresh_import(&project.config()).expect("export the escaping throw and initializer paths");
+        let prepared = load_import(&project.config()).expect("load the checked C++ artifact");
+        let lowered = lower_import(&prepared).expect("lower function-scope unwind edges");
 
-    fn collect_unwind_edges<'a>(
-        statement: &'a CStatement,
-        edges: &mut Vec<(&'a CStatement, &'a CStatement)>,
-    ) {
-        match statement {
-            CStatement::TryCatchInt32 {
-                try_body,
-                handler,
-                cleanup_unwind: true,
-                ..
-            } => {
-                edges.push((try_body, handler));
-                collect_unwind_edges(try_body, edges);
-                collect_unwind_edges(handler, edges);
+        fn collect_unwind_edges<'a>(
+            statement: &'a CStatement,
+            edges: &mut Vec<(&'a CStatement, &'a CStatement)>,
+        ) {
+            match statement {
+                CStatement::TryCatchInt32 {
+                    try_body,
+                    handler,
+                    cleanup_unwind: true,
+                    ..
+                } => {
+                    edges.push((try_body, handler));
+                    collect_unwind_edges(try_body, edges);
+                    collect_unwind_edges(handler, edges);
+                }
+                CStatement::Seq(first, second) => {
+                    collect_unwind_edges(first, edges);
+                    collect_unwind_edges(second, edges);
+                }
+                CStatement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    collect_unwind_edges(then_branch, edges);
+                    collect_unwind_edges(else_branch, edges);
+                }
+                CStatement::TryCatchInt32 {
+                    try_body, handler, ..
+                } => {
+                    collect_unwind_edges(try_body, edges);
+                    collect_unwind_edges(handler, edges);
+                }
+                _ => {}
             }
-            CStatement::Seq(first, second) => {
-                collect_unwind_edges(first, edges);
-                collect_unwind_edges(second, edges);
-            }
-            CStatement::If {
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                collect_unwind_edges(then_branch, edges);
-                collect_unwind_edges(else_branch, edges);
-            }
-            CStatement::TryCatchInt32 {
-                try_body, handler, ..
-            } => {
-                collect_unwind_edges(try_body, edges);
-                collect_unwind_edges(handler, edges);
-            }
-            _ => {}
         }
-    }
 
-    let mut edges = Vec::new();
-    collect_unwind_edges(lowered.kernel_function().body(), &mut edges);
-    assert_eq!(
-        edges.len(),
-        2,
-        "both exceptional operations need cleanup edges"
-    );
-    for (_, handler) in &edges {
-        assert!(
-            matches!(handler, CStatement::Seq(cleanup, rethrow)
+        let mut edges = Vec::new();
+        collect_unwind_edges(lowered.kernel_function().body(), &mut edges);
+        assert_eq!(
+            edges.len(),
+            2,
+            "both exceptional operations need cleanup edges"
+        );
+        for (_, handler) in &edges {
+            assert!(
+                matches!(handler, CStatement::Seq(cleanup, rethrow)
                 if contains_call(cleanup, "Restore_destructor")
                     && matches!(rethrow.as_ref(), CStatement::Throw(_))),
-            "each escaping edge must run the live destructor before rethrowing"
+                "each escaping edge must run the live destructor before rethrowing"
+            );
+        }
+        assert!(
+            edges
+                .iter()
+                .any(|(try_body, _)| matches!(try_body, CStatement::Throw(_)))
         );
-    }
-    assert!(
-        edges
-            .iter()
-            .any(|(try_body, _)| matches!(try_body, CStatement::Throw(_)))
-    );
-    assert!(edges.iter().any(|(try_body, _)| {
+        assert!(edges.iter().any(|(try_body, _)| {
         matches!(try_body, CStatement::Seq(declare, call)
             if matches!(declare.as_ref(), CStatement::Declare { name, .. } if name == "ignored")
                 && matches!(call.as_ref(), CStatement::CallAssign { function_name, .. } if function_name == "helper"))
     }));
+    })
 }
 
 #[test]
 fn scalar_int32_profile_rejects_hostile_cleanup_proofs() {
-    let mdtest = parse_mdtest(
-        Path::new("cpp_guard_unwind_before_second.md"),
-        GUARD_BEFORE_SECOND_MDTEST,
-    )
-    .unwrap();
-    let cpp = mdtest.cpp_source.unwrap();
-    let sidecar_source = mdtest.click_source.unwrap();
-    let project = Project::with_fixture(&cpp.filename, &cpp.function, &cpp.source);
-    project.write_exception_enabled_compilation_database();
-    project.write_config_with_exception_behavior(&cpp.function, &cpp.filename, true, &cpp.profile);
-    refresh_import(&project.config()).expect("export the conditional cleanup frontier");
-    let prepared = load_import(&project.config()).expect("load the cleanup artifact");
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, &sidecar_source).unwrap();
-    fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
+    limits::deterministic(|| {
+        let mdtest = parse_mdtest(
+            Path::new("cpp_guard_unwind_before_second.md"),
+            GUARD_BEFORE_SECOND_MDTEST,
+        )
+        .unwrap();
+        let cpp = mdtest.cpp_source.unwrap();
+        let sidecar_source = mdtest.click_source.unwrap();
+        let project = Project::with_fixture(&cpp.filename, &cpp.function, &cpp.source);
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_exception_behavior(
+            &cpp.function,
+            &cpp.filename,
+            true,
+            &cpp.profile,
+        );
+        refresh_import(&project.config()).expect("export the conditional cleanup frontier");
+        let prepared = load_import(&project.config()).expect("load the cleanup artifact");
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, &sidecar_source).unwrap();
+        fs::remove_file(&project.exporter).expect("verification must use the locked artifact");
 
-    let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &prepared)
-        .expect("the unmodified conditional cleanup proof must pass");
+        let click_project = read_click_project(&sidecar, &sidecar_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &prepared)
+            .expect("the unmodified conditional cleanup proof must pass");
 
-    let cases = [
+        let cases = [
         (
             "wrong_cleanup_order",
             sidecar_source.replacen(
@@ -1482,526 +1547,547 @@ fn scalar_int32_profile_rejects_hostile_cleanup_proofs() {
         ),
     ];
 
-    for (name, hostile_source, expectation) in cases {
-        assert_ne!(
-            hostile_source, sidecar_source,
-            "{name} did not change the hostile proof"
-        );
-        let hostile_project = read_click_project(&sidecar, &hostile_source).unwrap();
-        assert!(
-            verify_cpp_prepared_project(&hostile_project, &prepared).is_err(),
-            "{expectation}: {name} unexpectedly verified"
-        );
-    }
+        for (name, hostile_source, expectation) in cases {
+            assert_ne!(
+                hostile_source, sidecar_source,
+                "{name} did not change the hostile proof"
+            );
+            let hostile_project = read_click_project(&sidecar, &hostile_source).unwrap();
+            assert!(
+                verify_cpp_prepared_project(&hostile_project, &prepared).is_err(),
+                "{expectation}: {name} unexpectedly verified"
+            );
+        }
+    })
 }
 
 #[test]
 fn scalar_int32_profile_rejects_broader_guarded_try_shapes() {
-    let mdtest = parse_mdtest(
-        Path::new("cpp_one_guard_unwind.md"),
-        ONE_GUARD_UNWIND_MDTEST,
-    )
-    .unwrap();
-    let cpp = mdtest.cpp_source.unwrap();
-    let declaration = "        Restore guard(&value);\n        helper(should_throw);";
-    assert!(cpp.source.contains(declaration));
-    let cases = [
-        (
-            "late_guard",
-            "        helper(should_throw);\n        Restore guard(&value);",
-            "guard construction first",
-        ),
-        (
-            "return_inside_try",
-            "        Restore guard(&value);\n        return value;",
-            "return from a guarded try region",
-        ),
-    ];
-    for (name, replacement, expected) in cases {
-        let source = cpp.source.replacen(declaration, replacement, 1);
-        assert_ne!(source, cpp.source);
-        let project = Project::with_fixture(&cpp.filename, &cpp.function, &source);
-        project.write_exception_enabled_compilation_database();
-        project.write_config_with_exception_behavior(
-            &cpp.function,
-            &cpp.filename,
-            true,
-            &cpp.profile,
-        );
-        let error = refresh_import(&project.config())
-            .expect_err(&format!("{name} must not enter a locked artifact"));
-        assert!(error.contains(expected), "{name}: {error}");
-        assert!(
-            !project.artifact().exists(),
-            "{name} was unexpectedly locked"
-        );
-    }
-
-    let destructor = "~Restore() noexcept { *pointer = saved; }";
-    assert!(cpp.source.contains(destructor));
-    let throwing_destructor =
-        cpp.source
-            .replacen(destructor, "~Restore() noexcept { throw 7; }", 1);
-    let calling_destructor = format!(
-        "int destructor_helper();\n{}\nint destructor_helper() {{ throw 7; }}\n",
-        cpp.source.replacen(
-            destructor,
-            "~Restore() noexcept { destructor_helper(); *pointer = saved; }",
-            1,
+    limits::deterministic(|| {
+        let mdtest = parse_mdtest(
+            Path::new("cpp_one_guard_unwind.md"),
+            ONE_GUARD_UNWIND_MDTEST,
         )
-    );
-    for (name, source, expected) in [
-        (
-            "throwing_destructor",
-            throwing_destructor,
-            "has a non-throwing exception specification but can still throw",
-        ),
-        (
-            "calling_destructor",
-            calling_destructor,
-            "noexcept C++ object operation",
-        ),
-    ] {
-        let project = Project::with_fixture(&cpp.filename, &cpp.function, &source);
-        project.write_exception_enabled_compilation_database();
-        project.write_config_with_exception_behavior(
-            &cpp.function,
-            &cpp.filename,
-            true,
-            &cpp.profile,
+        .unwrap();
+        let cpp = mdtest.cpp_source.unwrap();
+        let declaration = "        Restore guard(&value);\n        helper(should_throw);";
+        assert!(cpp.source.contains(declaration));
+        let cases = [
+            (
+                "late_guard",
+                "        helper(should_throw);\n        Restore guard(&value);",
+                "guard construction first",
+            ),
+            (
+                "return_inside_try",
+                "        Restore guard(&value);\n        return value;",
+                "return from a guarded try region",
+            ),
+        ];
+        for (name, replacement, expected) in cases {
+            let source = cpp.source.replacen(declaration, replacement, 1);
+            assert_ne!(source, cpp.source);
+            let project = Project::with_fixture(&cpp.filename, &cpp.function, &source);
+            project.write_exception_enabled_compilation_database();
+            project.write_config_with_exception_behavior(
+                &cpp.function,
+                &cpp.filename,
+                true,
+                &cpp.profile,
+            );
+            let error = refresh_import(&project.config())
+                .expect_err(&format!("{name} must not enter a locked artifact"));
+            assert!(error.contains(expected), "{name}: {error}");
+            assert!(
+                !project.artifact().exists(),
+                "{name} was unexpectedly locked"
+            );
+        }
+
+        let destructor = "~Restore() noexcept { *pointer = saved; }";
+        assert!(cpp.source.contains(destructor));
+        let throwing_destructor =
+            cpp.source
+                .replacen(destructor, "~Restore() noexcept { throw 7; }", 1);
+        let calling_destructor = format!(
+            "int destructor_helper();\n{}\nint destructor_helper() {{ throw 7; }}\n",
+            cpp.source.replacen(
+                destructor,
+                "~Restore() noexcept { destructor_helper(); *pointer = saved; }",
+                1,
+            )
         );
-        let error = refresh_import(&project.config())
-            .expect_err(&format!("{name} must not enter a locked artifact"));
-        assert!(error.contains(expected), "{name}: {error}");
-        assert!(
-            !project.artifact().exists(),
-            "{name} was unexpectedly locked"
-        );
-    }
+        for (name, source, expected) in [
+            (
+                "throwing_destructor",
+                throwing_destructor,
+                "has a non-throwing exception specification but can still throw",
+            ),
+            (
+                "calling_destructor",
+                calling_destructor,
+                "noexcept C++ object operation",
+            ),
+        ] {
+            let project = Project::with_fixture(&cpp.filename, &cpp.function, &source);
+            project.write_exception_enabled_compilation_database();
+            project.write_config_with_exception_behavior(
+                &cpp.function,
+                &cpp.filename,
+                true,
+                &cpp.profile,
+            );
+            let error = refresh_import(&project.config())
+                .expect_err(&format!("{name} must not enter a locked artifact"));
+            assert!(error.contains(expected), "{name}: {error}");
+            assert!(
+                !project.artifact().exists(),
+                "{name} was unexpectedly locked"
+            );
+        }
+    })
 }
 
 #[test]
 fn scalar_int32_profile_rejects_a_non_int32_exception_payload() {
-    let disabled = Project::new();
-    disabled.write_config_with_exception_behavior(
-        "increment",
-        "increment.cpp",
-        false,
-        "scalar_int32",
-    );
-    let error = refresh_import(&disabled.config())
-        .expect_err("the scalar exception profile needs an exception-enabled compiler");
-    assert!(error.contains("requires C++ exceptions enabled"), "{error}");
+    limits::deterministic(|| {
+        let disabled = Project::new();
+        disabled.write_config_with_exception_behavior(
+            "increment",
+            "increment.cpp",
+            false,
+            "scalar_int32",
+        );
+        let error = refresh_import(&disabled.config())
+            .expect_err("the scalar exception profile needs an exception-enabled compiler");
+        assert!(error.contains("requires C++ exceptions enabled"), "{error}");
 
-    let noexcept = Project::new();
-    noexcept.write_exception_enabled_compilation_database();
-    noexcept.write_config_with_exception_behavior(
-        "increment",
-        "increment.cpp",
-        true,
-        "scalar_int32",
-    );
-    let error = refresh_import(&noexcept.config())
-        .expect_err("the scalar profile must not mis-model noexcept termination");
-    assert!(
-        error.contains("does not model noexcept termination"),
-        "{error}"
-    );
+        let noexcept = Project::new();
+        noexcept.write_exception_enabled_compilation_database();
+        noexcept.write_config_with_exception_behavior(
+            "increment",
+            "increment.cpp",
+            true,
+            "scalar_int32",
+        );
+        let error = refresh_import(&noexcept.config())
+            .expect_err("the scalar profile must not mis-model noexcept termination");
+        assert!(
+            error.contains("does not model noexcept termination"),
+            "{error}"
+        );
 
-    let project = Project::new();
-    fs::write(
-        project.source(),
-        "int increment(int& value) { throw true; }\n",
-    )
-    .unwrap();
-    project.write_exception_enabled_compilation_database();
-    project.write_config_with_exception_behavior(
-        "increment",
-        "increment.cpp",
-        true,
-        "scalar_int32",
-    );
-    let error = refresh_import(&project.config()).expect_err("bool is not an int32 exception");
-    assert!(error.contains("exception payload"), "{error}");
-    assert!(!project.artifact().exists());
+        let project = Project::new();
+        fs::write(
+            project.source(),
+            "int increment(int& value) { throw true; }\n",
+        )
+        .unwrap();
+        project.write_exception_enabled_compilation_database();
+        project.write_config_with_exception_behavior(
+            "increment",
+            "increment.cpp",
+            true,
+            "scalar_int32",
+        );
+        let error = refresh_import(&project.config()).expect_err("bool is not an int32 exception");
+        assert!(error.contains("exception payload"), "{error}");
+        assert!(!project.artifact().exists());
+    })
 }
 
 #[test]
 fn signed_int64_predicate_retains_alias_and_verifies_offline() {
-    let project = Project::int64_predicate();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, INT64_PREDICATE_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the signed-64 predicate");
-    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::int64_predicate();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, INT64_PREDICATE_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export the signed-64 predicate");
+        fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the predicate artifact offline");
-    assert_eq!(import.export().schema, 20);
-    assert!(import.export().profile.exceptions);
-    assert!(!import.export().function.declared_noexcept);
-    assert!(matches!(
-        import.export().function.return_type,
-        CppType::Boolean {
-            bits: 8,
-            is_const: false
-        }
-    ));
-    let CppType::LvalueReference { pointee } = &import.export().function.parameters[0].value_type
-    else {
-        panic!("CAmount parameter did not retain reference type")
-    };
-    let CppType::Integer {
-        bits: 64,
-        signed: true,
-        is_const: true,
-        source_aliases,
-    } = pointee.as_ref()
-    else {
-        panic!("CAmount parameter did not retain its signed-64 alias: {pointee:#?}")
-    };
-    let [alias] = source_aliases.as_slice() else {
-        panic!("CAmount parameter did not retain exactly one direct alias")
-    };
-    assert_eq!(alias.name, "CAmount");
-    assert!(!alias.declaration_id.is_empty());
-    assert_eq!(alias.span.file, "money_nonnegative.cpp");
-    assert_eq!(alias.span.start_line, 1);
-    assert!(matches!(
-        import.export().function.body.as_slice(),
-        [CppStatement::Return {
-            value: CppExpression::Binary {
-                operator: CppBinaryOperator::GreaterEqual,
-                left,
-                right,
+        let import = load_import(&project.config()).expect("load the predicate artifact offline");
+        assert_eq!(import.export().schema, 20);
+        assert!(import.export().profile.exceptions);
+        assert!(!import.export().function.declared_noexcept);
+        assert!(matches!(
+            import.export().function.return_type,
+            CppType::Boolean {
+                bits: 8,
+                is_const: false
+            }
+        ));
+        let CppType::LvalueReference { pointee } =
+            &import.export().function.parameters[0].value_type
+        else {
+            panic!("CAmount parameter did not retain reference type")
+        };
+        let CppType::Integer {
+            bits: 64,
+            signed: true,
+            is_const: true,
+            source_aliases,
+        } = pointee.as_ref()
+        else {
+            panic!("CAmount parameter did not retain its signed-64 alias: {pointee:#?}")
+        };
+        let [alias] = source_aliases.as_slice() else {
+            panic!("CAmount parameter did not retain exactly one direct alias")
+        };
+        assert_eq!(alias.name, "CAmount");
+        assert!(!alias.declaration_id.is_empty());
+        assert_eq!(alias.span.file, "money_nonnegative.cpp");
+        assert_eq!(alias.span.start_line, 1);
+        assert!(matches!(
+            import.export().function.body.as_slice(),
+            [CppStatement::Return {
+                value: CppExpression::Binary {
+                    operator: CppBinaryOperator::GreaterEqual,
+                    left,
+                    right,
+                    ..
+                },
                 ..
-            },
-            ..
-        }] if matches!(left.as_ref(), CppExpression::Load { .. })
-            && matches!(right.as_ref(), CppExpression::IntegralCast { value, .. }
-                if matches!(value.as_ref(), CppExpression::IntegerLiteral { value, .. } if value == "0"))
-    ));
+            }] if matches!(left.as_ref(), CppExpression::Load { .. })
+                && matches!(right.as_ref(), CppExpression::IntegralCast { value, .. }
+                    if matches!(value.as_ref(), CppExpression::IntegerLiteral { value, .. } if value == "0"))
+        ));
 
-    let lowered = lower_import(&import).expect("lower the predicate directly to the kernel");
-    assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
-    assert_eq!(
-        lowered.kernel_function().parameters()[0].c_type(),
-        CType::Int64Pointer
-    );
-    assert!(lowered.kernel_function().parameters()[0].pointee_is_constant());
+        let lowered = lower_import(&import).expect("lower the predicate directly to the kernel");
+        assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
+        assert_eq!(
+            lowered.kernel_function().parameters()[0].c_type(),
+            CType::Int64Pointer
+        );
+        assert!(lowered.kernel_function().parameters()[0].pointee_is_constant());
 
-    let click_project = read_click_project(&sidecar, INT64_PREDICATE_SIDECAR).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify the signed-64 comparison through the offline artifact");
+        let click_project = read_click_project(&sidecar, INT64_PREDICATE_SIDECAR).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify the signed-64 comparison through the offline artifact");
 
-    let false_source = INT64_PREDICATE_SIDECAR.replace(">= 0i64", "> 0i64");
-    let false_project = read_click_project(&sidecar, &false_source).unwrap();
-    let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
-    assert!(
-        error.message().contains("unclosed goal"),
-        "{}",
-        error.message()
-    );
+        let false_source = INT64_PREDICATE_SIDECAR.replace(">= 0i64", "> 0i64");
+        let false_project = read_click_project(&sidecar, &false_source).unwrap();
+        let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
+        assert!(
+            error.message().contains("unclosed goal"),
+            "{}",
+            error.message()
+        );
+    })
 }
 
 #[test]
 fn signed_int64_predicate_rejects_broader_comparisons_and_disjunction() {
-    let less_than = Project::int64_predicate();
-    fs::write(
-        less_than.source(),
-        INT64_PREDICATE_SOURCE.replace("nValue >= 0", "nValue < 0"),
-    )
-    .unwrap();
-    let error = refresh_import(&less_than.config()).unwrap_err();
-    assert!(error.contains("signed 64-bit <= and >="), "{error}");
+    limits::deterministic(|| {
+        let less_than = Project::int64_predicate();
+        fs::write(
+            less_than.source(),
+            INT64_PREDICATE_SOURCE.replace("nValue >= 0", "nValue < 0"),
+        )
+        .unwrap();
+        let error = refresh_import(&less_than.config()).unwrap_err();
+        assert!(error.contains("signed 64-bit <= and >="), "{error}");
 
-    let disjunction = Project::int64_predicate();
-    fs::write(
-        disjunction.source(),
-        INT64_PREDICATE_SOURCE.replace("nValue >= 0", "nValue >= 0 || nValue <= 2100000000000000L"),
-    )
-    .unwrap();
-    let error = refresh_import(&disjunction.config()).unwrap_err();
-    assert!(error.contains("built-in bool && bool only"), "{error}");
+        let disjunction = Project::int64_predicate();
+        fs::write(
+            disjunction.source(),
+            INT64_PREDICATE_SOURCE
+                .replace("nValue >= 0", "nValue >= 0 || nValue <= 2100000000000000L"),
+        )
+        .unwrap();
+        let error = refresh_import(&disjunction.config()).unwrap_err();
+        assert!(error.contains("built-in bool && bool only"), "{error}");
 
-    let unsigned = Project::int64_predicate();
-    fs::write(
-        unsigned.source(),
-        INT64_PREDICATE_SOURCE.replace("typedef long CAmount", "typedef unsigned long CAmount"),
-    )
-    .unwrap();
-    let error = refresh_import(&unsigned.config()).unwrap_err();
-    assert!(error.contains("const signed-64 reference"), "{error}");
+        let unsigned = Project::int64_predicate();
+        fs::write(
+            unsigned.source(),
+            INT64_PREDICATE_SOURCE.replace("typedef long CAmount", "typedef unsigned long CAmount"),
+        )
+        .unwrap();
+        let error = refresh_import(&unsigned.config()).unwrap_err();
+        assert!(error.contains("const signed-64 reference"), "{error}");
 
-    let mutable = Project::int64_predicate();
-    fs::write(
-        mutable.source(),
-        INT64_PREDICATE_SOURCE.replace("const CAmount&", "CAmount&"),
-    )
-    .unwrap();
-    let error = refresh_import(&mutable.config()).unwrap_err();
-    assert!(error.contains("const signed-64 reference"), "{error}");
+        let mutable = Project::int64_predicate();
+        fs::write(
+            mutable.source(),
+            INT64_PREDICATE_SOURCE.replace("const CAmount&", "CAmount&"),
+        )
+        .unwrap();
+        let error = refresh_import(&mutable.config()).unwrap_err();
+        assert!(error.contains("const signed-64 reference"), "{error}");
+    })
 }
 
 #[test]
 fn constexpr_coin_retains_alias_chain_and_verifies_offline() {
-    let project = Project::constexpr_coin();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, CONSTEXPR_COIN_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the constexpr coin predicate");
-    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::constexpr_coin();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, CONSTEXPR_COIN_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export the constexpr coin predicate");
+        fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the constexpr artifact offline");
-    assert_eq!(import.export().schema, 20);
-    assert_eq!(import.export().dependencies, ["cstdint"]);
-    let CppType::LvalueReference { pointee } = &import.export().function.parameters[0].value_type
-    else {
-        panic!("CAmount parameter did not retain reference type")
-    };
-    let CppType::Integer {
-        bits: 64,
-        signed: true,
-        is_const: true,
-        source_aliases,
-    } = pointee.as_ref()
-    else {
-        panic!("CAmount parameter did not retain its alias chain: {pointee:#?}")
-    };
-    assert_eq!(
-        source_aliases
-            .iter()
-            .map(|alias| alias.name.as_str())
-            .collect::<Vec<_>>(),
-        ["CAmount", "int64_t"]
-    );
-    assert_eq!(source_aliases[0].span.file, "at_least_one_coin.cpp");
-    assert_eq!(source_aliases[1].span.file, "cstdint");
+        let import = load_import(&project.config()).expect("load the constexpr artifact offline");
+        assert_eq!(import.export().schema, 20);
+        assert_eq!(import.export().dependencies, ["cstdint"]);
+        let CppType::LvalueReference { pointee } =
+            &import.export().function.parameters[0].value_type
+        else {
+            panic!("CAmount parameter did not retain reference type")
+        };
+        let CppType::Integer {
+            bits: 64,
+            signed: true,
+            is_const: true,
+            source_aliases,
+        } = pointee.as_ref()
+        else {
+            panic!("CAmount parameter did not retain its alias chain: {pointee:#?}")
+        };
+        assert_eq!(
+            source_aliases
+                .iter()
+                .map(|alias| alias.name.as_str())
+                .collect::<Vec<_>>(),
+            ["CAmount", "int64_t"]
+        );
+        assert_eq!(source_aliases[0].span.file, "at_least_one_coin.cpp");
+        assert_eq!(source_aliases[1].span.file, "cstdint");
 
-    let [constant] = import.export().constants.as_slice() else {
-        panic!("COIN was not captured as the sole reachable constant")
-    };
-    assert_eq!(constant.name, "COIN");
-    assert_eq!(constant.evaluated_value, "100000000");
-    assert!(matches!(
-        &constant.initializer,
-        CppExpression::IntegralCast { value, .. }
-            if matches!(value.as_ref(), CppExpression::IntegerLiteral { value, .. }
-                if value == "100000000")
-    ));
-    assert!(matches!(
-        import.export().function.body.as_slice(),
-        [CppStatement::Return {
-            value: CppExpression::Binary {
-                operator: CppBinaryOperator::GreaterEqual,
-                right,
+        let [constant] = import.export().constants.as_slice() else {
+            panic!("COIN was not captured as the sole reachable constant")
+        };
+        assert_eq!(constant.name, "COIN");
+        assert_eq!(constant.evaluated_value, "100000000");
+        assert!(matches!(
+            &constant.initializer,
+            CppExpression::IntegralCast { value, .. }
+                if matches!(value.as_ref(), CppExpression::IntegerLiteral { value, .. }
+                    if value == "100000000")
+        ));
+        assert!(matches!(
+            import.export().function.body.as_slice(),
+            [CppStatement::Return {
+                value: CppExpression::Binary {
+                    operator: CppBinaryOperator::GreaterEqual,
+                    right,
+                    ..
+                },
                 ..
-            },
-            ..
-        }] if matches!(right.as_ref(), CppExpression::ConstantReference { constant: reference, .. }
-            if reference.declaration_id == constant.declaration_id && reference.name == "COIN")
-    ));
+            }] if matches!(right.as_ref(), CppExpression::ConstantReference { constant: reference, .. }
+                if reference.declaration_id == constant.declaration_id && reference.name == "COIN")
+        ));
 
-    let lowered = lower_import(&import).expect("lower the constexpr predicate directly");
-    assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
-    let click_project = read_click_project(&sidecar, CONSTEXPR_COIN_SIDECAR).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify the constexpr comparison through the offline artifact");
+        let lowered = lower_import(&import).expect("lower the constexpr predicate directly");
+        assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
+        let click_project = read_click_project(&sidecar, CONSTEXPR_COIN_SIDECAR).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify the constexpr comparison through the offline artifact");
 
-    let false_source = CONSTEXPR_COIN_SIDECAR.replace(">= 100000000i64", "> 100000000i64");
-    let false_project = read_click_project(&sidecar, &false_source).unwrap();
-    let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
-    assert!(
-        error.message().contains("unclosed goal"),
-        "{}",
-        error.message()
-    );
+        let false_source = CONSTEXPR_COIN_SIDECAR.replace(">= 100000000i64", "> 100000000i64");
+        let false_project = read_click_project(&sidecar, &false_source).unwrap();
+        let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
+        assert!(
+            error.message().contains("unclosed goal"),
+            "{}",
+            error.message()
+        );
 
-    fs::write(project.directory.join("cstdint"), "typedef int int64_t;\n").unwrap();
-    let error = load_import(&project.config()).unwrap_err();
-    assert!(error.contains("dependency inventory differs"), "{error}");
+        fs::write(project.directory.join("cstdint"), "typedef int int64_t;\n").unwrap();
+        let error = load_import(&project.config()).unwrap_err();
+        assert!(error.contains("dependency inventory differs"), "{error}");
+    })
 }
 
 #[test]
 fn constexpr_coin_rejects_unlocked_mutable_and_nonleaf_constants() {
-    let mutable = Project::constexpr_coin();
-    fs::write(
-        mutable.source(),
-        CONSTEXPR_COIN_SOURCE.replace("static constexpr CAmount", "static CAmount"),
-    )
-    .unwrap();
-    let error = refresh_import(&mutable.config()).unwrap_err();
-    assert!(error.contains("static constexpr"), "{error}");
+    limits::deterministic(|| {
+        let mutable = Project::constexpr_coin();
+        fs::write(
+            mutable.source(),
+            CONSTEXPR_COIN_SOURCE.replace("static constexpr CAmount", "static CAmount"),
+        )
+        .unwrap();
+        let error = refresh_import(&mutable.config()).unwrap_err();
+        assert!(error.contains("static constexpr"), "{error}");
 
-    let nonleaf = Project::constexpr_coin();
-    fs::write(
-        nonleaf.source(),
-        CONSTEXPR_COIN_SOURCE.replace("100000000;", "50000000 + 50000000;"),
-    )
-    .unwrap();
-    let error = refresh_import(&nonleaf.config()).unwrap_err();
-    assert!(
-        error.contains("literal leaf or one dependent multiplication"),
-        "{error}"
-    );
+        let nonleaf = Project::constexpr_coin();
+        fs::write(
+            nonleaf.source(),
+            CONSTEXPR_COIN_SOURCE.replace("100000000;", "50000000 + 50000000;"),
+        )
+        .unwrap();
+        let error = refresh_import(&nonleaf.config()).unwrap_err();
+        assert!(
+            error.contains("literal leaf or one dependent multiplication"),
+            "{error}"
+        );
 
-    let mut unlocked = Project::constexpr_coin();
-    unlocked.dependencies.clear();
-    unlocked.write_config_with_profile("at_least_one_coin", "at_least_one_coin.cpp", true);
-    let error = refresh_import(&unlocked.config()).unwrap_err();
-    assert!(
-        error.contains("differ from configured dependencies"),
-        "{error}"
-    );
+        let mut unlocked = Project::constexpr_coin();
+        unlocked.dependencies.clear();
+        unlocked.write_config_with_profile("at_least_one_coin", "at_least_one_coin.cpp", true);
+        let error = refresh_import(&unlocked.config()).unwrap_err();
+        assert!(
+            error.contains("differ from configured dependencies"),
+            "{error}"
+        );
+    })
 }
 
 #[test]
 fn constexpr_max_money_retains_checked_dependency_and_verifies_offline() {
-    let project = Project::constexpr_max_money();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, CONSTEXPR_MAX_MONEY_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the dependent constexpr predicate");
-    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::constexpr_max_money();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, CONSTEXPR_MAX_MONEY_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export the dependent constexpr predicate");
+        fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the dependent artifact offline");
-    assert_eq!(import.export().schema, 20);
-    let [coin, max_money] = import.export().constants.as_slice() else {
-        panic!("COIN and MAX_MONEY were not captured as one ordered dependency")
-    };
-    assert_eq!(coin.name, "COIN");
-    assert_eq!(coin.evaluated_value, "100000000");
-    assert_eq!(max_money.name, "MAX_MONEY");
-    assert_eq!(max_money.evaluated_value, "2100000000000000");
-    assert!(matches!(
-        &max_money.initializer,
-        CppExpression::Binary {
-            operator: CppBinaryOperator::Multiply,
-            left,
-            right,
-            ..
-        } if matches!(left.as_ref(), CppExpression::IntegralCast { value, .. }
-            if matches!(value.as_ref(), CppExpression::IntegerLiteral { value, .. }
-                if value == "21000000"))
-            && matches!(right.as_ref(), CppExpression::ConstantReference { constant, .. }
-                if constant.declaration_id == coin.declaration_id && constant.name == "COIN")
-    ));
-    assert!(matches!(
-        import.export().function.body.as_slice(),
-        [CppStatement::Return {
-            value: CppExpression::Binary {
-                operator: CppBinaryOperator::GreaterEqual,
+        let import = load_import(&project.config()).expect("load the dependent artifact offline");
+        assert_eq!(import.export().schema, 20);
+        let [coin, max_money] = import.export().constants.as_slice() else {
+            panic!("COIN and MAX_MONEY were not captured as one ordered dependency")
+        };
+        assert_eq!(coin.name, "COIN");
+        assert_eq!(coin.evaluated_value, "100000000");
+        assert_eq!(max_money.name, "MAX_MONEY");
+        assert_eq!(max_money.evaluated_value, "2100000000000000");
+        assert!(matches!(
+            &max_money.initializer,
+            CppExpression::Binary {
+                operator: CppBinaryOperator::Multiply,
+                left,
                 right,
                 ..
-            },
-            ..
-        }] if matches!(right.as_ref(), CppExpression::ConstantReference { constant, .. }
-            if constant.declaration_id == max_money.declaration_id
-                && constant.name == "MAX_MONEY")
-    ));
+            } if matches!(left.as_ref(), CppExpression::IntegralCast { value, .. }
+                if matches!(value.as_ref(), CppExpression::IntegerLiteral { value, .. }
+                    if value == "21000000"))
+                && matches!(right.as_ref(), CppExpression::ConstantReference { constant, .. }
+                    if constant.declaration_id == coin.declaration_id && constant.name == "COIN")
+        ));
+        assert!(matches!(
+            import.export().function.body.as_slice(),
+            [CppStatement::Return {
+                value: CppExpression::Binary {
+                    operator: CppBinaryOperator::GreaterEqual,
+                    right,
+                    ..
+                },
+                ..
+            }] if matches!(right.as_ref(), CppExpression::ConstantReference { constant, .. }
+                if constant.declaration_id == max_money.declaration_id
+                    && constant.name == "MAX_MONEY")
+        ));
 
-    let lowered = lower_import(&import).expect("lower the dependent constexpr predicate");
-    assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
-    let click_project = read_click_project(&sidecar, CONSTEXPR_MAX_MONEY_SIDECAR).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify the dependent constexpr comparison offline");
+        let lowered = lower_import(&import).expect("lower the dependent constexpr predicate");
+        assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
+        let click_project = read_click_project(&sidecar, CONSTEXPR_MAX_MONEY_SIDECAR).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify the dependent constexpr comparison offline");
 
-    let false_source =
-        CONSTEXPR_MAX_MONEY_SIDECAR.replace(">= 2100000000000000i64", "> 2100000000000000i64");
-    let false_project = read_click_project(&sidecar, &false_source).unwrap();
-    let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
-    assert!(
-        error.message().contains("unclosed goal"),
-        "{}",
-        error.message()
-    );
+        let false_source =
+            CONSTEXPR_MAX_MONEY_SIDECAR.replace(">= 2100000000000000i64", "> 2100000000000000i64");
+        let false_project = read_click_project(&sidecar, &false_source).unwrap();
+        let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
+        assert!(
+            error.message().contains("unclosed goal"),
+            "{}",
+            error.message()
+        );
+    })
 }
 
 #[test]
 fn signed_int64_less_equal_verifies_max_money_upper_bound_offline() {
-    let project = Project::constexpr_max_money_less_equal();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, CONSTEXPR_MAX_MONEY_LE_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the signed-64 upper-bound predicate");
-    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::constexpr_max_money_less_equal();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, CONSTEXPR_MAX_MONEY_LE_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export the signed-64 upper-bound predicate");
+        fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the upper-bound artifact offline");
-    assert_eq!(import.export().schema, 20);
-    let [coin, max_money] = import.export().constants.as_slice() else {
-        panic!("the upper-bound artifact lost the MAX_MONEY dependency graph")
-    };
-    assert_eq!(coin.name, "COIN");
-    assert_eq!(max_money.name, "MAX_MONEY");
-    assert!(matches!(
-        import.export().function.body.as_slice(),
-        [CppStatement::Return {
-            value: CppExpression::Binary {
-                operator: CppBinaryOperator::LessEqual,
-                right,
+        let import = load_import(&project.config()).expect("load the upper-bound artifact offline");
+        assert_eq!(import.export().schema, 20);
+        let [coin, max_money] = import.export().constants.as_slice() else {
+            panic!("the upper-bound artifact lost the MAX_MONEY dependency graph")
+        };
+        assert_eq!(coin.name, "COIN");
+        assert_eq!(max_money.name, "MAX_MONEY");
+        assert!(matches!(
+            import.export().function.body.as_slice(),
+            [CppStatement::Return {
+                value: CppExpression::Binary {
+                    operator: CppBinaryOperator::LessEqual,
+                    right,
+                    ..
+                },
                 ..
-            },
-            ..
-        }] if matches!(right.as_ref(), CppExpression::ConstantReference { constant, .. }
-            if constant.declaration_id == max_money.declaration_id
-                && constant.name == "MAX_MONEY")
-    ));
+            }] if matches!(right.as_ref(), CppExpression::ConstantReference { constant, .. }
+                if constant.declaration_id == max_money.declaration_id
+                    && constant.name == "MAX_MONEY")
+        ));
 
-    let lowered = lower_import(&import).expect("lower signed-64 less-equal directly");
-    assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
-    let click_project = read_click_project(&sidecar, CONSTEXPR_MAX_MONEY_LE_SIDECAR).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify the inclusive MAX_MONEY upper bound offline");
+        let lowered = lower_import(&import).expect("lower signed-64 less-equal directly");
+        assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
+        let click_project = read_click_project(&sidecar, CONSTEXPR_MAX_MONEY_LE_SIDECAR).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify the inclusive MAX_MONEY upper bound offline");
 
-    let false_source =
-        CONSTEXPR_MAX_MONEY_LE_SIDECAR.replace("<= 2100000000000000i64", "< 2100000000000000i64");
-    let false_project = read_click_project(&sidecar, &false_source).unwrap();
-    let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
-    assert!(
-        error.message().contains("unclosed goal"),
-        "{}",
-        error.message()
-    );
+        let false_source = CONSTEXPR_MAX_MONEY_LE_SIDECAR
+            .replace("<= 2100000000000000i64", "< 2100000000000000i64");
+        let false_project = read_click_project(&sidecar, &false_source).unwrap();
+        let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
+        assert!(
+            error.message().contains("unclosed goal"),
+            "{}",
+            error.message()
+        );
+    })
 }
 
 #[test]
 fn built_in_cpp_logical_and_verifies_inclusive_money_range_offline() {
-    let project = Project::constexpr_max_money_range();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, CONSTEXPR_MAX_MONEY_RANGE_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the built-in short-circuit predicate");
-    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::constexpr_max_money_range();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, CONSTEXPR_MAX_MONEY_RANGE_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export the built-in short-circuit predicate");
+        fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the range artifact offline");
-    assert_eq!(import.export().schema, 20);
-    let [coin, max_money] = import.export().constants.as_slice() else {
-        panic!("the range artifact lost the ordered MAX_MONEY dependency graph")
-    };
-    assert_eq!(coin.name, "COIN");
-    assert_eq!(max_money.name, "MAX_MONEY");
-    let [
-        CppStatement::Return {
-            value:
-                CppExpression::Binary {
-                    operator: CppBinaryOperator::LogicalAnd,
-                    left,
-                    right,
-                    value_type:
-                        CppType::Boolean {
-                            bits: 8,
-                            is_const: false,
-                        },
-                    ..
-                },
-            ..
-        },
-    ] = import.export().function.body.as_slice()
-    else {
-        panic!("the range return did not retain Clang's built-in logical-and node")
-    };
-    assert!(matches!(left.as_ref(), CppExpression::Binary {
+        let import = load_import(&project.config()).expect("load the range artifact offline");
+        assert_eq!(import.export().schema, 20);
+        let [coin, max_money] = import.export().constants.as_slice() else {
+            panic!("the range artifact lost the ordered MAX_MONEY dependency graph")
+        };
+        assert_eq!(coin.name, "COIN");
+        assert_eq!(max_money.name, "MAX_MONEY");
+        let [
+            CppStatement::Return {
+                value:
+                    CppExpression::Binary {
+                        operator: CppBinaryOperator::LogicalAnd,
+                        left,
+                        right,
+                        value_type:
+                            CppType::Boolean {
+                                bits: 8,
+                                is_const: false,
+                            },
+                        ..
+                    },
+                ..
+            },
+        ] = import.export().function.body.as_slice()
+        else {
+            panic!("the range return did not retain Clang's built-in logical-and node")
+        };
+        assert!(matches!(left.as_ref(), CppExpression::Binary {
         operator: CppBinaryOperator::GreaterEqual,
         right,
         ..
     } if matches!(right.as_ref(), CppExpression::IntegralCast { value, .. }
         if matches!(value.as_ref(), CppExpression::IntegerLiteral { value, .. }
             if value == "0"))));
-    assert!(matches!(right.as_ref(), CppExpression::Binary {
+        assert!(matches!(right.as_ref(), CppExpression::Binary {
         operator: CppBinaryOperator::LessEqual,
         right,
         ..
@@ -2009,378 +2095,399 @@ fn built_in_cpp_logical_and_verifies_inclusive_money_range_offline() {
         if constant.declaration_id == max_money.declaration_id
             && constant.name == "MAX_MONEY")));
 
-    let lowered = lower_import(&import).expect("lower built-in C++ && directly");
-    assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
-    assert!(matches!(lowered.kernel_function().body(),
+        let lowered = lower_import(&import).expect("lower built-in C++ && directly");
+        assert_eq!(lowered.kernel_function().return_type(), CType::Bool);
+        assert!(matches!(lowered.kernel_function().body(),
         CStatement::Return(CExpression::Cast {
             expression,
             target_type: CType::Bool,
             ..
         }) if matches!(expression.as_ref(), CExpression::And(_, _))));
-    let click_project = read_click_project(&sidecar, CONSTEXPR_MAX_MONEY_RANGE_SIDECAR).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify the inclusive range contract offline");
+        let click_project =
+            read_click_project(&sidecar, CONSTEXPR_MAX_MONEY_RANGE_SIDECAR).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify the inclusive range contract offline");
 
-    let false_source = CONSTEXPR_MAX_MONEY_RANGE_SIDECAR
-        .replace("<= 2100000000000000i64", "< 2100000000000000i64");
-    let false_project = read_click_project(&sidecar, &false_source).unwrap();
-    let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
-    assert!(
-        error.message().contains("unclosed goal"),
-        "{}",
-        error.message()
-    );
+        let false_source = CONSTEXPR_MAX_MONEY_RANGE_SIDECAR
+            .replace("<= 2100000000000000i64", "< 2100000000000000i64");
+        let false_project = read_click_project(&sidecar, &false_source).unwrap();
+        let error = verify_cpp_prepared_project(&false_project, &import).unwrap_err();
+        assert!(
+            error.message().contains("unclosed goal"),
+            "{}",
+            error.message()
+        );
+    })
 }
 
 #[test]
 fn built_in_cpp_logical_and_rejects_non_boolean_operand() {
-    let project = Project::constexpr_max_money_range();
-    fs::write(
-        project.source(),
-        CONSTEXPR_MAX_MONEY_SOURCE.replace(
-            "value >= 0 && value <= MAX_MONEY",
-            "value && value <= MAX_MONEY",
-        ),
-    )
-    .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("unsupported implicit conversion"), "{error}");
+    limits::deterministic(|| {
+        let project = Project::constexpr_max_money_range();
+        fs::write(
+            project.source(),
+            CONSTEXPR_MAX_MONEY_SOURCE.replace(
+                "value >= 0 && value <= MAX_MONEY",
+                "value && value <= MAX_MONEY",
+            ),
+        )
+        .unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("unsupported implicit conversion"), "{error}");
+    })
 }
 
 #[test]
 fn constexpr_max_money_rejects_broader_constant_and_runtime_arithmetic() {
-    let addition = Project::constexpr_max_money();
-    fs::write(
-        addition.source(),
-        CONSTEXPR_MAX_MONEY_SOURCE.replace("21000000 * COIN", "21000000 + COIN"),
-    )
-    .unwrap();
-    let error = refresh_import(&addition.config()).unwrap_err();
-    assert!(
-        error.contains("literal leaf or one dependent multiplication"),
-        "{error}"
-    );
+    limits::deterministic(|| {
+        let addition = Project::constexpr_max_money();
+        fs::write(
+            addition.source(),
+            CONSTEXPR_MAX_MONEY_SOURCE.replace("21000000 * COIN", "21000000 + COIN"),
+        )
+        .unwrap();
+        let error = refresh_import(&addition.config()).unwrap_err();
+        assert!(
+            error.contains("literal leaf or one dependent multiplication"),
+            "{error}"
+        );
 
-    let third = Project::constexpr_max_money();
-    let source = CONSTEXPR_MAX_MONEY_SOURCE
+        let third = Project::constexpr_max_money();
+        let source = CONSTEXPR_MAX_MONEY_SOURCE
         .replace(
             "static constexpr CAmount MAX_MONEY = 21000000 * COIN;",
             "static constexpr CAmount MAX_MONEY = 21000000 * COIN;\nstatic constexpr CAmount TOO_MUCH = 2 * MAX_MONEY;",
         )
         .replace("value >= MAX_MONEY", "value >= TOO_MUCH");
-    fs::write(third.source(), source).unwrap();
-    let error = refresh_import(&third.config()).unwrap_err();
-    assert!(error.contains("at most two reachable constants"), "{error}");
+        fs::write(third.source(), source).unwrap();
+        let error = refresh_import(&third.config()).unwrap_err();
+        assert!(error.contains("at most two reachable constants"), "{error}");
 
-    let runtime_multiply = Project::constexpr_max_money();
-    fs::write(
-        runtime_multiply.source(),
-        CONSTEXPR_MAX_MONEY_SOURCE.replace("value >= MAX_MONEY", "value >= MAX_MONEY * 1"),
-    )
-    .unwrap();
-    let error = refresh_import(&runtime_multiply.config()).unwrap_err();
-    assert!(
-        error.contains("multiplication is supported only in a checked constant initializer"),
-        "{error}"
-    );
+        let runtime_multiply = Project::constexpr_max_money();
+        fs::write(
+            runtime_multiply.source(),
+            CONSTEXPR_MAX_MONEY_SOURCE.replace("value >= MAX_MONEY", "value >= MAX_MONEY * 1"),
+        )
+        .unwrap();
+        let error = refresh_import(&runtime_multiply.config()).unwrap_err();
+        assert!(
+            error.contains("multiplication is supported only in a checked constant initializer"),
+            "{error}"
+        );
+    })
 }
 
 #[test]
 fn exception_enabled_profile_rejects_exception_and_object_semantics() {
-    let throwing = Project::new();
-    fs::write(
-        throwing.source(),
-        "int increment(int& value) {\n    throw value;\n}\n",
-    )
-    .unwrap();
-    throwing.write_exception_enabled_compilation_database();
-    throwing.write_config_with_profile("increment", "increment.cpp", true);
-    let error = refresh_import(&throwing.config()).unwrap_err();
-    assert!(error.contains("increment.cpp:2"), "{error}");
-    assert!(error.contains("throw expressions are outside"), "{error}");
-    assert!(!throwing.artifact().exists());
+    limits::deterministic(|| {
+        let throwing = Project::new();
+        fs::write(
+            throwing.source(),
+            "int increment(int& value) {\n    throw value;\n}\n",
+        )
+        .unwrap();
+        throwing.write_exception_enabled_compilation_database();
+        throwing.write_config_with_profile("increment", "increment.cpp", true);
+        let error = refresh_import(&throwing.config()).unwrap_err();
+        assert!(error.contains("increment.cpp:2"), "{error}");
+        assert!(error.contains("throw expressions are outside"), "{error}");
+        assert!(!throwing.artifact().exists());
 
-    let catching = Project::new();
-    fs::write(
+        let catching = Project::new();
+        fs::write(
         catching.source(),
         "int increment(int& value) {\n    try { value = value + 1; } catch (...) { return 0; }\n    return value;\n}\n",
     )
     .unwrap();
-    catching.write_exception_enabled_compilation_database();
-    catching.write_config_with_profile("increment", "increment.cpp", true);
-    let error = refresh_import(&catching.config()).unwrap_err();
-    assert!(error.contains("increment.cpp:2"), "{error}");
-    assert!(error.contains("try/catch is outside"), "{error}");
-    assert!(!catching.artifact().exists());
+        catching.write_exception_enabled_compilation_database();
+        catching.write_config_with_profile("increment", "increment.cpp", true);
+        let error = refresh_import(&catching.config()).unwrap_err();
+        assert!(error.contains("increment.cpp:2"), "{error}");
+        assert!(error.contains("try/catch is outside"), "{error}");
+        assert!(!catching.artifact().exists());
 
-    let unresolved = Project::direct_call();
-    fs::write(
+        let unresolved = Project::direct_call();
+        fs::write(
         unresolved.source(),
         "int set_seven(int& value);\n\nint call_set_seven(int& value) {\n    set_seven(value);\n    return value;\n}\n",
     )
     .unwrap();
-    unresolved.write_exception_enabled_compilation_database();
-    unresolved.write_config_with_profile("call_set_seven", "call_set_seven.cpp", true);
-    let error = refresh_import(&unresolved.config()).unwrap_err();
-    assert!(
-        error.contains("no reachable function definition"),
-        "{error}"
-    );
-    assert!(!unresolved.artifact().exists());
+        unresolved.write_exception_enabled_compilation_database();
+        unresolved.write_config_with_profile("call_set_seven", "call_set_seven.cpp", true);
+        let error = refresh_import(&unresolved.config()).unwrap_err();
+        assert!(
+            error.contains("no reachable function definition"),
+            "{error}"
+        );
+        assert!(!unresolved.artifact().exists());
 
-    let object = Project::new();
-    fs::write(
+        let object = Project::new();
+        fs::write(
         object.source(),
         "struct Box { int stored; };\nint increment(int& value) {\n    Box box{value};\n    return box.stored;\n}\n",
     )
     .unwrap();
-    object.write_exception_enabled_compilation_database();
-    object.write_config_with_profile("increment", "increment.cpp", true);
-    let error = refresh_import(&object.config()).unwrap_err();
-    assert!(error.contains("increment.cpp:1"), "{error}");
-    assert!(
-        error.contains("limited to an object-free normal-only graph"),
-        "{error}"
-    );
-    assert!(!object.artifact().exists());
+        object.write_exception_enabled_compilation_database();
+        object.write_config_with_profile("increment", "increment.cpp", true);
+        let error = refresh_import(&object.config()).unwrap_err();
+        assert!(error.contains("increment.cpp:1"), "{error}");
+        assert!(
+            error.contains("limited to an object-free normal-only graph"),
+            "{error}"
+        );
+        assert!(!object.artifact().exists());
+    })
 }
 
 #[test]
 fn locked_cpp_function_verifies_through_the_shared_sidecar_path_offline() {
-    let project = Project::new();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("refresh the C++ import explicitly");
-    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::new();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("refresh the C++ import explicitly");
+        fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let inputs = read_c_inputs(&sidecar, &click_source).expect("load the locked sidecar input");
-    let CInput::PreparedCpp(import) = inputs else {
-        panic!("language=c++ must select the C++ prepared-input path")
-    };
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    let verified = verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify the directly lowered C++ function");
-    assert_eq!(
-        verified
-            .iter()
-            .map(|theorem| match theorem.claim {
-                VerifiedClaim::Ensure { index, .. } => index,
-                VerifiedClaim::ExceptionalEnsure { index, .. } => index,
-            })
-            .collect::<Vec<_>>(),
-        vec![0, 1, 2],
-        "the grouped proof checks returned ownership plus both value postconditions"
-    );
-    assert!(
-        verified
-            .iter()
-            .all(|theorem| { theorem.import_identity.as_deref() == Some(import.identity()) })
-    );
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let inputs = read_c_inputs(&sidecar, &click_source).expect("load the locked sidecar input");
+        let CInput::PreparedCpp(import) = inputs else {
+            panic!("language=c++ must select the C++ prepared-input path")
+        };
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        let verified = verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify the directly lowered C++ function");
+        assert_eq!(
+            verified
+                .iter()
+                .map(|theorem| match theorem.claim {
+                    VerifiedClaim::Ensure { index, .. } => index,
+                    VerifiedClaim::ExceptionalEnsure { index, .. } => index,
+                })
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2],
+            "the grouped proof checks returned ownership plus both value postconditions"
+        );
+        assert!(
+            verified
+                .iter()
+                .all(|theorem| { theorem.import_identity.as_deref() == Some(import.identity()) })
+        );
+    })
 }
 
 #[test]
 fn locked_cpp_branch_and_early_return_verify_through_the_shared_sidecar_path() {
-    let project = Project::branch_return();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, BRANCH_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("refresh the branching C++ import explicitly");
-    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::branch_return();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, BRANCH_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("refresh the branching C++ import explicitly");
+        fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load branching artifact offline");
-    let source = &import.export().function;
-    assert_eq!(source.parameters.len(), 2);
-    assert!(matches!(
-        source.parameters[0].value_type,
-        CppType::Boolean {
-            bits: 8,
-            is_const: false,
-        }
-    ));
-    assert!(matches!(
-        source.body.as_slice(),
-        [
-            CppStatement::Assign { .. },
-            CppStatement::If {
-                then_branch,
-                else_branch,
-                ..
-            },
-            CppStatement::Assign { .. },
-            CppStatement::Return { .. },
-        ] if matches!(then_branch.as_slice(), [CppStatement::Return { .. }])
-            && else_branch.is_empty()
-    ));
+        let import = load_import(&project.config()).expect("load branching artifact offline");
+        let source = &import.export().function;
+        assert_eq!(source.parameters.len(), 2);
+        assert!(matches!(
+            source.parameters[0].value_type,
+            CppType::Boolean {
+                bits: 8,
+                is_const: false,
+            }
+        ));
+        assert!(matches!(
+            source.body.as_slice(),
+            [
+                CppStatement::Assign { .. },
+                CppStatement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                },
+                CppStatement::Assign { .. },
+                CppStatement::Return { .. },
+            ] if matches!(then_branch.as_slice(), [CppStatement::Return { .. }])
+                && else_branch.is_empty()
+        ));
 
-    let lowered = lower_import(&import).expect("lower the typed branch directly");
-    assert_eq!(
-        lowered.kernel_function().parameters()[0].c_type(),
-        CType::Bool
-    );
-    assert!(contains_if(lowered.kernel_function().body()));
+        let lowered = lower_import(&import).expect("lower the typed branch directly");
+        assert_eq!(
+            lowered.kernel_function().parameters()[0].c_type(),
+            CType::Bool
+        );
+        assert!(contains_if(lowered.kernel_function().body()));
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let inputs = read_c_inputs(&sidecar, &click_source).unwrap();
-    let CInput::PreparedCpp(import) = inputs else {
-        panic!("language=c++ must select the C++ prepared-input path")
-    };
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    let verified = verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify both C++ return paths against one contract");
-    assert_eq!(
-        verified
-            .iter()
-            .map(|theorem| match theorem.claim {
-                VerifiedClaim::Ensure { index, .. } => index,
-                VerifiedClaim::ExceptionalEnsure { index, .. } => index,
-            })
-            .collect::<Vec<_>>(),
-        vec![0, 1, 2, 0, 1, 2],
-        "both return paths certify returned ownership and both postconditions"
-    );
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let inputs = read_c_inputs(&sidecar, &click_source).unwrap();
+        let CInput::PreparedCpp(import) = inputs else {
+            panic!("language=c++ must select the C++ prepared-input path")
+        };
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        let verified = verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify both C++ return paths against one contract");
+        assert_eq!(
+            verified
+                .iter()
+                .map(|theorem| match theorem.claim {
+                    VerifiedClaim::Ensure { index, .. } => index,
+                    VerifiedClaim::ExceptionalEnsure { index, .. } => index,
+                })
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 0, 1, 2],
+            "both return paths certify returned ownership and both postconditions"
+        );
 
-    let sites = cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
-    assert_eq!(
-        sites
-            .iter()
-            .map(|site| site.tactic_name.as_str())
-            .collect::<Vec<_>>(),
-        vec!["execute", "simp"]
-    );
-    let execute =
-        cpp_prepared_project_tactic_source_position(&click_project, &import, "choose.contract", 0)
-            .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the branch execution into a checkable source proof");
-    let rewritten = click_project.with_entry_source(expanded.clone());
-    verify_cpp_prepared_project(&rewritten, &import)
-        .expect("the expanded branch proof must reverify");
-    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
-        .expect("retain the original branch verification environment");
-    let next =
-        cpp_prepared_project_tactic_source_position(&rewritten, &import, "choose.contract", 0)
-            .unwrap();
-    session
-        .verify_at_project(&expanded, next.line, next.column)
-        .expect("retained audit session must accept the expanded branch proof");
+        let sites =
+            cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
+        assert_eq!(
+            sites
+                .iter()
+                .map(|site| site.tactic_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["execute", "simp"]
+        );
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "choose.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the branch execution into a checkable source proof");
+        let rewritten = click_project.with_entry_source(expanded.clone());
+        verify_cpp_prepared_project(&rewritten, &import)
+            .expect("the expanded branch proof must reverify");
+        let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+            .expect("retain the original branch verification environment");
+        let next =
+            cpp_prepared_project_tactic_source_position(&rewritten, &import, "choose.contract", 0)
+                .unwrap();
+        session
+            .verify_at_project(&expanded, next.line, next.column)
+            .expect("retained audit session must accept the expanded branch proof");
+    })
 }
 
 #[test]
 fn const_reference_preserves_qualification_and_may_alias_a_mutable_reference() {
-    let project = Project::const_reference_alias();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, CONST_REFERENCE_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("refresh the const-reference C++ import explicitly");
-    fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::const_reference_alias();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, CONST_REFERENCE_SIDECAR).unwrap();
+        refresh_import(&project.config())
+            .expect("refresh the const-reference C++ import explicitly");
+        fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load const-reference artifact offline");
-    let source = &import.export().function;
-    assert_eq!(source.parameters.len(), 2);
-    assert_eq!(
-        source.parameters[0].value_type,
-        CppType::LvalueReference {
-            pointee: Box::new(CppType::Integer {
-                bits: 32,
-                signed: true,
-                is_const: false,
-                source_aliases: Vec::new(),
-            }),
-        }
-    );
-    assert_eq!(
-        source.parameters[1].value_type,
-        CppType::LvalueReference {
-            pointee: Box::new(CppType::Integer {
-                bits: 32,
-                signed: true,
-                is_const: true,
-                source_aliases: Vec::new(),
-            }),
-        }
-    );
+        let import = load_import(&project.config()).expect("load const-reference artifact offline");
+        let source = &import.export().function;
+        assert_eq!(source.parameters.len(), 2);
+        assert_eq!(
+            source.parameters[0].value_type,
+            CppType::LvalueReference {
+                pointee: Box::new(CppType::Integer {
+                    bits: 32,
+                    signed: true,
+                    is_const: false,
+                    source_aliases: Vec::new(),
+                }),
+            }
+        );
+        assert_eq!(
+            source.parameters[1].value_type,
+            CppType::LvalueReference {
+                pointee: Box::new(CppType::Integer {
+                    bits: 32,
+                    signed: true,
+                    is_const: true,
+                    source_aliases: Vec::new(),
+                }),
+            }
+        );
 
-    let lowered = lower_import(&import).expect("lower both C++ reference qualifiers directly");
-    let parameters = lowered.kernel_function().parameters();
-    assert_eq!(parameters[0].c_type(), CType::Int32Pointer);
-    assert!(!parameters[0].pointee_is_constant());
-    assert_eq!(parameters[1].c_type(), CType::Int32Pointer);
-    assert!(parameters[1].pointee_is_constant());
+        let lowered = lower_import(&import).expect("lower both C++ reference qualifiers directly");
+        let parameters = lowered.kernel_function().parameters();
+        assert_eq!(parameters[0].c_type(), CType::Int32Pointer);
+        assert!(!parameters[0].pointee_is_constant());
+        assert_eq!(parameters[1].c_type(), CType::Int32Pointer);
+        assert!(parameters[1].pointee_is_constant());
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let inputs = read_c_inputs(&sidecar, &click_source).unwrap();
-    let CInput::PreparedCpp(import) = inputs else {
-        panic!("language=c++ must select the C++ prepared-input path")
-    };
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    let verified = verify_cpp_prepared_project(&click_project, &import)
-        .expect("one owned cell should authorize an aliased mutable write and const read");
-    assert_eq!(
-        verified
-            .iter()
-            .map(|theorem| match theorem.claim {
-                VerifiedClaim::Ensure { index, .. } => index,
-                VerifiedClaim::ExceptionalEnsure { index, .. } => index,
-            })
-            .collect::<Vec<_>>(),
-        vec![0, 1, 2],
-        "the proof returns ownership and checks both postconditions without an inferred view"
-    );
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let inputs = read_c_inputs(&sidecar, &click_source).unwrap();
+        let CInput::PreparedCpp(import) = inputs else {
+            panic!("language=c++ must select the C++ prepared-input path")
+        };
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        let verified = verify_cpp_prepared_project(&click_project, &import)
+            .expect("one owned cell should authorize an aliased mutable write and const read");
+        assert_eq!(
+            verified
+                .iter()
+                .map(|theorem| match theorem.claim {
+                    VerifiedClaim::Ensure { index, .. } => index,
+                    VerifiedClaim::ExceptionalEnsure { index, .. } => index,
+                })
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2],
+            "the proof returns ownership and checks both postconditions without an inferred view"
+        );
 
-    let sites = cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
-    assert_eq!(
-        sites
-            .iter()
-            .map(|site| site.tactic_name.as_str())
-            .collect::<Vec<_>>(),
-        vec!["execute", "simp"]
-    );
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "write_then_read.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the aliased reference execution into a checkable proof");
-    let rewritten = click_project.with_entry_source(expanded.clone());
-    verify_cpp_prepared_project(&rewritten, &import)
-        .expect("the expanded const-reference proof must reverify");
-    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
-        .expect("retain the const-reference verification environment");
-    let next = cpp_prepared_project_tactic_source_position(
-        &rewritten,
-        &import,
-        "write_then_read.contract",
-        0,
-    )
-    .unwrap();
-    session
-        .verify_at_project(&expanded, next.line, next.column)
-        .expect("retained audit session must accept the expanded const-reference proof");
+        let sites =
+            cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
+        assert_eq!(
+            sites
+                .iter()
+                .map(|site| site.tactic_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["execute", "simp"]
+        );
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "write_then_read.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the aliased reference execution into a checkable proof");
+        let rewritten = click_project.with_entry_source(expanded.clone());
+        verify_cpp_prepared_project(&rewritten, &import)
+            .expect("the expanded const-reference proof must reverify");
+        let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+            .expect("retain the const-reference verification environment");
+        let next = cpp_prepared_project_tactic_source_position(
+            &rewritten,
+            &import,
+            "write_then_read.contract",
+            0,
+        )
+        .unwrap();
+        session
+            .verify_at_project(&expanded, next.line, next.column)
+            .expect("retained audit session must accept the expanded const-reference proof");
 
-    let mutable_signature =
-        CONST_REFERENCE_SIDECAR.replace("const int32* readable", "int32* readable");
-    fs::write(&sidecar, &mutable_signature).unwrap();
-    let mismatched_project = read_click_project(&sidecar, &mutable_signature).unwrap();
-    let error = verify_cpp_prepared_project(&mismatched_project, &import).unwrap_err();
-    assert!(
-        error
-            .message()
-            .contains("signature mismatch for `write_then_read` parameter 2"),
-        "{}",
-        error.message()
-    );
+        let mutable_signature =
+            CONST_REFERENCE_SIDECAR.replace("const int32* readable", "int32* readable");
+        fs::write(&sidecar, &mutable_signature).unwrap();
+        let mismatched_project = read_click_project(&sidecar, &mutable_signature).unwrap();
+        let error = verify_cpp_prepared_project(&mismatched_project, &import).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("signature mismatch for `write_then_read` parameter 2"),
+            "{}",
+            error.message()
+        );
+    })
 }
 
 fn contains_if(statement: &CStatement) -> bool {
@@ -2587,1325 +2694,1375 @@ fn contains_local_aggregate_pipeline(statement: &CStatement, local: &str) -> [bo
 
 #[test]
 fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline() {
-    let project = Project::direct_call();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, DIRECT_CALL_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the resolved C++ call graph");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::direct_call();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, DIRECT_CALL_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export the resolved C++ call graph");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 20);
-    assert_eq!(import.export().function.name, "call_set_seven");
-    assert_eq!(import.export().reachable_functions.len(), 1);
-    let reachable = &import.export().reachable_functions[0];
-    assert_eq!(reachable.name, "set_seven");
-    let CppStatement::Call {
-        callee, arguments, ..
-    } = &import.export().function.body[0]
-    else {
-        panic!("first caller operation was not a resolved call")
-    };
-    assert_eq!(callee.declaration_id, reachable.declaration_id);
-    assert!(matches!(
-        arguments.as_slice(),
-        [CppCallArgument::Reference { place }]
-            if place.declaration_id == import.export().function.parameters[0].declaration_id
-    ));
+        let import = load_import(&project.config()).expect("load the call graph artifact offline");
+        assert_eq!(import.export().schema, 20);
+        assert_eq!(import.export().function.name, "call_set_seven");
+        assert_eq!(import.export().reachable_functions.len(), 1);
+        let reachable = &import.export().reachable_functions[0];
+        assert_eq!(reachable.name, "set_seven");
+        let CppStatement::Call {
+            callee, arguments, ..
+        } = &import.export().function.body[0]
+        else {
+            panic!("first caller operation was not a resolved call")
+        };
+        assert_eq!(callee.declaration_id, reachable.declaration_id);
+        assert!(matches!(
+            arguments.as_slice(),
+            [CppCallArgument::Reference { place }]
+                if place.declaration_id == import.export().function.parameters[0].declaration_id
+        ));
 
-    let lowered = lower_import(&import).expect("lower both C++ functions directly");
-    assert!(contains_call(lowered.kernel_function().body(), "set_seven"));
-    assert_eq!(lowered.reachable_kernel_functions().len(), 1);
-    assert_eq!(lowered.reachable_kernel_functions()[0].name(), "set_seven");
+        let lowered = lower_import(&import).expect("lower both C++ functions directly");
+        assert!(contains_call(lowered.kernel_function().body(), "set_seven"));
+        assert_eq!(lowered.reachable_kernel_functions().len(), 1);
+        assert_eq!(lowered.reachable_kernel_functions()[0].name(), "set_seven");
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    let verified = verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify the helper and caller through shared modular call rules");
-    assert_eq!(verified.len(), 6);
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        let verified = verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify the helper and caller through shared modular call rules");
+        assert_eq!(verified.len(), 6);
 
-    let sites = cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
-    assert_eq!(
-        sites
-            .iter()
-            .map(|site| site.tactic_name.as_str())
-            .collect::<Vec<_>>(),
-        vec!["execute", "simp", "execute", "simp"]
-    );
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "call_set_seven.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the caller's modular execution proof");
-    let rewritten = click_project.with_entry_source(expanded.clone());
-    verify_cpp_prepared_project(&rewritten, &import)
-        .expect("the expanded modular C++ proof must reverify");
-    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
-        .expect("retain the modular C++ verification environment");
-    let next = cpp_prepared_project_tactic_source_position(
-        &rewritten,
-        &import,
-        "call_set_seven.contract",
-        0,
-    )
-    .unwrap();
-    session
-        .verify_at_project(&expanded, next.line, next.column)
-        .expect("retained audit session must accept the expanded caller proof");
+        let sites =
+            cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
+        assert_eq!(
+            sites
+                .iter()
+                .map(|site| site.tactic_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["execute", "simp", "execute", "simp"]
+        );
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "call_set_seven.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the caller's modular execution proof");
+        let rewritten = click_project.with_entry_source(expanded.clone());
+        verify_cpp_prepared_project(&rewritten, &import)
+            .expect("the expanded modular C++ proof must reverify");
+        let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+            .expect("retain the modular C++ verification environment");
+        let next = cpp_prepared_project_tactic_source_position(
+            &rewritten,
+            &import,
+            "call_set_seven.contract",
+            0,
+        )
+        .unwrap();
+        session
+            .verify_at_project(&expanded, next.line, next.column)
+            .expect("retained audit session must accept the expanded caller proof");
+    })
 }
 
 #[test]
 fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
-    let project = Project::scalar_local();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, SCALAR_LOCAL_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the typed C++ local and call result");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::scalar_local();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, SCALAR_LOCAL_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export the typed C++ local and call result");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 20);
-    assert_eq!(import.export().function.name, "relay_value");
-    assert_eq!(import.export().reachable_functions.len(), 1);
-    let reachable = &import.export().reachable_functions[0];
-    assert_eq!(reachable.name, "read_value");
-    let [
-        CppStatement::Declare {
-            local: captured,
-            initializer: CppInitializer::Call {
-                callee, arguments, ..
+        let import =
+            load_import(&project.config()).expect("load the scalar-local artifact offline");
+        assert_eq!(import.export().schema, 20);
+        assert_eq!(import.export().function.name, "relay_value");
+        assert_eq!(import.export().reachable_functions.len(), 1);
+        let reachable = &import.export().reachable_functions[0];
+        assert_eq!(reachable.name, "read_value");
+        let [
+            CppStatement::Declare {
+                local: captured,
+                initializer:
+                    CppInitializer::Call {
+                        callee, arguments, ..
+                    },
+                ..
             },
-            ..
-        },
-        CppStatement::Declare {
-            local: relayed,
-            initializer: CppInitializer::Value { value: copied },
-            ..
-        },
-        CppStatement::Assign { target, value, .. },
-        CppStatement::Return {
-            value: returned, ..
-        },
-    ] = import.export().function.body.as_slice()
-    else {
-        panic!("caller did not retain declaration, local assignment, and return")
-    };
-    assert_eq!(captured.name, "captured");
-    assert!(!captured.declaration_id.is_empty());
-    assert_eq!(relayed.name, "relayed");
-    assert_ne!(captured.declaration_id, relayed.declaration_id);
-    assert_eq!(callee.declaration_id, reachable.declaration_id);
-    assert!(matches!(
-        arguments.as_slice(),
-        [CppCallArgument::Reference { .. }]
-    ));
-    assert!(matches!(
-        copied,
-        CppExpression::Load { place, .. }
-            if place.declaration_id == captured.declaration_id
-    ));
-    assert_eq!(target.declaration_id, relayed.declaration_id);
-    assert!(matches!(
-        value,
-        CppExpression::Binary { left, .. }
-            if matches!(left.as_ref(), CppExpression::Load { place, .. }
-                if place.declaration_id == relayed.declaration_id)
-    ));
-    assert!(matches!(
-        returned,
-        CppExpression::Load { place, .. } if place.declaration_id == relayed.declaration_id
-    ));
+            CppStatement::Declare {
+                local: relayed,
+                initializer: CppInitializer::Value { value: copied },
+                ..
+            },
+            CppStatement::Assign { target, value, .. },
+            CppStatement::Return {
+                value: returned, ..
+            },
+        ] = import.export().function.body.as_slice()
+        else {
+            panic!("caller did not retain declaration, local assignment, and return")
+        };
+        assert_eq!(captured.name, "captured");
+        assert!(!captured.declaration_id.is_empty());
+        assert_eq!(relayed.name, "relayed");
+        assert_ne!(captured.declaration_id, relayed.declaration_id);
+        assert_eq!(callee.declaration_id, reachable.declaration_id);
+        assert!(matches!(
+            arguments.as_slice(),
+            [CppCallArgument::Reference { .. }]
+        ));
+        assert!(matches!(
+            copied,
+            CppExpression::Load { place, .. }
+                if place.declaration_id == captured.declaration_id
+        ));
+        assert_eq!(target.declaration_id, relayed.declaration_id);
+        assert!(matches!(
+            value,
+            CppExpression::Binary { left, .. }
+                if matches!(left.as_ref(), CppExpression::Load { place, .. }
+                    if place.declaration_id == relayed.declaration_id)
+        ));
+        assert!(matches!(
+            returned,
+            CppExpression::Load { place, .. } if place.declaration_id == relayed.declaration_id
+        ));
 
-    let lowered = lower_import(&import).expect("lower the scalar local through kernel statements");
-    assert_eq!(
-        contains_scalar_local_pipeline(
-            lowered.kernel_function().body(),
-            "captured",
-            "relayed",
-            "read_value"
-        ),
-        [true, true, true, true]
-    );
+        let lowered =
+            lower_import(&import).expect("lower the scalar local through kernel statements");
+        assert_eq!(
+            contains_scalar_local_pipeline(
+                lowered.kernel_function().body(),
+                "captured",
+                "relayed",
+                "read_value"
+            ),
+            [true, true, true, true]
+        );
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    let verified = verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify local initialization through the shared call-result rule");
-    assert_eq!(verified.len(), 5);
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        let verified = verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify local initialization through the shared call-result rule");
+        assert_eq!(verified.len(), 5);
 
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "relay_value.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the scalar-local caller proof");
-    let rewritten = click_project.with_entry_source(expanded.clone());
-    verify_cpp_prepared_project(&rewritten, &import)
-        .expect("the expanded scalar-local proof must reverify");
-    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
-        .expect("retain the scalar-local verification environment");
-    let next =
-        cpp_prepared_project_tactic_source_position(&rewritten, &import, "relay_value.contract", 0)
-            .unwrap();
-    session
-        .verify_at_project(&expanded, next.line, next.column)
-        .expect("retained audit session must accept the expanded local proof");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "relay_value.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the scalar-local caller proof");
+        let rewritten = click_project.with_entry_source(expanded.clone());
+        verify_cpp_prepared_project(&rewritten, &import)
+            .expect("the expanded scalar-local proof must reverify");
+        let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+            .expect("retain the scalar-local verification environment");
+        let next = cpp_prepared_project_tactic_source_position(
+            &rewritten,
+            &import,
+            "relay_value.contract",
+            0,
+        )
+        .unwrap();
+        session
+            .verify_at_project(&expanded, next.line, next.column)
+            .expect("retained audit session must accept the expanded local proof");
 
-    let false_contract = SCALAR_LOCAL_SIDECAR.replace(
-        "ensures result == value[0] + 1;",
-        "ensures result == value[0] + 2;",
-    );
-    fs::write(&sidecar, &false_contract).unwrap();
-    let false_project = read_click_project(&sidecar, &false_contract).unwrap();
-    verify_cpp_prepared_project(&false_project, &import)
-        .expect_err("a false claim about the captured call result must be rejected");
+        let false_contract = SCALAR_LOCAL_SIDECAR.replace(
+            "ensures result == value[0] + 1;",
+            "ensures result == value[0] + 2;",
+        );
+        fs::write(&sidecar, &false_contract).unwrap();
+        let false_project = read_click_project(&sidecar, &false_contract).unwrap();
+        verify_cpp_prepared_project(&false_project, &import)
+            .expect_err("a false claim about the captured call result must be rejected");
+    })
 }
 
 #[test]
 fn mutable_pointer_dereference_and_reference_address_verify_offline() {
-    let project = Project::pointer();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, POINTER_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export pointer operations and the resolved call");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::pointer();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, POINTER_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export pointer operations and the resolved call");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the pointer artifact offline");
-    assert_eq!(import.export().schema, 20);
-    let caller = &import.export().function;
-    assert_eq!(caller.name, "bump_reference");
-    assert!(matches!(
-        caller.parameters[0].value_type,
-        CppType::LvalueReference { .. }
-    ));
-    let [helper] = import.export().reachable_functions.as_slice() else {
-        panic!("the pointer helper was not captured")
-    };
-    assert_eq!(helper.name, "bump_pointer");
-    assert!(matches!(
-        helper.parameters[0].value_type,
-        CppType::Pointer { ref pointee }
-            if matches!(pointee.as_ref(), CppType::Integer {
-                bits: 32,
-                signed: true,
-                is_const: false,
+        let import = load_import(&project.config()).expect("load the pointer artifact offline");
+        assert_eq!(import.export().schema, 20);
+        let caller = &import.export().function;
+        assert_eq!(caller.name, "bump_reference");
+        assert!(matches!(
+            caller.parameters[0].value_type,
+            CppType::LvalueReference { .. }
+        ));
+        let [helper] = import.export().reachable_functions.as_slice() else {
+            panic!("the pointer helper was not captured")
+        };
+        assert_eq!(helper.name, "bump_pointer");
+        assert!(matches!(
+            helper.parameters[0].value_type,
+            CppType::Pointer { ref pointee }
+                if matches!(pointee.as_ref(), CppType::Integer {
+                    bits: 32,
+                    signed: true,
+                    is_const: false,
+                    ..
+                })
+        ));
+
+        let [
+            CppStatement::Declare {
+                initializer:
+                    CppInitializer::Call {
+                        callee, arguments, ..
+                    },
                 ..
-            })
-    ));
-
-    let [
-        CppStatement::Declare {
-            initializer: CppInitializer::Call {
-                callee, arguments, ..
             },
-            ..
-        },
-        CppStatement::Return { .. },
-    ] = caller.body.as_slice()
-    else {
-        panic!("the reference caller did not retain its call-result local")
-    };
-    assert_eq!(callee.declaration_id, helper.declaration_id);
-    assert!(matches!(
-        arguments.as_slice(),
-        [CppCallArgument::Value {
-            value: CppExpression::AddressOf { place, value_type, .. }
-        }] if place.declaration_id == caller.parameters[0].declaration_id
-            && matches!(value_type, CppType::Pointer { .. })
-    ));
-
-    let [
-        CppStatement::Store {
-            pointer: stored_through,
-            value: CppExpression::Binary {
-                left: loaded_value, ..
-            },
-            ..
-        },
-        CppStatement::Return {
-            value: returned_value,
-            ..
-        },
-    ] = helper.body.as_slice()
-    else {
-        panic!("the pointer helper did not retain its checked load/store operations")
-    };
-    assert!(matches!(
-        stored_through,
-        CppExpression::Load { place, value_type, .. }
-            if place.declaration_id == helper.parameters[0].declaration_id
+            CppStatement::Return { .. },
+        ] = caller.body.as_slice()
+        else {
+            panic!("the reference caller did not retain its call-result local")
+        };
+        assert_eq!(callee.declaration_id, helper.declaration_id);
+        assert!(matches!(
+            arguments.as_slice(),
+            [CppCallArgument::Value {
+                value: CppExpression::AddressOf { place, value_type, .. }
+            }] if place.declaration_id == caller.parameters[0].declaration_id
                 && matches!(value_type, CppType::Pointer { .. })
-    ));
-    assert!(matches!(
-        loaded_value.as_ref(),
-        CppExpression::Dereference { pointer, .. }
-            if matches!(pointer.as_ref(), CppExpression::Load { place, .. }
-                if place.declaration_id == helper.parameters[0].declaration_id)
-    ));
-    assert!(matches!(
-        returned_value,
-        CppExpression::Dereference { pointer, .. }
-            if matches!(pointer.as_ref(), CppExpression::Load { place, .. }
-                if place.declaration_id == helper.parameters[0].declaration_id)
-    ));
+        ));
 
-    let lowered =
-        lower_import(&import).expect("lower pointer operations through kernel memory rules");
-    assert_eq!(
-        lowered.kernel_function().parameters()[0].c_type(),
-        CType::Int32Pointer
-    );
-    assert_eq!(
-        lowered.reachable_kernel_functions()[0].parameters()[0].c_type(),
-        CType::Int32Pointer
-    );
-    assert!(!lowered.reachable_kernel_functions()[0].parameters()[0].pointee_is_constant());
+        let [
+            CppStatement::Store {
+                pointer: stored_through,
+                value:
+                    CppExpression::Binary {
+                        left: loaded_value, ..
+                    },
+                ..
+            },
+            CppStatement::Return {
+                value: returned_value,
+                ..
+            },
+        ] = helper.body.as_slice()
+        else {
+            panic!("the pointer helper did not retain its checked load/store operations")
+        };
+        assert!(matches!(
+            stored_through,
+            CppExpression::Load { place, value_type, .. }
+                if place.declaration_id == helper.parameters[0].declaration_id
+                    && matches!(value_type, CppType::Pointer { .. })
+        ));
+        assert!(matches!(
+            loaded_value.as_ref(),
+            CppExpression::Dereference { pointer, .. }
+                if matches!(pointer.as_ref(), CppExpression::Load { place, .. }
+                    if place.declaration_id == helper.parameters[0].declaration_id)
+        ));
+        assert!(matches!(
+            returned_value,
+            CppExpression::Dereference { pointer, .. }
+                if matches!(pointer.as_ref(), CppExpression::Load { place, .. }
+                    if place.declaration_id == helper.parameters[0].declaration_id)
+        ));
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    let verified = verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify pointer load/store and reference address through shared rules");
-    assert_eq!(verified.len(), 6);
+        let lowered =
+            lower_import(&import).expect("lower pointer operations through kernel memory rules");
+        assert_eq!(
+            lowered.kernel_function().parameters()[0].c_type(),
+            CType::Int32Pointer
+        );
+        assert_eq!(
+            lowered.reachable_kernel_functions()[0].parameters()[0].c_type(),
+            CType::Int32Pointer
+        );
+        assert!(!lowered.reachable_kernel_functions()[0].parameters()[0].pointee_is_constant());
 
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "bump_reference.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the pointer caller proof");
-    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
-        .expect("the expanded pointer proof must reverify");
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        let verified = verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify pointer load/store and reference address through shared rules");
+        assert_eq!(verified.len(), 6);
 
-    let missing_ownership = POINTER_SIDECAR.replacen("    owns pointer[0..1];\n", "", 1);
-    fs::write(&sidecar, &missing_ownership).unwrap();
-    let missing_ownership_project = read_click_project(&sidecar, &missing_ownership).unwrap();
-    verify_cpp_prepared_project(&missing_ownership_project, &import)
-        .expect_err("dereferencing without memory authority must not verify");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "bump_reference.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the pointer caller proof");
+        verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+            .expect("the expanded pointer proof must reverify");
 
-    let false_contract = POINTER_SIDECAR.replace(
-        "ensures value[0] == old(value[0]) + 1;",
-        "ensures value[0] == old(value[0]) + 2;",
-    );
-    fs::write(&sidecar, &false_contract).unwrap();
-    let false_project = read_click_project(&sidecar, &false_contract).unwrap();
-    verify_cpp_prepared_project(&false_project, &import)
-        .expect_err("a false pointer-mediated memory effect must be rejected");
+        let missing_ownership = POINTER_SIDECAR.replacen("    owns pointer[0..1];\n", "", 1);
+        fs::write(&sidecar, &missing_ownership).unwrap();
+        let missing_ownership_project = read_click_project(&sidecar, &missing_ownership).unwrap();
+        verify_cpp_prepared_project(&missing_ownership_project, &import)
+            .expect_err("dereferencing without memory authority must not verify");
+
+        let false_contract = POINTER_SIDECAR.replace(
+            "ensures value[0] == old(value[0]) + 1;",
+            "ensures value[0] == old(value[0]) + 2;",
+        );
+        fs::write(&sidecar, &false_contract).unwrap();
+        let false_project = read_click_project(&sidecar, &false_contract).unwrap();
+        verify_cpp_prepared_project(&false_project, &import)
+            .expect_err("a false pointer-mediated memory effect must be rejected");
+    })
 }
 
 #[test]
 fn record_reference_member_loads_and_stores_verify_offline() {
-    let project = Project::struct_member();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, STRUCT_MEMBER_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the resolved C++ record layout and fields");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::struct_member();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, STRUCT_MEMBER_SIDECAR).unwrap();
+        refresh_import(&project.config())
+            .expect("export the resolved C++ record layout and fields");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the record artifact offline");
-    assert_eq!(import.export().schema, 20);
-    let [record] = import.export().records.as_slice() else {
-        panic!("the referenced record layout was not captured")
-    };
-    assert_eq!(record.name, "RestoreState");
-    assert_eq!((record.size_bytes, record.alignment_bytes), (16, 8));
-    let [pointer, saved] = record.fields.as_slice() else {
-        panic!("the record fields were not captured")
-    };
-    assert_eq!(
-        (
-            pointer.name.as_str(),
-            pointer.offset_bytes,
-            pointer.size_bytes
-        ),
-        ("pointer", 0, 8)
-    );
-    assert!(matches!(pointer.value_type, CppType::Pointer { .. }));
-    assert_eq!(
-        (saved.name.as_str(), saved.offset_bytes, saved.size_bytes),
-        ("saved", 8, 4)
-    );
-    assert!(matches!(saved.value_type, CppType::Integer { .. }));
+        let import = load_import(&project.config()).expect("load the record artifact offline");
+        assert_eq!(import.export().schema, 20);
+        let [record] = import.export().records.as_slice() else {
+            panic!("the referenced record layout was not captured")
+        };
+        assert_eq!(record.name, "RestoreState");
+        assert_eq!((record.size_bytes, record.alignment_bytes), (16, 8));
+        let [pointer, saved] = record.fields.as_slice() else {
+            panic!("the record fields were not captured")
+        };
+        assert_eq!(
+            (
+                pointer.name.as_str(),
+                pointer.offset_bytes,
+                pointer.size_bytes
+            ),
+            ("pointer", 0, 8)
+        );
+        assert!(matches!(pointer.value_type, CppType::Pointer { .. }));
+        assert_eq!(
+            (saved.name.as_str(), saved.offset_bytes, saved.size_bytes),
+            ("saved", 8, 4)
+        );
+        assert!(matches!(saved.value_type, CppType::Integer { .. }));
 
-    let function = &import.export().function;
-    assert!(matches!(
-        &function.parameters[0].value_type,
-        CppType::LvalueReference { pointee }
-            if matches!(pointee.as_ref(), CppType::Record { name, declaration_id }
-                if name == "RestoreState" && declaration_id == &record.declaration_id)
-    ));
-    assert!(matches!(
-        function.body.as_slice(),
-        [
-            CppStatement::MemberStore { field: first, .. },
-            CppStatement::MemberStore { field: second, .. },
-            CppStatement::Store {
-                pointer: CppExpression::MemberLoad { field: third, .. },
-                ..
-            },
-            CppStatement::Return {
-                value: CppExpression::MemberLoad { field: fourth, .. },
-                ..
-            },
-        ] if first.declaration_id == pointer.declaration_id
-            && second.declaration_id == saved.declaration_id
-            && third.declaration_id == pointer.declaration_id
-            && fourth.declaration_id == saved.declaration_id
-    ));
+        let function = &import.export().function;
+        assert!(matches!(
+            &function.parameters[0].value_type,
+            CppType::LvalueReference { pointee }
+                if matches!(pointee.as_ref(), CppType::Record { name, declaration_id }
+                    if name == "RestoreState" && declaration_id == &record.declaration_id)
+        ));
+        assert!(matches!(
+            function.body.as_slice(),
+            [
+                CppStatement::MemberStore { field: first, .. },
+                CppStatement::MemberStore { field: second, .. },
+                CppStatement::Store {
+                    pointer: CppExpression::MemberLoad { field: third, .. },
+                    ..
+                },
+                CppStatement::Return {
+                    value: CppExpression::MemberLoad { field: fourth, .. },
+                    ..
+                },
+            ] if first.declaration_id == pointer.declaration_id
+                && second.declaration_id == saved.declaration_id
+                && third.declaration_id == pointer.declaration_id
+                && fourth.declaration_id == saved.declaration_id
+        ));
 
-    let lowered = lower_import(&import).expect("lower member operations through checked offsets");
-    assert_eq!(
-        lowered.kernel_function().parameters()[0].c_type(),
-        CType::Int32Pointer
-    );
+        let lowered =
+            lower_import(&import).expect("lower member operations through checked offsets");
+        assert_eq!(
+            lowered.kernel_function().parameters()[0].c_type(),
+            CType::Int32Pointer
+        );
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    let verified = verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify field access and the loaded pointer through shared memory rules");
-    assert_eq!(verified.len(), 7);
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        let verified = verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify field access and the loaded pointer through shared memory rules");
+        assert_eq!(verified.len(), 7);
 
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "stage_restore.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the record execution proof");
-    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
-        .expect("the expanded record proof must reverify");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "stage_restore.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the record execution proof");
+        verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+            .expect("the expanded record proof must reverify");
 
-    let missing_ownership = STRUCT_MEMBER_SIDECAR.replace("    owns &state->pointer;\n", "");
-    fs::write(&sidecar, &missing_ownership).unwrap();
-    let missing_project = read_click_project(&sidecar, &missing_ownership).unwrap();
-    verify_cpp_prepared_project(&missing_project, &import)
-        .expect_err("writing a field without its memory authority must not verify");
+        let missing_ownership = STRUCT_MEMBER_SIDECAR.replace("    owns &state->pointer;\n", "");
+        fs::write(&sidecar, &missing_ownership).unwrap();
+        let missing_project = read_click_project(&sidecar, &missing_ownership).unwrap();
+        verify_cpp_prepared_project(&missing_project, &import)
+            .expect_err("writing a field without its memory authority must not verify");
 
-    let false_contract =
-        STRUCT_MEMBER_SIDECAR.replace("ensures value[0] == 7;", "ensures value[0] == 8;");
-    fs::write(&sidecar, &false_contract).unwrap();
-    let false_project = read_click_project(&sidecar, &false_contract).unwrap();
-    verify_cpp_prepared_project(&false_project, &import)
-        .expect_err("a false pointer-mediated member effect must be rejected");
+        let false_contract =
+            STRUCT_MEMBER_SIDECAR.replace("ensures value[0] == 7;", "ensures value[0] == 8;");
+        fs::write(&sidecar, &false_contract).unwrap();
+        let false_project = read_click_project(&sidecar, &false_contract).unwrap();
+        verify_cpp_prepared_project(&false_project, &import)
+            .expect_err("a false pointer-mediated member effect must be rejected");
+    })
 }
 
 #[test]
 fn brace_initialized_local_aggregate_verifies_offline() {
-    let project = Project::local_aggregate();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, LOCAL_AGGREGATE_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the local aggregate initializer");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::local_aggregate();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, LOCAL_AGGREGATE_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export the local aggregate initializer");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the aggregate artifact offline");
-    assert_eq!(import.export().schema, 20);
-    let [record] = import.export().records.as_slice() else {
-        panic!("the local aggregate record layout was not captured")
-    };
-    let [pointer, saved] = record.fields.as_slice() else {
-        panic!("the local aggregate fields were not captured")
-    };
-    let [
-        CppStatement::Declare {
-            local,
-            initializer: CppInitializer::Aggregate { fields, .. },
-            ..
-        },
-        CppStatement::Store {
-            pointer: CppExpression::MemberLoad { object, field, .. },
-            ..
-        },
-        CppStatement::Return {
-            value:
-                CppExpression::MemberLoad {
-                    object: returned_object,
-                    field: returned_field,
-                    ..
-                },
-            ..
-        },
-    ] = import.export().function.body.as_slice()
-    else {
-        panic!("the local object did not retain initialization and member use")
-    };
-    assert!(matches!(
-        &local.value_type,
-        CppType::Record { declaration_id, name }
-            if declaration_id == &record.declaration_id && name == "RestoreState"
-    ));
-    assert!(matches!(
-        fields.as_slice(),
-        [first, second]
-            if first.field.declaration_id == pointer.declaration_id
-                && second.field.declaration_id == saved.declaration_id
-                && matches!(first.value, CppExpression::AddressOf { .. })
-                && matches!(second.value, CppExpression::Load { .. })
-    ));
-    assert_eq!(object.declaration_id, local.declaration_id);
-    assert_eq!(field.declaration_id, pointer.declaration_id);
-    assert_eq!(returned_object.declaration_id, local.declaration_id);
-    assert_eq!(returned_field.declaration_id, saved.declaration_id);
+        let import = load_import(&project.config()).expect("load the aggregate artifact offline");
+        assert_eq!(import.export().schema, 20);
+        let [record] = import.export().records.as_slice() else {
+            panic!("the local aggregate record layout was not captured")
+        };
+        let [pointer, saved] = record.fields.as_slice() else {
+            panic!("the local aggregate fields were not captured")
+        };
+        let [
+            CppStatement::Declare {
+                local,
+                initializer: CppInitializer::Aggregate { fields, .. },
+                ..
+            },
+            CppStatement::Store {
+                pointer: CppExpression::MemberLoad { object, field, .. },
+                ..
+            },
+            CppStatement::Return {
+                value:
+                    CppExpression::MemberLoad {
+                        object: returned_object,
+                        field: returned_field,
+                        ..
+                    },
+                ..
+            },
+        ] = import.export().function.body.as_slice()
+        else {
+            panic!("the local object did not retain initialization and member use")
+        };
+        assert!(matches!(
+            &local.value_type,
+            CppType::Record { declaration_id, name }
+                if declaration_id == &record.declaration_id && name == "RestoreState"
+        ));
+        assert!(matches!(
+            fields.as_slice(),
+            [first, second]
+                if first.field.declaration_id == pointer.declaration_id
+                    && second.field.declaration_id == saved.declaration_id
+                    && matches!(first.value, CppExpression::AddressOf { .. })
+                    && matches!(second.value, CppExpression::Load { .. })
+        ));
+        assert_eq!(object.declaration_id, local.declaration_id);
+        assert_eq!(field.declaration_id, pointer.declaration_id);
+        assert_eq!(returned_object.declaration_id, local.declaration_id);
+        assert_eq!(returned_field.declaration_id, saved.declaration_id);
 
-    let lowered = lower_import(&import).expect("lower the local aggregate to checked stack memory");
-    assert_eq!(
-        contains_local_aggregate_pipeline(lowered.kernel_function().body(), "state"),
-        [true, true, true]
-    );
+        let lowered =
+            lower_import(&import).expect("lower the local aggregate to checked stack memory");
+        assert_eq!(
+            contains_local_aggregate_pipeline(lowered.kernel_function().body(), "state"),
+            [true, true, true]
+        );
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    let verified = verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify local aggregate initialization and later field reads");
-    assert_eq!(verified.len(), 3);
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        let verified = verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify local aggregate initialization and later field reads");
+        assert_eq!(verified.len(), 3);
 
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "stage_restore.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the local aggregate execution proof");
-    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
-        .expect("the expanded local aggregate proof must reverify");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "stage_restore.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the local aggregate execution proof");
+        verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+            .expect("the expanded local aggregate proof must reverify");
 
-    let missing_ownership = LOCAL_AGGREGATE_SIDECAR.replace("    owns value[0..1];\n", "");
-    fs::write(&sidecar, &missing_ownership).unwrap();
-    let missing_project = read_click_project(&sidecar, &missing_ownership).unwrap();
-    verify_cpp_prepared_project(&missing_project, &import)
-        .expect_err("the initializer and later pointer write require input memory authority");
+        let missing_ownership = LOCAL_AGGREGATE_SIDECAR.replace("    owns value[0..1];\n", "");
+        fs::write(&sidecar, &missing_ownership).unwrap();
+        let missing_project = read_click_project(&sidecar, &missing_ownership).unwrap();
+        verify_cpp_prepared_project(&missing_project, &import)
+            .expect_err("the initializer and later pointer write require input memory authority");
 
-    let false_contract =
-        LOCAL_AGGREGATE_SIDECAR.replace("ensures result == old(value[0]);", "ensures result == 7;");
-    fs::write(&sidecar, &false_contract).unwrap();
-    let false_project = read_click_project(&sidecar, &false_contract).unwrap();
-    verify_cpp_prepared_project(&false_project, &import)
-        .expect_err("a false claim about the saved initialized field must be rejected");
+        let false_contract = LOCAL_AGGREGATE_SIDECAR
+            .replace("ensures result == old(value[0]);", "ensures result == 7;");
+        fs::write(&sidecar, &false_contract).unwrap();
+        let false_project = read_click_project(&sidecar, &false_contract).unwrap();
+        verify_cpp_prepared_project(&false_project, &import)
+            .expect_err("a false claim about the saved initialized field must be rejected");
+    })
 }
 
 #[test]
 fn explicit_constructor_local_verifies_as_a_modular_call() {
-    let project = Project::constructor_local();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, CONSTRUCTOR_LOCAL_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the direct constructor call and body");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::constructor_local();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, CONSTRUCTOR_LOCAL_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export the direct constructor call and body");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the constructor artifact offline");
-    assert_eq!(import.export().schema, 20);
-    let [record] = import.export().records.as_slice() else {
-        panic!("the constructed record layout was not captured")
-    };
-    let [constructor] = import.export().reachable_functions.as_slice() else {
-        panic!("the resolved constructor definition was not exported")
-    };
-    assert!(matches!(
-        &constructor.function_kind,
-        CppFunctionKind::Constructor {
-            record_declaration_id,
-            record_name,
-        } if record_declaration_id == &record.declaration_id
-            && record_name == "RestoreState"
-    ));
-    assert_eq!(constructor.name, "RestoreState_constructor");
-    assert_eq!(constructor.return_type, CppType::Void);
-    assert!(matches!(
-        constructor.parameters.as_slice(),
-        [self_parameter, slot]
-            if self_parameter.name == "self"
-                && matches!(
-                    &self_parameter.value_type,
-                    CppType::LvalueReference { pointee }
-                        if matches!(
-                            pointee.as_ref(),
-                            CppType::Record { declaration_id, .. }
-                                if declaration_id == &record.declaration_id
-                        )
-                )
-                && slot.name == "slot"
-                && matches!(slot.value_type, CppType::Pointer { .. })
-    ));
-    assert!(matches!(
-        constructor.body.as_slice(),
-        [
-            CppStatement::MemberStore { field: pointer, .. },
-            CppStatement::MemberStore { field: saved, .. },
-            CppStatement::Store {
-                pointer: CppExpression::MemberLoad { field: used, .. },
+        let import = load_import(&project.config()).expect("load the constructor artifact offline");
+        assert_eq!(import.export().schema, 20);
+        let [record] = import.export().records.as_slice() else {
+            panic!("the constructed record layout was not captured")
+        };
+        let [constructor] = import.export().reachable_functions.as_slice() else {
+            panic!("the resolved constructor definition was not exported")
+        };
+        assert!(matches!(
+            &constructor.function_kind,
+            CppFunctionKind::Constructor {
+                record_declaration_id,
+                record_name,
+            } if record_declaration_id == &record.declaration_id
+                && record_name == "RestoreState"
+        ));
+        assert_eq!(constructor.name, "RestoreState_constructor");
+        assert_eq!(constructor.return_type, CppType::Void);
+        assert!(matches!(
+            constructor.parameters.as_slice(),
+            [self_parameter, slot]
+                if self_parameter.name == "self"
+                    && matches!(
+                        &self_parameter.value_type,
+                        CppType::LvalueReference { pointee }
+                            if matches!(
+                                pointee.as_ref(),
+                                CppType::Record { declaration_id, .. }
+                                    if declaration_id == &record.declaration_id
+                            )
+                    )
+                    && slot.name == "slot"
+                    && matches!(slot.value_type, CppType::Pointer { .. })
+        ));
+        assert!(matches!(
+            constructor.body.as_slice(),
+            [
+                CppStatement::MemberStore { field: pointer, .. },
+                CppStatement::MemberStore { field: saved, .. },
+                CppStatement::Store {
+                    pointer: CppExpression::MemberLoad { field: used, .. },
+                    ..
+                },
+            ] if pointer.name == "pointer" && saved.name == "saved" && used.name == "pointer"
+        ));
+
+        let [
+            CppStatement::Declare {
+                local,
+                initializer:
+                    CppInitializer::Constructor {
+                        callee, arguments, ..
+                    },
                 ..
             },
-        ] if pointer.name == "pointer" && saved.name == "saved" && used.name == "pointer"
-    ));
+            CppStatement::Return { .. },
+        ] = import.export().function.body.as_slice()
+        else {
+            panic!("the direct object construction was not retained")
+        };
+        assert_eq!(local.name, "state");
+        assert_eq!(callee.declaration_id, constructor.declaration_id);
+        assert_eq!(callee.name, constructor.name);
+        assert!(matches!(
+            arguments.as_slice(),
+            [CppCallArgument::Value {
+                value: CppExpression::AddressOf { .. }
+            }]
+        ));
 
-    let [
-        CppStatement::Declare {
-            local,
-            initializer:
-                CppInitializer::Constructor {
-                    callee, arguments, ..
-                },
-            ..
-        },
-        CppStatement::Return { .. },
-    ] = import.export().function.body.as_slice()
-    else {
-        panic!("the direct object construction was not retained")
-    };
-    assert_eq!(local.name, "state");
-    assert_eq!(callee.declaration_id, constructor.declaration_id);
-    assert_eq!(callee.name, constructor.name);
-    assert!(matches!(
-        arguments.as_slice(),
-        [CppCallArgument::Value {
-            value: CppExpression::AddressOf { .. }
-        }]
-    ));
+        let lowered =
+            lower_import(&import).expect("lower construction through the shared call rules");
+        assert!(contains_aggregate_construction_begin(
+            lowered.kernel_function().body(),
+            "state"
+        ));
+        assert!(contains_call(
+            lowered.kernel_function().body(),
+            "RestoreState_constructor"
+        ));
+        assert_eq!(lowered.reachable_kernel_functions().len(), 1);
+        assert_eq!(
+            lowered.reachable_kernel_functions()[0].parameters()[0].c_type(),
+            CType::Int32Pointer
+        );
+        assert_eq!(
+            lowered.reachable_kernel_functions()[0].parameters()[1].c_type(),
+            CType::Int32Pointer
+        );
+        assert_eq!(
+            lowered.reachable_kernel_functions()[0].return_type(),
+            CType::Void
+        );
 
-    let lowered = lower_import(&import).expect("lower construction through the shared call rules");
-    assert!(contains_aggregate_construction_begin(
-        lowered.kernel_function().body(),
-        "state"
-    ));
-    assert!(contains_call(
-        lowered.kernel_function().body(),
-        "RestoreState_constructor"
-    ));
-    assert_eq!(lowered.reachable_kernel_functions().len(), 1);
-    assert_eq!(
-        lowered.reachable_kernel_functions()[0].parameters()[0].c_type(),
-        CType::Int32Pointer
-    );
-    assert_eq!(
-        lowered.reachable_kernel_functions()[0].parameters()[1].c_type(),
-        CType::Int32Pointer
-    );
-    assert_eq!(
-        lowered.reachable_kernel_functions()[0].return_type(),
-        CType::Void
-    );
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify the constructor body and its implicit local invocation modularly");
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify the constructor body and its implicit local invocation modularly");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "capture.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the caller proof across construction");
+        verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+            .expect("the expanded constructor caller proof must reverify");
 
-    let execute =
-        cpp_prepared_project_tactic_source_position(&click_project, &import, "capture.contract", 0)
-            .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the caller proof across construction");
-    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
-        .expect("the expanded constructor caller proof must reverify");
+        let missing_field_ownership =
+            CONSTRUCTOR_LOCAL_SIDECAR.replace("    owns self->saved;\n", "");
+        fs::write(&sidecar, &missing_field_ownership).unwrap();
+        let missing_project = read_click_project(&sidecar, &missing_field_ownership).unwrap();
+        verify_cpp_prepared_project(&missing_project, &import)
+            .expect_err("constructor member initialization requires field authority");
 
-    let missing_field_ownership = CONSTRUCTOR_LOCAL_SIDECAR.replace("    owns self->saved;\n", "");
-    fs::write(&sidecar, &missing_field_ownership).unwrap();
-    let missing_project = read_click_project(&sidecar, &missing_field_ownership).unwrap();
-    verify_cpp_prepared_project(&missing_project, &import)
-        .expect_err("constructor member initialization requires field authority");
-
-    let false_constructor_contract = CONSTRUCTOR_LOCAL_SIDECAR.replace(
-        "ensures self->saved == old(slot[0]);",
-        "ensures self->saved == old(slot[0]) + 1;",
-    );
-    fs::write(&sidecar, &false_constructor_contract).unwrap();
-    let false_project = read_click_project(&sidecar, &false_constructor_contract).unwrap();
-    verify_cpp_prepared_project(&false_project, &import)
-        .expect_err("a false constructor field effect must be rejected");
+        let false_constructor_contract = CONSTRUCTOR_LOCAL_SIDECAR.replace(
+            "ensures self->saved == old(slot[0]);",
+            "ensures self->saved == old(slot[0]) + 1;",
+        );
+        fs::write(&sidecar, &false_constructor_contract).unwrap();
+        let false_project = read_click_project(&sidecar, &false_constructor_contract).unwrap();
+        verify_cpp_prepared_project(&false_project, &import)
+            .expect_err("a false constructor field effect must be rejected");
+    })
 }
 
 #[test]
 fn terminal_return_captures_value_before_checked_destructor_cleanup() {
-    let project = Project::terminal_destructor();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, TERMINAL_DESTRUCTOR_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export constructor and terminal destructor cleanup");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::terminal_destructor();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, TERMINAL_DESTRUCTOR_SIDECAR).unwrap();
+        refresh_import(&project.config())
+            .expect("export constructor and terminal destructor cleanup");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 20);
-    let [record] = import.export().records.as_slice() else {
-        panic!("the destructible record layout was not captured")
-    };
-    let destructor_reference = record
-        .destructor
-        .as_ref()
-        .expect("the record must retain its declared destructor identity");
-    let constructor = import
-        .export()
-        .reachable_functions
-        .iter()
-        .find(|function| matches!(function.function_kind, CppFunctionKind::Constructor { .. }))
-        .expect("constructor definition must be reachable");
-    let destructor = import
-        .export()
-        .reachable_functions
-        .iter()
-        .find(|function| matches!(function.function_kind, CppFunctionKind::Destructor { .. }))
-        .expect("destructor definition must be reachable");
-    assert_eq!(
-        destructor_reference.declaration_id,
-        destructor.declaration_id
-    );
-    assert_eq!(destructor_reference.name, "RestoreState_destructor");
-    assert!(matches!(
-        &destructor.function_kind,
-        CppFunctionKind::Destructor {
-            record_declaration_id,
-            record_name,
-        } if record_declaration_id == &record.declaration_id
-            && record_name == "RestoreState"
-    ));
-    assert_eq!(destructor.return_type, CppType::Void);
-    assert!(matches!(
-        destructor.parameters.as_slice(),
-        [self_parameter] if self_parameter.name == "self"
-    ));
-    assert!(matches!(
-        destructor.body.as_slice(),
-        [CppStatement::Store {
-            pointer: CppExpression::MemberLoad { field: pointer, .. },
-            value: CppExpression::MemberLoad { field: saved, .. },
-            ..
-        }] if pointer.name == "pointer" && saved.name == "saved"
-    ));
+        let import = load_import(&project.config()).expect("load the cleanup artifact offline");
+        assert_eq!(import.export().schema, 20);
+        let [record] = import.export().records.as_slice() else {
+            panic!("the destructible record layout was not captured")
+        };
+        let destructor_reference = record
+            .destructor
+            .as_ref()
+            .expect("the record must retain its declared destructor identity");
+        let constructor = import
+            .export()
+            .reachable_functions
+            .iter()
+            .find(|function| matches!(function.function_kind, CppFunctionKind::Constructor { .. }))
+            .expect("constructor definition must be reachable");
+        let destructor = import
+            .export()
+            .reachable_functions
+            .iter()
+            .find(|function| matches!(function.function_kind, CppFunctionKind::Destructor { .. }))
+            .expect("destructor definition must be reachable");
+        assert_eq!(
+            destructor_reference.declaration_id,
+            destructor.declaration_id
+        );
+        assert_eq!(destructor_reference.name, "RestoreState_destructor");
+        assert!(matches!(
+            &destructor.function_kind,
+            CppFunctionKind::Destructor {
+                record_declaration_id,
+                record_name,
+            } if record_declaration_id == &record.declaration_id
+                && record_name == "RestoreState"
+        ));
+        assert_eq!(destructor.return_type, CppType::Void);
+        assert!(matches!(
+            destructor.parameters.as_slice(),
+            [self_parameter] if self_parameter.name == "self"
+        ));
+        assert!(matches!(
+            destructor.body.as_slice(),
+            [CppStatement::Store {
+                pointer: CppExpression::MemberLoad { field: pointer, .. },
+                value: CppExpression::MemberLoad { field: saved, .. },
+                ..
+            }] if pointer.name == "pointer" && saved.name == "saved"
+        ));
 
-    let [
-        CppStatement::Declare {
-            local,
-            initializer: CppInitializer::Constructor { callee, .. },
-            ..
-        },
-        CppStatement::Return {
-            cleanups,
-            value: CppExpression::Load { .. },
-            ..
-        },
-    ] = import.export().function.body.as_slice()
-    else {
-        panic!("the terminal cleanup edge was not retained")
-    };
-    assert_eq!(local.name, "state");
-    assert_eq!(callee.declaration_id, constructor.declaration_id);
-    assert!(matches!(
-        cleanups.as_slice(),
-        [CppCleanup::Destructor {
-            object,
-            callee,
-            ..
-        }] if object.declaration_id == local.declaration_id
-            && callee.declaration_id == destructor.declaration_id
-    ));
+        let [
+            CppStatement::Declare {
+                local,
+                initializer: CppInitializer::Constructor { callee, .. },
+                ..
+            },
+            CppStatement::Return {
+                cleanups,
+                value: CppExpression::Load { .. },
+                ..
+            },
+        ] = import.export().function.body.as_slice()
+        else {
+            panic!("the terminal cleanup edge was not retained")
+        };
+        assert_eq!(local.name, "state");
+        assert_eq!(callee.declaration_id, constructor.declaration_id);
+        assert!(matches!(
+            cleanups.as_slice(),
+            [CppCleanup::Destructor {
+                object,
+                callee,
+                ..
+            }] if object.declaration_id == local.declaration_id
+                && callee.declaration_id == destructor.declaration_id
+        ));
 
-    let lowered = lower_import(&import).expect("lower return capture and destructor cleanup");
-    assert_eq!(
-        call_order(lowered.kernel_function().body()),
-        ["RestoreState_constructor", "RestoreState_destructor"]
-    );
-    assert!(matches!(
-        lowered.kernel_function().body(),
-        CStatement::Seq(_, returned)
-            if matches!(
-                returned.as_ref(),
-                CStatement::Seq(_, returned)
-                    if matches!(
-                        returned.as_ref(),
-                        CStatement::Return(CExpression::Variable(name))
-                            if name.starts_with("__click_cpp_return_value")
-                    )
-            )
-    ));
+        let lowered = lower_import(&import).expect("lower return capture and destructor cleanup");
+        assert_eq!(
+            call_order(lowered.kernel_function().body()),
+            ["RestoreState_constructor", "RestoreState_destructor"]
+        );
+        assert!(matches!(
+            lowered.kernel_function().body(),
+            CStatement::Seq(_, returned)
+                if matches!(
+                    returned.as_ref(),
+                    CStatement::Seq(_, returned)
+                        if matches!(
+                            returned.as_ref(),
+                            CStatement::Return(CExpression::Variable(name))
+                                if name.starts_with("__click_cpp_return_value")
+                        )
+                )
+        ));
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify captured result and restored caller memory");
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify captured result and restored caller memory");
 
-    let execute =
-        cpp_prepared_project_tactic_source_position(&click_project, &import, "capture.contract", 0)
-            .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the proof across terminal cleanup");
-    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
-        .expect("expanded terminal-cleanup proof must reverify");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "capture.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the proof across terminal cleanup");
+        verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+            .expect("expanded terminal-cleanup proof must reverify");
 
-    let missing_destructor = TERMINAL_DESTRUCTOR_SIDECAR.replace(
+        let missing_destructor = TERMINAL_DESTRUCTOR_SIDECAR.replace(
         "void RestoreState_destructor(struct RestoreState* self) {\n    requires separate(memory(object(self)), memory(self->pointer[0..1]));\n    owns &self->pointer;\n    owns self->saved;\n    owns self->pointer[0..1];\n    ensures self->pointer == old(self->pointer);\n    ensures self->saved == old(self->saved);\n    ensures self->pointer[0] == old(self->saved);\n} by {\n    execute();\n    simp();\n}\n\n",
         "",
     );
-    fs::write(&sidecar, &missing_destructor).unwrap();
-    let missing_project = read_click_project(&sidecar, &missing_destructor).unwrap();
-    verify_cpp_prepared_project(&missing_project, &import)
-        .expect_err("implicit cleanup requires a checked destructor contract");
+        fs::write(&sidecar, &missing_destructor).unwrap();
+        let missing_project = read_click_project(&sidecar, &missing_destructor).unwrap();
+        verify_cpp_prepared_project(&missing_project, &import)
+            .expect_err("implicit cleanup requires a checked destructor contract");
 
-    let false_destructor = TERMINAL_DESTRUCTOR_SIDECAR.replace(
-        "ensures self->pointer[0] == old(self->saved);",
-        "ensures self->pointer[0] == old(self->saved) + 1;",
-    );
-    fs::write(&sidecar, &false_destructor).unwrap();
-    let false_project = read_click_project(&sidecar, &false_destructor).unwrap();
-    verify_cpp_prepared_project(&false_project, &import)
-        .expect_err("a false destructor restore effect must be rejected");
+        let false_destructor = TERMINAL_DESTRUCTOR_SIDECAR.replace(
+            "ensures self->pointer[0] == old(self->saved);",
+            "ensures self->pointer[0] == old(self->saved) + 1;",
+        );
+        fs::write(&sidecar, &false_destructor).unwrap();
+        let false_project = read_click_project(&sidecar, &false_destructor).unwrap();
+        verify_cpp_prepared_project(&false_project, &import)
+            .expect_err("a false destructor restore effect must be rejected");
 
-    let wrong_capture = TERMINAL_DESTRUCTOR_SIDECAR
-        .replace("ensures result == 7;", "ensures result == old(value[0]);");
-    fs::write(&sidecar, &wrong_capture).unwrap();
-    let wrong_project = read_click_project(&sidecar, &wrong_capture).unwrap();
-    verify_cpp_prepared_project(&wrong_project, &import)
-        .expect_err("the return value must be captured before destruction");
+        let wrong_capture = TERMINAL_DESTRUCTOR_SIDECAR
+            .replace("ensures result == 7;", "ensures result == old(value[0]);");
+        fs::write(&sidecar, &wrong_capture).unwrap();
+        let wrong_project = read_click_project(&sidecar, &wrong_capture).unwrap();
+        verify_cpp_prepared_project(&wrong_project, &import)
+            .expect_err("the return value must be captured before destruction");
+    })
 }
 
 #[test]
 fn every_return_after_construction_runs_the_checked_destructor() {
-    let project = Project::early_return_destructor();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, EARLY_RETURN_DESTRUCTOR_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export cleanup on both C++ return edges");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::early_return_destructor();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, EARLY_RETURN_DESTRUCTOR_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export cleanup on both C++ return edges");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 20);
-    let destructor = import
-        .export()
-        .reachable_functions
-        .iter()
-        .find(|function| matches!(function.function_kind, CppFunctionKind::Destructor { .. }))
-        .expect("destructor definition must be reachable");
-    let [
-        CppStatement::Declare { local, .. },
-        CppStatement::If { then_branch, .. },
-        CppStatement::Assign { .. },
-        CppStatement::Return {
-            cleanups: final_cleanups,
-            ..
-        },
-    ] = import.export().function.body.as_slice()
-    else {
-        panic!("the two cleanup-bearing return paths were not retained")
-    };
-    let [
-        CppStatement::Return {
-            cleanups: early_cleanups,
-            ..
-        },
-    ] = then_branch.as_slice()
-    else {
-        panic!("the early return edge was not retained")
-    };
-    for cleanups in [early_cleanups, final_cleanups] {
-        assert!(matches!(
-            cleanups.as_slice(),
-            [CppCleanup::Destructor {
-                object,
-                callee,
+        let import = load_import(&project.config()).expect("load the cleanup artifact offline");
+        assert_eq!(import.export().schema, 20);
+        let destructor = import
+            .export()
+            .reachable_functions
+            .iter()
+            .find(|function| matches!(function.function_kind, CppFunctionKind::Destructor { .. }))
+            .expect("destructor definition must be reachable");
+        let [
+            CppStatement::Declare { local, .. },
+            CppStatement::If { then_branch, .. },
+            CppStatement::Assign { .. },
+            CppStatement::Return {
+                cleanups: final_cleanups,
                 ..
-            }] if object.declaration_id == local.declaration_id
-                && callee.declaration_id == destructor.declaration_id
-        ));
-    }
+            },
+        ] = import.export().function.body.as_slice()
+        else {
+            panic!("the two cleanup-bearing return paths were not retained")
+        };
+        let [
+            CppStatement::Return {
+                cleanups: early_cleanups,
+                ..
+            },
+        ] = then_branch.as_slice()
+        else {
+            panic!("the early return edge was not retained")
+        };
+        for cleanups in [early_cleanups, final_cleanups] {
+            assert!(matches!(
+                cleanups.as_slice(),
+                [CppCleanup::Destructor {
+                    object,
+                    callee,
+                    ..
+                }] if object.declaration_id == local.declaration_id
+                    && callee.declaration_id == destructor.declaration_id
+            ));
+        }
 
-    let lowered = lower_import(&import).expect("lower cleanup on both return edges");
-    assert_eq!(
-        call_order(lowered.kernel_function().body()),
-        [
-            "Restore_constructor",
-            "Restore_destructor",
-            "Restore_destructor"
-        ]
-    );
+        let lowered = lower_import(&import).expect("lower cleanup on both return edges");
+        assert_eq!(
+            call_order(lowered.kernel_function().body()),
+            [
+                "Restore_constructor",
+                "Restore_destructor",
+                "Restore_destructor"
+            ]
+        );
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    let verified = verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify both captured results and both restored-memory paths");
-    let ensure_indices = verified
-        .iter()
-        .map(|theorem| match theorem.claim {
-            VerifiedClaim::Ensure { index, .. } => index,
-            VerifiedClaim::ExceptionalEnsure { index, .. } => index,
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        ensure_indices.ends_with(&[0, 1, 2, 3, 0, 1, 2, 3]),
-        "both caller return paths must certify ownership, the captured result, and restoration: {ensure_indices:?}"
-    );
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        let verified = verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify both captured results and both restored-memory paths");
+        let ensure_indices = verified
+            .iter()
+            .map(|theorem| match theorem.claim {
+                VerifiedClaim::Ensure { index, .. } => index,
+                VerifiedClaim::ExceptionalEnsure { index, .. } => index,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ensure_indices.ends_with(&[0, 1, 2, 3, 0, 1, 2, 3]),
+            "both caller return paths must certify ownership, the captured result, and restoration: {ensure_indices:?}"
+        );
 
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "with_restore.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the proof across both cleanup edges");
-    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
-        .expect("the expanded early-return cleanup proof must reverify");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "with_restore.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the proof across both cleanup edges");
+        verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+            .expect("the expanded early-return cleanup proof must reverify");
 
-    let wrong_early_result = EARLY_RETURN_DESTRUCTOR_SIDECAR.replace(
-        "ensures early != 0 implies result == 7;",
-        "ensures early != 0 implies result == 9;",
-    );
-    fs::write(&sidecar, &wrong_early_result).unwrap();
-    let wrong_project = read_click_project(&sidecar, &wrong_early_result).unwrap();
-    verify_cpp_prepared_project(&wrong_project, &import)
-        .expect_err("cleanup must not overwrite the value captured by the early return");
+        let wrong_early_result = EARLY_RETURN_DESTRUCTOR_SIDECAR.replace(
+            "ensures early != 0 implies result == 7;",
+            "ensures early != 0 implies result == 9;",
+        );
+        fs::write(&sidecar, &wrong_early_result).unwrap();
+        let wrong_project = read_click_project(&sidecar, &wrong_early_result).unwrap();
+        verify_cpp_prepared_project(&wrong_project, &import)
+            .expect_err("cleanup must not overwrite the value captured by the early return");
+    })
 }
 
 #[test]
 fn modular_caller_observes_captured_result_and_restored_entry_value() {
-    assert!(
-        RESTORE_CALLER_SOURCE.starts_with(EARLY_RETURN_DESTRUCTOR_SOURCE),
-        "the caller fixture must preserve the original RAII source verbatim"
-    );
-    let project = Project::restore_caller();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, RESTORE_CALLER_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the RAII helper and its modular caller");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        assert!(
+            RESTORE_CALLER_SOURCE.starts_with(EARLY_RETURN_DESTRUCTOR_SOURCE),
+            "the caller fixture must preserve the original RAII source verbatim"
+        );
+        let project = Project::restore_caller();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, RESTORE_CALLER_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export the RAII helper and its modular caller");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the caller artifact offline");
-    assert_eq!(import.export().function.name, "call_with_restore");
-    assert!(
-        import
-            .export()
-            .reachable_functions
-            .iter()
-            .any(|function| function.name == "with_restore"),
-        "the helper definition must be reachable from the selected caller"
-    );
-    let CppStatement::Declare {
-        initializer: CppInitializer::Call { callee, .. },
-        ..
-    } = &import.export().function.body[0]
-    else {
-        panic!("the caller must capture a resolved call result")
-    };
-    assert_eq!(callee.name, "with_restore");
-    let lowered = lower_import(&import).expect("lower the modular RAII call");
-    assert!(
-        contains_scalar_local_pipeline(
-            lowered.kernel_function().body(),
-            "captured",
-            "unused",
-            "with_restore"
-        )[..2]
-            .iter()
-            .all(|found| *found),
-        "the captured call must remain a checked kernel call assignment"
-    );
+        let import = load_import(&project.config()).expect("load the caller artifact offline");
+        assert_eq!(import.export().function.name, "call_with_restore");
+        assert!(
+            import
+                .export()
+                .reachable_functions
+                .iter()
+                .any(|function| function.name == "with_restore"),
+            "the helper definition must be reachable from the selected caller"
+        );
+        let CppStatement::Declare {
+            initializer: CppInitializer::Call { callee, .. },
+            ..
+        } = &import.export().function.body[0]
+        else {
+            panic!("the caller must capture a resolved call result")
+        };
+        assert_eq!(callee.name, "with_restore");
+        let lowered = lower_import(&import).expect("lower the modular RAII call");
+        assert!(
+            contains_scalar_local_pipeline(
+                lowered.kernel_function().body(),
+                "captured",
+                "unused",
+                "with_restore"
+            )[..2]
+                .iter()
+                .all(|found| *found),
+            "the captured call must remain a checked kernel call assignment"
+        );
 
-    let click_project = read_click_project(&sidecar, RESTORE_CALLER_SIDECAR).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("the caller must receive 7 or 9 and still own an unchanged 41");
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "call_with_restore.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the caller's checked modular execution");
-    let rewritten = click_project.with_entry_source(expanded.clone());
-    verify_cpp_prepared_project(&rewritten, &import)
-        .expect("the expanded RAII caller proof must reverify");
-    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
-        .expect("retain the caller's original verification environment");
-    let next = cpp_prepared_project_tactic_source_position(
-        &rewritten,
-        &import,
-        "call_with_restore.contract",
-        0,
-    )
-    .unwrap();
-    session
-        .verify_at_project(&expanded, next.line, next.column)
-        .expect("retained audit session must accept the expanded RAII caller proof");
+        let click_project = read_click_project(&sidecar, RESTORE_CALLER_SIDECAR).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("the caller must receive 7 or 9 and still own an unchanged 41");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "call_with_restore.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the caller's checked modular execution");
+        let rewritten = click_project.with_entry_source(expanded.clone());
+        verify_cpp_prepared_project(&rewritten, &import)
+            .expect("the expanded RAII caller proof must reverify");
+        let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+            .expect("retain the caller's original verification environment");
+        let next = cpp_prepared_project_tactic_source_position(
+            &rewritten,
+            &import,
+            "call_with_restore.contract",
+            0,
+        )
+        .unwrap();
+        session
+            .verify_at_project(&expanded, next.line, next.column)
+            .expect("retained audit session must accept the expanded RAII caller proof");
 
-    let false_restoration =
-        RESTORE_CALLER_SIDECAR.replace("ensures value[0] == 41;", "ensures value[0] == 42;");
-    fs::write(&sidecar, &false_restoration).unwrap();
-    let false_project = read_click_project(&sidecar, &false_restoration).unwrap();
-    verify_cpp_prepared_project(&false_project, &import)
-        .expect_err("the caller cannot claim a different post-call value");
+        let false_restoration =
+            RESTORE_CALLER_SIDECAR.replace("ensures value[0] == 41;", "ensures value[0] == 42;");
+        fs::write(&sidecar, &false_restoration).unwrap();
+        let false_project = read_click_project(&sidecar, &false_restoration).unwrap();
+        verify_cpp_prepared_project(&false_project, &import)
+            .expect_err("the caller cannot claim a different post-call value");
+    })
 }
 
 #[test]
 fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
-    let project = Project::reverse_destructor_order();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, REVERSE_DESTRUCTOR_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export reverse cleanup on both C++ return edges");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::reverse_destructor_order();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, REVERSE_DESTRUCTOR_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export reverse cleanup on both C++ return edges");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the ordered cleanup artifact offline");
-    assert_eq!(import.export().schema, 20);
-    let [
-        CppStatement::Declare { local: first, .. },
-        CppStatement::Declare { local: second, .. },
-        CppStatement::If { then_branch, .. },
-        CppStatement::Assign { .. },
-        CppStatement::Return {
-            cleanups: final_cleanups,
-            ..
-        },
-    ] = import.export().function.body.as_slice()
-    else {
-        panic!("the two constructed objects and return edges were not retained")
-    };
-    let [
-        CppStatement::Return {
-            cleanups: early_cleanups,
-            ..
-        },
-    ] = then_branch.as_slice()
-    else {
-        panic!("the early return edge was not retained")
-    };
-    assert_eq!(first.name, "first");
-    assert_eq!(second.name, "second");
-    for cleanups in [early_cleanups, final_cleanups] {
+        let import =
+            load_import(&project.config()).expect("load the ordered cleanup artifact offline");
+        assert_eq!(import.export().schema, 20);
         let [
-            CppCleanup::Destructor {
-                object: second_cleanup,
+            CppStatement::Declare { local: first, .. },
+            CppStatement::Declare { local: second, .. },
+            CppStatement::If { then_branch, .. },
+            CppStatement::Assign { .. },
+            CppStatement::Return {
+                cleanups: final_cleanups,
                 ..
             },
-            CppCleanup::Destructor {
-                object: first_cleanup,
-                ..
-            },
-        ] = cleanups.as_slice()
+        ] = import.export().function.body.as_slice()
         else {
-            panic!("each return must retain two destructor calls")
+            panic!("the two constructed objects and return edges were not retained")
         };
-        assert_eq!(second_cleanup.declaration_id, second.declaration_id);
-        assert_eq!(first_cleanup.declaration_id, first.declaration_id);
-    }
+        let [
+            CppStatement::Return {
+                cleanups: early_cleanups,
+                ..
+            },
+        ] = then_branch.as_slice()
+        else {
+            panic!("the early return edge was not retained")
+        };
+        assert_eq!(first.name, "first");
+        assert_eq!(second.name, "second");
+        for cleanups in [early_cleanups, final_cleanups] {
+            let [
+                CppCleanup::Destructor {
+                    object: second_cleanup,
+                    ..
+                },
+                CppCleanup::Destructor {
+                    object: first_cleanup,
+                    ..
+                },
+            ] = cleanups.as_slice()
+            else {
+                panic!("each return must retain two destructor calls")
+            };
+            assert_eq!(second_cleanup.declaration_id, second.declaration_id);
+            assert_eq!(first_cleanup.declaration_id, first.declaration_id);
+        }
 
-    let lowered = lower_import(&import).expect("lower both reversed cleanup lists");
-    assert_eq!(
-        destructor_object_order(lowered.kernel_function().body(), "Restore_destructor"),
-        ["second", "first", "second", "first"]
-    );
+        let lowered = lower_import(&import).expect("lower both reversed cleanup lists");
+        assert_eq!(
+            destructor_object_order(lowered.kernel_function().body(), "Restore_destructor"),
+            ["second", "first", "second", "first"]
+        );
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify both return values and reverse-order restoration");
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify both return values and reverse-order restoration");
 
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "restore_twice.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the proof across both ordered cleanup lists");
-    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
-        .expect("the expanded reverse-cleanup proof must reverify");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "restore_twice.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the proof across both ordered cleanup lists");
+        verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+            .expect("the expanded reverse-cleanup proof must reverify");
 
-    let rejected = Project::reverse_destructor_order();
-    fs::write(
-        rejected.source(),
-        REVERSE_DESTRUCTOR_SOURCE.replace(
-            "Restore second(&value);",
-            "Restore second(&value);\n    Restore third(&value);",
-        ),
-    )
-    .unwrap();
-    let error = refresh_import(&rejected.config()).unwrap_err();
-    assert!(error.contains("restore_twice.cpp"), "{error}");
-    assert!(
-        error.contains("exactly two destructible objects"),
-        "{error}"
-    );
+        let rejected = Project::reverse_destructor_order();
+        fs::write(
+            rejected.source(),
+            REVERSE_DESTRUCTOR_SOURCE.replace(
+                "Restore second(&value);",
+                "Restore second(&value);\n    Restore third(&value);",
+            ),
+        )
+        .unwrap();
+        let error = refresh_import(&rejected.config()).unwrap_err();
+        assert!(error.contains("restore_twice.cpp"), "{error}");
+        assert!(
+            error.contains("exactly two destructible objects"),
+            "{error}"
+        );
+    })
 }
 
 #[test]
 fn nested_scope_destroys_its_object_on_return_and_fallthrough() {
-    let project = Project::nested_scope_destructor();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, NESTED_SCOPE_DESTRUCTOR_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export both nested-scope cleanup edges");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::nested_scope_destructor();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, NESTED_SCOPE_DESTRUCTOR_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export both nested-scope cleanup edges");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the nested-scope artifact offline");
-    assert_eq!(import.export().schema, 20);
-    let destructor = import
-        .export()
-        .reachable_functions
-        .iter()
-        .find(|function| matches!(function.function_kind, CppFunctionKind::Destructor { .. }))
-        .expect("destructor definition must be reachable");
-    let [
-        CppStatement::Scope {
-            body,
-            cleanups: fallthrough_cleanups,
-            ..
-        },
-        CppStatement::Return {
-            cleanups: outer_cleanups,
-            ..
-        },
-    ] = import.export().function.body.as_slice()
-    else {
-        panic!("the lexical cleanup boundary was not retained")
-    };
-    let [
-        CppStatement::Declare { local, .. },
-        CppStatement::If { then_branch, .. },
-        CppStatement::Assign { .. },
-    ] = body.as_slice()
-    else {
-        panic!("the nested block body was not retained")
-    };
-    let [
-        CppStatement::Return {
-            cleanups: early_cleanups,
-            ..
-        },
-    ] = then_branch.as_slice()
-    else {
-        panic!("the nested early return was not retained")
-    };
-    assert!(outer_cleanups.is_empty());
-    for cleanups in [early_cleanups, fallthrough_cleanups] {
-        assert!(matches!(
-            cleanups.as_slice(),
-            [CppCleanup::Destructor {
-                object,
-                callee,
+        let import =
+            load_import(&project.config()).expect("load the nested-scope artifact offline");
+        assert_eq!(import.export().schema, 20);
+        let destructor = import
+            .export()
+            .reachable_functions
+            .iter()
+            .find(|function| matches!(function.function_kind, CppFunctionKind::Destructor { .. }))
+            .expect("destructor definition must be reachable");
+        let [
+            CppStatement::Scope {
+                body,
+                cleanups: fallthrough_cleanups,
                 ..
-            }] if object.declaration_id == local.declaration_id
-                && callee.declaration_id == destructor.declaration_id
-        ));
-    }
+            },
+            CppStatement::Return {
+                cleanups: outer_cleanups,
+                ..
+            },
+        ] = import.export().function.body.as_slice()
+        else {
+            panic!("the lexical cleanup boundary was not retained")
+        };
+        let [
+            CppStatement::Declare { local, .. },
+            CppStatement::If { then_branch, .. },
+            CppStatement::Assign { .. },
+        ] = body.as_slice()
+        else {
+            panic!("the nested block body was not retained")
+        };
+        let [
+            CppStatement::Return {
+                cleanups: early_cleanups,
+                ..
+            },
+        ] = then_branch.as_slice()
+        else {
+            panic!("the nested early return was not retained")
+        };
+        assert!(outer_cleanups.is_empty());
+        for cleanups in [early_cleanups, fallthrough_cleanups] {
+            assert!(matches!(
+                cleanups.as_slice(),
+                [CppCleanup::Destructor {
+                    object,
+                    callee,
+                    ..
+                }] if object.declaration_id == local.declaration_id
+                    && callee.declaration_id == destructor.declaration_id
+            ));
+        }
 
-    let lowered = lower_import(&import).expect("lower the lexical cleanup boundary directly");
-    assert_eq!(
-        destructor_object_order(lowered.kernel_function().body(), "Restore_destructor"),
-        ["guard", "guard"]
-    );
+        let lowered = lower_import(&import).expect("lower the lexical cleanup boundary directly");
+        assert_eq!(
+            destructor_object_order(lowered.kernel_function().body(), "Restore_destructor"),
+            ["guard", "guard"]
+        );
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify early exit and normal exit from the nested scope");
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify early exit and normal exit from the nested scope");
 
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "scoped_restore.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the proof across both nested-scope cleanup edges");
-    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
-        .expect("the expanded nested-scope proof must reverify");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "scoped_restore.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the proof across both nested-scope cleanup edges");
+        verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+            .expect("the expanded nested-scope proof must reverify");
 
-    let wrong_fallthrough = NESTED_SCOPE_DESTRUCTOR_SIDECAR.replace(
-        "ensures early == 0 implies result == old(value[0]);",
-        "ensures early == 0 implies result == 9;",
-    );
-    fs::write(&sidecar, &wrong_fallthrough).unwrap();
-    let wrong_project = read_click_project(&sidecar, &wrong_fallthrough).unwrap();
-    verify_cpp_prepared_project(&wrong_project, &import)
-        .expect_err("fallthrough destruction must occur before the outer return");
+        let wrong_fallthrough = NESTED_SCOPE_DESTRUCTOR_SIDECAR.replace(
+            "ensures early == 0 implies result == old(value[0]);",
+            "ensures early == 0 implies result == 9;",
+        );
+        fs::write(&sidecar, &wrong_fallthrough).unwrap();
+        let wrong_project = read_click_project(&sidecar, &wrong_fallthrough).unwrap();
+        verify_cpp_prepared_project(&wrong_project, &import)
+            .expect_err("fallthrough destruction must occur before the outer return");
+    })
 }
 
 #[test]
 fn sibling_scopes_reuse_a_local_name_with_independent_cleanup() {
-    let project = Project::sibling_scope_destructors();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, SIBLING_SCOPE_DESTRUCTORS_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export both sibling cleanup scopes");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::sibling_scope_destructors();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, SIBLING_SCOPE_DESTRUCTORS_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export both sibling cleanup scopes");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import = load_import(&project.config()).expect("load the sibling-scope artifact offline");
-    let [
-        CppStatement::Scope {
-            body: first_body,
-            cleanups: first_fallthrough,
-            ..
-        },
-        CppStatement::Scope {
-            body: second_body,
-            cleanups: second_fallthrough,
-            ..
-        },
-        CppStatement::Return {
-            cleanups: outer_cleanups,
-            ..
-        },
-    ] = import.export().function.body.as_slice()
-    else {
-        panic!("the two sibling lifetime boundaries were not retained")
-    };
-    let [
-        CppStatement::Declare {
-            local: first_local, ..
-        },
-        CppStatement::If {
-            then_branch: first_then,
-            ..
-        },
-        CppStatement::Assign { .. },
-    ] = first_body.as_slice()
-    else {
-        panic!("the first sibling scope was not retained")
-    };
-    let [
-        CppStatement::Declare {
-            local: second_local,
-            ..
-        },
-        CppStatement::If {
-            then_branch: second_then,
-            ..
-        },
-        CppStatement::Assign { .. },
-    ] = second_body.as_slice()
-    else {
-        panic!("the second sibling scope was not retained")
-    };
-    assert_eq!(first_local.name, "guard");
-    assert_eq!(second_local.name, "guard");
-    assert_ne!(first_local.declaration_id, second_local.declaration_id);
-    assert!(outer_cleanups.is_empty());
-    for (local, branch, fallthrough) in [
-        (first_local, first_then, first_fallthrough),
-        (second_local, second_then, second_fallthrough),
-    ] {
+        let import =
+            load_import(&project.config()).expect("load the sibling-scope artifact offline");
         let [
-            CppStatement::Return {
-                cleanups: return_cleanups,
+            CppStatement::Scope {
+                body: first_body,
+                cleanups: first_fallthrough,
                 ..
             },
-        ] = branch.as_slice()
+            CppStatement::Scope {
+                body: second_body,
+                cleanups: second_fallthrough,
+                ..
+            },
+            CppStatement::Return {
+                cleanups: outer_cleanups,
+                ..
+            },
+        ] = import.export().function.body.as_slice()
         else {
-            panic!("a sibling scope lost its early return")
+            panic!("the two sibling lifetime boundaries were not retained")
         };
-        for cleanups in [return_cleanups, fallthrough] {
-            assert!(matches!(
-                cleanups.as_slice(),
-                [CppCleanup::Destructor { object, .. }]
-                    if object.declaration_id == local.declaration_id
-                        && object.name == local.name
-            ));
+        let [
+            CppStatement::Declare {
+                local: first_local, ..
+            },
+            CppStatement::If {
+                then_branch: first_then,
+                ..
+            },
+            CppStatement::Assign { .. },
+        ] = first_body.as_slice()
+        else {
+            panic!("the first sibling scope was not retained")
+        };
+        let [
+            CppStatement::Declare {
+                local: second_local,
+                ..
+            },
+            CppStatement::If {
+                then_branch: second_then,
+                ..
+            },
+            CppStatement::Assign { .. },
+        ] = second_body.as_slice()
+        else {
+            panic!("the second sibling scope was not retained")
+        };
+        assert_eq!(first_local.name, "guard");
+        assert_eq!(second_local.name, "guard");
+        assert_ne!(first_local.declaration_id, second_local.declaration_id);
+        assert!(outer_cleanups.is_empty());
+        for (local, branch, fallthrough) in [
+            (first_local, first_then, first_fallthrough),
+            (second_local, second_then, second_fallthrough),
+        ] {
+            let [
+                CppStatement::Return {
+                    cleanups: return_cleanups,
+                    ..
+                },
+            ] = branch.as_slice()
+            else {
+                panic!("a sibling scope lost its early return")
+            };
+            for cleanups in [return_cleanups, fallthrough] {
+                assert!(matches!(
+                    cleanups.as_slice(),
+                    [CppCleanup::Destructor { object, .. }]
+                        if object.declaration_id == local.declaration_id
+                            && object.name == local.name
+                ));
+            }
         }
-    }
 
-    let lowered = lower_import(&import).expect("lower the sibling lexical lifetimes directly");
-    assert_eq!(
-        call_order(lowered.kernel_function().body()),
-        [
-            "Restore_constructor",
-            "Restore_destructor",
-            "Restore_destructor",
-            "Restore_constructor",
-            "Restore_destructor",
-            "Restore_destructor",
-        ]
-    );
+        let lowered = lower_import(&import).expect("lower the sibling lexical lifetimes directly");
+        assert_eq!(
+            call_order(lowered.kernel_function().body()),
+            [
+                "Restore_constructor",
+                "Restore_destructor",
+                "Restore_destructor",
+                "Restore_constructor",
+                "Restore_destructor",
+                "Restore_destructor",
+            ]
+        );
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify independent cleanup and restoration in both sibling scopes");
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify independent cleanup and restoration in both sibling scopes");
 
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "sibling_restore.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the proof across both sibling lifetime boundaries");
-    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
-        .expect("the expanded sibling-scope proof must reverify");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "sibling_restore.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the proof across both sibling lifetime boundaries");
+        verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+            .expect("the expanded sibling-scope proof must reverify");
 
-    let wrong_final = SIBLING_SCOPE_DESTRUCTORS_SIDECAR.replace(
-        "second_early == 0 implies result == old(value[0])",
-        "second_early == 0 implies result == 11",
-    );
-    fs::write(&sidecar, &wrong_final).unwrap();
-    let wrong_project = read_click_project(&sidecar, &wrong_final).unwrap();
-    verify_cpp_prepared_project(&wrong_project, &import)
-        .expect_err("the second scope must clean up before the final outer return");
+        let wrong_final = SIBLING_SCOPE_DESTRUCTORS_SIDECAR.replace(
+            "second_early == 0 implies result == old(value[0])",
+            "second_early == 0 implies result == 11",
+        );
+        fs::write(&sidecar, &wrong_final).unwrap();
+        let wrong_project = read_click_project(&sidecar, &wrong_final).unwrap();
+        verify_cpp_prepared_project(&wrong_project, &import)
+            .expect_err("the second scope must clean up before the final outer return");
 
-    let rejected = Project::sibling_scope_destructors();
-    fs::write(
+        let rejected = Project::sibling_scope_destructors();
+        fs::write(
         rejected.source(),
         SIBLING_SCOPE_DESTRUCTORS_SOURCE.replace(
             "    return value;\n}",
@@ -3913,128 +4070,132 @@ fn sibling_scopes_reuse_a_local_name_with_independent_cleanup() {
         ),
     )
     .unwrap();
-    let error = refresh_import(&rejected.config()).unwrap_err();
-    assert!(error.contains("sibling_restore.cpp"), "{error}");
-    assert!(
-        error.contains("at most two sibling cleanup scopes"),
-        "{error}"
-    );
-    assert!(!rejected.artifact().exists());
+        let error = refresh_import(&rejected.config()).unwrap_err();
+        assert!(error.contains("sibling_restore.cpp"), "{error}");
+        assert!(
+            error.contains("at most two sibling cleanup scopes"),
+            "{error}"
+        );
+        assert!(!rejected.artifact().exists());
+    })
 }
 
 #[test]
 fn overlapping_scope_destroys_inner_before_outer_on_every_exit() {
-    let project = Project::overlapping_scope_destructors();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, OVERLAPPING_SCOPE_DESTRUCTORS_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export overlapping cleanup lifetimes");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::overlapping_scope_destructors();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, OVERLAPPING_SCOPE_DESTRUCTORS_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export overlapping cleanup lifetimes");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import =
-        load_import(&project.config()).expect("load the overlapping-scope artifact offline");
-    let [
-        CppStatement::Declare {
-            local: outer_local, ..
-        },
-        CppStatement::Scope {
-            body: inner_body,
-            cleanups: inner_fallthrough,
-            ..
-        },
-        CppStatement::Declare { .. },
-        CppStatement::Return {
-            cleanups: final_cleanups,
-            ..
-        },
-    ] = import.export().function.body.as_slice()
-    else {
-        panic!("the overlapping lexical cleanup boundary was not retained")
-    };
-    let [
-        CppStatement::Declare {
-            local: inner_local, ..
-        },
-        CppStatement::If { then_branch, .. },
-        CppStatement::Assign { .. },
-    ] = inner_body.as_slice()
-    else {
-        panic!("the inner cleanup scope body was not retained")
-    };
-    let [
-        CppStatement::Return {
-            cleanups: early_cleanups,
-            ..
-        },
-    ] = then_branch.as_slice()
-    else {
-        panic!("the overlapping early return was not retained")
-    };
-    assert_eq!(outer_local.name, "outer");
-    assert_eq!(inner_local.name, "inner");
-    assert!(matches!(
-        inner_fallthrough.as_slice(),
-        [CppCleanup::Destructor { object, .. }]
-            if object.declaration_id == inner_local.declaration_id
-    ));
-    assert!(matches!(
-        early_cleanups.as_slice(),
-        [
-            CppCleanup::Destructor {
-                object: inner_object,
+        let import =
+            load_import(&project.config()).expect("load the overlapping-scope artifact offline");
+        let [
+            CppStatement::Declare {
+                local: outer_local, ..
+            },
+            CppStatement::Scope {
+                body: inner_body,
+                cleanups: inner_fallthrough,
                 ..
             },
-            CppCleanup::Destructor {
-                object: outer_object,
+            CppStatement::Declare { .. },
+            CppStatement::Return {
+                cleanups: final_cleanups,
                 ..
             },
-        ] if inner_object.declaration_id == inner_local.declaration_id
-            && outer_object.declaration_id == outer_local.declaration_id
-    ));
-    assert!(matches!(
-        final_cleanups.as_slice(),
-        [CppCleanup::Destructor { object, .. }]
-            if object.declaration_id == outer_local.declaration_id
-    ));
+        ] = import.export().function.body.as_slice()
+        else {
+            panic!("the overlapping lexical cleanup boundary was not retained")
+        };
+        let [
+            CppStatement::Declare {
+                local: inner_local, ..
+            },
+            CppStatement::If { then_branch, .. },
+            CppStatement::Assign { .. },
+        ] = inner_body.as_slice()
+        else {
+            panic!("the inner cleanup scope body was not retained")
+        };
+        let [
+            CppStatement::Return {
+                cleanups: early_cleanups,
+                ..
+            },
+        ] = then_branch.as_slice()
+        else {
+            panic!("the overlapping early return was not retained")
+        };
+        assert_eq!(outer_local.name, "outer");
+        assert_eq!(inner_local.name, "inner");
+        assert!(matches!(
+            inner_fallthrough.as_slice(),
+            [CppCleanup::Destructor { object, .. }]
+                if object.declaration_id == inner_local.declaration_id
+        ));
+        assert!(matches!(
+            early_cleanups.as_slice(),
+            [
+                CppCleanup::Destructor {
+                    object: inner_object,
+                    ..
+                },
+                CppCleanup::Destructor {
+                    object: outer_object,
+                    ..
+                },
+            ] if inner_object.declaration_id == inner_local.declaration_id
+                && outer_object.declaration_id == outer_local.declaration_id
+        ));
+        assert!(matches!(
+            final_cleanups.as_slice(),
+            [CppCleanup::Destructor { object, .. }]
+                if object.declaration_id == outer_local.declaration_id
+        ));
 
-    let lowered = lower_import(&import).expect("lower the overlapping lifetimes directly");
-    assert_eq!(
-        destructor_object_order(lowered.kernel_function().body(), "Restore_destructor"),
-        ["inner", "outer", "inner", "outer"]
-    );
+        let lowered = lower_import(&import).expect("lower the overlapping lifetimes directly");
+        assert_eq!(
+            destructor_object_order(lowered.kernel_function().body(), "Restore_destructor"),
+            ["inner", "outer", "inner", "outer"]
+        );
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &import)
-        .expect("verify inner-then-outer cleanup and memory restoration");
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &import)
+            .expect("verify inner-then-outer cleanup and memory restoration");
 
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "overlap_restore.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the proof across overlapping cleanup lifetimes");
-    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
-        .expect("the expanded overlapping-cleanup proof must reverify");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "overlap_restore.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the proof across overlapping cleanup lifetimes");
+        verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+            .expect("the expanded overlapping-cleanup proof must reverify");
 
-    let wrong_result = OVERLAPPING_SCOPE_DESTRUCTORS_SIDECAR
-        .replace("ensures result == 7;", "ensures result == 11;");
-    fs::write(&sidecar, &wrong_result).unwrap();
-    let wrong_project = read_click_project(&sidecar, &wrong_result).unwrap();
-    verify_cpp_prepared_project(&wrong_project, &import)
-        .expect_err("inner fallthrough cleanup must restore 7 before the final return");
+        let wrong_result = OVERLAPPING_SCOPE_DESTRUCTORS_SIDECAR
+            .replace("ensures result == 7;", "ensures result == 11;");
+        fs::write(&sidecar, &wrong_result).unwrap();
+        let wrong_project = read_click_project(&sidecar, &wrong_result).unwrap();
+        verify_cpp_prepared_project(&wrong_project, &import)
+            .expect_err("inner fallthrough cleanup must restore 7 before the final return");
+    })
 }
 
 #[test]
 fn overlapping_scope_rejects_shadowing_and_a_second_inner_lifetime() {
-    for (source, expected) in [
+    limits::deterministic(|| {
+        for (source, expected) in [
         (
             OVERLAPPING_SCOPE_DESTRUCTORS_SOURCE.replace("Restore inner", "Restore outer"),
             "shadows another supported place",
@@ -4053,119 +4214,123 @@ fn overlapping_scope_rejects_shadowing_and_a_second_inner_lifetime() {
         assert!(error.contains(expected), "{error}");
         assert!(!project.artifact().exists());
     }
+    })
 }
 
 #[test]
 fn conditional_construction_cleans_up_only_the_constructed_arm() {
-    let project = Project::conditional_construction();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, CONDITIONAL_CONSTRUCTION_SIDECAR).unwrap();
-    refresh_import(&project.config()).expect("export the conditional object lifetime");
-    fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
+    limits::deterministic(|| {
+        let project = Project::conditional_construction();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, CONDITIONAL_CONSTRUCTION_SIDECAR).unwrap();
+        refresh_import(&project.config()).expect("export the conditional object lifetime");
+        fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
-    let import =
-        load_import(&project.config()).expect("load the conditional-construction artifact offline");
-    let [
-        CppStatement::If {
-            then_branch,
-            else_branch,
-            ..
-        },
-        CppStatement::Return {
-            cleanups: final_cleanups,
-            ..
-        },
-    ] = import.export().function.body.as_slice()
-    else {
-        panic!("the conditional lifetime boundary was not retained")
-    };
-    let [
-        CppStatement::Scope {
-            body,
-            cleanups: fallthrough_cleanups,
-            ..
-        },
-    ] = then_branch.as_slice()
-    else {
-        panic!("the constructed arm was not retained as a cleanup scope")
-    };
-    let [
-        CppStatement::Declare { local, .. },
-        CppStatement::If {
-            then_branch: early_branch,
-            ..
-        },
-        CppStatement::Assign { .. },
-    ] = body.as_slice()
-    else {
-        panic!("the conditional cleanup scope body was not retained")
-    };
-    let [
-        CppStatement::Return {
-            cleanups: early_cleanups,
-            ..
-        },
-    ] = early_branch.as_slice()
-    else {
-        panic!("the constructed arm's early return was not retained")
-    };
-    assert!(else_branch.is_empty());
-    assert!(final_cleanups.is_empty());
-    for cleanups in [early_cleanups, fallthrough_cleanups] {
-        assert!(matches!(
-            cleanups.as_slice(),
-            [CppCleanup::Destructor { object, .. }]
-                if object.declaration_id == local.declaration_id
-                    && object.name == "guard"
-        ));
-    }
+        let import = load_import(&project.config())
+            .expect("load the conditional-construction artifact offline");
+        let [
+            CppStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            },
+            CppStatement::Return {
+                cleanups: final_cleanups,
+                ..
+            },
+        ] = import.export().function.body.as_slice()
+        else {
+            panic!("the conditional lifetime boundary was not retained")
+        };
+        let [
+            CppStatement::Scope {
+                body,
+                cleanups: fallthrough_cleanups,
+                ..
+            },
+        ] = then_branch.as_slice()
+        else {
+            panic!("the constructed arm was not retained as a cleanup scope")
+        };
+        let [
+            CppStatement::Declare { local, .. },
+            CppStatement::If {
+                then_branch: early_branch,
+                ..
+            },
+            CppStatement::Assign { .. },
+        ] = body.as_slice()
+        else {
+            panic!("the conditional cleanup scope body was not retained")
+        };
+        let [
+            CppStatement::Return {
+                cleanups: early_cleanups,
+                ..
+            },
+        ] = early_branch.as_slice()
+        else {
+            panic!("the constructed arm's early return was not retained")
+        };
+        assert!(else_branch.is_empty());
+        assert!(final_cleanups.is_empty());
+        for cleanups in [early_cleanups, fallthrough_cleanups] {
+            assert!(matches!(
+                cleanups.as_slice(),
+                [CppCleanup::Destructor { object, .. }]
+                    if object.declaration_id == local.declaration_id
+                        && object.name == "guard"
+            ));
+        }
 
-    let lowered = lower_import(&import).expect("lower the conditional lifetime directly");
-    assert_eq!(
-        call_order(lowered.kernel_function().body()),
-        [
-            "Restore_constructor",
-            "Restore_destructor",
-            "Restore_destructor",
-        ]
-    );
+        let lowered = lower_import(&import).expect("lower the conditional lifetime directly");
+        assert_eq!(
+            call_order(lowered.kernel_function().body()),
+            [
+                "Restore_constructor",
+                "Restore_destructor",
+                "Restore_destructor",
+            ]
+        );
 
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
-    verify_cpp_prepared_project(&click_project, &import).expect(
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
+        verify_cpp_prepared_project(&click_project, &import).expect(
         "verify cleanup on constructed paths without calling the destructor on the skipped path",
     );
 
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "conditional_restore.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .expect("expand the proof across the conditional lifetime");
-    verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
-        .expect("the expanded conditional-construction proof must reverify");
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "conditional_restore.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .expect("expand the proof across the conditional lifetime");
+        verify_cpp_prepared_project(&click_project.with_entry_source(expanded), &import)
+            .expect("the expanded conditional-construction proof must reverify");
 
-    let wrong_skipped_result = CONDITIONAL_CONSTRUCTION_SIDECAR.replace(
-        "ensures construct == 0 implies result == 41;",
-        "ensures construct == 0 implies result == 7;",
-    );
-    fs::write(&sidecar, &wrong_skipped_result).unwrap();
-    let wrong_project = read_click_project(&sidecar, &wrong_skipped_result).unwrap();
-    verify_cpp_prepared_project(&wrong_project, &import)
-        .expect_err("the skipped-construction path must return the untouched input");
+        let wrong_skipped_result = CONDITIONAL_CONSTRUCTION_SIDECAR.replace(
+            "ensures construct == 0 implies result == 41;",
+            "ensures construct == 0 implies result == 7;",
+        );
+        fs::write(&sidecar, &wrong_skipped_result).unwrap();
+        let wrong_project = read_click_project(&sidecar, &wrong_skipped_result).unwrap();
+        verify_cpp_prepared_project(&wrong_project, &import)
+            .expect_err("the skipped-construction path must return the untouched input");
+    })
 }
 
 #[test]
 fn conditional_construction_rejects_both_arms_outer_objects_and_deeper_objects() {
-    for (source, expected) in [
+    limits::deterministic(|| {
+        for (source, expected) in [
         (
             CONDITIONAL_CONSTRUCTION_SOURCE.replace(
                 "        value = 9;\n    }\n    return value;",
@@ -4194,11 +4359,13 @@ fn conditional_construction_rejects_both_arms_outer_objects_and_deeper_objects()
         assert!(error.contains(expected), "{error}");
         assert!(!project.artifact().exists());
     }
+    })
 }
 
 #[test]
 fn nested_scope_rejects_conditional_construction_and_deeper_blocks() {
-    for (source, expected) in [
+    limits::deterministic(|| {
+        for (source, expected) in [
         (
             NESTED_SCOPE_DESTRUCTOR_SOURCE.replace(
                 "        Restore guard(&value);\n        if (early) {\n            return value;\n        }\n        value = 9;",
@@ -4221,572 +4388,607 @@ fn nested_scope_rejects_conditional_construction_and_deeper_blocks() {
         assert!(error.contains(expected), "{error}");
         assert!(!project.artifact().exists());
     }
+    })
 }
 
 #[test]
 fn constructor_local_rejects_implicit_throwing_partial_and_reordered_forms() {
-    let project = Project::constructor_local();
-    for (source, expected) in [
-        (
-            "struct RestoreState {\n    int* pointer;\n    int saved;\n    RestoreState(int* slot) noexcept : pointer(slot), saved(*slot) {}\n};\nint capture(int& value) noexcept { RestoreState state(&value); return state.saved; }\n",
-            "public explicit non-default noexcept constructor",
-        ),
-        (
-            "struct RestoreState {\n    int* pointer;\n    int saved;\n    explicit RestoreState(int* slot) : pointer(slot), saved(*slot) {}\n};\nint capture(int& value) noexcept { RestoreState state(&value); return state.saved; }\n",
-            "public explicit non-default noexcept constructor",
-        ),
-        (
-            "struct RestoreState {\n    int* pointer;\n    int saved;\n    explicit RestoreState(int* slot) noexcept : pointer(slot) {}\n};\nint capture(int& value) noexcept { RestoreState state(&value); return state.saved; }\n",
-            "explicitly initialize every field",
-        ),
-        (
-            "struct RestoreState {\n    int* pointer;\n    int saved;\n    explicit RestoreState(int* slot) noexcept : saved(*slot), pointer(slot) {}\n};\nint capture(int& value) noexcept { RestoreState state(&value); return state.saved; }\n",
-            "initializer list must follow declaration order",
-        ),
-    ] {
-        fs::write(project.source(), source).unwrap();
-        let error = refresh_import(&project.config()).unwrap_err();
-        assert!(error.contains("capture.cpp"), "{error}");
-        assert!(error.contains(expected), "{error}");
-        assert!(!project.artifact().exists());
-    }
+    limits::deterministic(|| {
+        let project = Project::constructor_local();
+        for (source, expected) in [
+            (
+                "struct RestoreState {\n    int* pointer;\n    int saved;\n    RestoreState(int* slot) noexcept : pointer(slot), saved(*slot) {}\n};\nint capture(int& value) noexcept { RestoreState state(&value); return state.saved; }\n",
+                "public explicit non-default noexcept constructor",
+            ),
+            (
+                "struct RestoreState {\n    int* pointer;\n    int saved;\n    explicit RestoreState(int* slot) : pointer(slot), saved(*slot) {}\n};\nint capture(int& value) noexcept { RestoreState state(&value); return state.saved; }\n",
+                "public explicit non-default noexcept constructor",
+            ),
+            (
+                "struct RestoreState {\n    int* pointer;\n    int saved;\n    explicit RestoreState(int* slot) noexcept : pointer(slot) {}\n};\nint capture(int& value) noexcept { RestoreState state(&value); return state.saved; }\n",
+                "explicitly initialize every field",
+            ),
+            (
+                "struct RestoreState {\n    int* pointer;\n    int saved;\n    explicit RestoreState(int* slot) noexcept : saved(*slot), pointer(slot) {}\n};\nint capture(int& value) noexcept { RestoreState state(&value); return state.saved; }\n",
+                "initializer list must follow declaration order",
+            ),
+        ] {
+            fs::write(project.source(), source).unwrap();
+            let error = refresh_import(&project.config()).unwrap_err();
+            assert!(error.contains("capture.cpp"), "{error}");
+            assert!(error.contains(expected), "{error}");
+            assert!(!project.artifact().exists());
+        }
+    })
 }
 
 #[test]
 fn terminal_destructor_rejects_throwing_virtual_empty_and_nonterminal_cleanup() {
-    let project = Project::terminal_destructor();
-    for (source, expected) in [
-        (
-            TERMINAL_DESTRUCTOR_SOURCE.replace(
-                "~RestoreState() noexcept",
-                "~RestoreState() noexcept(false)",
+    limits::deterministic(|| {
+        let project = Project::terminal_destructor();
+        for (source, expected) in [
+            (
+                TERMINAL_DESTRUCTOR_SOURCE.replace(
+                    "~RestoreState() noexcept",
+                    "~RestoreState() noexcept(false)",
+                ),
+                "public, non-virtual, non-deleted, and explicitly noexcept",
             ),
-            "public, non-virtual, non-deleted, and explicitly noexcept",
-        ),
-        (
-            TERMINAL_DESTRUCTOR_SOURCE.replace("~RestoreState() noexcept", "~RestoreState()"),
-            "public, non-virtual, non-deleted, and explicitly noexcept",
-        ),
-        (
-            TERMINAL_DESTRUCTOR_SOURCE.replace(
-                "~RestoreState() noexcept",
-                "virtual ~RestoreState() noexcept",
+            (
+                TERMINAL_DESTRUCTOR_SOURCE.replace("~RestoreState() noexcept", "~RestoreState()"),
+                "public, non-virtual, non-deleted, and explicitly noexcept",
             ),
-            "standard-layout",
-        ),
-        (
-            TERMINAL_DESTRUCTOR_SOURCE.replace(
-                "~RestoreState() noexcept {\n        *pointer = saved;\n    }",
-                "~RestoreState() noexcept {}",
+            (
+                TERMINAL_DESTRUCTOR_SOURCE.replace(
+                    "~RestoreState() noexcept",
+                    "virtual ~RestoreState() noexcept",
+                ),
+                "standard-layout",
             ),
-            "nonempty destructor body",
-        ),
-        (
-            TERMINAL_DESTRUCTOR_SOURCE.replace(
-                "RestoreState state(&value);\n    return value;",
-                "return value;\n    RestoreState state(&value);\n    return value;",
+            (
+                TERMINAL_DESTRUCTOR_SOURCE.replace(
+                    "~RestoreState() noexcept {\n        *pointer = saved;\n    }",
+                    "~RestoreState() noexcept {}",
+                ),
+                "nonempty destructor body",
             ),
-            "returns before automatic object construction",
-        ),
-        (
-            TERMINAL_DESTRUCTOR_SOURCE.replace(
-                "return value;",
-                "int result = value;\n    return result;\n    value = 9;",
+            (
+                TERMINAL_DESTRUCTOR_SOURCE.replace(
+                    "RestoreState state(&value);\n    return value;",
+                    "return value;\n    RestoreState state(&value);\n    return value;",
+                ),
+                "returns before automatic object construction",
             ),
-            "requires one final return",
-        ),
-    ] {
-        fs::write(project.source(), source).unwrap();
-        let error = refresh_import(&project.config()).unwrap_err();
-        assert!(error.contains("capture.cpp"), "{error}");
-        assert!(error.contains(expected), "{error}");
-        assert!(!project.artifact().exists());
-    }
+            (
+                TERMINAL_DESTRUCTOR_SOURCE.replace(
+                    "return value;",
+                    "int result = value;\n    return result;\n    value = 9;",
+                ),
+                "requires one final return",
+            ),
+        ] {
+            fs::write(project.source(), source).unwrap();
+            let error = refresh_import(&project.config()).unwrap_err();
+            assert!(error.contains("capture.cpp"), "{error}");
+            assert!(error.contains(expected), "{error}");
+            assert!(!project.artifact().exists());
+        }
+    })
 }
 
 #[test]
 fn cpp_local_aggregate_rejects_partial_default_copy_nested_and_second_objects() {
-    let project = Project::local_aggregate();
+    limits::deterministic(|| {
+        let project = Project::local_aggregate();
 
-    for (source, expected) in [
-        (
-            "struct RestoreState { int* pointer; int saved; };\nint stage_restore(int& value) noexcept {\n    RestoreState state{&value};\n    return value;\n}\n",
-            "one direct brace initializer per field",
-        ),
-        (
-            "struct RestoreState { int* pointer; int saved; };\nint stage_restore(int& value) noexcept {\n    RestoreState state;\n    return value;\n}\n",
-            "one direct brace initializer per field",
-        ),
-        (
-            "struct RestoreState { int* pointer; int saved; };\nint stage_restore(RestoreState& original, int& value) noexcept {\n    RestoreState copied = original;\n    return value;\n}\n",
-            "one direct brace initializer per field",
-        ),
-        (
-            "struct RestoreState { int* pointer; int saved; };\nint stage_restore(int& value, bool condition) noexcept {\n    if (condition) { RestoreState state{&value, value}; }\n    return value;\n}\n",
-            "only in the function body",
-        ),
-        (
-            "struct RestoreState { int* pointer; int saved; };\nint stage_restore(int& value) noexcept {\n    RestoreState first{&value, value};\n    RestoreState second{&value, value};\n    return value;\n}\n",
-            "one aggregate object or exactly two destructible objects",
-        ),
-    ] {
-        fs::write(project.source(), source).unwrap();
-        let error = refresh_import(&project.config()).unwrap_err();
-        assert!(error.contains("stage_restore.cpp"), "{error}");
-        assert!(error.contains(expected), "{error}");
-        assert!(!project.artifact().exists());
-    }
+        for (source, expected) in [
+            (
+                "struct RestoreState { int* pointer; int saved; };\nint stage_restore(int& value) noexcept {\n    RestoreState state{&value};\n    return value;\n}\n",
+                "one direct brace initializer per field",
+            ),
+            (
+                "struct RestoreState { int* pointer; int saved; };\nint stage_restore(int& value) noexcept {\n    RestoreState state;\n    return value;\n}\n",
+                "one direct brace initializer per field",
+            ),
+            (
+                "struct RestoreState { int* pointer; int saved; };\nint stage_restore(RestoreState& original, int& value) noexcept {\n    RestoreState copied = original;\n    return value;\n}\n",
+                "one direct brace initializer per field",
+            ),
+            (
+                "struct RestoreState { int* pointer; int saved; };\nint stage_restore(int& value, bool condition) noexcept {\n    if (condition) { RestoreState state{&value, value}; }\n    return value;\n}\n",
+                "only in the function body",
+            ),
+            (
+                "struct RestoreState { int* pointer; int saved; };\nint stage_restore(int& value) noexcept {\n    RestoreState first{&value, value};\n    RestoreState second{&value, value};\n    return value;\n}\n",
+                "one aggregate object or exactly two destructible objects",
+            ),
+        ] {
+            fs::write(project.source(), source).unwrap();
+            let error = refresh_import(&project.config()).unwrap_err();
+            assert!(error.contains("stage_restore.cpp"), "{error}");
+            assert!(error.contains(expected), "{error}");
+            assert!(!project.artifact().exists());
+        }
+    })
 }
 
 #[test]
 fn cpp_pointer_slice_rejects_arithmetic_null_multilevel_and_pointer_locals() {
-    let project = Project::pointer();
+    limits::deterministic(|| {
+        let project = Project::pointer();
 
-    fs::write(
-        project.source(),
-        "int bump_reference(int* pointer) noexcept {\n    return *(pointer + 1);\n}\n",
-    )
-    .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("bump_reference.cpp:2"), "{error}");
-    assert!(error.contains("pointer arithmetic"), "{error}");
-    assert!(!project.artifact().exists());
+        fs::write(
+            project.source(),
+            "int bump_reference(int* pointer) noexcept {\n    return *(pointer + 1);\n}\n",
+        )
+        .unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("bump_reference.cpp:2"), "{error}");
+        assert!(error.contains("pointer arithmetic"), "{error}");
+        assert!(!project.artifact().exists());
 
-    fs::write(
+        fs::write(
         project.source(),
         "int read_pointer(int* pointer) noexcept { return *pointer; }\n\nint bump_reference(int& value) noexcept {\n    int result = read_pointer(nullptr);\n    return result;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("bump_reference.cpp:4"), "{error}");
-    assert!(error.contains("unsupported implicit conversion"), "{error}");
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("bump_reference.cpp:4"), "{error}");
+        assert!(error.contains("unsupported implicit conversion"), "{error}");
+        assert!(!project.artifact().exists());
 
-    fs::write(
+        fs::write(
         project.source(),
         "int bump_reference(int& value) noexcept {\n    int* pointer = &value;\n    return *pointer;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("bump_reference.cpp:2"), "{error}");
-    assert!(error.contains("must resolve to mutable int"), "{error}");
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("bump_reference.cpp:2"), "{error}");
+        assert!(error.contains("must resolve to mutable int"), "{error}");
+        assert!(!project.artifact().exists());
 
-    fs::write(
-        project.source(),
-        "int bump_reference(int** pointer) noexcept {\n    return **pointer;\n}\n",
-    )
-    .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("bump_reference.cpp:1"), "{error}");
-    assert!(error.contains("mutable int* parameter"), "{error}");
-    assert!(!project.artifact().exists());
+        fs::write(
+            project.source(),
+            "int bump_reference(int** pointer) noexcept {\n    return **pointer;\n}\n",
+        )
+        .unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("bump_reference.cpp:1"), "{error}");
+        assert!(error.contains("mutable int* parameter"), "{error}");
+        assert!(!project.artifact().exists());
+    })
 }
 
 #[test]
 fn cpp_record_slice_rejects_methods_bitfields_inheritance_and_multiple_types() {
-    let project = Project::struct_member();
+    limits::deterministic(|| {
+        let project = Project::struct_member();
 
-    fs::write(
+        fs::write(
         project.source(),
         "struct RestoreState {\n    int saved;\n    int read() noexcept { return saved; }\n};\n\nint stage_restore(RestoreState& state, int& value) noexcept {\n    return state.saved;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("stage_restore.cpp:3"), "{error}");
-    assert!(error.contains("ordinary methods"), "{error}");
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("stage_restore.cpp:3"), "{error}");
+        assert!(error.contains("ordinary methods"), "{error}");
+        assert!(!project.artifact().exists());
 
-    fs::write(
+        fs::write(
         project.source(),
         "struct RestoreState {\n    int saved : 4;\n};\n\nint stage_restore(RestoreState& state, int& value) noexcept {\n    return state.saved;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("stage_restore.cpp:2"), "{error}");
-    assert!(error.contains("without bit-fields"), "{error}");
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("stage_restore.cpp:2"), "{error}");
+        assert!(error.contains("without bit-fields"), "{error}");
+        assert!(!project.artifact().exists());
 
-    fs::write(
+        fs::write(
         project.source(),
         "struct Base { int base; };\nstruct RestoreState : Base { int saved; };\n\nint stage_restore(RestoreState& state, int& value) noexcept {\n    return state.saved;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("stage_restore.cpp:2"), "{error}");
-    assert!(error.contains("have no bases"), "{error}");
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("stage_restore.cpp:2"), "{error}");
+        assert!(error.contains("have no bases"), "{error}");
+        assert!(!project.artifact().exists());
 
-    fs::write(
+        fs::write(
         project.source(),
         "struct First { int value; };\nstruct Second { int value; };\n\nint stage_restore(First& first, Second& second) noexcept {\n    first.value = second.value;\n    return first.value;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("stage_restore.cpp:2"), "{error}");
-    assert!(error.contains("exactly one record type"), "{error}");
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("stage_restore.cpp:2"), "{error}");
+        assert!(error.contains("exactly one record type"), "{error}");
+        assert!(!project.artifact().exists());
+    })
 }
 
 #[test]
 fn cpp_profile_expansion_and_audit_session_share_the_locked_input() {
-    let project = Project::new();
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, SIDECAR).unwrap();
-    refresh_import(&project.config()).unwrap();
-    fs::remove_file(&project.exporter).unwrap();
-    let import = load_import(&project.config()).unwrap();
-    let click_source = fs::read_to_string(&sidecar).unwrap();
-    let click_project = read_click_project(&sidecar, &click_source).unwrap();
+    limits::deterministic(|| {
+        let project = Project::new();
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, SIDECAR).unwrap();
+        refresh_import(&project.config()).unwrap();
+        fs::remove_file(&project.exporter).unwrap();
+        let import = load_import(&project.config()).unwrap();
+        let click_source = fs::read_to_string(&sidecar).unwrap();
+        let click_project = read_click_project(&sidecar, &click_source).unwrap();
 
-    let sites = cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
-    assert_eq!(
-        sites
-            .iter()
-            .map(|site| site.tactic_name.as_str())
-            .collect::<Vec<_>>(),
-        vec!["execute", "simp"]
-    );
-    let execute = cpp_prepared_project_tactic_source_position(
-        &click_project,
-        &import,
-        "increment.contract",
-        0,
-    )
-    .unwrap();
-    let expanded = expand_cpp_prepared_project_tactic_source_at(
-        &click_project,
-        &import,
-        execute.line,
-        execute.column,
-    )
-    .unwrap();
-    assert_ne!(expanded, click_source);
-    let rewritten = click_project.with_entry_source(expanded.clone());
-    verify_cpp_prepared_project(&rewritten, &import).expect("expanded proof must reverify");
+        let sites =
+            cpp_prepared_project_smart_tactic_source_sites(&click_project, &import).unwrap();
+        assert_eq!(
+            sites
+                .iter()
+                .map(|site| site.tactic_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["execute", "simp"]
+        );
+        let execute = cpp_prepared_project_tactic_source_position(
+            &click_project,
+            &import,
+            "increment.contract",
+            0,
+        )
+        .unwrap();
+        let expanded = expand_cpp_prepared_project_tactic_source_at(
+            &click_project,
+            &import,
+            execute.line,
+            execute.column,
+        )
+        .unwrap();
+        assert_ne!(expanded, click_source);
+        let rewritten = click_project.with_entry_source(expanded.clone());
+        verify_cpp_prepared_project(&rewritten, &import).expect("expanded proof must reverify");
 
-    let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
-        .expect("start the retained audit session");
-    let next =
-        cpp_prepared_project_tactic_source_position(&rewritten, &import, "increment.contract", 0)
-            .unwrap();
-    session
-        .verify_at_project(&expanded, next.line, next.column)
-        .expect("retained session must verify the rewritten C++ proof");
+        let (session, _) = C0VerificationSession::new_cpp_prepared_project(&click_project, &import)
+            .expect("start the retained audit session");
+        let next = cpp_prepared_project_tactic_source_position(
+            &rewritten,
+            &import,
+            "increment.contract",
+            0,
+        )
+        .unwrap();
+        session
+            .verify_at_project(&expanded, next.line, next.column)
+            .expect("retained session must verify the rewritten C++ proof");
+    })
 }
 
 #[test]
 fn cpp_sidecar_reports_source_and_signature_mismatches_without_c_fallback() {
-    let project = Project::new();
-    refresh_import(&project.config()).unwrap();
-    fs::remove_file(&project.exporter).unwrap();
-    let import = load_import(&project.config()).unwrap();
+    limits::deterministic(|| {
+        let project = Project::new();
+        refresh_import(&project.config()).unwrap();
+        fs::remove_file(&project.exporter).unwrap();
+        let import = load_import(&project.config()).unwrap();
 
-    let wrong_source = SIDECAR.replace("increment.cpp", "other.cpp");
-    let sidecar = project.directory.join("demo.click");
-    fs::write(&sidecar, &wrong_source).unwrap();
-    let click_project = read_click_project(&sidecar, &wrong_source).unwrap();
-    let error = verify_cpp_prepared_project(&click_project, &import).unwrap_err();
-    assert!(
-        error
-            .message()
-            .contains("prepared C++ import logical source must exactly match"),
-        "{}",
-        error.message()
-    );
+        let wrong_source = SIDECAR.replace("increment.cpp", "other.cpp");
+        let sidecar = project.directory.join("demo.click");
+        fs::write(&sidecar, &wrong_source).unwrap();
+        let click_project = read_click_project(&sidecar, &wrong_source).unwrap();
+        let error = verify_cpp_prepared_project(&click_project, &import).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("prepared C++ import logical source must exactly match"),
+            "{}",
+            error.message()
+        );
 
-    let wrong_signature = SIDECAR.replace("int32* value", "uint32* value");
-    fs::write(&sidecar, &wrong_signature).unwrap();
-    let click_project = read_click_project(&sidecar, &wrong_signature).unwrap();
-    let error = verify_cpp_prepared_project(&click_project, &import).unwrap_err();
-    assert!(
-        error
-            .message()
-            .contains("signature mismatch for `increment` parameter 1"),
-        "{}",
-        error.message()
-    );
+        let wrong_signature = SIDECAR.replace("int32* value", "uint32* value");
+        fs::write(&sidecar, &wrong_signature).unwrap();
+        let click_project = read_click_project(&sidecar, &wrong_signature).unwrap();
+        let error = verify_cpp_prepared_project(&click_project, &import).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("signature mismatch for `increment` parameter 1"),
+            "{}",
+            error.message()
+        );
+    })
 }
 
 #[test]
 fn locked_cpp_artifact_lowers_directly_and_executes_reference_semantics() {
-    let project = Project::new();
-    refresh_import(&project.config()).unwrap();
-    fs::remove_file(&project.exporter).unwrap();
-    let prepared = load_import(&project.config()).expect("load the locked artifact offline");
-    let declaration_id = prepared.export().function.declaration_id.clone();
-    let function_span = prepared.export().function.span.clone();
-    let lowered = lower_import(&prepared).expect("lower the typed artifact directly");
+    limits::deterministic(|| {
+        let project = Project::new();
+        refresh_import(&project.config()).unwrap();
+        fs::remove_file(&project.exporter).unwrap();
+        let prepared = load_import(&project.config()).expect("load the locked artifact offline");
+        let declaration_id = prepared.export().function.declaration_id.clone();
+        let function_span = prepared.export().function.span.clone();
+        let lowered = lower_import(&prepared).expect("lower the typed artifact directly");
 
-    assert_eq!(lowered.source().identity(), prepared.identity());
-    assert_eq!(lowered.source_function().declaration_id, declaration_id);
-    assert_eq!(lowered.source_function().span, function_span);
-    let function = lowered.kernel_function();
-    assert_eq!(function.name(), "increment");
-    assert_eq!(function.return_type(), CType::Int32);
-    assert_eq!(function.parameters().len(), 1);
-    assert_eq!(function.parameters()[0].name(), "value");
-    assert_eq!(function.parameters()[0].c_type(), CType::Int32Pointer);
-    assert!(matches!(
-        function.body(),
-        CStatement::Seq(store, returned)
-            if matches!(
-                store.as_ref(),
-                CStatement::TypedStore {
-                    pointer: CExpression::Variable(pointer),
-                    value: CExpression::Add(left, right),
-                    value_type: CType::Int32,
-                    volatile: false,
-                    pointee_constant: false,
-                } if pointer == "value"
-                    && matches!(
-                        left.as_ref(),
-                        CExpression::TypedLoad {
-                            pointer,
-                            value_type: CType::Int32,
-                            volatile: false,
-                            ..
-                        } if matches!(pointer.as_ref(), CExpression::Variable(name) if name == "value")
-                    )
-                    && matches!(right.as_ref(), CExpression::Value(value) if value == &int32(1))
-            )
-            && matches!(
-                returned.as_ref(),
-                CStatement::Return(CExpression::TypedLoad {
-                    pointer,
-                    value_type: CType::Int32,
-                    volatile: false,
-                    ..
-                }) if matches!(pointer.as_ref(), CExpression::Variable(name) if name == "value")
-            )
-    ));
+        assert_eq!(lowered.source().identity(), prepared.identity());
+        assert_eq!(lowered.source_function().declaration_id, declaration_id);
+        assert_eq!(lowered.source_function().span, function_span);
+        let function = lowered.kernel_function();
+        assert_eq!(function.name(), "increment");
+        assert_eq!(function.return_type(), CType::Int32);
+        assert_eq!(function.parameters().len(), 1);
+        assert_eq!(function.parameters()[0].name(), "value");
+        assert_eq!(function.parameters()[0].c_type(), CType::Int32Pointer);
+        assert!(matches!(
+            function.body(),
+            CStatement::Seq(store, returned)
+                if matches!(
+                    store.as_ref(),
+                    CStatement::TypedStore {
+                        pointer: CExpression::Variable(pointer),
+                        value: CExpression::Add(left, right),
+                        value_type: CType::Int32,
+                        volatile: false,
+                        pointee_constant: false,
+                    } if pointer == "value"
+                        && matches!(
+                            left.as_ref(),
+                            CExpression::TypedLoad {
+                                pointer,
+                                value_type: CType::Int32,
+                                volatile: false,
+                                ..
+                            } if matches!(pointer.as_ref(), CExpression::Variable(name) if name == "value")
+                        )
+                        && matches!(right.as_ref(), CExpression::Value(value) if value == &int32(1))
+                )
+                && matches!(
+                    returned.as_ref(),
+                    CStatement::Return(CExpression::TypedLoad {
+                        pointer,
+                        value_type: CType::Int32,
+                        volatile: false,
+                        ..
+                    }) if matches!(pointer.as_ref(), CExpression::Variable(name) if name == "value")
+                )
+        ));
 
-    let pointer = Pointer {
-        block: "cpp-reference".into(),
-        offset: PointerOffsetTerm::Constant(0),
-    };
-    let resources =
-        ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
-            pointer.clone(),
-            Bitvector32Term::Constant(0),
-            Bitvector32Term::Constant(1),
-        )));
-    let arguments = vec![c_typed_pointer_value(pointer.clone(), CType::Int32Pointer)];
-    let state = CState::new()
-        .with_memory(CMemory::new().store(pointer.clone(), int32(41)))
-        .with_resource_context(resources.clone());
-    let expected_state = CState::new()
-        .with_memory(CMemory::new().store(pointer.clone(), int32(42)))
-        .with_resource_context(resources.clone());
-    let theorem = prove_symbolic_c_function_execution(
-        state.clone(),
-        function.clone(),
-        arguments.clone(),
-        PureFactContext::new(),
-    )
-    .expect("the lowered reference function should execute");
-    assert_eq!(
-        theorem.proposition(),
-        &Proposition::CFunctionExecutes {
-            state,
-            function: function.clone(),
-            arguments: arguments.clone(),
-            outcome: CFunctionOutcome::Return {
-                value: int32(42),
-                state: expected_state,
-            },
-        }
-    );
+        let pointer = Pointer {
+            block: "cpp-reference".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let resources = ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(
+            CMemoryRange::new(
+                pointer.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            ),
+        ));
+        let arguments = vec![c_typed_pointer_value(pointer.clone(), CType::Int32Pointer)];
+        let state = CState::new()
+            .with_memory(CMemory::new().store(pointer.clone(), int32(41)))
+            .with_resource_context(resources.clone());
+        let expected_state = CState::new()
+            .with_memory(CMemory::new().store(pointer.clone(), int32(42)))
+            .with_resource_context(resources.clone());
+        let theorem = prove_symbolic_c_function_execution(
+            state.clone(),
+            function.clone(),
+            arguments.clone(),
+            PureFactContext::new(),
+        )
+        .expect("the lowered reference function should execute");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CFunctionExecutes {
+                state,
+                function: function.clone(),
+                arguments: arguments.clone(),
+                outcome: CFunctionOutcome::Return {
+                    value: int32(42),
+                    state: expected_state,
+                },
+            }
+        );
 
-    let max_state = CState::new()
-        .with_memory(CMemory::new().store(pointer, int32(i32::MAX as u32)))
-        .with_resource_context(resources);
-    let overflow = prove_symbolic_c_function_execution(
-        max_state.clone(),
-        function.clone(),
-        arguments.clone(),
-        PureFactContext::new(),
-    )
-    .expect("concrete signed overflow should produce a checked outcome");
-    assert_eq!(
-        overflow.proposition(),
-        &Proposition::CFunctionExecutes {
-            state: max_state,
-            function: function.clone(),
-            arguments,
-            outcome: CFunctionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
-        }
-    );
+        let max_state = CState::new()
+            .with_memory(CMemory::new().store(pointer, int32(i32::MAX as u32)))
+            .with_resource_context(resources);
+        let overflow = prove_symbolic_c_function_execution(
+            max_state.clone(),
+            function.clone(),
+            arguments.clone(),
+            PureFactContext::new(),
+        )
+        .expect("concrete signed overflow should produce a checked outcome");
+        assert_eq!(
+            overflow.proposition(),
+            &Proposition::CFunctionExecutes {
+                state: max_state,
+                function: function.clone(),
+                arguments,
+                outcome: CFunctionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
+            }
+        );
+    })
 }
 
 #[test]
 fn locked_cpp_import_rejects_stale_source_config_and_artifact() {
-    let project = Project::new();
-    refresh_import(&project.config()).unwrap();
+    limits::deterministic(|| {
+        let project = Project::new();
+        refresh_import(&project.config()).unwrap();
 
-    fs::write(project.source(), SOURCE.replace("+ 1", "+ 2")).unwrap();
-    let error = load_import(&project.config()).unwrap_err();
-    assert!(error.contains("source differs"), "{error}");
+        fs::write(project.source(), SOURCE.replace("+ 1", "+ 2")).unwrap();
+        let error = load_import(&project.config()).unwrap_err();
+        assert!(error.contains("source differs"), "{error}");
 
-    fs::write(project.source(), SOURCE).unwrap();
-    project.write_config("other");
-    let error = load_import(&project.config()).unwrap_err();
-    assert!(error.contains("config"), "{error}");
+        fs::write(project.source(), SOURCE).unwrap();
+        project.write_config("other");
+        let error = load_import(&project.config()).unwrap_err();
+        assert!(error.contains("config"), "{error}");
 
-    project.write_config("increment");
-    let mut artifact = fs::read(project.artifact()).unwrap();
-    artifact.push(b' ');
-    fs::write(project.artifact(), artifact).unwrap();
-    let error = load_import(&project.config()).unwrap_err();
-    assert!(error.contains("artifact differs"), "{error}");
+        project.write_config("increment");
+        let mut artifact = fs::read(project.artifact()).unwrap();
+        artifact.push(b' ');
+        fs::write(project.artifact(), artifact).unwrap();
+        let error = load_import(&project.config()).unwrap_err();
+        assert!(error.contains("artifact differs"), "{error}");
+    })
 }
 
 #[test]
 fn cpp_frontend_rejects_unsupported_source_without_a_c_fallback() {
-    let project = Project::new();
-    fs::write(
-        project.source(),
-        "int increment(int& value) noexcept {\n    value *= 2;\n    return value;\n}\n",
-    )
-    .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("increment.cpp:2"), "{error}");
-    assert!(error.contains("supports only simple assignment"), "{error}");
-    assert!(!project.artifact().exists());
+    limits::deterministic(|| {
+        let project = Project::new();
+        fs::write(
+            project.source(),
+            "int increment(int& value) noexcept {\n    value *= 2;\n    return value;\n}\n",
+        )
+        .unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("increment.cpp:2"), "{error}");
+        assert!(error.contains("supports only simple assignment"), "{error}");
+        assert!(!project.artifact().exists());
 
-    fs::write(
-        project.source(),
-        "int increment(const int* value) noexcept {\n    return *value;\n}\n",
-    )
-    .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("mutable int* parameter"), "{error}");
-    assert!(!project.artifact().exists());
+        fs::write(
+            project.source(),
+            "int increment(const int* value) noexcept {\n    return *value;\n}\n",
+        )
+        .unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("mutable int* parameter"), "{error}");
+        assert!(!project.artifact().exists());
 
-    fs::write(
+        fs::write(
         project.source(),
         "struct Guard {\n    int& value;\n    explicit Guard(int& input) noexcept : value(input) {}\n    ~Guard() noexcept { value = 0; }\n};\n\nint increment(int& value) noexcept {\n    Guard guard(value);\n    return value;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("increment.cpp:1"), "{error}");
-    assert!(
-        error.contains("standard-layout and trivially-copyable"),
-        "{error}"
-    );
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("increment.cpp:1"), "{error}");
+        assert!(
+            error.contains("standard-layout and trivially-copyable"),
+            "{error}"
+        );
+        assert!(!project.artifact().exists());
 
-    fs::write(
-        project.source(),
-        "int increment(const int& value) noexcept {\n    value = 7;\n    return value;\n}\n",
-    )
-    .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("increment.cpp:2"), "{error}");
-    assert!(error.contains("const-qualified"), "{error}");
-    assert!(!project.artifact().exists());
+        fs::write(
+            project.source(),
+            "int increment(const int& value) noexcept {\n    value = 7;\n    return value;\n}\n",
+        )
+        .unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("increment.cpp:2"), "{error}");
+        assert!(error.contains("const-qualified"), "{error}");
+        assert!(!project.artifact().exists());
+    })
 }
 
 #[test]
 fn cpp_scalar_locals_reject_uninitialized_reference_and_nested_declarations() {
-    let project = Project::scalar_local();
-    fs::write(
-        project.source(),
-        "int relay_value(int& value) noexcept {\n    int captured;\n    return value;\n}\n",
-    )
-    .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("relay_value.cpp:2"), "{error}");
-    assert!(error.contains("requires an initializer"), "{error}");
-    assert!(!project.artifact().exists());
+    limits::deterministic(|| {
+        let project = Project::scalar_local();
+        fs::write(
+            project.source(),
+            "int relay_value(int& value) noexcept {\n    int captured;\n    return value;\n}\n",
+        )
+        .unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("relay_value.cpp:2"), "{error}");
+        assert!(error.contains("requires an initializer"), "{error}");
+        assert!(!project.artifact().exists());
 
-    fs::write(
+        fs::write(
         project.source(),
         "int relay_value(int& value) noexcept {\n    int& captured = value;\n    return captured;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("relay_value.cpp:2"), "{error}");
-    assert!(error.contains("must resolve to mutable int"), "{error}");
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("relay_value.cpp:2"), "{error}");
+        assert!(error.contains("must resolve to mutable int"), "{error}");
+        assert!(!project.artifact().exists());
 
-    fs::write(
+        fs::write(
         project.source(),
         "int relay_value(bool choose, int& value) noexcept {\n    if (choose) {\n        int captured = value;\n        return captured;\n    }\n    return value;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("relay_value.cpp:3"), "{error}");
-    assert!(
-        error.contains("supported only in the function body"),
-        "{error}"
-    );
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("relay_value.cpp:3"), "{error}");
+        assert!(
+            error.contains("supported only in the function body"),
+            "{error}"
+        );
+        assert!(!project.artifact().exists());
+    })
 }
 
 #[test]
 fn cpp_direct_calls_reject_missing_throwing_and_recursive_definitions() {
-    let project = Project::direct_call();
-    fs::write(
+    limits::deterministic(|| {
+        let project = Project::direct_call();
+        fs::write(
         project.source(),
         "int set_seven(int& value) noexcept;\n\nint call_set_seven(int& value) noexcept {\n    set_seven(value);\n    return value;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("call_set_seven.cpp:4"), "{error}");
-    assert!(
-        error.contains("no reachable function definition"),
-        "{error}"
-    );
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("call_set_seven.cpp:4"), "{error}");
+        assert!(
+            error.contains("no reachable function definition"),
+            "{error}"
+        );
+        assert!(!project.artifact().exists());
 
-    fs::write(
+        fs::write(
         project.source(),
         "int set_seven(int& value) {\n    value = 7;\n    return value;\n}\n\nint call_set_seven(int& value) noexcept {\n    set_seven(value);\n    return value;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("call_set_seven.cpp:1"), "{error}");
-    assert!(error.contains("must declare noexcept"), "{error}");
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("call_set_seven.cpp:1"), "{error}");
+        assert!(error.contains("must declare noexcept"), "{error}");
+        assert!(!project.artifact().exists());
 
-    fs::write(
+        fs::write(
         project.source(),
         "int call_set_seven(int& value) noexcept {\n    call_set_seven(value);\n    return value;\n}\n",
     )
     .unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("recursive C++ calls"), "{error}");
-    assert!(
-        error.contains("call_set_seven -> call_set_seven"),
-        "{error}"
-    );
-    assert!(!project.artifact().exists());
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("recursive C++ calls"), "{error}");
+        assert!(
+            error.contains("call_set_seven -> call_set_seven"),
+            "{error}"
+        );
+        assert!(!project.artifact().exists());
+    })
 }
 
 #[test]
 fn cpp_config_rejects_profiles_outside_the_pinned_slice() {
-    let project = Project::new();
-    let bytes = fs::read_to_string(project.config()).unwrap();
-    fs::write(project.config(), bytes.replace("c++20", "gnu++20")).unwrap();
-    let error = refresh_import(&project.config()).unwrap_err();
-    assert!(error.contains("Clang c++20"), "{error}");
+    limits::deterministic(|| {
+        let project = Project::new();
+        let bytes = fs::read_to_string(project.config()).unwrap();
+        fs::write(project.config(), bytes.replace("c++20", "gnu++20")).unwrap();
+        let error = refresh_import(&project.config()).unwrap_err();
+        assert!(error.contains("Clang c++20"), "{error}");
 
-    let mismatch = Project::new();
-    mismatch.write_config_with_profile("increment", "increment.cpp", true);
-    let error = refresh_import(&mismatch.config()).unwrap_err();
-    assert!(
-        error.contains("profile must match the configured"),
-        "{error}"
-    );
-    assert!(!mismatch.artifact().exists());
+        let mismatch = Project::new();
+        mismatch.write_config_with_profile("increment", "increment.cpp", true);
+        let error = refresh_import(&mismatch.config()).unwrap_err();
+        assert!(
+            error.contains("profile must match the configured"),
+            "{error}"
+        );
+        assert!(!mismatch.artifact().exists());
+    })
 }
 
 #[test]
 fn exporter_path_is_not_needed_by_offline_load() {
-    let project = Project::new();
-    refresh_import(&project.config()).unwrap();
-    fs::remove_file(&project.exporter).unwrap();
-    assert!(!Path::new(&project.exporter).exists());
-    load_import(&project.config()).unwrap();
+    limits::deterministic(|| {
+        let project = Project::new();
+        refresh_import(&project.config()).unwrap();
+        fs::remove_file(&project.exporter).unwrap();
+        assert!(!Path::new(&project.exporter).exists());
+        load_import(&project.config()).unwrap();
+    })
 }

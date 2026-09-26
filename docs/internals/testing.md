@@ -327,6 +327,37 @@ examples and the mdtests and record its statistics there. Changing a work
 budget requires corpus measurements and a documented reason;
 it is not a way to make one difficult proof pass.
 
+### Adding a fixture harness
+
+Every integration test file that reaches verification or expansion — the
+mdtest, example, compiler-import, C++-import, and Bitcoin Core harnesses —
+judges tactics by deterministic work budgets only. Library verification
+entry points install production's two-second smart and other real-time
+tactic limits unless the calling thread has turned them off, and a harness
+that forgets to do so turns machine load into a false red: a C++-import
+fixture that passed alone once failed a loaded gate run at 2.006 seconds
+against the smart limit. The CLI keeps its real-time backstops; only the
+harnesses drop them.
+
+`tests/support/limits.rs` is the one route. A new harness declares it with
+`#[path = "support/limits.rs"] mod limits;` and then:
+
+- runs each `#[test]` body as `limits::deterministic(|| { ... })`;
+- starts a verifier thread only with `limits::spawn`, which gives it a 64 MiB
+  stack and re-enters `deterministic` on the new thread, because tactic
+  limits are thread-local; and
+- fans fixtures out with `limits::run_parallel` rather than
+  `click::cli::run_parallel`, for the same reason.
+
+Pinned per-fixture budgets, such as the mdtest canaries, nest inside with
+`instrumentation::with_tactic_work_limits`. The
+`every_fixture_harness_judges_tactics_by_work_budgets_only` test in
+`tests/documentation.rs` enforces these rules over every `tests/*.rs` file.
+A file that never reaches tactic checking goes on its short exemption list
+with a reason instead, and the test rejects an exempt file that names a
+verification or expansion entry point. Add the new harness to the fixture
+phase of `scripts/check.sh` as well.
+
 ### Scaling regressions
 
 The built-in standard library is parsed and resource-expanded once per process.
@@ -396,9 +427,9 @@ one function under a grouped proof and requires the implicit empty-effect
 check to stay near-linear in the paths: a grouped proof issues one theorem per
 path over one shared execution, and finalization visits that execution once.
 
-Rust library tests and both fixture gates enforce deterministic tactic-work
-budgets but do not inherit production time limits. Tests specifically about
-real-time interruption install explicit time limits. Fixture traversal runs on
+Rust library tests and every fixture harness under `tests/` enforce
+deterministic tactic-work budgets but do not inherit production time limits.
+Tests specifically about real-time interruption install explicit time limits. Fixture traversal runs on
 every core and reports every failing fixture, while nextest owns the narrow
 process-level timeout for an uncooperative hang. The former load-sensitive bubble-sort canary is pinned
 at 100,000 deterministic units per tactic class; its measured maxima on

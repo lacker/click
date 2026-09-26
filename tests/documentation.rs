@@ -87,6 +87,98 @@ fn language_proof_code_cannot_rebuild_the_kernel_proof_object() {
     }
 }
 
+/// Fixture verdicts come from deterministic tactic-work budgets, never from
+/// a wall-clock tactic limit: library verification installs production's
+/// thread-local tactic clocks unless `tests/support/limits.rs` turns them
+/// off. Every integration test file therefore routes each `#[test]` body and
+/// every verifier thread through that helper, except the named files that
+/// never reach tactic checking.
+#[test]
+fn every_fixture_harness_judges_tactics_by_work_budgets_only() {
+    const NON_VERIFYING: &[(&str, &str)] = &[
+        (
+            "condition_transport_api.rs",
+            "calls kernel transport rules directly, with no tactics",
+        ),
+        (
+            "documentation.rs",
+            "checks documentation and source inventories",
+        ),
+    ];
+    // Spelled in pieces so this file does not match its own check.
+    let verification_calls: Vec<String> = ["verify", "expand"]
+        .iter()
+        .flat_map(|verb| {
+            ["_c0", "_cpp", "_at_project("]
+                .iter()
+                .map(move |target| format!("{verb}{target}"))
+        })
+        .collect();
+    let thread_starts = [
+        "thread::Builder",
+        "thread::spawn",
+        "thread::scope",
+        ".spawn(",
+    ];
+    let mut checked = 0;
+    for entry in fs::read_dir(root().join("tests")).expect("read tests directory") {
+        let path = entry.expect("read tests entry").path();
+        if path.extension().and_then(|value| value.to_str()) != Some("rs") {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_str().unwrap().to_string();
+        let source = fs::read_to_string(&path).expect("read test harness");
+        if NON_VERIFYING.iter().any(|(exempt, _)| *exempt == name) {
+            for call in &verification_calls {
+                assert!(
+                    !source.contains(call.as_str()),
+                    "tests/{name} is listed as non-verifying but calls `{call}`; \
+                     route it through tests/support/limits.rs instead"
+                );
+            }
+            continue;
+        }
+        checked += 1;
+        assert!(
+            source.contains("#[path = \"support/limits.rs\"]\nmod limits;"),
+            "tests/{name} must declare `mod limits` from tests/support/limits.rs"
+        );
+        for start in thread_starts {
+            assert!(
+                !source.contains(start),
+                "tests/{name} starts a thread with `{start}`; tactic limits are \
+                 thread-local, so use `limits::spawn` or `limits::run_parallel`"
+            );
+        }
+        let lines: Vec<&str> = source.lines().collect();
+        for (index, line) in lines.iter().enumerate() {
+            if line.trim() != "#[test]" {
+                continue;
+            }
+            let signature = lines[index + 1..]
+                .iter()
+                .position(|line| line.trim_start().starts_with("fn "))
+                .map(|offset| index + 1 + offset)
+                .unwrap_or_else(|| panic!("tests/{name}:{} has no test function", index + 1));
+            let body = lines
+                .get(signature + 1)
+                .map_or("", |line| line.trim_start());
+            assert!(
+                lines[signature].trim_end().ends_with('{')
+                    && body.starts_with("limits::deterministic(|| {"),
+                "tests/{name}:{} `{}` must run its body in `limits::deterministic(|| {{ ... }})` \
+                 so no wall-clock tactic limit can decide it",
+                signature + 1,
+                lines[signature].trim()
+            );
+        }
+    }
+    assert!(checked >= 5, "expected the fixture harnesses under tests/");
+    let helper = fs::read_to_string(root().join("tests/support/limits.rs"))
+        .expect("read tests/support/limits.rs");
+    assert!(helper.contains("instrumentation::without_tactic_time_limits(operation)"));
+}
+
 fn files_with_extension(directory: &Path, extension: &str, files: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(directory).expect("read directory") {
         let path = entry.expect("read directory entry").path();

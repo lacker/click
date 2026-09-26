@@ -2,8 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use click::cli::{
-    CInput, MdTestExpectation, prepare_mdtest_inputs, read_click_project, read_mdtest,
-    run_parallel, source_refs,
+    CInput, MdTestExpectation, prepare_mdtest_inputs, read_click_project, read_mdtest, source_refs,
 };
 use click::instrumentation::{self, ArtifactReuseRejection};
 use click::surface::{
@@ -12,6 +11,8 @@ use click::surface::{
     verify_cpp_prepared_project,
 };
 
+#[path = "support/limits.rs"]
+mod limits;
 #[path = "support/tactic_work.rs"]
 mod tactic_work;
 
@@ -36,94 +37,100 @@ const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[
 
 #[test]
 fn mdtests() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mdtests_dir = manifest_dir.join("mdtests");
-    let mut paths = fs::read_dir(&mdtests_dir)
-        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", mdtests_dir.display()))
-        .map(|entry| {
-            entry
-                .unwrap_or_else(|error| panic!("failed to read mdtest directory entry: {error}"))
-                .path()
-        })
-        // Imported theorem bodies are interfaces to their importers. Run each
-        // local Click library as its own entry so the gate checks those bodies.
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "md" || extension == "click")
-        })
-        .collect::<Vec<_>>();
-    let filtered = if let Ok(filter) = std::env::var("MDTEST_FILTER") {
-        paths.retain(|path| {
-            path.file_name()
-                .is_some_and(|name| name.to_string_lossy().contains(&filter))
-        });
-        true
-    } else {
-        false
-    };
-    if !filtered && std::env::var_os(RUN_QUARANTINED).is_none() {
-        paths.retain(|path| {
-            let name = path.file_name().and_then(|name| name.to_str());
-            let quarantine = name.and_then(|name| {
-                QUARANTINED
-                    .iter()
-                    .find(|(quarantined, _)| *quarantined == name)
+    limits::deterministic(|| {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mdtests_dir = manifest_dir.join("mdtests");
+        let mut paths = fs::read_dir(&mdtests_dir)
+            .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", mdtests_dir.display()))
+            .map(|entry| {
+                entry
+                    .unwrap_or_else(|error| {
+                        panic!("failed to read mdtest directory entry: {error}")
+                    })
+                    .path()
+            })
+            // Imported theorem bodies are interfaces to their importers. Run each
+            // local Click library as its own entry so the gate checks those bodies.
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "md" || extension == "click")
+            })
+            .collect::<Vec<_>>();
+        let filtered = if let Ok(filter) = std::env::var("MDTEST_FILTER") {
+            paths.retain(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().contains(&filter))
             });
-            match quarantine {
-                Some((name, reason)) => {
-                    println!("SKIPPING quarantined mdtest `{name}`: {reason}");
-                    false
+            true
+        } else {
+            false
+        };
+        if !filtered && std::env::var_os(RUN_QUARANTINED).is_none() {
+            paths.retain(|path| {
+                let name = path.file_name().and_then(|name| name.to_str());
+                let quarantine = name.and_then(|name| {
+                    QUARANTINED
+                        .iter()
+                        .find(|(quarantined, _)| *quarantined == name)
+                });
+                match quarantine {
+                    Some((name, reason)) => {
+                        println!("SKIPPING quarantined mdtest `{name}`: {reason}");
+                        false
+                    }
+                    None => true,
                 }
-                None => true,
-            }
-        });
-    }
-    paths.sort();
-
-    assert!(
-        !paths.is_empty(),
-        "expected at least one mdtest in `{}`",
-        mdtests_dir.display()
-    );
-
-    // Verify files on every core. Tactic correctness is enforced by
-    // deterministic work budgets, not by how much CPU time happens to be
-    // available to each file, so concurrency cannot change a verdict. Peak
-    // memory stays small: on 2026-09-11 the whole corpus peaked at 171 MB
-    // serially and 291 MB on 8 workers.
-    let _ = instrumentation::take_artifact_reuse_rejection_census();
-    let _ = instrumentation::take_backwards_memory_derivation_census();
-    let workers = std::thread::available_parallelism().map_or(1, usize::from);
-    let failures = run_parallel(&paths, workers, |path| run_mdtest_in_thread(path));
-    let census = instrumentation::take_artifact_reuse_rejection_census();
-    // Which producers still end a step on a snapshot older than itself, so
-    // that the step is recorded on no history. A knowledge-losing forget
-    // cannot: its mark makes the result a node no earlier snapshot can be
-    // (`CMemory::mark_forgotten_from`). Anything else here is a producer
-    // whose steps are invisible to every history-based rule, and this line
-    // is how a corpus run names it.
-    eprintln!(
-        "backwards memory derivations over the corpus: {:?}",
-        instrumentation::take_backwards_memory_derivation_census()
-    );
-    if failures.is_empty() {
-        if !filtered
-            && std::env::var_os(RUN_QUARANTINED).is_none()
-            && let Some(mismatch) = instrumentation::artifact_reuse_rejection_census_mismatch(
-                &census,
-                ARTIFACT_REUSE_REJECTION_BASELINE,
-            )
-        {
-            panic!("artifact reuse rejection ratchet (tests/mdtests.rs baselines):\n{mismatch}");
+            });
         }
-        return;
-    }
+        paths.sort();
 
-    let mut message = format!("{} of {} mdtests failed:\n", failures.len(), paths.len());
-    for (index, diagnostics) in failures {
-        message.push_str(&format!("\n`{}` {diagnostics}\n", paths[index].display()));
-    }
-    panic!("{message}");
+        assert!(
+            !paths.is_empty(),
+            "expected at least one mdtest in `{}`",
+            mdtests_dir.display()
+        );
+
+        // Verify files on every core. Tactic correctness is enforced by
+        // deterministic work budgets, not by how much CPU time happens to be
+        // available to each file, so concurrency cannot change a verdict. Peak
+        // memory stays small: on 2026-09-11 the whole corpus peaked at 171 MB
+        // serially and 291 MB on 8 workers.
+        let _ = instrumentation::take_artifact_reuse_rejection_census();
+        let _ = instrumentation::take_backwards_memory_derivation_census();
+        let workers = std::thread::available_parallelism().map_or(1, usize::from);
+        let failures = limits::run_parallel(&paths, workers, |path| run_mdtest_in_thread(path));
+        let census = instrumentation::take_artifact_reuse_rejection_census();
+        // Which producers still end a step on a snapshot older than itself, so
+        // that the step is recorded on no history. A knowledge-losing forget
+        // cannot: its mark makes the result a node no earlier snapshot can be
+        // (`CMemory::mark_forgotten_from`). Anything else here is a producer
+        // whose steps are invisible to every history-based rule, and this line
+        // is how a corpus run names it.
+        eprintln!(
+            "backwards memory derivations over the corpus: {:?}",
+            instrumentation::take_backwards_memory_derivation_census()
+        );
+        if failures.is_empty() {
+            if !filtered
+                && std::env::var_os(RUN_QUARANTINED).is_none()
+                && let Some(mismatch) = instrumentation::artifact_reuse_rejection_census_mismatch(
+                    &census,
+                    ARTIFACT_REUSE_REJECTION_BASELINE,
+                )
+            {
+                panic!(
+                    "artifact reuse rejection ratchet (tests/mdtests.rs baselines):\n{mismatch}"
+                );
+            }
+            return;
+        }
+
+        let mut message = format!("{} of {} mdtests failed:\n", failures.len(), paths.len());
+        for (index, diagnostics) in failures {
+            message.push_str(&format!("\n`{}` {diagnostics}\n", paths[index].display()));
+        }
+        panic!("{message}");
+    })
 }
 
 fn run_mdtest_in_thread(path: &Path) -> Result<(), String> {
@@ -139,13 +146,9 @@ fn run_mdtest_in_thread(path: &Path) -> Result<(), String> {
     let name = path.display().to_string();
     eprintln!("mdtest `{name}` started");
     let started = std::time::Instant::now();
-    let result = std::thread::Builder::new()
-        .name(thread_name)
-        .stack_size(64 * 1024 * 1024)
-        .spawn(move || run_mdtest_attempt(&path))
-        .map_err(|error| format!("failed to start mdtest verifier: {error}"))?
-        .join()
-        .map_err(|_| "mdtest verifier panicked".to_string())?;
+    let result = limits::spawn("mdtest verifier", thread_name, move || {
+        run_mdtest_attempt(&path)
+    })?;
     eprintln!(
         "mdtest `{name}` {} in {:.2}s",
         if result.is_ok() { "passed" } else { "failed" },
@@ -155,44 +158,42 @@ fn run_mdtest_in_thread(path: &Path) -> Result<(), String> {
 }
 
 fn run_mdtest_attempt(path: &Path) -> Result<(), String> {
-    instrumentation::without_tactic_time_limits(|| {
-        // A calibration run measures every fixture unclipped, so the pinned
-        // budgets below step aside with the defaults.
-        let budgets_disabled = std::env::var_os("CLICK_DISABLE_TACTIC_BUDGETS").is_some();
-        if !budgets_disabled
-            && path
-                .file_name()
-                .is_some_and(|name| name == "bubble_sort3_loop_permutation.md")
-        {
-            // This is the former load-sensitive clock canary. Its measured
-            // maxima are simple 146, smart 21,090, and control 42,169 work
-            // units. Pin all three classes below 100,000 so machine load
-            // cannot change the result.
-            let limits = instrumentation::TacticWorkLimits {
-                simple: BUBBLE_SORT3_WORK_LIMIT,
-                smart: BUBBLE_SORT3_WORK_LIMIT,
-                control: BUBBLE_SORT3_WORK_LIMIT,
-            };
-            return instrumentation::with_tactic_work_limits(limits, || run_mdtest(path));
-        }
-        if !budgets_disabled
-            && path
-                .file_name()
-                .is_some_and(|name| name == "simp_frame_failure_through_region_arena_is_prompt.md")
-        {
-            // A prompt failure, not a budget crossing: pin the smart and
-            // control budgets well below the default so a return of the
-            // repeated failed questions changes the error and fails the
-            // expectation.
-            let limits = instrumentation::TacticWorkLimits {
-                smart: PROMPT_SIMP_FRAME_FAILURE_WORK_LIMIT,
-                control: PROMPT_SIMP_FRAME_FAILURE_WORK_LIMIT,
-                ..instrumentation::TacticWorkLimits::default()
-            };
-            return instrumentation::with_tactic_work_limits(limits, || run_mdtest(path));
-        }
-        run_mdtest(path)
-    })
+    // A calibration run measures every fixture unclipped, so the pinned
+    // budgets below step aside with the defaults.
+    let budgets_disabled = std::env::var_os("CLICK_DISABLE_TACTIC_BUDGETS").is_some();
+    if !budgets_disabled
+        && path
+            .file_name()
+            .is_some_and(|name| name == "bubble_sort3_loop_permutation.md")
+    {
+        // This is the former load-sensitive clock canary. Its measured
+        // maxima are simple 146, smart 21,090, and control 42,169 work
+        // units. Pin all three classes below 100,000 so machine load
+        // cannot change the result.
+        let limits = instrumentation::TacticWorkLimits {
+            simple: BUBBLE_SORT3_WORK_LIMIT,
+            smart: BUBBLE_SORT3_WORK_LIMIT,
+            control: BUBBLE_SORT3_WORK_LIMIT,
+        };
+        return instrumentation::with_tactic_work_limits(limits, || run_mdtest(path));
+    }
+    if !budgets_disabled
+        && path
+            .file_name()
+            .is_some_and(|name| name == "simp_frame_failure_through_region_arena_is_prompt.md")
+    {
+        // A prompt failure, not a budget crossing: pin the smart and
+        // control budgets well below the default so a return of the
+        // repeated failed questions changes the error and fails the
+        // expectation.
+        let limits = instrumentation::TacticWorkLimits {
+            smart: PROMPT_SIMP_FRAME_FAILURE_WORK_LIMIT,
+            control: PROMPT_SIMP_FRAME_FAILURE_WORK_LIMIT,
+            ..instrumentation::TacticWorkLimits::default()
+        };
+        return instrumentation::with_tactic_work_limits(limits, || run_mdtest(path));
+    }
+    run_mdtest(path)
 }
 
 fn run_mdtest(path: &Path) -> Result<(), String> {
