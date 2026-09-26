@@ -276,6 +276,8 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         // weaker proposition: the complete conjunction remains the supplied
         // evidence and only its checked conjunct satisfies this requirement.
         if !exact_fact_is_available(&lowered, available)
+            && !mirrored_equality(&lowered)
+                .is_some_and(|mirrored| exact_fact_is_available(&mirrored, available))
             && !matches!(normalize_proposition(&lowered), SimpProposition::True)
         {
             return Err(theorem_application_error(
@@ -371,6 +373,34 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         conclusions.push(conclusion.clone());
     }
     Ok(conclusions)
+}
+
+/// An equality requirement with its sides swapped. A `using` premise names
+/// the fact the proof holds, and `have a == b` and `have b == a` establish
+/// one fact; the exact lookup that discharges the requirement accepts either
+/// spelling, as `rewrite` and the kernel's own exact condition lookup do.
+pub(in crate::surface::proof) fn mirrored_equality(
+    proposition: &Proposition,
+) -> Option<Proposition> {
+    let Proposition::ConditionIs(condition, value) = proposition else {
+        return None;
+    };
+    let mirrored = match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            ConditionTerm::Bitvector32Equal(right.clone(), left.clone())
+        }
+        ConditionTerm::Bitvector64Equal(left, right) => {
+            ConditionTerm::Bitvector64Equal(right.clone(), left.clone())
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            ConditionTerm::PointerOffsetEqual(right.clone(), left.clone())
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            ConditionTerm::PointerEqual(right.clone(), left.clone())
+        }
+        _ => return None,
+    };
+    Some(Proposition::ConditionIs(mirrored, *value))
 }
 
 /// The refusal for a theorem requirement the application cannot discharge.
