@@ -3057,6 +3057,16 @@ impl Pointer {
         }
     }
 
+    /// This pointer's offset less `base`'s, exactly, when both name one block
+    /// and every non-constant summand of `base` occurs in this offset; see
+    /// [`offset_less_base`].
+    pub(crate) fn offset_from_base(&self, base: &Self) -> Option<PointerOffsetTerm> {
+        if self.block != base.block {
+            return None;
+        }
+        offset_less_base(&self.offset, &base.offset)
+    }
+
     pub(crate) fn element_index_from_base(&self, base: &Self) -> Option<Bitvector32Term> {
         self.element_index_from_base_with_width(base, 4)
     }
@@ -3086,6 +3096,11 @@ impl Pointer {
                 crate::kernel::reasoning::element_index_from_offset(left, byte_width)
             }
             _ => {
+                if let Some(rest) = offset_less_base(&self.offset, &base.offset)
+                    && let Some(index) = element_index_of_difference(&rest, byte_width)
+                {
+                    return Some(index);
+                }
                 if let (Some(pointer_index), Some(base_index)) = (
                     crate::kernel::reasoning::element_index_from_offset(&self.offset, byte_width),
                     crate::kernel::reasoning::element_index_from_offset(&base.offset, byte_width),
@@ -3135,12 +3150,96 @@ impl Pointer {
             PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
                 exact_element_delta_from_offset(left, byte_width)
             }
-            _ => exact_element_delta_from_offset(&self.offset, byte_width)?.subtract(
-                exact_element_delta_from_offset(&base.offset, byte_width)?,
-                assumptions,
-            ),
+            _ => {
+                if let Some(rest) = offset_less_base(&self.offset, &base.offset)
+                    && let Some(delta) = exact_element_delta_from_offset(&rest, byte_width)
+                {
+                    return Some(delta);
+                }
+                exact_element_delta_from_offset(&self.offset, byte_width)?.subtract(
+                    exact_element_delta_from_offset(&base.offset, byte_width)?,
+                    assumptions,
+                )
+            }
         }
     }
+}
+
+/// The element index of a difference [`offset_less_base`] returned, spelled
+/// as the kernel spells an index less a constant: a negative trailing
+/// constant is `index - c`, the form [`Bitvector32Term::subtract`] gives
+/// `(b + i) - (b + c)`, rather than the residue `index + (2^32 - c)`.
+fn element_index_of_difference(
+    difference: &PointerOffsetTerm,
+    byte_width: u32,
+) -> Option<Bitvector32Term> {
+    if let PointerOffsetTerm::Add(symbolic, constant) = difference
+        && let PointerOffsetTerm::Constant(bytes) = constant.as_ref()
+        && *bytes < 0
+    {
+        let elements = crate::kernel::reasoning::element_index_from_offset(
+            &PointerOffsetTerm::Constant(-bytes),
+            byte_width,
+        )?;
+        return Some(Bitvector32Term::subtract(
+            crate::kernel::reasoning::element_index_from_offset(symbolic, byte_width)?,
+            elements,
+        ));
+    }
+    crate::kernel::reasoning::element_index_from_offset(difference, byte_width)
+}
+
+/// `offset - base`, exactly, as the summands of `offset` that `base` does not
+/// account for: `((b + k) + 4) - b` is `k + 4`, and `(b + k + 12) - (b + 8)`
+/// is `k + 4`.
+///
+/// A pointer offset is a mathematical `i64` sum, so removing a summand that
+/// occurs on both sides and subtracting the constant parts is exact; nothing
+/// here reads a residue. Every non-constant summand of `base` must occur
+/// syntactically among those of `offset`, each occurrence matched once, or
+/// there is no answer and the caller keeps its own. The walk is over the two
+/// terms and nothing else.
+fn offset_less_base(
+    offset: &PointerOffsetTerm,
+    base: &PointerOffsetTerm,
+) -> Option<PointerOffsetTerm> {
+    fn summands(term: &PointerOffsetTerm) -> Option<(Vec<&PointerOffsetTerm>, i64)> {
+        let mut symbolic = Vec::new();
+        let mut constant = 0i64;
+        let mut pending = vec![term];
+        while let Some(current) = pending.pop() {
+            if let Some(value) = current.as_const() {
+                constant = constant.checked_add(value)?;
+                continue;
+            }
+            match current {
+                PointerOffsetTerm::Add(left, right) => {
+                    // Right first, so `left` is walked first and the
+                    // summands keep their written order.
+                    pending.push(right);
+                    pending.push(left);
+                }
+                other => symbolic.push(other),
+            }
+        }
+        Some((symbolic, constant))
+    }
+    let (mut rest, offset_constant) = summands(offset)?;
+    let (base_summands, base_constant) = summands(base)?;
+    for summand in base_summands {
+        let position = rest.iter().position(|candidate| *candidate == summand)?;
+        rest.remove(position);
+    }
+    let constant = offset_constant.checked_sub(base_constant)?;
+    let difference = rest
+        .into_iter()
+        .cloned()
+        .reduce(PointerOffsetTerm::add)
+        .unwrap_or(PointerOffsetTerm::Constant(0));
+    Some(PointerOffsetTerm::add(
+        difference,
+        PointerOffsetTerm::Constant(constant),
+    ))
 }
 
 #[cfg(test)]

@@ -2987,6 +2987,14 @@ pub(super) fn diagnostic_pointer_element_index_from_base(
             diagnostic_element_index_from_pointer_offset(left, byte_width)
         }
         _ => {
+            // Name the element as the kernel does: the base's own summands
+            // cancel exactly, so `((a + k) + 1) - a` prints as `k + 1`.
+            if pointer.offset_from_base(base).is_some()
+                && let Ok(width) = u32::try_from(byte_width)
+                && let Some(index) = pointer.element_index_from_base_with_width(base, width)
+            {
+                return Some(index);
+            }
             if let (Some(pointer_index), Some(base_index)) = (
                 diagnostic_element_index_from_pointer_offset(&pointer.offset, byte_width),
                 diagnostic_element_index_from_pointer_offset(&base.offset, byte_width),
