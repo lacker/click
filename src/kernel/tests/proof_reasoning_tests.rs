@@ -4600,6 +4600,50 @@ fn upper_bound_extends_to_a_nonoverflowing_successor() {
     );
 }
 
+/// A range's `fits` guard is the unsigned `count <=u limit`, which the kernel
+/// encodes with a sign-bit bias. With the limit below the sign bit it means
+/// `0 <= count` and `count <= limit`, and the condition checker decides it by
+/// those two signed conditions, including through an order chain such as
+/// `i <= n` and `n <= 1073741823`. A signed upper bound alone does not decide
+/// it: a negative count is a huge unsigned one.
+#[test]
+fn unsigned_extent_bound_below_the_sign_bit_is_decided_by_signed_order() {
+    let count = Bitvector32Term::Variable(Variable(89_200));
+    let end = Bitvector32Term::Variable(Variable(89_201));
+    let limit = Bitvector32Term::Constant(1_073_741_823);
+    let fits = ConditionTerm::unsigned_less_equal(count.clone(), limit.clone());
+    let nonnegative = ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), count.clone());
+    let chained = PureFactContext::new()
+        .assume_condition(nonnegative.clone(), true)
+        .assume_condition(
+            ConditionTerm::signed_less_equal(count.clone(), end.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_equal(end, limit.clone()), true);
+    assert_eq!(chained.decide(&fits), Some(true));
+
+    let upper_only = PureFactContext::new().assume_condition(
+        ConditionTerm::signed_less_equal(count.clone(), limit.clone()),
+        true,
+    );
+    assert_eq!(
+        upper_only.decide(&fits),
+        None,
+        "a count that may be negative is not below an unsigned limit"
+    );
+
+    let negative = PureFactContext::new().assume_condition(
+        ConditionTerm::signed_less_than(count.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+    assert_eq!(negative.decide(&fits), Some(false));
+
+    let above = PureFactContext::new()
+        .assume_condition(nonnegative, true)
+        .assume_condition(ConditionTerm::signed_less_than(limit, count.clone()), true);
+    assert_eq!(above.decide(&fits), Some(false));
+}
+
 #[test]
 fn assumptions_do_not_split_a_multi_value_context_variable() {
     let j = Bitvector32Term::Variable(Variable(87));

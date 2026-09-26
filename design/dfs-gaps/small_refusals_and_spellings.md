@@ -76,8 +76,11 @@ under a universal, through the same exact indexed lookup as any other goal.
 range or another snapshot still refuses
 (`mdtests/assumption_does_not_close_a_viewable_goal_at_another_range.md`,
 `mdtests/assumption_does_not_close_a_viewable_goal_at_another_snapshot.md`).
-The original `close_invariants by` arm was not rebuilt: a loop invariant
-`viewable(a[0..i])` is refused at the loop head for its unsigned extent bound.
+A loop invariant `viewable(a[0..i])` with `0 <= i`, `i <= n` and
+`n <= 1073741823` is no longer refused at the loop head for its unsigned extent
+bound (`mdtests/loop_invariant_states_a_growing_viewable_prefix.md`; the
+unbounded negative is
+`mdtests/loop_invariant_growing_viewable_prefix_needs_its_extent_bound.md`).
 
 ## The owned range in a store refusal is spelled against the wrong base
 

@@ -33,6 +33,11 @@ impl PureFactContext {
         &self,
         condition: &ConditionTerm,
     ) -> Option<bool> {
+        if let Some((term, bound)) = unsigned_upper_bound_below_sign_bit(condition)
+            && let Some(value) = self.decide_unsigned_upper_bound_by_signed_order(term, bound)
+        {
+            return Some(value);
+        }
         match condition {
             ConditionTerm::PointerEqual(left, right) if left == right => Some(true),
             ConditionTerm::PointerEqual(left, right) => {
@@ -1300,6 +1305,68 @@ fn split_constant_displacement(
         .reduce(PointerOffsetTerm::add)
         .unwrap_or(PointerOffsetTerm::Constant(0));
     (base, displacement)
+}
+
+/// The operand and inclusive bound of an unsigned upper bound `x <=u c` (or
+/// `x <u c + 1`) whose bound `c` lies below the sign bit, read back from the
+/// biased encoding [`ConditionTerm::unsigned_less_equal`] builds:
+/// `(x ^ 2^31) <=s (c ^ 2^31)`.
+///
+/// Such a bound means exactly `0 <= x` and `x <= c` in signed arithmetic: a
+/// word no larger than `c < 2^31` as unsigned has a clear sign bit, and for a
+/// clear sign bit the two readings agree. That is the form order facts are
+/// written in, so the condition checker decides it by deciding those two.
+/// The recognizer is a constant-size match on the condition's own shape.
+fn unsigned_upper_bound_below_sign_bit(
+    condition: &ConditionTerm,
+) -> Option<(&Bitvector32Term, u32)> {
+    const SIGN_BIT: u32 = 0x8000_0000;
+    let (left, right, strict) = match condition {
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => (left, right, false),
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, right, true),
+        _ => return None,
+    };
+    let term = match left.as_ref() {
+        Bitvector32Term::BitwiseXor(a, b) => match (a.as_ref(), b.as_ref()) {
+            (Bitvector32Term::Constant(SIGN_BIT), term)
+            | (term, Bitvector32Term::Constant(SIGN_BIT)) => term,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let biased = right.as_const()?;
+    let bound = biased ^ SIGN_BIT;
+    let bound = if strict { bound.checked_sub(1)? } else { bound };
+    (bound <= i32::MAX as u32).then_some((term, bound))
+}
+
+impl PureFactContext {
+    /// Decides `term <=u bound` for `bound < 2^31` as the signed pair
+    /// `0 <= term` and `term <= bound`; see
+    /// [`unsigned_upper_bound_below_sign_bit`]. True only when both are
+    /// decided true, false as soon as either is decided false.
+    fn decide_unsigned_upper_bound_by_signed_order(
+        &self,
+        term: &Bitvector32Term,
+        bound: u32,
+    ) -> Option<bool> {
+        let nonnegative = self.decide(&ConditionTerm::signed_less_equal(
+            Bitvector32Term::Constant(0),
+            term.clone(),
+        ));
+        if nonnegative == Some(false) {
+            return Some(false);
+        }
+        let below = self.decide(&ConditionTerm::signed_less_equal(
+            term.clone(),
+            Bitvector32Term::Constant(bound),
+        ));
+        match (nonnegative, below) {
+            (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        }
+    }
 }
 
 /// A wrapped comparison of rebuilt terms can refute offset equality (equal
