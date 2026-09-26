@@ -346,13 +346,13 @@ It is misleading for other failures:
 | Internal checker/certificate inconsistency | Identify a Click failure and preserve a reproducible case; do not blame the C program. |
 | A counterexample is established | Show the admitted path and violated requirement, distinguishing symbolic evidence from an executed test. |
 
-For example, today's unsupported abstract guard opening should eventually say:
+Preserving helpers now support abstract guard opening. The remaining limitation
+on lock-changing helper contracts should eventually be reported along these lines:
 
 ```text
-Cannot yet verify unfold(held_state) at helper.click:<line>.
-Available: owns held_state: holding(counter)
-Selected body: owns mutex_guard(&counter->mutex)
-Click does not yet support exposing that guard at abstract function entry.
+Cannot yet verify pthread_mutex_unlock(mu) at helper.c:<line>.
+Available: owns g: mutex_guard(mu)
+Click does not yet support consuming an acquisition across a helper boundary.
 This is a verifier limitation, not a missing contract resource.
 ```
 
