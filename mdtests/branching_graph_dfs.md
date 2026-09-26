@@ -452,7 +452,6 @@ int32 dfs(int32 *left, int32 *right, int32 *visited,
         step();
         simp();
     } else {
-
         have forall (k: int32) {
             0 <= k and k < n and at(before_right, visited[k]) == 0 and visited[k] != 0 implies
                 visited[at(before_right, left[k])] != 0 and visited[at(before_right, right[k])] != 0
@@ -564,14 +563,14 @@ int32 dfs(int32 *left, int32 *right, int32 *visited,
         have (forall (k: int32) { 0 <= k and k < n implies old(visited[k]) == 0 }) implies forall (path: Path) { walk(old(left), old(right), cur, path) != to } by {
             intro();
             apply(exhausted_zero_entry(old(left), old(right), old(visited), visited, n, cur, to)) using {
-            0 <= cur; cur < n; visited[cur] != 0;
-            forall (k: int32) { 0 <= k and k < n implies 0 <= old(left[k]) and old(left[k]) < n };
-            forall (k: int32) { 0 <= k and k < n implies 0 <= old(right[k]) and old(right[k]) < n };
-            forall (k: int32) { 0 <= k and k < n implies old(visited[k]) == 0 };
-            forall (k: int32) {
-            0 <= k and k < n and old(visited[k]) == 0 and visited[k] != 0 implies
-                visited[old(left[k])] != 0 and visited[old(right[k])] != 0
-        };
+                0 <= cur; cur < n; visited[cur] != 0;
+                forall (k: int32) { 0 <= k and k < n implies 0 <= old(left[k]) and old(left[k]) < n };
+                forall (k: int32) { 0 <= k and k < n implies 0 <= old(right[k]) and old(right[k]) < n };
+                forall (k: int32) { 0 <= k and k < n implies old(visited[k]) == 0 };
+                forall (k: int32) {
+                    0 <= k and k < n and old(visited[k]) == 0 and visited[k] != 0 implies
+                        visited[old(left[k])] != 0 and visited[old(right[k])] != 0
+                };
                 0 <= to and to < n implies visited[to] == old(visited[to]);
             }
             assumption();
