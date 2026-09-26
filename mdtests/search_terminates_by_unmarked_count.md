@@ -165,9 +165,15 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
         preserve by {
             mark iter;
             let (previous: Nat) satisfy { walk(next, from, previous) == cur };
-            have 0 <= 0 by { simp(); }
             have n <= n by { simp(); }
-            have 0 <= n by { arithmetic() using { 0 <= cur; cur < n; } }
+            have at(iter, forall (k: int32) {
+                0 <= k and k < n implies 0 <= next[k] and next[k] < n
+            }) by { assumption(); }
+            have forall (k: int32) {
+                0 <= k and k < n implies at(iter, next[k]) == at(iter, next[k])
+            } by {
+                intro(); intro(); normalize();
+            }
             have 0 <= next[cur] and next[cur] < n by {
                 instantiate(forall (k: int32) {
                     0 <= k and k < n implies 0 <= next[k] and next[k] < n
@@ -184,20 +190,19 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
             step();
             step();
             have forall (k: int32) {
-                0 <= k and k < n implies at(iter, next[k]) == next[k]
+                0 <= k and k < n implies 0 <= next[k] and next[k] < n
             } by {
-                intro();
-                intro();
-                extract(0 <= k);
-                extract(k < n);
-                have at(iter, next[k]) == at(iter, next[k]) by { normalize(); }
                 transport(
-                    at(iter, next[k]) == at(iter, next[k]),
-                    at(iter, next[k]) == next[k]
+                    at(iter, forall (k: int32) {
+                        0 <= k and k < n implies 0 <= next[k] and next[k] < n
+                    }),
+                    forall (k: int32) {
+                        0 <= k and k < n implies 0 <= next[k] and next[k] < n
+                    }
                 ) using {
-                    at(iter, next[k]) == at(iter, next[k]);
-                    0 <= k;
-                    k < n;
+                    at(iter, forall (k: int32) {
+                        0 <= k and k < n implies 0 <= next[k] and next[k] < n
+                    });
                     0 <= cur;
                     cur < n;
                     separate(memory(next[0..n]), memory(visited[0..n]));
@@ -205,78 +210,75 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
                 assumption();
             }
             have forall (k: int32) {
+                0 <= k and k < n implies at(iter, next[k]) == next[k]
+            } by {
+                transport(
+                    forall (k: int32) {
+                        0 <= k and k < n implies at(iter, next[k]) == at(iter, next[k])
+                    },
+                    forall (k: int32) {
+                        0 <= k and k < n implies at(iter, next[k]) == next[k]
+                    }
+                ) using {
+                    forall (k: int32) {
+                        0 <= k and k < n implies at(iter, next[k]) == at(iter, next[k])
+                    };
+                    0 <= cur;
+                    cur < n;
+                    separate(memory(next[0..n]), memory(visited[0..n]));
+                }
+                assumption();
+            }
+            have forall (k: int32) {
+                0 <= k and k < cur implies at(iter, visited[k]) == at(iter, visited[k])
+            } by {
+                intro(); intro(); normalize();
+            }
+            have forall (k: int32) {
                 0 <= k and k < cur implies at(iter, visited[k]) == visited[k]
             } by {
-                intro();
-                intro();
-                extract(k < cur);
-                have k != cur by {
-                    apply(int32_lt_implies_neq(k, cur)) using { k < cur; }
-                    assumption();
-                }
-                have at(iter, visited[k]) == at(iter, visited[k]) by { normalize(); }
                 transport(
-                    at(iter, visited[k]) == at(iter, visited[k]),
-                    at(iter, visited[k]) == visited[k]
+                    forall (k: int32) {
+                        0 <= k and k < cur implies at(iter, visited[k]) == at(iter, visited[k])
+                    },
+                    forall (k: int32) {
+                        0 <= k and k < cur implies at(iter, visited[k]) == visited[k]
+                    }
                 ) using {
-                    at(iter, visited[k]) == at(iter, visited[k]);
-                    k != cur;
-                };
+                    forall (k: int32) {
+                        0 <= k and k < cur implies at(iter, visited[k]) == at(iter, visited[k])
+                    };
+                }
                 assumption();
+            }
+            have forall (k: int32) {
+                cur < k and k < n implies at(iter, visited[k]) == at(iter, visited[k])
+            } by {
+                intro(); intro(); normalize();
             }
             have forall (k: int32) {
                 cur < k and k < n implies at(iter, visited[k]) == visited[k]
             } by {
-                intro();
-                intro();
-                extract(cur < k);
-                have cur != k by {
-                    apply(int32_lt_implies_neq(cur, k)) using { cur < k; }
-                    assumption();
-                }
-                have at(iter, visited[k]) == at(iter, visited[k]) by { normalize(); }
                 transport(
-                    at(iter, visited[k]) == at(iter, visited[k]),
-                    at(iter, visited[k]) == visited[k]
+                    forall (k: int32) {
+                        cur < k and k < n implies at(iter, visited[k]) == at(iter, visited[k])
+                    },
+                    forall (k: int32) {
+                        cur < k and k < n implies at(iter, visited[k]) == visited[k]
+                    }
                 ) using {
-                    at(iter, visited[k]) == at(iter, visited[k]);
-                    cur != k;
-                };
+                    forall (k: int32) {
+                        cur < k and k < n implies at(iter, visited[k]) == at(iter, visited[k])
+                    };
+                }
                 assumption();
             }
             have at(iter, visited[cur]) == 0 by { simp(); }
             have visited[cur] != 0 by { simp(); }
             have viewable(visited[0..n]) by { simp(); }
             have at(iter, viewable(visited[0..n])) by { simp(); }
-            apply(unmarked_point_update(at(iter, visited), visited, 0, n, n, cur)) using {
-                0 <= 0;
-                0 <= n;
-                n <= n;
-                n <= 1073741823;
-                at(iter, viewable(visited[0..n]));
-                viewable(visited[0..n]);
-                0 <= cur;
-                cur < n;
-                at(iter, visited[cur]) == 0;
-                visited[cur] != 0;
-                forall (k: int32) {
-                    0 <= k and k < cur implies at(iter, visited[k]) == visited[k]
-                };
-                forall (k: int32) {
-                    cur < k and k < n implies at(iter, visited[k]) == visited[k]
-                };
-                0 <= n - 0;
-                n - 0 <= 1073741823;
-            }
-            apply(unmarked_nonnegative(visited, 0, n, n)) using {
-                0 <= 0;
-                0 <= n;
-                n <= n;
-                n <= 1073741823;
-                viewable(visited[0..n]);
-                0 <= n - 0;
-                n - 0 <= 1073741823;
-            }
+            apply(unmarked_point_update(at(iter, visited), visited, 0, n, n, cur));
+            apply(unmarked_nonnegative(visited, 0, n, n));
             have unmarked(visited, 0, n) < unmarked(at(iter, visited), 0, n) by {
                 arithmetic() using {
                     unmarked(visited, 0, n) == unmarked(at(iter, visited), 0, n) - 1;
@@ -288,65 +290,12 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
             }
             have at(iter, viewable(next[0..n])) by { simp(); }
             have viewable(next[0..n]) by { simp(); }
-            have forall (k: int32) {
-                0 <= k and k < n implies
-                    0 <= at(iter, next[k]) and at(iter, next[k]) < n
-            } by { simp(); }
-            apply(walk_frame(at(iter, next), next, n, from, previous)) using {
-                0 <= from;
-                from < n;
-                n <= 1073741823;
-                at(iter, viewable(next[0..n]));
-                viewable(next[0..n]);
-                forall (k: int32) {
-                    0 <= k and k < n implies
-                        0 <= at(iter, next[k]) and at(iter, next[k]) < n
-                };
-                forall (k: int32) {
-                    0 <= k and k < n implies at(iter, next[k]) == next[k]
-                };
-                0 <= n - 0;
-                n - 0 <= 1073741823;
-            }
+            apply(walk_frame(at(iter, next), next, n, from, previous));
             have walk(next, from, previous) == at(iter, cur) by {
                 simp() using {
                     at(iter, walk(next, from, previous)) == at(iter, cur);
                     walk(at(iter, next), from, previous) == walk(next, from, previous);
                 }
-            }
-            have forall (k: int32) {
-                0 <= k and k < n implies 0 <= next[k] and next[k] < n
-            } by {
-                intro();
-                intro();
-                extract(0 <= k);
-                extract(k < n);
-                have 0 <= at(iter, next[k]) and at(iter, next[k]) < n by {
-                    instantiate(forall (j: int32) {
-                        0 <= j and j < n implies
-                            0 <= at(iter, next[j]) and at(iter, next[j]) < n
-                    }, k) using { 0 <= k; k < n; }
-                    assumption();
-                }
-                have at(iter, next[k]) == next[k] by {
-                    instantiate(forall (j: int32) {
-                        0 <= j and j < n implies at(iter, next[j]) == next[j]
-                    }, k) using { 0 <= k; k < n; }
-                    assumption();
-                }
-                rewrite(next[k] == at(iter, next[k]));
-                assumption();
-            }
-            apply(walk_in_range(next, n, from, previous)) using {
-                0 <= from;
-                from < n;
-                n <= 1073741823;
-                viewable(next[0..n]);
-                forall (k: int32) {
-                    0 <= k and k < n implies 0 <= next[k] and next[k] < n
-                };
-                0 <= n - 0;
-                n - 0 <= 1073741823;
             }
             have next[walk(next, from, previous)] == next[at(iter, cur)] by {
                 simp() using { walk(next, from, previous) == at(iter, cur); }
