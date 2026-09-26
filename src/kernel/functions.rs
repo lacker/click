@@ -16356,7 +16356,7 @@ fn resource_body_fact_is_established(
     if required_obligation_is_exactly_discharged(established, proposition) {
         return true;
     }
-    matches!(
+    if matches!(
         proposition,
         Proposition::ConditionIs(
             ConditionTerm::PointerOffsetEqual(left, right),
@@ -16366,7 +16366,45 @@ fn resource_body_fact_is_established(
             right,
             established,
         )
-    )
+    ) {
+        return true;
+    }
+    body_fact_is_established_through_a_pointer_alias(established, proposition)
+}
+
+/// Whether the body fact is established once one of its symbolic pointers
+/// is spelled as a pointer an exact fact proves equal to it.
+///
+/// A proved pointer equality names one address two ways, and the lowering
+/// of an arm's fact does not always choose the spelling the proof stated
+/// the fact under: a frame's identity passed to a pure function can lower
+/// through the C local proved equal to it while the constructor payload
+/// beside it keeps the model's name. Substituting equals for equals is
+/// sound, and each candidate is still checked exactly. The work is bounded
+/// by the fact's own pointer variables times the exact aliases filed under
+/// each, and is reached only after the exact check has refused.
+fn body_fact_is_established_through_a_pointer_alias(
+    established: &PureFactContext,
+    proposition: &Proposition,
+) -> bool {
+    let mut variables = std::collections::BTreeSet::new();
+    crate::kernel::reasoning::variable_collection::collect_proposition_capture_variables(
+        proposition,
+        &mut variables,
+    );
+    variables.into_iter().any(|variable| {
+        established
+            .exact_pointer_aliases(&Pointer::symbolic(variable))
+            .any(|alias| {
+                let candidate =
+                    crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_variable(
+                        variable, alias,
+                    )
+                    .proposition(proposition);
+                candidate != *proposition
+                    && required_obligation_is_exactly_discharged(established, &candidate)
+            })
+    })
 }
 
 /// Exchange one exclusive instance for its immediate memory body, or back.

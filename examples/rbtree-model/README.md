@@ -320,6 +320,17 @@ time; `ctx_consistent_top_frame`, `ctx_consistent_left_frame`, and
 `ctx_consistent_right_frame` build a frame back up, which is the step a descent
 loop takes when it pushes a frame.
 
+The converse runs the other way. `plug_parent_consistent_ctx` recovers
+`ctx_consistent(ctx, sub, root_parent)` from a consistent plugged tree, using
+`ctx_consistent_node_children` to read a node's children out of any frame. A
+rotation changes the subtree's shape, so the colour-erased `Links` skeleton
+below cannot carry consistency across it; `ctx_consistent_swap` does instead:
+a context consistent around one node whose parent payload is `parent` stays
+consistent around any tree consistent for `parent`, because every frame asks
+of its focus only that it be consistent for the frame's own node.
+`rb_parent_consistent_node_fixes_parent` is the bridge from a consistent node
+to its parent payload's pointer equality.
+
 ## Colors as summaries
 
 Three small pure functions turn a node's own color into the summaries the
@@ -560,6 +571,23 @@ case shape. `rb_parent_is_node_parent`, `rb_parent_is_node_of`,
 `node_color_ok_red_right_focus_is_black` are the one-line bridges the same
 proof uses to read a payload out of a frame fact and to learn that a red
 parent's own parent is black.
+
+### Case 3 as one step
+
+`ctx_insert_case3_left_step` and `ctx_insert_case3_right_step` are the same
+shape for the black-uncle rotation that leaves the loop. The hypotheses are the
+cursor's `is_rb`, the uncle's black root, the two-frame `ctx_rb` at the
+cursor's black height, and parent consistency of the two-frame `plug`. The
+conclusions are stated on the context the C loop hands back at its `break`,
+where the cursor keeps its subtree and the frame above it is now the rotated
+parent, black, whose other child is the grandparent, red, holding the
+reparented sibling and the uncle: the in-order sequence equals the two-frame
+one, the whole tree is `is_rb_root`, it is parent consistent, and the sibling's
+root is black, which the C proof needs to refold the sibling after
+`rb_set_parent_color(tmp, gparent, RB_BLACK)`. The first three rest on
+`ctx_insert_case3_*`, `plug_insert_fix_outer_*_inorder`, and
+`ctx_consistent_swap`. `rb_reparent_parent_is` says a reparented tree names
+its new parent.
 
 ## Standard library
 

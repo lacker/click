@@ -770,6 +770,10 @@ fn int64_constant(term: &Bitvector32Term) -> Option<i64> {
 fn uint64_constant(term: &Bitvector32Term) -> Option<u64> {
     match term {
         Bitvector32Term::UInt64Constant(value) => Some(*value),
+        // Null converts to the integer zero, exactly as evaluating the C
+        // cast `(uint64)p` yields it. The address term reaches a proof only
+        // when a pointer proved null is substituted into `(uint64)p`.
+        Bitvector32Term::PointerAddress(pointer) if **pointer == Pointer::null() => Some(0),
         Bitvector32Term::UInt64From32(value) => match value.as_ref() {
             Bitvector32Term::Constant(value) => Some(u64::from(*value)),
             _ => uint64_constant(value),
