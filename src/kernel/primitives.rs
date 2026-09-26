@@ -4459,8 +4459,9 @@ pub enum CMemoryDerivation {
     ///
     /// `kept_by_caller` is the owned memory the caller kept outside the
     /// transfer, when it held any: the one-layer bodies of its residual owned
-    /// instances and composites, and the flat residual members that kept a
-    /// cell. The callee cannot write a byte of it, since owned memory is a
+    /// instances and composites, and every flat owned residual member in a
+    /// block the write set may alias, whether or not its cell was cached.
+    /// The callee cannot write a byte of it, since owned memory is a
     /// partition at the call; the write-set marker spells these ranges, so
     /// the edge is shared only by paths that kept the same memory.
     CallHavoc {

@@ -2900,6 +2900,27 @@ impl ResourceContext {
             })
     }
 
+    /// The owned memory members of this composition based in a block among
+    /// `candidates`, by the block index: logarithmic to reach each candidate
+    /// block that holds an owned member, then one work unit per member. A
+    /// member in any other block -- and every fact that is not owned flat
+    /// memory -- is never visited.
+    pub(in crate::kernel) fn owned_memory_members_in_candidate_blocks<'a>(
+        &'a self,
+        candidates: &super::alias_candidates::AliasCandidates,
+    ) -> Vec<&'a CMemoryRange> {
+        let blocks = candidates.persistent_block_entries(&self.storage.index.owned_memory_by_block);
+        crate::instrumentation::record_deterministic_work(1 + blocks.len());
+        blocks
+            .into_iter()
+            .flat_map(|(_, entries)| entries.iter())
+            .filter_map(|entry| {
+                crate::instrumentation::record_deterministic_work(1);
+                self.fact(*entry).memory_own_range()
+            })
+            .collect()
+    }
+
     /// The owned memory fact of this composition that structurally contains
     /// `range`, as its entry and its own range.
     ///

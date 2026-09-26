@@ -1245,7 +1245,7 @@ permitted stores or a transition that drops the fact:
   again, and an instance that cannot be opened (a matched body, decided or
   not, a guarded, recursive or witness-bearing one) keeps nothing: the rule
   keeps only bytes it reads exactly. Flat residual members are found
-  through the residual's base index, one lookup per cell; opened ranges
+  through the residual's base index, one lookup per cached cell; opened ranges
   through theirs, then among the opened ranges of the cell's block when a
   reloaded base is proven equal to the opened one. The opening costs one
   evaluation of each residual instance's own body per call.
@@ -1258,13 +1258,27 @@ permitted stores or a transition that drops the fact:
   effect-summary route
   (`memory_snapshots_directly_proven_equal_for_memory_resolution`) read those
   ranges and name a cell they hold across the call at its pre-call value.
-  A call whose footprint reaches unnamed memory records every flat owned
-  member of the residual, cached or not: such a call drops every cell no
-  rule keeps, so a member whose cell an earlier call already dropped from
-  the cache, and which no load cached again, would be recorded on neither
-  edge, and a load after the second call could not be named across it
-  (`mdtests/consecutive_calls_through_recursive_list_keep_caller_cells.md`,
+  The flat residual members the edge records come from the caller's
+  ownership, not from the cache: every owned flat member of the residual
+  based in a block the write set may alias (the havoc's own alias
+  candidates, walked through the residual's per-block owned-memory index)
+  is recorded, cached or not. Recording only the members that kept a cached
+  cell lost a member whose cell an earlier call's havoc had dropped and no
+  load had cached again, so a load after the later call could not be named
+  across it
+  (`mdtests/call_keeps_an_uncached_flat_field_beside_folded_state.md`,
+  `mdtests/calls_keep_an_uncached_flat_field_across_three_calls.md`,
+  `mdtests/consecutive_calls_through_recursive_list_keep_caller_cells.md`,
   `mdtests/consecutive_calls_through_recursive_tree_keep_child_links.md`).
+  A member in a block proven distinct from every write-set base is left
+  out, since the separation rule keeps its cells, and a write set that
+  reaches unnamed memory sits in a symbolic block whose candidates are every
+  block. The record costs the residual members that can alias the
+  footprint, never the residual's other resources
+  (`a_call_records_kept_members_without_visiting_unrelated_residual_resources`,
+  `a_call_records_kept_members_in_work_linear_in_the_aliasing_members`); a
+  view still keeps nothing
+  (`mdtests/calls_havoc_an_uncached_field_the_caller_only_views.md`).
   Retaining the cached values instead made later loads of the block compare
   against more cached cells, and the arena pipeline's load resolution ran
   past its time limit

@@ -958,14 +958,117 @@ fn external_range(identity: u64, start: u32, end: u32) -> CMemoryRange {
     )
 }
 
-/// A call havoc finds the residual member that holds a cell through one
-/// lookup of the cell's base in the residual's base index: the unrelated
-/// ranges the caller also keeps add no work, to the producer or to its
-/// checker.
-#[test]
-fn a_call_kept_cell_is_placed_without_visiting_unrelated_residual_members() {
-    const KEPT: u64 = 2_000_000;
+/// One call havoc lending `external_range(LENT, 0, 16)` from a caller whose
+/// residual is `residual`, beside a cached cell of the kept member `KEPT`:
+/// the producer's and the checker's work, after asserting that the edge
+/// records both `KEPT` and the uncached member `UNCACHED`.
+fn kept_call_havoc_work(residual: ResourceContext) -> (usize, usize) {
     const LENT: u64 = 3_000_000;
+    let assumptions = PureFactContext::new();
+    let kept = CallKeptOwnership::new(
+        residual,
+        CallKeptRanges::new(ResourceContext::new(), Vec::new()),
+        &assumptions,
+    );
+    let memory = CMemory::new().store(
+        external_field(KEPT_MEMBER, 8),
+        CValue::Int32(Bitvector32Term::Constant(5)),
+    );
+    // The callee's footprint shares the parameters' block, so the
+    // separation rule cannot keep the cell on its own.
+    let ranges = [external_range(LENT, 0, 16)];
+    let (havocked, produced) = crate::instrumentation::measure_deterministic_work(|| {
+        memory.clone().with_call_memory_havoc(
+            Variable(LENT + 1),
+            &ranges,
+            &assumptions,
+            Some(&kept),
+        )
+    });
+    // The cached value goes, as for any cell in the footprint's block; the
+    // edge records the member that holds it, which is what names a later
+    // load of it across the call.
+    assert!(!havocked.has_known_cell_at(&external_field(KEPT_MEMBER, 8)));
+    let recorded = CallKeptRanges::recorded_on(&havocked).expect("the call records kept memory");
+    assert!(
+        recorded.holds_access(&external_field(KEPT_MEMBER, 8), 4, &assumptions),
+        "the residual member that holds the cached cell is recorded on the edge"
+    );
+    assert!(
+        recorded.holds_access(&external_field(UNCACHED_MEMBER, 0), 4, &assumptions),
+        "a residual member with no cached cell is recorded on the edge too"
+    );
+    let (matches, checked) = crate::instrumentation::measure_deterministic_work(|| {
+        havocked.matches_call_memory_havoc_result(&memory, &ranges, &assumptions, Some(&kept))
+    });
+    assert!(matches, "the checker re-derives the kept ranges");
+    let dropped =
+        memory
+            .clone()
+            .with_call_memory_havoc(Variable(LENT + 1), &ranges, &assumptions, None);
+    assert!(
+        CallKeptRanges::recorded_on(&dropped).is_none(),
+        "without the residual nothing is recorded as kept"
+    );
+    (produced, checked)
+}
+
+const KEPT_MEMBER: u64 = 2_000_000;
+const UNCACHED_MEMBER: u64 = 2_100_000;
+
+/// The two members every [`kept_call_havoc_work`] residual keeps: one with a
+/// cached cell and one without.
+fn measured_kept_members() -> [CResourceFact; 2] {
+    [
+        CResourceFact::own_memory(external_range(KEPT_MEMBER, 0, 12)),
+        CResourceFact::own_memory(external_range(UNCACHED_MEMBER, 0, 4)),
+    ]
+}
+
+/// A call havoc records the flat members its caller keeps owning from the
+/// residual's per-block owned-memory index over the blocks its write set
+/// may alias, whether or not a member's cell is cached. Residual resources
+/// that cannot alias the footprint -- owned memory in heap blocks, which are
+/// proven distinct from the parameters' block, and views, which keep nothing
+/// -- add no work to the producer or to its checker.
+#[test]
+fn a_call_records_kept_members_without_visiting_unrelated_residual_resources() {
+    let mut produced = Vec::new();
+    let mut checked = Vec::new();
+    for size in HEAP_SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let residual = ResourceContext::new().unchecked_with_facts(
+            (0..size)
+                .flat_map(|index| {
+                    [
+                        CResourceFact::own_memory(CMemoryRange::new(
+                            heap_cell(index as u64 + 1, 0),
+                            Bitvector32Term::Constant(0),
+                            Bitvector32Term::Constant(4),
+                        )),
+                        CResourceFact::view_memory(external_range(index as u64 + 1, 0, 4)),
+                    ]
+                })
+                .chain(measured_kept_members()),
+        );
+        let (producer, checker) = kept_call_havoc_work(residual);
+        produced.push((size, producer));
+        checked.push((size, checker));
+    }
+    assert_constant_plus_log_growth("a call havoc recording kept members", &produced, 16.0);
+    assert_constant_plus_log_growth(
+        "checking a call havoc recording kept members",
+        &checked,
+        16.0,
+    );
+}
+
+/// The same record is linear in the residual members that can alias the
+/// footprint: each owned member in the parameters' block is recorded once,
+/// since the callee's footprint shares that block and only the caller's
+/// ownership separates the member from it.
+#[test]
+fn a_call_records_kept_members_in_work_linear_in_the_aliasing_members() {
     let mut produced = Vec::new();
     let mut checked = Vec::new();
     for size in HEAP_SIZES {
@@ -973,62 +1076,27 @@ fn a_call_kept_cell_is_placed_without_visiting_unrelated_residual_members() {
         let residual = ResourceContext::new().unchecked_with_facts(
             (0..size)
                 .map(|index| CResourceFact::own_memory(external_range(index as u64 + 1, 0, 4)))
-                .chain([CResourceFact::own_memory(external_range(KEPT, 0, 4))]),
+                .chain(measured_kept_members()),
         );
-        let assumptions = PureFactContext::new();
-        let kept = CallKeptOwnership::new(
-            residual,
-            CallKeptRanges::new(ResourceContext::new(), Vec::new()),
-            &assumptions,
-        );
-        let memory = CMemory::new().store(
-            external_field(KEPT, 8),
-            CValue::Int32(Bitvector32Term::Constant(5)),
-        );
-        // The callee's footprint shares the parameters' block, so the
-        // separation rule cannot keep the cell on its own.
-        let ranges = [external_range(LENT, 0, 16)];
-        let (havocked, work) = crate::instrumentation::measure_deterministic_work(|| {
-            memory.clone().with_call_memory_havoc(
-                Variable(LENT + 1),
-                &ranges,
-                &assumptions,
-                Some(&kept),
-            )
-        });
-        // The cached value goes, as for any cell in the footprint's block;
-        // the edge records the member that holds it, which is what names a
-        // later load of it across the call.
-        assert!(!havocked.has_known_cell_at(&external_field(KEPT, 8)));
-        assert!(
-            CallKeptRanges::recorded_on(&havocked).is_some_and(|kept| kept.holds_access(
-                &external_field(KEPT, 8),
-                4,
-                &assumptions
-            )),
-            "the residual member that holds the cell is recorded on the edge"
-        );
-        produced.push((size, work));
-        let (matches, work) = crate::instrumentation::measure_deterministic_work(|| {
-            havocked.matches_call_memory_havoc_result(&memory, &ranges, &assumptions, Some(&kept))
-        });
-        assert!(matches, "the checker re-derives the kept cell");
-        checked.push((size, work));
-        let dropped =
-            memory
-                .clone()
-                .with_call_memory_havoc(Variable(LENT + 1), &ranges, &assumptions, None);
-        assert!(
-            CallKeptRanges::recorded_on(&dropped).is_none(),
-            "without the residual nothing is recorded as kept"
-        );
+        let (producer, checker) = kept_call_havoc_work(residual);
+        produced.push((size, producer));
+        checked.push((size, checker));
     }
-    assert_constant_plus_log_growth("a call havoc keeping a residual cell", &produced, 16.0);
-    assert_constant_plus_log_growth(
-        "checking a call havoc keeping a residual cell",
-        &checked,
-        16.0,
-    );
+    for (what, samples) in [
+        ("a call havoc recording aliasing members", &produced),
+        ("checking a call havoc recording aliasing members", &checked),
+    ] {
+        eprintln!("{what} (N, units): {samples:?}");
+        for pair in samples.windows(2) {
+            let [(small, small_work), (large, large_work)] = pair else {
+                unreachable!()
+            };
+            assert!(
+                (*large_work as f64) <= 1.5 * (*large as f64 / *small as f64) * *small_work as f64,
+                "{what}: work grew faster than the aliasing members: {samples:?}"
+            );
+        }
+    }
 }
 
 /// Placing a cell in a range an opened residual instance holds assumes that
