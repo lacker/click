@@ -2823,14 +2823,21 @@ pub(in crate::kernel) fn run_elements_meeting(run: &CellRun, shift: i64, bytes: 
 /// Which of `run`'s live slots the distinct-cell reduction of a load of
 /// `bytes` bytes at `pointer` keeps: every slot not both proven distinct from
 /// the load and proven to share none of its bytes.
+///
+/// `normalized` holds the pointer with its exactly known index constants
+/// substituted, computed on the first run a query asks about and shared by
+/// the rest.
 pub(in crate::kernel) fn run_slots_kept_by_load_reduction(
     run: &CellRun,
     pointer: &Pointer,
+    normalized: &std::cell::OnceCell<Pointer>,
     bytes: u32,
     assumptions: &PureFactContext,
 ) -> (SlotSet, RuleAnswer) {
+    let normalized =
+        normalized.get_or_init(|| pointer_with_exact_index_constants(pointer, assumptions));
     (
-        run_slots_kept_by_load_reduction_set(run, pointer, bytes, assumptions),
+        run_slots_kept_by_load_reduction_set(run, normalized, bytes),
         RuleAnswer::Sound,
     )
 }
@@ -2845,12 +2852,10 @@ pub(in crate::kernel) fn run_slots_kept_by_load_reduction(
 /// one more cell, which the load does not read).
 fn run_slots_kept_by_load_reduction_set(
     run: &CellRun,
-    pointer: &Pointer,
+    normalized: &Pointer,
     bytes: u32,
-    assumptions: &PureFactContext,
 ) -> SlotSet {
-    let normalized = pointer_with_exact_index_constants(pointer, assumptions);
-    match run_access(run, &normalized) {
+    match run_access(run, normalized) {
         RunAccess::DistinctBlock => SlotSet::Nothing,
         // Common atoms and unequal constants are distinct addresses, and the
         // constant gap decides the bytes exactly: a slot survives only where
@@ -2946,13 +2951,18 @@ pub(in crate::kernel) fn run_slots_kept_by_store(
 
 /// Which of `run`'s live slots the equal-cell scan of a load at `pointer`
 /// can match: the one element the pointer names, when it names one.
+///
+/// `normalized` is shared by a query's runs as for
+/// [`run_slots_kept_by_load_reduction`].
 pub(in crate::kernel) fn run_slots_equal_to_load(
     run: &CellRun,
     pointer: &Pointer,
+    normalized: &std::cell::OnceCell<Pointer>,
     assumptions: &PureFactContext,
 ) -> (SlotSet, RuleAnswer) {
-    let normalized = pointer_with_exact_index_constants(pointer, assumptions);
-    let set = match run_access(run, &normalized) {
+    let normalized =
+        normalized.get_or_init(|| pointer_with_exact_index_constants(pointer, assumptions));
+    let set = match run_access(run, normalized) {
         RunAccess::DistinctBlock => SlotSet::Nothing,
         RunAccess::Shift(shift) => {
             let width = i64::from(run.element_width()).max(1);
@@ -2970,9 +2980,9 @@ pub(in crate::kernel) fn run_slots_equal_to_load(
         // names one only through a stated alias. One hop of each is what the
         // per-cell ladder's first rungs read, and only those are asked.
         RunAccess::Scaled { .. } | RunAccess::Other => assumptions
-            .exact_pointer_aliases(&normalized)
+            .exact_pointer_aliases(normalized)
             .cloned()
-            .chain(assumptions.exact_pointer_offset_aliases(&normalized))
+            .chain(assumptions.exact_pointer_offset_aliases(normalized))
             .find_map(|alias| {
                 crate::instrumentation::record_deterministic_work(1);
                 let alias = pointer_with_exact_index_constants(&alias, assumptions);

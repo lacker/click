@@ -462,6 +462,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             // resolution-equal to it, so only the candidates can match, and
             // they are visited in the whole map's order.
             let candidates = AliasCandidates::of_block(&pointer.block);
+            let normalized = std::cell::OnceCell::new();
             let (found, visited) = memory.cells.find_candidate_by(
                 &candidates,
                 |stored_pointer, _| {
@@ -478,6 +479,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                     crate::kernel::reasoning::memory_resolution::run_slots_equal_to_load(
                         run,
                         &pointer,
+                        &normalized,
                         assumptions,
                     )
                 },
@@ -594,6 +596,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             // candidates the rule keeps, built without visiting the rest.
             let candidates = AliasCandidates::of_block(&pointer.block);
             let mut reduced = (*memory.cells).clone();
+            let normalized = std::cell::OnceCell::new();
             let visited = reduced.retain_only_candidates_by(
                 &candidates,
                 |stored_pointer, stored_value| {
@@ -617,6 +620,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                     crate::kernel::reasoning::memory_resolution::run_slots_kept_by_load_reduction(
                         run,
                         &pointer,
+                        &normalized,
                         load_bytes,
                         assumptions,
                     )
