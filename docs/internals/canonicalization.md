@@ -213,6 +213,15 @@ refers to one through a snapshot form such as `at(statement(3).entry, x)` or
   form of its own pointer at the pre-rewrite snapshot
   (`memory_only_adds_named_cells` in `src/kernel/proof/execution.rs`), which is
   definitional and needs no search.
+- **Contract entry names an unmatched instance body's cells** too, without
+  granting read authority: an unconditional, unmatched body is the one arm a
+  held field-bearing instance always has, so `project_initial_composite_resource_cores`
+  projects it as it projects a selected arm. A store to a separately owned
+  object keeps those cells when the store opens the held instance one body
+  layer (`docs/internals/resource-tracker.md`, "Two owners are two places"),
+  so an `unfold` after the store reloads a pointer field at the name the
+  instance was folded at, not at a fresh post-store name
+  (`mdtests/unfold_region_after_writing_a_descriptor_of_its_type.md`).
 - Surface synthesis resolves load variables it cannot otherwise express
   through the registry (`resolve_load_variables_from_registry`) —
   the sanctioned display direction: rendering a variable as source syntax

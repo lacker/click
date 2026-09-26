@@ -5127,6 +5127,12 @@ pub(super) struct ResourceContextIndex {
     /// selection costs the instances of one family rather than the whole
     /// resource context.
     pub(super) instance_shapes: PersistentMap<(String, usize), ResourceEntryIds>,
+    /// Owned instances keyed by each C pointer argument they name. A store
+    /// asks which held instances a cached cell's base spellings name, so the
+    /// question costs the instances whose arguments spell that base, never
+    /// the other instances of the context
+    /// (`functions::store_opened_instance_composition`).
+    pub(super) owned_instances_by_pointer_argument: PersistentMap<Pointer, ResourceEntryIds>,
     pub(super) exact: PersistentMap<CResourceFact, ResourceEntryIds>,
     pub(super) by_resource: PersistentMap<CResource, ResourceEntryIds>,
     pub(super) exact_shapes: PersistentMap<(ResourceFamily, String, usize), ResourceEntryIds>,

@@ -436,7 +436,7 @@ edge exists. Each decides the same abstract question as the matching arm of
 | `loan_preserving_havoc_keeps_cell` | disagrees | Preserved-block membership **or** bytes `LoanLedger::permits_memory_access` refuses a write through. An ownership question, with fail-open polarity, and no pointer-alias reasoning at all — a loop body or a joined branch arm may write through any pointer it can reach, so separation has nothing to decide. The width it asks the ledger about is the wider of the cell's value and the widest typed overlay recorded there (`union_overlay_widths`), and an unknown width fails closed. |
 | `CMemory::with_loop_memory_havoc_preserving_loans`, `CMemory::with_interface_memory_havoc_preserving_loans` | disagrees | The loop head and the interface join, which both ask `loan_preserving_havoc_keeps_cell`. Neither records an edge, so no rule covers either; what used to be the same retain written twice is now one function asked twice. |
 | `CMemory::forget_zeroed_allocations_written_by` | disagrees | The other half of a call's write set: it drops the zeroed reading of every allocation the declared ranges may reach, because "reads as zero where unwritten" is a claim about contents that an unseen write invalidates exactly as it invalidates a stored cell. It drops the status for the whole allocation rather than narrowing it to a prefix, since a write set bounds where a callee may store and not where it did. The rule has no arm for it: a zeroed reading is not a resource the tracker names. |
-| `CMemory::without_possible_aliasing_cells` | disagrees | A store's own eager drop, and the one site on this list that shares the rule's byte question: the address ladder is conjoined with `access_byte_overlap`, exactly as the rule's `Store` arm conjoins it, so a ladder that proves two addresses differ may stand in for byte separation only where the gap it establishes clears both accesses. Ahead of the ladder, and before `access_byte_overlap`, it asks ownership through the composition base index (`PureFactContext::access_owned_apart_from_store`, below); a cell ownership does not place goes down the ladder unchanged. The ladder itself is `pointers_proven_distinct_for_memory_resolution`, **or** `pointers_proven_disjoint_by_explicit_range_for_memory_resolution`, **or** `pointers_directly_disjoint_by_range`, **or** `owned_composition_store_separated_evidence`. The two range rungs are the cross-base pairs offset reasoning cannot decide and the byte question answers `Unknown` for; they are a range-index scan the rule's hot `Store` arm must not pay for. The last is shared with the rule's `Store` arm and the two transport sites, and it has to be here too: a cell this function drops is lost to every later route, because the two snapshots then differ at the read's own address. |
+| `CMemory::without_possible_aliasing_cells` | disagrees | A store's own eager drop, and the one site on this list that shares the rule's byte question: the address ladder is conjoined with `access_byte_overlap`, exactly as the rule's `Store` arm conjoins it, so a ladder that proves two addresses differ may stand in for byte separation only where the gap it establishes clears both accesses. Ahead of the ladder, and before `access_byte_overlap`, it asks ownership through the composition base index (`PureFactContext::access_owned_apart_from_store`, below), including the composition the store statement opens from the held folded instances whose arguments name a cached cell's base (`functions::store_opened_instance_composition`, below); a cell ownership does not place goes down the ladder unchanged. The ladder itself is `pointers_proven_distinct_for_memory_resolution`, **or** `pointers_proven_disjoint_by_explicit_range_for_memory_resolution`, **or** `pointers_directly_disjoint_by_range`, **or** `owned_composition_store_separated_evidence`. The two range rungs are the cross-base pairs offset reasoning cannot decide and the byte question answers `Unknown` for; they are a range-index scan the rule's hot `Store` arm must not pay for. The last is shared with the rule's `Store` arm and the two transport sites, and it has to be here too: a cell this function drops is lost to every later route, because the two snapshots then differ at the read's own address. |
 | `CMemory::without_field_cells` | disagrees | Same-block equality and a constant byte interval. Across blocks it removes too little, which for a copy is the safe direction; a completeness difference only. |
 | `heap_allocation_may_contain_pointer`, `CMemory::freed_heap_allocation_may_contain` | disagrees | `base.block != pointer.block` answers "not contained", which is fail-open on a spelling. The rule's `HeapFreed` arm is two separation ladders instead. Reaching it needs a freed allocation whose base block is not proven distinct from a live cell's block. The second is the same test over every deallocated allocation, and it is what the zeroed drop, the availability check below and contract certification all read, so the spelling is at least in one place. |
 | loop frame assembly `src/kernel/loops.rs`, `collect_loop_effect_check_obligations`, the multi-exit join | disagrees | Each reinstates or drops cells against the loop's *stated* effect summaries rather than a recorded edge, with a hardcoded `local:` skip. |
@@ -863,6 +863,46 @@ and `a_cell_straddling_two_owned_members_is_not_separated_from_either`
 `stores_beside_many_owned_ranges_scale_near_linearly`
 (`src/surface/tests/scaling_tests.rs`) is the deterministic regression: the
 query's own work over 2/4/8/16 stores is 9, 11, 15, 23 units.
+A cell a held *folded* instance owns is framed the same way, one body layer
+down. Compositions do not open folded instances, so before the store frames
+its cached cells, `functions::store_opened_instance_composition` asks which
+owned instances of the state's *current* context have a pointer argument
+naming an additive base spelling of a cached cell the store could drop
+(`owned_instances_by_pointer_argument`, an index maintained as instances
+enter and leave the context), opens each such instance whose body is
+unconditional, unmatched and witness-free one layer at the current state
+with its own fields, exactly as `unfold` and the call's kept-by-caller rule
+open it, and forms one composition of the owned member holding the written
+bytes and the opened bodies' owned ranges. The current context is a valid
+composition held here and an instance owns exactly what its body owns, so
+those ranges are disjoint from the written member; like every composition
+fact the claim is about addresses, so it stays true after the store. The
+store assumes that composition before framing, where both the ownership-first
+rung and the ladder's composition rung read it, and records it as a path
+fact, so the rule's `Store` arm and the two transport sites read the same
+members later. Only instances held now are opened, never one a recorded
+composition names: a body read at a snapshot where it is no longer held could
+name someone else's memory. The composition must pass the validity check a
+flat context of the same ranges would, so a path whose facts prove an opened
+range overlaps the written member (`requires s == other` beside a folded
+instance owning `object(s)` and a flat `object(other)`, which no caller can
+lend) opens nothing. A matched, guarded or witness-bearing body, a nested
+instance, an iterated clause and a view contribute nothing. The unmatched
+body's cells are named at contract entry, as a selected arm's are, so there
+is a cached cell to keep (`docs/internals/canonicalization.md`). Cost: a
+constant-time gate on the argument index, then one argument-index lookup per
+spelling of each cached candidate cell and one body evaluation per instance
+named; `a_store_opens_no_folded_instance_whose_arguments_name_no_cached_cell`
+(`src/kernel/tests/resource_scaling_tests.rs`) charges 55 units at 16, 64, 256
+and 1024 unrelated instances (heap-block instances and parameter instances
+with no cached cell), and
+`a_store_opens_folded_instances_in_work_linear_in_the_aliasing_ones` 272,
+520, 1016, 2008 at 8, 16, 32, 64 aliasing ones
+(`mdtests/unfold_region_after_writing_a_descriptor_of_its_type.md`,
+`mdtests/unfold_region_after_writing_through_another_descriptors_pool.md`,
+`mdtests/a_store_keeps_a_cell_a_folded_instance_owns.md`; negatives
+`mdtests/a_store_forgets_a_cell_of_a_matched_folded_instance.md` and
+`mdtests/a_store_through_an_equal_descriptor_forgets_a_folded_instance_cell.md`).
 `a_composition_separates_a_store_from_a_load_only_through_two_owners`
 (`src/kernel/tests/memory_reasoning_tests.rs`) is the attack set — an owner
 beside a view, a cell past the end of every member, a folded composite whose

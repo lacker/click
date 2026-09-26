@@ -27,6 +27,9 @@ mod memory_reasoning;
 pub(crate) use memory_reasoning::arm_frame_composite_definitions;
 pub(crate) use memory_reasoning::clear_frame_expansion_memo;
 pub(in crate::kernel) use memory_reasoning::signed_byte_sum_is_nonwrapping;
+pub(in crate::kernel) use memory_reasoning::{
+    frame_composite_definitions, owned_instances_naming_access_base,
+};
 pub(crate) mod proposition_reasoning;
 
 pub(crate) use proposition_reasoning::clear_context_inconsistency_memos;

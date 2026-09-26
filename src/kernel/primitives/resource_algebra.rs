@@ -358,6 +358,15 @@ impl ResourceContextIndex {
                 (instance.name.clone(), instance.arguments.len()),
                 entry,
             );
+            if fact.is_own() {
+                for pointer in instance_pointer_arguments(instance) {
+                    result.owned_instances_by_pointer_argument = insert_resource_index_entry(
+                        &result.owned_instances_by_pointer_argument,
+                        pointer.clone(),
+                        entry,
+                    );
+                }
+            }
         }
         if let CResource::Iterated(iterated) = fact.resource() {
             let [first, second] = iterated.blocks();
@@ -481,6 +490,15 @@ impl ResourceContextIndex {
                 &(instance.name.clone(), instance.arguments.len()),
                 entry,
             );
+            if fact.is_own() {
+                for pointer in instance_pointer_arguments(instance) {
+                    result.owned_instances_by_pointer_argument = remove_resource_index_entry(
+                        &result.owned_instances_by_pointer_argument,
+                        pointer,
+                        entry,
+                    );
+                }
+            }
         }
         if let CResource::Iterated(iterated) = fact.resource() {
             let [first, second] = iterated.blocks();
@@ -2030,6 +2048,37 @@ impl ResourceContext {
             history,
             materialized: std::sync::OnceLock::new(),
         });
+    }
+
+    /// The owned instances of this context with a C pointer argument equal
+    /// to `base`, as their entries and facts, read from the argument index:
+    /// one unit to position and one per instance returned, never the
+    /// context's other instances.
+    pub(in crate::kernel) fn owned_instances_with_pointer_argument<'a>(
+        &'a self,
+        base: &Pointer,
+    ) -> impl Iterator<Item = (u64, &'a CResourceFact)> + 'a {
+        crate::instrumentation::record_deterministic_work(1);
+        self.storage
+            .index
+            .owned_instances_by_pointer_argument
+            .get(base)
+            .into_iter()
+            .flat_map(ResourceEntryIds::iter)
+            .map(|entry| {
+                crate::instrumentation::record_deterministic_work(1);
+                (*entry, self.fact(*entry))
+            })
+    }
+
+    /// Whether this context holds any owned instance with a C pointer
+    /// argument: the constant-time gate before any cell asks the index.
+    pub(in crate::kernel) fn has_owned_instances_with_pointer_arguments(&self) -> bool {
+        !self
+            .storage
+            .index
+            .owned_instances_by_pointer_argument
+            .is_empty()
     }
 
     /// The owned field-bearing instances and folded composites of this
@@ -5260,6 +5309,17 @@ impl ResourceNormalizationIndex {
         }
         candidates.into_iter().collect()
     }
+}
+
+/// The C pointer arguments of an instance, as its index keys them.
+fn instance_pointer_arguments(instance: &ResourceInstance) -> impl Iterator<Item = &Pointer> {
+    instance
+        .arguments
+        .iter()
+        .filter_map(|argument| match argument {
+            AlgebraicValue::C(CValue::Pointer(pointer)) => Some(pointer.pointer()),
+            _ => None,
+        })
 }
 
 /// The block of a token or composite's first argument when that argument is

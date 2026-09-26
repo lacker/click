@@ -1019,6 +1019,35 @@ pub(super) fn project_initial_composite_resource_cores(
                 instance,
                 &assumptions,
             ) else {
+                // An unconditional, unmatched body is the one arm the
+                // instance always has. Its cells are named here as a
+                // selected arm's are -- read authority is not granted, since
+                // the instance stays folded -- so that a C read of one of
+                // them after a store to a separately owned object is the same
+                // load the body spoke about at entry, and an `unfold` after
+                // that store finds the name it was folded at
+                // (`materialize_unfolded_instance_arm_cells`).
+                if resource.is_own()
+                    && let Some(selected) =
+                        resource_environment
+                            .get(instance.name())
+                            .and_then(|definition| {
+                                let body = definition.composite_body()?;
+                                body.matched
+                                    .is_none()
+                                    .then(|| unmatched_instance_body(definition, body, instance))?
+                            })
+                {
+                    state = project_selected_instance_arm_cells(
+                        &selected,
+                        instance,
+                        parameters,
+                        arguments,
+                        state,
+                        &assumptions,
+                        false,
+                    );
+                }
                 continue;
             };
             state = project_selected_instance_arm_cells(

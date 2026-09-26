@@ -1456,3 +1456,158 @@ fn unfold_beside_descriptors_of_its_type_ignores_unrelated_descriptors() {
     }
     assert_constant_plus_log_growth("unfold beside descriptors of its type", &samples, 16.0);
 }
+
+/// A folded `window(p)` of a pointer parameter: its body owns `p[start..1]`
+/// at its own field `start = 0`, which is the cell at `p`.
+fn parameter_window_instance(parameter: u64, identity: u64) -> CResourceFact {
+    CResourceFact::own(CResource::Instance(
+        ResourceInstance::new(
+            Variable(identity),
+            "window".into(),
+            vec![CValue::pointer(parameter_base(parameter)).into()].into(),
+            ResourceFieldSchema::new(vec![("start".into(), ResourceFieldType::C(CType::Int32))])
+                .unwrap(),
+            vec![int32(0).into()].into(),
+        )
+        .unwrap(),
+    ))
+}
+
+const STORE_WRITTEN_PARAMETER: u64 = 97_000;
+const STORE_KEPT_PARAMETER: u64 = 97_001;
+
+/// Frames one store at the written parameter's object as the store
+/// statement does: the opened composition first, then the cached cells. It
+/// returns the charged work and how many of `kept` cached cells survived.
+fn framed_store_beside_instances(state: &CState, kept: &[Pointer]) -> (usize, usize) {
+    let write = parameter_base(STORE_WRITTEN_PARAMETER);
+    let assumptions = PureFactContext::new()
+        .assume_proposition(Proposition::CResourceComposition(state.resources().clone()));
+    let (memory, work) = crate::instrumentation::measure_deterministic_work(|| {
+        let assumptions = match crate::kernel::functions::store_opened_instance_composition(
+            state,
+            &write,
+            4,
+            &assumptions,
+        ) {
+            Some(opened) => {
+                assumptions.assume_proposition(Proposition::CResourceComposition(opened))
+            }
+            None => assumptions.clone(),
+        };
+        state
+            .memory
+            .clone()
+            .without_possible_aliasing_cells(&write, 4, &assumptions)
+    });
+    let survived = kept
+        .iter()
+        .filter(|cell| memory.has_known_cell_at(cell))
+        .count();
+    (work, survived)
+}
+
+/// A store beside folded field-bearing instances opens only the instances
+/// whose arguments name the base of a cell it could drop. Instances in heap
+/// blocks, which a parameter store cannot alias, and instances of other
+/// parameters with no cached cell are never visited, however many there are:
+/// the work to keep the one cell a folded instance owns is constant in them.
+#[test]
+fn a_store_opens_no_folded_instance_whose_arguments_name_no_cached_cell() {
+    let _armed = crate::kernel::arm_frame_composite_definitions(window_definitions(1));
+    let kept = parameter_base(STORE_KEPT_PARAMETER);
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let frame = ResourceContext::new()
+            .unchecked_with_facts((0..size).flat_map(|index| {
+                [
+                    window_instance(index as u64 + 1, TARGET_HEAP + 1 + index as u64),
+                    parameter_window_instance(
+                        FIRST_PARAMETER + index as u64,
+                        2 * TARGET_HEAP + 1 + index as u64,
+                    ),
+                ]
+            }))
+            .unchecked_with_facts([
+                parameter_object(STORE_WRITTEN_PARAMETER),
+                parameter_window_instance(STORE_KEPT_PARAMETER, 3 * TARGET_HEAP),
+            ]);
+        let memory = (0..size)
+            .fold(CMemory::new(), |memory, index| {
+                memory.store(heap_base(index as u64 + 1), int32(index as u32))
+            })
+            .store(kept.clone(), int32(5));
+        let state = CState::new()
+            .with_resource_context(frame)
+            .with_memory(memory);
+        let (work, survived) = framed_store_beside_instances(&state, std::slice::from_ref(&kept));
+        assert_eq!(survived, 1, "the folded instance's cell survives the store");
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("a store beside unrelated folded instances", &samples, 8.0);
+}
+
+/// The same framing is linear in the folded instances whose arguments name a
+/// cached cell's base: each is opened once, one body layer, and keeps its
+/// cell.
+#[test]
+fn a_store_opens_folded_instances_in_work_linear_in_the_aliasing_ones() {
+    let _armed = crate::kernel::arm_frame_composite_definitions(window_definitions(1));
+    let mut samples = Vec::new();
+    for size in PARAMETER_SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let frame = ResourceContext::new()
+            .unchecked_with_facts((0..size).map(|index| {
+                parameter_window_instance(
+                    FIRST_PARAMETER + index as u64,
+                    2 * TARGET_HEAP + 1 + index as u64,
+                )
+            }))
+            .unchecked_with_fact(parameter_object(STORE_WRITTEN_PARAMETER));
+        let cells = (0..size)
+            .map(|index| parameter_base(FIRST_PARAMETER + index as u64))
+            .collect::<Vec<_>>();
+        let memory = cells.iter().fold(CMemory::new(), |memory, cell| {
+            memory.store(cell.clone(), int32(5))
+        });
+        let state = CState::new()
+            .with_resource_context(frame)
+            .with_memory(memory);
+        let (work, survived) = framed_store_beside_instances(&state, &cells);
+        assert_eq!(survived, size, "every opened instance keeps its cell");
+        samples.push((size, work));
+    }
+    eprintln!("a store beside aliasing folded instances (N, units): {samples:?}");
+    for pair in samples.windows(2) {
+        let [(small, small_work), (large, large_work)] = pair else {
+            unreachable!()
+        };
+        assert!(
+            (*large_work as f64) <= 1.5 * (*large as f64 / *small as f64) * *small_work as f64,
+            "a store beside aliasing folded instances: work grew faster than the \
+             instances: {samples:?}"
+        );
+    }
+}
+
+/// Without the opening, the same store forgets the cell: a folded instance's
+/// body is not a composition member until the store opens it, and with no
+/// definitions to open it by there is nothing to open.
+#[test]
+fn a_store_forgets_a_folded_instance_cell_it_does_not_open() {
+    let kept = parameter_base(STORE_KEPT_PARAMETER);
+    let frame = ResourceContext::new().unchecked_with_facts([
+        parameter_object(STORE_WRITTEN_PARAMETER),
+        parameter_window_instance(STORE_KEPT_PARAMETER, 3 * TARGET_HEAP),
+    ]);
+    let state = CState::new()
+        .with_resource_context(frame)
+        .with_memory(CMemory::new().store(kept.clone(), int32(5)));
+    // No definitions armed: nothing can be opened.
+    let (_, survived) = framed_store_beside_instances(&state, std::slice::from_ref(&kept));
+    assert_eq!(survived, 0, "an unopened instance keeps nothing");
+    let _armed = crate::kernel::arm_frame_composite_definitions(window_definitions(1));
+    let (_, survived) = framed_store_beside_instances(&state, std::slice::from_ref(&kept));
+    assert_eq!(survived, 1, "the opened instance keeps its cell");
+}

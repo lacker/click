@@ -710,6 +710,27 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                     }
                 }
             }
+            // Cells a held folded instance owns one body layer down are kept
+            // by the same partition law as cells of a flat member; the
+            // composition that says so is assumed for this store and kept as
+            // a path fact, so every later route that re-asks this store's
+            // framing reads the same members
+            // (`functions::store_opened_instance_composition`).
+            let mut facts = facts;
+            let effective_assumptions =
+                match crate::kernel::functions::store_opened_instance_composition(
+                    &state,
+                    &written_pointer,
+                    written_value.byte_width(),
+                    &effective_assumptions,
+                ) {
+                    Some(opened) => {
+                        let fact = Proposition::CResourceComposition(opened);
+                        facts.push(ExecutionPureFact::new(fact.clone()));
+                        effective_assumptions.assume_proposition(fact)
+                    }
+                    None => effective_assumptions,
+                };
             let next_memory = state
                 .memory
                 .clone()

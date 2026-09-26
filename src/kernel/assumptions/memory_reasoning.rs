@@ -18,8 +18,10 @@ thread_local! {
     ///
     /// Separation is a property, not an authority grant: consulting the
     /// definitions here decides disjointness for framing without making any
-    /// resource usable, so this channel is deliberately readable only by the
-    /// frame-evidence prover in this module.
+    /// resource usable, so this channel is deliberately readable only by
+    /// frame evidence: the prover in this module, and a store opening the
+    /// folded instances it holds one body layer
+    /// (`functions::store_opened_instance_composition`).
     static FRAME_COMPOSITE_DEFINITIONS: std::cell::RefCell<
         Vec<std::sync::Arc<Vec<CCompositeResourceDefinition>>>,
     > = const { std::cell::RefCell::new(Vec::new()) };
@@ -98,7 +100,8 @@ pub(crate) fn clear_frame_expansion_memo() {
     EXPANSION_MEMO.with(|memo| memo.borrow_mut().clear());
 }
 
-fn frame_composite_definitions() -> Option<std::sync::Arc<Vec<CCompositeResourceDefinition>>> {
+pub(in crate::kernel) fn frame_composite_definitions()
+-> Option<std::sync::Arc<Vec<CCompositeResourceDefinition>>> {
     FRAME_COMPOSITE_DEFINITIONS.with(|definitions| definitions.borrow().last().cloned())
 }
 
@@ -3600,6 +3603,24 @@ fn structural_element_index(
         return None;
     }
     element_index_from_offset_with_facts(right, element_width, assumptions)
+}
+
+/// The owned instances of `resources` whose C pointer arguments name one of
+/// the additive base spellings of `pointer` (see [`additive_base_spellings`]),
+/// each once, keyed by entry: the instances whose body a cell at `pointer`
+/// could be owned by one layer down, found through the argument index. Cost
+/// is the access's spellings and the instances they name, never the
+/// context's other instances.
+pub(in crate::kernel) fn owned_instances_naming_access_base<'a>(
+    resources: &'a ResourceContext,
+    pointer: &Pointer,
+    found: &mut BTreeMap<u64, &'a CResourceFact>,
+) {
+    for base in additive_base_spellings(pointer) {
+        for (entry, fact) in resources.owned_instances_with_pointer_argument(&base) {
+            found.entry(entry).or_insert(fact);
+        }
+    }
 }
 
 /// The bases an owned range could be stated over for an access at `pointer`:

@@ -5869,52 +5869,14 @@ fn unmatched_instance_body_ownership(
     state: &CState,
     assumptions: &PureFactContext,
 ) -> Option<(Vec<CMemoryRange>, Vec<(ConditionTerm, bool)>)> {
-    crate::instrumentation::record_deterministic_work(1);
-    let CResource::Instance(instance) = fact.resource() else {
-        return None;
-    };
-    let index = definitions
-        .binary_search_by(|definition| definition.name().cmp(instance.name()))
-        .ok()?;
-    let definition = &definitions[index];
-    if definition.matched.is_some()
-        || definition.condition.is_some()
-        || !definition.witnesses.is_empty()
-        || definition.contains.is_empty()
-    {
-        return None;
-    }
-    let evaluation = instance_body_evaluation(state, instance, definition).ok()?;
-    let evaluation_assumptions = assumptions
-        .clone()
-        .allow_symbolic_contract_loads()
-        .prefer_symbolic_external_loads();
+    let UnmatchedInstanceBody {
+        definition,
+        evaluation,
+        evaluation_assumptions,
+        body_resources,
+        expanded,
+    } = open_unmatched_instance_body(fact, definitions, state, assumptions)?;
     let mut budget = ExecutionBudget::beside_live_state();
-    let Ok(Ok(body_resources)) = evaluate_function_resource_context_with_normalization(
-        &evaluation,
-        &definition.contains,
-        &[],
-        &evaluation_assumptions,
-        &mut budget,
-        false,
-    ) else {
-        return None;
-    };
-    let body_resources = body_resources.0;
-    let expanded = if body_resources
-        .facts()
-        .iter()
-        .any(|fact| matches!(fact.resource(), CResource::Composite { .. }))
-    {
-        expand_all_composite_resource_facts(
-            &body_resources,
-            definitions,
-            evaluation.memory(),
-            &evaluation_assumptions,
-        )?
-    } else {
-        body_resources.clone()
-    };
     // The facts read the body's own cells, as an unfold reads them: with the
     // body as the evaluation's resources and its observable facts assumed.
     let mut body_facts = body_resources.observable_facts_assuming_valid(assumptions);
@@ -5965,6 +5927,182 @@ fn unmatched_instance_body_ownership(
         })
         .collect();
     Some((owned_memory_ranges_of(&expanded), premises))
+}
+
+/// One layer of an owned field-bearing instance's unconditional, unmatched
+/// body, evaluated at a state that holds the instance: the evaluation state
+/// and assumptions, the body's resources, and the same with field-free
+/// composites expanded.
+struct UnmatchedInstanceBody<'a> {
+    definition: &'a CCompositeResourceDefinition,
+    evaluation: CState,
+    evaluation_assumptions: PureFactContext,
+    body_resources: ResourceContext,
+    expanded: ResourceContext,
+}
+
+/// Opens an owned instance one body layer at `state`, exactly as `unfold`
+/// evaluates it: the instance's own fields and arguments bound, the body's
+/// clauses evaluated, and its field-free composites expanded. `None` for
+/// anything but an instance whose definition is unconditional, unmatched,
+/// witness-free and owns something, and for a body that does not evaluate
+/// here. Charges one unit, plus the evaluation's own work.
+fn open_unmatched_instance_body<'a>(
+    fact: &CResourceFact,
+    definitions: &'a [CCompositeResourceDefinition],
+    state: &CState,
+    assumptions: &PureFactContext,
+) -> Option<UnmatchedInstanceBody<'a>> {
+    crate::instrumentation::record_deterministic_work(1);
+    let CResource::Instance(instance) = fact.resource() else {
+        return None;
+    };
+    let index = definitions
+        .binary_search_by(|definition| definition.name().cmp(instance.name()))
+        .ok()?;
+    let definition = &definitions[index];
+    if definition.matched.is_some()
+        || definition.condition.is_some()
+        || !definition.witnesses.is_empty()
+        || definition.contains.is_empty()
+    {
+        return None;
+    }
+    let evaluation = instance_body_evaluation(state, instance, definition).ok()?;
+    let evaluation_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    let mut budget = ExecutionBudget::beside_live_state();
+    let Ok(Ok(body_resources)) = evaluate_function_resource_context_with_normalization(
+        &evaluation,
+        &definition.contains,
+        &[],
+        &evaluation_assumptions,
+        &mut budget,
+        false,
+    ) else {
+        return None;
+    };
+    let body_resources = body_resources.0;
+    let expanded = if body_resources
+        .facts()
+        .iter()
+        .any(|fact| matches!(fact.resource(), CResource::Composite { .. }))
+    {
+        expand_all_composite_resource_facts(
+            &body_resources,
+            definitions,
+            evaluation.memory(),
+            &evaluation_assumptions,
+        )?
+    } else {
+        body_resources.clone()
+    };
+    Some(UnmatchedInstanceBody {
+        definition,
+        evaluation,
+        evaluation_assumptions,
+        body_resources,
+        expanded,
+    })
+}
+
+/// The composition a store at `write` of `bytes` adds to the partition law
+/// when the state holds folded instances whose bodies own cached cells: the
+/// owned member of `state`'s context that holds the written bytes, beside the
+/// owned memory one body layer inside each owned instance of that context
+/// whose pointer arguments name the base of a cell the store could drop.
+///
+/// **Why it is true.** `state`'s context is a valid composition held at this
+/// point, and an owned instance owns exactly what its body owns, so the
+/// memory its unconditional, unmatched body owns -- evaluated here, at the
+/// instance's own fields and arguments, as `unfold` would evaluate it -- is
+/// disjoint from every other owned member of the context and from every other
+/// instance's body. Its ranges are spelled with this snapshot's load
+/// variables, so like any composition fact the claim is about addresses and
+/// stays true after the store. It is `unmatched_instance_body_ownership`'s
+/// opening at a call (the kept-by-caller rule), asked at a store.
+///
+/// **What it opens.** Only instances this context holds now, never one a
+/// recorded composition names: a body read at a snapshot where the instance
+/// is no longer held could name memory that is someone else's. Only one
+/// layer: nested instances stay folded, and a view, an iterated clause, a
+/// matched, guarded or witness-bearing body contributes nothing.
+///
+/// **What it costs.** A constant-time gate on the argument index, one lookup
+/// in the base index for the write, then, per cached cell the store could
+/// drop, one argument-index lookup per additive base spelling -- the
+/// cells the ownership rung visits anyway -- and one body evaluation per
+/// instance those lookups name. Instances whose arguments name no cached
+/// cell's base are never visited.
+///
+/// The caller assumes the result before framing the store and records it as
+/// a path fact, so the producer (`CMemory::without_possible_aliasing_cells`,
+/// through its ownership-first rung and the composition rung of its ladder)
+/// and every route that later re-asks the store-versus-load question (the
+/// memory-DAG `Store` hop and both transport sites, through
+/// `memory_provenance::owned_composition_store_separated_evidence`) read the
+/// same composition and give the same answer.
+pub(in crate::kernel) fn store_opened_instance_composition(
+    state: &CState,
+    write: &Pointer,
+    bytes: u32,
+    assumptions: &PureFactContext,
+) -> Option<ResourceContext> {
+    let resources = state.resources();
+    if !resources.has_owned_instances_with_pointer_arguments() {
+        return None;
+    }
+    let definitions = crate::kernel::assumptions::frame_composite_definitions()?;
+    let write = Pointer {
+        block: write.block.clone(),
+        offset: crate::kernel::memory_provenance::normalize_exact_memory_loads_in_pointer_offset(
+            &write.offset,
+            assumptions,
+        ),
+    };
+    let write_member = assumptions
+        .owned_member_holding_access(resources, &write, bytes)?
+        .clone();
+    let memory = state.memory();
+    let candidates = crate::kernel::primitives::AliasCandidates::of_block(&write.block);
+    let mut instances = BTreeMap::new();
+    for (pointer, _) in candidates.entries(&memory.cells) {
+        crate::kernel::assumptions::owned_instances_naming_access_base(
+            resources,
+            pointer,
+            &mut instances,
+        );
+    }
+    for ((pointer, _), _) in candidates.entries(&memory.union_cells) {
+        crate::kernel::assumptions::owned_instances_naming_access_base(
+            resources,
+            pointer,
+            &mut instances,
+        );
+    }
+    let mut opened = Vec::new();
+    for fact in instances.values() {
+        if let Some(body) = open_unmatched_instance_body(fact, &definitions, state, assumptions) {
+            opened.extend(owned_memory_ranges_of(&body.expanded));
+        }
+    }
+    if opened.is_empty() {
+        return None;
+    }
+    // The members must pass the check a flat context of the same ranges
+    // would: where this path's facts prove an opened range overlaps the
+    // written member (two spellings of one descriptor, say), the context the
+    // instance was held in was never realizable, and nothing is opened.
+    ResourceContext::new()
+        .try_compose_with_facts_delaying_normalization(
+            std::iter::once(write_member)
+                .chain(opened)
+                .map(CResourceFact::own_memory),
+            assumptions,
+        )
+        .ok()
 }
 
 /// How much one owned-footprint derivation may visit: one unit per owned
