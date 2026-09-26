@@ -1668,6 +1668,9 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
         CResourceTerm::Instance { resource, .. } => {
             collect_resource_term_bitvector_variables(resource, variables)
         }
+        CResourceTerm::MutexGuard { mutex, .. } => {
+            collect_c_expression_bitvector_variables(mutex, variables)
+        }
         CResourceTerm::Memory(segment) => {
             collect_c_expression_bitvector_variables(&segment.base, variables);
             collect_c_expression_bitvector_variables(&segment.start, variables);
@@ -1699,6 +1702,9 @@ fn collect_resource_term_bitvector_variables(
     match resource {
         CResourceTerm::Instance { resource, .. } => {
             collect_resource_term_bitvector_variables(resource, variables)
+        }
+        CResourceTerm::MutexGuard { mutex, .. } => {
+            collect_c_expression_bitvector_variables(mutex, variables)
         }
         CResourceTerm::Memory(segment) => {
             collect_c_expression_bitvector_variables(&segment.base, variables);

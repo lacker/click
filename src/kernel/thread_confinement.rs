@@ -11,6 +11,20 @@ use std::collections::{BTreeMap, VecDeque};
 use super::{CCompositeResourceDefinition, CResource, CResourceFact};
 
 pub(super) fn propagate_thread_confinement(definitions: &mut [CCompositeResourceDefinition]) {
+    for definition in definitions.iter_mut() {
+        definition.contains_mutex_guard = definition
+            .contains
+            .iter()
+            .chain(
+                definition
+                    .matched
+                    .iter()
+                    .flat_map(|body| body.arms.iter())
+                    .flat_map(|arm| arm.contains.iter()),
+            )
+            .any(|spec| spec.family() == super::ResourceFamily::MutexGuard);
+        definition.thread_confined |= definition.contains_mutex_guard;
+    }
     let by_name: BTreeMap<&str, usize> = definitions
         .iter()
         .enumerate()
@@ -49,8 +63,12 @@ pub(super) fn propagate_thread_confinement(definitions: &mut [CCompositeResource
         .collect();
     while let Some(child) = pending.pop_front() {
         for &parent in &dependents[child] {
-            if !definitions[parent].thread_confined {
+            if !definitions[parent].thread_confined
+                || (definitions[child].contains_mutex_guard
+                    && !definitions[parent].contains_mutex_guard)
+            {
                 definitions[parent].thread_confined = true;
+                definitions[parent].contains_mutex_guard |= definitions[child].contains_mutex_guard;
                 pending.push_back(parent);
             }
         }
@@ -108,6 +126,54 @@ mod tests {
         );
         assert!(!bodyless.is_thread_confined());
         assert!(stateful.is_thread_confined());
+    }
+
+    #[test]
+    fn guard_ingredient_confines_its_transitive_wrappers() {
+        use crate::kernel::{
+            CExpression, CResourceQuantity, CResourceSnapshot, CResourceTerm,
+            CResourceTransferRole, CValue, Pointer,
+        };
+        let guard = CResourceSpec::new(
+            CResourceTerm::MutexGuard {
+                mutex: Box::new(CExpression::Value(CValue::pointer(Pointer::null()))),
+                snapshot: CResourceSnapshot::Current,
+            },
+            CResourceAccessMode::Own,
+            CResourceQuantity::One,
+            CResourceTransferRole::Consume,
+            CResourceSnapshot::Current,
+        )
+        .unwrap();
+        let inner =
+            CCompositeResourceDefinition::new("inner", vec![], None, false, vec![guard], vec![]);
+        let outer = CCompositeResourceDefinition::new(
+            "outer",
+            vec![],
+            None,
+            false,
+            vec![CResourceSpec::composite(
+                CResourceAccessMode::Own,
+                "inner".into(),
+                vec![],
+                vec![],
+            )],
+            vec![],
+        );
+        let mut definitions = vec![inner, outer];
+        propagate_thread_confinement(&mut definitions);
+        assert!(
+            definitions
+                .iter()
+                .all(CCompositeResourceDefinition::is_thread_confined)
+        );
+        assert_eq!(
+            confined_resource_name(
+                &CResourceFact::own_composite("outer".into(), vec![]),
+                &definitions
+            ),
+            Some("outer")
+        );
     }
 
     #[test]

@@ -224,11 +224,23 @@ Stale guard atoms do not authorize a later acquisition, and direct worker
 transfer rejects guards as thread-confined. Indexed validity and deterministic
 multi-size acquisition/release tests cover unrelated held guards.
 
-This is the kernel ingredient, not yet surface composition: declared-resource
-bodies cannot name guards yet. Guard body/contract specifications, conditional
-ownership, same-thread guard return, live-use and lifecycle authority, and
-shared interference remain later work. Current return and loop restrictions
-remain in place. This checkpoint does not add concurrent population access.
+The surface now lowers `owns mutex_guard(mu)` to a dedicated
+`CResourceTerm::MutexGuard`, with explicit pointer snapshot selection. It
+resolves the current acquisition identity; folding must separately consume
+that atom from the available resources. Guards compose in ordinary exclusive
+resource bodies and conditional model arms. Guard-containing definitions and their transitive
+wrappers are thread-confined and marked as guard-bearing for contract checks.
+Both function argument binders retain the caller's mutex ledger. Ordinary
+calls with live mutex protocols are refused until contract effects describe
+those protocols; a call must never erase them.
+
+Direct and wrapped guard contract inputs/outputs are refused during contract
+transfer and certification. They need abstract protocol and acquisition state
+at contract entry. The hostile reinitializing-helper regression demonstrates
+why preserving an opaque wrapper alone is insufficient. Same-thread contracts that change lock
+state, loop joins across acquisition epochs, live-use and lifecycle authority,
+and shared interference remain later work. Existing return and loop
+restrictions remain. This checkpoint does not add concurrent population access.
 
 The surface's return-resource adapter now checks the obligations returned by
 the kernel before marking its transition checked. Calls involving counted

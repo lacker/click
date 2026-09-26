@@ -7464,6 +7464,22 @@ fn resource_clause_to_resource_spec_with_metadata(
                 .iter()
                 .map(|c_type| c_type.to_kernel_type())
                 .collect();
+            if name == "mutex_guard" {
+                let [mutex] = arguments.as_slice() else {
+                    return Err(ClickError::new("mutex_guard expects one mutex pointer"));
+                };
+                return CResourceSpec::new(
+                    crate::kernel::CResourceTerm::MutexGuard {
+                        mutex: Box::new(mutex.clone()),
+                        snapshot: argument_snapshots[0],
+                    },
+                    access,
+                    crate::kernel::CResourceQuantity::One,
+                    role,
+                    snapshot,
+                )
+                .map_err(|error| ClickError::new(error.to_string()));
+            }
             CResourceSpec::declared_with_argument_snapshots(
                 match kind {
                     ResourceKind::Composite => ResourceFamily::Composite,

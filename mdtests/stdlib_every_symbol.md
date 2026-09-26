@@ -7,6 +7,10 @@ source registry and the library reference remain complete.
 The external catalog symbols `memcpy`, `memcmp`, `memset`, and `strlen` are
 verified in `mdtests/stdlib_external_contracts.md`.
 
+The modeled-runtime resource `mutex_guard` is verified in
+[`mutex_guard_resource_body.md`](mutex_guard_resource_body.md) and
+[`mutex_guard_conditional_body.md`](mutex_guard_conditional_body.md).
+
 ```c filename=stdlib_every_symbol.c
 int32 docs_identity(int32 value) {
     return value;

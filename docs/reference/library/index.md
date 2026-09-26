@@ -14,6 +14,23 @@ remain opaque until a proof explicitly unfolds them or applies a theorem that
 exposes the needed consequence. Theorems can be applied when their stated
 requirements are available. An abstract resource has no body to unfold.
 
+## Mutex acquisition authority
+
+### `mutex_guard`
+
+```click
+abstract resource mutex_guard(mutex: void*);
+```
+
+**Meaning:** Owns one current acquisition of a modeled mutex. The built-in
+resource has exclusive unit ownership, no view, and no memory authority.
+Use `owns mutex_guard(mu)` inside a declared-resource body. Folding consumes
+the existing guard and unfolding returns it; proving `held(mu)` cannot create
+it. Direct or wrapped guards in contracts require abstract protocol state
+and are not supported yet.
+
+**Verified use:** [`mdtests/mutex_guard_resource_body.md`](https://github.com/lacker/click/blob/master/mdtests/mutex_guard_resource_body.md).
+
 ## Allocation authority
 
 ### `allocation`

@@ -3189,3 +3189,7 @@ path = "reference/library/index.md#integer_to_nat_zero"
 [[item]]
 id = "stdlib.theorem.nat_integer_add"
 path = "reference/library/index.md#nat_integer_add"
+
+[[item]]
+id = "stdlib.resource.mutex_guard"
+path = "reference/library/index.md#mutex_guard"

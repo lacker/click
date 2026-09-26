@@ -2655,6 +2655,8 @@ pub struct CCompositeResourceDefinition {
     /// A definition-level restriction on direct transfer to another thread.
     /// Computed when definitions are installed, including contained families.
     pub(super) thread_confined: bool,
+    /// Transitive guard ingredient marker; contract protocol effects are not modeled yet.
+    pub(super) contains_mutex_guard: bool,
     /// Whether the owned footprint reaches memory no clause instance names:
     /// the definition is on a cycle of families, binds an existential witness
     /// in an instance body, or contains or names a child of such a
@@ -5623,9 +5625,18 @@ pub(super) trait ResourceFamilyAlgebra {
         }
         match self.family() {
             ResourceFamily::MutexGuard => {
-                return Err(CResourceSpecError::InvalidNestedTerm(
-                    "mutex guard specifications are not yet supported".into(),
-                ));
+                if spec.access != CResourceAccessMode::Own {
+                    return Err(CResourceSpecError::InvalidAccess {
+                        family: self.family(),
+                        access: spec.access,
+                    });
+                }
+                if spec.quantity != CResourceQuantity::One {
+                    return Err(CResourceSpecError::InvalidQuantity {
+                        family: self.family(),
+                        reason: "mutex guards have unit quantity".into(),
+                    });
+                }
             }
             ResourceFamily::Memory => {
                 if !matches!(spec.quantity, CResourceQuantity::One) {
@@ -5767,6 +5778,10 @@ pub enum CResourceAccessMode {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceTerm {
     Memory(CMemorySegment),
+    MutexGuard {
+        mutex: Box<CExpression>,
+        snapshot: CResourceSnapshot,
+    },
     Composite {
         name: String,
         arguments: Vec<CExpression>,
@@ -5911,6 +5926,7 @@ impl CResourceTerm {
     pub fn family(&self) -> ResourceFamily {
         match self {
             Self::Memory(_) => ResourceFamily::Memory,
+            Self::MutexGuard { .. } => ResourceFamily::MutexGuard,
             Self::Composite { .. } => ResourceFamily::Composite,
             Self::Token { .. } => ResourceFamily::Token,
             Self::Instance { .. } => ResourceFamily::Instance,

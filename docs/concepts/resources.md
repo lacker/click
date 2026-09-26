@@ -575,6 +575,33 @@ execution path, and unlocking requires it folded again. In an execution proof,
 `held(&object->mutex)` states whether that path owns the lock guard; it does
 not by itself grant the protected resource.
 
+The built-in `mutex_guard(mu)` names the exclusive authority for the current
+acquisition of `mu`. It grants no memory access by itself. A declared resource
+can contain that authority using ordinary ownership syntax:
+
+<!-- verified-example: mdtests/mutex_guard_resource_body.md -->
+```click
+resource holding(counter: struct counter*) {
+    field tag: int32;
+    owns mutex_guard(&counter->mu);
+}
+```
+
+Folding consumes the existing guard; unfolding returns it. Unlock therefore
+requires unfolding this wrapper first, as well as restoring any protected
+assertion. A conditional resource arm may own the guard while another arm
+owns none. The acquisition identity stays internal: `held(mu)` alone cannot
+create a guard, and neither `views mutex_guard(mu)` nor a quantity is allowed.
+A wrapper containing a guard is thread-confined, including through nested
+wrappers.
+
+Guard-bearing contracts, including contracts mentioning enclosing wrappers,
+are currently refused. They need abstract protocol state at function entry;
+otherwise a helper could reinitialize a held mutex while claiming to preserve
+the wrapper. Ordinary calls while a mutex protocol is live are also refused
+until contract protocol effects are modeled. Local guard composition works
+within one function; current return and loop restrictions still apply.
+
 A contract clause speaks about parameters, so `consumes t: tree_at(root);`
 names the tree at the entry argument. These tactics are not contract clauses:
 they name the state the execution has reached. After `root = root->left` a

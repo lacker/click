@@ -11336,6 +11336,7 @@ pub(super) fn bind_c_function_arguments(
         .with_enclosing_frame_holds_locals(
             caller_state.enclosing_frame_holds_locals() || !caller_state.locals.is_empty(),
         );
+    callee_state.mutex_ledger = caller_state.mutex_ledger.clone();
     callee_state.population_access = caller_state.population_access.clone();
     callee_state.counted_populations = caller_state.counted_populations.clone();
     // A function entry is a lexical/frame rebind, not an authority reset.
@@ -11451,6 +11452,7 @@ fn bind_c_contract_arguments(
         .with_enclosing_frame_holds_locals(
             caller_state.enclosing_frame_holds_locals() || !caller_state.locals.is_empty(),
         );
+    callee_state.mutex_ledger = caller_state.mutex_ledger.clone();
     callee_state.population_access = caller_state.population_access.clone();
     callee_state.counted_populations = caller_state.counted_populations.clone();
     callee_state.loan_ledger = caller_state.loan_ledger.clone();
@@ -13421,6 +13423,16 @@ impl ResourceTransitionPurpose {
 
 /// Prepares the resource transition of one contract application; see
 /// [`ResourceTransitionPurpose`] for the two routes.
+pub(crate) fn guard_contract_refusal(
+    interface: &CFunctionContractInterface,
+) -> Option<&'static str> {
+    interface.resource_requires().iter().chain(interface.resource_ensures()).any(|spec| {
+        spec.family() == ResourceFamily::MutexGuard || spec.contained_definition_name().is_some_and(|name| {
+            interface.composite_resource_definition(name).is_some_and(|definition| definition.contains_mutex_guard)
+        })
+    }).then_some("mutex guards in contracts require abstract protocol state; guard-bearing contracts are not supported yet")
+}
+
 fn prepare_contract_resource_transfer(
     caller_state: &CState,
     callee_state: &CState,
@@ -13431,6 +13443,19 @@ fn prepare_contract_resource_transfer(
     preserve_explicit_representation: bool,
     purpose: ResourceTransitionPurpose,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
+    if let Some(message) = guard_contract_refusal(interface) {
+        return Ok(Err(CRuntimeError::FunctionContract(message.into())));
+    }
+    if purpose.lends()
+        && caller_state
+            .mutex_ledger
+            .as_ref()
+            .is_some_and(super::mutexes::MutexLedger::has_any_mutex)
+    {
+        return Ok(Err(CRuntimeError::FunctionContract(
+            "calls with live mutex protocols require contract protocol effects".into(),
+        )));
+    }
     if purpose.lends()
         && caller_state.loan_ledger().is_some() != caller_state.loan_participant().is_some()
     {
@@ -16607,7 +16632,12 @@ pub(crate) fn rewrite_resource_instance_selecting_children(
     )
     .map_err(|_| "instance body evaluation exceeded its budget")?
     .map(|(context, _)| context)
-    .map_err(|_| "could not evaluate instance memory body")?;
+    .map_err(|error| match error {
+        CRuntimeError::FunctionContract(message) => ResourceRewriteRefusal::OwnedMessage(format!(
+            "could not evaluate instance memory body: {message}"
+        )),
+        _ => ResourceRewriteRefusal::Message("could not evaluate instance memory body"),
+    })?;
     // Only the immediate declared memory justifies child-argument loads, not
     // the ambient frame or a child that has not been constructed. On fold,
     // check and consume that memory before allowing it in this scratch view.
@@ -17341,11 +17371,13 @@ fn instance_body_clauses_are_exchangeable(contains: &[CResourceSpec]) -> bool {
     contains.iter().all(|body| {
         !body.is_view()
             && match body.family() {
-                ResourceFamily::Memory | ResourceFamily::Iterated => true,
+                ResourceFamily::Memory | ResourceFamily::Iterated | ResourceFamily::MutexGuard => {
+                    true
+                }
                 ResourceFamily::Composite | ResourceFamily::Token => {
                     matches!(body.quantity(), CResourceQuantity::One)
                 }
-                ResourceFamily::Instance | ResourceFamily::MutexGuard => false,
+                ResourceFamily::Instance => false,
             }
     })
 }
@@ -21756,6 +21788,33 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
     match resource.term() {
+        CResourceTerm::MutexGuard { mutex, snapshot } => {
+            let selected = match snapshot {
+                CResourceSnapshot::Entry => entry_state,
+                _ => state,
+            };
+            let value = evaluate_loop_effect_segment_value(
+                selected,
+                mutex,
+                assumptions,
+                "mutex guard pointer",
+                budget,
+            )?;
+            let Ok(CValue::Pointer(pointer)) = value else {
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "mutex_guard expects a mutex pointer".into(),
+                )));
+            };
+            Ok(state
+                .mutex_ledger
+                .as_ref()
+                .and_then(|ledger| ledger.guard_resource(pointer.pointer()))
+                .ok_or_else(|| {
+                    CRuntimeError::FunctionContract(
+                        "mutex_guard requires a live acquisition".into(),
+                    )
+                }))
+        }
         CResourceTerm::Instance {
             identity,
             schema,

@@ -1293,6 +1293,9 @@ fn collect_c_resource_spec_bound_variables(
         CResourceTerm::Instance { resource, .. } => {
             collect_c_resource_term_bound_variables(resource, variables)
         }
+        CResourceTerm::MutexGuard { mutex, .. } => {
+            collect_c_expression_bound_variables(mutex, variables)
+        }
         CResourceTerm::Memory(segment) => {
             collect_c_memory_segment_bound_variables(segment, variables)
         }
@@ -1319,6 +1322,9 @@ fn collect_c_resource_term_bound_variables(
     match resource {
         CResourceTerm::Instance { resource, .. } => {
             collect_c_resource_term_bound_variables(resource, variables)
+        }
+        CResourceTerm::MutexGuard { mutex, .. } => {
+            collect_c_expression_bound_variables(mutex, variables)
         }
         CResourceTerm::Memory(segment) => {
             collect_c_memory_segment_bound_variables(segment, variables)
@@ -3931,6 +3937,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
             instance_schema: definition.instance_schema.clone(),
             guarded_by: definition.guarded_by.clone(),
             thread_confined: definition.thread_confined,
+            contains_mutex_guard: definition.contains_mutex_guard,
             owned_footprint_unnamed: definition.owned_footprint_unnamed,
             fact_source_indices: definition.fact_source_indices.clone(),
             fact_source_spellings: definition.fact_source_spellings.clone(),
@@ -4103,6 +4110,12 @@ fn substitute_bitvector_variable_in_resource_term(
             resource: Box::new(substitute_bitvector_variable_in_resource_term(
                 resource, from, to,
             )),
+        },
+        CResourceTerm::MutexGuard { mutex, snapshot } => CResourceTerm::MutexGuard {
+            mutex: Box::new(substitute_bitvector_variable_in_c_expression(
+                mutex, from, to,
+            )),
+            snapshot: *snapshot,
         },
         CResourceTerm::Iterated(spec) => {
             CResourceTerm::Iterated(Box::new(spec.map_expressions(|expression| {
@@ -7419,6 +7432,7 @@ fn substitute_pointer_variable_in_c_function(
             instance_schema: definition.instance_schema.clone(),
             guarded_by: definition.guarded_by.clone(),
             thread_confined: definition.thread_confined,
+            contains_mutex_guard: definition.contains_mutex_guard,
             owned_footprint_unnamed: definition.owned_footprint_unnamed,
             fact_source_indices: definition.fact_source_indices.clone(),
             fact_source_spellings: definition.fact_source_spellings.clone(),
@@ -7591,6 +7605,10 @@ fn substitute_pointer_variable_in_resource_term(
             resource: Box::new(substitute_pointer_variable_in_resource_term(
                 resource, from, to,
             )),
+        },
+        CResourceTerm::MutexGuard { mutex, snapshot } => CResourceTerm::MutexGuard {
+            mutex: Box::new(substitute_pointer_variable_in_c_expression(mutex, from, to)),
+            snapshot: *snapshot,
         },
         CResourceTerm::Iterated(spec) => {
             CResourceTerm::Iterated(Box::new(spec.map_expressions(|expression| {

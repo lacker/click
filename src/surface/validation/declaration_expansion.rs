@@ -219,6 +219,16 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
             kind: ResourceKind::Token,
             child_slots: Default::default(),
         });
+    resource_definitions.insert(
+        "mutex_guard".into(),
+        DeclaredResourceInfo {
+            fields: Default::default(),
+            has_fields: false,
+            parameter_types: vec![C0Type::VoidPointer],
+            kind: ResourceKind::Token,
+            child_slots: Default::default(),
+        },
+    );
     let resource_definitions = DeclaredResourceScope {
         definitions: resource_definitions,
         children: Default::default(),
@@ -1390,11 +1400,12 @@ fn expand_declared_resource_clause(
             parameter_types,
         } if parameter_types.is_empty() => {
             let info = declared_resource_info(&name, arguments.len(), resource_definitions)?;
-            if name == CResourceFact::ALLOCATION_RESOURCE_NAME && access == ResourceAccessMode::View
+            if (name == CResourceFact::ALLOCATION_RESOURCE_NAME || name == "mutex_guard")
+                && access == ResourceAccessMode::View
             {
-                return Err(ClickError::new(
-                    "allocation authority is owned and cannot be viewed or duplicated",
-                ));
+                return Err(ClickError::new(format!(
+                    "{name} authority is owned and cannot be viewed or duplicated"
+                )));
             }
             Ok(ResourceClause::Declared {
                 access,
@@ -2142,6 +2153,9 @@ fn reject_counted_field_resource(
     definitions: &DeclaredResourceScope,
 ) -> Result<(), ClickError> {
     match resource {
+        ResourceClause::Declared { name, .. } if name == "mutex_guard" => Err(ClickError::new(
+            "`mutex_guard` is exclusive and not countable",
+        )),
         ResourceClause::Declared { name, .. }
             if definitions.get(name).is_some_and(|info| info.has_fields) =>
         {

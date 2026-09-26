@@ -360,6 +360,15 @@ impl MutexLedger {
         self.storage.entries.get(mutex)
     }
 
+    pub(super) fn guard_resource(&self, mutex: &Pointer) -> Option<CResourceFact> {
+        match self.get(mutex) {
+            Some(MutexEntry::Locked { epoch, .. }) => Some(CResourceFact::own(
+                CResource::MutexGuard(super::MutexGuardIdentity { epoch: *epoch }),
+            )),
+            _ => None,
+        }
+    }
+
     pub(super) fn held_condition(&self, mutex: &Pointer) -> ConditionTerm {
         ConditionTerm::Constant(matches!(self.get(mutex), Some(MutexEntry::Locked { .. })))
     }
