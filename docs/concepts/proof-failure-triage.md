@@ -22,6 +22,34 @@ semantics, do not rewrite otherwise-correct implementation code merely to make
 a proof easier. Keep the original source pattern in the regression and put the
 adaptation or fix in the contract, proof, language, verifier, or kernel.
 
+## Explain the program requirement first
+
+When adding or repairing a diagnostic, lead with the C operation or contract
+clause being checked and the requirement that is not yet established. Name the
+needed fact, resource ownership, or lifetime guarantee in terms of the user's
+source. Show a bounded, relevant selection of available evidence and explain
+the specific mismatch. Include the C and contract/proof locations when known;
+do not invent missing locations or provenance.
+
+For example, "this write needs exclusive ownership of `counter->value`; the
+available permission only keeps its mutex alive" explains a semantic boundary.
+"Resource transfer failed" does not. Internal subsystem names may supplement
+the explanation, but must not replace it.
+
+A failed search means the goal is not yet proved, not that it is false or that
+the required resource is absent everywhere. Distinguish a missing resource from
+one still folded inside another resource or temporarily lent elsewhere when
+the evidence supports that distinction. Suggestions must follow from checked
+evidence; do not automatically recommend stronger preconditions or changes to C.
+
+Do not disguise unsupported verifier operations, exhausted budgets, or internal
+errors as missing program facts. In particular, an unsupported rule must not be
+explained as a request to prove `false = true`. Say what Click cannot yet check
+and distinguish that limitation from evidence of a program bug. The
+[concurrency contract proposal](../internals/concurrency-contracts-and-diagnostics.md)
+contains concrete examples of the intended explanations; it is a design target,
+not a claim that all current diagnostics already meet it.
+
 ## Triage order
 
 ### 1. check the claim and its assumptions

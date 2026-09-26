@@ -63,6 +63,7 @@
 - [Separation logic](internals/separation-logic.md)
 - [Stable views](internals/stable-views.md)
 - [Resource invariants and synchronization](internals/resource-invariants.md)
+- [Concurrency contracts and diagnostics (proposal)](internals/concurrency-contracts-and-diagnostics.md)
 - [Byte representation](internals/byte-representation.md)
 - [Memory derivation DAG](internals/memory-dag.md)
   - [The resource tracker](internals/resource-tracker.md)

@@ -5,6 +5,11 @@ mutexes. It distinguishes the sequential implementation work from later
 concurrent extensions. It is not a claim that Click implements Iris or that
 the current mutex runtime has been validated against native pthreads.
 
+The [concurrency contract proposal](concurrency-contracts-and-diagnostics.md)
+sets out the candidate surface clauses, lifecycle/use permissions, and
+program-level failure explanations for human review. Its unresolved choices
+are not additions to the implemented language.
+
 ## Semantic reference and implementation boundary
 
 Use the ownership-transfer specification in the
