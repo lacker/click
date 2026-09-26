@@ -1666,6 +1666,76 @@ impl<'a> Planner<'a> {
         results.pop()
     }
 
+    /// A premise that bounds an operation directly, such as `0 <= i` for the
+    /// back-edge value `i == i0 + 1`, stops the traversal at that operation.
+    /// When that direct bound is one-sided, the operation's operands may
+    /// still bound its other side (`i0 < n` and `n <= c` bound `i0 + 1` by
+    /// `c`), so the operation is also built from its operands and the two
+    /// intervals are intersected. Without this a true premise could only
+    /// lose a certificate: citing `0 <= i` beside `i0 < n` hid the upper
+    /// bound the operands give. The consumer asks for this only where the
+    /// one-sided interval is what refuses it, so the extra work is one build
+    /// of this operation's operands, and certificates that did not need it
+    /// keep their single direct root.
+    fn tighten_one_sided_direct_interval(
+        &mut self,
+        term: &Bitvector32Term,
+        direct: usize,
+    ) -> usize {
+        let Some(direct_interval) = self.interval_at(direct) else {
+            return direct;
+        };
+        if direct_interval.lower > SIGNED_MIN && direct_interval.upper < SIGNED_MAX {
+            return direct;
+        }
+        let (left, right) = match term {
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right) => (left, right),
+            _ => return direct,
+        };
+        let Some(structural) = (|| {
+            let left = self.build_interval_with_direct(left, true)?;
+            let right = self.build_interval_with_direct(right, true)?;
+            self.build_operation(term, Some(left), Some(right))
+        })() else {
+            return direct;
+        };
+        let Some(structural_interval) = self.interval_at(structural) else {
+            return direct;
+        };
+        let lower = direct_interval.lower.max(structural_interval.lower);
+        let upper = direct_interval.upper.min(structural_interval.upper);
+        let tightened = if lower == direct_interval.lower && upper == direct_interval.upper {
+            return direct;
+        } else if lower == structural_interval.lower && upper == structural_interval.upper {
+            structural
+        } else if lower > upper {
+            return direct;
+        } else {
+            let result = SignedArithmeticInterval {
+                carrier: SignedArithmeticCarrier::SignedInt32,
+                lower,
+                upper,
+            };
+            let Some(index) = self.push_interval(
+                SignedArithmeticNode::IntervalIntersect {
+                    left: direct,
+                    right: structural,
+                    result: result.clone(),
+                },
+                result,
+            ) else {
+                return direct;
+            };
+            index
+        };
+        if let Some(cache_key) = SignedArithmeticAtom::from_term(term) {
+            self.interval_cache.insert(cache_key, tightened);
+        }
+        tightened
+    }
+
     fn build_operation(
         &mut self,
         term: &Bitvector32Term,
@@ -1867,7 +1937,7 @@ impl<'a> Planner<'a> {
             }
             Bitvector32Term::BitwiseXor(left, right) => {
                 let operand = right_index?;
-                let (_operand_term, sign_bit) = if left.as_const() == Some(0x8000_0000) {
+                let (operand_term, sign_bit) = if left.as_const() == Some(0x8000_0000) {
                     (right, left)
                 } else if right.as_const() == Some(0x8000_0000) {
                     (left, right)
@@ -1877,7 +1947,20 @@ impl<'a> Planner<'a> {
                 if sign_bit.as_const()? != 0x8000_0000 {
                     return None;
                 }
-                let op = self.interval_at(operand)?;
+                // The flipped interval is only as tight as the operand's. A
+                // premise bounding the operand directly on one side only
+                // leaves the other side open; its operands may still close it.
+                let mut operand = operand;
+                let mut op = self.interval_at(operand)?;
+                if (op.lower == SIGNED_MIN || op.upper == SIGNED_MAX)
+                    && matches!(
+                        self.nodes.get(operand),
+                        Some(SignedArithmeticNode::IntervalFromAffineDirect { .. })
+                    )
+                {
+                    operand = self.tighten_one_sided_direct_interval(operand_term, operand);
+                    op = self.interval_at(operand)?;
+                }
                 let (lower, upper) = if op.lower >= 0 {
                     (op.lower + SIGNED_MIN, op.upper + SIGNED_MIN)
                 } else if op.upper < 0 {
@@ -2109,6 +2192,42 @@ mod tests {
         plan.check(goal, premises)
             .expect("independent checker should accept planner output");
         plan
+    }
+
+    fn biased_extent_bound(term: Bitvector32Term) -> Proposition {
+        le(
+            Bitvector32Term::BitwiseXor(Box::new(constant(i32::MIN)), Box::new(term)),
+            constant(-1073741825),
+        )
+    }
+
+    #[test]
+    fn one_sided_direct_bound_does_not_hide_the_operand_bound() {
+        // The back edge of `for (i = 0; i < n; i++)`: the new index is
+        // `i0 + 1`, the invariant `0 <= i` bounds it directly from below
+        // only, and the guard `i0 < n` with `n <= 1073741823` bounds its
+        // operands from above. Citing the direct premise must not lose the
+        // certificate the operands alone give.
+        let i0 = var(10);
+        let n = var(11);
+        let next = Bitvector32Term::Add(Box::new(i0.clone()), Box::new(constant(1)));
+        let goal = biased_extent_bound(next.clone());
+        let without_direct = vec![
+            le(constant(0), i0.clone()),
+            lt(i0.clone(), n.clone()),
+            le(n.clone(), constant(1073741823)),
+        ];
+        check_plan(&goal, &without_direct);
+        let mut with_direct = vec![le(constant(0), next.clone())];
+        with_direct.extend(without_direct);
+        check_plan(&goal, &with_direct);
+        // The bound is still owed: with `n` unbounded nothing derives it.
+        let unbounded = vec![
+            le(constant(0), next),
+            le(constant(0), i0.clone()),
+            lt(i0, n),
+        ];
+        assert!(plan_signed_arithmetic_certificate(&goal, &unbounded).is_none());
     }
 
     #[test]
