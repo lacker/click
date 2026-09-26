@@ -25,16 +25,24 @@ adaptation or fix in the contract, proof, language, verifier, or kernel.
 ## Explain the program requirement first
 
 When adding or repairing a diagnostic, lead with the C operation or contract
-clause being checked and the requirement that is not yet established. Name the
-needed fact, resource ownership, or lifetime guarantee in terms of the user's
-source. Show a bounded, relevant selection of available evidence and explain
-the specific mismatch. Include the C and contract/proof locations when known;
-do not invent missing locations or provenance.
+clause being checked and `Requires` followed by the exact Click proposition or
+resource clause that is not yet established. Use the user's source expressions
+and retain the access mode (`owns` versus `views`), arguments, named resource
+occurrence, and relevant snapshot. An English explanation supplements this
+requirement; it must not replace it.
 
-For example, "this write needs exclusive ownership of `counter->value`; the
-available permission only keeps its mutex alive" explains a semantic boundary.
-"Resource transfer failed" does not. Internal subsystem names may supplement
-the explanation, but must not replace it.
+For example, print `Requires owns counter->value` and `Available: owns
+mutex_use(&counter->mutex)`. Then explain, if helpful, that `mutex_use` does not
+supply the field's ownership. For a missing equality, print `Requires
+counter->value == completed`. "Resource transfer failed" names neither
+obligation and is not an adequate primary explanation.
+
+Show a bounded, relevant selection of available evidence and explain the
+specific mismatch. Include the C and contract/proof locations when known;
+do not invent missing locations or provenance. Equal resource arguments do not
+necessarily identify the same resource occurrence: preserve source binders such
+as `g` and `next` when that distinction matters. Internal subsystem names may
+supplement the explanation, but must not replace it.
 
 A failed search means the goal is not yet proved, not that it is false or that
 the required resource is absent everywhere. Distinguish a missing resource from

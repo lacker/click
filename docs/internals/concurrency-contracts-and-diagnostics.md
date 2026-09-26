@@ -26,10 +26,10 @@ The proposed next surface is:
 | `owns mutex_guard(mu)` in a resource body | Keep the existing spelling | This resource contains ownership of a current acquisition, not merely knowledge that the mutex is locked. |
 | Direct named guard clauses, such as `owns g: mutex_guard(mu);` | Extend contract support; not supported today | The function receives and returns the same guard occurrence. |
 | `consumes` and `produces` for guards | Extend existing clause semantics; not supported today | The function can surrender an acquisition or return a newly established one. |
-| `mutex_live(mu)` | Proposed new built-in resource; name open for review | Lifecycle ownership of this initialized mutex, including responsibility for destruction. |
-| `mutex_use(mu)` | Proposed new built-in resource; name open for review | Permission to use this initialization while its lifetime is guaranteed. It gives no payload access. |
+| `mutex_live(mu)` | Agreed name for a proposed new built-in resource | Lifecycle ownership of this initialized mutex, including responsibility for destruction. |
+| `mutex_use(mu)` | Agreed name for a proposed new built-in resource | Permission to use this initialization while its lifetime is guaranteed. It gives no payload access. |
 | Acquisition numbers, protocol generations, ledger annotations | Keep internal | Source contracts should not need to name checker bookkeeping. |
-| A new `uses` clause or general effect language | Do not add initially | First try expressing the capabilities through ordinary resource clauses. |
+| A new `uses` clause or general effect language | Do not add initially | Use ordinary `owns`, `views`, `consumes`, and `produces` clauses; preserve their distinctions. |
 
 The examples below are proposed contract sketches. They are not passing Click
 fixtures or promises that the current parser accepts every spelling. In
@@ -136,33 +136,60 @@ beyond their lender's lifetime. More general reference-counted lifetimes can be
 added through a separate resource protocol; they are not necessary for joined
 workers.
 
-## A semantic choice that must not be hidden by syntax
+## Recommendation: no separate continuity witness
 
-The identity of a declared wrapper and the identity of an acquisition inside it
-are different things. A wrapper's model can change; an existential ingredient
-can be replaced when its body is reconstructed. Therefore, "returns the same
-wrapper" does not automatically prove "never released this acquisition."
+Use existing resource preservation and replacement clauses to express acquisition
+continuity. Do not add a `continuous` clause, epoch-valued field, or a second
+resource whose only purpose is to certify that the guard stayed held.
 
-Recommendation:
+```text
+owns g: mutex_guard(mu);       // Return this guard.
+```
 
-- A directly preserved guard binder names the same acquisition on input and
-  output. The kernel enforces this through ownership, not a held Boolean.
-- Ordinary `owns h: some_resource(...)` keeps its ordinary resource meaning.
-  Do not silently freeze all of its model fields or existential contents.
-- When a client needs acquisition continuity, its contract must preserve an
-  acquisition witness in its public meaning. A direct guard clause is the
-  initial explicit spelling. A wrapper can promise continuity only when its
-  declared model/contract exposes that relationship; Click must not infer it
-  solely from wrapper identity.
-- A replacement acquisition cannot preserve current-memory observations from
-  the old critical section. Snapshot and authority checks apply even if a
-  wrapper is reconstructed with the same visible fields.
+For a helper that may release and reacquire:
 
-This refines the earlier informal phrase "owns a wrapper preserves its guard."
+```text
+consumes g: mutex_guard(mu);   // The input guard need not be returned.
+produces next: mutex_guard(mu);
+```
+
+These are different contracts. In the first, `g` denotes the input resource
+occurrence, not an existential slot that any guard at the same address can fill.
+The binder gives that occurrence a readable name; it does not strengthen the
+meaning of an otherwise anonymous preserved primitive guard clause. Release
+consumes the input occurrence, and reacquisition supplies a different one. The
+second contract permits replacement; it does not by itself prove that release
+and reacquisition occurred. The body must justify the output resource.
+
+The kernel keeps acquisition identities internal. A diagnostic can distinguish
+`g` from `next` using source binders and their introduction/consumption sites,
+without requiring the user to compare acquisition numbers.
+
+A declared wrapper is different. `owns h: holding(counter)` returns that declared
+resource according to its definition and contract. Its existential ingredients
+may have been reconstructed. Do not infer uninterrupted holding merely because
+the wrapper's identity or visible model is unchanged, and do not silently freeze
+its model fields to obtain that stronger meaning.
+
+When a client specifically needs the same acquisition preserved across a helper,
+expose the guard as an ordinary contract resource. A caller can unfold its
+wrapper, pass the guard and any required body resources, and refold afterwards.
+It cannot pass both the folded wrapper and the guard contained in it as two
+independent owners. If the wrapper intentionally hides its guard, its public
+contract must be useful without promising the hidden guard's identity.
+
+This leaves wrapper abstraction intact and puts the stronger requirement in a
+contract the human can read. No separate continuity witness is needed for the
+initial design. Revisit that decision only for a concrete API whose necessary
+contract cannot be expressed this way; do not preemptively add a new surface
+concept.
+
 The implemented opaque checkpoint is safe because it forbids every mutex
-transition. Removing that prohibition requires resolving the distinction above.
-The representation of a continuity witness in a wrapper is still an open design
-choice; do not introduce epoch-valued model fields as an accidental solution.
+transition. Removing that prohibition must implement the rules above, including
+snapshot/authority checks: a replacement guard cannot revive observations about
+current memory from an earlier acquisition. A value can still be proved equal
+across acquisitions when the invariant or another checked argument establishes
+that equality; continuity is not the only possible proof.
 
 ## Loop contracts use existence, not fixed acquisition numbers
 
@@ -189,10 +216,26 @@ incomplete work.
 For an unmet proof requirement, use this information order:
 
 1. The C source location and operation, plus the related contract/loop clause.
-2. **Need:** the exact fact, resource ownership, or lifetime guarantee required.
+2. **Requires:** the exact Click proposition or resource clause, including access
+   mode, arguments, binder identity, and relevant snapshot when needed.
 3. **Available:** a small relevant selection of facts/resources on this path.
 4. **Why it does not suffice:** the specific mismatch, with source provenance.
 5. A next investigation or proof step supported by the evidence, if one exists.
+
+The requirement is written in Click terms, not replaced by an English paraphrase.
+For a fact, print `Requires counter->value == completed`. For a resource, print
+`Requires owns mutex_live(&counter->mutex)` (or the applicable `views` clause).
+Ownership and a view must not print as the same obligation. Explanatory prose
+follows only when it helps distinguish the required term from the available one.
+Automatic lending, reborrowing, and framing may remain sophisticated internally;
+their failures must expose the particular resource requirement they could not
+satisfy. A checker limitation must be identified separately.
+
+A printed binder such as `g` refers to the existing contract/proof binding, not
+an invitation to declare a fresh resource with that name. When two resources
+have the same printed arguments, retain the binder and source provenance that
+explain why only one can satisfy the obligation. A diagnostic that erases this
+distinction is imprecise even if its resource type is correct.
 
 Locations below are placeholders, not claims about current fixture line numbers.
 Names must be taken from the user's program and contracts. Internal identities
@@ -205,8 +248,8 @@ may be displayed as local explanatory labels such as "the acquisition at line
 Cannot verify this write at counter.c:<line>:
     counter->value = counter->value + 1;
 
-Need: exclusive ownership of counter->value.
-Available: permission to use counter->mutex.
+Requires owns counter->value
+Available: owns u: mutex_use(&counter->mutex)
 That permission keeps the mutex alive; it does not give access to its payload.
 The counter_state resource that owns this field is protected by counter->mutex.
 ```
@@ -221,9 +264,10 @@ only when its selected body actually supplies the required ownership.
 ```text
 Cannot verify pthread_mutex_unlock(&counter->mutex) at counter.c:<line>.
 
-Need: ownership of this acquisition, available to return to the mutex.
-Available: held_state contains that guard in its Holding arm.
-Unfold held_state to expose the guard before this call.
+Requires owns mutex_guard(&counter->mutex)
+Available: owns held_state: holding(counter)
+The selected Holding arm of held_state contains the required guard.
+Unfold held_state before this call.
 ```
 
 Only make this suggestion when the `Holding` arm is established. Otherwise the
@@ -235,8 +279,8 @@ unconditional instruction to unfold.
 ```text
 Cannot return counter_state to counter->mutex at counter.c:<line>.
 
-Need: counter->value == completed.
-Available: counter->value == previous + 1; completed == previous.
+Requires counter->value == completed
+Available: counter->value == previous + 1; completed == previous
 This path updates the C counter but has not established the matching
 contribution update required by counter_state.
 ```
@@ -250,8 +294,9 @@ automatically recommend weakening that invariant or changing the C program.
 ```text
 Cannot verify pthread_mutex_destroy(&counter->mutex) at counter.c:<line>.
 
-Need: exclusive lifecycle ownership, with all uses returned.
-Still outstanding: the use lent to worker second at pthread_create(...).
+Requires owns mutex_live(&counter->mutex)
+Unavailable while borrowed: mutex_live(&counter->mutex)
+Outstanding use: mutex_use(&counter->mutex), lent to second at pthread_create(...)
 This path has joined first, but has not recovered second's use permission.
 ```
 
@@ -263,8 +308,9 @@ Report the distinction as unresolved until the proof establishes which it is.
 ```text
 Cannot establish counter->value == saved at counter.c:<line>.
 
-Known: saved equals the value read before the unlock at counter.c:<earlier line>.
-Missing: a reason the current value still equals that earlier value.
+Requires counter->value == saved
+Earlier fact: counter->value == saved, at the read before unlock at counter.c:<earlier line>
+That fact describes the earlier state, not the current counter->value.
 The mutex was released and acquired again; another worker may have changed it.
 ```
 
@@ -276,9 +322,10 @@ fact itself became false or was arbitrarily erased.
 ```text
 Cannot establish the return requirement for g in helper's contract.
 
-Need: the acquisition received as g on entry.
-Available: a different acquisition, created by the later lock call.
-The input acquisition was returned by the unlock at helper.c:<line>.
+Requires owns g: mutex_guard(mu)
+Available: owns next: mutex_guard(mu)
+g was consumed by pthread_mutex_unlock(mu) at helper.c:<line>.
+next was produced by pthread_mutex_lock(mu) at helper.c:<later line>.
 ```
 
 Whether the contract should describe replacement or the C should avoid releasing
@@ -286,7 +333,7 @@ the lock is a human decision. The diagnostic must explain the discrepancy first.
 
 ## Do not disguise every failure as a missing fact
 
-The desired "need X here" explanation applies to semantic proof obligations.
+The desired `Requires X` explanation applies to semantic proof obligations.
 It is misleading for other failures:
 
 | Situation | Required explanation |
@@ -300,13 +347,14 @@ It is misleading for other failures:
 For example, today's unsupported abstract guard opening should eventually say:
 
 ```text
-Click cannot yet verify opening this guard at a function boundary.
-The contract supplies the guard, but Click does not yet represent its
-acquisition at abstract function entry.
-This is a verifier limitation; no additional C precondition is suggested.
+Cannot yet verify unfold(held_state) at helper.click:<line>.
+Available: owns held_state: holding(counter)
+Selected body: owns mutex_guard(&counter->mutex)
+Click does not yet support exposing that guard at abstract function entry.
+This is a verifier limitation, not a missing contract resource.
 ```
 
-Printing `need: false = true` as a substitute for that explanation is unacceptable.
+Printing `Requires false = true` as a substitute for that explanation is unacceptable.
 Likewise, "resource transfer failed" or "protocol state mismatch" is useful only
 as a secondary implementation label, after the program-level requirement.
 
@@ -346,21 +394,24 @@ obligations, not claims that the tutorial already proves Click's design.
 
 ## Review decisions and handoff criteria
 
-Human review should settle these before implementation is treated as mechanical:
+The current design direction is:
 
-1. Are `mutex_live` and `mutex_use` understandable names, or does their distinction
-   need clearer wording? Both names are provisional.
-2. Is ordinary `owns` syntax for a use permission sufficiently clear, given that
-   it owns permission rather than the mutex or payload? Prefer documentation and
-   a precise resource name before adding a new clause keyword.
-3. Is automatic checked lending at a call boundary understandable? The contract
-   must reveal the lifetime requirement, and failure messages must identify the
-   owner/use loan that supplies or blocks it.
-4. Does the direct-preservation versus existential-wrapper distinction need a
-   surface continuity witness? This remains open; do not silently pick a meaning
-   that makes existing ordinary resource contracts stronger.
-5. Do the refusal examples contain enough information to discuss the C, contract,
-   and proof without understanding Click internals?
+1. Use the names `mutex_live` and `mutex_use`. They are still proposed language
+   additions, not implemented resources.
+2. Keep the existing ownership-clause vocabulary. Do not introduce a `uses`
+   keyword or a general protocol-effect annotation.
+3. Permit automatic checked lending and reborrowing, provided a failure prints
+   the exact Click resource or fact required and identifies a relevant blocked
+   loan when one exists.
+4. Use preserved guard occurrences for continuity and consumed/produced guards
+   for replacement. Do not add a separate surface continuity witness initially.
+5. Lead semantic proof failures with `Requires <Click proposition or resource
+   clause>`. English supplies context; it does not replace the obligation.
+
+The remaining design work is the checked lifetime-loan and abstract-identity
+rules, including returned guards and conditional loops. Their implementation
+must support these contracts without strengthening ordinary wrapper semantics
+or granting current-memory facts from obsolete acquisitions.
 
 The implementation handoff should contain the accepted contract sketches,
 operation rules, and paired positive/negative examples for preserving,
