@@ -36,6 +36,44 @@ Fix what slows the work before completing the example:
    efficiency contract.
 4. **Then the remaining exits of C3**, as separate packages by exit path.
 
+## State, 2026-09-25
+
+**C3a is written on all four frame combinations.** The uncle-red `continue`
+of `__rb_insert` now recolours the uncle, the parent, and the grandparent,
+refolds the three nodes at their recoloured models, and closes the nine
+invariants and the two-frame `decreases c` descent, for the cursor's frame
+`Left` or `Right` inside the grandparent's frame `Left` or `Right`. The C
+proof of each arm unfolds one cursor frame with `plug_left_frame` or
+`plug_right_frame` and applies one of the new model theorems
+`ctx_insert_case1_left_step` / `ctx_insert_case1_right_step`, whose four
+conclusions are stated on the explicit recoloured subtree; the parent
+consistency half rests on the new colour-erased `Links` skeleton
+(`plug_insert_fix_recolor_parent_consistent`). This is the D10 shape E1 asked
+for: the case reasoning lives in the model once, and each C arm is the
+bookkeeping between the frame's own facts and the theorem's spelling. The
+four arms remain written out per D9. The kernel gap it exposed (73 below) is
+closed in 9e1c4281.
+
+The loop rule was certified end to end only in a scratch experiment whose C
+copy cut the uncle-black paths short with a `break`; on the unchanged source
+the frontier report for the first uncle-black path preempts the back-edge
+check of the completed paths, so the recolour arms' closers are validated
+there by explicit `have`s of every invariant in the rebound binder spellings
+immediately before `close_invariants()`. The frontier is now the uncle-black
+case, statement 22 of the body (`tmp = parent->rb_right`), which is where C3b
+starts on all four copies; `tests/examples.rs` pins that diagnostic. The
+frontier verifies to that point in about 2.8s on a warm debug build.
+
+Three tooling observations from this resumption, none blocking, none filed:
+`click verify` of a lone sidecar takes its directory as the project root, so
+`rbtree_insert.frontier` cannot be run from the command line and its README
+said it could (corrected); `--trace-proof --trace-to` addresses only tactics
+written directly in a proof body, not those inside a proof `match` arm or a
+loop phase, so it could not show the insert loop's state; and the unfinished
+`preserve` frontier report is emitted before any completed path's back edge
+is checked, so a wrong `close_invariants` on a finished arm stays silent
+until every arm is finished.
+
 ## State, 2026-09-13
 
 **The traversal parser prerequisite:** the unchanged `rb_next` guard
@@ -116,16 +154,18 @@ next folded-entry proof frontier). Uniform scoping: bb142e1c (theorem arguments,
 `instantiate`, `extract`), ad5c2307 (loop clauses), 2d96d5d7 (phase
 bodies), 99a07d5c (`using` premises in a `have` body).
 
-**Where to pick this up.** I1 is complete as of 2026-09-13. The next C3 work
-starts from the imported frontier in `examples/rbtree-insert`, incorporating
-the useful proof progress from branch `claude/rsm-c3-insert-fixup-7`
-(388cb043) only after restoring a green checkpoint. That branch's unfinished
-red-uncle draft reaches statement 42, `augment_rotate` in
-case 2, so the next C3 resumption starts from that branch rather than from
-the old fixture. The order of work is now E1 (per-frame duplication and verify
-time), then C3a through C3c. Each resumption so far was one Opus agent per package
-with the orchestrator integrating; doing the packages directly works the
-same way, the packages below are written to be self-contained either way.
+**Where to pick this up.** C3b starts from the frontier in
+`examples/rbtree-insert/rbtree_insert.frontier` at the `Color::Black` arm of
+each `match uncolor`, which stands before `tmp = parent->rb_right` (or
+`rb_left`) with the uncle's cells unfolded as `ul`/`ur`, the grandparent
+frame unfolded as `us`/`uu`, and `cup == Context::Left(...)`/`Right(...)`
+already restated in constructor form. The branch `claude/rsm-c3-insert-fixup-7`
+named earlier no longer exists. To iterate on the frontier from the command
+line, copy it beside a copy of `examples/rbtree-model` under one scratch
+root and verify that directory (see the fixture README). Each resumption so
+far was one agent per package with the orchestrator integrating; doing the
+packages directly works the same way, the packages below are written to be
+self-contained either way.
 
 **Machine notes.** One full gate at a time; under heavy load a few unit
 tests hit nextest's 60s kill with zero assertion failures and pass alone.
@@ -399,6 +439,7 @@ commit that closed it. Reproductions live in the named fixtures.
 | 70 | `static inline` locals had no layouts (map keyed by the `#inline:` name) | ca8b75f8 |
 | 71 | `contradiction` in a `preserve` arm only as its sole tactic | ccf9a340 |
 | 72 | A read through a symbolic identity proved equal to a C pointer was refused: the read lookup resolved to the alias and looked only there | a3b96c12 |
+| 73 | `if (parent != tmp)` undecided with both nodes owned: the separation rule read only assumed compositions, and two instances opened one at a time never shared one; a comparison now composes its own two holders through the alias component | 9e1c4281 |
 
 ## Open findings, not scheduled
 
@@ -472,19 +513,22 @@ unfinished proof as an explicit negative frontier. The duplicated mdtest was
 deleted. I1 has no remaining P1 work; the imports issue now retains only P2
 follow-ups.
 
-**E1. Per-frame duplication and verify time.** Restate the fixup body's
-per-frame proofs as one theorem per case (D10 shape) so each path is
-written once; measure `click verify` before and after; if the remaining
-time is superlinear in the body, reduce it to a scaling regression under
-`docs/internals/verification-efficiency.md` and fix the verifier before
-C3b. Depends on I1.
+**E1. Per-frame duplication and verify time — delivered with C3a.** The
+case reasoning is one theorem per case in the model
+(`ctx_insert_case1_*_step`); each C arm is the bookkeeping between its frame
+facts and the theorem's spelling, and the four arms are written out per D9.
+The frontier verifies in about 2.8s to the first uncle-black path. Measure
+again when C3b lands the rotation arms; a superlinear step is a scaling
+regression under `docs/internals/verification-efficiency.md`.
 
-**C3a. Recolour `continue`s.** Case 1 on both frames: recolour parent,
-uncle, and grandparent through `rb_set_parent_color`, refold at the
-recoloured models, `ctx_insert_case1_left`/`_right` for the restated
-invariant at the grandparent, `node = gparent; parent = rb_red_parent(node);
-continue;` owing all nine invariants and `decreases c` (the next frame is
-`up.up`, a strict contained descendant). Depends on I1, E1.
+**C3a. Recolour `continue`s — written 2026-09-25, certified with C3b.**
+Case 1 on all four frame combinations: recolour parent, uncle, and
+grandparent through `rb_set_parent_color`, refold at the recoloured models,
+`ctx_insert_case1_left_step`/`_right_step` for the restated invariants at the
+grandparent, `node = gparent; parent = rb_parent(node); continue;` owing all
+nine invariants and `decreases c`. Every tactic of every arm is checked on
+the unchanged source; the loop rule itself is certified once the
+uncle-black arms also end, which is C3b.
 
 **C3b. Rotation `break`s.** Cases 2 and 3 on both frames: the writes
 through `__rb_rotate_set_parents` and `__rb_change_child`, refolds at the

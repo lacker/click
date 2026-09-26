@@ -524,6 +524,43 @@ grandparent-level shape the case theorems name. A fixup proof uses one of these
 to move between the loop invariant's `plug(ctx.model, sub.model)` and the case
 shape, with no induction of its own.
 
+## Parent consistency under recolouring
+
+`rb_parent_consistent` reads links and parent payloads and never a colour, but
+the recolouring case functions are compositions of `rb_recolor`, whose result
+is a different constructor term, so "the parents did not change" has to be
+said once as a theorem rather than by unfolding. `Links` is the tree with its
+colours erased: `rb_links(tree)` keeps each node's identity and parent payload
+and drops the colour, `links_consistent` is `rb_parent_consistent` restated on
+that skeleton, and `rb_parent_consistent_is_links_consistent` says the two
+agree at every tree and parent. `rb_links_recolor`, `_recolor_left`,
+`_recolor_right`, and `rb_links_insert_fix_recolor` say the four recolouring
+functions leave the skeleton alone, `plug_links_transport` carries an equal
+skeleton through any context as `plug_inorder_transport` carries an equal
+sequence, and `plug_parent_consistent_links` turns that into an equality of
+`rb_parent_consistent` at the plugged trees. The theorem a C proof applies is
+`plug_insert_fix_recolor_parent_consistent`: recolouring the case-1 subtree
+under any context leaves `rb_parent_consistent(plug(...), p)` unchanged.
+
+### Case 1 as one step
+
+`ctx_insert_case1_left_step` and `ctx_insert_case1_right_step` restate case 1
+in the form the loop body consumes: the hypotheses are the cursor's
+`almost_rb_insert` at the parent's subtree and the grandparent frame's
+`ctx_rb` at the parent's black height (exactly what `ctx_insert_cursor_*_parent`
+produces), and the four conclusions are stated on the explicit recoloured
+subtree — `is_rb`, `ctx_almost_rb_insert` two frames up at its black height,
+and two unconditional equalities that move the in-order sequence and parent
+consistency from the two-frame `plug` at the parent's subtree to `plug` two
+frames up at the recoloured subtree. The C proof of the uncle-red `continue`
+therefore unfolds one cursor frame with `plug_left_frame` or
+`plug_right_frame`, applies one step theorem, and folds; it never restates the
+case shape. `rb_parent_is_node_parent`, `rb_parent_is_node_of`,
+`ctx_rb_left_red_focus_black`, `ctx_rb_right_red_focus_black`, and
+`node_color_ok_red_right_focus_is_black` are the one-line bridges the same
+proof uses to read a payload out of a frame fact and to learn that a red
+parent's own parent is black.
+
 ## Standard library
 
 The example adds `list_tail` locally rather than to `stdlib/prelude.click`; it

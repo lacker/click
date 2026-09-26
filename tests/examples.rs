@@ -174,13 +174,16 @@ fn rbtree_insert_frontier_remains_explicit_and_uses_the_shared_model() {
             .expect("the insert frontier should resolve the shared model");
         let error = click::surface::verify_c0_project(&project, &source_refs(&c_sources))
             .expect_err("the insert proof frontier is deliberately unfinished");
+        // The uncle-red `continue`s are complete on every frame combination;
+        // the first unfinished path is the uncle-black case, standing before
+        // `tmp = parent->rb_right` after the red-uncle test was decided false.
         assert!(
-        error.message().contains(
-            "the frontier is at statement 23, `tmp = load_int32_pointer(byte_offset(parent, 8))`"
-        ),
-        "unexpected insert frontier: {}",
-        error.message()
-    );
+            error.message().contains(
+                "the frontier is at statement 22, `tmp = load_int32_pointer(byte_offset(parent, 8))`"
+            ),
+            "unexpected insert frontier: {}",
+            error.message()
+        );
     })
 }
 
