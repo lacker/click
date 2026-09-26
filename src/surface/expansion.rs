@@ -2488,6 +2488,83 @@ fn locate_source_tactic_file(
     )))
 }
 
+/// Whether the smart tactic written at `target` is a direct tactic of the
+/// body of the `have` written at `have`.
+///
+/// A `have` whose body is a smart tactic is one source site anchored at its
+/// `have` keyword: the `have` owns its nested proof work, and expanding it
+/// rewrites that body. A location naming the smart tactic inside the body
+/// selects that same site.
+pub fn smart_have_body_tactic_at(
+    source: &str,
+    have: &SourcePosition,
+    target: &SourcePosition,
+) -> Result<bool, ClickError> {
+    let tokens = scan_source_tokens(source)?;
+    let have = offset_at_position(source, have.line, have.column)?;
+    let target = offset_at_position(source, target.line, target.column)?;
+    let Some(start) = tokens.iter().position(|token| token.span.start == have) else {
+        return Ok(false);
+    };
+    have_body_smart_tactic_starts_at(&tokens, start, target)
+}
+
+fn have_body_smart_tactic_starts_at(
+    tokens: &[SourceToken],
+    start: usize,
+    target: usize,
+) -> Result<bool, ClickError> {
+    if tokens[start].text != "have" {
+        return Ok(false);
+    }
+    let end = tactic_end_token(tokens, start, tokens.len())?;
+    let Some(by) = (start..=end).find(|&index| tokens[index].text == "by") else {
+        return Ok(false);
+    };
+    let starts = if tokens.get(by + 1).map(|token| token.text.as_str()) == Some("{") {
+        let close = matching_delimiter(tokens, by + 1, "{", "}")?;
+        direct_tactic_token_ranges(tokens, by + 1, close)?
+            .into_iter()
+            .map(|range| range.start)
+            .collect::<Vec<_>>()
+    } else {
+        vec![by + 1]
+    };
+    Ok(starts.into_iter().any(|index| {
+        tokens[index].span.start == target && matches!(tokens[index].text.as_str(), "simp" | "auto")
+    }))
+}
+
+/// The source index of the smart `have` site whose body writes the smart
+/// tactic starting at `wanted`, if there is one.
+fn smart_have_owning_tactic_at(
+    tokens: &[SourceToken],
+    spans: &[Range<usize>],
+    tactics: &[ProofTactic],
+    wanted: usize,
+) -> Result<Option<usize>, ClickError> {
+    let mut sites = Vec::new();
+    collect_smart_script_sites("", tactics, 0, &mut sites);
+    for site in sites {
+        let Some(span) = spans.get(site.source_index) else {
+            continue;
+        };
+        if !span.contains(&wanted) {
+            continue;
+        }
+        let Some(start) = tokens
+            .iter()
+            .position(|token| token.span.start == span.start)
+        else {
+            continue;
+        };
+        if have_body_smart_tactic_starts_at(tokens, start, wanted)? {
+            return Ok(Some(site.source_index));
+        }
+    }
+    Ok(None)
+}
+
 fn locate_tactic_in_proof(
     tokens: &[SourceToken],
     edit: &ProofSourceEdit,
@@ -2503,10 +2580,12 @@ fn locate_tactic_in_proof(
                 ));
             };
             let spans = collect_source_tactic_spans(tokens, source_proof_span, tactics)?;
-            let Some((source_index, span)) = spans
-                .into_iter()
-                .enumerate()
-                .find(|(_, span)| span.start == wanted)
+            let exact = spans.iter().position(|span| span.start == wanted);
+            let selected = match exact {
+                Some(index) => Some(index),
+                None => smart_have_owning_tactic_at(tokens, &spans, tactics, wanted)?,
+            };
+            let Some((source_index, span)) = selected.map(|index| (index, spans[index].clone()))
             else {
                 return Ok(None);
             };

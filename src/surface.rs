@@ -123,7 +123,7 @@ pub use expansion::{
     expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
     map_verifying_source_paths, nested_tactic_source_position, selected_c_target,
     selected_project_c_target, selected_project_thread_runtime, selected_thread_runtime,
-    tactic_arm_containing_position, tactic_have_body_contains_position,
+    smart_have_body_tactic_at, tactic_arm_containing_position, tactic_have_body_contains_position,
     tactic_line_has_multiple_starts, tactic_source_at_position, tactic_starts_on_line,
     verifying_source_paths,
 };

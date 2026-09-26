@@ -29,7 +29,9 @@ Replace the following:
 ## Selection
 
 The location form selects one source-addressable smart tactic. Coordinates in
-an mdtest refer to the Markdown file, not to the extracted Click block. The
+an mdtest refer to the Markdown file, not to the extracted Click block. A
+`have` whose body is a smart tactic is one site: its `have` keyword and the
+`simp` written in its body both select it, and expansion rewrites the body. The
 claim form expands every smart tactic in one named function claim and is useful
 when aggregate smart work matters even though no individual site is slow.
 

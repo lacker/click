@@ -4288,6 +4288,34 @@ fn source_expander_lowers_smart_simp_inside_have() {
         .expect("the expanded smart have should check");
 }
 
+/// The `simp` written in a smart `have` body selects the `have` site, as
+/// the `have` keyword does, for a bare `by simp` and for a block body.
+#[test]
+fn source_expander_selects_a_smart_have_by_the_simp_in_its_body() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    let click_source = "verifying \"identity.c\";\n\
+        int32 identity(int32 x) {\n\
+        \x20   ensures result == x;\n\
+        } by {\n\
+        \x20   have x == x by simp;\n\
+        \x20   have x <= x by {\n\
+        \x20       simp();\n\
+        \x20   }\n\
+        \x20   execute();\n\
+        \x20   simp();\n\
+        }\n";
+    let sources = [("identity.c", c_source)];
+    for (have, nested) in [((5, 5), (5, 20)), ((6, 5), (7, 9))] {
+        let from_have = expand_c0_tactic_source_at(click_source, &sources, have.0, have.1)
+            .expect("the have keyword should select the smart have");
+        let from_nested = expand_c0_tactic_source_at(click_source, &sources, nested.0, nested.1)
+            .expect("the simp in the body should select the smart have");
+        assert_eq!(from_nested, from_have);
+        assert_ne!(from_nested, click_source);
+        verify_c0_sources(&from_nested, &sources).expect("the expanded smart have should check");
+    }
+}
+
 #[test]
 fn pure_structural_simp_builds_recursive_conjunction_on_proof() {
     let click_source = r#"

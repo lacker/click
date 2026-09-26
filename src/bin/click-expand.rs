@@ -11,7 +11,7 @@ use click::cli::{
     source_refs,
 };
 use click::surface::{
-    ClickProject, c0_prepared_project_smart_tactic_source_sites,
+    ClickProject, SourcePosition, c0_prepared_project_smart_tactic_source_sites,
     c0_prepared_project_tactic_source_position, c0_prepared_smart_tactic_source_sites,
     c0_prepared_tactic_source_position, c0_project_smart_tactic_source_sites,
     c0_project_tactic_source_position, c0_smart_tactic_source_sites, c0_tactic_source_position,
@@ -23,9 +23,9 @@ use click::surface::{
     expand_c0_project_tactic_source_at, expand_c0_tactic_source_at,
     expand_cpp_prepared_claim_source_by_label, expand_cpp_prepared_project_claim_source_by_label,
     expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
-    map_verifying_source_paths, verify_c0_prepared_project_at, verify_c0_prepared_sources_at,
-    verify_c0_project_at, verify_c0_sources_at, verify_cpp_prepared_project_at,
-    verify_cpp_prepared_sources_at,
+    map_verifying_source_paths, smart_have_body_tactic_at, verify_c0_prepared_project_at,
+    verify_c0_prepared_sources_at, verify_c0_project_at, verify_c0_sources_at,
+    verify_cpp_prepared_project_at, verify_cpp_prepared_sources_at,
 };
 
 const USAGE: &str = "usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>:<column>\n       click expand --claim <LABEL> [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>\n\nExpansion is checked before output. With --in-place, the original is atomically replaced only after targeted verification succeeds.";
@@ -600,7 +600,20 @@ fn selected_claim(
                 },
             }
             .ok()?;
-            (position.line == line && position.column == column).then_some(site.claim_label)
+            // A smart `have` is selected by its `have` keyword or by the smart
+            // tactic written in its body.
+            let selected = (position.line == line && position.column == column)
+                || smart_have_body_tactic_at(
+                    click_source,
+                    &position,
+                    &SourcePosition {
+                        line,
+                        column,
+                        origin: None,
+                    },
+                )
+                .unwrap_or(false);
+            selected.then_some(site.claim_label)
         })
         .ok_or_else(|| "source location does not select a smart tactic".to_string())
 }
@@ -986,6 +999,46 @@ int32 bad(int32 x) {
             expanded.ends_with("int32 bad(int32 x) {\n    ensures result == x + 1 by simp;\n}\n")
         );
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// A smart `have` nested in a proof `branch` arm is one site, selected by
+    /// its `have` keyword or by the `simp` written in its body; both select
+    /// the same checked expansion.
+    #[test]
+    fn a_smart_tactic_inside_a_nested_have_body_selects_the_have() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests/guarded_postcondition_closes_after_call.md");
+        let markdown = fs::read_to_string(&path).unwrap();
+        let have_line = markdown
+            .lines()
+            .position(|line| line == "            have st.live == 1 by {")
+            .expect("fixture should contain the nested smart have")
+            + 1;
+        let simp = markdown.lines().nth(have_line).unwrap();
+        assert_eq!(simp.trim(), "simp() using {", "{simp}");
+        let run_at = |line: usize, column: usize| {
+            run(&Arguments {
+                click_path: path.clone(),
+                selection: Selection::Tactic { line, column },
+                time_limit: DEFAULT_EXPANSION_TIME_LIMIT,
+                output: None,
+                in_place: false,
+            })
+        };
+
+        let from_simp = run_at(have_line + 1, simp.find("simp").unwrap() + 1)
+            .expect("the nested simp should select its smart have");
+        let from_have = run_at(have_line, 13).expect("the have keyword should select it");
+
+        assert_eq!(from_simp, from_have);
+        assert!(
+            from_simp.contains("extract(st.live == (at(m, st.live) + got));"),
+            "{from_simp}"
+        );
+        assert!(
+            !from_simp.contains("simp() using {\n                    defined(1 + got)"),
+            "{from_simp}"
+        );
     }
 
     #[test]
