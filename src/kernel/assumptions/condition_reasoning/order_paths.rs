@@ -838,6 +838,19 @@ impl PureFactContext {
         if crate::kernel::assumptions::reasoning_interrupted() {
             return false;
         }
+        // The biased spelling of an unsigned bound below the sign bit is the
+        // signed pair `0 <= term` and `term <= bound`, read the same way the
+        // condition checker reads it (`unsigned_upper_bound_below_sign_bit`),
+        // so the two provers agree on what a range's extent guard means.
+        if value && let Some((term, bound)) = unsigned_upper_bound_below_sign_bit(condition) {
+            return self.proves_order_condition_for_memory_resolution(
+                &ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), term.clone()),
+                true,
+            ) && self.proves_order_condition_for_memory_resolution(
+                &ConditionTerm::signed_less_equal(term.clone(), Bitvector32Term::Constant(bound)),
+                true,
+            );
+        }
         condition_as_order_fact(condition, value).is_some_and(|(left, right, strict)| {
             let left = self.simplify_bitvector_under_assumptions(&left);
             let right = self.simplify_bitvector_under_assumptions(&right);
