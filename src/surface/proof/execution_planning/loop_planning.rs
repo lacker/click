@@ -457,6 +457,12 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
             let scope = phase.begin_loop_entry_goal(item.proposition().clone(), obligation)?;
             let body_checkpoint = scope.checkpoint();
             let checked = check_initialization_body(&scope, invariant_proof).map_err(|error| {
+                // The kernel already refused this declaration and says why.
+                if obligation.is_impossible_goal()
+                    && let Some(reason) = obligation.context()
+                {
+                    return ClickError::new(reason);
+                }
                 error.with_context(format!(
                     "loop {loop_index} invariant {invariant_index} entry"
                 ))

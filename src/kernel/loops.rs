@@ -3746,6 +3746,23 @@ pub(super) fn invariant_context(
     }
 }
 
+/// Why a stated range was pruned as a byte extent, in the terms the reader
+/// wrote it in: an element count and a width.
+fn dropped_range_extent_reason(extent: &crate::kernel::DroppedRangeExtent) -> String {
+    if extent.element_count < 0 {
+        let count = -extent.element_count;
+        let elements = if count == 1 { "element" } else { "elements" };
+        format!(
+            "a memory range it states runs backwards, so it is not a byte extent: its end is {count} {elements} before its start"
+        )
+    } else {
+        format!(
+            "a memory range it states is too wide to be a 32-bit byte extent: {} elements of {} bytes is past the {}-byte limit",
+            extent.element_count, extent.element_width, extent.byte_limit
+        )
+    }
+}
+
 pub(super) fn collect_invariant_check_obligations(
     state: &CState,
     loop_entry_state: &CState,
@@ -3838,13 +3855,41 @@ fn collect_invariant_check_obligations_with_mode(
             } else {
                 assumptions_with_path_context(assumptions, &facts, &obligations)
             };
-            for path in lower_spec_proposition_at_state_with_loop_entry(
+            let dropped_extent_before = budget.dropped_range_extent().is_some();
+            let paths = lower_spec_proposition_at_state_with_loop_entry(
                 state,
                 check.proposition(),
                 Some(loop_entry_state),
                 &effective_assumptions,
                 budget,
-            )? {
+            )?;
+            // A declaration with no reading at this state owes the
+            // impossible goal, never nothing. Lowering prunes a path whose
+            // obligation it already decides false — a stated range whose
+            // extent is reversed or too wide, for one — so an empty result
+            // means the invariant does not hold here. Owing nothing would
+            // let the head assume a hypothesis nobody proved: the head
+            // assumes a stated range's extent half as content.
+            if paths.is_empty() {
+                let reason =
+                    if !dropped_extent_before && let Some(extent) = budget.dropped_range_extent() {
+                        dropped_range_extent_reason(extent)
+                    } else {
+                        "a condition it owes is already decided false at this state".to_string()
+                    };
+                let context = invariant_context(check, phase).unwrap_or("loop invariant");
+                let goal = ProofObligation::verification_condition(false_equals_true_proposition())
+                    .with_context(format!(
+                        "{context}: this invariant cannot hold here: {reason}"
+                    ));
+                if let Some(declarations) = declarations.as_deref_mut() {
+                    declarations[declaration_index].push(goal.clone());
+                }
+                append_required_proof_obligations(&mut all_obligations, assumptions, &[goal]);
+                next_contexts.push((facts, obligations, guards));
+                continue;
+            }
+            for path in paths {
                 let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
                     &facts,
                     &obligations,
@@ -6159,11 +6204,26 @@ pub(super) fn assume_invariant_checks(
                 &effective_assumptions,
                 budget,
             )? {
+                // The extent half of a stated range is invariant content: it
+                // is owed at entry and at every back edge together with the
+                // range (`collect_invariant_check_obligations` owes every
+                // obligation this lowering emits), so the head assumes it
+                // beside the range instead of demanding it as a prerequisite.
+                let (extent, path_obligations): (Vec<_>, Vec<_>) = path
+                    .obligations
+                    .into_iter()
+                    .partition(ProofObligation::is_range_extent);
+                let mut path_facts = path.facts;
+                path_facts.extend(
+                    extent
+                        .into_iter()
+                        .map(|obligation| ExecutionPureFact::new(obligation.proposition)),
+                );
                 let Some((mut facts, obligations)) = merge_execution_pure_facts_and_obligations(
                     &facts,
                     &obligations,
-                    &path.facts,
-                    &path.obligations,
+                    &path_facts,
+                    &path_obligations,
                     assumptions,
                 ) else {
                     continue;

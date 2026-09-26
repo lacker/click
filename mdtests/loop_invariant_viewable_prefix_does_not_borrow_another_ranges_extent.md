@@ -5,9 +5,10 @@ The negative of
 The contract views `a[0..m]`, so its extent half bounds `m`, and nothing
 relates `m` to the loop bound `n`. The invariant `viewable(a[0..i])` with
 `i <= n` is then false whenever `n > m`, and even its extent bound fails for
-`n` past `1073741823`. The `views` clause's `m <= 1073741823` is about `m`
-only, so no closer can cite it for `i`, and the invariant is refused where it
-is first read as a stated range.
+`n` past `1073741823`. The head assumes the invariant's own extent half, which
+the back edge would owe, but the `views` clause's `m <= 1073741823` is about
+`m` only and says nothing about the cell `a[i]` the body reads, so the body is
+refused at that read.
 
 ```c filename=loop_invariant_viewable_prefix_does_not_borrow_another_ranges_extent.c
 int32 any_zero(int32 *a, int32 n, int32 m) {
@@ -45,5 +46,5 @@ int32 any_zero(int32 *a, int32 n, int32 m) {
 ```
 
 ```expect
-fail: loop-head prerequisite
+fail: missing resource fact `views a[i..(i + 1)]`
 ```

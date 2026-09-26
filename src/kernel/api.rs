@@ -2274,9 +2274,10 @@ fn no_single_path_message<T>(what: &str, paths: &[T], budget: &ExecutionBudget) 
         let width = extent.element_width;
         let limit = extent.byte_limit;
         return if extent.element_count < 0 {
+            let count = -extent.element_count;
+            let elements = if count == 1 { "element" } else { "elements" };
             format!(
-                "the kernel {what} produced no path: a memory range runs backwards, so it is not a byte extent: its end is {} elements before its start",
-                -extent.element_count
+                "the kernel {what} produced no path: a memory range runs backwards, so it is not a byte extent: its end is {count} {elements} before its start"
             )
         } else {
             format!(

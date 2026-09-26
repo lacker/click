@@ -83,6 +83,11 @@ has to be *established* — a C call site, applying a theorem whose premise is a
 range, a loop invariant's entry and back edge — the extent half is owed along
 with the viewability half.
 
+A loop invariant is both at once, like any other invariant content: the head,
+the body and the exit assume both halves, and the entry and every back edge owe
+both. An invariant whose range is already known not to be an extent where it is
+owed is refused there, as a false invariant, rather than read as owing nothing.
+
 `separate(memory(p[a..b]), memory(q[c..d]))` includes the same validity
 conditions for both ranges. A separation premise supplies the bounds; a
 separation goal or call requirement must prove them. Observing or unfolding a

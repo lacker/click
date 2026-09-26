@@ -8,9 +8,10 @@ holds on entry, where `k <= 1 <= n`, but once `i == n` it claims
 `viewable(a[0..n + 1])`, and for `n == 1073741823` even its extent bound
 `n + 1 <=u 1073741823` is false. The binder is bounded only by `i + 1`, which
 `i <= n` and `n <= 1073741823` bound by `1073741824`, so the extent bound is
-not decided for every `k` the invariant covers. It is refused where the
-invariant is first read as a stated range, at the loop head, before the
-closer at the back edge could be asked for the same bound.
+not decided for every `k` the invariant covers. The head assumes it as the
+invariant's content, so it is owed where the invariant is established, and the
+closer at the back edge is refused for it: the unproved bundle spells the
+bound over the binder, `k <= 1073741823`.
 
 ```c filename=loop_quantified_viewable_invariant_one_prefix_too_wide_is_refused.c
 int32 count_up(int32 *a, int32 n) {
@@ -61,5 +62,5 @@ int32 count_up(int32 *a, int32 n) {
 ```
 
 ```expect
-fail: missing loop-head prerequisite
+fail: implies 0 <= k and k <= (i + 1) implies k <= 1073741823 }
 ```

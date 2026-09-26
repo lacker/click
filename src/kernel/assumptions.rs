@@ -6078,6 +6078,7 @@ impl ProofObligation {
             assumable: true,
             call_requirement_site: None,
             introductions: None,
+            range_extent: false,
         }
     }
 
@@ -6088,6 +6089,7 @@ impl ProofObligation {
             assumable: false,
             call_requirement_site: None,
             introductions: None,
+            range_extent: false,
         }
     }
 
@@ -6145,6 +6147,20 @@ impl ProofObligation {
         self.introductions.as_ref()
     }
 
+    /// Whether this obligation is the impossible goal `false = true` the
+    /// kernel owes where something is already refused. Its context is then
+    /// the whole reason, and a caller whose proof of it failed reports that
+    /// context instead of the attempt.
+    pub fn is_impossible_goal(&self) -> bool {
+        self.proposition == crate::kernel::loops::false_equals_true_proposition()
+    }
+
+    /// Whether lowering emitted this obligation as the extent half of a
+    /// stated range. See [`ProofObligation::range_extent`].
+    pub(in crate::kernel) fn is_range_extent(&self) -> bool {
+        self.range_extent
+    }
+
     pub fn is_assumable(&self) -> bool {
         self.assumable
     }
@@ -6195,6 +6211,7 @@ impl ProofObligation {
             // recorded for. A rewrite adds or removes head nodes, so the
             // record is dropped rather than left describing another shape.
             introductions: None,
+            range_extent: self.range_extent,
         }
     }
 }

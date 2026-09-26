@@ -388,7 +388,7 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                     ..
                 } => Err(ClickError::new(format!(
                     "{context_label} could not verify the C condition: {}",
-                    crate::surface::diagnostics::describe_runtime_error(error, &[], &[]),
+                    crate::surface::diagnostics::describe_runtime_error_over_locals(error, state),
                 )).with_kind(crate::surface::diagnostics::runtime_refusal_kind(error))),
                 proposition => Err(ClickError::new(format!(
                     "{context_label} saw unexpected condition theorem {proposition:?}"

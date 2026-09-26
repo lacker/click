@@ -707,6 +707,21 @@ pub(super) fn describe_stated_fact_over_locals(fact: &Proposition, state: &CStat
     describe_stated_fact(fact, &parameters, &arguments)
 }
 
+/// A runtime error spelled over `state`'s locals, so an address a loop head
+/// minted a variable for reads as the index the source wrote.
+pub(super) fn describe_runtime_error_over_locals(
+    error: &crate::kernel::CRuntimeError,
+    state: &CState,
+) -> String {
+    let values = state
+        .locals()
+        .object_values()
+        .map(|(name, value)| (name.to_string(), value.clone()))
+        .collect();
+    let (parameters, arguments) = value_naming_tables(&values);
+    describe_runtime_error(error, &parameters, &arguments)
+}
+
 pub(super) fn describe_missing_proof_obligations(
     obligations: &[ProofObligation],
     pure_facts: &[Proposition],
