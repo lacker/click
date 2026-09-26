@@ -51,5 +51,5 @@ theorem a_wrapped_extent_yields_a_cell(v: int32[], n: int32) {
 ```
 
 ```expect
-fail: simplified proposition was not true
+fail: could not establish `defined(v[0])`
 ```

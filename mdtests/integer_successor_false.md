@@ -11,5 +11,5 @@ theorem integer_successor_false(z: Integer) {
 ```
 
 ```expect
-fail: simplified proposition was not true: Integer less-or-equal is true
+fail: could not establish `(z + 1) <= z`
 ```

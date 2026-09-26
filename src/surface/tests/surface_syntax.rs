@@ -304,12 +304,14 @@ fn false_library_list_equality_has_a_bounded_diagnostic() {
     )
     .expect_err("different list elements must not be equal");
     assert!(
-        error.message().contains("algebraic value equality"),
+        error.message().contains(
+            "could not establish `List<int32>::Cons(1, List<int32>::Nil()) == \
+             List<int32>::Cons(2, List<int32>::Nil())`"
+        ),
         "{}",
         error.message()
     );
     assert!(!error.message().contains("AlgebraicSchemas"));
-    assert!(error.message().contains("goal:"));
     assert!(error.message().contains("search candidates:"));
     assert!(error.message().len() < 4000, "{}", error.message());
 }

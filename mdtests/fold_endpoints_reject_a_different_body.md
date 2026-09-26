@@ -16,5 +16,5 @@ theorem fold_endpoints_reject_a_different_body(lo: int32, a: int32, b: int32) {
 ```
 
 ```expect
-fail: `simp` failed for `fold_endpoints_reject_a_different_body.ensures_0`: simplified proposition was not true: Integer equality is true
+fail: `simp` failed for `fold_endpoints_reject_a_different_body.ensures_0`: could not establish `(lo..a).fold(0, |acc, k| { (acc + to_integer(k)) }) == (lo..b).fold(0, |acc, k| { ((acc + to_integer(k)) + 1) })`
 ```

@@ -609,10 +609,12 @@ fn failed_algebraic_simp_reports_claim_without_internal_schema_dump() {
         message.contains("false_reconstruction.ensures_0"),
         "{message}"
     );
-    assert!(message.contains("algebraic value equality"), "{message}");
+    assert!(
+        message.contains("could not establish `match value {"),
+        "{message}"
+    );
     assert!(!message.contains("AlgebraicSchemas"), "{message}");
     assert!(!message.contains("AlgebraicTerm"), "{message}");
-    assert!(message.contains("goal:"), "{message}");
     assert!(message.contains("search candidates:"), "{message}");
     assert!(message.len() < 4000, "{message}");
 }
@@ -653,7 +655,10 @@ fn failed_compound_algebraic_simp_renders_the_goal_once_without_a_debug_dump() {
     assert!(message.contains("color_bit_is_two.ensures_0"), "{message}");
     assert!(message.contains("root_color("), "{message}");
     assert!(message.contains("Color::Red"), "{message}");
-    assert!(message.contains("goal:"), "{message}");
+    assert!(
+        message.contains("could not establish `color_bit(root_color(t)) == 2 and "),
+        "{message}"
+    );
     assert!(message.contains("search candidates:"), "{message}");
     for marker in [
         "AlgebraicSchemas",

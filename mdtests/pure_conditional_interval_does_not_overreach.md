@@ -14,5 +14,5 @@ theorem indicator_is_not_at_most_zero(x: int32) {
 ```
 
 ```expect
-fail: simplified proposition was not true: signed less-or-equal is true
+fail: could not establish `(if x == 0 { 1 } else { 0 }) <= 0`
 ```

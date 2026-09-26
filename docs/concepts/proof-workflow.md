@@ -561,7 +561,7 @@ Failure messages usually include:
 - pure facts
 - resource facts, when the failing tactic has a current resource context
 - remaining proof obligations
-- simplified proposition for failed `simp`
+- the goal a failed `simp` could not establish, in source spelling
 
 Practical approach:
 

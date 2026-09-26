@@ -28,5 +28,5 @@ int spin(int n) {
 ```
 
 ```expect
-fail: have body tactic 1: `simp` failed for `spin.contract`: simplified proposition was not true: signed greater-than is true
+fail: have body tactic 1: `simp` failed for `spin.contract`: could not establish `(n + 1) > 500`
 ```

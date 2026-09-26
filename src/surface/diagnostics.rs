@@ -280,6 +280,52 @@ pub(in crate::surface) fn value_naming_tables(
     (parameters, arguments)
 }
 
+/// The kind of comparison or check a kernel condition makes, for a
+/// diagnostic that has no source spelling of its operands.
+pub(super) fn condition_kind(condition: &ConditionTerm) -> &'static str {
+    match condition {
+        ConditionTerm::AlgebraicEqual(_, _) => "algebraic equality",
+        ConditionTerm::IntegerLessThan(_, _) => "Integer less-than",
+        ConditionTerm::IntegerLessEqual(_, _) => "Integer less-or-equal",
+        ConditionTerm::IntegerGreaterThan(_, _) => "Integer greater-than",
+        ConditionTerm::IntegerGreaterEqual(_, _) => "Integer greater-or-equal",
+        ConditionTerm::IntegerEqual(_, _) => "Integer equality",
+        ConditionTerm::IntegerNotEqual(_, _) => "Integer disequality",
+        ConditionTerm::Bitvector32SignedLessThan(_, _) => "signed less-than",
+        ConditionTerm::Bitvector32SignedLessEqual(_, _) => "signed less-or-equal",
+        ConditionTerm::Bitvector32SignedGreaterThan(_, _) => "signed greater-than",
+        ConditionTerm::Bitvector32SignedGreaterEqual(_, _) => "signed greater-or-equal",
+        ConditionTerm::Bitvector32Equal(_, _) => "int32 equality",
+        ConditionTerm::Bitvector32SignedAddOverflows(_, _) => "addition overflow",
+        ConditionTerm::Bitvector32SignedSubtractOverflows(_, _) => "subtraction overflow",
+        ConditionTerm::Bitvector32SignedMultiplyOverflows(_, _) => "multiplication overflow",
+        ConditionTerm::Bitvector32SignedDivideOverflows(_, _) => "division overflow",
+        ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _) => "left-shift overflow",
+        ConditionTerm::Bitvector64SignedLessThan(_, _) => "int64 signed less-than",
+        ConditionTerm::Bitvector64SignedLessEqual(_, _) => "int64 signed less-or-equal",
+        ConditionTerm::Bitvector64SignedGreaterThan(_, _) => "int64 signed greater-than",
+        ConditionTerm::Bitvector64SignedGreaterEqual(_, _) => "int64 signed greater-or-equal",
+        ConditionTerm::Bitvector64UnsignedLessThan(_, _) => "uint64 less-than",
+        ConditionTerm::Bitvector64UnsignedLessEqual(_, _) => "uint64 less-or-equal",
+        ConditionTerm::Bitvector64UnsignedGreaterThan(_, _) => "uint64 greater-than",
+        ConditionTerm::Bitvector64UnsignedGreaterEqual(_, _) => "uint64 greater-or-equal",
+        ConditionTerm::Bitvector64Equal(_, _) => "64-bit equality",
+        ConditionTerm::Bitvector64SignedAddOverflows(_, _) => "int64 addition overflow",
+        ConditionTerm::Bitvector64SignedSubtractOverflows(_, _) => "int64 subtraction overflow",
+        ConditionTerm::Bitvector64SignedMultiplyOverflows(_, _) => "int64 multiplication overflow",
+        ConditionTerm::Bitvector64SignedDivideOverflows(_, _) => "int64 division overflow",
+        ConditionTerm::Bitvector64SignedShiftLeftOverflows(_, _) => "int64 left-shift overflow",
+        ConditionTerm::Float32(CFloatCondition::Comparison { .. }) => "float32 comparison",
+        ConditionTerm::Float32(CFloatCondition::Classification { .. }) => "float32 classification",
+        ConditionTerm::Float64(CFloatCondition::Comparison { .. }) => "float64 comparison",
+        ConditionTerm::Float64(CFloatCondition::Classification { .. }) => "float64 classification",
+        ConditionTerm::PointerOffsetEqual(_, _) => "pointer-offset equality",
+        ConditionTerm::PointerEqual(_, _) => "pointer equality",
+        ConditionTerm::Constant(_) => "constant condition",
+        ConditionTerm::Variable(_) => "condition variable",
+    }
+}
+
 pub(super) fn describe_pure_fact(
     fact: &Proposition,
     parameters: &[syntax::C0Parameter],
@@ -353,62 +399,7 @@ pub(super) fn describe_pure_fact(
             format!("constant condition `{constant}` is {value}")
         }
         Proposition::ConditionIs(condition, value) => {
-            let kind = match condition {
-                ConditionTerm::AlgebraicEqual(_, _) => "algebraic equality",
-                ConditionTerm::IntegerLessThan(_, _) => "Integer less-than",
-                ConditionTerm::IntegerLessEqual(_, _) => "Integer less-or-equal",
-                ConditionTerm::IntegerGreaterThan(_, _) => "Integer greater-than",
-                ConditionTerm::IntegerGreaterEqual(_, _) => "Integer greater-or-equal",
-                ConditionTerm::IntegerEqual(_, _) => "Integer equality",
-                ConditionTerm::IntegerNotEqual(_, _) => "Integer disequality",
-                ConditionTerm::Bitvector32SignedLessThan(_, _) => "signed less-than",
-                ConditionTerm::Bitvector32SignedLessEqual(_, _) => "signed less-or-equal",
-                ConditionTerm::Bitvector32SignedGreaterThan(_, _) => "signed greater-than",
-                ConditionTerm::Bitvector32SignedGreaterEqual(_, _) => "signed greater-or-equal",
-                ConditionTerm::Bitvector32Equal(_, _) => "int32 equality",
-                ConditionTerm::Bitvector32SignedAddOverflows(_, _) => "addition overflow",
-                ConditionTerm::Bitvector32SignedSubtractOverflows(_, _) => "subtraction overflow",
-                ConditionTerm::Bitvector32SignedMultiplyOverflows(_, _) => {
-                    "multiplication overflow"
-                }
-                ConditionTerm::Bitvector32SignedDivideOverflows(_, _) => "division overflow",
-                ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _) => "left-shift overflow",
-                ConditionTerm::Bitvector64SignedLessThan(_, _) => "int64 signed less-than",
-                ConditionTerm::Bitvector64SignedLessEqual(_, _) => "int64 signed less-or-equal",
-                ConditionTerm::Bitvector64SignedGreaterThan(_, _) => "int64 signed greater-than",
-                ConditionTerm::Bitvector64SignedGreaterEqual(_, _) => {
-                    "int64 signed greater-or-equal"
-                }
-                ConditionTerm::Bitvector64UnsignedLessThan(_, _) => "uint64 less-than",
-                ConditionTerm::Bitvector64UnsignedLessEqual(_, _) => "uint64 less-or-equal",
-                ConditionTerm::Bitvector64UnsignedGreaterThan(_, _) => "uint64 greater-than",
-                ConditionTerm::Bitvector64UnsignedGreaterEqual(_, _) => "uint64 greater-or-equal",
-                ConditionTerm::Bitvector64Equal(_, _) => "64-bit equality",
-                ConditionTerm::Bitvector64SignedAddOverflows(_, _) => "int64 addition overflow",
-                ConditionTerm::Bitvector64SignedSubtractOverflows(_, _) => {
-                    "int64 subtraction overflow"
-                }
-                ConditionTerm::Bitvector64SignedMultiplyOverflows(_, _) => {
-                    "int64 multiplication overflow"
-                }
-                ConditionTerm::Bitvector64SignedDivideOverflows(_, _) => "int64 division overflow",
-                ConditionTerm::Bitvector64SignedShiftLeftOverflows(_, _) => {
-                    "int64 left-shift overflow"
-                }
-                ConditionTerm::Float32(CFloatCondition::Comparison { .. }) => "float32 comparison",
-                ConditionTerm::Float32(CFloatCondition::Classification { .. }) => {
-                    "float32 classification"
-                }
-                ConditionTerm::Float64(CFloatCondition::Comparison { .. }) => "float64 comparison",
-                ConditionTerm::Float64(CFloatCondition::Classification { .. }) => {
-                    "float64 classification"
-                }
-                ConditionTerm::PointerOffsetEqual(_, _) => "pointer-offset equality",
-                ConditionTerm::PointerEqual(_, _) => "pointer equality",
-                ConditionTerm::Constant(_) => "constant condition",
-                ConditionTerm::Variable(_) => "condition variable",
-            };
-            format!("{kind} is {value}")
+            format!("{} is {value}", condition_kind(condition))
         }
         Proposition::Predicate {
             name,

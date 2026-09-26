@@ -160,8 +160,12 @@ fn render_diagnostic_labeled(
             .as_ref()
             .and_then(|state| state.source_goal())
         {
-            rendered.push_str("\n  goal: ");
-            rendered.push_str(&source);
+            // A summary that already quotes the goal in the user's spelling
+            // (a failed `simp` does) is not followed by a second copy of it.
+            if !summary.is_some_and(|summary| summary.contains(&format!("`{source}`"))) {
+                rendered.push_str("\n  goal: ");
+                rendered.push_str(&source);
+            }
             if crate::surface::proof_trace::enabled_for(&diagnostic.claim_label) {
                 let internal = render::render_proposition_labeled(goal, labels);
                 if internal.contains("snapshot#") || internal.contains("snapshot<untracked>") {

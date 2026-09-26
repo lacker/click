@@ -38,5 +38,5 @@ theorem color_bit_is_two(t: RbTree) {
 ```
 
 ```expect
-fail: goal: color_bit(root_color(t)) == 2 and root_color(t) == Color::Red()
+fail: could not establish `color_bit(root_color(t)) == 2 and root_color(t) == Color::Red()
 ```

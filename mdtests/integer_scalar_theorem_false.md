@@ -11,5 +11,5 @@ theorem integer_false(x: Integer) {
 ```
 
 ```expect
-fail: Integer less-than is true
+fail: could not establish `x < x`
 ```

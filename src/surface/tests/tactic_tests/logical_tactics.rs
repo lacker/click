@@ -462,9 +462,7 @@ fn contract_lets_do_not_capture_later_quantifier_binders() {
     let error = verify_c0_sources(false_range, &[])
         .expect_err("a range binder must not capture the lexical alias");
     assert!(
-        error
-            .message()
-            .contains("simplified proposition was not true"),
+        error.message().contains("could not establish"),
         "{}",
         error.message()
     );

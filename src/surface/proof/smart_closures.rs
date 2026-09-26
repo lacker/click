@@ -5597,19 +5597,38 @@ impl<'a> Proof<'a> {
                 self.claim_label()
             ));
         }
-        self.step_error(format!(
-            "`simp` failed for `{}`: simplified proposition was not true: {}{}",
-            self.claim_label(),
-            self.goal()
-                .map(|goal| match goal {
+        // Name the goal as the user wrote it. Only a goal with no source
+        // spelling falls back to the kind of check it makes, and that kind is
+        // what was asked for, never a value it was found to have.
+        let goal = self
+            .surface_goal()
+            .map(crate::surface::printing::source_click_proposition)
+            .filter(|source| !source.contains("__click_"))
+            .map(|source| format!("`{source}`"))
+            .or_else(|| {
+                self.goal().map(|goal| match goal {
                     Proposition::And(_, _)
                     | Proposition::Or(_, _)
                     | Proposition::Implies(_, _)
                     | Proposition::ForAll { .. }
-                    | Proposition::Exists { .. } => "compound proposition".to_string(),
-                    _ => describe_pure_fact(goal, &[], &[]),
+                    | Proposition::Exists { .. } => {
+                        "a compound goal with no Click spelling".to_string()
+                    }
+                    Proposition::ConditionIs(condition, true) => format!(
+                        "an internal {} goal with no Click spelling",
+                        condition_kind(condition)
+                    ),
+                    Proposition::ConditionIs(condition, false) => format!(
+                        "the negation of an internal {} goal with no Click spelling",
+                        condition_kind(condition)
+                    ),
+                    _ => format!("the goal {}", describe_pure_fact(goal, &[], &[])),
                 })
-                .unwrap_or_else(|| "no open proposition".into()),
+            })
+            .unwrap_or_else(|| "a goal that is not a proposition".into());
+        self.step_error(format!(
+            "`simp` failed for `{}`: could not establish {goal}{}",
+            self.claim_label(),
             self.describe_goal_version_mismatch()
                 .map(|mismatch| format!("\n  {mismatch}"))
                 .unwrap_or_default(),
