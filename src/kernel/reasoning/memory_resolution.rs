@@ -1467,6 +1467,12 @@ pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
     if left.forgotten.ended_local_blocks != right.forgotten.ended_local_blocks {
         return false;
     }
+    // The cell comparison below reads an entry neither side holds as
+    // agreement, which holds only between maps over one underlying state
+    // (see `snapshot_objects_agree`).
+    if left.forgotten.forgotten_from != right.forgotten.forgotten_from {
+        return false;
+    }
     left.cells
         .keys()
         .chain(right.cells.keys())
@@ -1810,10 +1816,20 @@ fn cell_is_observable_by_load(cell_pointer: &Pointer, load: &Pointer) -> bool {
 /// in the comparison.
 fn snapshot_objects_agree(left: &CMemory, right: &CMemory, pointer: &Pointer) -> bool {
     let reachable = |block: &PointerBlock| !local_block_no_pointer_can_reach(block);
-    left.blocks
-        .iter()
-        .filter(|(block, _)| reachable(block))
-        .eq(right.blocks.iter().filter(|(block, _)| reachable(block)))
+    // Every caller goes on to compare the two cell maps and treats an entry
+    // neither side holds as agreement. That reading is only valid between
+    // maps layered over one underlying state: a cell map is knowledge about
+    // the state its forget mark names, and a store whose cell was later
+    // forgotten leaves no entry on either side for a difference to show.
+    // `memories_match_for_pointer_load` asks the same question first for the
+    // same reason; two snapshots with different marks are related by the
+    // recorded history or not at all.
+    left.forgotten.forgotten_from == right.forgotten.forgotten_from
+        && left
+            .blocks
+            .iter()
+            .filter(|(block, _)| reachable(block))
+            .eq(right.blocks.iter().filter(|(block, _)| reachable(block)))
         && retirements_agree_for_load(left, right, pointer)
 }
 
