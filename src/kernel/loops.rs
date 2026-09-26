@@ -3896,7 +3896,23 @@ fn collect_invariant_check_obligations_with_mode(
                 // `merge` keeps the earlier obligations as a prefix and
                 // appends this path's own; those are their own guards.
                 let mut guards = guards.clone();
-                guards.extend(obligations.iter().skip(guards.len()).cloned());
+                let side_conditions = obligations.iter().skip(guards.len()).cloned();
+                // This path's own side conditions are invariant content: the
+                // head assumes them (`assume_invariant_checks`), so the entry
+                // owes each as a judgment of its own, exactly as the back
+                // edge's bundle carries each as a member. Wrapping them only
+                // as antecedents of the declaration's goal would let a proved
+                // entry owe nothing for them.
+                if let Some(declarations) = declarations.as_deref_mut() {
+                    for side_condition in side_conditions.clone() {
+                        let mut goal = side_condition;
+                        if let Some(context) = invariant_context(check, phase) {
+                            goal = goal.with_context(context);
+                        }
+                        declarations[declaration_index].push(goal);
+                    }
+                }
+                guards.extend(side_conditions);
                 let obligation_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
                 // The guards this wrap inserts, then the head chain the
@@ -6320,18 +6336,17 @@ pub(super) fn assume_invariant_checks(
                 &effective_assumptions,
                 budget,
             )? {
-                // The extent half of a stated range is invariant content: it
-                // is owed at entry and at every back edge together with the
-                // range (`collect_invariant_check_obligations` owes every
-                // obligation this lowering emits), so the head assumes it
-                // beside the range instead of demanding it as a prerequisite.
-                let (extent, path_obligations): (Vec<_>, Vec<_>) = path
-                    .obligations
-                    .into_iter()
-                    .partition(ProofObligation::is_range_extent);
+                // Every side condition the lowering emits — a stated range's
+                // extent half, an int32 conversion's bounds, a count that
+                // must not overflow, a checked read's definedness — is
+                // invariant content: `collect_invariant_check_obligations`
+                // owes every obligation this lowering emits at entry and at
+                // every back edge, together with the proposition. So the head
+                // assumes them beside it instead of demanding them as
+                // prerequisites of a hypothesis it never has to prove.
                 let mut path_facts = path.facts;
                 path_facts.extend(
-                    extent
+                    path.obligations
                         .into_iter()
                         .map(|obligation| ExecutionPureFact::new(obligation.proposition)),
                 );
@@ -6339,7 +6354,7 @@ pub(super) fn assume_invariant_checks(
                     &facts,
                     &obligations,
                     &path_facts,
-                    &path_obligations,
+                    &[],
                     assumptions,
                 ) else {
                     continue;

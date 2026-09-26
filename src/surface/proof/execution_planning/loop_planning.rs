@@ -463,8 +463,27 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                 {
                     return ClickError::new(reason);
                 }
+                // Name the judgment that was compared: a declaration owes its
+                // side conditions as goals of their own beside its body, so
+                // "invariant N" alone does not say which one failed.
+                let owed =
+                    crate::surface::proof::surface_synthesis::synthesize_surface_proposition(
+                        obligation.proposition(),
+                        environment.parsed_function.parameters(),
+                        environment.arguments,
+                        &context.state,
+                    )
+                    .map(|surface| crate::surface::printing::source_click_proposition(&surface))
+                    .unwrap_or_else(|| {
+                        let (parameters, arguments) = phase.diagnostic_naming_tables();
+                        crate::surface::diagnostics::describe_stated_fact(
+                            obligation.proposition(),
+                            &parameters,
+                            &arguments,
+                        )
+                    });
                 error.with_context(format!(
-                    "loop {loop_index} invariant {invariant_index} entry"
+                    "loop {loop_index} invariant {invariant_index} entry, owing `{owed}`"
                 ))
             })?;
             let body_certificate = checked.certificate_since(&body_checkpoint)?;

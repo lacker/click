@@ -656,14 +656,9 @@ pub(super) fn describe_proof_context(
 }
 
 /// A loop head the kernel could not build, spelled over the head state's
-/// locals, with the written invariant that owed a missing premise when the
-/// kernel found one. `invariants` are the loop's written invariant clauses in
-/// the order the kernel checks them.
-pub(super) fn describe_loop_head_refusal(
-    refusal: &crate::kernel::CLoopHeadRefusal,
-    invariants: &[&ClickProposition],
-) -> String {
-    let (proposition, context, invariant, state) = match refusal {
+/// locals.
+pub(super) fn describe_loop_head_refusal(refusal: &crate::kernel::CLoopHeadRefusal) -> String {
+    let (proposition, context, state) = match refusal {
         crate::kernel::CLoopHeadRefusal::Message(message) => return message.clone(),
         crate::kernel::CLoopHeadRefusal::UnheldResource { fact, state } => {
             let (parameters, arguments) = local_naming_tables(state);
@@ -675,25 +670,15 @@ pub(super) fn describe_loop_head_refusal(
         crate::kernel::CLoopHeadRefusal::MissingPrerequisite {
             proposition,
             context,
-            invariant,
             state,
-        } => (proposition, context, invariant, state),
+        } => (proposition, context, state),
     };
     let fact = describe_stated_fact_over_locals(proposition, state);
     let context = context
         .as_ref()
         .map(|context| format!(" ({context})"))
         .unwrap_or_default();
-    let owner = invariant
-        .and_then(|index| invariants.get(index))
-        .map(|invariant| {
-            format!(
-                ", which invariant `{}` needs",
-                describe_click_proposition(invariant)
-            )
-        })
-        .unwrap_or_default();
-    format!("missing loop-head prerequisite{context}: `{fact}`{owner}")
+    format!("missing loop-head prerequisite{context}: `{fact}`")
 }
 
 /// A fact as a proof would state it, spelled over `state`'s locals: the

@@ -7560,16 +7560,6 @@ pub struct ProofObligation {
     /// written syntax happens to share. `None` is the unrecorded state: an
     /// obligation the kernel built with no lowering of its own.
     pub(super) introductions: Option<Arc<super::LoweringIntroductions>>,
-    /// Whether lowering emitted this obligation as the extent half of a
-    /// stated range: `a..b` is a valid 32-bit byte extent for the range's
-    /// element width. A stated range carries that half as content, so a site
-    /// that assumes the lowered proposition as a hypothesis it proves
-    /// elsewhere — a loop invariant at the head, proved at entry and at every
-    /// back edge — assumes this obligation with it instead of demanding it.
-    /// Provenance only, like `introductions`: it never distinguishes two
-    /// obligations, and a wrap under a quantifier or an implication keeps it,
-    /// since the wrapped proposition is still that half under the same guard.
-    pub(super) range_extent: bool,
 }
 
 /// Provenance describes the proposition; it never distinguishes two

@@ -5159,9 +5159,9 @@ fn lower_spec_memory_loadable_at_state_in(
                         return None;
                     }
                     // The extent half of the stated range. It is owed here
-                    // like any other obligation of the lowering, and marked so
-                    // that a site assuming the lowered proposition as a
-                    // hypothesis proved elsewhere assumes it as well.
+                    // like any other side condition of the lowering, and a
+                    // site assuming the lowered proposition as a hypothesis
+                    // proved elsewhere assumes it with the rest.
                     crate::kernel::MemoryRangeExtent::Guards(guards) => {
                         // Past one-byte elements the unsigned `fits` half is
                         // the signed count bound, which is the spelling a
@@ -5179,11 +5179,7 @@ fn lower_spec_memory_loadable_at_state_in(
                             guards
                         };
                         for guard in guards {
-                            let before = obligations.len();
                             add_proof_obligation(&mut obligations, assumptions, guard)?;
-                            for obligation in &mut obligations[before..] {
-                                obligation.range_extent = true;
-                            }
                         }
                     }
                 }

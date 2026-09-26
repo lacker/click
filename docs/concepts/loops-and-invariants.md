@@ -203,6 +203,16 @@ executes one complete body iteration, and proves all invariants again. Either
 proof may be omitted; bounded automation owned by the `loop` keyword supplies
 an omitted phase. Expanding that keyword writes all omitted phases explicitly.
 
+An invariant's side conditions are invariant content. These are what its
+terms need to denote a value: that `i + 1` does not overflow in
+`to_integer(i + 1)`, that an integer converted back to `int32` fits, or the
+extent half of a stated range (see [Viewable ranges](viewability.md)). The
+head, the body and the exit assume them with the invariant, so the entry and
+every back edge owe them: each is an entry goal of its own beside the
+invariant's body, proved by that invariant's proof, and a member of the
+back-edge bundle. An entry that cannot establish one is refused by naming it,
+as in ``loop 0 invariant 1 entry, owing `defined((i + 1))` ``.
+
 ## How an `initialize` script divides up
 
 Each invariant gets its own entry goal, so an `initialize by { ... }` script is

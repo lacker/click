@@ -398,14 +398,13 @@ impl CLoopPreservationContext {
 pub enum CLoopHeadRefusal {
     /// A refusal the kernel spells on its own.
     Message(String),
-    /// A premise the head's invariants or guard owe that the entry context
-    /// does not discharge.
+    /// A premise the head's guard owes that the entry context does not
+    /// discharge. The invariants owe none here: their side conditions are
+    /// invariant content, assumed at the head and owed at entry and at every
+    /// back edge.
     MissingPrerequisite {
         proposition: Proposition,
         context: Option<String>,
-        /// The index into the loop's invariant checks whose lowering owes
-        /// the premise, when one does.
-        invariant: Option<usize>,
         /// The loop-top state the premise is stated over.
         state: CState,
     },
@@ -628,13 +627,6 @@ fn c_loop_preservation_contexts_with_mode(
                 return Err(CLoopHeadRefusal::MissingPrerequisite {
                     proposition: obligation.proposition().clone(),
                     context: obligation.context().map(str::to_string),
-                    invariant: invariant_owing_obligation(
-                        &top_state,
-                        loop_entry_state,
-                        invariant_checks,
-                        assumptions,
-                        obligation,
-                    ),
                     state: top_state.clone(),
                 });
             }
@@ -685,35 +677,6 @@ fn c_loop_preservation_contexts_with_mode(
         context.next_kernel_variable = reached;
     }
     Ok(contexts)
-}
-
-/// The invariant whose lowering at the loop head owes `obligation`, for a
-/// refusal to name the clause that needed it. Relowers the checks one at a
-/// time, only on the failing path.
-fn invariant_owing_obligation(
-    top_state: &CState,
-    loop_entry_state: &CState,
-    invariant_checks: &[CLoopInvariantCheck],
-    assumptions: &PureFactContext,
-    obligation: &ProofObligation,
-) -> Option<usize> {
-    let mut budget = ExecutionBudget::beside_live_state();
-    invariant_checks.iter().position(|check| {
-        assume_invariant_checks(
-            top_state,
-            loop_entry_state,
-            std::slice::from_ref(check),
-            assumptions,
-            &[],
-            &[],
-            &mut budget,
-        )
-        .is_ok_and(|contexts| {
-            contexts
-                .iter()
-                .any(|(_, obligations, _)| obligations.contains(obligation))
-        })
-    })
 }
 
 /// Names the loop invariant that could not be read at the abstract loop head.
