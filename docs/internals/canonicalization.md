@@ -51,7 +51,14 @@ two-stage composition:
    whose snapshot records a value for its pointer becomes that value; every
    other load keeps only the part of its snapshot the load can observe —
    the pointer's block plus the havoc markers. Loads inside the pointer's
-   own offset are treated the same way.
+   own offset are treated the same way. When every observable cell is a
+   materialization — it holds exactly the value a load of that cell reads
+   from one common source snapshot — the load is shrunk against that source
+   instead, since such cells write nothing. A pointer cell counts when its
+   value is the pointer a typed load of the same cell produces: the cell's
+   block offset by that load's variable at the pointee's width. So owning a
+   second descriptor, which materializes its pointer fields, does not rename
+   a load of the first (`mdtests/unfold_region_beside_an_object_of_its_type.md`).
 2. **Replace each remaining load with its load variable**: the kernel
    variable identified by the cell and the snapshot of its last write, found
    by walking the memory derivation DAG.

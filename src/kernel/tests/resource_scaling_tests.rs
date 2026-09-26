@@ -1307,3 +1307,152 @@ fn a_recursive_footprint_is_constant_in_live_nodes() {
     }
     assert_constant_plus_log_growth("a recursive footprint", &samples, 0.0);
 }
+
+/// `slot(s)`: the arena's region shape. The body owns the descriptor
+/// `s[0..4]` and the cells `s->pool->data[at..end]`, whose base loads the
+/// descriptor's first field and then the pool's.
+fn slot_definitions() -> Vec<CCompositeResourceDefinition> {
+    let schema = ResourceFieldSchema::new(vec![
+        ("at".into(), ResourceFieldType::C(CType::Int32)),
+        ("end".into(), ResourceFieldType::C(CType::Int32)),
+    ])
+    .unwrap();
+    let pool = c_typed_load(c_variable("s"), CType::Int32Pointer);
+    vec![
+        CCompositeResourceDefinition::new(
+            "slot",
+            vec![c_parameter("s", CType::Int32Pointer)],
+            None,
+            false,
+            vec![
+                CResourceSpec::owned_memory(CMemorySegment {
+                    base: c_variable("s"),
+                    start: c_int32_literal(0),
+                    end: c_int32_literal(4),
+                    element_width: 4,
+                    guard: None,
+                }),
+                CResourceSpec::owned_memory(CMemorySegment {
+                    base: c_typed_load(pool, CType::Int32Pointer),
+                    start: c_variable("at"),
+                    end: c_variable("end"),
+                    element_width: 4,
+                    guard: None,
+                }),
+            ],
+            vec![],
+        )
+        .with_instance_schema(Some(schema)),
+    ]
+}
+
+fn external_descriptor(identity: u64) -> Pointer {
+    Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(identity)), 4),
+    }
+}
+
+/// The pointer a load of `cell` reads in `source`, as execution materializes
+/// it: the cell's own block, offset by the load's name.
+fn materialized_pointer(source: &CMemory, cell: &Pointer) -> CValue {
+    CValue::typed_pointer(
+        Pointer {
+            block: cell.block.clone(),
+            offset: PointerOffsetTerm::scale_int32(
+                crate::kernel::eval::canonical_form_of_load(
+                    crate::kernel::intern_c_memory_ref(source),
+                    cell.clone(),
+                ),
+                4,
+            ),
+        },
+        CType::Int32Pointer,
+    )
+}
+
+/// Unfolding a region beside other owned descriptors of its type reads the
+/// region's own descriptor field through their materialized `pool` cells.
+/// The work is the region body's: one second descriptor argument beside it
+/// and any number of unrelated same-type descriptors in their own
+/// allocations, each owned and each with its `pool` cell materialized, cost
+/// nothing that grows with their number.
+#[test]
+fn unfold_beside_descriptors_of_its_type_ignores_unrelated_descriptors() {
+    let definitions = slot_definitions();
+    let region = external_descriptor(100_000);
+    let other = external_descriptor(100_001);
+    let entry = CMemory::new();
+    let pool = match materialized_pointer(&entry, &region) {
+        CValue::Pointer(value) => value.pointer().clone(),
+        _ => unreachable!("a pointer cell is materialized as a pointer"),
+    };
+    let instance = ResourceInstance::new(
+        Variable(2 * TARGET_HEAP),
+        "slot".into(),
+        vec![CValue::typed_pointer(region.clone(), CType::Int32Pointer).into()].into(),
+        ResourceFieldSchema::new(vec![
+            ("at".into(), ResourceFieldType::C(CType::Int32)),
+            ("end".into(), ResourceFieldType::C(CType::Int32)),
+        ])
+        .unwrap(),
+        vec![int32(0).into(), int32(2).into()].into(),
+    )
+    .unwrap();
+    let mut samples = Vec::new();
+    for size in SIZES {
+        let unrelated = (0..size)
+            .map(|index| heap_base(index as u64 + 1))
+            .collect::<Vec<_>>();
+        let memory = unrelated.iter().fold(
+            entry
+                .clone()
+                .store(other.clone(), materialized_pointer(&entry, &other)),
+            |memory, descriptor| {
+                memory.store(descriptor.clone(), materialized_pointer(&entry, descriptor))
+            },
+        );
+        let frame = ResourceContext::new()
+            .unchecked_with_facts(
+                unrelated
+                    .iter()
+                    .map(|descriptor| owned_range(descriptor.clone(), 0, 4)),
+            )
+            .unchecked_with_facts([
+                owned_range(other.clone(), 0, 4),
+                owned_range(pool.clone(), 0, 4),
+                CResourceFact::own(CResource::Instance(instance.clone())),
+            ]);
+        let state = CState::new()
+            .with_memory(memory)
+            .with_resource_context(frame);
+        let assumptions = PureFactContext::new();
+        let (unfolded, work) = crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::rewrite_resource_instance_selecting_children(
+                &state,
+                &instance,
+                &definitions[0],
+                &definitions,
+                &assumptions,
+                true,
+                None,
+            )
+        });
+        let unfolded = unfolded.unwrap_or_else(|refusal| {
+            panic!(
+                "the region unfolds beside {size} descriptors of its type: {}",
+                refusal.describe()
+            )
+        });
+        assert!(
+            unfolded
+                .state
+                .resources
+                .owned_instance(instance.identity)
+                .is_none(),
+            "the region is unfolded"
+        );
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("unfold beside descriptors of its type", &samples, 16.0);
+}

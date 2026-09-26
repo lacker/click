@@ -2798,6 +2798,37 @@ fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<Sh
                 crate::kernel::eval::registered_load_for_variable(variable)?;
             (&source_pointer == cell_pointer).then_some(source)
         }
+        // A pointer cell is a materialization when it holds the pointer a
+        // typed load of this same cell produces (`symbolic_pointer_load`):
+        // the cell's block, offset by the load's variable scaled at the
+        // pointee width. `materialized_pointer_cell_load_variable` names the
+        // cell by the same shape. A pointer given a symbolic identity, or
+        // one loaded from another cell, is a write and never qualifies.
+        CValue::Pointer(value) => {
+            let stored = value.pointer();
+            if stored.block != cell_pointer.block {
+                return None;
+            }
+            let PointerOffsetTerm::Int32Scaled {
+                value: index,
+                byte_width,
+            } = &stored.offset
+            else {
+                return None;
+            };
+            if value.c_type().pointee_type()?.byte_width() != u32::try_from(*byte_width).ok()? {
+                return None;
+            }
+            let Bitvector32Term::Variable(variable) = index.as_ref() else {
+                return None;
+            };
+            if !crate::kernel::eval::is_load_variable(variable) {
+                return None;
+            }
+            let (source, source_pointer) =
+                crate::kernel::eval::registered_load_for_variable(variable)?;
+            (&source_pointer == cell_pointer).then_some(source)
+        }
         CValue::Int8(_) => None,
         CValue::Void
         | CValue::Bool(_)
@@ -2808,7 +2839,6 @@ fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<Sh
         | CValue::UInt32(_)
         | CValue::Int64(_)
         | CValue::UInt64(_)
-        | CValue::Pointer(_)
         | CValue::Float32(_)
         | CValue::Float64(_) => None,
     }

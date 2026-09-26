@@ -1,18 +1,14 @@
-# Unfolding a region beside an owned object of its type (frontier)
+# Unfolding a region after writing another descriptor of its type (frontier)
 
-`pool_slot(s)` owns the descriptor `object(s)` and `s->pool->data[at..end]`.
-With the pool state unfolded, `peek` unfolds the slot to read through it, as
-the arena's `arena_read` does. The unfold evaluates the slot body's range,
-whose base loads `s->pool`, against the body's own memory; when the caller
-also owns `object(other)`, a second `struct slot`, that evaluation is refused
-(`could not evaluate instance memory body`: the base's load reports a missing
-view of the pool field). Without `object(other)` the same proof verifies.
+The same C and resources as `unfold_region_then_write_a_descriptor_of_its_type.md`,
+with the proof executing the writes to `other` before it unfolds the region.
+`other->pool` is then a real store, not a materialization, and the region's
+descriptor is owned only inside the folded instance: no resource composition
+names `object(s)`, so nothing separates the store into `other->pool` from the
+body's reload of `s->pool`, which gets a name unrelated to the pool the state
+was unfolded at. The unfold is refused.
 
-The arena example meets this in `arena_reuse`, whose caller owns the
-descriptor it allocates into beside the region it frees: its C reads
-`middle->arena` only after `arena_free` has returned the descriptor.
-
-```c filename=unfold_region_beside_an_object_of_its_type_frontier.c
+```c filename=unfold_region_after_writing_a_descriptor_of_its_type_frontier.c
 struct pool {
     int32* data;
     int32 n;
@@ -27,6 +23,8 @@ struct slot {
 int32 peek(struct slot* s, struct slot* other) {
     struct pool* pool;
 
+    other->at = 7;
+    other->pool = 0;
     pool = s->pool;
     return pool->n;
 }
@@ -51,13 +49,16 @@ resource pool_slot(s: struct slot*) {
     fact at < end;
 }
 
-verifying "unfold_region_beside_an_object_of_its_type_frontier.c";
+verifying "unfold_region_after_writing_a_descriptor_of_its_type_frontier.c";
 
 int32 peek(struct slot* s, struct slot* other) {
     owns r: pool_slot(s);
     owns st: pool_state(old(s->pool));
     owns object(other);
 } by {
+    step();
+    step();
+    step();
     let { live: n } = unfold(st);
     let { at: a, end: e } = unfold(r);
     execute();

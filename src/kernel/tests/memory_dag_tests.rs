@@ -1715,6 +1715,108 @@ fn sibling_materialization_cells_must_not_launder_a_havoc() {
     );
 }
 
+fn symbolic_descriptor(identity: u64) -> Pointer {
+    Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(identity)), 4),
+    }
+}
+
+/// A pointer cell holding exactly the pointer a load of that cell reads is a
+/// materialization like an integer one: the cell is named at its source, so a
+/// load of a neighbouring cell through the materialized snapshot keeps the
+/// name it has at the source. Only the pointer a typed load of *this* cell
+/// produces qualifies: another cell's load, or the same load scaled at a
+/// width other than the pointee's, is a write the load cannot pass over.
+#[test]
+fn a_materialized_pointer_cell_is_named_at_its_source() {
+    let pristine = CMemory::new().with_block("arg-memory", 32);
+    // Two descriptors at unrelated symbolic addresses: nothing structural
+    // separates their cells, so only the materialization rule passes over.
+    let loaded = symbolic_descriptor(92_000);
+    let sibling = symbolic_descriptor(92_001);
+    let name = |memory: &CMemory, pointer: &Pointer| {
+        crate::kernel::eval::canonical_form_of_load(
+            crate::kernel::intern_c_memory_ref(memory),
+            pointer.clone(),
+        )
+    };
+    let pointer_value = |index: Bitvector32Term, width: i64, c_type: CType| {
+        CValue::typed_pointer(
+            Pointer {
+                block: "arg-memory".into(),
+                offset: PointerOffsetTerm::scale_int32(index, width),
+            },
+            c_type,
+        )
+    };
+    let own = name(&pristine, &sibling);
+    assert!(matches!(own, Bitvector32Term::Variable(_)));
+
+    let materialized = pristine.clone().store(
+        sibling.clone(),
+        pointer_value(own.clone(), 4, CType::Int32Pointer),
+    );
+    assert_eq!(
+        name(&materialized, &loaded),
+        name(&pristine, &loaded),
+        "a pointer cell holding its own load is passed over"
+    );
+
+    let foreign = name(&pristine, &symbolic_descriptor(92_002));
+    for (value, why) in [
+        (
+            pointer_value(foreign, 4, CType::Int32Pointer),
+            "another cell's load is a real write",
+        ),
+        (
+            pointer_value(own, 4, CType::Int16Pointer),
+            "a scale other than the pointee width is not this cell's load",
+        ),
+    ] {
+        let written = pristine.clone().store(sibling.clone(), value);
+        assert_ne!(name(&written, &loaded), name(&pristine, &loaded), "{why}");
+    }
+}
+
+/// The pointer form of `sibling_materialization_cells_must_not_launder_a_havoc`:
+/// a materialized pointer cell that survives a havoc must not carry a load
+/// the havoc may have written back to the pre-havoc snapshot.
+#[test]
+fn a_materialized_pointer_cell_must_not_launder_a_havoc() {
+    let pristine = CMemory::new().with_block("arg-memory", 32);
+    let loaded = symbolic_descriptor(92_010);
+    let sibling = symbolic_descriptor(92_011);
+    let own = crate::kernel::eval::canonical_form_of_load(
+        crate::kernel::intern_c_memory_ref(&pristine),
+        sibling.clone(),
+    );
+    let materialized = pristine.clone().store(
+        sibling.clone(),
+        CValue::typed_pointer(
+            Pointer {
+                block: "arg-memory".into(),
+                offset: PointerOffsetTerm::scale_int32(own, 4),
+            },
+            CType::Int32Pointer,
+        ),
+    );
+    let havocked = materialized.clone().with_call_memory_havoc(
+        Variable(9001),
+        &[CMemoryRange::new(
+            loaded.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )],
+        &PureFactContext::new(),
+        None,
+    );
+    assert!(
+        !checked_memory_load_equality(&materialized, &havocked, &loaded, &PureFactContext::new()),
+        "a havoc of the loaded pointer must not be laundered by a materialized pointer cell"
+    );
+}
+
 // --- store edge: frozen-context crossing ---------------------------------
 // A store at a symbolic index keeps every cell a strict order recorded in
 // the transition's context separates from the written one: the naming walk

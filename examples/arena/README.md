@@ -160,14 +160,15 @@ about a region field in the pipeline, and this fixture does not pin that.
 
 The driver reads `middle->arena` into a local after `arena_free(middle)` has
 returned the descriptor, and its contract names the returned state
-`arena_state(old(middle->arena))`. These route around two pinned frontiers: a
-region cannot be unfolded while the caller also owns another descriptor of
-its type (`mdtests/unfold_region_beside_an_object_of_its_type_frontier.md`),
-and a descriptor field the caller holds flat is carried across a later call
-only while its value is cached
+`arena_state(old(middle->arena))`. When the driver was written, a region
+could not be unfolded while the caller also owned another descriptor of its
+type; that now verifies
+(`mdtests/unfold_region_beside_an_object_of_its_type.md`), but the `old`
+remains: a descriptor field the caller holds flat is carried across a later
+call only while its value is cached
 (`mdtests/call_keeps_a_flat_field_only_while_cached_frontier.md`), so
 `middle->arena` read after `arena_alloc` would not be related to the value
-before it.
+before it, and `produces after: arena_state(middle->arena)` is refused.
 
 This is the weaker form of first-fit reuse: the freed hole is the only free
 run, so any successful allocation of that size lands in it. First fit itself
