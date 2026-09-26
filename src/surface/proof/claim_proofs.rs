@@ -426,8 +426,12 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
     let function_environment = &anchored_function_environment;
     let proof_claims = [*claim];
+    let proof_site = proof_site_for_claims(function_block, &proof_claims, false);
+    let nested_tactic_capture = expansion_capture
+        .as_deref()
+        .and_then(|capture| capture.nested_for_site(proof_site.as_ref()));
     let constants = ExecutionProofConstants {
-        proof_site: proof_site_for_claims(function_block, &proof_claims, false),
+        proof_site,
         source_layout: SourceExecutionLayout::for_function(parsed_function)?,
         execution_start_facts: Arc::new(pure_facts.clone()),
         entry_fact_origins: Arc::new(entry_fact_origins),
@@ -437,6 +441,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         function_source_registry,
         grouped_contract: false,
         invariant_body_context: None,
+        nested_tactic_capture,
     };
     let frontier = ExecutionFrontier::default();
     let mut recorded_snapshots = RecordedSnapshots::new();
@@ -666,8 +671,12 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         )
         .map_err(|message| ClickError::new(format!("`{proof_label}`: {message}")))?;
     let function_environment = &anchored_function_environment;
+    let proof_site = proof_site_for_claims(function_block, claims, true);
+    let nested_tactic_capture = expansion_capture
+        .as_deref()
+        .and_then(|capture| capture.nested_for_site(proof_site.as_ref()));
     let constants = ExecutionProofConstants {
-        proof_site: proof_site_for_claims(function_block, claims, true),
+        proof_site,
         source_layout: SourceExecutionLayout::for_function(parsed_function)?,
         execution_start_facts: Arc::new(pure_facts.clone()),
         entry_fact_origins: Arc::new(entry_fact_origins),
@@ -677,6 +686,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         function_source_registry,
         grouped_contract: true,
         invariant_body_context: None,
+        nested_tactic_capture,
     };
     let frontier = ExecutionFrontier::default();
     let mut recorded_snapshots = RecordedSnapshots::new();

@@ -2316,9 +2316,62 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Starts recording this written tactic's checked delta when `click
+    /// expand` selected it inside a `have` body: the proof carries the
+    /// selected site's recorder and this step's source path is the selected
+    /// one. Costs nothing unless an expansion installed a recorder.
+    pub(in crate::surface::proof) fn begin_nested_tactic_capture(
+        &self,
+    ) -> Option<NestedTacticCaptureGuard<'a>> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return None;
+        };
+        let capture = context.constants.nested_tactic_capture.as_ref()?;
+        if context.constants.proof_site.as_ref() != Some(&capture.site)
+            || self.site.source_tactic_path().as_deref() != Some(capture.path.as_slice())
+            || !capture.try_begin()
+        {
+            return None;
+        }
+        Some(NestedTacticCaptureGuard {
+            capture: capture.clone(),
+            checkpoint: self.checkpoint(),
+            finished: false,
+        })
+    }
+
     #[cfg(test)]
     fn fact_lookup_comparisons(&self, fact: &Proposition) -> usize {
         self.facts().lookup_comparisons(fact)
+    }
+}
+
+/// One claimed occurrence of a selected nested expansion target. Finishing
+/// records the steps checked since the tactic began; dropping it without
+/// finishing (the tactic failed or was abandoned by its caller) releases the
+/// recorder with nothing recorded.
+pub(in crate::surface::proof) struct NestedTacticCaptureGuard<'a> {
+    capture: Arc<NestedTacticCapture>,
+    checkpoint: ProofCheckpoint<'a>,
+    finished: bool,
+}
+
+impl<'a> NestedTacticCaptureGuard<'a> {
+    pub(in crate::surface::proof) fn finish(mut self, after: &Proof<'a>) {
+        let occurrence = after
+            .certificate_after_node(Some(&self.checkpoint.node))
+            .map(|certificate| certificate.to_proof_tactics())
+            .map_err(|error| error.message().to_string());
+        self.capture.finish(occurrence);
+        self.finished = true;
+    }
+}
+
+impl Drop for NestedTacticCaptureGuard<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.capture.abandon();
+        }
     }
 }
 

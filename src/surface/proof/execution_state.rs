@@ -180,18 +180,59 @@ impl DeferredTacticCapture {
     pub(super) const NESTED: usize = usize::MAX;
 }
 
+/// The answer a completed capture already holds: a nested target's own
+/// recorded delta, or the flat tactic's.
+fn decided_tactic_expansion(
+    capture: &ExpansionCapture,
+) -> Option<Result<Vec<ProofTactic>, ClickError>> {
+    match &capture.nested {
+        Some(nested) => nested.result(),
+        None => capture.result.clone(),
+    }
+    .map(|result| result.map_err(ClickError::new))
+}
+
+/// The answer when verification succeeded without recording one.
+fn undecided_tactic_expansion(
+    capture: &ExpansionCapture,
+    site: &ProofSite,
+    source_index: usize,
+) -> Result<Vec<ProofTactic>, ClickError> {
+    if capture.dropped_path_occurrence {
+        return Ok(Vec::new());
+    }
+    if let Some(nested) = &capture.nested {
+        return Err(ClickError::new(if capture.result.is_some() {
+            format!(
+                "the selected tactic is written inside the `have` at source tactic {source_index} of {}; that `have` was checked, but by a driver that does not address the tactics written in its body (a loop `initialize` phase helper is one), so the selected tactic's own expansion (source path {:?}) could not be isolated; expand the whole claim with `--claim` instead",
+                site.description(),
+                nested.path
+            )
+        } else {
+            format!(
+                "selected {} proof never checked the `have` at source tactic {source_index} that contains the selected tactic",
+                site.description()
+            )
+        }));
+    }
+    Err(ClickError::new(format!(
+        "selected {} proof has no source tactic {source_index}",
+        site.description()
+    )))
+}
+
 pub(in crate::surface) fn capture_c0_tactic_expansion(
     click_source: &str,
     c_sources: &[(&str, &str)],
     site: ProofSite,
     source_index: usize,
+    nested_path: &[usize],
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    let mut capture = ExpansionCapture::for_tactic(site.clone(), source_index);
+    let mut capture = ExpansionCapture::for_nested_tactic(site.clone(), source_index, nested_path);
     let verification =
         verify_c0_sources_with_expansion_capture(click_source, c_sources, &mut capture);
-    let dropped_path_occurrence = capture.dropped_path_occurrence;
-    if let Some(result) = capture.result {
-        return result.map_err(ClickError::new);
+    if let Some(result) = decided_tactic_expansion(&capture) {
+        return result;
     }
     match verification {
         Err(error) => {
@@ -208,11 +249,7 @@ pub(in crate::surface) fn capture_c0_tactic_expansion(
                 None => Err(error),
             }
         }
-        Ok(_) if dropped_path_occurrence => Ok(Vec::new()),
-        Ok(_) => Err(ClickError::new(format!(
-            "selected {} proof has no source tactic {source_index}",
-            site.description()
-        ))),
+        Ok(_) => undecided_tactic_expansion(&capture, &site, source_index),
     }
 }
 
@@ -221,21 +258,14 @@ pub(in crate::surface) fn capture_c0_project_tactic_expansion(
     c_sources: &[(&str, &str)],
     site: ProofSite,
     source_index: usize,
+    nested_path: &[usize],
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    let mut capture = ExpansionCapture::for_tactic(site.clone(), source_index);
+    let mut capture = ExpansionCapture::for_nested_tactic(site.clone(), source_index, nested_path);
     let verification = verify_c0_project_with_expansion_capture(project, c_sources, &mut capture);
-    let dropped_path_occurrence = capture.dropped_path_occurrence;
-    if let Some(result) = capture.result {
-        return result.map_err(ClickError::new);
+    if let Some(result) = decided_tactic_expansion(&capture) {
+        return result;
     }
-    match verification {
-        Err(error) => Err(error),
-        Ok(_) if dropped_path_occurrence => Ok(Vec::new()),
-        Ok(_) => Err(ClickError::new(format!(
-            "selected {} proof has no source tactic {source_index}",
-            site.description()
-        ))),
-    }
+    verification.and_then(|_| undecided_tactic_expansion(&capture, &site, source_index))
 }
 
 pub(in crate::surface) fn capture_c0_prepared_project_tactic_expansion(
@@ -243,22 +273,15 @@ pub(in crate::surface) fn capture_c0_prepared_project_tactic_expansion(
     imports: &[crate::languages::c::compiler_import::PreparedCImport],
     site: ProofSite,
     source_index: usize,
+    nested_path: &[usize],
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    let mut capture = ExpansionCapture::for_tactic(site.clone(), source_index);
+    let mut capture = ExpansionCapture::for_nested_tactic(site.clone(), source_index, nested_path);
     let verification =
         verify_c0_prepared_project_with_expansion_capture(project, imports, &mut capture);
-    let dropped_path_occurrence = capture.dropped_path_occurrence;
-    if let Some(result) = capture.result {
-        return result.map_err(ClickError::new);
+    if let Some(result) = decided_tactic_expansion(&capture) {
+        return result;
     }
-    match verification {
-        Err(error) => Err(error),
-        Ok(_) if dropped_path_occurrence => Ok(Vec::new()),
-        Ok(_) => Err(ClickError::new(format!(
-            "selected {} proof has no source tactic {source_index}",
-            site.description()
-        ))),
-    }
+    verification.and_then(|_| undecided_tactic_expansion(&capture, &site, source_index))
 }
 
 pub(in crate::surface) fn capture_cpp_prepared_project_tactic_expansion(
@@ -266,22 +289,15 @@ pub(in crate::surface) fn capture_cpp_prepared_project_tactic_expansion(
     import: &crate::languages::cpp::PreparedCppImport,
     site: ProofSite,
     source_index: usize,
+    nested_path: &[usize],
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    let mut capture = ExpansionCapture::for_tactic(site.clone(), source_index);
+    let mut capture = ExpansionCapture::for_nested_tactic(site.clone(), source_index, nested_path);
     let verification =
         verify_cpp_prepared_project_with_expansion_capture(project, import, &mut capture);
-    let dropped_path_occurrence = capture.dropped_path_occurrence;
-    if let Some(result) = capture.result {
-        return result.map_err(ClickError::new);
+    if let Some(result) = decided_tactic_expansion(&capture) {
+        return result;
     }
-    match verification {
-        Err(error) => Err(error),
-        Ok(_) if dropped_path_occurrence => Ok(Vec::new()),
-        Ok(_) => Err(ClickError::new(format!(
-            "selected {} proof has no source tactic {source_index}",
-            site.description()
-        ))),
-    }
+    verification.and_then(|_| undecided_tactic_expansion(&capture, &site, source_index))
 }
 
 pub(in crate::surface) fn capture_cpp_prepared_tactic_expansion(
@@ -289,23 +305,16 @@ pub(in crate::surface) fn capture_cpp_prepared_tactic_expansion(
     import: &crate::languages::cpp::PreparedCppImport,
     site: ProofSite,
     source_index: usize,
+    nested_path: &[usize],
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    let mut capture = ExpansionCapture::for_tactic(site.clone(), source_index);
+    let mut capture = ExpansionCapture::for_nested_tactic(site.clone(), source_index, nested_path);
     let sources = CSourceContext::cpp(import)?;
     let verification =
         verify_c0_sources_with_expansion_capture_context(click_source, &sources, &mut capture);
-    let dropped_path_occurrence = capture.dropped_path_occurrence;
-    if let Some(result) = capture.result {
-        return result.map_err(ClickError::new);
+    if let Some(result) = decided_tactic_expansion(&capture) {
+        return result;
     }
-    match verification {
-        Err(error) => Err(error),
-        Ok(_) if dropped_path_occurrence => Ok(Vec::new()),
-        Ok(_) => Err(ClickError::new(format!(
-            "selected {} proof has no source tactic {source_index}",
-            site.description()
-        ))),
-    }
+    verification.and_then(|_| undecided_tactic_expansion(&capture, &site, source_index))
 }
 
 pub(in crate::surface) fn capture_c0_prepared_tactic_expansion(
@@ -313,23 +322,16 @@ pub(in crate::surface) fn capture_c0_prepared_tactic_expansion(
     imports: &[crate::languages::c::compiler_import::PreparedCImport],
     site: ProofSite,
     source_index: usize,
+    nested_path: &[usize],
 ) -> Result<Vec<ProofTactic>, ClickError> {
-    let mut capture = ExpansionCapture::for_tactic(site.clone(), source_index);
+    let mut capture = ExpansionCapture::for_nested_tactic(site.clone(), source_index, nested_path);
     let sources = CSourceContext::prepared(imports);
     let verification =
         verify_c0_sources_with_expansion_capture_context(click_source, &sources, &mut capture);
-    let dropped_path_occurrence = capture.dropped_path_occurrence;
-    if let Some(result) = capture.result {
-        return result.map_err(ClickError::new);
+    if let Some(result) = decided_tactic_expansion(&capture) {
+        return result;
     }
-    match verification {
-        Err(error) => Err(error),
-        Ok(_) if dropped_path_occurrence => Ok(Vec::new()),
-        Ok(_) => Err(ClickError::new(format!(
-            "selected {} proof has no source tactic {source_index}",
-            site.description()
-        ))),
-    }
+    verification.and_then(|_| undecided_tactic_expansion(&capture, &site, source_index))
 }
 
 pub(in crate::surface) fn capture_c0_proof_site_expansion(

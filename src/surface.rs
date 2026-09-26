@@ -107,14 +107,17 @@ mod verification;
 
 use checking::*;
 pub use expansion::{
-    CProofClaim, ClickImportSite, SmartTacticSourceSite, SourcePosition,
+    CProofClaim, ClickImportSite, SmartTacticCandidate, SmartTacticSelectionError,
+    SmartTacticSourceSite, SourcePosition, c0_prepared_project_select_smart_tactic,
     c0_prepared_project_smart_tactic_source_sites, c0_prepared_project_tactic_source_position,
-    c0_prepared_smart_tactic_source_sites, c0_prepared_tactic_source_position,
+    c0_prepared_select_smart_tactic, c0_prepared_smart_tactic_source_sites,
+    c0_prepared_tactic_source_position, c0_project_select_smart_tactic,
     c0_project_smart_tactic_source_sites, c0_project_tactic_source_position,
-    c0_smart_tactic_source_sites, c0_tactic_source_position, click_import_sites,
+    c0_select_smart_tactic, c0_smart_tactic_source_sites, c0_tactic_source_position,
+    click_import_sites, cpp_prepared_project_select_smart_tactic,
     cpp_prepared_project_smart_tactic_source_sites, cpp_prepared_project_tactic_source_position,
-    cpp_prepared_smart_tactic_source_sites, cpp_prepared_tactic_source_position,
-    expand_c0_claim_source, expand_c0_claim_source_by_label,
+    cpp_prepared_select_smart_tactic, cpp_prepared_smart_tactic_source_sites,
+    cpp_prepared_tactic_source_position, expand_c0_claim_source, expand_c0_claim_source_by_label,
     expand_c0_prepared_claim_source_by_label, expand_c0_prepared_project_claim_source_by_label,
     expand_c0_prepared_project_tactic_source_at, expand_c0_prepared_tactic_source_at,
     expand_c0_project_claim_source_by_label, expand_c0_project_tactic_source_at,
@@ -123,12 +126,12 @@ pub use expansion::{
     expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
     map_verifying_source_paths, nested_tactic_source_position, selected_c_target,
     selected_project_c_target, selected_project_thread_runtime, selected_thread_runtime,
-    smart_have_body_tactic_at, tactic_arm_containing_position, tactic_have_body_contains_position,
+    tactic_arm_containing_position, tactic_have_body_contains_position,
     tactic_line_has_multiple_starts, tactic_source_at_position, tactic_starts_on_line,
     verifying_source_paths,
 };
 use expansion::{
-    ExpansionCapture, ProofSite, VerificationTarget, verification_target_at,
+    ExpansionCapture, NestedTacticCapture, ProofSite, VerificationTarget, verification_target_at,
     verification_target_at_context,
 };
 use lowering::*;

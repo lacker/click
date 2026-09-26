@@ -2019,6 +2019,7 @@ fn frontier_local_loop_at_function_entry_keeps_initialization_capture_separate()
             claim: CProofClaim::Grouped,
         },
         1,
+        &[],
     )
     .expect("initialization should retain its own expansion certificate");
 

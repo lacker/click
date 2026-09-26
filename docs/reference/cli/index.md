@@ -32,7 +32,8 @@ Commands accept one or more of these target forms, as documented on each
 command page:
 
 - a `.click` sidecar;
-- a one-based `PATH:LINE:COLUMN` source location;
+- a one-based `PATH:LINE:COLUMN` source location, or a `PATH:LINE` line for
+  `click expand`;
 - a project directory containing sidecars;
 - a directory whose immediate subdirectories are projects;
 - an mdtest file or mdtest directory;

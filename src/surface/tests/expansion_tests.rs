@@ -4316,6 +4316,297 @@ fn source_expander_selects_a_smart_have_by_the_simp_in_its_body() {
     }
 }
 
+/// A `have` whose body mixes a smart `have` and a smart `simp` is no smart
+/// site itself, but each smart tactic in its body is: expansion rewrites
+/// exactly that tactic's source and leaves its neighbors as written.
+#[test]
+fn source_expander_rewrites_one_smart_tactic_inside_a_mixed_have_body() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    let click_source = "verifying \"identity.c\";\n\
+        int32 identity(int32 x) {\n\
+        \x20   ensures result == x;\n\
+        } by {\n\
+        \x20   have x <= x by {\n\
+        \x20       have x == x by { simp(); }\n\
+        \x20       simp();\n\
+        \x20   }\n\
+        \x20   execute();\n\
+        \x20   simp();\n\
+        }\n";
+    let sources = [("identity.c", c_source)];
+    verify_c0_sources(click_source, &sources).expect("the fixture should verify");
+    let lines = click_source.lines().collect::<Vec<_>>();
+
+    let body_simp = expand_c0_tactic_source_at(click_source, &sources, 7, 9)
+        .expect("the simp in the mixed have body should expand");
+    let rewritten = body_simp.lines().collect::<Vec<_>>();
+    assert_eq!(rewritten[..6], lines[..6], "{body_simp}");
+    assert_eq!(rewritten[6], "        normalize();", "{body_simp}");
+    assert!(
+        body_simp.ends_with("    }\n    execute();\n    simp();\n}\n"),
+        "{body_simp}"
+    );
+    verify_c0_sources(&body_simp, &sources).expect("the rewritten body simp should check");
+
+    // The inner smart `have` is one site, selected by its keyword, by the
+    // `simp` in its body, or by any column inside it.
+    let inner_have = expand_c0_tactic_source_at(click_source, &sources, 6, 9)
+        .expect("the nested smart have should expand");
+    for column in [26, 18, 34] {
+        assert_eq!(
+            expand_c0_tactic_source_at(click_source, &sources, 6, column)
+                .expect("a column inside the nested smart have should select it"),
+            inner_have
+        );
+    }
+    assert!(
+        inner_have.contains(
+            "    have x <= x by {\n        have x == x by {\n            normalize();\n        }\n        simp();\n    }\n"
+        ),
+        "{inner_have}"
+    );
+    verify_c0_sources(&inner_have, &sources).expect("the rewritten nested have should check");
+
+    // Neither the brace closing the non-smart outer `have` nor the space
+    // before it lies in a smart tactic.
+    for (line, column) in [(8, 5), (5, 1)] {
+        let error = expand_c0_tactic_source_at(click_source, &sources, line, column)
+            .expect_err("a location outside every smart tactic selects nothing");
+        assert!(
+            error
+                .message()
+                .contains("no smart tactic's source contains this location"),
+            "{line}:{column}: {}",
+            error.message()
+        );
+    }
+}
+
+/// Expands the smart `simp` written at `line` inside a mixed `have` body,
+/// checks that only that line changed, and re-verifies the rewrite.
+fn assert_mixed_have_body_simp_expands(
+    click_source: &str,
+    sources: &[(&str, &str)],
+    line: usize,
+    column: usize,
+) -> String {
+    verify_c0_sources(click_source, sources).expect("the fixture should verify");
+    let expanded = expand_c0_tactic_source_at(click_source, sources, line, column)
+        .unwrap_or_else(|error| panic!("{line}:{column}: {}", error.message()));
+    let original = click_source.lines().collect::<Vec<_>>();
+    let rewritten = expanded.lines().collect::<Vec<_>>();
+    assert_eq!(rewritten.len(), original.len(), "{expanded}");
+    for (index, (before, after)) in original.iter().zip(&rewritten).enumerate() {
+        if index + 1 == line {
+            assert_ne!(before, after, "{expanded}");
+        } else {
+            assert_eq!(before, after, "{expanded}");
+        }
+    }
+    verify_c0_sources(&expanded, sources).expect("the rewritten body tactic should check");
+    expanded
+}
+
+/// A mixed `have` in a proof `if` arm after execution is checked per
+/// outcome; its body `simp` expands on its own there too.
+#[test]
+fn source_expander_rewrites_a_have_body_tactic_in_a_post_execution_if_arm() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    let click_source = "verifying \"identity.c\";\n\
+        int32 identity(int32 x) {\n\
+        \x20   ensures result == x;\n\
+        } by {\n\
+        \x20   execute();\n\
+        \x20   if x > 0 {\n\
+        \x20       simp();\n\
+        \x20   } else {\n\
+        \x20       have x <= x by {\n\
+        \x20           have x == x by simp;\n\
+        \x20           simp();\n\
+        \x20       }\n\
+        \x20       simp();\n\
+        \x20   }\n\
+        }\n";
+    assert_mixed_have_body_simp_expands(click_source, &[("identity.c", c_source)], 11, 13);
+}
+
+/// A mixed `have` in a C `branch` arm is checked on the execution frontier;
+/// its body `simp` expands on its own there.
+#[test]
+fn source_expander_rewrites_a_have_body_tactic_in_a_branch_arm() {
+    let c_source = "int32 early_exit(int32 c) {\n\
+        \x20   int32 x;\n\
+        \x20   x = 0;\n\
+        \x20   if (c != 0) {\n\
+        \x20       return 1;\n\
+        \x20   }\n\
+        \x20   x = 2;\n\
+        \x20   return x;\n\
+        }\n";
+    let click_source = "verifying \"early_exit.c\";\n\
+        int32 early_exit(int32 c) {\n\
+        \x20   ensures result >= 0;\n\
+        } by {\n\
+        \x20   step();\n\
+        \x20   step();\n\
+        \x20   branch {\n\
+        \x20       then {\n\
+        \x20           have c != 0 by {\n\
+        \x20               have c == c by simp;\n\
+        \x20               simp();\n\
+        \x20           }\n\
+        \x20           step();\n\
+        \x20           simp();\n\
+        \x20       }\n\
+        \x20       else {}\n\
+        \x20   }\n\
+        \x20   step();\n\
+        \x20   step();\n\
+        \x20   simp();\n\
+        }\n";
+    assert_mixed_have_body_simp_expands(click_source, &[("early_exit.c", c_source)], 11, 17);
+}
+
+/// A mixed `have` in a frontier-local loop's `preserve` phase is checked by
+/// the preservation proof; its body `simp` expands on its own there.
+#[test]
+fn source_expander_rewrites_a_have_body_tactic_in_a_loop_preserve_phase() {
+    let c_source = "int32 count_to_n(int32 n) {\n\
+        \x20   int32 i;\n\
+        \x20   i = 0;\n\
+        \x20   while (i < n) {\n\
+        \x20       i++;\n\
+        \x20   }\n\
+        \x20   return i;\n\
+        }\n";
+    let click_source = "verifying \"count_up.c\";\n\
+        int32 count_to_n(int32 n) {\n\
+        \x20   requires n >= 0 and n <= 2147483647;\n\
+        \x20   ensures result == n;\n\
+        } by {\n\
+        \x20   step();\n\
+        \x20   step();\n\
+        \x20   loop {\n\
+        \x20       decreases n - i;\n\
+        \x20       invariant i >= 0;\n\
+        \x20       invariant i <= n;\n\
+        \x20       initialize by simp;\n\
+        \x20       preserve by {\n\
+        \x20           have i <= n by {\n\
+        \x20               have i == i by simp;\n\
+        \x20               simp();\n\
+        \x20           }\n\
+        \x20           step();\n\
+        \x20           close_invariants();\n\
+        \x20       }\n\
+        \x20   }\n\
+        \x20   step();\n\
+        \x20   simp();\n\
+        }\n";
+    assert_mixed_have_body_simp_expands(click_source, &[("count_up.c", c_source)], 16, 17);
+}
+
+/// A loop `initialize` phase checks its helper `have`s without addressing
+/// the tactics written in their bodies, so a smart tactic there cannot be
+/// isolated yet; expansion says so instead of rewriting a neighbor.
+#[test]
+fn a_have_body_tactic_in_a_loop_initialize_phase_is_refused_with_a_reason() {
+    let c_source = "int32 count_to_n(int32 n) {\n\
+        \x20   int32 i;\n\
+        \x20   i = 0;\n\
+        \x20   while (i < n) {\n\
+        \x20       i++;\n\
+        \x20   }\n\
+        \x20   return i;\n\
+        }\n";
+    let click_source = "verifying \"count_up.c\";\n\
+        int32 count_to_n(int32 n) {\n\
+        \x20   requires n >= 0 and n <= 2147483647;\n\
+        \x20   ensures result == n;\n\
+        } by {\n\
+        \x20   step();\n\
+        \x20   step();\n\
+        \x20   loop {\n\
+        \x20       decreases n - i;\n\
+        \x20       invariant i >= 0;\n\
+        \x20       invariant i <= n;\n\
+        \x20       initialize by {\n\
+        \x20           have 0 <= n by {\n\
+        \x20               have n == n by simp;\n\
+        \x20               simp();\n\
+        \x20           }\n\
+        \x20           simp();\n\
+        \x20       }\n\
+        \x20       preserve by {\n\
+        \x20           step();\n\
+        \x20           close_invariants();\n\
+        \x20       }\n\
+        \x20   }\n\
+        \x20   step();\n\
+        \x20   simp();\n\
+        }\n";
+    let sources = [("count_up.c", c_source)];
+    verify_c0_sources(click_source, &sources).expect("fixture verifies");
+    let error = expand_c0_tactic_source_at(click_source, &sources, 15, 17)
+        .expect_err("an initialize-phase helper body tactic cannot be isolated yet");
+    assert!(
+        error
+            .message()
+            .contains("by a driver that does not address the tactics written in its body"),
+        "{}",
+        error.message()
+    );
+    assert!(error.message().contains("--claim"), "{}", error.message());
+}
+
+/// A line without a column selects the one smart tactic starting on it and
+/// lists the candidates when there are several.
+#[test]
+fn smart_tactic_selection_by_line_is_unique_or_lists_candidates() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    let click_source = "verifying \"identity.c\";\n\
+        int32 identity(int32 x) {\n\
+        \x20   ensures result == x;\n\
+        } by {\n\
+        \x20   have x <= x by {\n\
+        \x20       have x == x by { simp(); }\n\
+        \x20       simp();\n\
+        \x20   }\n\
+        \x20   have x >= x by { have x == x by simp; simp(); }\n\
+        \x20   execute();\n\
+        \x20   simp();\n\
+        }\n";
+    let sources = [("identity.c", c_source)];
+    let select = |line, column| c0_select_smart_tactic(click_source, &sources, line, column);
+    for (line, column, name) in [(6, 9, "have"), (7, 9, "simp"), (11, 5, "simp")] {
+        let selected = select(line, None).expect("the line starts one smart tactic");
+        assert_eq!(
+            (selected.position.line, selected.position.column),
+            (line, column)
+        );
+        assert_eq!(selected.tactic_name, name);
+        assert_eq!(selected.claim_label, "identity.contract");
+    }
+    let ambiguous = select(9, None).expect_err("line 9 starts two smart tactics");
+    assert!(
+        ambiguous.reason.contains("2 smart tactics"),
+        "{}",
+        ambiguous.reason
+    );
+    assert_eq!(
+        ambiguous
+            .candidates
+            .iter()
+            .map(|candidate| (candidate.position.line, candidate.position.column))
+            .collect::<Vec<_>>(),
+        [(9, 22), (9, 43)]
+    );
+    let selected = select(9, Some(45)).expect("a column disambiguates the line");
+    assert_eq!((selected.position.line, selected.position.column), (9, 43));
+    let none = select(5, None).expect_err("line 5 starts only a non-smart have");
+    assert!(none.reason.contains("no smart tactic starts on this line"));
+}
+
 #[test]
 fn pure_structural_simp_builds_recursive_conjunction_on_proof() {
     let click_source = r#"
@@ -12280,6 +12571,7 @@ fn branch_continuation_claims_retain_their_selected_outcome_step() {
                     claim: CProofClaim::Ensure(1),
                 },
                 0,
+                &[],
             )
             .expect("the selected pre-branch step should have one stable expansion");
             assert!(

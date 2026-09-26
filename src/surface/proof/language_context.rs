@@ -163,6 +163,10 @@ pub(in crate::surface::proof) struct ExecutionProofConstants {
     #[allow(dead_code)]
     pub(in crate::surface::proof) function_source_registry: Arc<FunctionSourceRegistry>,
     pub(in crate::surface::proof) grouped_contract: bool,
+    /// The recorder for a selected expansion target written inside a `have`
+    /// body of this proof, when `click expand` selected one. Presentation
+    /// metadata only; it grants no authority and changes no check.
+    pub(in crate::surface::proof) nested_tactic_capture: Option<Arc<NestedTacticCapture>>,
 }
 
 impl Default for ExecutionProofConstants {
@@ -178,6 +182,7 @@ impl Default for ExecutionProofConstants {
             function_entry_state: None,
             function_source_registry: Arc::new(FunctionSourceRegistry::default()),
             grouped_contract: false,
+            nested_tactic_capture: None,
         }
     }
 }

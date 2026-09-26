@@ -215,6 +215,7 @@ fn linear_frontier_branch_uses_the_checked_structural_join() {
                 claim: CProofClaim::Grouped,
             },
             0,
+            &[],
         )
     });
     let captured = captured.expect("the checked branch should expose its retained expansion");
@@ -399,6 +400,7 @@ fn decided_frontier_branch_retains_the_only_feasible_checked_arm() {
                             claim: CProofClaim::Ensure(0),
                         },
                         0,
+                        &[],
                     )
                 })
             })

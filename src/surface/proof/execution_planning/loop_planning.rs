@@ -805,7 +805,11 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         ..ExecutionFrontier::default()
     };
     let mut recorded_snapshots = RecordedSnapshots::new();
+    let nested_tactic_capture = expansion_capture
+        .as_deref()
+        .and_then(|capture| capture.nested_for_site(Some(&preserve_site)));
     let mut constants = ExecutionProofConstants {
+        nested_tactic_capture,
         proof_site: Some(preserve_site),
         invariant_body_context: Some(Arc::new(InvariantBodyContext {
             loop_entry_state: preservation.loop_entry_state().clone(),

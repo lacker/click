@@ -7,16 +7,16 @@ use std::time::Duration;
 
 use click::cli::{
     CInput, DEFAULT_EXPANSION_TIME_LIMIT, containing_directory, looks_like_mdtest, parse_duration,
-    parse_source_location, prepare_mdtest_inputs, read_c_inputs, read_click_project, read_mdtest,
-    source_refs,
+    parse_source_line_location, prepare_mdtest_inputs, read_c_inputs, read_click_project,
+    read_mdtest, source_refs,
 };
 use click::surface::{
-    ClickProject, SourcePosition, c0_prepared_project_smart_tactic_source_sites,
-    c0_prepared_project_tactic_source_position, c0_prepared_smart_tactic_source_sites,
-    c0_prepared_tactic_source_position, c0_project_smart_tactic_source_sites,
-    c0_project_tactic_source_position, c0_smart_tactic_source_sites, c0_tactic_source_position,
-    click_import_sites, cpp_prepared_project_smart_tactic_source_sites,
-    cpp_prepared_project_tactic_source_position, cpp_prepared_smart_tactic_source_sites,
+    ClickProject, SmartTacticCandidate, SmartTacticSelectionError,
+    c0_prepared_project_select_smart_tactic, c0_prepared_project_tactic_source_position,
+    c0_prepared_select_smart_tactic, c0_prepared_tactic_source_position,
+    c0_project_select_smart_tactic, c0_project_tactic_source_position, c0_select_smart_tactic,
+    c0_tactic_source_position, click_import_sites, cpp_prepared_project_select_smart_tactic,
+    cpp_prepared_project_tactic_source_position, cpp_prepared_select_smart_tactic,
     cpp_prepared_tactic_source_position, expand_c0_claim_source_by_label,
     expand_c0_prepared_claim_source_by_label, expand_c0_prepared_project_claim_source_by_label,
     expand_c0_prepared_project_tactic_source_at, expand_c0_prepared_tactic_source_at,
@@ -24,12 +24,12 @@ use click::surface::{
     expand_c0_tactic_source_at, expand_cpp_prepared_claim_source_by_label,
     expand_cpp_prepared_project_claim_source_by_label,
     expand_cpp_prepared_project_tactic_source_at, expand_cpp_prepared_tactic_source_at,
-    map_verifying_source_paths, smart_have_body_tactic_at, verify_c0_prepared_project_at,
-    verify_c0_prepared_sources_at, verify_c0_project_at, verify_c0_sources_at,
-    verify_cpp_prepared_project_at, verify_cpp_prepared_sources_at,
+    map_verifying_source_paths, verify_c0_prepared_project_at, verify_c0_prepared_sources_at,
+    verify_c0_project_at, verify_c0_sources_at, verify_cpp_prepared_project_at,
+    verify_cpp_prepared_sources_at,
 };
 
-const USAGE: &str = "usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>:<column>\n       click expand --claim <LABEL> [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>\n\nExpansion is checked before output. With --in-place, the original is atomically replaced only after targeted verification succeeds.";
+const USAGE: &str = "usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>[:<column>]\n       click expand --claim <LABEL> [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>\n\nExpansion is checked before output. With --in-place, the original is atomically replaced only after targeted verification succeeds.";
 
 fn main() {
     if let Err(message) = entry() {
@@ -49,7 +49,12 @@ struct Arguments {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Selection {
-    Tactic { line: usize, column: usize },
+    /// A source location; without a column the line must start exactly one
+    /// smart tactic.
+    Tactic {
+        line: usize,
+        column: Option<usize>,
+    },
     Claim(String),
 }
 
@@ -127,7 +132,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let (click_path, selection) = match (claim, positional.as_slice()) {
         (Some(claim), [path]) => (PathBuf::from(path), Selection::Claim(claim)),
         (None, [location]) => {
-            let (path, line, column) = parse_source_location(location)?;
+            let (path, line, column) = parse_source_line_location(location)?;
             (path, Selection::Tactic { line, column })
         }
         _ => return Err(USAGE.to_string()),
@@ -171,7 +176,16 @@ fn run_bounded(arguments: &Arguments) -> Result<ExpandedArtifact, String> {
     let inputs = read_c_inputs(&arguments.click_path, &click_source)?;
     let project = read_click_project(&arguments.click_path, &click_source)?;
     let (claim, expanded) = generate_expansion(arguments.time_limit, || {
-        expand_selection(Some(&project), &click_source, &inputs, &arguments.selection)
+        expand_selection(
+            Some(&project),
+            &click_source,
+            &inputs,
+            &arguments.selection,
+            &SelectionReport {
+                path: &arguments.click_path,
+                line_offset: 0,
+            },
+        )
     })?;
     verify_expansion(
         Some(&project),
@@ -393,7 +407,17 @@ fn run_mdtest(arguments: &Arguments) -> Result<ExpandedArtifact, String> {
             },
             Selection::Claim(claim) => Selection::Claim(claim.clone()),
         };
-        expand_selection(project.as_ref(), click_source, &inputs, &selection)
+        let location = SelectionReport {
+            path: &arguments.click_path,
+            line_offset: mdtest.click_start_line.saturating_sub(1),
+        };
+        expand_selection(
+            project.as_ref(),
+            click_source,
+            &inputs,
+            &selection,
+            &location,
+        )
     })?;
     verify_expansion(
         project.as_ref(),
@@ -406,15 +430,53 @@ fn run_mdtest(arguments: &Arguments) -> Result<ExpandedArtifact, String> {
     Ok(ExpandedArtifact { source, claim })
 }
 
+/// How a selection failure names file positions: the input path, and the
+/// line of the input file where the Click source's first line sits.
+struct SelectionReport<'a> {
+    path: &'a Path,
+    line_offset: usize,
+}
+
+impl SelectionReport<'_> {
+    fn describe(
+        &self,
+        line: usize,
+        column: Option<usize>,
+        error: SmartTacticSelectionError,
+    ) -> String {
+        let location = |line: usize, column: Option<usize>| {
+            let line = line + self.line_offset;
+            column.map_or_else(
+                || format!("{}:{line}", self.path.display()),
+                |column| format!("{}:{line}:{column}", self.path.display()),
+            )
+        };
+        let mut message = format!("{}: {}", location(line, column), error.reason);
+        for candidate in &error.candidates {
+            message.push_str(&format!(
+                "\n  {} `{}` in `{}`",
+                location(candidate.position.line, Some(candidate.position.column)),
+                candidate.tactic_name,
+                candidate.claim_label
+            ));
+        }
+        message
+    }
+}
+
 fn expand_selection(
     project: Option<&ClickProject>,
     click_source: &str,
     inputs: &CInput,
     selection: &Selection,
+    report: &SelectionReport<'_>,
 ) -> Result<(String, String), String> {
     match selection {
         Selection::Tactic { line, column } => {
-            let claim = selected_claim(project, click_source, inputs, *line, *column)?;
+            let selected = select_smart_tactic(project, click_source, inputs, *line, *column)
+                .map_err(|error| report.describe(*line, *column, error))?;
+            let claim = selected.claim_label;
+            let (line, column) = (&selected.position.line, &selected.position.column);
             let expanded = match inputs {
                 CInput::Bundle(sources) => match project {
                     Some(project) => expand_c0_project_tactic_source_at(
@@ -543,92 +605,33 @@ fn expansion_deadline_error(
     )
 }
 
-fn selected_claim(
+fn select_smart_tactic(
     project: Option<&ClickProject>,
     click_source: &str,
     inputs: &CInput,
     line: usize,
-    column: usize,
-) -> Result<String, String> {
-    let sites = match inputs {
+    column: Option<usize>,
+) -> Result<SmartTacticCandidate, SmartTacticSelectionError> {
+    match inputs {
         CInput::Bundle(sources) => match project {
-            Some(project) => c0_project_smart_tactic_source_sites(project, &source_refs(sources)),
-            None => c0_smart_tactic_source_sites(click_source, &source_refs(sources)),
+            Some(project) => {
+                c0_project_select_smart_tactic(project, &source_refs(sources), line, column)
+            }
+            None => c0_select_smart_tactic(click_source, &source_refs(sources), line, column),
         },
         CInput::Prepared(imports) => match project {
-            Some(project) => c0_prepared_project_smart_tactic_source_sites(project, imports),
-            None => c0_prepared_smart_tactic_source_sites(click_source, imports),
+            Some(project) => {
+                c0_prepared_project_select_smart_tactic(project, imports, line, column)
+            }
+            None => c0_prepared_select_smart_tactic(click_source, imports, line, column),
         },
         CInput::PreparedCpp(import) => match project {
-            Some(project) => cpp_prepared_project_smart_tactic_source_sites(project, import),
-            None => cpp_prepared_smart_tactic_source_sites(click_source, import),
+            Some(project) => {
+                cpp_prepared_project_select_smart_tactic(project, import, line, column)
+            }
+            None => cpp_prepared_select_smart_tactic(click_source, import, line, column),
         },
     }
-    .map_err(|error| error.report())?;
-    sites
-        .into_iter()
-        .find_map(|site| {
-            let position = match inputs {
-                CInput::Bundle(sources) => match project {
-                    Some(project) => c0_project_tactic_source_position(
-                        project,
-                        &source_refs(sources),
-                        &site.claim_label,
-                        site.source_index,
-                    ),
-                    None => c0_tactic_source_position(
-                        click_source,
-                        &source_refs(sources),
-                        &site.claim_label,
-                        site.source_index,
-                    ),
-                },
-                CInput::Prepared(imports) => match project {
-                    Some(project) => c0_prepared_project_tactic_source_position(
-                        project,
-                        imports,
-                        &site.claim_label,
-                        site.source_index,
-                    ),
-                    None => c0_prepared_tactic_source_position(
-                        click_source,
-                        imports,
-                        &site.claim_label,
-                        site.source_index,
-                    ),
-                },
-                CInput::PreparedCpp(import) => match project {
-                    Some(project) => cpp_prepared_project_tactic_source_position(
-                        project,
-                        import,
-                        &site.claim_label,
-                        site.source_index,
-                    ),
-                    None => cpp_prepared_tactic_source_position(
-                        click_source,
-                        import,
-                        &site.claim_label,
-                        site.source_index,
-                    ),
-                },
-            }
-            .ok()?;
-            // A smart `have` is selected by its `have` keyword or by the smart
-            // tactic written in its body.
-            let selected = (position.line == line && position.column == column)
-                || smart_have_body_tactic_at(
-                    click_source,
-                    &position,
-                    &SourcePosition {
-                        line,
-                        column,
-                        origin: None,
-                    },
-                )
-                .unwrap_or(false);
-            selected.then_some(site.claim_label)
-        })
-        .ok_or_else(|| "source location does not select a smart tactic".to_string())
 }
 
 fn verify_expansion(
@@ -955,7 +958,7 @@ int32 identity(int32 x) {
             arguments.selection,
             Selection::Tactic {
                 line: 12,
-                column: 7
+                column: Some(7)
             }
         );
         assert_eq!(arguments.time_limit, Duration::from_secs(30));
@@ -1010,7 +1013,7 @@ int32 bad(int32 x) {
             click_path,
             selection: Selection::Tactic {
                 line: position.line,
-                column: position.column,
+                column: Some(position.column),
             },
             time_limit: DEFAULT_EXPANSION_TIME_LIMIT,
             output: None,
@@ -1045,7 +1048,10 @@ int32 bad(int32 x) {
         let run_at = |line: usize, column: usize| {
             run(&Arguments {
                 click_path: path.clone(),
-                selection: Selection::Tactic { line, column },
+                selection: Selection::Tactic {
+                    line,
+                    column: Some(column),
+                },
                 time_limit: DEFAULT_EXPANSION_TIME_LIMIT,
                 output: None,
                 in_place: false,
@@ -1065,6 +1071,212 @@ int32 bad(int32 x) {
             !from_simp.contains("simp() using {\n                    defined(1 + got)"),
             "{from_simp}"
         );
+    }
+
+    fn mdtest_path(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(name)
+    }
+
+    /// Runs one location selection end to end, including the ordinary
+    /// verification of the rewritten source that `run` performs.
+    fn run_location(path: &Path, location: &str) -> Result<String, String> {
+        let arguments = parse_arguments([format!("{}:{location}", path.display())])?;
+        run(&arguments)
+    }
+
+    fn markdown_line(path: &Path, line: usize) -> String {
+        fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .nth(line - 1)
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn parses_a_location_without_a_column() {
+        let arguments = parse_arguments(["volume:name/example.click:12".to_string()])
+            .expect("a line-only location should parse");
+        assert_eq!(
+            arguments.click_path,
+            PathBuf::from("volume:name/example.click")
+        );
+        assert_eq!(
+            arguments.selection,
+            Selection::Tactic {
+                line: 12,
+                column: None
+            }
+        );
+        assert!(parse_arguments(["example.click".to_string()]).is_err());
+        assert!(parse_arguments(["example.click:0".to_string()]).is_err());
+    }
+
+    /// Inside a proof `branch` arm: the line of the `simp` in a smart
+    /// `have` body selects that `have`, as its keyword and any column
+    /// inside it do; a line that starts no smart tactic selects nothing.
+    #[test]
+    fn a_line_inside_a_branch_arm_selects_its_one_smart_tactic() {
+        let path = mdtest_path("guarded_postcondition_closes_after_call.md");
+        let markdown = fs::read_to_string(&path).unwrap();
+        let have_line = markdown
+            .lines()
+            .position(|line| line == "            have st.live == 1 by {")
+            .unwrap()
+            + 1;
+        let from_have = run_location(&path, &format!("{have_line}:13")).unwrap();
+        assert_eq!(
+            run_location(&path, &format!("{}", have_line + 1)).unwrap(),
+            from_have
+        );
+        let premise_line = have_line + 2;
+        assert!(markdown_line(&path, premise_line).contains("defined(1 + got)"));
+        assert_eq!(
+            run_location(&path, &format!("{premise_line}:24")).unwrap(),
+            from_have
+        );
+        let error = run_location(&path, &format!("{premise_line}"))
+            .expect_err("a premise line starts no smart tactic");
+        assert!(
+            error.contains(&format!(
+                "{}:{premise_line}: no smart tactic starts on this line",
+                path.display()
+            )),
+            "{error}"
+        );
+    }
+
+    /// A proof `if` arm and the continuation after a `have` are addressed by
+    /// line; a smart tactic in a `cases` arm written inside a `have` body is
+    /// refused with the reason instead of selecting a neighbor.
+    #[test]
+    fn lines_in_proof_if_arms_select_and_a_cases_arm_in_a_have_body_is_refused() {
+        let path = mdtest_path("proof_cases_after_c_branch_expands.md");
+        for line in [53, 65] {
+            assert_eq!(markdown_line(&path, line).trim(), "simp();");
+            let expanded = run_location(&path, &line.to_string())
+                .unwrap_or_else(|error| panic!("line {line}: {error}"));
+            let original = fs::read_to_string(&path).unwrap();
+            assert_ne!(expanded, original);
+            // Every other line of the proof is kept as written.
+            assert_eq!(
+                expanded.lines().take(line - 1).collect::<Vec<_>>(),
+                original.lines().take(line - 1).collect::<Vec<_>>()
+            );
+        }
+        for line in [57, 60] {
+            let error = run_location(&path, &line.to_string())
+                .expect_err("a smart tactic in a cases arm inside a have body is refused");
+            assert!(
+                error.contains("inside a proof `cases` written in a `have` body"),
+                "{error}"
+            );
+            assert!(error.contains("--claim use_pick.contract"), "{error}");
+        }
+    }
+
+    /// Loop phases: the smart `initialize by simp` and the smart
+    /// `close_invariants()` of a frontier-local loop are selected by line.
+    #[test]
+    fn lines_in_loop_phases_select_their_smart_tactics() {
+        let path = mdtest_path("c_decreases_count_up.md");
+        for (line, text) in [(27, "initialize by simp;"), (30, "close_invariants();")] {
+            assert_eq!(markdown_line(&path, line).trim(), text);
+            let expanded = run_location(&path, &line.to_string())
+                .unwrap_or_else(|error| panic!("line {line}: {error}"));
+            assert!(!expanded.contains(text), "{expanded}");
+        }
+    }
+
+    /// A close bundle is one smart site: a column on the `simp` written in
+    /// one of its `both` arms selects the whole bundle.
+    #[test]
+    fn a_column_inside_a_close_bundle_selects_the_bundle() {
+        let path = mdtest_path("loop_invariant_body.md");
+        assert_eq!(markdown_line(&path, 35).trim(), "both { simp(); }");
+        let from_simp = run_location(&path, "35:24").unwrap();
+        let from_bundle = run_location(&path, "34:13").unwrap();
+        assert_eq!(from_simp, from_bundle);
+        assert!(!from_simp.contains("both { simp(); }"), "{from_simp}");
+    }
+
+    /// Call outcomes: the `simp` closing the `returned` arm is selected by
+    /// its line, and only that arm is rewritten.
+    #[test]
+    fn a_line_in_a_call_outcome_arm_selects_its_smart_tactic() {
+        let path = mdtest_path("cpp_single_guard_throw_step.md");
+        assert_eq!(markdown_line(&path, 81).trim(), "simp();");
+        let expanded = run_location(&path, "81").unwrap();
+        let tail = expanded
+            .split_once("        threw {\n")
+            .expect("the threw arm is kept")
+            .1;
+        assert!(
+            tail.starts_with("            step();\n            execute();\n            simp();\n"),
+            "{expanded}"
+        );
+    }
+
+    /// Through the CLI on a sidecar: a smart tactic in a mixed `have` body
+    /// is selected by its line, an ambiguous line lists its candidates as
+    /// copy-pasteable locations, and a location between tactics is refused.
+    #[test]
+    fn line_selection_on_a_sidecar_lists_ambiguous_candidates() {
+        let directory = env::temp_dir().join(format!(
+            "click-expand-lines-{}-{}",
+            std::process::id(),
+            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("identity.c"),
+            "int32 identity(int32 x) { return x; }",
+        )
+        .unwrap();
+        let click_path = directory.join("identity.click");
+        let click_source = "verifying \"identity.c\";\n\
+            int32 identity(int32 x) {\n\
+            \x20   ensures result == x;\n\
+            } by {\n\
+            \x20   have x <= x by {\n\
+            \x20       have x == x by { simp(); }\n\
+            \x20       simp();\n\
+            \x20   }\n\
+            \x20   have x >= x by { have x == x by simp; simp(); }\n\
+            \x20   execute();\n\
+            \x20   simp();\n\
+            }\n";
+        fs::write(&click_path, click_source).unwrap();
+
+        let expanded = run_location(&click_path, "7").unwrap();
+        assert!(
+            expanded.contains("        have x == x by { simp(); }\n        normalize();\n    }\n"),
+            "{expanded}"
+        );
+        let ambiguous = run_location(&click_path, "9").expect_err("line 9 is ambiguous");
+        let path = click_path.display();
+        assert!(
+            ambiguous.contains(&format!(
+                "{path}:9: 2 smart tactics start on this line; add the column of one of them:\n  {path}:9:22 `have` in `identity.contract`\n  {path}:9:43 `simp` in `identity.contract`"
+            )),
+            "{ambiguous}"
+        );
+        let expanded = run_location(&click_path, "9:43").unwrap();
+        assert!(
+            expanded.contains("    have x >= x by { have x == x by simp; normalize(); }\n"),
+            "{expanded}"
+        );
+        let between =
+            run_location(&click_path, "8:5").expect_err("a closing brace selects nothing");
+        assert!(
+            between.contains(&format!(
+                "{path}:8:5: no smart tactic's source contains this location"
+            )),
+            "{between}"
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

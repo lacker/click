@@ -5783,6 +5783,7 @@ impl<'a> Proof<'a> {
             // the user wrote, so a failure inside one `have` body is
             // distinguishable from the same failure inside another.
             proof = proof.at_block_position(index);
+            let nested_capture = proof.begin_nested_tactic_capture();
             if proof.focused_discharged() {
                 // A closer after a step that already discharged the goal (a
                 // `transport` whose target is the goal, an exact theorem
@@ -5801,6 +5802,11 @@ impl<'a> Proof<'a> {
                         | ProofTactic::Normalize
                         | ProofTactic::NormalizeUsing(_)
                 ) {
+                    // The harmless closer checks nothing: its expansion is
+                    // empty.
+                    if let Some(capture) = nested_capture {
+                        capture.finish(&proof);
+                    }
                     continue;
                 }
                 let closer = index
@@ -6012,6 +6018,9 @@ impl<'a> Proof<'a> {
                 && proof.focused_discharged()
             {
                 proof = before.retain_completed_goal(&proof)?;
+            }
+            if let Some(capture) = nested_capture {
+                capture.finish(&proof);
             }
         }
 

@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::sync::Arc;
 
 use super::validation::tactic_name;
 use super::*;
@@ -1345,6 +1346,7 @@ fn expand_c0_tactic_source_at_context(
                     c_sources,
                     selected.site.clone(),
                     selected.source_index,
+                    &selected.nested,
                 )?
             } else {
                 super::proof::capture_c0_tactic_expansion(
@@ -1352,6 +1354,7 @@ fn expand_c0_tactic_source_at_context(
                     c_sources,
                     selected.site.clone(),
                     selected.source_index,
+                    &selected.nested,
                 )?
             }
         }
@@ -1560,6 +1563,7 @@ fn expand_cpp_prepared_tactic_source_at_context(
                     import,
                     selected.site.clone(),
                     selected.source_index,
+                    &selected.nested,
                 )?
             } else {
                 super::proof::capture_cpp_prepared_tactic_expansion(
@@ -1567,6 +1571,7 @@ fn expand_cpp_prepared_tactic_source_at_context(
                     import,
                     selected.site.clone(),
                     selected.source_index,
+                    &selected.nested,
                 )?
             }
         }
@@ -1689,6 +1694,7 @@ fn expand_c0_prepared_tactic_source_at_context(
                     imports,
                     selected.site.clone(),
                     selected.source_index,
+                    &selected.nested,
                 )?
             } else {
                 super::proof::capture_c0_prepared_tactic_expansion(
@@ -1696,6 +1702,7 @@ fn expand_c0_prepared_tactic_source_at_context(
                     imports,
                     selected.site.clone(),
                     selected.source_index,
+                    &selected.nested,
                 )?
             }
         }
@@ -2293,6 +2300,12 @@ pub(super) struct ExpansionCapture {
     /// running the tactic. This is the fallback answer only: an occurrence
     /// that also runs on a feasible path fills in `result` and that wins.
     pub(super) dropped_path_occurrence: bool,
+    /// A selected tactic written inside the body of the `have` at
+    /// `source_index`, which the flat source numbering does not reach.
+    /// `source_index` still names that enclosing `have`, so the ordinary
+    /// occurrence bookkeeping runs unchanged; the answer is the nested
+    /// tactic's own checked delta recorded here.
+    pub(super) nested: Option<Arc<NestedTacticCapture>>,
 }
 
 impl ExpansionCapture {
@@ -2303,7 +2316,26 @@ impl ExpansionCapture {
             active: false,
             result: None,
             dropped_path_occurrence: false,
+            nested: None,
         }
+    }
+
+    /// Selects the tactic at `nested_path` below the claim-level tactic at
+    /// `source_index`: each entry is a written position inside the next
+    /// `have` body. An empty path selects the claim-level tactic itself.
+    pub(super) fn for_nested_tactic(
+        site: ProofSite,
+        source_index: usize,
+        nested_path: &[usize],
+    ) -> Self {
+        let mut capture = Self::for_tactic(site.clone(), source_index);
+        if !nested_path.is_empty() {
+            let mut path = Vec::with_capacity(nested_path.len() + 1);
+            path.push(source_index);
+            path.extend_from_slice(nested_path);
+            capture.nested = Some(Arc::new(NestedTacticCapture::new(site, path)));
+        }
+        capture
     }
 
     pub(super) fn for_site(site: ProofSite) -> Self {
@@ -2313,7 +2345,98 @@ impl ExpansionCapture {
             active: false,
             result: None,
             dropped_path_occurrence: false,
+            nested: None,
         }
+    }
+
+    /// The nested-tactic recorder that proofs checking `site` carry, if this
+    /// capture selects a tactic inside a `have` body of that proof.
+    pub(super) fn nested_for_site(
+        &self,
+        site: Option<&ProofSite>,
+    ) -> Option<Arc<NestedTacticCapture>> {
+        self.nested
+            .as_ref()
+            .filter(|nested| site == Some(&nested.site))
+            .cloned()
+    }
+}
+
+/// The recorder for one selected tactic written inside a `have` body.
+///
+/// Proofs checking the selected site carry it in their shared constants. The
+/// linear body runner compares each written tactic's source path with `path`
+/// and records the checked certificate delta of the matching tactic. It is
+/// presentation metadata only: recording never changes what a step checks.
+#[derive(Debug)]
+pub(in crate::surface) struct NestedTacticCapture {
+    pub(in crate::surface) site: ProofSite,
+    /// The claim-level source index of the outermost enclosing `have`, then
+    /// the written position inside each nested `have` body.
+    pub(in crate::surface) path: Vec<usize>,
+    state: std::sync::Mutex<NestedTacticCaptureState>,
+}
+
+#[derive(Debug, Default)]
+struct NestedTacticCaptureState {
+    /// The selected tactic is being checked now. A smart closure run inside
+    /// it addresses its generated steps by the same block positions, so no
+    /// inner occurrence may claim the recorder while the outer one holds it.
+    active: bool,
+    result: Option<Result<Vec<ProofTactic>, String>>,
+}
+
+impl NestedTacticCapture {
+    fn new(site: ProofSite, path: Vec<usize>) -> Self {
+        Self {
+            site,
+            path,
+            state: std::sync::Mutex::new(NestedTacticCaptureState::default()),
+        }
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, NestedTacticCaptureState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Claims the recorder for one occurrence of the selected tactic.
+    pub(in crate::surface) fn try_begin(&self) -> bool {
+        let mut state = self.state();
+        if state.active {
+            return false;
+        }
+        state.active = true;
+        true
+    }
+
+    /// Records one checked occurrence. Every occurrence (one per C path or
+    /// outcome that checks the body) must expand identically; the first
+    /// disagreement is the answer.
+    pub(in crate::surface) fn finish(&self, occurrence: Result<Vec<ProofTactic>, String>) {
+        let mut state = self.state();
+        state.active = false;
+        match (&state.result, occurrence) {
+            (None, occurrence) => state.result = Some(occurrence),
+            (Some(Ok(existing)), Ok(tactics)) if *existing == tactics => {}
+            (Some(Ok(_)), Ok(_)) => {
+                state.result = Some(Err(
+                    "selected tactic expands differently across proof obligations".to_string(),
+                ));
+            }
+            (Some(Ok(_)), Err(error)) => state.result = Some(Err(error)),
+            (Some(Err(_)), _) => {}
+        }
+    }
+
+    /// Releases the recorder after an occurrence that did not complete.
+    pub(in crate::surface) fn abandon(&self) {
+        self.state().active = false;
+    }
+
+    pub(in crate::surface) fn result(&self) -> Option<Result<Vec<ProofTactic>, String>> {
+        self.state().result.clone()
     }
 }
 
@@ -2364,8 +2487,296 @@ enum TacticSourceEdit {
 #[derive(Clone, Debug)]
 struct LocatedSourceTactic {
     site: ProofSite,
+    /// The claim-level source index: the selected tactic's own, or that of
+    /// the outermost `have` whose body contains it.
     source_index: usize,
+    /// The written position inside each nested `have` body, outermost first;
+    /// empty for a claim-level tactic.
+    nested: Vec<usize>,
     edit: TacticSourceEdit,
+}
+
+/// One written tactic in the span-indexed side table that source selection
+/// consults. Every tactic at every depth is recorded by its source span; the
+/// flat claim-level numbering stays exactly the one timing, profiling, and
+/// audit use, and a tactic inside a `have` body is addressed by that `have`'s
+/// number plus its written positions.
+#[derive(Clone, Debug)]
+struct SourceTacticEntry {
+    span: Range<usize>,
+    /// The canonical start the tactic is reported at.
+    anchor: usize,
+    claim_label: String,
+    tactic_name: String,
+    smart: bool,
+    selection: EntrySelection,
+}
+
+#[derive(Clone, Debug)]
+enum EntrySelection {
+    Located(LocatedSourceTactic),
+    /// A smart tactic the expander cannot address separately, and why.
+    Unaddressable(String),
+}
+
+/// One smart tactic that a source location can select.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SmartTacticCandidate {
+    pub claim_label: String,
+    pub tactic_name: String,
+    /// Where the tactic starts, in the Click source's own coordinates.
+    pub position: SourcePosition,
+}
+
+/// Why a source location selects no single smart tactic. `candidates` lists
+/// the smart tactics the location could have meant, if any.
+#[derive(Clone, Debug)]
+pub struct SmartTacticSelectionError {
+    pub reason: String,
+    pub candidates: Vec<SmartTacticCandidate>,
+}
+
+impl SmartTacticSelectionError {
+    fn from_error(error: ClickError) -> Self {
+        Self {
+            reason: error.message().to_string(),
+            candidates: Vec::new(),
+        }
+    }
+
+    /// The error in Click source coordinates, for callers without a
+    /// container file to report positions in.
+    fn into_click_error(self, line: usize, column: Option<usize>) -> ClickError {
+        let location =
+            column.map_or_else(|| format!("{line}"), |column| format!("{line}:{column}"));
+        let mut message = format!("source location {location}: {}", self.reason);
+        for candidate in &self.candidates {
+            message.push_str(&format!(
+                "\n  {}:{} `{}` in `{}`",
+                candidate.position.line,
+                candidate.position.column,
+                candidate.tactic_name,
+                candidate.claim_label
+            ));
+        }
+        ClickError::new(message)
+    }
+}
+
+/// Resolves a source location to the one smart tactic it selects.
+///
+/// With a column, the location selects the innermost smart tactic whose
+/// source span contains it, at any nesting depth. Without one, the line must
+/// start exactly one smart tactic. The result's position is the tactic's
+/// canonical start, which every location-taking expansion entry point
+/// accepts.
+pub fn c0_select_smart_tactic(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    line: usize,
+    column: Option<usize>,
+) -> Result<SmartTacticCandidate, SmartTacticSelectionError> {
+    let sources = CSourceContext::bundle(c_sources);
+    let file = parse_source_with_c_layouts_context(click_source, &sources)
+        .map_err(SmartTacticSelectionError::from_error)?;
+    select_smart_tactic_file(click_source, &file, line, column)
+}
+
+pub fn c0_prepared_select_smart_tactic(
+    click_source: &str,
+    imports: &[crate::languages::c::compiler_import::PreparedCImport],
+    line: usize,
+    column: Option<usize>,
+) -> Result<SmartTacticCandidate, SmartTacticSelectionError> {
+    let sources = CSourceContext::prepared(imports);
+    let file = parse_source_with_c_layouts_context(click_source, &sources)
+        .map_err(SmartTacticSelectionError::from_error)?;
+    select_smart_tactic_file(click_source, &file, line, column)
+}
+
+pub fn cpp_prepared_select_smart_tactic(
+    click_source: &str,
+    import: &crate::languages::cpp::PreparedCppImport,
+    line: usize,
+    column: Option<usize>,
+) -> Result<SmartTacticCandidate, SmartTacticSelectionError> {
+    let sources = CSourceContext::cpp(import).map_err(SmartTacticSelectionError::from_error)?;
+    let file = parse_source_with_c_layouts_context(click_source, &sources)
+        .map_err(SmartTacticSelectionError::from_error)?;
+    select_smart_tactic_file(click_source, &file, line, column)
+}
+
+pub fn c0_project_select_smart_tactic(
+    project: &ClickProject,
+    c_sources: &[(&str, &str)],
+    line: usize,
+    column: Option<usize>,
+) -> Result<SmartTacticCandidate, SmartTacticSelectionError> {
+    let sources = CSourceContext::bundle(c_sources).with_click_project(project);
+    select_project_smart_tactic(project, &sources, line, column)
+}
+
+pub fn c0_prepared_project_select_smart_tactic(
+    project: &ClickProject,
+    imports: &[crate::languages::c::compiler_import::PreparedCImport],
+    line: usize,
+    column: Option<usize>,
+) -> Result<SmartTacticCandidate, SmartTacticSelectionError> {
+    let sources = CSourceContext::prepared(imports).with_click_project(project);
+    select_project_smart_tactic(project, &sources, line, column)
+}
+
+pub fn cpp_prepared_project_select_smart_tactic(
+    project: &ClickProject,
+    import: &crate::languages::cpp::PreparedCppImport,
+    line: usize,
+    column: Option<usize>,
+) -> Result<SmartTacticCandidate, SmartTacticSelectionError> {
+    let sources = CSourceContext::cpp(import)
+        .map_err(SmartTacticSelectionError::from_error)?
+        .with_click_project(project);
+    select_project_smart_tactic(project, &sources, line, column)
+}
+
+fn select_project_smart_tactic(
+    project: &ClickProject,
+    sources: &CSourceContext<'_>,
+    line: usize,
+    column: Option<usize>,
+) -> Result<SmartTacticCandidate, SmartTacticSelectionError> {
+    let click_source = project.entry_source().ok_or_else(|| {
+        SmartTacticSelectionError::from_error(ClickError::new(format!(
+            "missing entry module `{}`",
+            project.entry()
+        )))
+    })?;
+    let file = resolve_click_project_context(project, sources)
+        .map_err(SmartTacticSelectionError::from_error)?;
+    select_smart_tactic_file(click_source, &file, line, column)
+}
+
+fn select_smart_tactic_file(
+    click_source: &str,
+    file: &ClickFile,
+    line: usize,
+    column: Option<usize>,
+) -> Result<SmartTacticCandidate, SmartTacticSelectionError> {
+    let entries =
+        source_tactic_entries(click_source, file).map_err(SmartTacticSelectionError::from_error)?;
+    let entry = select_source_tactic_entry(click_source, &entries, line, column)?;
+    Ok(smart_tactic_candidate(click_source, entry))
+}
+
+fn smart_tactic_candidate(click_source: &str, entry: &SourceTacticEntry) -> SmartTacticCandidate {
+    SmartTacticCandidate {
+        claim_label: entry.claim_label.clone(),
+        tactic_name: entry.tactic_name.clone(),
+        position: position_at_offset(click_source, entry.anchor),
+    }
+}
+
+/// The one smart entry a location selects: with a column, the innermost
+/// smart span containing it; without one, the only smart tactic starting on
+/// the line.
+fn select_source_tactic_entry<'e>(
+    click_source: &str,
+    entries: &'e [SourceTacticEntry],
+    line: usize,
+    column: Option<usize>,
+) -> Result<&'e SourceTacticEntry, SmartTacticSelectionError> {
+    // A smart tactic written inside a smart site that owns it (the `simp`
+    // of a smart `have`) is an alias of that site; the line lists the site
+    // once.
+    let starting_on_line = || {
+        let mut starting: Vec<&SourceTacticEntry> = Vec::new();
+        for entry in entries.iter().filter(|entry| {
+            entry.smart && position_at_offset(click_source, entry.anchor).line == line
+        }) {
+            if !starting
+                .iter()
+                .any(|seen| same_selection(&seen.selection, &entry.selection))
+            {
+                starting.push(entry);
+            }
+        }
+        starting
+    };
+    let innermost_containing = |wanted: usize| {
+        // Spans nest, so the shortest containing span is the innermost;
+        // equal spans keep source order.
+        entries
+            .iter()
+            .filter(|entry| entry.smart && (entry.span.contains(&wanted) || entry.anchor == wanted))
+            .min_by_key(|entry| entry.span.end - entry.span.start)
+    };
+    let candidates = |entries: &[&SourceTacticEntry]| {
+        entries
+            .iter()
+            .map(|entry| smart_tactic_candidate(click_source, entry))
+            .collect::<Vec<_>>()
+    };
+    let selected = match column {
+        Some(column) => {
+            let wanted = offset_at_position(click_source, line, column)
+                .map_err(SmartTacticSelectionError::from_error)?;
+            match innermost_containing(wanted) {
+                Some(entry) => entry,
+                None => {
+                    let on_line = starting_on_line();
+                    return Err(SmartTacticSelectionError {
+                        reason: if on_line.is_empty() {
+                            "no smart tactic's source contains this location".to_string()
+                        } else {
+                            "no smart tactic's source contains this location; the smart tactics starting on this line are:".to_string()
+                        },
+                        candidates: candidates(&on_line),
+                    });
+                }
+            }
+        }
+        None => match starting_on_line().as_slice() {
+            [] => {
+                // A line inside a region the expander cannot address says
+                // why, as a column there would.
+                let line_start = offset_at_position(click_source, line, 1)
+                    .map_err(SmartTacticSelectionError::from_error)?;
+                let indent = click_source[line_start..]
+                    .find(|character: char| !character.is_whitespace() || character == '\n')
+                    .unwrap_or(0);
+                if let Some(SourceTacticEntry {
+                    selection: EntrySelection::Unaddressable(reason),
+                    ..
+                }) = innermost_containing(line_start + indent)
+                {
+                    return Err(SmartTacticSelectionError {
+                        reason: reason.clone(),
+                        candidates: Vec::new(),
+                    });
+                }
+                return Err(SmartTacticSelectionError {
+                    reason: "no smart tactic starts on this line".to_string(),
+                    candidates: Vec::new(),
+                });
+            }
+            [only] => only,
+            several => {
+                return Err(SmartTacticSelectionError {
+                    reason: format!(
+                        "{} smart tactics start on this line; add the column of one of them:",
+                        several.len()
+                    ),
+                    candidates: candidates(several),
+                });
+            }
+        },
+    };
+    match &selected.selection {
+        EntrySelection::Located(_) => Ok(selected),
+        EntrySelection::Unaddressable(reason) => Err(SmartTacticSelectionError {
+            reason: reason.clone(),
+            candidates: Vec::new(),
+        }),
+    }
 }
 
 fn locate_source_tactic(
@@ -2388,14 +2799,54 @@ fn locate_source_tactic_context(
     locate_source_tactic_file(click_source, &file, line, column)
 }
 
+/// Whether two entries select the same expansion.
+fn same_selection(left: &EntrySelection, right: &EntrySelection) -> bool {
+    match (left, right) {
+        (EntrySelection::Located(left), EntrySelection::Located(right)) => {
+            left.site == right.site
+                && left.source_index == right.source_index
+                && left.nested == right.nested
+        }
+        _ => false,
+    }
+}
+
 fn locate_source_tactic_file(
     click_source: &str,
     file: &ClickFile,
     line: usize,
     column: usize,
 ) -> Result<LocatedSourceTactic, ClickError> {
+    let entries = source_tactic_entries(click_source, file)?;
+    // The library entry point also expands a non-smart tactic named by its
+    // exact start (a `have` whose explicit body a smart step closes, a whole
+    // pure theorem proof); every other location selects the innermost smart
+    // tactic containing it.
     let wanted = offset_at_position(click_source, line, column)?;
+    let exact = entries
+        .iter()
+        .filter(|entry| {
+            entry.anchor == wanted && matches!(entry.selection, EntrySelection::Located(_))
+        })
+        .min_by_key(|entry| entry.span.end - entry.span.start);
+    let entry = match exact {
+        Some(entry) => entry,
+        None => select_source_tactic_entry(click_source, &entries, line, Some(column))
+            .map_err(|error| error.into_click_error(line, Some(column)))?,
+    };
+    match &entry.selection {
+        EntrySelection::Located(located) => Ok(located.clone()),
+        EntrySelection::Unaddressable(reason) => Err(ClickError::new(reason.clone())),
+    }
+}
+
+/// Records every written tactic of every selected proof, keyed by span.
+fn source_tactic_entries(
+    click_source: &str,
+    file: &ClickFile,
+) -> Result<Vec<SourceTacticEntry>, ClickError> {
     let tokens = scan_source_tokens(click_source)?;
+    let mut entries = Vec::new();
     for theorem in file.theorem_definitions() {
         if !file.theorem_is_selected(theorem.name()) {
             continue;
@@ -2404,15 +2855,15 @@ fn locate_source_tactic_file(
         for (ensure_index, ensure) in theorem.ensures().iter().enumerate() {
             let edit =
                 find_ensure_proof_edit(&tokens, source.body_open, source.body_close, ensure_index)?;
+            let label = ensure.name().map_or_else(
+                || format!("{}.ensures_{ensure_index}", theorem.name()),
+                |name| format!("{}.{name}", theorem.name()),
+            );
             let site = ProofSite::TheoremEnsure {
                 theorem_name: theorem.name().to_string(),
                 ensure_index,
             };
-            if let Some(found) =
-                locate_tactic_in_proof(&tokens, &edit, ensure.proof(), wanted, site)?
-            {
-                return Ok(found);
-            }
+            proof_tactic_entries(&tokens, &edit, ensure.proof(), &site, &label, &mut entries)?;
         }
     }
     for function_block in file.function_blocks() {
@@ -2436,19 +2887,18 @@ fn locate_source_tactic_file(
                         },
                         ProofSourceEdit::Explicit,
                     );
-                    if let Some(found) = locate_tactic_in_proof(
+                    proof_tactic_entries(
                         &tokens,
                         &edit,
                         proof,
-                        wanted,
-                        ProofSite::LoopPhase {
+                        &ProofSite::LoopPhase {
                             function_name: function_name.to_string(),
                             loop_index: *loop_index,
                             phase,
                         },
-                    )? {
-                        return Ok(found);
-                    }
+                        &format!("{function_name}.loop({loop_index}).{phase}"),
+                        &mut entries,
+                    )?;
                 }
             }
             let block = find_structural_clause_block(&tokens, &function, *clause.region())?;
@@ -2464,142 +2914,91 @@ fn locate_source_tactic_file(
         }
         if let Some(proof) = function_block.grouped_proof() {
             let edit = ProofSourceEdit::Explicit(find_grouped_proof_span(&tokens, &function)?);
-            if let Some(found) = locate_tactic_in_proof(
+            proof_tactic_entries(
                 &tokens,
                 &edit,
                 proof,
-                wanted,
-                ProofSite::FunctionClaim {
+                &ProofSite::FunctionClaim {
                     function_name: function_name.to_string(),
                     claim: CProofClaim::Grouped,
                 },
-            )? {
-                return Ok(found);
-            }
+                &format!("{function_name}.contract"),
+                &mut entries,
+            )?;
             continue;
         }
         for (index, ensure) in function_block.ensures().iter().enumerate() {
             let claim = CProofClaim::Ensure(index);
             let edit = find_claim_proof_edit(&tokens, &function, claim)?;
-            if let Some(found) = locate_tactic_in_proof(
+            let label = ensure.name().map_or_else(
+                || format!("{function_name}.ensures_{index}"),
+                |name| format!("{function_name}.{name}"),
+            );
+            proof_tactic_entries(
                 &tokens,
                 &edit,
                 ensure.proof(),
-                wanted,
-                ProofSite::FunctionClaim {
+                &ProofSite::FunctionClaim {
                     function_name: function_name.to_string(),
                     claim,
                 },
-            )? {
-                return Ok(found);
-            }
+                &label,
+                &mut entries,
+            )?;
         }
         for (index, ensure) in function_block.exceptional_ensures().iter().enumerate() {
             let claim = CProofClaim::ExceptionalEnsure(index);
             let edit = find_claim_proof_edit(&tokens, &function, claim)?;
-            if let Some(found) = locate_tactic_in_proof(
+            let label = ensure.name().map_or_else(
+                || format!("{function_name}.exceptional_ensures_{index}"),
+                |name| format!("{function_name}.{name}"),
+            );
+            proof_tactic_entries(
                 &tokens,
                 &edit,
                 ensure.proof(),
-                wanted,
-                ProofSite::FunctionClaim {
+                &ProofSite::FunctionClaim {
                     function_name: function_name.to_string(),
                     claim,
                 },
-            )? {
-                return Ok(found);
-            }
+                &label,
+                &mut entries,
+            )?;
         }
     }
-    Err(ClickError::new(format!(
-        "no explicit C proof tactic starts at {line}:{column}"
-    )))
+    Ok(entries)
 }
 
-/// Whether the smart tactic written at `target` is a direct tactic of the
-/// body of the `have` written at `have`.
-///
-/// A `have` whose body is a smart tactic is one source site anchored at its
-/// `have` keyword: the `have` owns its nested proof work, and expanding it
-/// rewrites that body. A location naming the smart tactic inside the body
-/// selects that same site.
-pub fn smart_have_body_tactic_at(
-    source: &str,
-    have: &SourcePosition,
-    target: &SourcePosition,
-) -> Result<bool, ClickError> {
-    let tokens = scan_source_tokens(source)?;
-    let have = offset_at_position(source, have.line, have.column)?;
-    let target = offset_at_position(source, target.line, target.column)?;
-    let Some(start) = tokens.iter().position(|token| token.span.start == have) else {
-        return Ok(false);
-    };
-    have_body_smart_tactic_starts_at(&tokens, start, target)
-}
-
-fn have_body_smart_tactic_starts_at(
-    tokens: &[SourceToken],
-    start: usize,
-    target: usize,
-) -> Result<bool, ClickError> {
-    if tokens[start].text != "have" {
-        return Ok(false);
-    }
-    let end = tactic_end_token(tokens, start, tokens.len())?;
-    let Some(by) = (start..=end).find(|&index| tokens[index].text == "by") else {
-        return Ok(false);
-    };
-    let starts = if tokens.get(by + 1).map(|token| token.text.as_str()) == Some("{") {
-        let close = matching_delimiter(tokens, by + 1, "{", "}")?;
-        direct_tactic_token_ranges(tokens, by + 1, close)?
-            .into_iter()
-            .map(|range| range.start)
-            .collect::<Vec<_>>()
-    } else {
-        vec![by + 1]
-    };
-    Ok(starts.into_iter().any(|index| {
-        tokens[index].span.start == target && matches!(tokens[index].text.as_str(), "simp" | "auto")
-    }))
-}
-
-/// The source index of the smart `have` site whose body writes the smart
-/// tactic starting at `wanted`, if there is one.
-fn smart_have_owning_tactic_at(
-    tokens: &[SourceToken],
-    spans: &[Range<usize>],
-    tactics: &[ProofTactic],
-    wanted: usize,
-) -> Result<Option<usize>, ClickError> {
-    let mut sites = Vec::new();
-    collect_smart_script_sites("", tactics, 0, &mut sites);
-    for site in sites {
-        let Some(span) = spans.get(site.source_index) else {
-            continue;
-        };
-        if !span.contains(&wanted) {
-            continue;
-        }
-        let Some(start) = tokens
-            .iter()
-            .position(|token| token.span.start == span.start)
-        else {
-            continue;
-        };
-        if have_body_smart_tactic_starts_at(tokens, start, wanted)? {
-            return Ok(Some(site.source_index));
-        }
-    }
-    Ok(None)
-}
-
-fn locate_tactic_in_proof(
+fn proof_tactic_entries(
     tokens: &[SourceToken],
     edit: &ProofSourceEdit,
     proof: &SourceProof,
-    wanted: usize,
-    site: ProofSite,
-) -> Result<Option<LocatedSourceTactic>, ClickError> {
+    site: &ProofSite,
+    claim_label: &str,
+    entries: &mut Vec<SourceTacticEntry>,
+) -> Result<(), ClickError> {
+    let whole_proof = |span: Range<usize>, anchor: usize, name: &str| SourceTacticEntry {
+        span,
+        anchor,
+        claim_label: claim_label.to_string(),
+        tactic_name: name.to_string(),
+        smart: true,
+        selection: EntrySelection::Located(LocatedSourceTactic {
+            site: site.clone(),
+            source_index: 0,
+            nested: Vec::new(),
+            edit: TacticSourceEdit::WholeProof(edit.clone()),
+        }),
+    };
+    let omitted_proof_span = || match edit {
+        ProofSourceEdit::DefaultTerminator { span, selector } => *selector..span.end,
+        _ => tokens
+            .iter()
+            .find(|token| token.span.start == edit.selector())
+            .map_or(edit.selector()..edit.selector() + 1, |token| {
+                token.span.clone()
+            }),
+    };
     match proof {
         SourceProof::Script(tactics) => {
             let ProofSourceEdit::Explicit(source_proof_span) = edit else {
@@ -2607,68 +3006,337 @@ fn locate_tactic_in_proof(
                     "an explicit proof script has no source `by` clause",
                 ));
             };
-            let spans = collect_source_tactic_spans(tokens, source_proof_span, tactics)?;
-            let exact = spans.iter().position(|span| span.start == wanted);
-            let selected = match exact {
-                Some(index) => Some(index),
-                None => smart_have_owning_tactic_at(tokens, &spans, tactics, wanted)?,
-            };
-            let Some((source_index, span)) = selected.map(|index| (index, spans[index].clone()))
-            else {
-                return Ok(None);
-            };
-            let edit = if source_tactic_is_nested_proof_clause(tactics, source_index) {
-                let tactic_token = tokens
-                    .iter()
-                    .position(|token| token.span.start == span.start)
-                    .ok_or_else(|| ClickError::new("could not locate selected nested tactic"))?;
-                let by = tactic_token.checked_sub(1).ok_or_else(|| {
-                    ClickError::new("selected nested tactic has no source `by` clause")
-                })?;
-                if tokens[by].text != "by" {
-                    return Err(ClickError::new(
-                        "selected nested tactic has no source `by` clause",
-                    ));
+            let flat = collect_source_tactics(tokens, source_proof_span, tactics)?;
+            for (source_index, item) in flat.into_iter().enumerate() {
+                let (tactic_name, smart, edit) = match item.tactic {
+                    FlatTactic::Written(tactic) => (
+                        tactic_name(tactic).to_string(),
+                        source_site_kind(tactic) == SourceSiteKind::ExpandableAutomation,
+                        TacticSourceEdit::Partial(item.span.clone()),
+                    ),
+                    FlatTactic::Phase(tactic) => {
+                        // A frontier-local loop phase proved by one smart
+                        // tactic is rewritten as the whole `by` clause.
+                        let by =
+                            item.tokens.start.checked_sub(1).filter(|by| {
+                                tokens.get(*by).is_some_and(|token| token.text == "by")
+                            });
+                        let by = by.ok_or_else(|| {
+                            ClickError::new("selected nested tactic has no source `by` clause")
+                        })?;
+                        (
+                            smart_tactic_name(tactic).to_string(),
+                            true,
+                            TacticSourceEdit::PartialProofClause(proof_span(tokens, by)?),
+                        )
+                    }
+                };
+                let entry = SourceTacticEntry {
+                    span: item.span.clone(),
+                    anchor: item.span.start,
+                    claim_label: claim_label.to_string(),
+                    tactic_name,
+                    smart,
+                    selection: EntrySelection::Located(LocatedSourceTactic {
+                        site: site.clone(),
+                        source_index,
+                        nested: Vec::new(),
+                        edit,
+                    }),
+                };
+                entries.push(entry.clone());
+                if let FlatTactic::Written(tactic) = item.tactic
+                    && smart
+                {
+                    smart_container_alias_entries(
+                        tokens,
+                        item.tokens.clone(),
+                        tactic,
+                        &entry,
+                        entries,
+                    );
                 }
-                TacticSourceEdit::PartialProofClause(proof_span(tokens, by)?)
-            } else {
-                TacticSourceEdit::Partial(span)
-            };
-            Ok(Some(LocatedSourceTactic {
-                site,
-                source_index,
-                edit,
-            }))
-        }
-        SourceProof::Tactic(_) => match edit {
-            ProofSourceEdit::Explicit(proof_span) => {
-                let by = tokens
-                    .iter()
-                    .position(|token| token.span.start == proof_span.start && token.text == "by")
-                    .ok_or_else(|| ClickError::new("could not locate source `by` clause"))?;
-                Ok(tokens
-                    .get(by + 1)
-                    .filter(|token| token.span.start == wanted)
-                    .map(|_| LocatedSourceTactic {
+                // A smart `have` is one site: its body belongs to it.
+                if let FlatTactic::Written(ProofTactic::Have(have)) = item.tactic
+                    && !smart
+                {
+                    have_body_tactic_entries(
+                        tokens,
+                        item.tokens.clone(),
+                        have,
                         site,
-                        source_index: 0,
-                        edit: TacticSourceEdit::WholeProof(edit.clone()),
-                    }))
+                        claim_label,
+                        source_index,
+                        &[],
+                        entries,
+                    )?;
+                }
             }
-            ProofSourceEdit::DefaultTerminator { .. }
-            | ProofSourceEdit::OmittedLoopPhase { .. } => {
-                Ok((edit.selector() == wanted).then(|| LocatedSourceTactic {
-                    site,
-                    source_index: 0,
-                    edit: TacticSourceEdit::WholeProof(edit.clone()),
-                }))
+            Ok(())
+        }
+        SourceProof::Tactic(tactic) => {
+            let name = smart_tactic_name(*tactic);
+            match edit {
+                ProofSourceEdit::Explicit(proof_span) => {
+                    let by = tokens
+                        .iter()
+                        .position(|token| {
+                            token.span.start == proof_span.start && token.text == "by"
+                        })
+                        .ok_or_else(|| ClickError::new("could not locate source `by` clause"))?;
+                    let anchor = tokens
+                        .get(by + 1)
+                        .map_or(proof_span.start, |token| token.span.start);
+                    entries.push(whole_proof(proof_span.clone(), anchor, name));
+                }
+                ProofSourceEdit::DefaultTerminator { .. }
+                | ProofSourceEdit::OmittedLoopPhase { .. } => {
+                    entries.push(whole_proof(omitted_proof_span(), edit.selector(), name));
+                }
             }
+            Ok(())
+        }
+        SourceProof::Default => {
+            entries.push(whole_proof(omitted_proof_span(), edit.selector(), "auto"));
+            Ok(())
+        }
+    }
+}
+
+fn smart_tactic_name(tactic: SmartTactic) -> &'static str {
+    match tactic {
+        SmartTactic::Auto => "auto",
+        SmartTactic::Simp => "simp",
+    }
+}
+
+/// Records the tactics written in a non-smart `have` body, addressed by the
+/// `have`'s claim-level source index and their written positions.
+#[allow(clippy::too_many_arguments)]
+fn have_body_tactic_entries(
+    tokens: &[SourceToken],
+    have_tokens: Range<usize>,
+    have: &ProofHave,
+    site: &ProofSite,
+    claim_label: &str,
+    source_index: usize,
+    prefix: &[usize],
+    entries: &mut Vec<SourceTacticEntry>,
+) -> Result<(), ClickError> {
+    let SourceProof::Script(body) = &have.proof else {
+        return Ok(());
+    };
+    let mut depth = 0_usize;
+    let by = have_tokens
+        .clone()
+        .find(|&index| {
+            match tokens[index].text.as_str() {
+                "(" | "[" | "{" => depth += 1,
+                ")" | "]" | "}" => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            depth == 0 && tokens[index].text == "by"
+        })
+        .ok_or_else(|| ClickError::new("source `have` has no `by` clause"))?;
+    let open = by + 1;
+    if tokens.get(open).map(|token| token.text.as_str()) != Some("{") {
+        return Err(ClickError::new(
+            "source `have` script body has no `{ ... }` block",
+        ));
+    }
+    let close = matching_delimiter(tokens, open, "{", "}")?;
+    let direct = direct_tactic_token_ranges(tokens, open, close)?;
+    if direct.len() != body.len() {
+        return Err(ClickError::new(format!(
+            "source `have` body has {} direct tactic(s), but the parsed body has {}",
+            direct.len(),
+            body.len()
+        )));
+    }
+    for (position, (tactic, token_range)) in body.iter().zip(direct).enumerate() {
+        let span = tokens[token_range.start].span.start..tokens[token_range.end - 1].span.end;
+        let mut path = prefix.to_vec();
+        path.push(position);
+        let smart = source_site_kind(tactic) == SourceSiteKind::ExpandableAutomation;
+        let entry = SourceTacticEntry {
+            span: span.clone(),
+            anchor: span.start,
+            claim_label: claim_label.to_string(),
+            tactic_name: tactic_name(tactic).to_string(),
+            smart,
+            selection: EntrySelection::Located(LocatedSourceTactic {
+                site: site.clone(),
+                source_index,
+                nested: path.clone(),
+                edit: TacticSourceEdit::Partial(span.clone()),
+            }),
+        };
+        entries.push(entry.clone());
+        if smart {
+            smart_container_alias_entries(tokens, token_range.clone(), tactic, &entry, entries);
+        }
+        match tactic {
+            ProofTactic::Have(have) if !smart => have_body_tactic_entries(
+                tokens,
+                token_range,
+                have,
+                site,
+                claim_label,
+                source_index,
+                &path,
+                entries,
+            )?,
+            // A smart tactic written in an arm of a structured tactic inside
+            // a `have` body is checked on an arm path whose written positions
+            // the body runner does not address, so its own checked delta
+            // cannot be isolated. Say so rather than selecting a neighbor.
+            _ if !smart && tactic_contains_smart_tactic(tactic) => {
+                entries.push(SourceTacticEntry {
+                    span: span.clone(),
+                    anchor: span.start,
+                    claim_label: claim_label.to_string(),
+                    tactic_name: tactic_name(tactic).to_string(),
+                    smart: true,
+                    selection: EntrySelection::Unaddressable(format!(
+                        "the location is inside a proof `{}` written in a `have` body, and a smart tactic in one of its arms cannot be expanded on its own yet; expand the enclosing claim with `--claim {claim_label}`",
+                        tactic_name(tactic)
+                    )),
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Records each smart tactic written inside a smart site that owns its body
+/// (a smart `have`, `both`, or `close_invariants by`) as an alias selecting
+/// that site: the body is expanded as part of the site, never on its own.
+fn smart_container_alias_entries(
+    tokens: &[SourceToken],
+    tactic_tokens: Range<usize>,
+    tactic: &ProofTactic,
+    container: &SourceTacticEntry,
+    entries: &mut Vec<SourceTacticEntry>,
+) {
+    let top_level_by = |range: Range<usize>| {
+        let mut depth = 0_usize;
+        range.clone().find(|&index| {
+            match tokens[index].text.as_str() {
+                "(" | "[" | "{" => depth += 1,
+                ")" | "]" | "}" => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            depth == 0 && tokens[index].text == "by"
+        })
+    };
+    let block_after_by = |range: Range<usize>| {
+        let by = top_level_by(range)?;
+        let open = by + 1;
+        (tokens.get(open)?.text == "{").then_some(open)
+    };
+    let mut blocks: Vec<(usize, &[ProofTactic])> = Vec::new();
+    match tactic {
+        ProofTactic::Have(have) => match &have.proof {
+            SourceProof::Script(body) => {
+                if let Some(open) = block_after_by(tactic_tokens) {
+                    blocks.push((open, body));
+                }
+            }
+            SourceProof::Tactic(smart) => {
+                if let Some(by) = top_level_by(tactic_tokens)
+                    && let Some(token) = tokens.get(by + 1)
+                {
+                    entries.push(SourceTacticEntry {
+                        span: token.span.clone(),
+                        anchor: token.span.start,
+                        tactic_name: smart_tactic_name(*smart).to_string(),
+                        ..container.clone()
+                    });
+                }
+            }
+            SourceProof::Default => {}
         },
-        SourceProof::Default => Ok((edit.selector() == wanted).then(|| LocatedSourceTactic {
-            site,
-            source_index: 0,
-            edit: TacticSourceEdit::WholeProof(edit.clone()),
-        })),
+        ProofTactic::CloseInvariantsBy(body) => {
+            if let Some(open) = block_after_by(tactic_tokens) {
+                blocks.push((open, body));
+            }
+        }
+        ProofTactic::Both(both) => {
+            let left = tactic_tokens
+                .clone()
+                .find(|&index| tokens[index].text == "{");
+            if let Some(left) = left
+                && let Ok(left_close) = matching_delimiter(tokens, left, "{", "}")
+                && tokens
+                    .get(left_close + 1)
+                    .is_some_and(|token| token.text == "and")
+                && tokens
+                    .get(left_close + 2)
+                    .is_some_and(|token| token.text == "{")
+            {
+                blocks.push((left, &both.left_tactics));
+                blocks.push((left_close + 2, &both.right_tactics));
+            }
+        }
+        _ => {}
+    }
+    for (open, body) in blocks {
+        let Ok(close) = matching_delimiter(tokens, open, "{", "}") else {
+            continue;
+        };
+        let Ok(direct) = direct_tactic_token_ranges(tokens, open, close) else {
+            continue;
+        };
+        if direct.len() != body.len() {
+            continue;
+        }
+        for (inner, range) in body.iter().zip(direct) {
+            let span = tokens[range.start].span.start..tokens[range.end - 1].span.end;
+            if source_site_kind(inner) == SourceSiteKind::ExpandableAutomation {
+                entries.push(SourceTacticEntry {
+                    span: span.clone(),
+                    anchor: span.start,
+                    tactic_name: tactic_name(inner).to_string(),
+                    ..container.clone()
+                });
+            }
+            smart_container_alias_entries(tokens, range, inner, container, entries);
+        }
+    }
+}
+
+/// Whether a smart tactic is written anywhere inside `tactic`.
+fn tactic_contains_smart_tactic(tactic: &ProofTactic) -> bool {
+    fn any(tactics: &[ProofTactic]) -> bool {
+        tactics.iter().any(|tactic| {
+            source_site_kind(tactic) == SourceSiteKind::ExpandableAutomation
+                || tactic_contains_smart_tactic(tactic)
+        })
+    }
+    fn proof(proof: &SourceProof) -> bool {
+        match proof {
+            SourceProof::Default | SourceProof::Tactic(_) => true,
+            SourceProof::Script(tactics) => any(tactics),
+        }
+    }
+    match tactic {
+        ProofTactic::CloseInvariantsBy(tactics) => any(tactics),
+        ProofTactic::StructuralInduct { arms, .. } => arms.iter().any(|arm| any(&arm.tactics)),
+        ProofTactic::Have(have) => proof(&have.proof),
+        ProofTactic::Open(open) => any(&open.tactics),
+        ProofTactic::If(proof_if) => any(&proof_if.then_tactics) || any(&proof_if.else_tactics),
+        ProofTactic::Match(proof_match) => proof_match.arms.iter().any(|arm| any(&arm.tactics)),
+        ProofTactic::Cases(cases) => any(&cases.left_tactics) || any(&cases.right_tactics),
+        ProofTactic::Both(both) => any(&both.left_tactics) || any(&both.right_tactics),
+        ProofTactic::Branch(branch) => any(&branch.then_tactics) || any(&branch.else_tactics),
+        ProofTactic::CallOutcomes(outcomes) => {
+            any(&outcomes.returned_tactics) || any(&outcomes.threw_tactics)
+        }
+        ProofTactic::Loop(clause) => {
+            clause.initialize_proof().is_none_or(proof) || clause.preserve_proof().is_none_or(proof)
+        }
+        _ => false,
     }
 }
 
@@ -3439,6 +4107,33 @@ fn collect_source_tactic_spans(
     proof_span: &Range<usize>,
     tactics: &[ProofTactic],
 ) -> Result<Vec<Range<usize>>, ClickError> {
+    Ok(collect_source_tactics(tokens, proof_span, tactics)?
+        .into_iter()
+        .map(|tactic| tactic.span)
+        .collect())
+}
+
+/// One claim-level source tactic, in the flat pre-order numbering that
+/// timing, profiling, audit, and expansion share.
+struct FlatSourceTactic<'t> {
+    span: Range<usize>,
+    /// The tactic's token range, end exclusive.
+    tokens: Range<usize>,
+    tactic: FlatTactic<'t>,
+}
+
+#[derive(Clone, Copy)]
+enum FlatTactic<'t> {
+    Written(&'t ProofTactic),
+    /// A frontier-local loop phase proved by one smart tactic (`by simp`).
+    Phase(SmartTactic),
+}
+
+fn collect_source_tactics<'t>(
+    tokens: &[SourceToken],
+    proof_span: &Range<usize>,
+    tactics: &'t [ProofTactic],
+) -> Result<Vec<FlatSourceTactic<'t>>, ClickError> {
     let by = tokens
         .iter()
         .position(|token| token.span.start == proof_span.start && token.text == "by")
@@ -3455,116 +4150,12 @@ fn collect_source_tactic_spans(
     Ok(spans)
 }
 
-fn source_tactic_is_nested_proof_clause(tactics: &[ProofTactic], wanted: usize) -> bool {
-    fn in_proof(proof: &SourceProof, wanted: usize, source_index: usize) -> Option<bool> {
-        match proof {
-            SourceProof::Default => None,
-            SourceProof::Tactic(_) => (wanted == source_index).then_some(true),
-            SourceProof::Script(tactics) => find(tactics, wanted, source_index),
-        }
-    }
-
-    fn find(tactics: &[ProofTactic], wanted: usize, offset: usize) -> Option<bool> {
-        let mut source_index = offset;
-        for tactic in tactics {
-            if wanted == source_index {
-                return Some(false);
-            }
-            let nested = match tactic {
-                ProofTactic::Open(open) => find(&open.tactics, wanted, source_index + 1),
-                ProofTactic::If(proof_if) => find(&proof_if.then_tactics, wanted, source_index + 1)
-                    .or_else(|| {
-                        find(
-                            &proof_if.else_tactics,
-                            wanted,
-                            source_index + 1 + source_tactic_count(&proof_if.then_tactics),
-                        )
-                    }),
-                ProofTactic::Branch(proof_branch) => {
-                    find(&proof_branch.then_tactics, wanted, source_index + 1).or_else(|| {
-                        find(
-                            &proof_branch.else_tactics,
-                            wanted,
-                            source_index + 1 + source_tactic_count(&proof_branch.then_tactics),
-                        )
-                    })
-                }
-                ProofTactic::Cases(proof_cases) => {
-                    find(&proof_cases.left_tactics, wanted, source_index + 1).or_else(|| {
-                        find(
-                            &proof_cases.right_tactics,
-                            wanted,
-                            source_index + 1 + source_tactic_count(&proof_cases.left_tactics),
-                        )
-                    })
-                }
-                ProofTactic::CallOutcomes(outcomes) => {
-                    find(&outcomes.returned_tactics, wanted, source_index + 1).or_else(|| {
-                        find(
-                            &outcomes.threw_tactics,
-                            wanted,
-                            source_index + 1 + source_tactic_count(&outcomes.returned_tactics),
-                        )
-                    })
-                }
-                ProofTactic::StructuralInduct { arms, .. } => {
-                    let mut nested_source_index = source_index + 1;
-                    let mut found = None;
-                    for arm in arms {
-                        found = find(&arm.tactics, wanted, nested_source_index);
-                        nested_source_index += source_tactic_count(&arm.tactics);
-                        if found.is_some() {
-                            break;
-                        }
-                    }
-                    found
-                }
-                ProofTactic::Match(proof_match) => {
-                    let arms = &proof_match.arms;
-                    let mut nested_source_index = source_index + 1;
-                    let mut found = None;
-                    for arm in arms {
-                        found = find(&arm.tactics, wanted, nested_source_index);
-                        nested_source_index += source_tactic_count(&arm.tactics);
-                        if found.is_some() {
-                            break;
-                        }
-                    }
-                    found
-                }
-                ProofTactic::Loop(clause) => {
-                    let mut nested_source_index = source_index + 1;
-                    let mut found = None;
-                    if let Some(proof) = clause.initialize_proof() {
-                        found = in_proof(proof, wanted, nested_source_index);
-                        nested_source_index += proof_source_tactic_count(proof);
-                    }
-                    if found.is_none()
-                        && let Some(proof) = clause.preserve_proof()
-                    {
-                        found = in_proof(proof, wanted, nested_source_index);
-                    }
-                    found
-                }
-                _ => None,
-            };
-            if nested.is_some() {
-                return nested;
-            }
-            source_index += source_tactic_count(std::slice::from_ref(tactic));
-        }
-        None
-    }
-
-    find(tactics, wanted, 0).unwrap_or(false)
-}
-
-fn collect_tactic_block_spans(
+fn collect_tactic_block_spans<'t>(
     tokens: &[SourceToken],
     open: usize,
     close: usize,
-    tactics: &[ProofTactic],
-    spans: &mut Vec<Range<usize>>,
+    tactics: &'t [ProofTactic],
+    spans: &mut Vec<FlatSourceTactic<'t>>,
 ) -> Result<(), ClickError> {
     let direct = direct_tactic_token_ranges(tokens, open, close)?;
     if direct.len() != tactics.len() {
@@ -3575,7 +4166,11 @@ fn collect_tactic_block_spans(
         )));
     }
     for (tactic, token_range) in tactics.iter().zip(direct) {
-        spans.push(tokens[token_range.start].span.start..tokens[token_range.end - 1].span.end);
+        spans.push(FlatSourceTactic {
+            span: tokens[token_range.start].span.start..tokens[token_range.end - 1].span.end,
+            tokens: token_range.clone(),
+            tactic: FlatTactic::Written(tactic),
+        });
         match tactic {
             ProofTactic::Open(proof_open) => {
                 let body_open = (token_range.start + 1..token_range.end)
@@ -3745,15 +4340,15 @@ fn inline_loop_phase_proof_edit(
     Ok(None)
 }
 
-fn collect_nested_proof_spans(
+fn collect_nested_proof_spans<'t>(
     tokens: &[SourceToken],
     edit: &ProofSourceEdit,
-    proof: &SourceProof,
-    spans: &mut Vec<Range<usize>>,
+    proof: &'t SourceProof,
+    spans: &mut Vec<FlatSourceTactic<'t>>,
 ) -> Result<(), ClickError> {
     match proof {
         SourceProof::Default => Ok(()),
-        SourceProof::Tactic(_) => {
+        SourceProof::Tactic(smart) => {
             let ProofSourceEdit::Explicit(span) = edit else {
                 return Err(ClickError::new(
                     "explicit nested loop tactic has no source `by` clause",
@@ -3766,7 +4361,11 @@ fn collect_nested_proof_spans(
             let tactic = tokens
                 .get(by + 1)
                 .ok_or_else(|| ClickError::new("nested source `by` clause has no tactic"))?;
-            spans.push(tactic.span.clone());
+            spans.push(FlatSourceTactic {
+                span: tactic.span.clone(),
+                tokens: by + 1..by + 2,
+                tactic: FlatTactic::Phase(*smart),
+            });
             Ok(())
         }
         SourceProof::Script(tactics) => {

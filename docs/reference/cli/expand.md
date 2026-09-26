@@ -15,7 +15,7 @@ another expansion candidate.
 ## Synopsis
 
 ```text
-usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>:<column>
+usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>[:<column>]
        click expand --claim <LABEL> [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>
 ```
 
@@ -23,17 +23,52 @@ Replace the following:
 
 - `DURATION`: the whole-command limit; the default is `1m` (60 seconds).
 - `PATH`: a destination for the complete rewritten sidecar or mdtest.
-- `LINE` and `COLUMN`: one-based coordinates selecting a smart tactic.
+- `LINE` and `COLUMN`: one-based coordinates selecting a smart tactic. The
+  column may be omitted when the line starts exactly one smart tactic.
 - `LABEL`: one function-claim label whose smart tactics are all selected.
 
 ## Selection
 
-The location form selects one source-addressable smart tactic. Coordinates in
-an mdtest refer to the Markdown file, not to the extracted Click block. A
-`have` whose body is a smart tactic is one site: its `have` keyword and the
-`simp` written in its body both select it, and expansion rewrites the body. The
-claim form expands every smart tactic in one named function claim and is useful
-when aggregate smart work matters even though no individual site is slow.
+The location form selects one smart tactic by where it is written, at any
+nesting depth: in a proof `branch`, `if`, `cases`, or `match` arm, a call's
+`outcomes` arm, a loop's `initialize` or `preserve` phase, or the body of a
+`have`. Coordinates in an mdtest refer to the Markdown file, not to the
+extracted Click block.
+
+- `PATH:LINE:COLUMN` selects the innermost smart tactic whose source text
+  contains that position, so any column inside the tactic works, not only its
+  first character.
+- `PATH:LINE` selects the one smart tactic that starts on that line. When the
+  line starts several, the command fails and lists each candidate as a
+  `PATH:LINE:COLUMN` location to rerun with.
+- A location outside every smart tactic, such as a blank column or the brace
+  that closes a non-smart `have`, fails with a diagnostic instead of selecting
+  a neighbor.
+
+The locations `click verify` prints are accepted as written: the `--> PATH:LINE:COLUMN`
+line of a diagnostic, and the `LINE` of its `tactic@LINE` or
+`tactic@LINE:COLUMN` heading, which carries a column exactly when its line
+starts more than one tactic.
+
+A smart tactic that owns its body is one site. The `simp` written in a smart
+`have` (`have P by { simp(); }`) or anywhere inside a smart `both` or
+`close_invariants by` bundle selects that enclosing tactic, and expansion
+rewrites the whole site. A `have` whose body mixes several tactics is not a
+site itself; each smart tactic written in its body is, and expanding one
+rewrites exactly that tactic's source, leaving its neighbors as written. A
+smart tactic in a proof `if` or `cases` arm written inside a `have` body, or
+inside the body of a `have` in a loop's `initialize` phase, is not yet
+addressable on its own; selecting it fails and says to expand the claim with
+`--claim` instead.
+
+The claim form expands every smart tactic in one named function claim and is
+useful when aggregate smart work matters even though no individual site is
+slow.
+
+Selection never changes how tactics are numbered: `click profile`, `click
+audit`, and tactic timing keep their flat per-claim source indices, and a
+tactic inside a `have` body is addressed by its enclosing `have`'s index plus
+its written position in each body.
 
 The selected proof unit must verify before rewriting. Click verifies the
 complete rewritten proof unit before any output is written. Imported theorem
@@ -109,6 +144,12 @@ Write one expansion to standard output:
 
 ```sh
 click expand path/to/file.click:LINE:COLUMN
+```
+
+Select the only smart tactic on a line:
+
+```sh
+click expand path/to/file.click:LINE
 ```
 
 Expand one claim into a review file:

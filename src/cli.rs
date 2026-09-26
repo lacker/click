@@ -121,6 +121,32 @@ pub fn parse_source_location(source: &str) -> Result<(PathBuf, usize, usize), St
     Ok((PathBuf::from(path), line, column))
 }
 
+/// Parses `PATH:LINE:COLUMN` or `PATH:LINE`. When the last two segments are
+/// both numbers they are the line and column; otherwise a numeric last
+/// segment is the line and the column is omitted.
+pub fn parse_source_line_location(source: &str) -> Result<(PathBuf, usize, Option<usize>), String> {
+    if looks_like_source_location(source) {
+        let (path, line, column) = parse_source_location(source)?;
+        return Ok((path, line, Some(column)));
+    }
+    let expected =
+        || format!("invalid source location `{source}`; expected PATH:LINE or PATH:LINE:COLUMN");
+    let (path, line) = source.rsplit_once(':').ok_or_else(expected)?;
+    if path.is_empty() {
+        return Err("source path must not be empty".to_string());
+    }
+    if line.is_empty() || !line.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(expected());
+    }
+    let line = line
+        .parse::<usize>()
+        .map_err(|_| format!("invalid source line `{line}`"))?;
+    if line == 0 {
+        return Err("source lines and columns are one-based".to_string());
+    }
+    Ok((PathBuf::from(path), line, None))
+}
+
 /// Returns true when the argument is shaped like `PATH:LINE:COLUMN`, meaning
 /// it ends in two colon-separated all-digit segments.
 ///
