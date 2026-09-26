@@ -2391,14 +2391,21 @@ pub(in crate::surface) fn loadable_base_and_bytes(
                 segment.end.clone(),
                 element_width,
             );
+            // A written `viewable(p[a..b])` states the same range a `views
+            // p[a..b]` clause does, so it carries the same guards in the same
+            // spellings (`memory_range_loadable_guards`): the endpoint form
+            // memory reasoning reads and the signed count form a proof can
+            // write, such as `n <= 1073741823` for `p[0..n]` of `int32`.
+            let guards = memory_range_loadable_guards(&CMemoryRange::new_with_element_width(
+                segment.base.clone(),
+                segment.start.clone(),
+                segment.end.clone(),
+                element_width,
+            ));
             Ok((
                 offset_pointer_by_elements(segment.base, segment.start.clone(), element_width),
                 bytes,
-                crate::kernel::memory_range_byte_count_guards(
-                    segment.start,
-                    segment.end,
-                    element_width,
-                ),
+                guards,
             ))
         }
         Requirement::Labeled { .. } | Requirement::Proposition(_) | Requirement::Resource(_) => {

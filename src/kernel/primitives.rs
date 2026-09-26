@@ -17,12 +17,13 @@ pub(crate) const SAME_OBJECT_PREDICATE_NAME: &str = "__click_same_object";
 pub(crate) const MUTEX_HELD_PREDICATE_NAME: &str = "__click_mutex_held";
 
 mod contracts;
+#[cfg(test)]
+pub(crate) use contracts::memory_range_byte_count_guards;
 pub(crate) use contracts::{
     MemoryRangeExtent, element_count_limit_constrains_int32, is_unnamed_footprint_base,
-    memory_range_byte_count, memory_range_byte_count_extent, memory_range_byte_count_guards,
-    memory_range_element_count, memory_range_element_count_guards,
-    memory_range_element_count_limit, memory_range_extent_guard_spellings,
-    memory_range_extent_guards, scaled_extent_element_width,
+    memory_range_byte_count, memory_range_byte_count_extent, memory_range_element_count,
+    memory_range_element_count_guards, memory_range_element_count_limit,
+    memory_range_extent_guard_spellings, memory_range_extent_guards, scaled_extent_element_width,
     stated_loadable_extent_guard_spellings, stated_loadable_extent_guards,
     stated_separation_extent_bounds, stated_separation_extent_guards,
 };
