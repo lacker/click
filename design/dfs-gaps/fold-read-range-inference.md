@@ -1,7 +1,9 @@
 # Design: checked read ranges for fold applications
 
-Status: delivery steps 1 and 2 landed; steps 3 and 4 are not started and
-not authorized. `src/kernel/fold_read_summary.rs` holds the kernel-checked,
+Status: delivery steps 1, 2, and 4 landed; step 3 is not started and not
+authorized. Step 4 used the explicit rule: the sweep example carries its
+prefix across `visited[i] = 1` with one `transport`, and no C proof uses
+`unmarked_frame` any more. `src/kernel/fold_read_summary.rs` holds the kernel-checked,
 session-scoped read summary (step 1) and the explicit application-framing
 rule that `transport(P, Q) using { ... }` reaches (step 2). The rule walks
 the recorded memory history between the two array snapshots per query and
