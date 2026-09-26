@@ -90,6 +90,9 @@ edge owes the extent under the quantifier in the unsigned spelling
 its antecedent and decides it by signed order, and a written `both` over the
 bundle names the member's binder `k` as the invariant wrote it
 (`mdtests/loop_bundle_names_a_quantified_invariant_binder_as_written.md`).
+Both back edges also take `n <= 1073741823` from `views a[0..n]` alone
+(`mdtests/loop_invariant_growing_viewable_prefix_bounded_by_its_views_clause.md`,
+`mdtests/loop_quantified_viewable_invariant_bounded_by_its_views_clause.md`).
 
 ## The owned range in a store refusal is spelled against the wrong base
 

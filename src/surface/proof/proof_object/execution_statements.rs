@@ -32,8 +32,9 @@ fn ranking_member_diagnostic(ranking_measures: &[crate::kernel::CRankingComponen
 /// A premise the bundle closer may hand to `arithmetic() using`, as the
 /// exact pair of lowered kernel proposition and the source text that lowers
 /// to it. Only the loop head's guard and invariants at iteration entry, the
-/// function's written preconditions, and the written antecedent a quantified
-/// bundle member introduces ever become one of these.
+/// function's written preconditions and the extent halves of the ranges its
+/// contract states, and the written antecedent a quantified bundle member
+/// introduces ever become one of these.
 pub(in crate::surface::proof) type NamedArithmeticPremise = (Proposition, ClickProposition);
 
 /// Splits a written contract clause into the conjuncts a source proof would
@@ -138,6 +139,14 @@ impl<'a> Proof<'a> {
                 written_conjuncts(proposition, &mut candidates)?;
             }
         }
+        // A range the contract states carries its extent half as a fact
+        // beside it (`docs/concepts/viewability.md`), whether a `requires`
+        // or a `views`/`owns` clause states it. Offer that half in the one
+        // spelling a proof can write, `0 <= count` and `count <= limit`, so
+        // the closer can cite `n <= 1073741823` from `views a[0..n]` exactly
+        // as it cites a written `requires n <= 1073741823`.
+        let stated_extents = self.contract_range_extent_facts(requires, &candidates);
+        candidates.extend(stated_extents);
         candidates.extend(path_branch_premises.iter().cloned());
         // Loop-head invariants are recorded as written, including a
         // conjunction such as `0 <= i and i <= 100`.  Arithmetic consumes
@@ -337,6 +346,89 @@ impl<'a> Proof<'a> {
             scope.succeed();
         }
         Ok(result)
+    }
+
+    /// The extent halves of the ranges the contract states, as the facts a
+    /// proof can write: `0 <= count` and, for elements wide enough that the
+    /// limit binds in `int32`, `count <= limit`. A `views`/`owns` clause
+    /// states its range as a resource, so its element width is read from
+    /// the clause lowered at function entry; a written `viewable(...)`
+    /// precondition, already among `written`, is lowered for the same
+    /// width. The walk is over the contract's own clauses and nothing else;
+    /// each fact is still kept only when it is exactly available where the
+    /// closer cites it.
+    fn contract_range_extent_facts(
+        &self,
+        requires: &[Requirement],
+        written: &[ClickProposition],
+    ) -> Vec<ClickProposition> {
+        let mut facts = Vec::new();
+        let mut push = |start: &ContractExpression, end: &ContractExpression, width: u32| {
+            for fact in Self::stated_range_extent_facts(start, end, width) {
+                if !facts.contains(&fact) {
+                    facts.push(fact);
+                }
+            }
+        };
+        if let Some(context) = self.execution_context()
+            && let Some(entry) = context.constants.function_entry_state.as_ref()
+        {
+            let parameters = context.parsed_function.parameters();
+            for requirement in requires {
+                let Requirement::Resource(resource) = requirement.inner() else {
+                    continue;
+                };
+                let mut resource: &ResourceClause = resource;
+                while let ResourceClause::Named {
+                    resource: inner, ..
+                } = resource
+                {
+                    resource = inner.as_ref();
+                }
+                let segments: Vec<&ContractSegment> = match resource {
+                    ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
+                        vec![segment]
+                    }
+                    ResourceClause::MemoryAggregate { segments, .. } => segments.iter().collect(),
+                    _ => continue,
+                };
+                let Ok(Some(ranges)) =
+                    crate::surface::lowering::resource_clause_memory_ranges_at_state(
+                        resource,
+                        parameters,
+                        context.arguments,
+                        entry,
+                    )
+                else {
+                    continue;
+                };
+                if ranges.len() != segments.len() {
+                    continue;
+                }
+                for (segment, range) in segments.into_iter().zip(ranges.iter()) {
+                    if let Some((_, start, end)) = segment.surface_range() {
+                        push(start, end, range.element_width());
+                    }
+                }
+            }
+        }
+        for candidate in written {
+            let ClickProposition::Loadable { segment } = candidate else {
+                continue;
+            };
+            let Some((_, start, end)) = segment.surface_range() else {
+                continue;
+            };
+            let Ok(Proposition::CMemoryLoadable { bytes, .. }) =
+                self.lower_cited_surface_proposition(candidate, "stated range premise")
+            else {
+                continue;
+            };
+            if let Some(width) = crate::kernel::scaled_extent_element_width(&bytes) {
+                push(start, end, width);
+            }
+        }
+        facts
     }
 
     /// Introduces the written antecedent of a quantified bundle member whose

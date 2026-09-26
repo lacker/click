@@ -3074,7 +3074,7 @@ impl<'a> Proof<'a> {
     /// available and print what to go and prove. The count of `a[s..e]` is
     /// `e - s`, and for a range starting at `0` it is `e` itself, which is how
     /// the kernel's own count form reads it.
-    fn stated_range_extent_facts(
+    pub(super) fn stated_range_extent_facts(
         start: &ContractExpression,
         end: &ContractExpression,
         element_width: u32,
