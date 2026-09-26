@@ -5511,10 +5511,13 @@ pub enum CResource {
 }
 
 /// An acquisition identity can be copied as syntax, but ownership cannot be duplicated.
-/// Only the checked mutex transition allocates a fresh identity.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+/// Concrete acquisitions have fresh epochs. In an independently checked preserving
+/// contract, a symbolic mutex names its one unchanged acquisition. Such identities
+/// are meaningful only while every mutex transition is prohibited.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct MutexGuardIdentity {
     pub(in crate::kernel) epoch: u64,
+    pub(in crate::kernel) abstract_mutex: Option<Pointer>,
 }
 
 impl CResource {

@@ -15,7 +15,9 @@ classification is described in [proof-failure triage](../concepts/proof-failure-
 
 Today, `mutex_guard(mu)` can occur in declared resource bodies. `owns h:
 holding(counter)` can preserve a folded guard wrapper through a helper. The
-helper cannot change mutex protocols. This is a conservative implementation
+helper can unfold and refold the wrapper, establish `held(mu)` from the exposed
+guard, and use separately supplied protected memory. It cannot change mutex
+protocols. This is a conservative implementation
 boundary, not the proposed final meaning of concurrency contracts.
 
 The proposed next surface is:

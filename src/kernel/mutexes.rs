@@ -67,6 +67,7 @@ impl MutexGuard {
     fn resource_fact(&self) -> CResourceFact {
         CResourceFact::own(CResource::MutexGuard(super::MutexGuardIdentity {
             epoch: self.epoch,
+            abstract_mutex: None,
         }))
     }
 }
@@ -385,7 +386,10 @@ impl MutexLedger {
     pub(super) fn guard_resource(&self, mutex: &Pointer) -> Option<CResourceFact> {
         match self.get(mutex) {
             Some(MutexEntry::Locked { epoch, .. }) => Some(CResourceFact::own(
-                CResource::MutexGuard(super::MutexGuardIdentity { epoch: *epoch }),
+                CResource::MutexGuard(super::MutexGuardIdentity {
+                    epoch: *epoch,
+                    abstract_mutex: None,
+                }),
             )),
             _ => None,
         }
@@ -554,6 +558,167 @@ fn same_instance(previous: &Option<CResourceFact>, restored: &Option<CResourceFa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn guard_spec(
+        mutex: Pointer,
+        snapshot: super::super::CResourceSnapshot,
+    ) -> super::super::CResourceSpec {
+        use super::super::*;
+        CResourceSpec::new(
+            CResourceTerm::MutexGuard {
+                mutex: Box::new(CExpression::Value(CValue::pointer(mutex))),
+                snapshot: CResourceSnapshot::Current,
+            },
+            CResourceAccessMode::Own,
+            CResourceQuantity::One,
+            CResourceTransferRole::Borrow,
+            snapshot,
+        )
+        .unwrap()
+    }
+
+    fn evaluate_guard(
+        entry: &CState,
+        current: &CState,
+        mutex: Pointer,
+        snapshot: super::super::CResourceSnapshot,
+    ) -> CResourceFact {
+        super::super::functions::evaluate_function_resource_spec_with_entry(
+            entry,
+            current,
+            &guard_spec(mutex, snapshot),
+            &PureFactContext::new(),
+            &mut super::super::ExecutionBudget::beside_live_state(),
+        )
+        .unwrap()
+        .unwrap()
+    }
+
+    #[test]
+    fn preserved_guard_selects_entry_acquisition_after_reacquisition() {
+        use super::super::CResourceSnapshot;
+        let assumptions = PureFactContext::new();
+        let address = mutex(0);
+        let entry = MutexContext::new(CState::new())
+            .initialize_empty(address.clone())
+            .unwrap()
+            .acquire_current(&address, &assumptions)
+            .unwrap();
+        let next = entry
+            .release_current(&address, &assumptions)
+            .unwrap()
+            .acquire_current(&address, &assumptions)
+            .unwrap();
+        let required = evaluate_guard(
+            entry.state(),
+            next.state(),
+            address.clone(),
+            CResourceSnapshot::Entry,
+        );
+        let replacement = evaluate_guard(
+            entry.state(),
+            next.state(),
+            address,
+            CResourceSnapshot::Current,
+        );
+        assert_ne!(required, replacement);
+        assert!(
+            entry
+                .state()
+                .resources
+                .satisfies_fact(&required, &assumptions)
+        );
+        assert!(
+            !next
+                .state()
+                .resources
+                .satisfies_fact(&required, &assumptions)
+        );
+        assert!(
+            next.state()
+                .resources
+                .satisfies_fact(&replacement, &assumptions)
+        );
+    }
+
+    #[test]
+    fn symbolic_guard_description_grants_no_authority_and_is_mutex_specific() {
+        use super::super::CResourceSnapshot;
+        let assumptions = PureFactContext::new();
+        let mut state = CState::new();
+        state.preserves_mutex_protocols = true;
+        let guard = evaluate_guard(&state, &state, mutex(0), CResourceSnapshot::Current);
+        let other = evaluate_guard(&state, &state, mutex(1), CResourceSnapshot::Current);
+        assert_ne!(guard, other);
+        assert!(!state.resources.satisfies_fact(&guard, &assumptions));
+        state.resources = state
+            .resources
+            .try_compose_with_fact(guard.clone(), &assumptions)
+            .unwrap();
+        assert!(state.resources.satisfies_fact(&guard, &assumptions));
+        assert!(!state.resources.satisfies_fact(&other, &assumptions));
+        assert!(
+            state
+                .resources
+                .clone()
+                .try_compose_with_fact(guard, &assumptions)
+                .is_err()
+        );
+        let concrete = MutexContext::new(CState::new())
+            .initialize_empty(mutex(0))
+            .unwrap()
+            .acquire_current(&mutex(0), &assumptions)
+            .unwrap();
+        let concrete_guard = evaluate_guard(
+            concrete.state(),
+            concrete.state(),
+            mutex(0),
+            CResourceSnapshot::Current,
+        );
+        assert!(
+            !state
+                .resources
+                .satisfies_fact(&concrete_guard, &assumptions)
+        );
+    }
+
+    #[test]
+    fn symbolic_guard_lookup_and_exchange_use_indexed_paths() {
+        use super::super::CResourceSnapshot;
+        let assumptions = PureFactContext::new();
+        let mut samples = Vec::new();
+        for size in [16usize, 64, 256, 1024] {
+            let mut state = CState::new();
+            state.preserves_mutex_protocols = true;
+            for index in 0..size {
+                let fact = evaluate_guard(&state, &state, mutex(index), CResourceSnapshot::Current);
+                state.resources = state
+                    .resources
+                    .try_compose_with_fact(fact, &assumptions)
+                    .unwrap();
+            }
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let fact =
+                    evaluate_guard(&state, &state, mutex(size / 2), CResourceSnapshot::Current);
+                assert!(state.resources.satisfies_fact(&fact, &assumptions));
+                let removed = state
+                    .resources
+                    .clone()
+                    .without_fact_incrementally(&fact, &assumptions)
+                    .unwrap();
+                assert!(!removed.satisfies_fact(&fact, &assumptions));
+                removed.try_compose_with_fact(fact, &assumptions).unwrap()
+            });
+            samples.push((size, work));
+        }
+        let baseline = samples[0].1;
+        for &(size, work) in &samples {
+            assert!(
+                work > 0 && work <= baseline + 600 * (size.ilog2() as usize - 4),
+                "symbolic guard exchange work: {samples:?}"
+            );
+        }
+    }
 
     #[test]
     fn preserving_contract_freezes_every_mutex_transition() {

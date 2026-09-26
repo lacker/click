@@ -1,4 +1,4 @@
-# A helper preserves an opaque guard wrapper
+# A helper opens and preserves a guard wrapper
 
 A preserving contract frames the wrapper and its acquisition. The helper
 receives no permission to change the mutex protocol.
@@ -42,6 +42,9 @@ verifying "guarded_resource_mutex_flow.c";
 void keep(struct counter *counter) {
     owns h: holding(counter);
 } by {
+    unfold(h);
+    have held(&counter->mu) by simp;
+    fold(h);
     execute();
     simp();
 }

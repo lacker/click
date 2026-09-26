@@ -1,4 +1,4 @@
-# Nested helpers preserve an opaque guard wrapper
+# Abstract guards cannot be manufactured from an address
 
 A preserving contract frames the wrapper and its acquisition. The helper
 receives no permission to change the mutex protocol.
@@ -7,8 +7,7 @@ receives no permission to change the mutex protocol.
 #include <pthread.h>
 struct counter { pthread_mutex_t mu; int value; };
 
-void inner(struct counter *counter) {}
-void keep(struct counter *counter) { inner(counter); }
+void keep(struct counter *counter) {}
 
 int read_counter(struct counter *counter) {
     int value;
@@ -40,27 +39,11 @@ resource counter_state(counter: struct counter*) {
 
 verifying "guarded_resource_mutex_flow.c";
 
-void inner(struct counter *counter) {
-    owns h: holding(counter);
-} by {
-    unfold(h);
-    have held(&counter->mu) by simp;
-    fold(h);
-    execute();
-    simp();
-}
-
 void keep(struct counter *counter) {
     owns h: holding(counter);
 } by {
-    unfold(h);
-    have held(&counter->mu) by simp;
-    fold(h);
-    step(inner(counter), { h: h });
-    unfold(h);
-    have held(&counter->mu) by simp;
-    fold(h);
-    step();
+    let duplicate = fold(holding(counter), { tag: 0 });
+    execute();
     simp();
 }
 
@@ -85,5 +68,5 @@ int32 read_counter(struct counter *counter) {
 ```
 
 ```expect
-pass
+fail: fold requires ownership of the complete instance body
 ```

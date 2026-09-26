@@ -327,7 +327,7 @@ impl ResourceContextIndex {
     fn refresh_suspect_guard(&mut self, identity: MutexGuardIdentity) {
         let suspect = self
             .by_resource
-            .get(&CResource::MutexGuard(identity))
+            .get(&CResource::MutexGuard(identity.clone()))
             .is_some_and(|entries| entries.len() >= 2)
             || self.invalid_guard_access.contains_key(&identity);
         if suspect {
@@ -389,9 +389,9 @@ impl ResourceContextIndex {
                     .unwrap_or(0);
                 result.invalid_guard_access = result
                     .invalid_guard_access
-                    .with_inserted(*identity, count + 1);
+                    .with_inserted(identity.clone(), count + 1);
             }
-            result.refresh_suspect_guard(*identity);
+            result.refresh_suspect_guard(identity.clone());
         }
         if let Some(range) = fact.memory_range() {
             let block = range.base().block.clone();
@@ -524,10 +524,10 @@ impl ResourceContextIndex {
                 } else {
                     result
                         .invalid_guard_access
-                        .with_inserted(*identity, count - 1)
+                        .with_inserted(identity.clone(), count - 1)
                 };
             }
-            result.refresh_suspect_guard(*identity);
+            result.refresh_suspect_guard(identity.clone());
         }
         if let Some(range) = fact.memory_range() {
             let block = range.base().block.clone();
@@ -4163,7 +4163,7 @@ impl ResourceContext {
                 .storage
                 .index
                 .by_resource
-                .get(&CResource::MutexGuard(*identity))
+                .get(&CResource::MutexGuard(identity.clone()))
                 .expect("suspect guard is held");
             for entry in entries.iter() {
                 if let Some(error) = self.exclusive_validity_error(self.fact(*entry)) {

@@ -180,13 +180,16 @@ composition, consumption, and logarithmic indexed work amid unrelated guards.
 
 The surface now supports `owns mutex_guard(mu)` in declared-resource bodies,
 including conditional model arms. Preserving contracts may now carry folded
-guard instances opaquely through ordinary and nested helpers. Their checked
+guard instances through ordinary and nested helpers. Independently checked
+helpers can unfold and refold them, establish `held(mu)` from exposed guards,
+and access separately supplied protected memory. Their checked
 bodies freeze all mutex transitions; reinitialization, unlock, destruction,
 and untracked nested calls are rejected. The caller retains the same protocol
 and acquisition. This uses the existing `owns` syntax.
 
-Unfolding guards at abstract contract entry, direct guard clauses, and
-consumed/produced guards still require abstract acquisition identities. Calls
+Direct named guard clauses and consumed/produced guards still require the
+full abstract acquisition binding and transition model. The current symbolic
+form is restricted to helpers whose mutex protocols cannot change. Calls
 without preserving guard inputs remain refused while protocols are live.
 Lock-changing helpers and loop joins across acquisition epochs remain open
 before the unchanged parity loop can verify. Protocol lifecycle and shared

@@ -1479,7 +1479,11 @@ fn collect_memory_bound_variables(memory: &CMemory, variables: &mut BTreeSet<Var
 
 fn collect_resource_bound_variables(resource: &CResource, variables: &mut BTreeSet<Variable>) {
     match resource {
-        CResource::MutexGuard(_) => {}
+        CResource::MutexGuard(identity) => {
+            if let Some(pointer) = &identity.abstract_mutex {
+                collect_pointer_bound_variables(pointer, variables);
+            }
+        }
         CResource::Instance(instance) => {
             for value in instance.arguments.iter().chain(instance.fields.iter()) {
                 collect_algebraic_value_bound_variables(value, variables);
@@ -3855,7 +3859,13 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
     to: &Bitvector32Term,
 ) -> CResource {
     match resource {
-        CResource::MutexGuard(_) => resource.clone(),
+        CResource::MutexGuard(identity) => CResource::MutexGuard(MutexGuardIdentity {
+            epoch: identity.epoch,
+            abstract_mutex: identity
+                .abstract_mutex
+                .as_ref()
+                .map(|pointer| substitute_bitvector_variable_in_pointer(pointer, from, to)),
+        }),
         CResource::Instance(instance) => {
             let mut result = instance.clone();
             result.arguments = instance
@@ -6464,7 +6474,13 @@ fn substitute_pointer_variable_in_c_resource(
     to: &Pointer,
 ) -> CResource {
     match resource {
-        CResource::MutexGuard(_) => resource.clone(),
+        CResource::MutexGuard(identity) => CResource::MutexGuard(MutexGuardIdentity {
+            epoch: identity.epoch,
+            abstract_mutex: identity
+                .abstract_mutex
+                .as_ref()
+                .map(|pointer| substitute_pointer_variable_in_pointer(pointer, from, to)),
+        }),
         CResource::Instance(instance) => {
             let mut result = instance.clone();
             result.arguments = instance

@@ -21834,7 +21834,23 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                     "mutex_guard expects a mutex pointer".into(),
                 )));
             };
-            Ok(state
+            // Evaluating a term describes authority; it never grants it. An
+            // owned wrapper may expose this atom through checked unfolding, and
+            // folding must consume that same atom. With no concrete ledger,
+            // preserving contracts prohibit all acquisition-changing operations.
+            if state.preserves_mutex_protocols && state.mutex_ledger.is_none() {
+                return Ok(Ok(CResourceFact::own(CResource::MutexGuard(
+                    MutexGuardIdentity {
+                        epoch: 0,
+                        abstract_mutex: Some(pointer.pointer().clone()),
+                    },
+                ))));
+            }
+            let acquisition_state = match resource.snapshot() {
+                CResourceSnapshot::Entry => entry_state,
+                _ => state,
+            };
+            Ok(acquisition_state
                 .mutex_ledger
                 .as_ref()
                 .and_then(|ledger| ledger.guard_resource(pointer.pointer()))

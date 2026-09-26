@@ -241,8 +241,15 @@ for the checked body. This boundary is carried in C state, substitution, and
 state equality; nested calls cannot erase it. Returning across it retains the
 caller's acquisition and restores the caller's transition permissions.
 
-The first contract rule preserves folded guard instances opaquely. It does
-not synthesize acquisitions from a mutex address or from `held(mu)`. Direct
+Preserving helpers can unfold guard instances using a symbolic acquisition
+associated with the mutex pointer. This symbolic form is restricted to abstract
+entries without a concrete mutex ledger and with every mutex transition frozen.
+Evaluating a guard term describes a required resource; only checked unfolding
+of an owned body supplies it. Folding consumes it. An exposed guard establishes
+`held(mu)`; absence of an exposed guard does not establish `not held(mu)`.
+Symbolic atoms remain distinct from concrete acquisition epochs. A concrete
+preserved guard requirement selects the entry acquisition, even if a later
+state contains a replacement acquisition at the same address. Direct
 guard clauses and consumed/produced guard instances are refused in both
 transfer and certification. Calls with live protocols require a preserving
 guard input; suspended workers remain refused. All modeled mutex transitions
@@ -250,8 +257,8 @@ reject a preserving body, even when its abstract entry has no concrete ledger.
 The reinitializing, unlocking, destroying, and nested-reset helper fixtures
 protect this boundary. Opaque entry heldness is not interpreted as false.
 
-Abstract acquisition identities for unfolding inside a helper, lock-changing
-contracts, loop joins across acquisition epochs, lifecycle authority, and
+Direct named primitive guard binders, lock-changing contracts, loop joins
+across acquisition epochs, lifecycle authority, and
 shared interference remain later work. This checkpoint does not add
 concurrent population access.
 

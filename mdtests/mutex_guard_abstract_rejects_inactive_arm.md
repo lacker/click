@@ -1,4 +1,4 @@
-# Nested helpers preserve an opaque guard wrapper
+# An inactive wrapper arm does not supply an abstract guard
 
 A preserving contract frames the wrapper and its acquisition. The helper
 receives no permission to change the mutex protocol.
@@ -7,8 +7,7 @@ receives no permission to change the mutex protocol.
 #include <pthread.h>
 struct counter { pthread_mutex_t mu; int value; };
 
-void inner(struct counter *counter) {}
-void keep(struct counter *counter) { inner(counter); }
+void keep(struct counter *counter) {}
 
 int read_counter(struct counter *counter) {
     int value;
@@ -26,9 +25,13 @@ int read_counter(struct counter *counter) {
 target "x86_64-linux-userspace";
 runtime "modeled-pthread";
 
+spec enum LockMode { Idle, Holding, }
 resource holding(counter: struct counter*) {
-    field tag: int32;
-    owns mutex_guard(&counter->mu);
+    field mode: LockMode;
+    match mode {
+        LockMode::Idle => {},
+        LockMode::Holding => { owns mutex_guard(&counter->mu); },
+    }
 }
 
 resource counter_state(counter: struct counter*) {
@@ -40,27 +43,13 @@ resource counter_state(counter: struct counter*) {
 
 verifying "guarded_resource_mutex_flow.c";
 
-void inner(struct counter *counter) {
-    owns h: holding(counter);
-} by {
-    unfold(h);
-    have held(&counter->mu) by simp;
-    fold(h);
-    execute();
-    simp();
-}
-
 void keep(struct counter *counter) {
     owns h: holding(counter);
+    requires h.mode == LockMode::Idle;
 } by {
     unfold(h);
-    have held(&counter->mu) by simp;
-    fold(h);
-    step(inner(counter), { h: h });
-    unfold(h);
-    have held(&counter->mu) by simp;
-    fold(h);
-    step();
+    let forged = fold(holding(counter), { mode: LockMode::Holding });
+    execute();
     simp();
 }
 
@@ -71,7 +60,7 @@ int32 read_counter(struct counter *counter) {
     step();
     step(pthread_mutex_init(&counter->mu, 0), { invariant: state });
     step();
-    let held = fold(holding(counter), { tag: 0 });
+    let held = fold(holding(counter), { mode: LockMode::Holding });
     step(keep(counter), { h: held });
     unfold(held);
     unfold(state);
@@ -85,5 +74,5 @@ int32 read_counter(struct counter *counter) {
 ```
 
 ```expect
-pass
+fail: fold requires ownership of the complete instance body
 ```

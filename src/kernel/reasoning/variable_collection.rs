@@ -1588,7 +1588,11 @@ pub(in crate::kernel) fn collect_c_resource_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
-        CResource::MutexGuard(_) => {}
+        CResource::MutexGuard(identity) => {
+            if let Some(pointer) = &identity.abstract_mutex {
+                collect_pointer_bitvector_variables(pointer, variables);
+            }
+        }
         CResource::Instance(instance) => {
             for value in instance.arguments.iter().chain(instance.fields.iter()) {
                 collect_algebraic_value_bitvector_variables(value, variables);

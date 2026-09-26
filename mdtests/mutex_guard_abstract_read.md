@@ -1,4 +1,4 @@
-# Nested helpers preserve an opaque guard wrapper
+# A helper reads protected memory through an abstract guard
 
 A preserving contract frames the wrapper and its acquisition. The helper
 receives no permission to change the mutex protocol.
@@ -7,15 +7,13 @@ receives no permission to change the mutex protocol.
 #include <pthread.h>
 struct counter { pthread_mutex_t mu; int value; };
 
-void inner(struct counter *counter) {}
-void keep(struct counter *counter) { inner(counter); }
+int read_locked(struct counter *counter) { return counter->value; }
 
 int read_counter(struct counter *counter) {
     int value;
     pthread_mutex_init(&counter->mu, 0);
     pthread_mutex_lock(&counter->mu);
-    keep(counter);
-    value = counter->value;
+    value = read_locked(counter);
     pthread_mutex_unlock(&counter->mu);
     pthread_mutex_destroy(&counter->mu);
     return value;
@@ -40,27 +38,17 @@ resource counter_state(counter: struct counter*) {
 
 verifying "guarded_resource_mutex_flow.c";
 
-void inner(struct counter *counter) {
+int32 read_locked(struct counter *counter) {
     owns h: holding(counter);
+    owns state: counter_state(counter);
+    ensures result == state.value;
 } by {
     unfold(h);
     have held(&counter->mu) by simp;
-    fold(h);
+    unfold(state);
     execute();
-    simp();
-}
-
-void keep(struct counter *counter) {
-    owns h: holding(counter);
-} by {
-    unfold(h);
-    have held(&counter->mu) by simp;
+    fold(state);
     fold(h);
-    step(inner(counter), { h: h });
-    unfold(h);
-    have held(&counter->mu) by simp;
-    fold(h);
-    step();
     simp();
 }
 
@@ -72,11 +60,8 @@ int32 read_counter(struct counter *counter) {
     step(pthread_mutex_init(&counter->mu, 0), { invariant: state });
     step();
     let held = fold(holding(counter), { tag: 0 });
-    step(keep(counter), { h: held });
+    step(read_locked(counter), { h: held, state: state });
     unfold(held);
-    unfold(state);
-    step();
-    fold(state);
     step();
     step();
     step();
