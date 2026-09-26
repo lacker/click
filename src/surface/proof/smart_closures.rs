@@ -837,18 +837,41 @@ impl<'a> Proof<'a> {
             else {
                 continue;
             };
-            if right.as_ref().as_const() == Some(0)
-                && signed_surface_terms_equal(left.as_ref(), term)
-            {
-                return Some((*candidate).clone());
-            }
-            if left.as_ref().as_const() == Some(0)
-                && signed_surface_terms_equal(right.as_ref(), term)
-            {
+            let names_term = (right.as_ref().as_const() == Some(0)
+                && signed_surface_terms_equal(left.as_ref(), term))
+                || (left.as_ref().as_const() == Some(0)
+                    && signed_surface_terms_equal(right.as_ref(), term));
+            if names_term && self.signed_surface_term_is_int32(candidate, term) {
                 return Some((*candidate).clone());
             }
         }
         None
+    }
+
+    /// Whether `candidate` reads `term` as an `int32`, so a certificate node
+    /// that names the signed atom re-lowers to that atom. Equality cannot
+    /// tell: `(uint32) n == 0` lowers to the same raw bitvector equality as
+    /// `n == 0`, while `(uint32) n <= 2147483647` is an unsigned comparison of
+    /// another typed value. A signed order does tell, since only an `int32`
+    /// operand lowers `candidate < 0` to a signed comparison of that term.
+    fn signed_surface_term_is_int32(
+        &self,
+        candidate: &ContractExpression,
+        term: &crate::kernel::Bitvector32Term,
+    ) -> bool {
+        let probe = ClickProposition::Comparison {
+            left: candidate.clone(),
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::IntegerLiteral("0".into()),
+        };
+        let Ok(Proposition::ConditionIs(
+            crate::kernel::ConditionTerm::Bitvector32SignedLessThan(left, right),
+            true,
+        )) = self.lower_surface_proposition_direct(&probe, "signed arithmetic certificate term")
+        else {
+            return false;
+        };
+        right.as_ref().as_const() == Some(0) && signed_surface_terms_equal(left.as_ref(), term)
     }
 
     pub(super) fn signed_plan_to_surface_certificate(
