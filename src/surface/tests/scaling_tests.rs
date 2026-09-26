@@ -3495,3 +3495,54 @@ fn a_constant_view_costs_the_same_whatever_its_length() {
         "deterministic work depends on the range's length: {samples:?}"
     );
 }
+
+/// A smart `close_invariants()` whose quantified invariant is not restated
+/// at the back edge closes it from the loop head's own universal, not by
+/// whole-bundle simplification. `search_terminates_by_unmarked_count.md`
+/// transports the quantified `next` bound explicitly before closing; the
+/// same proof without that transport must cost a small multiple of it.
+/// Before the direct member pass, the variant's two closes spent about 300k
+/// units (whole-bundle simplification failed, then the member planner
+/// succeeded) against about 19k for the explicit proof.
+#[test]
+fn close_invariants_without_the_explicit_transport_costs_a_small_multiple() {
+    let markdown = include_str!("../../../mdtests/search_terminates_by_unmarked_count.md");
+    let mdtest = crate::cli::parse_mdtest(
+        std::path::Path::new("search_terminates_by_unmarked_count.md"),
+        markdown,
+    )
+    .unwrap();
+    let explicit = mdtest.click_source.as_deref().unwrap().replace(
+        "import \"unmarked_count_lemmas.click\";",
+        include_str!("../../../mdtests/unmarked_count_lemmas.click"),
+    );
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let transport = "            have forall (k: int32) {\n                0 <= k and k < n implies 0 <= next[k] and next[k] < n\n            } by {\n                transport(";
+    let start = explicit
+        .find(transport)
+        .expect("the fixture transports the quantified bound explicitly");
+    let end = start
+        + explicit[start..]
+            .find("            have forall (k: int32) {\n                0 <= k and k < n implies at(iter, next[k]) == next[k]")
+            .expect("the next explicit proof step follows the transport");
+    let implicit = format!("{}{}", &explicit[..start], &explicit[end..]);
+    let measure = |source: &str| {
+        let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+            verify_c0_sources(source, &c_sources)
+        });
+        verified.unwrap_or_else(|error| panic!("{}", error.message()));
+        work
+    };
+    // The first verification on a thread fills shared caches once.
+    measure(&explicit);
+    let explicit_work = measure(&explicit);
+    let implicit_work = measure(&implicit);
+    assert!(
+        implicit_work <= explicit_work.saturating_mul(3) / 2,
+        "closing without the explicit transport costs {implicit_work} units against {explicit_work}"
+    );
+}

@@ -1283,7 +1283,7 @@ impl<'a> Proof<'a> {
     /// expansion prints.
     fn try_direct_structural_closure(&self) -> Result<Option<Self>, ClickError> {
         let mut scope = attempt::search_scope("direct structural closure");
-        let result = self.try_direct_structural_closure_inner()?;
+        let result = self.try_direct_structural_closure_inner(&mut |_| Ok(None))?;
         if result.is_some() {
             scope.succeed();
         }
@@ -1310,7 +1310,27 @@ impl<'a> Proof<'a> {
         )
     }
 
-    fn try_direct_structural_closure_inner(&self) -> Result<Option<Self>, ClickError> {
+    /// [`Self::try_direct_structural_closure`] with one more closer at a
+    /// universal node the direct candidates miss: `quantified` is offered
+    /// the universal whole before `intro` descends into it. The walk is
+    /// otherwise the same goal-sized descent, so the extra work is one
+    /// `quantified` attempt per universal node of the goal.
+    pub(in crate::surface::proof) fn try_direct_structural_closure_with_quantified(
+        &self,
+        quantified: &mut dyn FnMut(&Self) -> Result<Option<Self>, ClickError>,
+    ) -> Result<Option<Self>, ClickError> {
+        let mut scope = attempt::search_scope("direct structural closure");
+        let result = self.try_direct_structural_closure_inner(quantified)?;
+        if result.is_some() {
+            scope.succeed();
+        }
+        Ok(result)
+    }
+
+    fn try_direct_structural_closure_inner(
+        &self,
+        quantified: &mut dyn FnMut(&Self) -> Result<Option<Self>, ClickError>,
+    ) -> Result<Option<Self>, ClickError> {
         check_verification_deadline()?;
         let mut budget = attempt::AttemptBudget::unbounded();
         if let Some(closed) =
@@ -1327,20 +1347,25 @@ impl<'a> Proof<'a> {
             let marker = split_proof.checkpoint();
             let Some(left) = split_proof
                 .focus_branch(ids[0])?
-                .try_direct_structural_closure_inner()?
+                .try_direct_structural_closure_inner(quantified)?
             else {
                 return Ok(None);
             };
             let Some(right) = left
                 .focus_branch(ids[1])?
-                .try_direct_structural_closure_inner()?
+                .try_direct_structural_closure_inner(quantified)?
             else {
                 return Ok(None);
             };
             return attempt::candidate_outcome(right.join_focused_both(&marker, split, ids));
         }
+        if matches!(self.goal(), Some(Proposition::ForAll { .. }))
+            && let Some(closed) = quantified(self)?
+        {
+            return Ok(Some(closed));
+        }
         match attempt::candidate_outcome(self.apply_step(ProofStep::Intro))? {
-            Some(introduced) => introduced.try_direct_structural_closure_inner(),
+            Some(introduced) => introduced.try_direct_structural_closure_inner(quantified),
             None => Ok(None),
         }
     }

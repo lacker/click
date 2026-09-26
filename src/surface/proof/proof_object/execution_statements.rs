@@ -228,6 +228,45 @@ impl<'a> Proof<'a> {
         Ok((proof, cited))
     }
 
+    /// The direct first pass of a smart `close_invariants()`: the bundle's
+    /// fixed `both`/`intro` structure with direct logical candidates at
+    /// every node, plus one loop-specific closer at a universal member. A
+    /// universal the context does not state exactly at the back edge is
+    /// closed from the loop head's own universal of that shape, instantiated
+    /// at the introduced binder and transported across the body, citing
+    /// only the named premises (`named_arithmetic_premises`). This is the
+    /// same closer the member planner uses, offered before whole-goal
+    /// simplification: that search does not know the loop head's premises
+    /// and, for such a member, spends work proportional to the ambient
+    /// facts before it declines.
+    ///
+    /// The walk is linear in the bundle's size, and each universal member
+    /// costs one pass over the named premises. A miss anywhere declines the
+    /// whole candidate, leaving the ordinary closers the unchanged fallback.
+    fn try_direct_bundle_closure(
+        &self,
+        bundle: &InvariantBodyContext,
+        requires: &[Requirement],
+        path_branch_premises: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        let mut quantified = |member: &Self| -> Result<Option<Self>, ClickError> {
+            let member = member.with_synthesized_bundle_member_surface();
+            if member.surface_goal().is_none() {
+                return Ok(None);
+            }
+            let (member, premises) =
+                member.named_arithmetic_premises(bundle, requires, path_branch_premises)?;
+            let mut surfaces = bundle.loop_head_premises.clone();
+            for (_, surface) in premises {
+                if !surfaces.contains(&surface) {
+                    surfaces.push(surface);
+                }
+            }
+            Ok(member.try_named_forall_goal_from_surfaces(&surfaces))
+        };
+        self.try_direct_structural_closure_with_quantified(&mut quantified)
+    }
+
     /// Closes the back-edge bundle by descending its fixed structure.
     ///
     /// The bundle is a right-nested conjunction of members, and a tuple
@@ -1126,32 +1165,51 @@ impl<'a> Proof<'a> {
         // Explicit source bodies use the source driver exactly once.
         let _ = take_unclosed_bundle_member();
         let attempted = if body == [ProofTactic::Simp] {
-            match crate::instrumentation::measure_operation(
+            let direct = crate::instrumentation::measure_operation(
                 "surface",
                 "close invariants",
-                "close invariants: simp closure",
-                || root.try_simp_closure(),
-            )? {
-                Some(completed) => Ok(Some(completed)),
-                None => {
-                    let (candidate, premises) = crate::instrumentation::measure_operation(
-                        "surface",
-                        "close invariants",
-                        "close invariants: named premises",
-                        || {
-                            root.named_arithmetic_premises(
-                                bundle,
-                                context.function_block.requires(),
-                                &path_branch_premises,
-                            )
-                        },
-                    )?;
-                    crate::instrumentation::measure_operation(
-                        "surface",
-                        "close invariants",
-                        "close invariants: member planner",
-                        || candidate.plan_invariant_bundle_closure(&premises, &named_loop_surfaces),
+                "close invariants: direct members",
+                || {
+                    root.try_direct_bundle_closure(
+                        bundle,
+                        context.function_block.requires(),
+                        &path_branch_premises,
                     )
+                },
+            )?;
+            if let Some(completed) = direct {
+                Ok(Some(completed))
+            } else {
+                match crate::instrumentation::measure_operation(
+                    "surface",
+                    "close invariants",
+                    "close invariants: simp closure",
+                    || root.try_simp_closure(),
+                )? {
+                    Some(completed) => Ok(Some(completed)),
+                    None => {
+                        let (candidate, premises) = crate::instrumentation::measure_operation(
+                            "surface",
+                            "close invariants",
+                            "close invariants: named premises",
+                            || {
+                                root.named_arithmetic_premises(
+                                    bundle,
+                                    context.function_block.requires(),
+                                    &path_branch_premises,
+                                )
+                            },
+                        )?;
+                        crate::instrumentation::measure_operation(
+                            "surface",
+                            "close invariants",
+                            "close invariants: member planner",
+                            || {
+                                candidate
+                                    .plan_invariant_bundle_closure(&premises, &named_loop_surfaces)
+                            },
+                        )
+                    }
                 }
             }
         } else {
