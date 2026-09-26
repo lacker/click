@@ -12,7 +12,7 @@ use super::{CCompositeResourceDefinition, CResource, CResourceFact};
 
 pub(super) fn propagate_thread_confinement(definitions: &mut [CCompositeResourceDefinition]) {
     for definition in definitions.iter_mut() {
-        definition.contains_mutex_guard = definition
+        definition.contains_mutex_authority = definition
             .contains
             .iter()
             .chain(
@@ -22,8 +22,13 @@ pub(super) fn propagate_thread_confinement(definitions: &mut [CCompositeResource
                     .flat_map(|body| body.arms.iter())
                     .flat_map(|arm| arm.contains.iter()),
             )
-            .any(|spec| spec.family() == super::ResourceFamily::MutexGuard);
-        definition.thread_confined |= definition.contains_mutex_guard;
+            .any(|spec| {
+                matches!(
+                    spec.family(),
+                    super::ResourceFamily::MutexGuard | super::ResourceFamily::MutexLive
+                )
+            });
+        definition.thread_confined |= definition.contains_mutex_authority;
     }
     let by_name: BTreeMap<&str, usize> = definitions
         .iter()
@@ -64,11 +69,12 @@ pub(super) fn propagate_thread_confinement(definitions: &mut [CCompositeResource
     while let Some(child) = pending.pop_front() {
         for &parent in &dependents[child] {
             if !definitions[parent].thread_confined
-                || (definitions[child].contains_mutex_guard
-                    && !definitions[parent].contains_mutex_guard)
+                || (definitions[child].contains_mutex_authority
+                    && !definitions[parent].contains_mutex_authority)
             {
                 definitions[parent].thread_confined = true;
-                definitions[parent].contains_mutex_guard |= definitions[child].contains_mutex_guard;
+                definitions[parent].contains_mutex_authority |=
+                    definitions[child].contains_mutex_authority;
                 pending.push_back(parent);
             }
         }
@@ -80,6 +86,8 @@ pub(super) fn confined_resource_name<'a>(
     definitions: &[CCompositeResourceDefinition],
 ) -> Option<&'a str> {
     let name = match fact {
+        CResourceFact::Own(CResource::MutexLive(_), _)
+        | CResourceFact::View(CResource::MutexLive(_)) => return Some("mutex lifetime"),
         CResourceFact::Own(CResource::MutexGuard(_), _)
         | CResourceFact::View(CResource::MutexGuard(_)) => return Some("mutex guard"),
         CResourceFact::Own(CResource::Composite { name, .. }, _)

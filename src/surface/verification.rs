@@ -7489,6 +7489,22 @@ fn resource_clause_to_resource_spec_with_metadata(
                 )
                 .map_err(|error| ClickError::new(error.to_string()));
             }
+            if name == "mutex_live" {
+                let [mutex] = arguments.as_slice() else {
+                    return Err(ClickError::new("mutex_live expects one mutex pointer"));
+                };
+                return CResourceSpec::new(
+                    crate::kernel::CResourceTerm::MutexLive {
+                        mutex: Box::new(mutex.clone()),
+                        snapshot: argument_snapshots[0],
+                    },
+                    access,
+                    crate::kernel::CResourceQuantity::One,
+                    role,
+                    snapshot,
+                )
+                .map_err(|error| ClickError::new(error.to_string()));
+            }
             CResourceSpec::declared_with_argument_snapshots(
                 match kind {
                     ResourceKind::Composite => ResourceFamily::Composite,
@@ -7940,7 +7956,7 @@ mod modeled_pthread_binding_tests {
             .modeled_pthread_binding
             .as_ref()
             .unwrap();
-        assert_eq!(binding.specification_version, 3);
+        assert_eq!(binding.specification_version, 4);
         assert_eq!(binding.mutex_storage_bytes, 40);
         assert_eq!(binding.target, CTarget::X86_64LinuxUserspace);
     }

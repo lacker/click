@@ -2657,8 +2657,8 @@ pub struct CCompositeResourceDefinition {
     /// A definition-level restriction on direct transfer to another thread.
     /// Computed when definitions are installed, including contained families.
     pub(super) thread_confined: bool,
-    /// Transitive guard ingredient marker; contract protocol effects are not modeled yet.
-    pub(super) contains_mutex_guard: bool,
+    /// Transitive mutex-authority ingredient marker; contract protocol effects are not modeled yet.
+    pub(super) contains_mutex_authority: bool,
     /// Whether the owned footprint reaches memory no clause instance names:
     /// the definition is on a cycle of families, binds an existential witness
     /// in an instance body, or contains or names a child of such a
@@ -3397,6 +3397,10 @@ pub enum CRuntimeError {
     MissingReturn,
     MissingResource {
         resource: CResourceFact,
+    },
+    /// An operation requires the current initialization's lifecycle owner.
+    MissingMutexLive {
+        mutex: Pointer,
     },
     /// An operation requires an acquisition that is not available as owned authority.
     MissingMutexGuard {
@@ -5174,9 +5178,9 @@ pub(super) struct ResourceContextChange {
 #[derive(Clone, Debug, Default)]
 pub(super) struct ResourceContextIndex {
     pub(super) instances: PersistentMap<Variable, ResourceEntryIds>,
-    /// Only duplicated or malformed guard atoms need a validity check.
-    pub(super) suspect_guards: PersistentMap<MutexGuardIdentity, ()>,
-    pub(super) invalid_guard_access: PersistentMap<MutexGuardIdentity, usize>,
+    /// Only duplicated or malformed mutex authority atoms need a validity check.
+    pub(super) suspect_mutex_authorities: PersistentMap<CResource, ()>,
+    pub(super) invalid_mutex_authority_access: PersistentMap<CResource, usize>,
     /// Instance identities with an entry whose access is not one owned unit.
     /// With `instances`, these select the identities that can fail a
     /// validity check without visiting every instance.
@@ -5530,26 +5534,28 @@ pub enum CResource {
     },
     Instance(ResourceInstance),
     /// Opaque exclusive authority for one acquisition of a modeled mutex.
-    MutexGuard(MutexGuardIdentity),
+    MutexGuard(MutexIdentity),
+    /// Exclusive lifecycle authority for one initialized mutex.
+    MutexLive(MutexIdentity),
     /// Iterated guarded ownership: one fact for every element of a bounded
     /// index range whose guard cell holds (`iterated.rs`).
     Iterated(Arc<CIteratedMemory>),
 }
 
-/// An acquisition identity can be copied as syntax, but ownership cannot be duplicated.
-/// Concrete acquisitions have fresh epochs. In an independently checked preserving
-/// contract, a symbolic mutex names its one unchanged acquisition. Such identities
-/// are meaningful only while every mutex transition is prohibited.
+/// Opaque identity for one mutex initialization or acquisition. The resource
+/// variant distinguishes these namespaces. Copying syntax never duplicates ownership.
+/// Concrete epochs are generative; abstract identities describe an unchanged
+/// contract input and are valid only while protocol transitions are prohibited.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct MutexGuardIdentity {
-    /// `None` is the unchanged acquisition assumed at abstract contract entry.
+pub struct MutexIdentity {
+    /// `None` is the unchanged authority assumed at abstract contract entry.
     pub(in crate::kernel) epoch: Option<u64>,
-    /// For concrete acquisitions this is immutable diagnostic provenance;
-    /// only an abstract acquisition's address participates in substitution.
+    /// Concrete addresses are immutable diagnostic provenance; only an
+    /// abstract authority's address participates in substitution.
     pub(in crate::kernel) mutex: Pointer,
 }
 
-impl MutexGuardIdentity {
+impl MutexIdentity {
     pub(crate) fn mutex(&self) -> &Pointer {
         &self.mutex
     }
@@ -5665,7 +5671,7 @@ pub(super) trait ResourceFamilyAlgebra {
             ));
         }
         match self.family() {
-            ResourceFamily::MutexGuard => {
+            ResourceFamily::MutexGuard | ResourceFamily::MutexLive => {
                 if spec.access != CResourceAccessMode::Own {
                     return Err(CResourceSpecError::InvalidAccess {
                         family: self.family(),
@@ -5675,7 +5681,7 @@ pub(super) trait ResourceFamilyAlgebra {
                 if spec.quantity != CResourceQuantity::One {
                     return Err(CResourceSpecError::InvalidQuantity {
                         family: self.family(),
-                        reason: "mutex guards have unit quantity".into(),
+                        reason: "mutex authority has unit quantity".into(),
                     });
                 }
             }
@@ -5775,6 +5781,9 @@ struct TokenResourceAlgebra;
 /// observation laws by the Click proof layer.
 struct CompositeResourceAlgebra;
 struct InstanceResourceAlgebra;
+struct MutexLiveResourceAlgebra;
+static MUTEX_LIVE_RESOURCE_ALGEBRA: MutexLiveResourceAlgebra = MutexLiveResourceAlgebra;
+
 struct MutexGuardResourceAlgebra;
 static MUTEX_GUARD_RESOURCE_ALGEBRA: MutexGuardResourceAlgebra = MutexGuardResourceAlgebra;
 
@@ -5798,6 +5807,7 @@ pub enum ResourceFamily {
     Token,
     Instance,
     MutexGuard,
+    MutexLive,
     /// Iterated guarded ownership (`CResource::Iterated`).
     Iterated,
 }
@@ -5820,6 +5830,10 @@ pub enum CResourceAccessMode {
 pub enum CResourceTerm {
     Memory(CMemorySegment),
     MutexGuard {
+        mutex: Box<CExpression>,
+        snapshot: CResourceSnapshot,
+    },
+    MutexLive {
         mutex: Box<CExpression>,
         snapshot: CResourceSnapshot,
     },
@@ -5968,6 +5982,7 @@ impl CResourceTerm {
         match self {
             Self::Memory(_) => ResourceFamily::Memory,
             Self::MutexGuard { .. } => ResourceFamily::MutexGuard,
+            Self::MutexLive { .. } => ResourceFamily::MutexLive,
             Self::Composite { .. } => ResourceFamily::Composite,
             Self::Token { .. } => ResourceFamily::Token,
             Self::Instance { .. } => ResourceFamily::Instance,
@@ -6165,7 +6180,8 @@ impl CResourceSpec {
             ResourceFamily::Memory
             | ResourceFamily::Instance
             | ResourceFamily::Iterated
-            | ResourceFamily::MutexGuard => {
+            | ResourceFamily::MutexGuard
+            | ResourceFamily::MutexLive => {
                 return Err(CResourceSpecError::InvalidNestedTerm(
                     "only composite and token families have declared resource terms".into(),
                 ));

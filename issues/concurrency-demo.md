@@ -196,8 +196,8 @@ with the same protected assertion. Loop joins reject that replacement with an
 explicit limitation message, while a complete initialization/destruction within
 an iteration remains supported. Kernel regressions cover replacement with and
 without a protected resource, forged initialization witnesses, and indexed join
-work at increasing mutex counts. Lifecycle resources, use loans, and the
-connection to live C storage remain unimplemented.
+work at increasing mutex counts. The lifecycle owner is implemented below;
+use loans and the connection to live C storage remain unimplemented.
 
 Unlock failures now preserve structured missing-resource obligations through
 the kernel/runtime boundary. They report `Requires owns mutex_guard(...)`
@@ -214,6 +214,15 @@ allocation blocks remain independently releasable. Abstract guard contracts
 cannot yet retire allocations without checked lifecycle inputs. Initialization
 storage validity, ordinary-write exclusion, automatic-storage lifetimes, and
 use loans remain open; this is not full `mutex_live`/`mutex_use` support.
+
+`owns mutex_live(mu)` now carries the initialization's exclusive owner in the
+ordinary resource context. It composes inside declared resources and preserving
+helper contracts. Lock requires available ownership; destroy consumes it.
+Folding, duplication attempts, missing call inputs, and same-address stale
+owners are covered by regressions, as is indexed lifecycle-transition work.
+Missing authority reports `Requires owns mutex_live(...)`. This checkpoint does
+not implement `mutex_use`, storage validity at init, write/scope protection,
+named primitive binders, or lifecycle-changing helper contracts.
 
 Direct named guard clauses and consumed/produced guards still require the
 full abstract acquisition binding and transition model. The current symbolic

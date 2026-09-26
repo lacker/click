@@ -93,17 +93,43 @@ mod resource_frame_substitution_tests {
         let variable = Variable(71_900);
         let address = Pointer::symbolic(variable);
         let replacement = Pointer::symbolic(Variable(71_901));
-        let abstract_guard = CResource::MutexGuard(MutexGuardIdentity {
+        let abstract_guard = CResource::MutexGuard(MutexIdentity {
             epoch: None,
             mutex: address.clone(),
         });
-        let concrete_guard = CResource::MutexGuard(MutexGuardIdentity {
+        let concrete_guard = CResource::MutexGuard(MutexIdentity {
             epoch: Some(123),
             mutex: address,
         });
         assert_eq!(
             substitute_pointer_variable_in_c_resource(&abstract_guard, variable, &replacement),
-            CResource::MutexGuard(MutexGuardIdentity {
+            CResource::MutexGuard(MutexIdentity {
+                epoch: None,
+                mutex: replacement.clone()
+            })
+        );
+        assert_eq!(
+            substitute_pointer_variable_in_c_resource(&concrete_guard, variable, &replacement),
+            concrete_guard
+        );
+    }
+
+    #[test]
+    fn lifetime_substitution_renames_abstract_authority_but_preserves_concrete_initialization() {
+        let variable = Variable(71_900);
+        let address = Pointer::symbolic(variable);
+        let replacement = Pointer::symbolic(Variable(71_901));
+        let abstract_guard = CResource::MutexLive(MutexIdentity {
+            epoch: None,
+            mutex: address.clone(),
+        });
+        let concrete_guard = CResource::MutexLive(MutexIdentity {
+            epoch: Some(123),
+            mutex: address,
+        });
+        assert_eq!(
+            substitute_pointer_variable_in_c_resource(&abstract_guard, variable, &replacement),
+            CResource::MutexLive(MutexIdentity {
                 epoch: None,
                 mutex: replacement.clone()
             })
@@ -1355,7 +1381,7 @@ fn collect_c_resource_spec_bound_variables(
         CResourceTerm::Instance { resource, .. } => {
             collect_c_resource_term_bound_variables(resource, variables)
         }
-        CResourceTerm::MutexGuard { mutex, .. } => {
+        CResourceTerm::MutexGuard { mutex, .. } | CResourceTerm::MutexLive { mutex, .. } => {
             collect_c_expression_bound_variables(mutex, variables)
         }
         CResourceTerm::Memory(segment) => {
@@ -1385,7 +1411,7 @@ fn collect_c_resource_term_bound_variables(
         CResourceTerm::Instance { resource, .. } => {
             collect_c_resource_term_bound_variables(resource, variables)
         }
-        CResourceTerm::MutexGuard { mutex, .. } => {
+        CResourceTerm::MutexGuard { mutex, .. } | CResourceTerm::MutexLive { mutex, .. } => {
             collect_c_expression_bound_variables(mutex, variables)
         }
         CResourceTerm::Memory(segment) => {
@@ -1505,7 +1531,7 @@ fn collect_memory_bound_variables(memory: &CMemory, variables: &mut BTreeSet<Var
 
 fn collect_resource_bound_variables(resource: &CResource, variables: &mut BTreeSet<Variable>) {
     match resource {
-        CResource::MutexGuard(identity) => {
+        CResource::MutexGuard(identity) | CResource::MutexLive(identity) => {
             if identity.epoch.is_none() {
                 let pointer = &identity.mutex;
                 collect_pointer_bound_variables(pointer, variables);
@@ -3886,7 +3912,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_resource(
     to: &Bitvector32Term,
 ) -> CResource {
     match resource {
-        CResource::MutexGuard(identity) => CResource::MutexGuard(MutexGuardIdentity {
+        CResource::MutexGuard(identity) => CResource::MutexGuard(MutexIdentity {
+            epoch: identity.epoch,
+            mutex: if identity.epoch.is_none() {
+                substitute_bitvector_variable_in_pointer(&identity.mutex, from, to)
+            } else {
+                identity.mutex.clone()
+            },
+        }),
+        CResource::MutexLive(identity) => CResource::MutexLive(MutexIdentity {
             epoch: identity.epoch,
             mutex: if identity.epoch.is_none() {
                 substitute_bitvector_variable_in_pointer(&identity.mutex, from, to)
@@ -4012,7 +4046,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
             instance_schema: definition.instance_schema.clone(),
             guarded_by: definition.guarded_by.clone(),
             thread_confined: definition.thread_confined,
-            contains_mutex_guard: definition.contains_mutex_guard,
+            contains_mutex_authority: definition.contains_mutex_authority,
             owned_footprint_unnamed: definition.owned_footprint_unnamed,
             fact_source_indices: definition.fact_source_indices.clone(),
             fact_source_spellings: definition.fact_source_spellings.clone(),
@@ -4187,6 +4221,12 @@ fn substitute_bitvector_variable_in_resource_term(
             )),
         },
         CResourceTerm::MutexGuard { mutex, snapshot } => CResourceTerm::MutexGuard {
+            mutex: Box::new(substitute_bitvector_variable_in_c_expression(
+                mutex, from, to,
+            )),
+            snapshot: *snapshot,
+        },
+        CResourceTerm::MutexLive { mutex, snapshot } => CResourceTerm::MutexLive {
             mutex: Box::new(substitute_bitvector_variable_in_c_expression(
                 mutex, from, to,
             )),
@@ -6502,7 +6542,15 @@ fn substitute_pointer_variable_in_c_resource(
     to: &Pointer,
 ) -> CResource {
     match resource {
-        CResource::MutexGuard(identity) => CResource::MutexGuard(MutexGuardIdentity {
+        CResource::MutexGuard(identity) => CResource::MutexGuard(MutexIdentity {
+            epoch: identity.epoch,
+            mutex: if identity.epoch.is_none() {
+                substitute_pointer_variable_in_pointer(&identity.mutex, from, to)
+            } else {
+                identity.mutex.clone()
+            },
+        }),
+        CResource::MutexLive(identity) => CResource::MutexLive(MutexIdentity {
             epoch: identity.epoch,
             mutex: if identity.epoch.is_none() {
                 substitute_pointer_variable_in_pointer(&identity.mutex, from, to)
@@ -7515,7 +7563,7 @@ fn substitute_pointer_variable_in_c_function(
             instance_schema: definition.instance_schema.clone(),
             guarded_by: definition.guarded_by.clone(),
             thread_confined: definition.thread_confined,
-            contains_mutex_guard: definition.contains_mutex_guard,
+            contains_mutex_authority: definition.contains_mutex_authority,
             owned_footprint_unnamed: definition.owned_footprint_unnamed,
             fact_source_indices: definition.fact_source_indices.clone(),
             fact_source_spellings: definition.fact_source_spellings.clone(),
@@ -7690,6 +7738,10 @@ fn substitute_pointer_variable_in_resource_term(
             )),
         },
         CResourceTerm::MutexGuard { mutex, snapshot } => CResourceTerm::MutexGuard {
+            mutex: Box::new(substitute_pointer_variable_in_c_expression(mutex, from, to)),
+            snapshot: *snapshot,
+        },
+        CResourceTerm::MutexLive { mutex, snapshot } => CResourceTerm::MutexLive {
             mutex: Box::new(substitute_pointer_variable_in_c_expression(mutex, from, to)),
             snapshot: *snapshot,
         },

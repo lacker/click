@@ -5492,7 +5492,7 @@ fn lower_spec_predicate_proposition_at_state_in(
                     );
                 };
                 if state.preserves_mutex_protocols && state.mutex_ledger.is_none() {
-                    let guard = CResourceFact::own(CResource::MutexGuard(MutexGuardIdentity {
+                    let guard = CResourceFact::own(CResource::MutexGuard(MutexIdentity {
                         epoch: None,
                         mutex: mutex.pointer().clone(),
                     }));

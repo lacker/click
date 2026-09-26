@@ -620,9 +620,28 @@ Missing guard inputs are reported as `Requires owns mutex_guard(...)`.
 
 Named primitive binders such as `owns g: mutex_guard(mu)`, consuming or producing
 guards, and lock-changing helper contracts remain unsupported. Calls without a
-preserving guard input remain refused while a mutex protocol is live. An opaque
+preserving mutex-authority input remain refused while a mutex protocol is live. An opaque
 entry protocol without exposed guard authority does not establish `not held(mu)`.
 Loop restrictions remain.
+
+The separate `mutex_live(mu)` resource owns one initialization. Initialization
+creates it, destruction consumes it, and lock currently requires it. It can be
+packaged just like a guard:
+
+<!-- verified-example: mdtests/mutex_live_wrapper.md -->
+```click
+resource lifetime(holder: struct holder*) {
+    field tag: int32;
+    owns mutex_live(&holder->mu);
+}
+```
+
+Folded lifecycle ownership must be unfolded before lock or destroy. A direct
+`owns mutex_live(mu)` contract preserves the entry initialization. The resource
+implies neither `held(mu)` nor payload access and cannot be viewed or counted.
+Borrowed `mutex_use` permissions, lifecycle-changing contracts, initialization
+storage validity, and write/scope protection are not implemented yet. See the
+[library reference](../reference/library/index.md#mutex_live) for this boundary.
 
 A contract clause speaks about parameters, so `consumes t: tree_at(root);`
 names the tree at the entry argument. These tactics are not contract clauses:

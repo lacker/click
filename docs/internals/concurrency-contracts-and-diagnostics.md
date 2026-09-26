@@ -26,8 +26,8 @@ preserve it, distinguishing balanced lock/unlock from destroy/init at the same
 address, even when the protected assertion is identical. Replacing a loop-head
 initialization is currently refused with an explicit unsupported-contract
 message. A mutex may still be initialized and destroyed entirely within an
-iteration. This is groundwork for lifecycle authority; it does not establish
-storage lifetime or implement `mutex_live`/`mutex_use`.
+iteration. The lifecycle resource described below now carries that identity;
+the complete storage-lifetime and `mutex_use` protocol remains future work.
 
 Heap allocation retirement now checks initialized mutex storage. The modeled
 ABI records a 40-byte mutex footprint, indexed by memory block. Direct `free`,
@@ -38,7 +38,23 @@ retirement until checked lifecycle inputs can describe their dependencies.
 This adds no surface syntax. Initialization validity, writes to mutex bytes,
 automatic-storage lifetime, and use loans remain unimplemented.
 
-The proposed next surface is:
+The first lifecycle ownership layer now implements `owns mutex_live(mu)` in
+preserving contracts and declared resource bodies. Initialization creates one
+exclusive resource for its generation. Locking requires that resource to be
+available; destruction consumes it. Folding hides authority from both operations
+until unfolding restores it. An address, an initialized ledger entry, or an old
+generation's resource cannot substitute for the owner. Missing ownership reports
+`Requires owns mutex_live(mu)`. This resource supplies neither `held(mu)` nor
+memory access. It cannot be viewed, counted, or transferred to workers yet.
+
+This is an ownership checkpoint, **not a complete lifetime proof**. It does not
+yet check storage validity on initialization, reserve bytes against ordinary
+writes, or prevent automatic-storage expiry. `mutex_use` loans and their guard
+and worker dependencies are not implemented. Preserving lifecycle contracts
+retain the same conservative transition freeze as preserving guard contracts;
+`consumes`/`produces` and named primitive lifecycle binders remain unsupported.
+
+The surface status is:
 
 | Surface | Status in this proposal | What a reader should understand |
 | --- | --- | --- |
@@ -47,7 +63,7 @@ The proposed next surface is:
 | Direct `owns mutex_guard(mu);` clauses | Implemented for preserving helpers | Receives and returns the entry acquisition; all mutex transitions remain prohibited. |
 | Direct named guard clauses, such as `owns g: mutex_guard(mu);` | Extend contract support; not supported today | The function receives and returns the same guard occurrence. |
 | `consumes` and `produces` for guards | Extend existing clause semantics; not supported today | The function can surrender an acquisition or return a newly established one. |
-| `mutex_live(mu)` | Agreed name for a proposed new built-in resource | Lifecycle ownership of this initialized mutex, including responsibility for destruction. |
+| `mutex_live(mu)` | Implemented for direct preserving `owns` clauses and resource bodies | Lifecycle ownership of this initialized mutex, including responsibility for destruction. |
 | `mutex_use(mu)` | Agreed name for a proposed new built-in resource | Permission to use this initialization while its lifetime is guaranteed. It gives no payload access. |
 | Acquisition numbers, protocol generations, ledger annotations | Keep internal | Source contracts should not need to name checker bookkeeping. |
 | A new `uses` clause or general effect language | Do not add initially | Use ordinary `owns`, `views`, `consumes`, and `produces` clauses; preserve their distinctions. |
@@ -468,9 +484,11 @@ The heap-retirement checkpoint does not make the remaining migration mechanical.
 Three substantial semantic boundaries still need careful implementation and
 hostile certificate tests:
 
-1. **Storage and lifetime authority.** Initialization must establish live,
+1. **Storage and lifetime authority.** The exclusive `mutex_live` owner is implemented,
+   including generative identity, fold/unfold, and preserving call transport.
+   Initialization must still establish live,
    exclusive storage; initialized bytes must resist ordinary writes and scope
-   exit. `mutex_live`/`mutex_use` need checked lending, reborrowing, worker join
+   exit. `mutex_use` needs checked lending from `mutex_live`, reborrowing, worker join
    recovery, and returned guards that keep their lender alive. The current heap
    refusal is a conservative dependency check, not this resource protocol.
 2. **Abstract guard transitions.** Contracts need generative initialization and

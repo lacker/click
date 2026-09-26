@@ -2511,13 +2511,13 @@ pub(crate) fn c_evaluate_spec_resource_expression_with_checked_obligations(
 
 /// Freeze protocols before evaluating an independent contract's assumed guard
 /// inputs. This grants no resources and is not a call-site transfer operation.
-pub(crate) fn c_state_with_assumed_guard_inputs(mut state: CState) -> CState {
-    if state
-        .resources
-        .facts()
-        .iter()
-        .any(|fact| matches!(fact.resource(), CResource::MutexGuard(_)))
-    {
+pub(crate) fn c_state_with_assumed_mutex_inputs(mut state: CState) -> CState {
+    if state.resources.facts().iter().any(|fact| {
+        matches!(
+            fact.resource(),
+            CResource::MutexGuard(_) | CResource::MutexLive(_)
+        )
+    }) {
         state.preserves_mutex_protocols = true;
     }
     state
@@ -2529,6 +2529,14 @@ pub(crate) fn c_mutex_guard_resource(
     abstract_entry: bool,
 ) -> Option<CResourceFact> {
     crate::kernel::mutexes::guard_resource(state, mutex, abstract_entry)
+}
+
+pub(crate) fn c_mutex_live_resource(
+    state: &CState,
+    mutex: &Pointer,
+    abstract_entry: bool,
+) -> Option<CResourceFact> {
+    crate::kernel::mutexes::live_resource(state, mutex, abstract_entry)
 }
 
 pub fn c_function_entry_state(
@@ -4838,6 +4846,7 @@ pub fn prove_owned_resource_count_lower_bound(
         CResource::Memory(_)
         | CResource::Instance(_)
         | CResource::MutexGuard(_)
+        | CResource::MutexLive(_)
         | CResource::Iterated(_) => return None,
     };
     let count = match state.counted_population(name, arguments) {
@@ -4908,6 +4917,7 @@ fn describe_contract_reuse_premise(premise: &Proposition) -> String {
             CResource::Composite { name, .. } | CResource::Token { name, .. } => name,
             CResource::Memory(_) => "memory",
             CResource::MutexGuard(_) => "mutex guard",
+            CResource::MutexLive(_) => "mutex lifetime",
             CResource::Instance(instance) => instance.name(),
             CResource::Iterated(iterated) => iterated.owner(),
         }

@@ -1588,7 +1588,7 @@ pub(in crate::kernel) fn collect_c_resource_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
-        CResource::MutexGuard(identity) => {
+        CResource::MutexGuard(identity) | CResource::MutexLive(identity) => {
             if identity.epoch.is_none() {
                 let pointer = &identity.mutex;
                 collect_pointer_bitvector_variables(pointer, variables);
@@ -1673,7 +1673,7 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
         CResourceTerm::Instance { resource, .. } => {
             collect_resource_term_bitvector_variables(resource, variables)
         }
-        CResourceTerm::MutexGuard { mutex, .. } => {
+        CResourceTerm::MutexGuard { mutex, .. } | CResourceTerm::MutexLive { mutex, .. } => {
             collect_c_expression_bitvector_variables(mutex, variables)
         }
         CResourceTerm::Memory(segment) => {
@@ -1708,7 +1708,7 @@ fn collect_resource_term_bitvector_variables(
         CResourceTerm::Instance { resource, .. } => {
             collect_resource_term_bitvector_variables(resource, variables)
         }
-        CResourceTerm::MutexGuard { mutex, .. } => {
+        CResourceTerm::MutexGuard { mutex, .. } | CResourceTerm::MutexLive { mutex, .. } => {
             collect_c_expression_bitvector_variables(mutex, variables)
         }
         CResourceTerm::Memory(segment) => {

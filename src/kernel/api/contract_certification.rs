@@ -840,6 +840,9 @@ pub(in crate::kernel) fn describe_certification_runtime_error(error: &CRuntimeEr
         CRuntimeError::MissingMutexGuard { .. } => {
             "a required mutex_guard resource is not available".to_string()
         }
+        CRuntimeError::MissingMutexLive { .. } => {
+            "a required mutex_live resource is not available".to_string()
+        }
         CRuntimeError::MissingMutexInvariant { .. } => {
             "the protected resource selected at mutex initialization must be restored".to_string()
         }
@@ -1334,6 +1337,7 @@ pub(super) fn c_function_contract_certification_assumptions(
                     CResource::Composite { name, .. } => format!("composite {name}"),
                     CResource::Token { name, .. } => format!("token {name}"),
                     CResource::MutexGuard(_) => "mutex guard".to_string(),
+                    CResource::MutexLive(_) => "mutex lifetime".to_string(),
                     CResource::Instance(instance) => format!("instance {}", instance.name()),
                     CResource::Iterated(iterated) => {
                         format!("iterated ownership of {}", iterated.owner())
@@ -1371,6 +1375,7 @@ pub(super) fn c_function_contract_certification_assumptions(
             CResource::Memory(_)
             | CResource::Instance(_)
             | CResource::MutexGuard(_)
+            | CResource::MutexLive(_)
             | CResource::Iterated(_) => continue,
         };
         let Some(count) = entry_state.counted_population(name, arguments) else {

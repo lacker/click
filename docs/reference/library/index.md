@@ -34,6 +34,34 @@ unsupported.
 
 **Verified use:** [`mdtests/mutex_guard_resource_body.md`](https://github.com/lacker/click/blob/master/mdtests/mutex_guard_resource_body.md).
 
+## Mutex lifecycle authority
+
+### `mutex_live`
+
+```click
+abstract resource mutex_live(mutex: void*);
+```
+
+**Meaning:** Owns the lifecycle authority for one initialization of a modeled
+mutex. Initialization creates this exclusive unit resource. Locking currently
+requires it to be available; destruction consumes it. A previous initialization's
+owner cannot authorize operations after reinitialization at the same address.
+It supplies neither an acquisition nor memory access, and cannot be viewed or
+counted.
+
+Use `owns mutex_live(mu)` directly in a preserving contract or inside an
+exclusive declared-resource body. Folding consumes the owner; unfolding returns
+it. Preserving helpers retain the entry initialization and cannot change mutex
+protocols. Missing authority is reported as `Requires owns mutex_live(mu)`.
+
+This is the lifecycle ownership layer, not a complete storage-lifetime proof.
+Initialization storage checks, protection against ordinary writes and scope
+exit, `mutex_use` loans, worker transfer, named primitive binders, and lifecycle
+`consumes`/`produces` contracts remain unsupported.
+
+**Verified use:** [`mdtests/mutex_live_wrapper.md`](https://github.com/lacker/click/blob/master/mdtests/mutex_live_wrapper.md)
+and [`mdtests/mutex_live_contract.md`](https://github.com/lacker/click/blob/master/mdtests/mutex_live_contract.md).
+
 ## Allocation authority
 
 ### `allocation`

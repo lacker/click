@@ -1,4 +1,4 @@
-# Modeled pthread create/join and mutex specification, version 3
+# Modeled pthread create/join and mutex specification, version 4
 
 This trusted specification is an explicit assumption of a conditional Click
 client proof. It does not certify an operating system's pthread implementation.
@@ -21,13 +21,20 @@ client proof. It does not certify an operating system's pthread implementation.
 - `pthread_mutex_init` with null attributes and a selected folded, exclusive
   resource whose `guarded_by` field is the passed mutex address succeeds and
   deposits that resource in the mutex. This model treats the mutex bytes as
-  opaque and tracks initialization through unique proof authority.
-- `pthread_mutex_lock` succeeds for an initialized, unlocked mutex and gives
+  opaque and creates one exclusive `mutex_live` resource for this initialization.
+  Initialization without a selected protected resource creates that owner too.
+- `pthread_mutex_lock` requires the current initialization's available
+  `mutex_live` owner. It succeeds for an unlocked mutex and gives
   the current path its escrowed resource. `pthread_mutex_unlock` succeeds only
   when that same resource has been folded and returned to escrow.
-  `pthread_mutex_destroy` succeeds only for an unlocked initialized mutex and
-  returns its resource to the caller. These calls do not branch on a failure
+  `pthread_mutex_destroy` succeeds only for an unlocked initialized mutex,
+  consumes its `mutex_live` owner, and returns its protected resource to the caller. These calls do not branch on a failure
   status under their checked preconditions.
+
+The owner is separate from the guard: it implies neither heldness nor payload
+access. Describing an initialized address grants no ownership. Folded owners
+must be unfolded before lock or destroy; an old initialization's owner cannot
+authorize either transition after reinitialization at the same address.
 
 The checked mutex transitions currently apply to one C path with no worker
 sharing. Creation of a worker while a mutex is initialized is refused.

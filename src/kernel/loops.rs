@@ -5812,6 +5812,7 @@ fn viewed_form_of_resource_fact(fact: &CResourceFact) -> Option<CResourceFact> {
             CResource::Token { .. }
             | CResource::Instance(_)
             | CResource::MutexGuard(_)
+            | CResource::MutexLive(_)
             | CResource::Iterated(_),
             _,
         ) => None,

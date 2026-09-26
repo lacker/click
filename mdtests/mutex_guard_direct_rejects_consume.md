@@ -61,5 +61,5 @@ int32 read_counter(struct counter *counter) {
 ```
 
 ```expect
-fail: guard-bearing contracts currently require preserving owned inputs
+fail: mutex authority contracts currently require preserving owned inputs
 ```

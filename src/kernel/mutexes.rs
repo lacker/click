@@ -22,6 +22,7 @@ use super::{CResource, CResourceFact, CState, ConditionTerm, Pointer, PureFactCo
 pub(super) enum MutexTransitionError {
     NotInitialized,
     MissingGuard(Pointer),
+    MissingLive(Pointer),
     MissingInvariant(CResourceFact),
     Refusal(&'static str),
 }
@@ -38,6 +39,7 @@ impl MutexTransitionError {
             Self::NotInitialized => super::CRuntimeError::UninitializedMutex {
                 mutex: mutex.clone(),
             },
+            Self::MissingLive(mutex) => super::CRuntimeError::MissingMutexLive { mutex },
             Self::MissingGuard(mutex) => super::CRuntimeError::MissingMutexGuard { mutex },
             Self::MissingInvariant(resource) => {
                 super::CRuntimeError::MissingMutexInvariant { resource }
@@ -66,6 +68,13 @@ enum MutexEntry {
 struct MutexInitialization(u64, u32);
 
 impl MutexInitialization {
+    fn resource_fact(self, mutex: &Pointer) -> CResourceFact {
+        CResourceFact::own(CResource::MutexLive(super::MutexIdentity {
+            epoch: Some(self.0),
+            mutex: mutex.clone(),
+        }))
+    }
+
     fn fresh(storage_bytes: u32) -> Result<Self, &'static str> {
         if storage_bytes == 0 {
             return Err("mutex storage extent must be nonzero");
@@ -119,7 +128,7 @@ pub(super) struct MutexGuard {
 
 impl MutexGuard {
     fn resource_fact(&self) -> CResourceFact {
-        CResourceFact::own(CResource::MutexGuard(super::MutexGuardIdentity {
+        CResourceFact::own(CResource::MutexGuard(super::MutexIdentity {
             epoch: Some(self.epoch),
             mutex: self.mutex.clone(),
         }))
@@ -129,6 +138,27 @@ impl MutexGuard {
 /// Describe the acquisition selected by a resource clause. This does not insert
 /// ownership. Abstract entry construction may assume this atom just as it assumes
 /// other declared input resources; execution must consume checked ownership.
+/// Describe the lifecycle resource for the current initialization. This does
+/// not establish ownership; callers must check the ordinary resource context.
+pub(super) fn live_resource(
+    state: &CState,
+    mutex: &Pointer,
+    abstract_entry: bool,
+) -> Option<CResourceFact> {
+    if let Some(ledger) = &state.mutex_ledger {
+        ledger.live_resource(mutex)
+    } else if abstract_entry || state.preserves_mutex_protocols {
+        Some(CResourceFact::own(CResource::MutexLive(
+            super::MutexIdentity {
+                epoch: None,
+                mutex: mutex.clone(),
+            },
+        )))
+    } else {
+        None
+    }
+}
+
 pub(super) fn guard_resource(
     state: &CState,
     mutex: &Pointer,
@@ -138,7 +168,7 @@ pub(super) fn guard_resource(
         return ledger.guard_resource(mutex);
     }
     (abstract_entry || state.preserves_mutex_protocols).then(|| {
-        CResourceFact::own(CResource::MutexGuard(super::MutexGuardIdentity {
+        CResourceFact::own(CResource::MutexGuard(super::MutexIdentity {
             epoch: None,
             mutex: mutex.clone(),
         }))
@@ -183,17 +213,25 @@ impl MutexContext {
         storage_bytes: u32,
     ) -> Result<Self, &'static str> {
         if self.state.preserves_mutex_protocols {
-            return Err("preserving guard contracts cannot change mutex protocols");
+            return Err("preserving mutex contracts cannot change mutex protocols");
         }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         if ledger.get(&mutex).is_some() {
             return Err("mutex is already initialized");
         }
+        let initialization = MutexInitialization::fresh(storage_bytes)?;
         let mut state = self.state.clone();
+        state.resources = state
+            .resources
+            .try_compose_with_fact(
+                initialization.resource_fact(&mutex),
+                &PureFactContext::new(),
+            )
+            .map_err(|_| "mutex lifetime authority conflicts with current resources")?;
         state.mutex_ledger = Some(ledger.with_inserted(
             mutex,
             MutexEntry::Unlocked {
-                initialization: MutexInitialization::fresh(storage_bytes)?,
+                initialization,
                 invariant: None,
             },
         ));
@@ -211,7 +249,7 @@ impl MutexContext {
         storage_bytes: u32,
     ) -> Result<Self, &'static str> {
         if self.state.preserves_mutex_protocols {
-            return Err("preserving guard contracts cannot change mutex protocols");
+            return Err("preserving mutex contracts cannot change mutex protocols");
         }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         if ledger.get(&mutex).is_some() {
@@ -249,11 +287,14 @@ impl MutexContext {
             .without_fact(&invariant, assumptions)
             .ok_or("mutex invariant cannot be moved to escrow")?;
         let mut state = self.state.clone();
-        state.resources = resources;
+        let initialization = MutexInitialization::fresh(storage_bytes)?;
+        state.resources = resources
+            .try_compose_with_fact(initialization.resource_fact(&mutex), assumptions)
+            .map_err(|_| "mutex lifetime authority conflicts with current resources")?;
         state.mutex_ledger = Some(ledger.with_inserted(
             mutex,
             MutexEntry::Unlocked {
-                initialization: MutexInitialization::fresh(storage_bytes)?,
+                initialization,
                 invariant: Some(invariant),
             },
         ));
@@ -267,7 +308,7 @@ impl MutexContext {
     ) -> Result<(Self, MutexGuard), MutexTransitionError> {
         if self.state.preserves_mutex_protocols {
             return Err(MutexTransitionError::Refusal(
-                "preserving guard contracts cannot change mutex protocols",
+                "preserving mutex contracts cannot change mutex protocols",
             ));
         }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
@@ -281,6 +322,13 @@ impl MutexContext {
             }
             None => return Err(MutexTransitionError::NotInitialized),
         };
+        if !self
+            .state
+            .resources
+            .satisfies_fact(&initialization.resource_fact(mutex), assumptions)
+        {
+            return Err(MutexTransitionError::MissingLive(mutex.clone()));
+        }
         let resources = if let Some(invariant) = &invariant {
             self.state
                 .resources
@@ -345,7 +393,7 @@ impl MutexContext {
         assumptions: &PureFactContext,
     ) -> Result<Self, MutexTransitionError> {
         if self.state.preserves_mutex_protocols {
-            return Err("preserving guard contracts cannot change mutex protocols".into());
+            return Err("preserving mutex contracts cannot change mutex protocols".into());
         }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         let (previous, initialization, epoch) = match ledger.get(mutex) {
@@ -393,7 +441,7 @@ impl MutexContext {
     ) -> Result<Self, MutexTransitionError> {
         if self.state.preserves_mutex_protocols {
             return Err(MutexTransitionError::Refusal(
-                "preserving guard contracts cannot change mutex protocols",
+                "preserving mutex contracts cannot change mutex protocols",
             ));
         }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
@@ -404,10 +452,15 @@ impl MutexContext {
             }
             None => return Err(MutexTransitionError::NotInitialized),
         };
+        let live = ledger.live_resource(mutex).expect("initialized mutex");
+        let resources = self
+            .state
+            .resources
+            .clone()
+            .without_fact(&live, assumptions)
+            .ok_or_else(|| MutexTransitionError::MissingLive(mutex.clone()))?;
         let resources = if let Some(invariant) = invariant {
-            self.state
-                .resources
-                .clone()
+            resources
                 .try_compose_with_fact(invariant, assumptions)
                 .map_err(|_| {
                     MutexTransitionError::Refusal(
@@ -415,7 +468,7 @@ impl MutexContext {
                     )
                 })?
         } else {
-            self.state.resources.clone()
+            resources
         };
         let mut state = self.state.clone();
         state.resources = resources;
@@ -440,7 +493,7 @@ impl MutexContext {
         assumptions: &PureFactContext,
     ) -> Result<Self, MutexTransitionError> {
         if self.state.preserves_mutex_protocols {
-            return Err("preserving guard contracts cannot change mutex protocols".into());
+            return Err("preserving mutex contracts cannot change mutex protocols".into());
         }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         let previous = match ledger.get(&guard.mutex) {
@@ -571,10 +624,16 @@ impl MutexLedger {
         None
     }
 
+    pub(super) fn live_resource(&self, mutex: &Pointer) -> Option<CResourceFact> {
+        let (MutexEntry::Unlocked { initialization, .. }
+        | MutexEntry::Locked { initialization, .. }) = self.get(mutex)?;
+        Some(initialization.resource_fact(mutex))
+    }
+
     pub(super) fn guard_resource(&self, mutex: &Pointer) -> Option<CResourceFact> {
         match self.get(mutex) {
             Some(MutexEntry::Locked { epoch, .. }) => Some(CResourceFact::own(
-                CResource::MutexGuard(super::MutexGuardIdentity {
+                CResource::MutexGuard(super::MutexIdentity {
                     epoch: Some(*epoch),
                     mutex: mutex.clone(),
                 }),
@@ -664,7 +723,8 @@ impl MutexLedger {
         !self.storage.entries.is_empty()
     }
 
-    /// An unlocked empty mutex has no resource or guard to discharge at return.
+    /// An unlocked empty mutex has no payload/guard return obligation yet.
+    /// Automatic-storage expiry and lifecycle output contracts remain separate gaps.
     pub(super) fn has_return_obligation(&self) -> bool {
         self.storage.return_obligation_count != 0
     }
@@ -976,7 +1036,7 @@ mod tests {
         let mut state = holding.into_state();
         state.preserves_mutex_protocols = true;
         let frozen = MutexContext::new(state.clone());
-        let message = "preserving guard contracts cannot change mutex protocols";
+        let message = "preserving mutex contracts cannot change mutex protocols";
         assert_eq!(frozen.initialize_empty(mutex(1), 40).err(), Some(message));
         assert_eq!(
             frozen.acquire(&address, &assumptions).err(),
@@ -1204,8 +1264,8 @@ mod tests {
                     let released = holding.release_current(&target, &assumptions).unwrap();
                     (holding, released)
                 });
-            assert_eq!(holding.state.resources.facts().len(), size + 1);
-            assert_eq!(released.state.resources.facts().len(), size);
+            assert_eq!(holding.state.resources.facts().len(), 2 * (size + 1));
+            assert_eq!(released.state.resources.facts().len(), 2 * size + 1);
             samples.push((size, work));
         }
         let baseline = samples[0].1;
@@ -1213,6 +1273,177 @@ mod tests {
             assert!(
                 work > 0 && work <= baseline + 600 * (size.ilog2() as usize - 4),
                 "guard exchange work: {samples:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn lifetime_owner_is_required_independently_of_initialization_metadata() {
+        let assumptions = PureFactContext::new();
+        let address = mutex(0);
+        let initialized = MutexContext::new(CState::new())
+            .initialize_empty(address.clone(), 40)
+            .unwrap();
+        let live = live_resource(initialized.state(), &address, false).unwrap();
+        let mut missing = initialized.clone();
+        missing.state.resources = missing
+            .state
+            .resources
+            .clone()
+            .without_fact(&live, &assumptions)
+            .unwrap();
+        let before = missing.state().clone();
+        assert_eq!(
+            missing.destroy(&address, &assumptions).err(),
+            Some(MutexTransitionError::MissingLive(address.clone()))
+        );
+        assert_eq!(
+            missing.acquire_current(&address, &assumptions).err(),
+            Some(MutexTransitionError::MissingLive(address.clone()))
+        );
+        assert_eq!(missing.state(), &before);
+        assert_eq!(
+            MutexTransitionError::MissingLive(address.clone()).into_runtime_error(&address),
+            super::super::CRuntimeError::MissingMutexLive {
+                mutex: address.clone()
+            }
+        );
+        // Describing the resource doesn't restore it; checked resource transfer does.
+        assert_eq!(
+            live_resource(missing.state(), &address, false),
+            Some(live.clone())
+        );
+        missing.state.resources = missing
+            .state
+            .resources
+            .clone()
+            .try_compose_with_fact(live.clone(), &assumptions)
+            .unwrap();
+        let destroyed = missing.destroy(&address, &assumptions).unwrap();
+        assert!(destroyed.state.resources.facts().is_empty());
+        assert!(live_resource(destroyed.state(), &address, false).is_none());
+    }
+
+    #[test]
+    fn old_lifetime_owner_cannot_authorize_reinitialized_mutex() {
+        let assumptions = PureFactContext::new();
+        let address = mutex(0);
+        let first = MutexContext::new(CState::new())
+            .initialize_empty(address.clone(), 40)
+            .unwrap();
+        let old = live_resource(first.state(), &address, false).unwrap();
+        let mut next =
+            MutexContext::new(first.destroy(&address, &assumptions).unwrap().into_state())
+                .initialize_empty(address.clone(), 40)
+                .unwrap();
+        let fresh = live_resource(next.state(), &address, false).unwrap();
+        assert_ne!(old, fresh);
+        next.state.resources = next
+            .state
+            .resources
+            .clone()
+            .without_fact(&fresh, &assumptions)
+            .unwrap()
+            .try_compose_with_fact(old, &assumptions)
+            .unwrap();
+        assert_eq!(
+            next.destroy(&address, &assumptions).err(),
+            Some(MutexTransitionError::MissingLive(address.clone()))
+        );
+        assert_eq!(
+            next.acquire_current(&address, &assumptions).err(),
+            Some(MutexTransitionError::MissingLive(address))
+        );
+    }
+
+    #[test]
+    fn lifetime_and_guard_are_distinct_exclusive_resource_families() {
+        let assumptions = PureFactContext::new();
+        let identity = super::super::MutexIdentity {
+            epoch: Some(17),
+            mutex: mutex(0),
+        };
+        let live = CResourceFact::own(CResource::MutexLive(identity.clone()));
+        let guard = CResourceFact::own(CResource::MutexGuard(identity));
+        let resources = super::super::ResourceContext::new()
+            .try_compose_with_fact(live.clone(), &assumptions)
+            .unwrap();
+        assert!(!resources.satisfies_fact(&guard, &assumptions));
+        assert!(live.core().is_none());
+        assert!(live.core_with_assumptions(&assumptions).is_none());
+        assert!(live.memory_range().is_none());
+        assert!(
+            resources
+                .clone()
+                .try_compose_with_fact(live.clone(), &assumptions)
+                .is_err()
+        );
+        assert!(
+            resources
+                .clone()
+                .unchecked_with_fact(live.clone())
+                .normalized(&assumptions)
+                .validity_error(&assumptions)
+                .is_some()
+        );
+        // Equal numeric epochs from the two generative namespaces do not collide.
+        assert!(
+            resources
+                .clone()
+                .try_compose_with_fact(guard, &assumptions)
+                .is_ok()
+        );
+        for invalid in [
+            CResourceFact::View(live.resource().clone()),
+            CResourceFact::own_quantity(live.resource().clone(), 0u32.into()),
+            CResourceFact::own_quantity(live.resource().clone(), 2u32.into()),
+        ] {
+            assert!(!resources.satisfies_fact(&invalid, &assumptions));
+            assert!(
+                resources
+                    .clone()
+                    .without_fact(&invalid, &assumptions)
+                    .is_none()
+            );
+            assert!(
+                super::super::ResourceContext::new()
+                    .try_compose_with_fact(invalid.clone(), &assumptions)
+                    .is_err()
+            );
+            assert!(
+                super::super::ResourceContext::new()
+                    .unchecked_with_fact(invalid)
+                    .validity_error(&assumptions)
+                    .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn lifetime_transitions_do_not_scan_unrelated_owners() {
+        let assumptions = PureFactContext::new();
+        let mut samples = Vec::new();
+        for size in [16usize, 64, 256, 1024] {
+            let mut context = MutexContext::new(CState::new());
+            for index in 0..size {
+                context = context.initialize_empty(mutex(index), 40).unwrap();
+            }
+            let target = mutex(size);
+            let (restored, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context
+                    .initialize_empty(target.clone(), 40)
+                    .unwrap()
+                    .destroy(&target, &assumptions)
+                    .unwrap()
+            });
+            assert_eq!(restored.state.resources, context.state.resources);
+            samples.push((size, work));
+        }
+        let baseline = samples[0].1;
+        for &(size, work) in &samples {
+            assert!(
+                work > 0 && work <= baseline + 600 * (size.ilog2() as usize - 4),
+                "lifecycle exchange work: {samples:?}"
             );
         }
     }
@@ -1232,7 +1463,7 @@ mod tests {
                 .unwrap()
                 .has_return_obligation()
         );
-        assert!(initialized.state().resources.facts().is_empty());
+        assert_eq!(initialized.state().resources.facts().len(), 1);
         assert_eq!(
             initialized.initialize_empty(mutex.clone(), 40).err(),
             Some("mutex is already initialized")
@@ -1246,11 +1477,14 @@ mod tests {
                 .unwrap()
                 .has_return_obligation()
         );
-        assert_eq!(held.state().resources.facts().len(), 1);
-        assert!(matches!(
-            held.state().resources.facts()[0].resource(),
-            CResource::MutexGuard(_)
-        ));
+        assert_eq!(held.state().resources.facts().len(), 2);
+        assert!(
+            held.state()
+                .resources
+                .facts()
+                .iter()
+                .any(|fact| matches!(fact.resource(), CResource::MutexGuard(_)))
+        );
         assert!(held.acquire_current(&mutex, &assumptions).is_err());
         assert_eq!(
             held.destroy(&mutex, &assumptions).err(),
@@ -1266,7 +1500,7 @@ mod tests {
                 .unwrap()
                 .has_return_obligation()
         );
-        assert!(unlocked.state().resources.facts().is_empty());
+        assert_eq!(unlocked.state().resources.facts().len(), 1);
         let destroyed = unlocked.destroy(&mutex, &assumptions).unwrap();
         assert!(destroyed.state().mutex_ledger.is_none());
     }

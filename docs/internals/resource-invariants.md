@@ -271,7 +271,8 @@ at the same address cannot disguise a replacement. A mutex created and
 destroyed entirely within an iteration leaves no loop-head obligation.
 The loop checker reports replacement of a loop-head initialization as an
 unsupported contract, not as evidence that the C program is incorrect.
-This does not yet implement `mutex_live`, use loans, or storage-lifetime checks.
+The lifecycle ownership checkpoint below exposes this identity as `mutex_live`;
+use loans and full storage-lifetime checks remain open.
 
 Heap retirement now checks an index of initialized mutex footprints. The
 modeled binding supplies the complete ABI storage extent, retained through
@@ -284,8 +285,26 @@ retire allocations, since their lifetime dependencies lack checked inputs.
 This does not yet reserve mutex bytes against writes, validate their initial
 storage, or handle automatic-storage expiry.
 
-Direct named primitive guard binders, lock-changing contracts, loop joins
-across acquisition epochs, lifecycle authority, and
+The lifecycle owner now lives in the same resource context as guards, as
+`CResource::MutexLive`. Initialization mints exactly one owned atom; destruction
+consumes the atom for that initialization. Acquiring currently requires that
+owner too, until a checked `mutex_use` loan can authorize it instead. Folded
+owners cannot authorize either transition until unfolded. The exclusive
+resource algebra refuses duplicates, views, and counts; it implies neither
+memory authority nor heldness. Generation identity survives lock/unlock and
+cannot be renamed through concrete pointer substitution. Missing ownership
+uses `Requires owns mutex_live(...)`.
+
+Direct preserving `owns mutex_live(mu)` contracts and field-bearing wrappers
+use the same entry-snapshot transport and abstract-protocol freeze as guards.
+The shared mutex-authority validity index tracks only duplicate or malformed
+atoms. Multi-size tests exercise initialization/destruction amid unrelated owners.
+These facts do not yet justify worker transfer, lifecycle replacement at calls,
+or a claim that initialization storage has been checked. Checked use lending,
+reborrowing, guard holds, and join recovery remain the next semantic boundary.
+
+Direct named primitive guard/lifecycle binders, lock-changing contracts, loop joins
+across acquisition epochs, borrowed lifetime authority, and
 shared interference remain later work. This checkpoint does not add
 concurrent population access.
 

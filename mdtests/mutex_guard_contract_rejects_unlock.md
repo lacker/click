@@ -67,5 +67,5 @@ int32 read_counter(struct counter *counter) {
 ```
 
 ```expect
-fail: preserving guard contracts cannot change mutex protocols
+fail: preserving mutex contracts cannot change mutex protocols
 ```

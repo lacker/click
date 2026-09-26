@@ -845,6 +845,10 @@ pub(super) fn describe_runtime_error(
             "Requires owns mutex_guard({})",
             describe_mutex_pointer(mutex, parameters, arguments)
         ),
+        crate::kernel::CRuntimeError::MissingMutexLive { mutex } => format!(
+            "Requires owns mutex_live({})",
+            describe_mutex_pointer(mutex, parameters, arguments)
+        ),
         crate::kernel::CRuntimeError::MissingMutexInvariant { resource } => {
             let required = match resource.resource() {
                 CResource::Instance(instance) => format!(
@@ -864,7 +868,7 @@ pub(super) fn describe_runtime_error(
         }
         crate::kernel::CRuntimeError::MissingResource { resource } => {
             let fact = describe_resource_fact(resource, parameters, arguments);
-            if matches!(resource.resource(), CResource::MutexGuard(_)) {
+            if matches!(resource.resource(), CResource::MutexGuard(_) | CResource::MutexLive(_)) {
                 format!("Requires {fact}")
             } else {
                 format!("missing resource fact `{fact}`")
@@ -1146,6 +1150,12 @@ pub(super) fn describe_resource_fact(
             if resource.is_own() { "owns" } else { "views" },
             describe_mutex_pointer(identity.mutex(), parameters, arguments)
         ),
+        CResourceFact::Own(CResource::MutexLive(identity), _)
+        | CResourceFact::View(CResource::MutexLive(identity)) => format!(
+            "{} mutex_live({})",
+            if resource.is_own() { "owns" } else { "views" },
+            describe_mutex_pointer(identity.mutex(), parameters, arguments)
+        ),
         CResourceFact::Own(CResource::Instance(instance), _)
         | CResourceFact::View(CResource::Instance(instance)) => format!(
             "{} instance {}#{}",
@@ -1272,6 +1282,10 @@ fn describe_c_resource(
         } => format_declared_resource(name, resource_arguments, parameters, arguments),
         CResource::MutexGuard(identity) => format!(
             "mutex_guard({})",
+            describe_mutex_pointer(identity.mutex(), parameters, arguments)
+        ),
+        CResource::MutexLive(identity) => format!(
+            "mutex_live({})",
             describe_mutex_pointer(identity.mutex(), parameters, arguments)
         ),
         CResource::Iterated(iterated) => describe_iterated_memory(iterated, parameters, arguments),

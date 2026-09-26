@@ -3197,3 +3197,7 @@ path = "reference/library/index.md#nat_integer_add"
 [[item]]
 id = "stdlib.resource.mutex_guard"
 path = "reference/library/index.md#mutex_guard"
+
+[[item]]
+id = "stdlib.resource.mutex_live"
+path = "reference/library/index.md#mutex_live"

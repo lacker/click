@@ -591,7 +591,9 @@ impl Names {
                 binder.clear();
                 self.resource_term(resource);
             }
-            CResourceTerm::MutexGuard { mutex, .. } => self.c(mutex),
+            CResourceTerm::MutexGuard { mutex, .. } | CResourceTerm::MutexLive { mutex, .. } => {
+                self.c(mutex)
+            }
             CResourceTerm::Memory(s) => self.segment(s),
             CResourceTerm::Composite { arguments, .. } | CResourceTerm::Token { arguments, .. } => {
                 for e in arguments {

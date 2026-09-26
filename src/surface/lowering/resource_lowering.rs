@@ -289,7 +289,7 @@ pub(in crate::surface) fn initial_call_state(
     let state = state.with_memory(memory);
     let resources = resource_context_from_requirements(requires, parameters, &arguments, &state)?;
     Ok((
-        crate::kernel::c_state_with_assumed_guard_inputs(state.with_resource_context(resources)),
+        crate::kernel::c_state_with_assumed_mutex_inputs(state.with_resource_context(resources)),
         arguments,
     ))
 }
@@ -1579,6 +1579,21 @@ fn lower_resource_clause_with_values_mode_at_entry(
                     allow_symbolic_resource_arguments,
                 )
                 .ok_or_else(|| ClickError::new("mutex_guard requires a live acquisition"))?;
+                return Ok(match access {
+                    ResourceAccessMode::Own => guard,
+                    ResourceAccessMode::View => CResourceFact::View(guard.resource().clone()),
+                });
+            }
+            if name == "mutex_live" {
+                let [CValue::Pointer(mutex)] = resource_values.as_slice() else {
+                    return Err(ClickError::new("mutex_live expects one mutex pointer"));
+                };
+                let guard = crate::kernel::c_mutex_live_resource(
+                    state,
+                    mutex.pointer(),
+                    allow_symbolic_resource_arguments,
+                )
+                .ok_or_else(|| ClickError::new("mutex_live requires a live initialization"))?;
                 return Ok(match access {
                     ResourceAccessMode::Own => guard,
                     ResourceAccessMode::View => CResourceFact::View(guard.resource().clone()),

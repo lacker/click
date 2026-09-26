@@ -6299,7 +6299,7 @@ impl<'a> OwnedFootprintDerivation<'a> {
                 .push(canonical_memory_range(iterated.spanning_range())),
             // A token and a mutex guard own no bytes; a guard's guarded
             // resources are separate facts that reach here on their own.
-            CResource::Token { .. } | CResource::MutexGuard(_) => {}
+            CResource::Token { .. } | CResource::MutexGuard(_) | CResource::MutexLive(_) => {}
             CResource::Composite { name, arguments } => self.composite(name, arguments),
             CResource::Instance(instance) => {
                 let Some(definition) = self.definition(instance.name()) else {
@@ -13058,6 +13058,7 @@ fn evaluate_resource_population_body_resources(
             CResource::Memory(_)
             | CResource::Instance(_)
             | CResource::MutexGuard(_)
+            | CResource::MutexLive(_)
             | CResource::Iterated(_) => continue,
         };
         let Some(definition) = definitions
@@ -13506,20 +13507,25 @@ impl ResourceTransitionPurpose {
     }
 }
 
-fn spec_contains_mutex_guard(interface: &CFunctionContractInterface, spec: &CResourceSpec) -> bool {
-    spec.family() == ResourceFamily::MutexGuard
-        || spec.contained_definition_name().is_some_and(|name| {
-            interface
-                .composite_resource_definition(name)
-                .is_some_and(|definition| definition.contains_mutex_guard)
-        })
+fn spec_contains_mutex_authority(
+    interface: &CFunctionContractInterface,
+    spec: &CResourceSpec,
+) -> bool {
+    matches!(
+        spec.family(),
+        ResourceFamily::MutexGuard | ResourceFamily::MutexLive
+    ) || spec.contained_definition_name().is_some_and(|name| {
+        interface
+            .composite_resource_definition(name)
+            .is_some_and(|definition| definition.contains_mutex_authority)
+    })
 }
 
 pub(crate) fn preserves_mutex_protocols(interface: &CFunctionContractInterface) -> bool {
     interface
         .resource_requires()
         .iter()
-        .any(|spec| spec_contains_mutex_guard(interface, spec))
+        .any(|spec| spec_contains_mutex_authority(interface, spec))
 }
 
 pub(crate) fn guard_contract_refusal(
@@ -13530,14 +13536,16 @@ pub(crate) fn guard_contract_refusal(
         .iter()
         .chain(interface.resource_ensures())
         .any(|spec| {
-            spec_contains_mutex_guard(interface, spec)
+            spec_contains_mutex_authority(interface, spec)
                 && (!matches!(
                     spec.family(),
-                    ResourceFamily::Instance | ResourceFamily::MutexGuard
+                    ResourceFamily::Instance
+                        | ResourceFamily::MutexGuard
+                        | ResourceFamily::MutexLive
                 ) || spec.role() != CResourceTransferRole::Borrow
                     || spec.is_view())
         })
-        .then_some("guard-bearing contracts currently require preserving owned inputs")
+        .then_some("mutex authority contracts currently require preserving owned inputs")
 }
 
 /// Prepares the resource transition of one contract application; see
@@ -15256,6 +15264,7 @@ fn counted_population_quantities(
             CResource::Memory(_)
             | CResource::Instance(_)
             | CResource::MutexGuard(_)
+            | CResource::MutexLive(_)
             | CResource::Iterated(_) => continue,
         };
         if name == CResourceFact::ALLOCATION_RESOURCE_NAME {
@@ -17521,9 +17530,10 @@ fn instance_body_clauses_are_exchangeable(contains: &[CResourceSpec]) -> bool {
     contains.iter().all(|body| {
         !body.is_view()
             && match body.family() {
-                ResourceFamily::Memory | ResourceFamily::Iterated | ResourceFamily::MutexGuard => {
-                    true
-                }
+                ResourceFamily::Memory
+                | ResourceFamily::Iterated
+                | ResourceFamily::MutexGuard
+                | ResourceFamily::MutexLive => true,
                 ResourceFamily::Composite | ResourceFamily::Token => {
                     matches!(body.quantity(), CResourceQuantity::One)
                 }
@@ -18666,6 +18676,7 @@ pub(super) fn evaluate_resource_population_fact_propositions(
             CResource::Memory(_)
             | CResource::Instance(_)
             | CResource::MutexGuard(_)
+            | CResource::MutexLive(_)
             | CResource::Iterated(_) => continue,
         };
         let Some(quantity) = fact.owned_quantity_term() else {
@@ -21657,6 +21668,7 @@ fn resource_clause_supply_with_fact(
                 CResource::Token { .. }
                 | CResource::Instance(_)
                 | CResource::MutexGuard(_)
+                | CResource::MutexLive(_)
                 | CResource::Iterated(_) => {}
             }
         }
@@ -21969,6 +21981,42 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                         } else {
                             CRuntimeError::FunctionContract(
                                 "mutex_guard requires a live acquisition".into(),
+                            )
+                        }
+                    }),
+            )
+        }
+        CResourceTerm::MutexLive { mutex, snapshot } => {
+            let selected = match snapshot {
+                CResourceSnapshot::Entry => entry_state,
+                _ => state,
+            };
+            let value = evaluate_loop_effect_segment_value(
+                selected,
+                mutex,
+                assumptions,
+                "mutex lifetime pointer",
+                budget,
+            )?;
+            let Ok(CValue::Pointer(pointer)) = value else {
+                return Ok(Err(CRuntimeError::FunctionContract(
+                    "mutex_live expects a mutex pointer".into(),
+                )));
+            };
+            let initialization_state = match resource.snapshot() {
+                CResourceSnapshot::Entry => entry_state,
+                _ => state,
+            };
+            Ok(
+                super::mutexes::live_resource(initialization_state, pointer.pointer(), false)
+                    .ok_or_else(|| {
+                        if resource.role() == CResourceTransferRole::Borrow {
+                            CRuntimeError::MissingMutexLive {
+                                mutex: pointer.pointer().clone(),
+                            }
+                        } else {
+                            CRuntimeError::FunctionContract(
+                                "mutex_live requires a live initialization".into(),
                             )
                         }
                     }),
@@ -22452,6 +22500,7 @@ fn evaluate_function_declared_resource_spec(
         ResourceFamily::Memory
         | ResourceFamily::Instance
         | ResourceFamily::MutexGuard
+        | ResourceFamily::MutexLive
         | ResourceFamily::Iterated => {
             return Ok(Err(CRuntimeError::FunctionContract(
                 "declared resources cannot use the raw memory family".to_string(),
@@ -22473,6 +22522,7 @@ fn resource_fact_transfer_priority(resource: &CResourceFact) -> u8 {
             | CResource::Token { .. }
             | CResource::Instance(_)
             | CResource::MutexGuard(_)
+            | CResource::MutexLive(_)
             | CResource::Iterated(_),
             _,
         ) => 2,

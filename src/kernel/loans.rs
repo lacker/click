@@ -2391,7 +2391,10 @@ pub(crate) fn plan_stable_view_transfer_with_bindings_and_composites_for_worker(
         };
         let owned = &owned;
         match owned.resource() {
-            CResource::Instance(_) | CResource::MutexGuard(_) | CResource::Iterated(_) => {
+            CResource::Instance(_)
+            | CResource::MutexGuard(_)
+            | CResource::MutexLive(_)
+            | CResource::Iterated(_) => {
                 return Err(StableViewPlanError::Loan(LoanRefusal::UnsupportedResource));
             }
             CResource::Composite { .. } => {
@@ -4586,6 +4589,7 @@ impl LoanLedger {
                     CResource::Composite { .. }
                     | CResource::Instance(_)
                     | CResource::MutexGuard(_)
+                    | CResource::MutexLive(_)
                     | CResource::Iterated(_) => {
                         return Err(LoanRefusal::UnsupportedResource);
                     }

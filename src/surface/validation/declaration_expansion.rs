@@ -229,6 +229,16 @@ pub(in crate::surface) fn expand_declared_resource_clauses(
             child_slots: Default::default(),
         },
     );
+    resource_definitions.insert(
+        "mutex_live".into(),
+        DeclaredResourceInfo {
+            fields: Default::default(),
+            has_fields: false,
+            parameter_types: vec![C0Type::VoidPointer],
+            kind: ResourceKind::Token,
+            child_slots: Default::default(),
+        },
+    );
     let resource_definitions = DeclaredResourceScope {
         definitions: resource_definitions,
         children: Default::default(),
@@ -1403,7 +1413,9 @@ fn expand_declared_resource_clause(
             parameter_types,
         } if parameter_types.is_empty() => {
             let info = declared_resource_info(&name, arguments.len(), resource_definitions)?;
-            if (name == CResourceFact::ALLOCATION_RESOURCE_NAME || name == "mutex_guard")
+            if (name == CResourceFact::ALLOCATION_RESOURCE_NAME
+                || name == "mutex_guard"
+                || name == "mutex_live")
                 && access == ResourceAccessMode::View
             {
                 return Err(ClickError::new(format!(
@@ -2156,6 +2168,9 @@ fn reject_counted_field_resource(
     definitions: &DeclaredResourceScope,
 ) -> Result<(), ClickError> {
     match resource {
+        ResourceClause::Declared { name, .. } if name == "mutex_live" => Err(ClickError::new(
+            "`mutex_live` is exclusive and not countable",
+        )),
         ResourceClause::Declared { name, .. } if name == "mutex_guard" => Err(ClickError::new(
             "`mutex_guard` is exclusive and not countable",
         )),

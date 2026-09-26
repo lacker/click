@@ -11,6 +11,10 @@ The modeled-runtime resource `mutex_guard` is verified in
 [`mutex_guard_resource_body.md`](mutex_guard_resource_body.md) and
 [`mutex_guard_conditional_body.md`](mutex_guard_conditional_body.md).
 
+The modeled-runtime resource `mutex_live` is verified in
+[`mutex_live_wrapper.md`](mutex_live_wrapper.md) and
+[`mutex_live_contract.md`](mutex_live_contract.md).
+
 ```c filename=stdlib_every_symbol.c
 int32 docs_identity(int32 value) {
     return value;
