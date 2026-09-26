@@ -910,46 +910,6 @@ pub fn c_loop_invariant_obligations_at_entry(
     })
 }
 
-pub fn c_loop_effects_hold_at_back_edge(
-    iteration_entry_state: &CState,
-    state: &CState,
-    effect_checks: &[CLoopEffectCheck],
-    pure_facts: &[Proposition],
-    assumptions: &PureFactContext,
-) -> Result<(), String> {
-    let execution_facts = pure_facts
-        .iter()
-        .cloned()
-        .map(ExecutionPureFact::new)
-        .collect::<Vec<_>>();
-    let obligations = collect_loop_effect_check_obligations(
-        iteration_entry_state,
-        state,
-        effect_checks,
-        &execution_facts,
-        &[],
-        assumptions,
-        &mut ExecutionBudget::beside_live_state(),
-    )
-    .map_err(|error| {
-        format!(
-            "could not lower back-edge effects: they stopped at {}",
-            error.describe()
-        )
-    })?;
-    if let Some(obligation) = obligations.first() {
-        return Err(format!(
-            "missing loop effect fact{}: {:?}",
-            obligation
-                .context()
-                .map(|context| format!(" ({context})"))
-                .unwrap_or_default(),
-            obligation.proposition()
-        ));
-    }
-    Ok(())
-}
-
 pub fn c_loop_invariants_hold_at_entry(
     state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
