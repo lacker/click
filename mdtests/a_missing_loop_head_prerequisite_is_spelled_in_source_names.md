@@ -2,9 +2,9 @@
 
 Assuming `viewable(a[0..i])` at the loop head also assumes its range is a valid
 32-bit byte extent: `i` elements of four bytes fit, which is the unsigned bound
-`i <= 1073741823`. The head's facts `0 <= i`, `i <= n` and `n <= 1073741823`
-imply that bound without stating it, and the head discharges only a premise
-it holds exactly, so the loop is refused. The refusal used to print the
+`i <= 1073741823`. Here `n` is unbounded above and the held range is the
+constant `a[0..8]`, so nothing implies that bound and the loop is refused.
+The refusal used to print the
 kernel proposition itself,
 
 ```text
@@ -30,8 +30,8 @@ int32 walk(int32 *a, int32 n) {
 verifying "a_missing_loop_head_prerequisite_is_spelled_in_source_names.c";
 
 int32 walk(int32 *a, int32 n) {
-    views a[0..n];
-    requires 0 <= n and n <= 1073741823;
+    views a[0..8];
+    requires 0 <= n;
 } by {
     step();
     step();
