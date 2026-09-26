@@ -2124,46 +2124,32 @@ fn observable_cells_match(
             observable,
         ),
         None => {
-            // The runs do not pair up. Two maps whose observable cells differ
-            // in number differ; counting needs only each run's live count and
-            // the concrete candidates, where comparing the logical maps would
-            // lay out every slot.
-            let count = |memory: &CMemory| {
-                let concrete = candidates
-                    .entries(memory.cells.concrete())
-                    .filter(|(key, _)| observable(key))
-                    .count();
-                crate::instrumentation::record_deterministic_work(
-                    concrete + memory.cells.runs().len(),
-                );
-                concrete as u64
-                    + memory
-                        .cells
-                        .runs()
-                        .iter()
-                        .filter(|run| {
-                            candidates.admits_block(&run.base().block) && observable(run.base())
-                        })
-                        .map(|run| run.live_count())
-                        .sum::<u64>()
-            };
-            count(left) == count(right)
-                && observable_entries_match(
-                    candidates,
-                    left.cells.logical(),
-                    right.cells.logical(),
-                    observable,
-                )
+            // The runs do not pair up: walk both stores' candidate cells in
+            // order, as the logical maps would, spelling a run's slots only
+            // as the walk reaches them, so a difference early in the walk
+            // stops it there.
+            let visited = std::cell::Cell::new(0usize);
+            let equal = left
+                .cells
+                .candidate_logical_entries(candidates)
+                .inspect(|_| visited.set(visited.get() + 1))
+                .filter(|(key, _)| observable(key))
+                .eq(right
+                    .cells
+                    .candidate_logical_entries(candidates)
+                    .inspect(|_| visited.set(visited.get() + 1))
+                    .filter(|(key, _)| observable(key)));
+            crate::instrumentation::record_deterministic_work(visited.get());
+            equal
         }
     };
     #[cfg(debug_assertions)]
-    if runs_match.is_some()
-        && left
-            .cells
-            .runs()
-            .iter()
-            .chain(right.cells.runs())
-            .all(|run| run.count() <= crate::kernel::primitives::CHECKED_RUN_SLOTS)
+    if left
+        .cells
+        .runs()
+        .iter()
+        .chain(right.cells.runs())
+        .all(|run| run.count() <= crate::kernel::primitives::CHECKED_RUN_SLOTS)
     {
         crate::instrumentation::uncharged_debug_check(|| {
             assert_eq!(

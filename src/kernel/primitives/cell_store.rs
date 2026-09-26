@@ -734,6 +734,59 @@ impl CellStore {
         )
     }
 
+    /// The logical cells `candidates` admits, ascending, as
+    /// `candidates.entries(self.logical())` yields them, without laying out
+    /// a run: each admitted run's live slots are spelled and valued only as
+    /// the walk reaches them. The concrete candidates and each run's slots
+    /// are ascending, so a merge of them is the logical walk. A caller that
+    /// stops early pays only for what it visited.
+    pub(crate) fn candidate_logical_entries<'a>(
+        &'a self,
+        candidates: &'a AliasCandidates,
+    ) -> impl Iterator<Item = (Pointer, CValue)> + 'a {
+        type Sequence<'a> = Box<dyn Iterator<Item = (Pointer, CValue)> + 'a>;
+        let mut sequences: Vec<Sequence<'a>> = vec![Box::new(
+            candidates
+                .entries(&self.concrete)
+                .map(|(pointer, value)| (pointer.clone(), value.clone())),
+        )];
+        for run in self.runs.iter() {
+            if run.live_count() == 0 || !candidates.admits_block(&run.base.block) {
+                continue;
+            }
+            // Element 0 is spelled as the base itself and every later element
+            // as the base plus its shift, so the two are ascending apart.
+            sequences.push(Box::new(
+                (!run.holes.contains(0))
+                    .then(|| (run.slot_pointer(0), run.value(0)))
+                    .into_iter(),
+            ));
+            sequences.push(Box::new(
+                run.holes
+                    .gaps(run.count)
+                    .into_iter()
+                    .flat_map(|(low, high)| low.max(1)..high)
+                    .map(move |index| (run.slot_pointer(index), run.value(index))),
+            ));
+        }
+        let mut heads = sequences
+            .iter_mut()
+            .map(|sequence| sequence.next())
+            .collect::<Vec<_>>();
+        std::iter::from_fn(move || {
+            let least = heads
+                .iter()
+                .enumerate()
+                .filter_map(|(position, head)| {
+                    head.as_ref().map(|(pointer, _)| (position, pointer))
+                })
+                .min_by(|(_, left), (_, right)| left.cmp(right))
+                .map(|(position, _)| position)?;
+            let next = sequences[least].next();
+            std::mem::replace(&mut heads[least], next)
+        })
+    }
+
     /// How many entries represent the cells: each concrete cell and each
     /// run, whatever its length. The measure of work that visits the
     /// representation rather than every logical cell.
