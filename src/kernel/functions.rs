@@ -12029,7 +12029,22 @@ fn materialize_symbolic_cell(memory: CMemory, pointer: &Pointer, c_type: CType) 
     let value = if c_type.is_object_pointer() {
         Some(symbolic_pointer_cell_load(&symbolic_base, pointer, c_type))
     } else {
-        symbolic_load_value(&symbolic_base, pointer, c_type)
+        // The cell holds the load of this storage at its symbolic base, and a
+        // term is canonical at creation: name the load as its load variable,
+        // exactly as a contract clause over the same storage names it. A raw
+        // load here reached the facts a callee's `old(...)` produced, where
+        // nothing equates it with the caller's name for the same cell.
+        symbolic_load_value(&symbolic_base, pointer, c_type).map(|value| match value {
+            CValue::Int8(bits) => CValue::Int8(crate::kernel::eval::canonical_term(&bits)),
+            CValue::Int16(bits) => CValue::Int16(crate::kernel::eval::canonical_term(&bits)),
+            CValue::Int32(bits) => CValue::Int32(crate::kernel::eval::canonical_term(&bits)),
+            CValue::UInt8(bits) => CValue::UInt8(crate::kernel::eval::canonical_term(&bits)),
+            CValue::UInt16(bits) => CValue::UInt16(crate::kernel::eval::canonical_term(&bits)),
+            CValue::UInt32(bits) => CValue::UInt32(crate::kernel::eval::canonical_term(&bits)),
+            CValue::Int64(bits) => CValue::Int64(crate::kernel::eval::canonical_term(&bits)),
+            CValue::UInt64(bits) => CValue::UInt64(crate::kernel::eval::canonical_term(&bits)),
+            other => other,
+        })
     };
     if let Some(value) = value {
         memory.materialize_named_cell(pointer.clone(), value)
