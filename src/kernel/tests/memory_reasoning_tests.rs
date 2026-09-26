@@ -4691,6 +4691,49 @@ fn load_variable_registry_fails_loudly_at_capacity_instead_of_clearing() {
     });
 }
 
+/// Two distinct loads whose hashes land on one id must still get two ids.
+///
+/// The id space is narrowed until every hash collides. Each load keeps its
+/// own id, each id names only the load it was minted for, and asking again
+/// for a load already named returns its id rather than another slot: the
+/// registry decides the id, and the hash only says where to start looking.
+#[test]
+fn colliding_load_hashes_still_mint_distinct_load_variables() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let pointer = |block: &str| Pointer {
+        block: block.into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = intern_c_memory(
+        CMemory::new()
+            .with_block("local:a", 4)
+            .with_block("local:b", 4)
+            .with_block("local:c", 4),
+    );
+    crate::kernel::with_load_variable_range(4, || {
+        let blocks = ["local:a", "local:b", "local:c"];
+        let variables = blocks.map(|block| {
+            crate::kernel::eval::load_variable_for_exact_cell(&memory, &pointer(block), 4)
+        });
+        for (index, block) in blocks.iter().enumerate() {
+            for other in &variables[index + 1..] {
+                assert_ne!(variables[index], *other, "two loads share one id");
+            }
+            assert_eq!(
+                crate::kernel::registered_load_for_variable(&variables[index]),
+                Some((memory.clone(), pointer(block))),
+                "an id must name the load it was minted for"
+            );
+            assert_eq!(
+                crate::kernel::eval::load_variable_for_exact_cell(&memory, &pointer(block), 4),
+                variables[index],
+                "a load already named keeps its id"
+            );
+        }
+        assert_eq!(crate::kernel::load_variable_registry_len(), 3);
+    });
+}
+
 /// `(data + i) + j` with `i == INT_MAX`, `j == 1` and `data + k` with
 /// `k == INT_MIN` have equal wrapped index sums but exact byte offsets of
 /// +2^33 and -2^33, so the equality must not be decided true.

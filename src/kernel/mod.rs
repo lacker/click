@@ -107,7 +107,9 @@ pub(crate) use eval::registered_load_origin_for_variable;
 pub(crate) use eval::resolve_pending_heap_allocations;
 pub(crate) use eval::terms_have_same_canonical_form;
 #[cfg(test)]
-pub(crate) use eval::{load_variable_registry_len, with_load_variable_registry_capacity};
+pub(crate) use eval::{
+    load_variable_registry_len, with_load_variable_range, with_load_variable_registry_capacity,
+};
 pub(crate) use functions::ResourceModelArmDecision;
 pub(crate) use functions::ResourceModelArmSelection;
 pub(crate) use functions::arm_binding_program_spelling;

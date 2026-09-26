@@ -84,7 +84,9 @@ pub(super) use memory_loads::{
 #[cfg(test)]
 pub(super) use memory_loads::{load_substitution_term_visits, reset_load_substitution_term_visits};
 #[cfg(test)]
-pub(crate) use memory_loads::{load_variable_registry_len, with_load_variable_registry_capacity};
+pub(crate) use memory_loads::{
+    load_variable_registry_len, with_load_variable_range, with_load_variable_registry_capacity,
+};
 pub(super) use operators::pointer_offset_by_bytes_paths;
 pub(super) use operators::*;
 pub(super) use statements::execute_c_realloc_assign_paths;

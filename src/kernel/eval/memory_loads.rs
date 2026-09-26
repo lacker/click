@@ -1113,6 +1113,34 @@ fn load_variable_registry_capacity() -> usize {
     LOAD_VARIABLE_REGISTRY_CAPACITY
 }
 
+#[cfg(test)]
+thread_local! {
+    static LOAD_VARIABLE_RANGE_OVERRIDE: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// How many ids the load-variable space offers to the probe in
+/// `mint_load_variable_identity`. The real range dwarfs the capacity, so a
+/// collision is rare; a test narrows it to make every hash collide.
+fn load_variable_range() -> u64 {
+    #[cfg(test)]
+    if let Some(range) = LOAD_VARIABLE_RANGE_OVERRIDE.with(|cell| cell.get()) {
+        return range;
+    }
+    LOAD_VARIABLE_RANGE
+}
+
+/// Runs `body` with only the first `range` load-variable ids available, so
+/// distinct loads collide at the hash and a test can watch the probe.
+#[cfg(test)]
+pub(crate) fn with_load_variable_range<T>(range: u64, body: impl FnOnce() -> T) -> T {
+    assert!(range > 0 && range <= LOAD_VARIABLE_RANGE);
+    let previous = LOAD_VARIABLE_RANGE_OVERRIDE.with(|cell| cell.replace(Some(range)));
+    let result = body();
+    LOAD_VARIABLE_RANGE_OVERRIDE.with(|cell| cell.set(previous));
+    result
+}
+
 /// Runs `body` with the registry capacity lowered so a test can reach it.
 #[cfg(test)]
 pub(crate) fn with_load_variable_registry_capacity<T>(
@@ -2691,15 +2719,15 @@ fn offset_mentions_a_memory_load(offset: &PointerOffsetTerm) -> bool {
 }
 
 /// The load variable representing one load identity: the pair of a memory
-/// snapshot (by content) and a loaded pointer. The id is derived
-/// deterministically by hashing that identity into a reserved id space, so
-/// every pass — contract-grant lowering, requirement evaluation, and body
-/// execution — writes the same load with the same variable without sharing
-/// any allocator state, and certificates check across runs. A thread-local
-/// registry detects hash collisions between distinct load identities and
-/// stops verification loudly instead of silently conflating them; it is
-/// never cleared within a session, and exhausting its capacity is likewise
-/// a loud failure rather than a silent reset.
+/// snapshot (by content) and a loaded pointer. Hashing that identity into a
+/// reserved id space picks where the search for its id starts, and the
+/// thread-local registry assigns the first slot that holds this identity or
+/// nothing, so distinct identities get distinct ids by construction. Every
+/// pass — contract-grant lowering, requirement evaluation, and body
+/// execution — therefore writes the same load with the same variable, and
+/// the id is the hash itself unless another load already took that slot in
+/// this session. The registry is never cleared within a session, and
+/// exhausting its capacity is a loud failure rather than a silent reset.
 /// The variable naming a load of `pointer` in `memory` whose width the
 /// caller cannot name. A raw `MemoryLoad` term records no access width, so
 /// this stands in the widest scalar one could be.
@@ -2764,48 +2792,68 @@ fn mint_load_variable_identity(
     memory.hash(&mut hasher);
     pointer.hash(&mut hasher);
     let hash = hasher.finish();
-    let variable = Variable(LOAD_VARIABLE_BASE + hash % LOAD_VARIABLE_RANGE);
+    let range = load_variable_range();
     let current_epoch = LOAD_ORIGIN_EPOCH.with(std::cell::Cell::get);
     LOAD_VARIABLE_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
-        if let Some((known_memory, known_pointer, known_origin, known_epoch, known_bytes)) =
-            registry.get_mut(&variable)
-        {
-            assert!(
-                known_memory == memory && known_pointer == pointer,
-                "load-variable collision: {variable:?} represents two distinct loads"
-            );
-            // One entry stands for every access that resolved to this name,
-            // so its width has to cover all of them: a caller that reads the
-            // width back is asking how many bytes this name could depend on.
-            *known_bytes = (*known_bytes).max(bytes);
-            // An origin from an earlier epoch was minted by another
-            // function; this function's first mint is its origin.
-            if *known_epoch != current_epoch {
-                *known_origin = origin.clone();
-                *known_epoch = current_epoch;
+        // The hash picks where the search for this load's id starts, not the
+        // id itself. A slot is this load's exactly when the registry holds
+        // this load there; a slot holding another load is skipped, so two
+        // distinct loads can never share an id however their hashes compare.
+        // Nothing is removed within a session, so a lookup that reaches an
+        // empty slot has passed every slot this load could already hold.
+        //
+        // Termination: the capacity check below keeps the registry strictly
+        // smaller than the id range, so an empty slot always exists; the
+        // expected probe length at the real capacity and range is one.
+        let mut slot = hash % range;
+        loop {
+            let variable = Variable(LOAD_VARIABLE_BASE + slot);
+            match registry.get_mut(&variable) {
+                Some((known_memory, known_pointer, known_origin, known_epoch, known_bytes))
+                    if known_memory == memory && known_pointer == pointer =>
+                {
+                    // One entry stands for every access that resolved to this
+                    // name, so its width has to cover all of them: a caller
+                    // that reads the width back is asking how many bytes this
+                    // name could depend on.
+                    *known_bytes = (*known_bytes).max(bytes);
+                    // An origin from an earlier epoch was minted by another
+                    // function; this function's first mint is its origin.
+                    if *known_epoch != current_epoch {
+                        *known_origin = origin.clone();
+                        *known_epoch = current_epoch;
+                    }
+                    return variable;
+                }
+                Some(_) => {
+                    crate::instrumentation::record_deterministic_work(1);
+                    slot = (slot + 1) % range;
+                }
+                None => {
+                    assert!(
+                        (registry.len() as u64) < range.saturating_sub(1)
+                            && registry.len() < load_variable_registry_capacity(),
+                        "load-variable registry capacity exhausted: this verification session \
+                         minted {} distinct load identities; the registry never forgets an \
+                         entry because it is what keeps two loads from sharing an id",
+                        registry.len()
+                    );
+                    registry.insert(
+                        variable,
+                        (
+                            memory.clone(),
+                            pointer.clone(),
+                            origin.clone(),
+                            current_epoch,
+                            bytes,
+                        ),
+                    );
+                    return variable;
+                }
             }
-        } else {
-            assert!(
-                registry.len() < load_variable_registry_capacity(),
-                "load-variable registry capacity exhausted: this verification session minted \
-                 {} distinct load identities; the registry never forgets an entry because \
-                 it is the only collision guard for load-variable ids",
-                registry.len()
-            );
-            registry.insert(
-                variable,
-                (
-                    memory.clone(),
-                    pointer.clone(),
-                    origin.clone(),
-                    current_epoch,
-                    bytes,
-                ),
-            );
         }
-    });
-    variable
+    })
 }
 
 /// Returns the load variable for a load term's provenance-stable form.
