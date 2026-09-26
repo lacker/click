@@ -2359,3 +2359,95 @@ fn arithmetic_certificate_mixed_atom_lowering_scales_with_selected_inputs() {
         );
     }
 }
+
+/// `source_tactic_width` numbers the tactics inside a proof `cases` and a call
+/// `outcomes` block, so the site inventory, the source span list, and the
+/// nested-proof test must walk those arms too. Before they did, a smart tactic
+/// inside either block was missing from the inventory, and the span list fell
+/// out of step with the numbering: `cases` read as two tactics, so every
+/// location in or after the block failed to resolve ("source location does
+/// not select a smart tactic").
+#[test]
+fn smart_sites_inside_and_after_cases_and_outcomes_resolve_to_their_source() {
+    let source = r#"
+theorem pick_nonzero(r: int32) {
+    requires r == 18 or r == -1;
+    ensures r != 0 by {
+        cases (r == 18 or r == -1) {
+            have r > 0 by { simp(); }
+        } {
+            have r < 0 by { simp(); }
+        }
+        simp();
+    }
+}
+"#;
+    let sites = c0_smart_tactic_source_sites(source, &[]).expect("cases sites are indexed");
+    let indexes = sites
+        .iter()
+        .map(|site| (site.source_index, site.tactic_name.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![(1, "have"), (2, "have"), (3, "simp")],
+        "{sites:?}"
+    );
+    let final_simp = "simp();\n    }\n}";
+    for (index, needle) in [(1, "have r > 0"), (2, "have r < 0"), (3, final_simp)] {
+        let position = c0_tactic_source_position(source, &[], "pick_nonzero.ensures_0", index)
+            .unwrap_or_else(|error| panic!("site {index} has no source position: {error:?}"));
+        assert_eq!(
+            position,
+            position_at_offset(source, source.find(needle).unwrap()),
+            "site {index}"
+        );
+    }
+    let after = position_at_offset(source, source.find(final_simp).unwrap());
+    let expanded = expand_c0_tactic_source_at(source, &[], after.line, after.column)
+        .expect("the smart tactic after `cases` expands");
+    verify_c0_sources(&expanded, &[]).expect("the expanded `cases` proof re-verifies");
+
+    let c_source =
+        "int32 helper(int32 x) { return x; }\nint32 client(int32 x) { return helper(x); }\n";
+    let outcomes = r#"verifying "outcomes_sites.c";
+int32 client(int32 x) {
+    ensures result == x;
+} by {
+    step();
+    outcomes {
+        returned {
+            simp();
+        }
+        threw {
+            simp();
+        }
+    }
+    simp();
+}
+"#;
+    let c_sources = [("outcomes_sites.c", c_source)];
+    let sites =
+        c0_smart_tactic_source_sites(outcomes, &c_sources).expect("outcomes sites are indexed");
+    let indexes = sites
+        .iter()
+        .map(|site| (site.source_index, site.tactic_name.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![(2, "simp"), (3, "simp"), (4, "simp")],
+        "{sites:?}"
+    );
+    for (index, needle) in [
+        (2, "simp();\n        }\n        threw"),
+        (3, "simp();\n        }\n    }"),
+        (4, "simp();\n}"),
+    ] {
+        let position = c0_tactic_source_position(outcomes, &c_sources, "client.contract", index)
+            .unwrap_or_else(|error| panic!("site {index} has no source position: {error:?}"));
+        assert_eq!(
+            position,
+            position_at_offset(outcomes, outcomes.find(needle).unwrap()),
+            "site {index}"
+        );
+    }
+}
