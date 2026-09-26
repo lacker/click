@@ -160,19 +160,8 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
         // fact when that constant is the value it asserts: `0 <= 0` at an
         // instance is `true is true`, and the availability check below
         // accepts it by the rule every `using` list shares
-        // (`proposition_holds_without_facts`).
-        // An equality listed in the other orientation from the fact held
-        // is the same fact; use the held spelling as the premise.
-        let premise = match crate::surface::proof::theorem_application::mirrored_equality(&premise)
-        {
-            Some(mirrored)
-                if !available.listed_premise_available(&premise, &[], true)
-                    && available.available_across_effects(&mirrored, &[]) =>
-            {
-                mirrored
-            }
-            _ => premise,
-        };
+        // (`listed_premise_holds`), which also accepts an equality listed in
+        // the other orientation from the fact held.
         if !available.listed_premise_available(&premise, &[], true) {
             let available_facts = available.to_vec();
             // Name the listed premise in the reader's own spelling: a

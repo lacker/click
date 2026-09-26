@@ -61,10 +61,10 @@ pub(super) use derivations::*;
 pub(crate) use memory_state::resource_context_has_symbolic_range_read;
 pub use memory_state::value_independent_click_memory;
 pub(super) use resource_algebra::*;
-pub(crate) use term_operations::proposition_holds_without_facts;
 pub(in crate::kernel) use term_operations::{
     int64_add_interval_fits, int64_subtract_interval_fits,
 };
+pub(crate) use term_operations::{listed_premise_holds, proposition_holds_without_facts};
 
 pub(super) const C_POINTER_BYTE_WIDTH: u32 = 8;
 

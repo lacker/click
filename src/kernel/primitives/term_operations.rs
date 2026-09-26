@@ -3731,3 +3731,43 @@ pub(crate) fn proposition_holds_without_facts(proposition: &Proposition) -> bool
         _ => false,
     }
 }
+
+/// An equality with its sides swapped. `have a == b` and `have b == a`
+/// establish one fact, so a `using` premise may name either spelling of the
+/// fact the proof holds.
+pub(crate) fn mirrored_equality(proposition: &Proposition) -> Option<Proposition> {
+    let Proposition::ConditionIs(condition, value) = proposition else {
+        return None;
+    };
+    let mirrored = match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            ConditionTerm::Bitvector32Equal(right.clone(), left.clone())
+        }
+        ConditionTerm::Bitvector64Equal(left, right) => {
+            ConditionTerm::Bitvector64Equal(right.clone(), left.clone())
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            ConditionTerm::PointerOffsetEqual(right.clone(), left.clone())
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            ConditionTerm::PointerEqual(right.clone(), left.clone())
+        }
+        _ => return None,
+    };
+    Some(Proposition::ConditionIs(mirrored, *value))
+}
+
+/// The one availability rule for a premise a `using` list names, over the
+/// lookup `available` the site already owns: the premise holds with no facts
+/// ([`proposition_holds_without_facts`]), or it or its mirrored equality
+/// ([`mirrored_equality`]) is available. Every using list, and every checker
+/// that matches a theorem requirement against listed evidence, asks this and
+/// nothing else, so no site accepts a spelling another refuses.
+pub(crate) fn listed_premise_holds(
+    premise: &Proposition,
+    available: impl Fn(&Proposition) -> bool,
+) -> bool {
+    proposition_holds_without_facts(premise)
+        || available(premise)
+        || mirrored_equality(premise).is_some_and(|mirrored| available(&mirrored))
+}

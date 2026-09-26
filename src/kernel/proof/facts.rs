@@ -1044,12 +1044,13 @@ impl ProofFacts {
         framing: &[ExecutionPureFact],
         across_quantifiers: bool,
     ) -> bool {
-        crate::kernel::proposition_holds_without_facts(premise)
-            || if across_quantifiers {
+        crate::kernel::listed_premise_holds(premise, |premise| {
+            if across_quantifiers {
                 self.available_across_effects(premise, framing)
             } else {
                 self.exact_available_across_effects(premise, framing)
             }
+        })
     }
 
     pub(crate) fn exact_available_across_effects(
