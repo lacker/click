@@ -351,17 +351,28 @@ impl<'a> Proof<'a> {
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
     ) -> Result<CheckedFocusedTransition, ClickError> {
-        let explicit_premises = surface_premises
+        let lowered_premises = surface_premises
             .iter()
             .map(|premise| self.lower_surface_proposition(premise, "`apply using` premise"))
             .collect::<Result<Vec<_>, _>>()?;
 
-        for (premise, surface) in explicit_premises.iter().zip(surface_premises) {
+        let mut explicit_premises = Vec::new();
+        for (premise, surface) in lowered_premises.iter().zip(surface_premises) {
             if !self.facts().exact_available_across_effects(premise, &[]) {
                 return Err(self.step_error(format!(
                     "`apply using` requires an unavailable exact premise: `{}`",
                     crate::surface::diagnostics::describe_click_proposition(surface)
                 )));
+            }
+            // Citing a stated range cites both of its halves, exactly as in
+            // a fixed-state `apply using`.
+            crate::surface::proof::theorem_application::cite_range_extent_guards(
+                premise,
+                &mut explicit_premises,
+                |guard| self.facts().exact_available_across_effects(guard, &[]),
+            );
+            if !explicit_premises.contains(premise) {
+                explicit_premises.push(premise.clone());
             }
         }
 

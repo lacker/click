@@ -17,6 +17,53 @@ pub(super) struct TheoremApplicationContext<'a> {
     pub(super) pointer_element_widths: BTreeMap<String, u32>,
 }
 
+/// Adds a cited range premise's extent guards to an explicit evidence list.
+///
+/// Citing a stated range cites what the range says: `loadable(p[a..b])`
+/// means `a..b` is a valid 32-bit byte extent and those bytes are loadable,
+/// and theorem instantiation asks the application for both halves. A `using`
+/// list that names the range has therefore named both, and the endpoint
+/// spelling of the `fits` half is an unsigned comparison the surface cannot
+/// write at all. This relaxes the restriction only: a guard joins the list
+/// solely where `available` already holds it, so nothing is derived and no
+/// ambient fact becomes evidence for anything else.
+///
+/// Every checker that turns a `using` list into evidence (`apply using` in
+/// pure and fixed-state proofs, `transport using`) calls this one rule, and
+/// smart theorem selection proposes a range premise only when
+/// [`missing_theorem_extent_guard`] finds nothing this rule would leave out.
+pub(super) fn cite_range_extent_guards(
+    premise: &Proposition,
+    evidence: &mut Vec<Proposition>,
+    available: impl Fn(&Proposition) -> bool,
+) {
+    for guard in crate::kernel::stated_loadable_extent_guard_spellings(premise) {
+        if !evidence.contains(&guard) && available(&guard) {
+            evidence.push(guard);
+        }
+    }
+}
+
+/// The first extent guard a theorem requirement owes that an application
+/// citing the requirement cannot supply.
+///
+/// This is the search-side mirror of the check in
+/// `instantiate_theorem_application_with_assumptions`: that check asks for
+/// each count-form guard among the evidence, and [`cite_range_extent_guards`]
+/// puts it there exactly when it is available. A selector that lists the
+/// range requirement therefore owes nothing more when this returns `None`,
+/// and would be refused by the checker when it returns a guard.
+pub(super) fn missing_theorem_extent_guard(
+    requirement: &Proposition,
+    available: impl Fn(&Proposition) -> bool,
+) -> Option<Proposition> {
+    crate::kernel::stated_loadable_extent_guards(requirement)
+        .into_iter()
+        .find(|guard| {
+            !available(guard) && !matches!(normalize_proposition(guard), SimpProposition::True)
+        })
+}
+
 pub(super) fn apply_theorem_applications_to_available(
     theorem_environment: &TheoremEnvironment,
     theorem_applications: &[(usize, TheoremApplication)],

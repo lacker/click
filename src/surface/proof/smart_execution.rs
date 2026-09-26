@@ -674,6 +674,21 @@ impl<'a> Proof<'a> {
                         &requirement,
                     ))
                 })?;
+            // The checker adds a cited range's extent guards to the evidence
+            // when they are available and refuses otherwise; propose the
+            // range only where it will be accepted.
+            if let Some(guard) =
+                crate::surface::proof::theorem_application::missing_theorem_extent_guard(
+                    &requirement,
+                    |guard| self.facts().available_across_effects(guard, &[]),
+                )
+            {
+                return Err(self.step_error(format!(
+                    "theorem application `{}` requires a memory range whose extent guard `{}` is not an available fact",
+                    application.name,
+                    crate::surface::proof_diagnostics::render::render_proposition(&guard),
+                )));
+            }
 
             // Reuse the established snapshot-surface search for execution
             // proofs, with availability answered by persistent indexes. The
@@ -889,6 +904,22 @@ impl<'a> Proof<'a> {
                     &surface,
                     &[],
                     &requirement,
+                )));
+            }
+            // The checker adds the range's extent guards to the evidence
+            // when they are available and refuses otherwise; propose the
+            // range only where it will be accepted.
+            if let Some(guard) =
+                crate::surface::proof::theorem_application::missing_theorem_extent_guard(
+                    &requirement,
+                    |guard| self.facts().exact_available_across_effects(guard, &[]),
+                )
+            {
+                return Err(self.step_error(format!(
+                    "theorem `{}` requirement {} states a memory range whose extent guard `{}` is not an available fact",
+                    application.name,
+                    requirement_index + 1,
+                    crate::surface::proof_diagnostics::render::render_proposition(&guard),
                 )));
             }
             if !premises.contains(&surface) {
