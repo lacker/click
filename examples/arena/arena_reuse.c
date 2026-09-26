@@ -12,11 +12,9 @@ struct region {
 };
 
 int32 arena_reuse(struct region* middle, struct region* reused) {
-    struct arena* arena;
     int32 allocated;
 
     arena_free(middle);
-    arena = middle->arena;
-    allocated = arena_alloc(arena, 2, reused);
+    allocated = arena_alloc(middle->arena, 2, reused);
     return allocated;
 }

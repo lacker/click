@@ -154,17 +154,16 @@ proved about the loaded `reused->start` to discharge the guard of the
 allocation's `reused->end == reused->start + 2`, as it does for one proved
 about a region field in the pipeline, and this fixture does not pin that.
 
-The driver reads `middle->arena` into a local after `arena_free(middle)` has
-returned the descriptor, and its contract names the returned state
-`arena_state(old(middle->arena))`. Both reasons the local and the `old`
-were introduced are now closed: a region can be unfolded while the caller
-also owns another descriptor of its type
-(`mdtests/unfold_region_beside_an_object_of_its_type.md`), and a descriptor
-field the caller holds flat is carried across a later call whether or not
-its value is cached
-(`mdtests/call_keeps_an_uncached_flat_field_beside_folded_state.md`). The
-driver still uses the local and the `old`; rewriting its contract as
-`produces after: arena_state(middle->arena)` has not been retried since.
+The driver passes `middle->arena` straight to `arena_alloc` after
+`arena_free(middle)` has returned the descriptor, and its contract returns
+the state as `arena_state(middle->arena)`. An earlier version copied the
+field into a local first and named the state `arena_state(old(middle->arena))`;
+neither is needed now that a region can be unfolded while the caller also
+owns another descriptor of its type
+(`mdtests/unfold_region_beside_an_object_of_its_type.md`) and a descriptor
+field the caller holds flat is carried across a later call whether or not its
+value is cached
+(`mdtests/call_keeps_an_uncached_flat_field_beside_folded_state.md`).
 
 This is the weaker form of first-fit reuse: the freed hole is the only free
 run, so any successful allocation of that size lands in it. First fit itself
@@ -182,9 +181,6 @@ holds an occupied cell).
 - A call that lends an iterated fact havocs every cell the fact could hold,
   whatever the callee writes; the caller's frame across it comes only from
   the cells it keeps owning.
-- `arena_reuse` still copies `middle->arena` into a local and returns the
-  state as `arena_state(old(middle->arena))`; both frontiers that forced
-  that are closed (above), and the simpler contract has not been retried.
 
 A guarded equality over `int64` terms no longer needs its bounds restated in
 the guard's own spelling: `simp` discharges an `int64` sum's or difference's

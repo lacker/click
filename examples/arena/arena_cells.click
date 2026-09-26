@@ -5312,12 +5312,11 @@ int32 arena_reuse(struct region* middle, struct region* reused) {
         0 <= k and k < middle->arena->capacity implies middle->arena->occupied[k] == 1
     };
     produces object(middle);
-    produces after: arena_state(old(middle->arena));
+    produces after: arena_state(middle->arena);
     produces outcome: arena_alloc_result(reused);
 
     ensures result == 1 implies 2 <= reused->start and reused->end <= 4;
 } by {
-    step();
     step();
     let { after: after } = step(arena_free(middle), { r: r, st: st });
     have middle->start == 2 by {
@@ -5436,50 +5435,9 @@ int32 arena_reuse(struct region* middle, struct region* reused) {
             }
         }
     }
-    have after.live < 2147483647 by {
-        assumption();
-    }
-    step();
-    have arena == middle->arena by {
-        simp();
-    }
-    have arena == old(middle->arena) by {
-        simp();
-    }
-    have forall (k: int32) {
-        0 <= k and k < arena->capacity implies
-            (arena->occupied[k] == 0 implies 2 <= k and k < 4)
-    } by {
-        intro();
-        intro();
-        extract(0 <= k);
-        extract(k < arena->capacity);
-        have k < middle->arena->capacity by {
-            simp() using {
-                k < arena->capacity;
-                arena == middle->arena;
-            }
-        }
-        intro();
-        have middle->arena->occupied[k] == 0 by {
-            simp() using {
-                arena->occupied[k] == 0;
-                arena == middle->arena;
-            }
-        }
-        instantiate(forall (j: int32) {
-            0 <= j and j < middle->arena->capacity implies
-                (middle->arena->occupied[j] == 0 implies 2 <= j and j < 4)
-        }, k) using {
-            0 <= k;
-            k < middle->arena->capacity;
-            middle->arena->occupied[k] == 0;
-        }
-        assumption();
-    }
     mark allocating;
-    let { outcome: outcome } = step(arena_alloc(arena, 2, reused), { st: after });
-    have arena->capacity == at(allocating, arena->capacity) by {
+    let { outcome: outcome } = step(arena_alloc(middle->arena, 2, reused), { st: after });
+    have middle->arena->capacity == at(allocating, middle->arena->capacity) by {
         simp();
     }
     have forall (k: int32) {
@@ -5492,7 +5450,7 @@ int32 arena_reuse(struct region* middle, struct region* reused) {
         extract(k < reused->end);
         instantiate(forall (j: int32) {
             allocated == 1 and reused->start <= j and j < reused->end implies
-                at(allocating, arena->occupied[j]) == 0
+                at(allocating, middle->arena->occupied[j]) == 0
         }, k) using {
             allocated == 1;
             reused->start <= k;
@@ -5507,23 +5465,23 @@ int32 arena_reuse(struct region* middle, struct region* reused) {
                 reused->start <= k;
             }
         }
-        have reused->end <= arena->capacity by {
+        have reused->end <= middle->arena->capacity by {
             simp();
         }
-        have k < at(allocating, arena->capacity) by {
+        have k < at(allocating, middle->arena->capacity) by {
             simp() using {
                 k < reused->end;
-                reused->end <= arena->capacity;
-                arena->capacity == at(allocating, arena->capacity);
+                reused->end <= middle->arena->capacity;
+                middle->arena->capacity == at(allocating, middle->arena->capacity);
             }
         }
         instantiate(forall (j: int32) {
-            0 <= j and j < at(allocating, arena->capacity) implies
-                (at(allocating, arena->occupied[j]) == 0 implies 2 <= j and j < 4)
+            0 <= j and j < at(allocating, middle->arena->capacity) implies
+                (at(allocating, middle->arena->occupied[j]) == 0 implies 2 <= j and j < 4)
         }, k) using {
             0 <= k;
-            k < at(allocating, arena->capacity);
-            at(allocating, arena->occupied[k]) == 0;
+            k < at(allocating, middle->arena->capacity);
+            at(allocating, middle->arena->occupied[k]) == 0;
         }
         assumption();
     }
