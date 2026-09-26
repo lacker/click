@@ -3113,11 +3113,24 @@ impl<'a> Proof<'a> {
     /// checked. Historical locals are anchored before ordinary forms are
     /// considered, so a same-written newer snapshot cannot be substituted.
     /// The fixed-state view against which a premise lookup is spelled: the
-    /// focused branch's outcome data, or the frontier's current state for a
-    /// judgment stated mid-execution.
+    /// focused branch's outcome data, the frontier's current state for a
+    /// judgment stated mid-execution, or a fixed-state proof's own state.
+    /// The last is a loop's `initialize` phase, a proof at the loop entry: it
+    /// spells the contract's entry-state facts against function entry exactly
+    /// as the same judgment stated in the function body does. A fixed-state
+    /// proof whose state is its entry state (the same object) needs no such
+    /// anchoring, and keeps its plain spellings.
     fn premise_fixed_state_view(&self) -> Option<FixedStateOperationView<'_>> {
         self.outcome_fixed_state_view()
             .or_else(|| self.execution_proposition_fixed_state_view())
+            .or_else(|| match self.context.as_ref() {
+                ProofContext::FixedState(context)
+                    if !std::ptr::eq(context.pre_state, context.state) =>
+                {
+                    Some(FixedStateOperationView::from_fixed_state(context))
+                }
+                _ => None,
+            })
     }
 
     pub(super) fn available_surface_fact(

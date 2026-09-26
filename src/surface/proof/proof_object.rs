@@ -1304,7 +1304,9 @@ pub(in crate::surface::proof) struct FixedStateOperationView<'p> {
 }
 
 impl<'p> FixedStateOperationView<'p> {
-    fn from_fixed_state(context: &'p FixedStateProofContext<'_>) -> Self {
+    pub(in crate::surface::proof) fn from_fixed_state(
+        context: &'p FixedStateProofContext<'_>,
+    ) -> Self {
         Self {
             claim_label: context.claim_label,
             tactic_index: context.tactic_index,

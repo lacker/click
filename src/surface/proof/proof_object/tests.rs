@@ -263,10 +263,33 @@ fn atomic_conjunct_extraction_requires_exact_selected_premise_on_small_stack() {
                     .is_err(),
                 "a retry must remain a prompt miss rather than accumulating extraction steps"
             );
-            assert!(
-                stale.try_typed_atomic_simp_closure().is_none(),
-                "the stale selected candidate must fail without recursively extracting"
+            // The unanchored current spelling cannot stand for the old leaf,
+            // but the old leaf is this fixed-state proof's entry-state fact,
+            // and anchoring the written form at function entry lowers to it
+            // exactly. That is the one checked extraction the closure may make:
+            // a single step, never a recursive retry of the stale spelling.
+            let anchored_surface = surface_at_snapshot(
+                &surface,
+                &ProgramPointRef {
+                    region: CodeRegionRef::Function,
+                    kind: ProgramPointKind::Entry,
+                },
+            )
+            .expect("the selected surface anchors at function entry");
+            let anchored = stale
+                .try_typed_atomic_simp_closure()
+                .expect("the entry-anchored spelling of the old leaf should extract it");
+            assert!(anchored.is_complete());
+            assert_eq!(
+                anchored.certificate().steps(),
+                &[ProofStep::Extract(anchored_surface)],
+                "the stale spelling must not be extracted, only its entry-anchored form"
             );
+            let rechecked = stale
+                .try_authoritative_linear_script(&anchored.certificate().to_proof_tactics())
+                .unwrap()
+                .unwrap();
+            assert!(rechecked.is_complete());
             assert!(stale.certificate().steps().is_empty());
 
             let mut exact_surfaces = SurfacePropositionMap::default();

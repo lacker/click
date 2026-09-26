@@ -81,6 +81,12 @@ A loop invariant `viewable(a[0..i])` with `0 <= i`, `i <= n` and
 bound (`mdtests/loop_invariant_states_a_growing_viewable_prefix.md`; the
 unbounded negative is
 `mdtests/loop_invariant_growing_viewable_prefix_needs_its_extent_bound.md`).
+Its quantified form `forall (k: int32) { 0 <= k and k <= n implies
+viewable(a[0..k]) }` now initializes with the function body's
+`intro(); intro(); extract(..); extract(..); simp();`
+(`mdtests/loop_initialize_narrows_a_held_range_under_a_universal.md`). Its back
+edge still owes the extent under the quantifier in the unsigned spelling
+`(-2147483648 ^ k) <= -1073741825`, which `close_invariants()` does not derive.
 
 ## The owned range in a store refusal is spelled against the wrong base
 
