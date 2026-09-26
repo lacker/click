@@ -27,6 +27,10 @@ struct Capture {
 
 struct TraceAcceptedPath {
     claim: String,
+    /// A loop phase's completed path, recorded while the function's own
+    /// path is still being driven. It is rendered only for a target that
+    /// lies on it; a plain trace shows the function's path.
+    nested: bool,
     path_index: usize,
     lineage: Vec<TracePathNode>,
     /// Retain the accepted provenance chain until the CLI has rendered it.
@@ -330,6 +334,34 @@ pub(super) fn record_body(node: usize, body: TraceBody) {
     });
 }
 
+thread_local! {
+    static LOOP_PARENT_LINEAGE: RefCell<Option<Vec<TracePathNode>>> = const { RefCell::new(None) };
+}
+
+/// Runs `verify` with `lineage`, the traced proof's path up to a `loop`
+/// tactic, on record as the parent of any loop phase proof it drives, so
+/// the phase's own trace can be rendered with that path above it.
+pub(crate) fn with_loop_parent_lineage<R>(
+    lineage: Option<Vec<TracePathNode>>,
+    verify: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<Vec<TracePathNode>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            LOOP_PARENT_LINEAGE.with(|slot| *slot.borrow_mut() = self.0.take());
+        }
+    }
+    let prior = LOOP_PARENT_LINEAGE.with(|slot| slot.replace(lineage));
+    let _restore = Restore(prior);
+    verify()
+}
+
+/// The traced path up to the `loop` tactic whose phase proof is being
+/// driven, if a trace is on and the tactic lies on one.
+pub(crate) fn loop_parent_lineage() -> Option<Vec<TracePathNode>> {
+    LOOP_PARENT_LINEAGE.with(|slot| slot.borrow().clone())
+}
+
 pub(super) fn register_scope(
     root: usize,
     parent_lineage: Vec<TracePathNode>,
@@ -355,6 +387,7 @@ pub(super) fn register_scope(
 pub(super) fn record_accepted_path(
     claim: &str,
     path_index: usize,
+    nested: bool,
     lineage: Vec<TracePathNode>,
     retained: Box<dyn Any>,
 ) {
@@ -364,6 +397,7 @@ pub(super) fn record_accepted_path(
         if capture.accepted_paths.len() < MAX_STEPS {
             capture.accepted_paths.push(TraceAcceptedPath {
                 claim: claim.to_owned(),
+                nested,
                 path_index,
                 lineage,
                 _retained: retained,
@@ -420,7 +454,19 @@ pub(crate) fn render_accepted(
     CAPTURE.with(|slot| {
         let slot = slot.borrow();
         let capture = slot.as_ref()?;
-        for path in &capture.accepted_paths {
+        // The function's own paths first; a loop phase's path only answers a
+        // target that lies inside the phase.
+        let paths = capture
+            .accepted_paths
+            .iter()
+            .filter(|path| !path.nested)
+            .chain(
+                capture
+                    .accepted_paths
+                    .iter()
+                    .filter(|path| path.nested && target.is_some()),
+            );
+        for path in paths {
             let locate = |indices: &[usize]| tactic_location(&path.claim, indices);
             let arm = |indices: &[usize], position: &SourcePosition| {
                 branch_arm(&path.claim, indices, position)
@@ -440,7 +486,13 @@ pub(crate) fn render_accepted(
             );
             if target.is_none() || reached {
                 *labels = path_labels;
-                if capture.accepted_paths.len() > 1 {
+                if capture
+                    .accepted_paths
+                    .iter()
+                    .filter(|path| !path.nested)
+                    .count()
+                    > 1
+                {
                     report = report.replacen(
                         "proof trace (checked tactics and branch facts)",
                         &format!("proof trace (accepted path {})", path.path_index),
@@ -478,7 +530,8 @@ fn render_lineage(
     let mut depth = 0;
     let mut done = false;
     let mut reached = false;
-    for segment in segments.into_iter().rev() {
+    let segment_count = segments.len();
+    for (index, segment) in segments.into_iter().rev().enumerate() {
         depth = append_path(
             &mut output,
             capture,
@@ -493,6 +546,15 @@ fn render_lineage(
             &mut done,
             &mut reached,
         );
+        // An enclosing segment stops at its first step past the target,
+        // which for a loop phase's path is the enclosing proof's step after
+        // the loop; the phase's own segment still lies ahead and is where
+        // the target is reached.
+        if done && !reached && index + 1 < segment_count && output.len() < MAX_RENDER_BYTES {
+            done = false;
+            depth += 1;
+            continue;
+        }
         if done {
             break;
         }
@@ -1281,6 +1343,7 @@ mod tests {
             record_accepted_path(
                 "f.contract",
                 0,
+                false,
                 vec![
                     TracePathNode {
                         node: 3,

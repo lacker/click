@@ -3347,9 +3347,12 @@ pub fn tactic_starts_on_line(source: &str, line: usize) -> Result<Vec<SourcePosi
             continue;
         }
         let preceding = open.checked_sub(1).and_then(|index| tokens.get(index));
-        let direct_proof_block = preceding.is_some_and(|token| {
-            matches!(token.text.as_str(), "by" | "then" | "else" | "and" | "=>")
-        });
+        // A match arm's block follows `=>`, which the scanner emits as the
+        // two punctuation tokens `=` and `>`.
+        let arm_block = open >= 2 && tokens[open - 2].text == "=" && tokens[open - 1].text == ">";
+        let direct_proof_block = arm_block
+            || preceding
+                .is_some_and(|token| matches!(token.text.as_str(), "by" | "then" | "else" | "and"));
         let open_tactic_block = preceding.is_some_and(|token| token.text == ")")
             && tokens[..open]
                 .iter()

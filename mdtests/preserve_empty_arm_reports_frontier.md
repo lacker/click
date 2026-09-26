@@ -83,5 +83,5 @@ int spin(struct node* p, int n) {
 ```
 
 ```expect
-fail: after tactic 0 `match, inside an arm with no tactics`; still ahead on this path: the body's end. No path of this `preserve` is complete yet
+fail: after tactic 0 `match, inside an arm with no tactics`; still ahead on this path: the body's end. Already complete: 1 at the body's end
 ```

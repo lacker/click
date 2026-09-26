@@ -2040,15 +2040,19 @@ impl<'a> Proof<'a> {
         // this frontier; the re-annotation resolves that scope's locals
         // before lowering them, as a `have` goal at this point would.
         let proof_locals = self.proof_local_values();
-        let expanded_loop = execute_frontier_local_loop(
-            expansion_capture.as_deref_mut(),
-            loop_clause,
-            &proof_locals,
-            &mut execution,
-            &tactic_context,
-            &mut facts,
-            source_index,
-        )?;
+        let trace_lineage = self.trace_lineage(context.claim_label);
+        let expanded_loop =
+            crate::surface::proof_trace::with_loop_parent_lineage(trace_lineage, || {
+                execute_frontier_local_loop(
+                    expansion_capture.as_deref_mut(),
+                    loop_clause,
+                    &proof_locals,
+                    &mut execution,
+                    &tactic_context,
+                    &mut facts,
+                    source_index,
+                )
+            })?;
         if capture_this_tactic {
             // The tactic's expansion is the expanded loop itself.
             let expansion = ProofCertificateBuilder {
