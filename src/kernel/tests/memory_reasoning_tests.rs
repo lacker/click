@@ -5574,8 +5574,32 @@ mod stated_range_guard_derivation {
         );
     }
 
-    /// An extent that is not a scaled element range carries nothing: a cell
-    /// width and a block size are already true counts of bytes.
+    /// A range of one-byte elements keeps its extent unscaled, `a[0..n]` over
+    /// `uint8` being `n` bytes, and carries its count bound like a wider
+    /// range. One-byte elements have no count limit below `i32::MAX`, so the
+    /// nonnegative count is the whole guard.
+    #[test]
+    fn a_byte_range_carries_its_count_bound() {
+        let count = Bitvector32Term::Variable(Variable(9_200_020));
+        let range = Proposition::CMemoryLoadable {
+            memory: CMemory::new(),
+            base: Pointer {
+                block: "arg-memory".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            bytes: count.clone(),
+        };
+        assert_eq!(
+            crate::kernel::stated_loadable_extent_guards(&range),
+            vec![Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), count),
+                true,
+            )]
+        );
+    }
+
+    /// A constant extent carries nothing: a cell width or a constant range's
+    /// size is already a true count of bytes, decided where it was lowered.
     #[test]
     fn an_unscaled_extent_carries_nothing() {
         let cell = Proposition::CMemoryLoadable {

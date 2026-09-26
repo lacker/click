@@ -3085,7 +3085,7 @@ impl<'a> Proof<'a> {
             let Proposition::CMemoryLoadable { bytes, .. } = kernel else {
                 continue;
             };
-            let Some(element_width) = crate::kernel::scaled_extent_element_width(bytes) else {
+            let Some(element_width) = crate::kernel::stated_extent_element_width(bytes) else {
                 continue;
             };
             let available = self.facts().exact_available_across_effects(kernel, &[]);

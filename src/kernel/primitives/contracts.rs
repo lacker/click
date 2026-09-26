@@ -2056,6 +2056,19 @@ pub(crate) fn scaled_extent_element_width(bytes: &Bitvector32Term) -> Option<u32
     }
 }
 
+/// The element width a stated range's byte count was lowered with, when the
+/// count reads as a range at all.
+///
+/// A range of `w`-byte elements lowers its extent to `(y - x) * w`, except
+/// that a range of one-byte elements keeps it unscaled: `a[0..n]` over `uint8`
+/// is `n` bytes itself. So a scaled count gives its factor, and a symbolic
+/// unscaled one is a byte range. A constant count is neither: a cell's width
+/// or a constant range's size is already a true count of bytes, and its
+/// validity is decided where it was lowered.
+pub(crate) fn stated_extent_element_width(bytes: &Bitvector32Term) -> Option<u32> {
+    scaled_extent_element_width(bytes).or_else(|| bytes.as_const().is_none().then_some(1))
+}
+
 /// The byte-count guards a stated range-loadable proposition carries.
 ///
 /// A surface `loadable(p[a..b])` means two things at once: that `a..b` is a
@@ -2076,9 +2089,9 @@ pub(crate) fn scaled_extent_element_width(bytes: &Bitvector32Term) -> Option<u32
 ///
 /// Conjunctions are walked, because a `requires` clause is written as one.
 /// A quantifier or an implication is not: a guard over a bound variable is not
-/// a fact about anything the surrounding scope can state. A byte count that is
-/// not a scaled element range carries nothing — a constant cell width and a
-/// block size are already true counts of bytes.
+/// a fact about anything the surrounding scope can state. A byte range carries
+/// its guards like a wider one, over its unscaled count; a constant byte count
+/// carries nothing (see [`stated_extent_element_width`]).
 pub(crate) fn stated_loadable_extent_guards(proposition: &Proposition) -> Vec<Proposition> {
     let mut guards = Vec::new();
     collect_stated_loadable_extent_guards(proposition, &mut guards, false);
@@ -2114,7 +2127,7 @@ fn collect_stated_loadable_extent_guards(
             collect_stated_loadable_extent_guards(right, guards, every_spelling);
         }
         Proposition::CMemoryLoadable { bytes, .. } => {
-            let Some(element_width) = scaled_extent_element_width(bytes) else {
+            let Some(element_width) = stated_extent_element_width(bytes) else {
                 return;
             };
             let Some(element_count) =
