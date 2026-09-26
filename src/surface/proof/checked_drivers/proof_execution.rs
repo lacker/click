@@ -1674,6 +1674,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
     claim_label: &str,
     leaves: &mut Vec<Proof<'a>>,
     refuted_match_paths: &mut Vec<(ExecutionProofState, ProofCertificate)>,
+    unfinished: &mut Vec<UnfinishedPreservationPath<'a>>,
     last_tactic: Option<(usize, &'static str)>,
 ) -> Result<Proof<'a>, ClickError> {
     check_verification_deadline()?;
@@ -1706,6 +1707,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 claim_label,
                 leaves,
                 refuted_match_paths,
+                unfinished,
                 0,
                 Some((*index, "match")),
             )
@@ -1728,13 +1730,23 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                     // One certified iteration is a path that reaches the
                     // body's end, a `continue`, or a `break`. A path that
                     // stops anywhere else has not been proved at all. A
-                    // script still being written stops inside the body, and
-                    // reports the frontier it reached instead; anything
-                    // else is a complete-but-wrong body.
-                    if let Some(frontier) =
-                        describe_unfinished_preservation(claim_label, &proof, leaves, last_tactic)
-                    {
-                        return Err(ClickError::new(frontier));
+                    // script still being written stops inside the body; it
+                    // is set aside so the region's other paths still run
+                    // and the finished ones still close their back edges,
+                    // and the frontier it reached is reported after that
+                    // (`describe_unfinished_preservation`). Anything else is
+                    // a complete-but-wrong body.
+                    if proof.execution_view().is_ok_and(|view| {
+                        matches!(
+                            view.frontier.position,
+                            FrontierPosition::StatementEntry { .. }
+                        )
+                    }) {
+                        unfinished.push(UnfinishedPreservationPath {
+                            proof: proof.clone(),
+                            last_tactic,
+                        });
+                        return Ok(proof);
                     }
                     return Err(ClickError::new(format!(
                         "`{claim_label}` must execute exactly one complete loop-body iteration, ending at the body's end, a `continue`, or a `break`"
@@ -1753,6 +1765,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 claim_label,
                 leaves,
                 refuted_match_paths,
+                unfinished,
                 last_tactic,
             )
         }
@@ -1825,6 +1838,12 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 }
                 match &indexed.tactic {
                     ProofTactic::Step => {
+                        // The checked step is recorded, timed, and traced
+                        // under this tactic's own index, not the last one
+                        // the linear driver set.
+                        proof = proof
+                            .with_execution_tactic_index(indexed.index)?
+                            .at_source_tactic(indexed.source_index);
                         let checkpoint = proof.checkpoint();
                         proof = proof.apply_step(ProofStep::Step)?;
                         if indexed.source_index != owning_source_index
@@ -1875,6 +1894,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 claim_label,
                 leaves,
                 refuted_match_paths,
+                unfinished,
                 last_tactic,
             )
         }
@@ -1907,6 +1927,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                     claim_label,
                     leaves,
                     refuted_match_paths,
+                    unfinished,
                     Some((*index, "if")),
                 );
             }
@@ -1930,6 +1951,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                     claim_label,
                     leaves,
                     refuted_match_paths,
+                    unfinished,
                     Some((*index, "if")),
                 )?;
             }
@@ -1977,6 +1999,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 claim_label,
                 leaves,
                 refuted_match_paths,
+                unfinished,
                 Some((*index, "branch")),
             )
         }
@@ -2015,8 +2038,35 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                 claim_label,
                 leaves,
                 refuted_match_paths,
+                unfinished,
                 Some((*index, "open")),
             )
+        }
+    }
+}
+
+/// A `preserve` path that stopped inside the loop body because its script
+/// ran out of tactics. The region keeps traversing its other paths after
+/// meeting one, so a finished arm's back edge is still checked, and the
+/// first of these is reported once those checks pass.
+pub(in crate::surface::proof) struct UnfinishedPreservationPath<'a> {
+    pub(in crate::surface::proof) proof: Proof<'a>,
+    pub(in crate::surface::proof) last_tactic: Option<(usize, &'static str)>,
+}
+
+impl UnfinishedPreservationPath<'_> {
+    /// The frontier report for this path, counting the paths in `leaves`
+    /// as the ones already complete.
+    pub(in crate::surface::proof) fn report(
+        &self,
+        claim_label: &str,
+        leaves: &[Proof<'_>],
+    ) -> ClickError {
+        match describe_unfinished_preservation(claim_label, &self.proof, leaves, self.last_tactic) {
+            Some(frontier) => ClickError::new(frontier),
+            None => ClickError::new(format!(
+                "`{claim_label}` must execute exactly one complete loop-body iteration, ending at the body's end, a `continue`, or a `break`"
+            )),
         }
     }
 }
@@ -2190,6 +2240,7 @@ fn advance_preservation_match_group<'a>(
     claim_label: &str,
     leaves: &mut Vec<Proof<'a>>,
     refuted_match_paths: &mut Vec<(ExecutionProofState, ProofCertificate)>,
+    unfinished: &mut Vec<UnfinishedPreservationPath<'a>>,
     split_depth: usize,
     last_tactic: Option<(usize, &'static str)>,
 ) -> Result<Proof<'a>, ClickError> {
@@ -2220,6 +2271,7 @@ fn advance_preservation_match_group<'a>(
                 claim_label,
                 leaves,
                 refuted_match_paths,
+                unfinished,
                 split_depth + 1,
                 last_tactic,
             )?;
@@ -2246,6 +2298,7 @@ fn advance_preservation_match_group<'a>(
         claim_label,
         leaves,
         refuted_match_paths,
+        unfinished,
         last_tactic,
     )
 }

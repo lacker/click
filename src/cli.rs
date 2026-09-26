@@ -6,7 +6,7 @@
 //! durations, structured tactic budgets, project discovery, and a bounded
 //! worker pool.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -854,9 +854,9 @@ impl SidecarSelection {
 /// example may import another's model.
 pub fn select_sidecars(path: &Path) -> Result<SidecarSelection, String> {
     if !path.is_dir() {
-        let parent = containing_directory(path);
+        let parent = lone_sidecar_project_root(path)?;
         return Ok(SidecarSelection {
-            project_root: parent.to_path_buf(),
+            project_root: parent,
             projects: vec![SelectedProject {
                 path: path.to_path_buf(),
                 sidecars: vec![path.to_path_buf()],
@@ -888,6 +888,60 @@ pub fn select_sidecars(path: &Path) -> Result<SidecarSelection, String> {
         ));
     }
     Ok(selection)
+}
+
+/// The project root a lone sidecar selects: its own directory, widened to
+/// the nearest directory that also holds every module it transitively
+/// imports. A sidecar whose imports all lie beside or below it keeps its
+/// directory, as before; one that imports a sibling project (the rbtree
+/// insert frontier importing `../rbtree-model/rbtree_model.click`) selects
+/// their common parent, which is the root the directory form of the same
+/// command would use. Only the import graph is read here; the sources are
+/// loaded again, under the root, by the ordinary project reader, so an
+/// import that fails to resolve is reported there rather than guessed at.
+pub fn lone_sidecar_project_root(sidecar: &Path) -> Result<PathBuf, String> {
+    let default = containing_directory(sidecar).to_path_buf();
+    let Ok(entry) = fs::canonicalize(sidecar) else {
+        return Ok(default);
+    };
+    let mut root = containing_directory(&entry).to_path_buf();
+    let mut visited = BTreeSet::new();
+    let mut pending = vec![entry];
+    while let Some(module) = pending.pop() {
+        if !visited.insert(module.clone()) {
+            continue;
+        }
+        if visited.len() > 256 {
+            return Err(format!(
+                "Click import chain exceeds 256 modules while selecting the project root of `{}`",
+                sidecar.display()
+            ));
+        }
+        let Ok(source) = fs::read_to_string(&module) else {
+            continue;
+        };
+        let Ok(sites) = click_import_sites(&source) else {
+            continue;
+        };
+        let parent = containing_directory(&module);
+        for site in sites {
+            let Ok(imported) = fs::canonicalize(parent.join(&site.path)) else {
+                continue;
+            };
+            let directory = containing_directory(&imported).to_path_buf();
+            while !directory.starts_with(&root) {
+                let Some(above) = root.parent() else {
+                    break;
+                };
+                root = above.to_path_buf();
+            }
+            pending.push(imported);
+        }
+    }
+    if visited.len() == 1 {
+        return Ok(default);
+    }
+    Ok(root)
 }
 
 /// What a `profile` or `audit` target selects: markdown tests, or sidecars
@@ -1572,6 +1626,59 @@ mod tests {
         assert_eq!(containing_directory(Path::new("/")), Path::new("."));
         let selection = select_sidecars(Path::new("a.click")).unwrap();
         assert_eq!(selection.project_root, Path::new("."));
+    }
+
+    /// A lone sidecar that imports a sibling project selects their common
+    /// parent as its project root, the root the directory form would use;
+    /// one whose imports lie beside or below it keeps its own directory.
+    #[test]
+    fn a_lone_sidecar_root_covers_its_imports() {
+        let root = std::env::temp_dir().join(format!(
+            "click-lone-sidecar-root-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("model")).unwrap();
+        fs::create_dir_all(root.join("insert/local")).unwrap();
+        fs::write(root.join("model/model.click"), "spec enum Color { Red }\n").unwrap();
+        fs::write(
+            root.join("insert/local/helpers.click"),
+            "import \"../../model/model.click\";\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("insert/entry.click"),
+            "import \"local/helpers.click\";\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("insert/alone.click"),
+            "import \"local/helpers.click\";\n",
+        )
+        .unwrap();
+        fs::write(root.join("insert/local/helpers.click"), "").unwrap();
+        let canonical = fs::canonicalize(&root).unwrap();
+        assert_eq!(
+            fs::canonicalize(lone_sidecar_project_root(&root.join("insert/alone.click")).unwrap())
+                .unwrap(),
+            canonical.join("insert")
+        );
+        fs::write(
+            root.join("insert/local/helpers.click"),
+            "import \"../../model/model.click\";\n",
+        )
+        .unwrap();
+        assert_eq!(
+            fs::canonicalize(lone_sidecar_project_root(&root.join("insert/entry.click")).unwrap())
+                .unwrap(),
+            canonical
+        );
+        assert_eq!(
+            lone_sidecar_project_root(Path::new("missing/nowhere.click")).unwrap(),
+            PathBuf::from("missing")
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// A declaration module beside its importers is not a directory entry:

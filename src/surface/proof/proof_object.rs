@@ -1102,10 +1102,52 @@ impl Proof<'_> {
             crate::surface::proof_trace::record_accepted_path(
                 claim,
                 path_index,
+                false,
                 trace_path_lineage(&self.node, self.focused_branch_id()),
                 Box::new(self.node.clone()),
             );
         }
+    }
+
+    /// Records this completed loop-phase path for the trace, under the path
+    /// the enclosing proof had reached at the `loop` tactic.
+    pub(in crate::surface::proof) fn record_nested_accepted_trace(
+        &self,
+        claim: &str,
+        path_index: usize,
+    ) {
+        if crate::surface::proof_trace::enabled_for(claim) {
+            crate::surface::proof_trace::record_accepted_path(
+                claim,
+                path_index,
+                true,
+                trace_path_lineage(&self.node, self.focused_branch_id()),
+                Box::new(self.node.clone()),
+            );
+        }
+    }
+
+    /// This proof's traced path so far, for a phase proof it is about to
+    /// drive to render above its own.
+    pub(in crate::surface::proof) fn trace_lineage(
+        &self,
+        claim: &str,
+    ) -> Option<Vec<crate::surface::proof_trace::TracePathNode>> {
+        crate::surface::proof_trace::enabled_for(claim)
+            .then(|| trace_path_lineage(&self.node, self.focused_branch_id()))
+    }
+
+    /// Makes `parent_lineage` the traced path above this proof's root, as a
+    /// `have` body's root is placed under the proof that opened it.
+    pub(in crate::surface::proof) fn register_trace_scope_under(
+        &self,
+        parent_lineage: Vec<crate::surface::proof_trace::TracePathNode>,
+    ) {
+        crate::surface::proof_trace::register_scope(
+            Arc::as_ptr(&self.node) as usize,
+            parent_lineage,
+            Box::new(self.node.clone()),
+        );
     }
 
     pub(in crate::surface::proof) fn note_trace_join_continuation_arm(&self, arm: Option<usize>) {

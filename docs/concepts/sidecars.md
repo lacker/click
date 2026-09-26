@@ -68,10 +68,13 @@ Imports are relative to the importing file, transitive, and confined to the
 project root. Paths are canonicalized to stable project-relative module
 identities; cycles, missing files, escaping paths, and ambiguous unqualified
 declarations are errors. A single-sidecar CLI input uses the sidecar's
-directory as its root; directory-target verification passes its selected Click
-project root explicitly. This keeps import boundaries independent of version
-control while permitting an intentional project to share specifications across
-sibling directories. In the first import delivery, libraries may export
+directory as its root, widened to the nearest directory that also holds every
+module the sidecar transitively imports, so a sidecar that imports a sibling
+project (`../rbtree-model/rbtree_model.click`) selects their common parent,
+the same root the directory form of the command uses; directory-target
+verification passes its selected Click project root explicitly. This keeps
+import boundaries independent of version control while permitting an
+intentional project to share specifications across sibling directories. In the first import delivery, libraries may export
 algebraic types, predicates, pure functions, resources, and theorem
 statements. Imported `verifying` declarations, named contracts, and C function
 specifications are rejected.

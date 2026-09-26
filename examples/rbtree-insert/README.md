@@ -27,9 +27,13 @@ click verify examples/rbtree-model
 click verify examples/rbtree-insert
 ```
 
-The frontier sidecar imports the model by a path above its own directory, and
-`click verify` on a single sidecar takes that sidecar's directory as the
-project root, so the file cannot be verified on its own from the command line
-today. The examples integration test loads it with the `examples` root; to
-iterate on it, copy it beside a copy of the model under one scratch root and
-verify that directory.
+Inspect the unfinished proof directly with:
+
+```sh
+click verify examples/rbtree-insert/rbtree_insert.frontier
+click verify --trace-proof __rb_insert --trace-to LINE examples/rbtree-insert/rbtree_insert.frontier
+```
+
+The frontier imports the model from the sibling project, so its project root
+is `examples`, the nearest directory holding both; `--trace-to` reaches the
+tactics inside the fixup's proof `match` arms and its `preserve` body.

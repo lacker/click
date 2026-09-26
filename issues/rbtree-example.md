@@ -56,23 +56,22 @@ closed in 9e1c4281.
 
 The loop rule was certified end to end only in a scratch experiment whose C
 copy cut the uncle-black paths short with a `break`; on the unchanged source
-the frontier report for the first uncle-black path preempts the back-edge
-check of the completed paths, so the recolour arms' closers are validated
-there by explicit `have`s of every invariant in the rebound binder spellings
-immediately before `close_invariants()`. The frontier is now the uncle-black
+the frontier report for the first uncle-black path preempted the back-edge
+check of the completed paths at the time, so the recolour arms' closers were
+validated there by explicit `have`s of every invariant in the rebound binder
+spellings immediately before `close_invariants()`. Since the frontier fix the
+next day, the finished arms' closers are checked on the unchanged source
+before that report. The frontier is now the uncle-black
 case, statement 22 of the body (`tmp = parent->rb_right`), which is where C3b
 starts on all four copies; `tests/examples.rs` pins that diagnostic. The
 frontier verifies to that point in about 2.8s on a warm debug build.
 
-Three tooling observations from this resumption, none blocking, none filed:
-`click verify` of a lone sidecar takes its directory as the project root, so
-`rbtree_insert.frontier` cannot be run from the command line and its README
-said it could (corrected); `--trace-proof --trace-to` addresses only tactics
-written directly in a proof body, not those inside a proof `match` arm or a
-loop phase, so it could not show the insert loop's state; and the unfinished
-`preserve` frontier report is emitted before any completed path's back edge
-is checked, so a wrong `close_invariants` on a finished arm stays silent
-until every arm is finished.
+Three tooling limits met on this resumption were fixed the next day: a lone
+sidecar now selects a project root covering its imports, so
+`rbtree_insert.frontier` verifies from the command line; `--trace-to` reaches
+tactics inside proof `match` arms and loop phases; and a finished `preserve`
+arm's back edge is checked before an unfinished sibling's frontier is
+reported (`mdtests/preserve_finished_arm_checked_before_frontier.md`).
 
 ## State, 2026-09-13
 

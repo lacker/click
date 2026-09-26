@@ -938,8 +938,12 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         environment.theorem_environment,
     )
     .with_surface_local_scope(&phase_proof_scope(environment));
+    if let Some(parent_lineage) = crate::surface::proof_trace::loop_parent_lineage() {
+        root.register_trace_scope_under(parent_lineage);
+    }
     let mut leaves = Vec::new();
     let mut refuted_match_paths = Vec::new();
+    let mut unfinished = Vec::new();
     advance_preservation_region(
         root,
         &program,
@@ -950,6 +954,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         &claim_label,
         &mut leaves,
         &mut refuted_match_paths,
+        &mut unfinished,
         None,
     )?;
     let invariant_surfaces = loop_invariant_surfaces(environment, loop_index, &claim_label)?;
@@ -991,7 +996,16 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             certificate,
         });
     }
-    for leaf in leaves {
+    // A path whose script ran out of tactics is reported only after the
+    // finished paths have closed their back edges below, so a wrong
+    // `close_invariants` on a finished arm is named while its sibling arm
+    // is still being written. The report is prepared first because the
+    // loop consumes the leaves it counts.
+    let deferred_frontier = unfinished
+        .first()
+        .map(|path| path.report(&claim_label, &leaves));
+    for (leaf_index, leaf) in leaves.into_iter().enumerate() {
+        leaf.record_nested_accepted_trace(&claim_label, leaf_index);
         let context_execution = leaf.execution_view()?.execution.clone();
         for rule in context_execution.core.frontier_loop_rules.iter() {
             if !nested_loop_rules
@@ -1300,6 +1314,9 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             case_offsets,
             certificate,
         });
+    }
+    if let Some(frontier) = deferred_frontier {
+        return Err(frontier);
     }
     let certificate = merge_phase_path_aligned_certificates(&claim_label, certificate_paths)?;
     Ok(LoopPreservationProofResult {

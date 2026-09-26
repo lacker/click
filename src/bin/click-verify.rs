@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use click::cli::{
     CInput, DEFAULT_VERIFY_TIME_LIMIT, LoadedTarget, containing_directory, load_sidecar_inputs,
-    load_target_inputs, looks_like_mdtest, looks_like_source_location, parse_duration,
-    parse_source_location, select_sidecars, source_refs,
+    load_target_inputs, lone_sidecar_project_root, looks_like_mdtest, looks_like_source_location,
+    parse_duration, parse_source_location, select_sidecars, source_refs,
 };
 use click::languages::c::source as c_source;
 use click::languages::c::target::CTarget;
@@ -162,10 +162,11 @@ fn run(arguments: Arguments) -> Result<(), String> {
     if path.is_dir() {
         verify_directory(path, arguments.time_limit)
     } else {
+        let project_root = lone_sidecar_project_root(path)?;
         verify_file(
             path,
             arguments.time_limit,
-            Some(containing_directory(path)),
+            Some(&project_root),
             arguments.trace_proof.as_deref(),
             arguments.trace_to.as_ref(),
         )
@@ -1304,7 +1305,8 @@ fn verify_location(
     column: usize,
     time_limit: Duration,
 ) -> Result<(), String> {
-    let target = load_target_inputs(click_path, Some(containing_directory(click_path)))?;
+    let project_root = lone_sidecar_project_root(click_path)?;
+    let target = load_target_inputs(click_path, Some(&project_root))?;
     let line_offset = target.line_offset();
     // An mdtest location names a line of the markdown file; the verifier
     // selects by lines of the extracted Click block.
@@ -1430,6 +1432,23 @@ mod tests {
             )
             .unwrap(),
             click::surface::SourcePosition::new(1, 6),
+        );
+
+        // A proof `match` arm's block follows `=>`, which the source scanner
+        // reads as two punctuation tokens; its tactics are targets too.
+        let arm =
+            "by {\n    match m {\n        K::A => {\n            step();\n        },\n    }\n}\n";
+        assert_eq!(
+            resolve_trace_target(
+                arm,
+                0,
+                &TraceTo {
+                    line: 4,
+                    column: None
+                }
+            )
+            .unwrap(),
+            click::surface::SourcePosition::new(4, 13),
         );
 
         let nested = "by {\n    have n <= n by { simp(); }\n}\n";

@@ -951,3 +951,10 @@ stops the body where it stands and its own diagnostic is what the author sees
 (`mdtests/loop_preserve_tactic_failure_reported.md`). The one-iteration rule is
 still what refuses a body that is complete and wrong without reaching one of
 those endings, because such a path did not stop inside the body at all.
+
+An unfinished path does not stop the region's other paths. Each arm of a
+proof `match` that does reach an ending still closes its invariants and its
+measure, and a failure there is reported before the unfinished sibling's
+frontier: a wrong `close_invariants` on a finished arm is named while the
+next arm is still being written, rather than staying silent until every arm
+is finished (`mdtests/preserve_finished_arm_checked_before_frontier.md`).

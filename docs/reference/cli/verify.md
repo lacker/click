@@ -25,9 +25,11 @@ Replace the following:
 
 ## Target selection
 
-A sidecar target verifies every proof owned by that sidecar. A
-`PATH:LINE:COLUMN` target verifies only the proof unit containing that
-location. Imported declarations are available, but importing does not select
+A sidecar target verifies every proof owned by that sidecar. Its project
+root is the sidecar's directory, widened to cover every module the sidecar
+transitively imports, so a sidecar importing a sibling project's module can
+be verified on its own. A `PATH:LINE:COLUMN` target verifies only the proof
+unit containing that location. Imported declarations are available, but importing does not select
 their proof bodies; similarly, an unselected called C function contributes its
 well-formed contract without recursively selecting its implementation proof.
 The retained proof artifact records this selected/assumed boundary.
@@ -63,7 +65,7 @@ rather than checking their proofs.
 | --- | --- |
 | `--time-limit DURATION` | Set the outer deadline independently for each selected sidecar or proof unit. The default is `30s`. |
 | `--trace-proof FUNCTION` | Verify only this C function in one sidecar and, on a proof error, show checked steps on its failing path with added facts and changed resource counts. If the script completes but contract certification fails, show the failed obligation and a bounded view of facts available to that check. Trace output is bounded. |
-| `--trace-to LINE[:COLUMN]` | Focus `--trace-proof` on a written tactic at this source location, including in a successful proof. Without it, the trace follows the failing tactic. |
+| `--trace-to LINE[:COLUMN]` | Focus `--trace-proof` on a written tactic at this source location, including in a successful proof; the tactic may sit inside a proof `match` arm or a loop's `preserve` body, whose trace is shown under the enclosing proof's path up to the `loop`. Without it, the trace follows the failing tactic. |
 | `--changed-since REVISION` | Select claims affected since a Git revision. Reuse requires a valid full-verification marker for the baseline and verifier binary. |
 | `--explain` | With `--changed-since`, print the incremental selection without verifying it. |
 | `--allow-sorry` | Dev-only debugging switch: admit proof units whose body is exactly `sorry();` without checking them. Admissions are reported loudly, never recorded in incremental baselines, and `click audit`, `click expand`, and `scripts/check.sh` never enable the flag. Cannot be combined with `--changed-since`. |
