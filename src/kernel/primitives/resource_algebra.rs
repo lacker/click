@@ -2668,28 +2668,43 @@ impl ResourceContext {
             let Some(derivation) = current.derivation() else {
                 break;
             };
+            // A seeded run is the stores it stands for, each judged as one.
+            let seeded = derivation.seeded_stores();
+            let stores: Vec<(&Pointer, &CValue)> = match (&*derivation, &seeded) {
+                (CMemoryDerivation::Store { pointer, value, .. }, _) => vec![(pointer, value)],
+                (CMemoryDerivation::CellsSeeded { .. }, Some(stores)) => stores
+                    .iter()
+                    .map(|(pointer, value)| (pointer, value))
+                    .collect(),
+                _ => Vec::new(),
+            };
             match &*derivation {
-                CMemoryDerivation::Store { .. } if stores_checked => {}
-                CMemoryDerivation::Store { pointer, .. } if unchanged_cell(pointer) => {}
-                CMemoryDerivation::Store { pointer, value, .. } => {
-                    for fact in facts_in_block(&self, &pointer.block) {
-                        let CResource::Iterated(iterated) = fact.resource() else {
+                CMemoryDerivation::Store { .. } | CMemoryDerivation::CellsSeeded { .. }
+                    if stores_checked => {}
+                CMemoryDerivation::Store { .. } | CMemoryDerivation::CellsSeeded { .. } => {
+                    for (pointer, value) in stores {
+                        if unchanged_cell(pointer) {
                             continue;
-                        };
-                        let guard = iterated.guard();
-                        // A store that did not pass the store rule keeps the
-                        // fact only when it provably misses the guard cells.
-                        let keeps = pointer.block.proven_distinct(&guard.base.block)
-                            || (pointer.block == guard.base.block
-                                && value.byte_width() == guard.cell_width
-                                && pointer
-                                    .element_index_from_base_with_width(
-                                        &guard.base,
-                                        guard.cell_width,
-                                    )
-                                    .is_some_and(|index| iterated.holes().contains(&index)));
-                        if !keeps {
-                            dropped.push(fact);
+                        }
+                        for fact in facts_in_block(&self, &pointer.block) {
+                            let CResource::Iterated(iterated) = fact.resource() else {
+                                continue;
+                            };
+                            let guard = iterated.guard();
+                            // A store that did not pass the store rule keeps the
+                            // fact only when it provably misses the guard cells.
+                            let keeps = pointer.block.proven_distinct(&guard.base.block)
+                                || (pointer.block == guard.base.block
+                                    && value.byte_width() == guard.cell_width
+                                    && pointer
+                                        .element_index_from_base_with_width(
+                                            &guard.base,
+                                            guard.cell_width,
+                                        )
+                                        .is_some_and(|index| iterated.holes().contains(&index)));
+                            if !keeps {
+                                dropped.push(fact);
+                            }
                         }
                     }
                 }
@@ -2753,6 +2768,7 @@ impl ResourceContext {
             });
         let ambiguous_event = match derivation {
             CMemoryDerivation::Store { pointer, .. } => memory_block_may_alias(&pointer.block),
+            CMemoryDerivation::CellsSeeded { run, .. } => memory_block_may_alias(&run.base().block),
             CMemoryDerivation::CallHavoc { mutable_ranges, .. }
             | CMemoryDerivation::LoopHavoc {
                 mutable_ranges: Some(mutable_ranges),
@@ -2787,25 +2803,33 @@ impl ResourceContext {
             }
         }
         match derivation {
-            CMemoryDerivation::Store { pointer, value, .. } => {
-                let write = CMemoryRange::new_with_element_width(
-                    pointer.clone(),
-                    Bitvector32Term::Constant(0),
-                    Bitvector32Term::Constant(1),
-                    value.byte_width(),
-                );
-                if memory_interval_nodes(&write).is_some() {
-                    add_memory_interval_candidates(
-                        &self.storage.projections_by_memory_interval,
-                        &self.storage.projections_by_memory_interval_subtree,
-                        &write,
-                        &mut entries,
+            CMemoryDerivation::Store { .. } | CMemoryDerivation::CellsSeeded { .. } => {
+                let stores = match derivation {
+                    CMemoryDerivation::Store { pointer, value, .. } => {
+                        vec![(pointer.clone(), value.clone())]
+                    }
+                    _ => derivation.seeded_stores().expect("a CellsSeeded edge"),
+                };
+                for (pointer, value) in &stores {
+                    let write = CMemoryRange::new_with_element_width(
+                        pointer.clone(),
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Constant(1),
+                        value.byte_width(),
                     );
-                } else if let Some(bucket) =
-                    self.storage.projections_by_memory_block.get(&pointer.block)
-                {
-                    for occurrence in bucket.iter() {
-                        entries = entries.with_value(*occurrence);
+                    if memory_interval_nodes(&write).is_some() {
+                        add_memory_interval_candidates(
+                            &self.storage.projections_by_memory_interval,
+                            &self.storage.projections_by_memory_interval_subtree,
+                            &write,
+                            &mut entries,
+                        );
+                    } else if let Some(bucket) =
+                        self.storage.projections_by_memory_block.get(&pointer.block)
+                    {
+                        for occurrence in bucket.iter() {
+                            entries = entries.with_value(*occurrence);
+                        }
                     }
                 }
             }

@@ -119,6 +119,11 @@ pub(in crate::kernel) enum MemoryDagHopJustification {
     LoopHavocRanges {
         ranges: Vec<RangeDisjointFromPointerEvidence>,
     },
+    /// A `CellsSeeded` edge crossed: one justification per store it stands
+    /// for, newest first ([`CMemoryDerivation::seeded_stores`]).
+    SeededStores {
+        hops: Vec<MemoryDagHopJustification>,
+    },
     AssumptionDependent(MemoryDagAssumptionKind),
 }
 
@@ -205,7 +210,11 @@ pub(in crate::kernel) enum PositiveTermEvidence {
 
 impl MemoryDagHopJustification {
     fn is_typed(&self) -> bool {
-        !matches!(self, Self::AssumptionDependent(_))
+        match self {
+            Self::AssumptionDependent(_) => false,
+            Self::SeededStores { hops } => hops.iter().all(Self::is_typed),
+            _ => true,
+        }
     }
 
     /// Check one completed local edge proof without asking a general solver
@@ -366,6 +375,24 @@ impl MemoryDagHopJustification {
                 ranges.len() == mutable_ranges.len()
                     && ranges.iter().zip(mutable_ranges).all(|(evidence, range)| {
                         evidence.checks(range, pointer, bytes, assumptions)
+                    })
+            }
+            Self::SeededStores { hops } => {
+                let Some(stores) = derivation.seeded_stores() else {
+                    return false;
+                };
+                hops.len() == stores.len()
+                    && hops.iter().zip(stores).all(|(hop, (write, value))| {
+                        hop.checks(
+                            &CMemoryDerivation::Store {
+                                base: derivation.base().clone(),
+                                pointer: write,
+                                value,
+                            },
+                            pointer,
+                            bytes,
+                            assumptions,
+                        )
                     })
             }
             Self::AssumptionDependent(_) => false,
@@ -901,6 +928,25 @@ fn memory_dag_cell_source_walk(
             &evidence,
         ) {
             super::step_effect::StepEffect::Affected => {
+                let seeded = matches!(derivation.as_ref(), CMemoryDerivation::CellsSeeded { .. })
+                    .then(|| {
+                        super::step_effect::seeded_cell_effect(
+                            derivation.as_ref(),
+                            pointer,
+                            bytes,
+                            &evidence,
+                        )
+                    });
+                if let Some(super::step_effect::SeededCellEffect::Written(_, value)) = seeded {
+                    return (
+                        MemoryDagCell::Stored {
+                            node: current,
+                            value,
+                            path,
+                        },
+                        CellWalkStop::Affected,
+                    );
+                }
                 if let CMemoryDerivation::Store { value, .. } = derivation.as_ref() {
                     return (
                         MemoryDagCell::Stored {

@@ -1992,7 +1992,7 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut memory.blocks).remove(block);
         // Only the retired block's own cells go: one key range each.
         let own = AliasCandidates::only_block(block);
-        own.retain_map(std::sync::Arc::make_mut(&mut memory.cells), |_, _| false);
+        std::sync::Arc::make_mut(&mut memory.cells).retain_candidates(&own, |_, _| false);
         own.retain_map(std::sync::Arc::make_mut(&mut memory.union_cells), |_, _| {
             false
         });
@@ -2078,7 +2078,7 @@ impl CMemory {
             !freed_within(base)
         });
         candidates.retain_map(&mut heap.initialized_cells, |cell, _| !freed_within(cell));
-        candidates.retain_map(std::sync::Arc::make_mut(&mut self.cells), |cell, _| {
+        std::sync::Arc::make_mut(&mut self.cells).retain_candidates(&candidates, |cell, _| {
             !aliased_blocks.contains(&cell.block) && !freed_within(cell)
         });
         if let Some(base) = base {
@@ -2332,9 +2332,8 @@ impl CMemory {
         candidates.retain_map(&mut heap.initialized_cells, |candidate, _| {
             !retired_cell(candidate)
         });
-        candidates.retain_map(std::sync::Arc::make_mut(&mut self.cells), |candidate, _| {
-            !retired_cell(candidate)
-        });
+        std::sync::Arc::make_mut(&mut self.cells)
+            .retain_candidates(&candidates, |candidate, _| !retired_cell(candidate));
         candidates.retain_map(
             std::sync::Arc::make_mut(&mut self.union_cells),
             |(candidate, _), _| !retired_cell(candidate),
@@ -2791,8 +2790,8 @@ impl CMemory {
         let base = Some(intern_derivation_base(&mut self));
         let mut flat_hits = Vec::new();
         let candidates = call_havoc_candidates(mutable_ranges);
-        candidates.retain_map(
-            std::sync::Arc::make_mut(&mut self.cells),
+        std::sync::Arc::make_mut(&mut self.cells).retain_candidates(
+            &candidates,
             |pointer, value| match call_havoc_keeps_cell(
                 pointer,
                 value,
@@ -2911,7 +2910,7 @@ impl CMemory {
         let mut visited = 0usize;
         let mut flat_hits = Vec::new();
         let mut dropped_cells = Vec::new();
-        for (pointer, value) in candidates.entries(&before.cells) {
+        for (pointer, value) in candidates.entries(before.cells.logical()) {
             visited += 1;
             match call_havoc_keeps_cell(pointer, value, mutable_ranges, assumptions, kept) {
                 CallHavocCellRule::Separate => {}
@@ -2948,6 +2947,102 @@ impl CMemory {
             && self
                 .union_cells
                 .is_without(&before.union_cells, &dropped_union_cells)
+    }
+
+    /// Seeds the cells of elements `first..count` at `base`,
+    /// `base + element_width`, …: each one the load of its own element in
+    /// `source`, typed as `element_type` ([`cell_run_value`]). This is exactly
+    /// `store` of each such value in element order, skipping every element
+    /// that already holds a cell, and
+    /// it costs the same whatever `count` is: the cells are one [`CellRun`]
+    /// and the stores one `CellsSeeded` edge.
+    ///
+    /// Two things a store does that a run does not represent are refused
+    /// rather than approximated: displacing typed union views (the snapshot
+    /// holds some) and marking a live heap cell initialized (an allocation
+    /// may hold the range). Those fall back to the stores themselves.
+    pub(crate) fn with_seeded_cells(
+        mut self,
+        base: Pointer,
+        element_width: u32,
+        element_type: CType,
+        first: u32,
+        count: u32,
+        source: SharedCMemory,
+    ) -> Self {
+        if first >= count {
+            return self;
+        }
+        let may_touch_heap = AliasCandidates::of_block(&base.block)
+            .any_entry(&self.heap.live_allocations, |_, _| true);
+        if !self.union_cells.is_empty() || may_touch_heap {
+            let run = CellRun::new(
+                base,
+                element_width,
+                element_type,
+                count,
+                source,
+                IndexIntervals::default(),
+            );
+            for index in first..count {
+                let pointer = run.slot_pointer(index);
+                if !matches!(self.load(&pointer), CExpressionOutcome::Value(_)) {
+                    self = self.store(pointer, run.value(index));
+                }
+            }
+            return self;
+        }
+        let mut holes = IndexIntervals::default();
+        holes.insert_range(0, first);
+        let probe = CellRun::new(
+            base.clone(),
+            element_width,
+            element_type,
+            count,
+            source.clone(),
+            IndexIntervals::default(),
+        );
+        // An element that already holds a cell keeps it: seeding skips it,
+        // so it is a hole of the new run from the start. Only the cells of
+        // the run's own block can be one of its slots.
+        let own = AliasCandidates::only_block(&base.block);
+        for (pointer, _) in own.entries(self.cells.concrete()) {
+            if let Some(index) = probe.slot_index(pointer) {
+                holes.insert(index);
+            }
+        }
+        for run in self.cells.runs() {
+            if run.base().block != base.block {
+                continue;
+            }
+            if run.base() == &base && run.element_width() == element_width {
+                // One spelling, one stride: the live slots of the older run
+                // are the elements it has in common with this one.
+                for (low, high) in run.holes().gaps(run.count()) {
+                    holes.insert_range(low.min(count), high.min(count));
+                }
+                continue;
+            }
+            for index in run.live_indexes() {
+                if let Some(slot) = probe.slot_index(&run.slot_pointer(index)) {
+                    holes.insert(slot);
+                }
+            }
+        }
+        if holes.count() >= u64::from(count) {
+            return self;
+        }
+        let run = CellRun::new(base, element_width, element_type, count, source, holes);
+        let derivation_base = intern_derivation_base(&mut self);
+        std::sync::Arc::make_mut(&mut self.cells).add_run(run.clone());
+        record_c_memory_derivation(
+            &mut self,
+            CMemoryDerivation::CellsSeeded {
+                base: derivation_base,
+                run: std::sync::Arc::new(run),
+            },
+        );
+        self
     }
 
     pub fn store(self, pointer: Pointer, value: CValue) -> Self {
@@ -3214,9 +3309,8 @@ impl CMemory {
         };
         // `overlaps` holds only in the base's own block.
         let own = AliasCandidates::only_block(&base.block);
-        own.retain_map(std::sync::Arc::make_mut(&mut memory.cells), |pointer, _| {
-            !overlaps(pointer)
-        });
+        std::sync::Arc::make_mut(&mut memory.cells)
+            .retain_candidates(&own, |pointer, _| !overlaps(pointer));
         own.retain_map(
             std::sync::Arc::make_mut(&mut memory.union_cells),
             |(pointer, _), _| !overlaps(pointer),
@@ -3315,7 +3409,7 @@ impl CMemory {
         // every separation fact of the block. Cells ownership does not place
         // go down the ladder unchanged.
         let owned_footprint = assumptions.owned_store_footprint(&normalized_pointer, bytes);
-        candidates.retain_map(std::sync::Arc::make_mut(&mut memory.cells), |cell_pointer, cell_value| {
+        std::sync::Arc::make_mut(&mut memory.cells).retain_candidates(&candidates, |cell_pointer, cell_value| {
             let normalized_cell_pointer = Pointer {
                 block: cell_pointer.block.clone(),
                 offset: normalize_exact_memory_loads_in_pointer_offset(

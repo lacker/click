@@ -1082,14 +1082,14 @@ fn nested_snapshot_load(depth: usize) -> Bitvector32Term {
         heap: std::sync::Arc::new(CHeapMemory::default()),
     };
 
-    let mut memory = level_memory(SnapshotMap::new());
+    let mut memory = level_memory(CellStore::new());
     for level in 0..depth {
         let offset = 8 * level as i64;
         let load = Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(memory),
             Box::new(at(offset)),
         );
-        memory = level_memory(SnapshotMap::from_iter([
+        memory = level_memory(CellStore::from_iter([
             (at(offset), CValue::Int32(load.clone())),
             (at(offset + 4), CValue::Int32(load)),
         ]));

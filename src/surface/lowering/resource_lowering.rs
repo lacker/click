@@ -376,22 +376,19 @@ pub(in crate::surface) fn memory_with_symbolic_loadable_cells(
         let Some(element_type) = range.element_type else {
             continue;
         };
-        let mut offset: u32 = 0;
-        while offset
-            .checked_add(range.element_width)
-            .is_some_and(|end| end <= range.bytes)
-        {
-            let pointer = offset_pointer_by_elements(
-                range.base.clone(),
-                Bitvector32Term::Constant(offset / range.element_width),
-                range.element_width,
-            );
-            let value = symbolic_value_for_element(&base_memory, &pointer, element_type);
-            if !matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
-                memory = memory.store(pointer, value);
-            }
-            offset += range.element_width;
-        }
+        // Every whole element of the range, as one run: the cells it holds
+        // are exactly the stores of `symbolic_value_for_element` in element
+        // order, skipping elements that already hold a cell, at a cost that
+        // does not depend on how many elements there are.
+        let count = range.bytes.checked_div(range.element_width).unwrap_or(0);
+        memory = memory.with_seeded_cells(
+            range.base.clone(),
+            range.element_width,
+            element_type,
+            0,
+            count,
+            crate::kernel::intern_c_memory(base_memory.clone()),
+        );
     }
     memory
 }
@@ -793,24 +790,17 @@ fn materialize_access_segment_cells(
 
     let element_type = contract_segment_element_type(parameters, &segment.source);
     let element_width = contract_segment_element_width(parameters, &segment.source);
-    let base_memory = memory.clone();
-    for index in *start..*end {
-        let pointer = offset_pointer_by_elements(
-            segment.base.clone(),
-            Bitvector32Term::Constant(index),
-            element_width,
-        );
-        if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
-            continue;
-        }
-        let load = crate::kernel::canonical_form_of_load(
-            crate::kernel::intern_c_memory(base_memory.clone()),
-            pointer.clone(),
-        );
-        let value = symbolic_value_from_load(&pointer, element_type, load);
-        memory = memory.store(pointer, value);
-    }
-    Ok(memory)
+    let source = crate::kernel::intern_c_memory(memory.clone());
+    // One run for the segment's elements, spelled from the segment's own
+    // base as each element's pointer is (see `memory_with_symbolic_loadable_cells`).
+    Ok(memory.with_seeded_cells(
+        segment.base.clone(),
+        element_width,
+        element_type,
+        *start,
+        *end,
+        source,
+    ))
 }
 
 pub(in crate::surface) fn requirement_propositions(

@@ -34,6 +34,9 @@ pub use integer::{
 pub use integer::{MachineIntegerType, SharedMachineIntegerTerm, SignedDefinedWidth};
 mod alias_candidates;
 pub(crate) use alias_candidates::{AliasCandidates, BlockKeyed};
+mod cell_store;
+pub use cell_store::CellRun;
+pub(crate) use cell_store::{CellStore, IndexIntervals};
 mod derivations;
 mod memory_state;
 mod persistent_map;
@@ -3814,7 +3817,7 @@ pub struct CForgottenKnowledge {
 #[derive(Clone, Debug, Default)]
 pub struct CMemory {
     pub(super) blocks: std::sync::Arc<SnapshotMap<PointerBlock, CBlock>>,
-    pub(super) cells: std::sync::Arc<SnapshotMap<Pointer, CValue>>,
+    pub(super) cells: std::sync::Arc<CellStore>,
     /// Typed views of address-overlapping union storage. A union member is
     /// keyed by its address and type rather than placed in `cells`, because
     /// two members at one address must remain independently readable after a
@@ -4470,13 +4473,38 @@ pub enum CMemoryDerivation {
         mutable_ranges: Vec<CMemoryRange>,
         kept_by_caller: Option<CallKeptRanges>,
     },
+    /// `base` with a run of seeded cells added: exactly the stores, in
+    /// element order, of each slot the run held live when it was seeded
+    /// ([`CellRun`]). One edge stands for the whole run so that seeding a
+    /// constant range costs the same whatever its length; every consumer
+    /// reads it as that sequence of stores ([`Self::seeded_stores`]).
+    CellsSeeded {
+        base: SharedCMemory,
+        run: std::sync::Arc<CellRun>,
+    },
 }
 
 impl CMemoryDerivation {
+    /// The stores a `CellsSeeded` edge stands for, newest first: the order a
+    /// walk from the produced snapshot meets them in. `None` for every other
+    /// edge kind.
+    pub(crate) fn seeded_stores(&self) -> Option<Vec<(Pointer, CValue)>> {
+        let Self::CellsSeeded { run, .. } = self else {
+            return None;
+        };
+        let mut stores = run
+            .live_indexes()
+            .map(|index| (run.slot_pointer(index), run.value(index)))
+            .collect::<Vec<_>>();
+        stores.reverse();
+        Some(stores)
+    }
+
     /// The edge kind's name, for census rows that must stay readable
     /// without carrying a snapshot.
     pub(crate) fn kind_name(&self) -> &'static str {
         match self {
+            Self::CellsSeeded { .. } => "CellsSeeded",
             Self::Store { .. } => "Store",
             Self::BlockDeclared { .. } => "BlockDeclared",
             Self::HeapAllocated { .. } => "HeapAllocated",
@@ -4506,7 +4534,8 @@ impl CMemoryDerivation {
             | Self::CellsForgotten { base }
             | Self::LocalLifetimeEnded { base, .. }
             | Self::LoopHavoc { base, .. }
-            | Self::CallHavoc { base, .. } => base,
+            | Self::CallHavoc { base, .. }
+            | Self::CellsSeeded { base, .. } => base,
         }
     }
 }

@@ -210,6 +210,7 @@ pub(in crate::kernel) fn separation_check(
                 SeparationCheck::HeapAllocationSeparation
             }
             CMemoryDerivation::Store { .. }
+            | CMemoryDerivation::CellsSeeded { .. }
             | CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocated { .. }
             | CMemoryDerivation::HeapAllocationPending { .. }
@@ -222,7 +223,9 @@ pub(in crate::kernel) fn separation_check(
         // covers its extent, liveness and heap status as well as its cells;
         // only a store has a single address to be distinct from.
         Resource::Block(_) => match step {
-            CMemoryDerivation::Store { .. } => SeparationCheck::PointerDistinctness,
+            CMemoryDerivation::Store { .. } | CMemoryDerivation::CellsSeeded { .. } => {
+                SeparationCheck::PointerDistinctness
+            }
             CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocated { .. }
             | CMemoryDerivation::HeapAllocationPending { .. }
@@ -248,6 +251,7 @@ pub(in crate::kernel) fn separation_check(
                 SeparationCheck::HeapAllocationSeparation
             }
             CMemoryDerivation::Store { .. }
+            | CMemoryDerivation::CellsSeeded { .. }
             | CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocated { .. }
             | CMemoryDerivation::HeapAllocationPending { .. }
@@ -292,117 +296,14 @@ fn cell_effect(
             pointer: write,
             value,
             ..
-        } => {
-            if write == pointer
-                || explicit_dag_check_active()
-                    && write.block == pointer.block
-                    && pointer_offsets_match_from_memory_derivations(
-                        &write.offset,
-                        &pointer.offset,
-                        assumptions,
-                    )
-                || write.block == pointer.block
-                    && assumptions.exact_condition_value(&ConditionTerm::pointer_offset_equal(
-                        write.offset.clone(),
-                        pointer.offset.clone(),
-                    )) == Some(true)
-            {
-                return StepEffect::Affected;
-            }
-            // The ladders below prove the two ADDRESSES are different. That
-            // is not the question: the question is whether the store writes
-            // any of this cell's bytes, and `write + 4` is a different
-            // address from `write` while still overwriting the upper half of
-            // an eight-byte cell there.
-            //
-            // A known constant gap between the addresses answers the byte
-            // question outright, so take that answer first: overlapping
-            // bytes mean the store wrote this cell, whatever the addresses
-            // are called.
-            let overlap =
-                access_byte_overlap(write, value.byte_width(), pointer, bytes, assumptions);
-            if overlap == AccessByteOverlap::Overlaps {
-                return StepEffect::Affected;
-            }
-            // Otherwise the ladders may speak, but the two that rest on
-            // address inequality alone may only stand in for byte separation
-            // when the gap they establish is at least as wide as the wider
-            // access. Where it is not, they are skipped rather than
-            // contradicted: the answer becomes "not shown separate", which
-            // is both the truth and the refusal that explains itself.
-            let address_inequality_separates_bytes = overlap == AccessByteOverlap::Separate;
-            // The recorded-range fallback covers writes into a
-            // proven-separate region (a buffer store crossed while resolving
-            // a struct field); extended-bridging scope only, and under its
-            // own capped budget so this advisory walk can never drain the
-            // enclosing query's fuel.
-            if write.blocks_proven_distinct(pointer) {
-                hop(MemoryDagHopJustification::StoreDistinctBlocks)
-            } else if address_inequality_separates_bytes
-                && pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
-            {
-                let condition =
-                    pointer_offsets_with_common_base_distinctness_condition(write, pointer)
-                        .expect("a successful common-base check has a cancellation condition");
-                let unequal_constants = condition == ConditionTerm::Constant(false);
-                if unequal_constants {
-                    hop(MemoryDagHopJustification::StoreCommonBaseUnequalConstants { condition })
-                } else if assumptions.exact_condition_value(&condition) == Some(false) {
-                    hop(MemoryDagHopJustification::StoreCommonBaseExactInequality { condition })
-                } else if let ConditionTerm::Bitvector32Equal(left, right) = &condition
-                    && let Some(path) =
-                        assumptions.exact_signed_order_path_evidence(left, right, true)
-                {
-                    hop(MemoryDagHopJustification::StoreCommonBaseSignedOrder {
-                        condition,
-                        path,
-                        reversed: false,
-                    })
-                } else if let ConditionTerm::Bitvector32Equal(left, right) = &condition
-                    && let Some(path) =
-                        assumptions.exact_signed_order_path_evidence(right, left, true)
-                {
-                    hop(MemoryDagHopJustification::StoreCommonBaseSignedOrder {
-                        condition,
-                        path,
-                        reversed: true,
-                    })
-                } else {
-                    hop(MemoryDagHopJustification::AssumptionDependent(
-                        MemoryDagAssumptionKind::StoreCommonBaseDistinctness,
-                    ))
+        } => store_cell_effect(step, write, value, pointer, bytes, evidence),
+        CMemoryDerivation::CellsSeeded { .. } => {
+            match seeded_cell_effect(step, pointer, bytes, evidence) {
+                SeededCellEffect::Written(..) => StepEffect::Affected,
+                SeededCellEffect::Separate(hops) => {
+                    hop(MemoryDagHopJustification::SeededStores { hops })
                 }
-            } else if explicit_dag_check_active()
-                && let Some(justification) =
-                    typed_store_separated_ranges_evidence(write, pointer, assumptions)
-            {
-                hop(justification)
-            } else if explicit_dag_check_active()
-                && assumptions.pointers_proven_disjoint_by_shallow_explicit_range(write, pointer)
-            {
-                hop(MemoryDagHopJustification::AssumptionDependent(
-                    MemoryDagAssumptionKind::StoreExplicitRange,
-                ))
-            } else if extended_dag_bridging_active()
-                && address_inequality_separates_bytes
-                && pointers_proven_distinct_for_memory_resolution(write, pointer, assumptions)
-            {
-                hop(MemoryDagHopJustification::AssumptionDependent(
-                    MemoryDagAssumptionKind::StoreGeneralDistinctness,
-                ))
-            } else if let Some(justification) =
-                owned_composition_store_separated_evidence(write, pointer, assumptions)
-            {
-                // Last, after every cheaper check: one composition in the
-                // context owns the written address and the read address
-                // through two different members, so the partition invariant
-                // separates them. The evidence names the composition and each
-                // side's membership, and the naming walks cannot reach it:
-                // they are handed no facts at all, and this reads nothing but
-                // facts.
-                hop(justification)
-            } else {
-                unknown()
+                SeededCellEffect::NotShownSeparate => unknown(),
             }
         }
         // Declaring a block, registering unresolved allocation metadata,
@@ -573,6 +474,169 @@ fn cell_effect(
     }
 }
 
+/// The `Store` arm of [`cell_effect`], for one write. A `CellsSeeded` edge is
+/// the same question asked of each store it stands for.
+fn store_cell_effect(
+    step: &CMemoryDerivation,
+    write: &Pointer,
+    value: &CValue,
+    pointer: &Pointer,
+    bytes: u32,
+    evidence: &Evidence<'_>,
+) -> StepEffect {
+    let assumptions = evidence.assumptions;
+    let hop = |justification| StepEffect::Separate(Separation::Cell(justification));
+    let unknown =
+        || StepEffect::NotShownSeparate(separation_check(step, Resource::Cell { pointer, bytes }));
+    if write == pointer
+        || explicit_dag_check_active()
+            && write.block == pointer.block
+            && pointer_offsets_match_from_memory_derivations(
+                &write.offset,
+                &pointer.offset,
+                assumptions,
+            )
+        || write.block == pointer.block
+            && assumptions.exact_condition_value(&ConditionTerm::pointer_offset_equal(
+                write.offset.clone(),
+                pointer.offset.clone(),
+            )) == Some(true)
+    {
+        return StepEffect::Affected;
+    }
+    // The ladders below prove the two ADDRESSES are different. That
+    // is not the question: the question is whether the store writes
+    // any of this cell's bytes, and `write + 4` is a different
+    // address from `write` while still overwriting the upper half of
+    // an eight-byte cell there.
+    //
+    // A known constant gap between the addresses answers the byte
+    // question outright, so take that answer first: overlapping
+    // bytes mean the store wrote this cell, whatever the addresses
+    // are called.
+    let overlap = access_byte_overlap(write, value.byte_width(), pointer, bytes, assumptions);
+    if overlap == AccessByteOverlap::Overlaps {
+        return StepEffect::Affected;
+    }
+    // Otherwise the ladders may speak, but the two that rest on
+    // address inequality alone may only stand in for byte separation
+    // when the gap they establish is at least as wide as the wider
+    // access. Where it is not, they are skipped rather than
+    // contradicted: the answer becomes "not shown separate", which
+    // is both the truth and the refusal that explains itself.
+    let address_inequality_separates_bytes = overlap == AccessByteOverlap::Separate;
+    // The recorded-range fallback covers writes into a
+    // proven-separate region (a buffer store crossed while resolving
+    // a struct field); extended-bridging scope only, and under its
+    // own capped budget so this advisory walk can never drain the
+    // enclosing query's fuel.
+    if write.blocks_proven_distinct(pointer) {
+        hop(MemoryDagHopJustification::StoreDistinctBlocks)
+    } else if address_inequality_separates_bytes
+        && pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
+    {
+        let condition = pointer_offsets_with_common_base_distinctness_condition(write, pointer)
+            .expect("a successful common-base check has a cancellation condition");
+        let unequal_constants = condition == ConditionTerm::Constant(false);
+        if unequal_constants {
+            hop(MemoryDagHopJustification::StoreCommonBaseUnequalConstants { condition })
+        } else if assumptions.exact_condition_value(&condition) == Some(false) {
+            hop(MemoryDagHopJustification::StoreCommonBaseExactInequality { condition })
+        } else if let ConditionTerm::Bitvector32Equal(left, right) = &condition
+            && let Some(path) = assumptions.exact_signed_order_path_evidence(left, right, true)
+        {
+            hop(MemoryDagHopJustification::StoreCommonBaseSignedOrder {
+                condition,
+                path,
+                reversed: false,
+            })
+        } else if let ConditionTerm::Bitvector32Equal(left, right) = &condition
+            && let Some(path) = assumptions.exact_signed_order_path_evidence(right, left, true)
+        {
+            hop(MemoryDagHopJustification::StoreCommonBaseSignedOrder {
+                condition,
+                path,
+                reversed: true,
+            })
+        } else {
+            hop(MemoryDagHopJustification::AssumptionDependent(
+                MemoryDagAssumptionKind::StoreCommonBaseDistinctness,
+            ))
+        }
+    } else if explicit_dag_check_active()
+        && let Some(justification) =
+            typed_store_separated_ranges_evidence(write, pointer, assumptions)
+    {
+        hop(justification)
+    } else if explicit_dag_check_active()
+        && assumptions.pointers_proven_disjoint_by_shallow_explicit_range(write, pointer)
+    {
+        hop(MemoryDagHopJustification::AssumptionDependent(
+            MemoryDagAssumptionKind::StoreExplicitRange,
+        ))
+    } else if extended_dag_bridging_active()
+        && address_inequality_separates_bytes
+        && pointers_proven_distinct_for_memory_resolution(write, pointer, assumptions)
+    {
+        hop(MemoryDagHopJustification::AssumptionDependent(
+            MemoryDagAssumptionKind::StoreGeneralDistinctness,
+        ))
+    } else if let Some(justification) =
+        owned_composition_store_separated_evidence(write, pointer, assumptions)
+    {
+        // Last, after every cheaper check: one composition in the
+        // context owns the written address and the read address
+        // through two different members, so the partition invariant
+        // separates them. The evidence names the composition and each
+        // side's membership, and the naming walks cannot reach it:
+        // they are handed no facts at all, and this reads nothing but
+        // facts.
+        hop(justification)
+    } else {
+        unknown()
+    }
+}
+
+/// What a `CellsSeeded` edge does to one cell.
+pub(in crate::kernel) enum SeededCellEffect {
+    /// One of its stores writes the cell: the store's pointer, and the value
+    /// the walk reads.
+    Written(Pointer, CValue),
+    /// Every store it stands for is separate from the cell, in the order a
+    /// walk meets them.
+    Separate(Vec<MemoryDagHopJustification>),
+    NotShownSeparate,
+}
+
+/// The stores of a `CellsSeeded` edge, newest first, asked one by one exactly
+/// as a walk over the stores themselves would ask them: the first that writes
+/// the cell answers, and the edge is crossed only when every store is
+/// separate.
+pub(in crate::kernel) fn seeded_cell_effect(
+    step: &CMemoryDerivation,
+    pointer: &Pointer,
+    bytes: u32,
+    evidence: &Evidence<'_>,
+) -> SeededCellEffect {
+    let stores = step
+        .seeded_stores()
+        .expect("seeded_cell_effect is asked about a CellsSeeded edge");
+    let mut hops = Vec::with_capacity(stores.len());
+    for (write, value) in &stores {
+        crate::instrumentation::record_deterministic_work(1);
+        match store_cell_effect(step, write, value, pointer, bytes, evidence) {
+            StepEffect::Affected => {
+                return SeededCellEffect::Written(write.clone(), value.clone());
+            }
+            StepEffect::Separate(Separation::Cell(justification)) => hops.push(justification),
+            StepEffect::Separate(_) | StepEffect::NotShownSeparate(_) => {
+                return SeededCellEffect::NotShownSeparate;
+            }
+        }
+    }
+    SeededCellEffect::Separate(hops)
+}
+
 /// One whole block's answer: separate means separate from **everything the
 /// block contains**, decided from the edge alone.
 ///
@@ -705,6 +769,10 @@ fn block_effect(step: &CMemoryDerivation, block: &PointerBlock) -> StepEffect {
         CMemoryDerivation::Store { pointer, .. } => {
             one_object(&pointer.block, BlockSeparation::StoreInDistinctBlock)
         }
+        // Every store of a run writes the run's own block.
+        CMemoryDerivation::CellsSeeded { run, .. } => {
+            one_object(&run.base().block, BlockSeparation::StoreInDistinctBlock)
+        }
         CMemoryDerivation::BlockDeclared {
             block: declared, ..
         } => one_object(declared, BlockSeparation::DeclarationOfDistinctBlock),
@@ -829,6 +897,19 @@ fn footprint_effect(step: &CMemoryDerivation, ranges: Option<&[CMemoryRange]>) -
                     .iter()
                     .any(|range| memory_range_overlaps_pointer(range, pointer, value.byte_width()))
             {
+                separate(FootprintSeparation::StoreOutsideRanges)
+            } else {
+                unknown()
+            }
+        }
+        CMemoryDerivation::CellsSeeded { .. } => {
+            let stores = step.seeded_stores().expect("a CellsSeeded edge");
+            if stores.iter().all(|(pointer, value)| {
+                !memory_block_may_alias(&pointer.block)
+                    && !ranges.iter().any(|range| {
+                        memory_range_overlaps_pointer(range, pointer, value.byte_width())
+                    })
+            }) {
                 separate(FootprintSeparation::StoreOutsideRanges)
             } else {
                 unknown()

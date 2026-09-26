@@ -5025,18 +5025,12 @@ fn substitute_bitvector_variable_in_memory_contents(
     crate::instrumentation::record_deterministic_work(
         memory.cells.len() + memory.union_cells.len() + memory.blocks.len(),
     );
-    let cells = std::sync::Arc::new(
-        memory
-            .cells
-            .iter()
-            .map(|(pointer, value)| {
-                (
-                    substitute_bitvector_variable_in_pointer(pointer, from, to),
-                    substitute_bitvector_variable_in_c_value(value, from, to),
-                )
-            })
-            .collect(),
-    );
+    let cells = std::sync::Arc::new(memory.cells.map_cells(|pointer, value| {
+        (
+            substitute_bitvector_variable_in_pointer(pointer, from, to),
+            substitute_bitvector_variable_in_c_value(value, from, to),
+        )
+    }));
     CMemory {
         blocks: std::sync::Arc::new(
             memory
@@ -6458,18 +6452,12 @@ pub(crate) fn substitute_pointer_variable_in_memory(
                 })
                 .collect(),
         ),
-        cells: std::sync::Arc::new(
-            memory
-                .cells
-                .iter()
-                .map(|(pointer, value)| {
-                    (
-                        substitute_pointer_variable_in_pointer(pointer, from, to),
-                        substitute_pointer_variable_in_c_value(value, from, to),
-                    )
-                })
-                .collect(),
-        ),
+        cells: std::sync::Arc::new(memory.cells.map_cells(|pointer, value| {
+            (
+                substitute_pointer_variable_in_pointer(pointer, from, to),
+                substitute_pointer_variable_in_c_value(value, from, to),
+            )
+        })),
         union_cells: std::sync::Arc::new(
             memory
                 .union_cells

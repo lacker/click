@@ -940,6 +940,22 @@ fn step_misses_interval(
                 ))
             }
         }
+        // A seeded run is the stores it stands for, each framed as one.
+        CMemoryDerivation::CellsSeeded { .. } => {
+            let stores = step.seeded_stores().expect("a CellsSeeded edge");
+            if empty
+                || stores.iter().all(|(pointer, value)| {
+                    access_misses_interval(pointer, value.byte_width(), interval, assumptions)
+                })
+            {
+                Ok(())
+            } else {
+                Err((
+                    "store",
+                    "no exact fact places the written bytes at or above the fold's end or below its start, and no stated separation holds them apart",
+                ))
+            }
+        }
         CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
             if empty
                 || mutable_ranges

@@ -2026,9 +2026,12 @@ pub(in crate::kernel) fn memories_match_for_pointer_load(
         && observable_blocks_match_for_load(left, right, pointer, &candidates)
         && retirements_agree_for_load(left, right, pointer)
         && observable_heap_metadata_matches_for_load(left, right, pointer, &candidates)
-        && observable_entries_match(&candidates, &left.cells, &right.cells, |cell_pointer| {
-            cell_pointer.block.observable_by_load(&pointer.block)
-        })
+        && observable_entries_match(
+            &candidates,
+            left.cells.logical(),
+            right.cells.logical(),
+            |cell_pointer| cell_pointer.block.observable_by_load(&pointer.block),
+        )
         && observable_entries_match(
             &candidates,
             &left.union_cells,
@@ -2337,7 +2340,7 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
     let candidates = AliasCandidates::of_block(&pointer.block);
     let mut visited = 0usize;
     let relevant_cells = candidates
-        .entries(&memory.cells)
+        .entries(memory.cells.logical())
         .inspect(|_| visited += 1)
         .filter(|(cell_pointer, _)| cell_pointer.block.observable_by_load(&pointer.block))
         .collect::<Vec<_>>();
@@ -2397,16 +2400,11 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
                 .map(|(block, size)| (block.clone(), size.clone())),
         )
         .collect::<SnapshotMap<_, _>>();
-    let mut visited = 0usize;
-    let cells = candidates
-        .entries(&canonical.cells)
-        .inspect(|_| visited += 1)
-        .filter(|(cell_pointer, value)| {
-            cell_pointer.block.observable_by_load(&pointer.block)
-                && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
-        })
-        .map(|(cell_pointer, value)| (cell_pointer.clone(), value.clone()))
-        .collect::<SnapshotMap<_, _>>();
+    let mut cells = (*canonical.cells).clone();
+    let mut visited = cells.retain_only_candidates(&candidates, |cell_pointer, value| {
+        cell_pointer.block.observable_by_load(&pointer.block)
+            && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
+    });
     let union_cells = candidates
         .entries(&canonical.union_cells)
         .inspect(|_| visited += 1)

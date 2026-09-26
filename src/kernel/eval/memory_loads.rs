@@ -463,21 +463,27 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             // they are visited in the whole map's order.
             let candidates = AliasCandidates::of_block(&pointer.block);
             let mut visited = 0usize;
-            let found = candidates
-                .entries(&memory.cells)
-                .find_map(|(stored_pointer, value)| {
-                    visited += 1;
-                    let equal = alias_cache.resolution_equal(&pointer, stored_pointer, assumptions);
-                    // A bounded equality query can retain an alias guard before its
-                    // nested separation search reaches a compact resource composition.
-                    // Recheck separation at the top-level query before treating that
-                    // materialized cell as authoritative. If both hold, the alias guard
-                    // describes an unreachable branch and must not manufacture a typed
-                    // load from the disjoint cell.
-                    (equal
-                        && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions))
-                    .then(|| value.clone())
-                });
+            let found =
+                candidates
+                    .entries(memory.cells.logical())
+                    .find_map(|(stored_pointer, value)| {
+                        visited += 1;
+                        let equal =
+                            alias_cache.resolution_equal(&pointer, stored_pointer, assumptions);
+                        // A bounded equality query can retain an alias guard before its
+                        // nested separation search reaches a compact resource composition.
+                        // Recheck separation at the top-level query before treating that
+                        // materialized cell as authoritative. If both hold, the alias guard
+                        // describes an unreachable branch and must not manufacture a typed
+                        // load from the disjoint cell.
+                        (equal
+                            && !alias_cache.resolution_distinct(
+                                &pointer,
+                                stored_pointer,
+                                assumptions,
+                            ))
+                        .then(|| value.clone())
+                    });
             crate::instrumentation::record_deterministic_work(visited);
             found
         },
@@ -589,11 +595,9 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             // bytes are `Separate`), so the reduced map is exactly the
             // candidates the rule keeps, built without visiting the rest.
             let candidates = AliasCandidates::of_block(&pointer.block);
-            let mut visited = 0usize;
-            let kept = candidates
-                .entries(&memory.cells)
-                .filter(|(stored_pointer, stored_value)| {
-                    visited += 1;
+            let mut reduced = (*memory.cells).clone();
+            let visited =
+                reduced.retain_only_candidates(&candidates, |stored_pointer, stored_value| {
                     // Dropping a cell names this load at a snapshot that no longer
                     // records it, so the question is the same byte question
                     // `1a3b2701` put in front of the three snapshot comparisons:
@@ -609,14 +613,10 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                             load_bytes,
                             assumptions,
                         ) == AccessByteOverlap::Separate)
-                })
-                .map(|(stored_pointer, stored_value)| {
-                    (stored_pointer.clone(), stored_value.clone())
-                })
-                .collect::<Vec<_>>();
+                });
             crate::instrumentation::record_deterministic_work(visited);
-            if kept.len() != cells_before_reduction {
-                memory.cells = std::sync::Arc::new(kept.into_iter().collect());
+            if reduced.len() != cells_before_reduction {
+                memory.cells = std::sync::Arc::new(reduced);
             }
         },
     );

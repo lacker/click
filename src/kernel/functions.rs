@@ -6068,7 +6068,7 @@ pub(in crate::kernel) fn store_opened_instance_composition(
     let memory = state.memory();
     let candidates = crate::kernel::primitives::AliasCandidates::of_block(&write.block);
     let mut instances = BTreeMap::new();
-    for (pointer, _) in candidates.entries(&memory.cells) {
+    for (pointer, _) in candidates.entries(memory.cells.logical()) {
         crate::kernel::assumptions::owned_instances_naming_access_base(
             resources,
             pointer,

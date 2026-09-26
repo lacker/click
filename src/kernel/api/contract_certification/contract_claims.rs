@@ -476,6 +476,41 @@ pub(crate) fn matching_recomputed_call_havoc_views(
                     assumptions,
                 ) && match_inner(left_base, right_base, assumptions, views)
             }
+            // Two seeded runs are two sequences of stores, matched store for
+            // store as above.
+            (
+                Some(
+                    left_seeded @ CMemoryDerivation::CellsSeeded {
+                        base: left_base, ..
+                    },
+                ),
+                Some(
+                    right_seeded @ CMemoryDerivation::CellsSeeded {
+                        base: right_base, ..
+                    },
+                ),
+            ) => {
+                let (Some(left_stores), Some(right_stores)) =
+                    (left_seeded.seeded_stores(), right_seeded.seeded_stores())
+                else {
+                    return false;
+                };
+                left_stores.len() == right_stores.len()
+                    && left_stores.iter().zip(&right_stores).all(
+                        |((left_pointer, left_value), (right_pointer, right_value))| {
+                            pointers_proven_equal_for_memory_resolution(
+                                left_pointer,
+                                right_pointer,
+                                assumptions,
+                            ) && c_values_proven_equal_for_memory_resolution(
+                                left_value,
+                                right_value,
+                                assumptions,
+                            )
+                        },
+                    )
+                    && match_inner(left_base, right_base, assumptions, views)
+            }
             _ => false,
         }
     }

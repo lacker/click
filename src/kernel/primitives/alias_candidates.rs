@@ -316,6 +316,13 @@ impl AliasCandidates {
     }
 
     /// Whether an entry in `block` is among the candidates.
+    pub(crate) fn admits_block(&self, block: &PointerBlock) -> bool {
+        self.intervals.iter().any(|interval| {
+            interval.start.as_ref().is_none_or(|start| block >= start) && interval.end.admits(block)
+        })
+    }
+
+    /// Whether an entry in `block` is among the candidates.
     #[cfg(test)]
     pub(crate) fn contains_block(&self, block: &PointerBlock) -> bool {
         self.intervals

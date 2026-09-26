@@ -404,6 +404,11 @@ impl Change {
             CMemoryDerivation::Store { pointer, .. } => Self::Store {
                 pointer: pointer.clone(),
             },
+            // A seeded run is its stores; the run's first element stands for
+            // them, as the one address a refusal can spell.
+            CMemoryDerivation::CellsSeeded { run, .. } => Self::Store {
+                pointer: run.base().clone(),
+            },
             CMemoryDerivation::CallHavoc { mutable_ranges, .. } => Self::Call {
                 ranges: mutable_ranges.clone(),
             },

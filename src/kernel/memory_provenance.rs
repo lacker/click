@@ -320,8 +320,7 @@ pub(crate) fn canonical_c_memory_deep(memory: &CMemory) -> CMemory {
 
 fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
     let mut canonical = memory.clone();
-    let cells = std::mem::take(&mut canonical.cells);
-    for (pointer, value) in cells.iter() {
+    let cells = canonical.cells.map_cells(|pointer, value| {
         let key = canonicalize_pointer_loads(pointer);
         let value = match value {
             CValue::Void => CValue::Void,
@@ -341,8 +340,9 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
                 pointer.c_type(),
             ),
         };
-        std::sync::Arc::make_mut(&mut canonical.cells).insert(key, value);
-    }
+        (key, value)
+    });
+    canonical.cells = std::sync::Arc::new(cells);
     let union_cells = std::mem::take(&mut canonical.union_cells);
     for ((pointer, c_type), value) in union_cells.iter() {
         let key = canonicalize_pointer_loads(pointer);
@@ -897,14 +897,15 @@ impl CheckedLoadEquality {
                 let Some(derivation) = cell.node().derivation() else {
                     return false;
                 };
-                let CMemoryDerivation::Store {
-                    pointer,
-                    value: CValue::Int32(stored),
-                    ..
-                } = derivation.as_ref()
-                else {
+                let Some((pointer, CValue::Int32(stored))) = stored_write_reaching(
+                    derivation.as_ref(),
+                    &endpoint.pointer,
+                    crate::kernel::load_access_width_or_widest(&endpoint.memory, &endpoint.pointer),
+                    assumptions,
+                ) else {
                     return false;
                 };
+                let (pointer, stored) = (&pointer, &stored);
                 endpoint.matches_term(load)
                     && cell.has_only_typed_hops()
                     && cell.checks_walk_from(
@@ -1128,14 +1129,20 @@ pub(crate) fn checked_stored_origin_equality(
         let Some(derivation) = cell.node().derivation() else {
             continue;
         };
-        let CMemoryDerivation::Store {
-            pointer,
-            value: CValue::Int32(stored),
-            ..
-        } = derivation.as_ref()
-        else {
+        let previous = EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true));
+        let written = with_extended_dag_bridging(|| {
+            stored_write_reaching(
+                derivation.as_ref(),
+                &endpoint.pointer,
+                crate::kernel::load_access_width_or_widest(&endpoint.memory, &endpoint.pointer),
+                assumptions,
+            )
+        });
+        EXPLICIT_DAG_CHECK.with(|flag| flag.set(previous));
+        let Some((pointer, CValue::Int32(stored))) = written else {
             continue;
         };
+        let (pointer, stored) = (&pointer, &stored);
         if stored != value || pointer.block != endpoint.pointer.block {
             continue;
         }
@@ -1987,6 +1994,42 @@ pub(crate) fn pointer_load_offset_proven_equal(
         right,
         assumptions,
     )
+}
+
+/// The write a walk stopped at: the store's pointer and value, for a `Store`
+/// edge, and for a `CellsSeeded` edge the one store of the run that writes
+/// the cell at `pointer`, asked exactly as the walk asked it.
+fn stored_write_reaching(
+    derivation: &CMemoryDerivation,
+    pointer: &Pointer,
+    bytes: u32,
+    assumptions: &PureFactContext,
+) -> Option<(Pointer, CValue)> {
+    match derivation {
+        CMemoryDerivation::Store {
+            pointer: written,
+            value,
+            ..
+        } => Some((written.clone(), value.clone())),
+        CMemoryDerivation::CellsSeeded { .. } => {
+            match crate::kernel::resource_tracker::step_effect::seeded_cell_effect(
+                derivation,
+                pointer,
+                bytes,
+                &crate::kernel::resource_tracker::step_effect::Evidence {
+                    assumptions,
+                    cross_loop_havoc: true,
+                },
+            ) {
+                crate::kernel::resource_tracker::step_effect::SeededCellEffect::Written(
+                    written,
+                    value,
+                ) => Some((written, value)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn heap_allocation_proven_separate_from_pointer(
@@ -2869,7 +2912,7 @@ fn differing_cell_pointers_possibly_aliasing(
         .keys()
         .chain(right.cells.keys())
         .filter(|pointer| pointer.block.observable_by_load(block))
-        .filter(|pointer| left.cells.get(*pointer) != right.cells.get(*pointer))
+        .filter(|pointer| left.cells.get(pointer) != right.cells.get(pointer))
         .cloned()
         .collect()
 }
