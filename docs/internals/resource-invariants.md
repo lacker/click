@@ -262,6 +262,17 @@ reject a preserving body, even when its abstract entry has no concrete ledger.
 The reinitializing, unlocking, destroying, and nested-reset helper fixtures
 protect this boundary. Opaque entry heldness is not interpreted as false.
 
+Every successful modeled initialization now has a fresh internal identity,
+independent of the mutex address and protected resource. Lock/unlock retain
+that identity; destroy/init replaces it. Concrete release witnesses must match
+both the initialization and acquisition. Loop joins compare initialization
+identity for the changed mutexes, so depositing the same protected instance
+at the same address cannot disguise a replacement. A mutex created and
+destroyed entirely within an iteration leaves no loop-head obligation.
+The loop checker reports replacement of a loop-head initialization as an
+unsupported contract, not as evidence that the C program is incorrect.
+This does not yet implement `mutex_live`, use loans, or storage-lifetime checks.
+
 Direct named primitive guard binders, lock-changing contracts, loop joins
 across acquisition epochs, lifecycle authority, and
 shared interference remain later work. This checkpoint does not add

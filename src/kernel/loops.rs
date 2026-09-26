@@ -2251,12 +2251,16 @@ fn c_loop_state_components_match_at_back_edge_inner(
     if top_state.preserves_mutex_protocols != next_state.preserves_mutex_protocols {
         changed.push("mutex protocol frame");
     }
-    if !match (&top_state.mutex_ledger, &next_state.mutex_ledger) {
-        (None, None) => true,
-        (Some(top), Some(next)) => top.same_protocol_state_since(next),
-        _ => false,
-    } {
-        changed.push("mutex ownership");
+    match (&top_state.mutex_ledger, &next_state.mutex_ledger) {
+        (None, None) => {}
+        (Some(top), Some(next)) => match top.check_protocol_state_since(next) {
+            Ok(()) => {}
+            Err(super::mutexes::MutexProtocolMismatch::Initialization) => {
+                return Err("Click does not yet support destroying and reinitializing a loop-head mutex across a loop backedge; the loop requires the same initialization".into());
+            }
+            Err(super::mutexes::MutexProtocolMismatch::State) => changed.push("mutex ownership"),
+        },
+        _ => changed.push("mutex ownership"),
     }
     if changed.is_empty() {
         Ok(())

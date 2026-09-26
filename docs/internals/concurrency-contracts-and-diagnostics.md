@@ -21,6 +21,14 @@ guard, and use separately supplied protected memory. It cannot change mutex
 protocols. This is a conservative implementation
 boundary, not the proposed final meaning of concurrency contracts.
 
+Modeled initialization also has a generative internal identity. Loop joins
+preserve it, distinguishing balanced lock/unlock from destroy/init at the same
+address, even when the protected assertion is identical. Replacing a loop-head
+initialization is currently refused with an explicit unsupported-contract
+message. A mutex may still be initialized and destroyed entirely within an
+iteration. This is groundwork for lifecycle authority; it does not establish
+storage lifetime or implement `mutex_live`/`mutex_use`.
+
 The proposed next surface is:
 
 | Surface | Status in this proposal | What a reader should understand |

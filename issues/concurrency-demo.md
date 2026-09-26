@@ -190,6 +190,15 @@ nested preserving calls and wrapper exchanges. They return the entry acquisition
 and report missing input authority as `Requires owns mutex_guard(...)`. This
 uses the existing `owns` syntax.
 
+Successful initialization now creates a fresh internal identity. Lock/unlock
+retain it; destruction and reinitialization replace it even at the same address
+with the same protected assertion. Loop joins reject that replacement with an
+explicit limitation message, while a complete initialization/destruction within
+an iteration remains supported. Kernel regressions cover replacement with and
+without a protected resource, forged initialization witnesses, and indexed join
+work at increasing mutex counts. Lifecycle resources, use loans, and the
+connection to live C storage remain unimplemented.
+
 Direct named guard clauses and consumed/produced guards still require the
 full abstract acquisition binding and transition model. The current symbolic
 form is restricted to helpers whose mutex protocols cannot change. Calls

@@ -26,11 +26,37 @@ pub(super) enum MutexTransitionError {
 
 #[derive(Clone)]
 enum MutexEntry {
-    Unlocked(Option<CResourceFact>),
+    Unlocked {
+        initialization: MutexInitialization,
+        invariant: Option<CResourceFact>,
+    },
     Locked {
+        initialization: MutexInitialization,
         invariant: Option<CResourceFact>,
         epoch: u64,
     },
+}
+
+/// Identity of one successful initialization, independent of its address and
+/// protected assertion. Lock/unlock retain it; destroy/init must replace it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MutexInitialization(u64);
+
+impl MutexInitialization {
+    fn fresh() -> Result<Self, &'static str> {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            value.checked_add(1)
+        })
+        .map(Self)
+        .map_err(|_| "mutex initialization identity space exhausted")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum MutexProtocolMismatch {
+    State,
+    Initialization,
 }
 
 /// A proof-path snapshot. Updates touch only the selected mutex's persistent
@@ -60,6 +86,7 @@ struct MutexLedgerStorage {
 /// mutex address or an integer value copied by C.
 pub(super) struct MutexGuard {
     mutex: Pointer,
+    initialization: MutexInitialization,
     epoch: u64,
 }
 
@@ -115,7 +142,13 @@ impl MutexContext {
             return Err("mutex is already initialized");
         }
         let mut state = self.state.clone();
-        state.mutex_ledger = Some(ledger.with_inserted(mutex, MutexEntry::Unlocked(None)));
+        state.mutex_ledger = Some(ledger.with_inserted(
+            mutex,
+            MutexEntry::Unlocked {
+                initialization: MutexInitialization::fresh()?,
+                invariant: None,
+            },
+        ));
         Ok(Self { state })
     }
 
@@ -168,8 +201,13 @@ impl MutexContext {
             .ok_or("mutex invariant cannot be moved to escrow")?;
         let mut state = self.state.clone();
         state.resources = resources;
-        state.mutex_ledger =
-            Some(ledger.with_inserted(mutex, MutexEntry::Unlocked(Some(invariant))));
+        state.mutex_ledger = Some(ledger.with_inserted(
+            mutex,
+            MutexEntry::Unlocked {
+                initialization: MutexInitialization::fresh()?,
+                invariant: Some(invariant),
+            },
+        ));
         Ok(Self { state })
     }
 
@@ -184,8 +222,11 @@ impl MutexContext {
             ));
         }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
-        let invariant = match ledger.get(mutex) {
-            Some(MutexEntry::Unlocked(invariant)) => invariant.clone(),
+        let (initialization, invariant) = match ledger.get(mutex) {
+            Some(MutexEntry::Unlocked {
+                initialization,
+                invariant,
+            }) => (*initialization, invariant.clone()),
             Some(MutexEntry::Locked { .. }) => {
                 return Err(MutexTransitionError::Refusal("mutex is already guarded"));
             }
@@ -215,6 +256,7 @@ impl MutexContext {
         let mut state = self.state.clone();
         let guard = MutexGuard {
             mutex: mutex.clone(),
+            initialization,
             epoch,
         };
         state.resources = resources
@@ -222,12 +264,19 @@ impl MutexContext {
             .map_err(|_| {
                 MutexTransitionError::Refusal("mutex guard conflicts with current authority")
             })?;
-        state.mutex_ledger =
-            Some(ledger.with_inserted(mutex.clone(), MutexEntry::Locked { invariant, epoch }));
+        state.mutex_ledger = Some(ledger.with_inserted(
+            mutex.clone(),
+            MutexEntry::Locked {
+                initialization,
+                invariant,
+                epoch,
+            },
+        ));
         Ok((
             Self { state },
             MutexGuard {
                 mutex: mutex.clone(),
+                initialization,
                 epoch,
             },
         ))
@@ -250,8 +299,12 @@ impl MutexContext {
             return Err("preserving guard contracts cannot change mutex protocols");
         }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
-        let (previous, epoch) = match ledger.get(mutex) {
-            Some(MutexEntry::Locked { invariant, epoch }) => (invariant, *epoch),
+        let (previous, initialization, epoch) = match ledger.get(mutex) {
+            Some(MutexEntry::Locked {
+                invariant,
+                initialization,
+                epoch,
+            }) => (invariant, *initialization, *epoch),
             _ => return Err("mutex is not held by this C path"),
         };
         let restored = match previous {
@@ -268,6 +321,7 @@ impl MutexContext {
         self.release_with_invariant(
             MutexGuard {
                 mutex: mutex.clone(),
+                initialization,
                 epoch,
             },
             restored,
@@ -287,7 +341,7 @@ impl MutexContext {
         }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         let invariant = match ledger.get(mutex) {
-            Some(MutexEntry::Unlocked(invariant)) => invariant.clone(),
+            Some(MutexEntry::Unlocked { invariant, .. }) => invariant.clone(),
             Some(MutexEntry::Locked { .. }) => {
                 return Err(MutexTransitionError::Refusal("cannot destroy a held mutex"));
             }
@@ -333,7 +387,11 @@ impl MutexContext {
         }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         let previous = match ledger.get(&guard.mutex) {
-            Some(MutexEntry::Locked { invariant, epoch }) if *epoch == guard.epoch => invariant,
+            Some(MutexEntry::Locked {
+                invariant,
+                initialization,
+                epoch,
+            }) if *initialization == guard.initialization && *epoch == guard.epoch => invariant,
             _ => return Err("mutex guard does not match the current holder"),
         };
         let guard_fact = guard.resource_fact();
@@ -373,8 +431,13 @@ impl MutexContext {
         state.resources = resources
             .without_fact(&guard_fact, assumptions)
             .ok_or("mutex guard cannot be consumed")?;
-        state.mutex_ledger =
-            Some(ledger.with_inserted(guard.mutex, MutexEntry::Unlocked(restored)));
+        state.mutex_ledger = Some(ledger.with_inserted(
+            guard.mutex,
+            MutexEntry::Unlocked {
+                initialization: guard.initialization,
+                invariant: restored,
+            },
+        ));
         Ok(Self { state })
     }
 }
@@ -473,50 +536,78 @@ impl MutexLedger {
 
     /// Compare the protocol state after a loop body with its loop head. A
     /// state from another lineage is rejected.
-    pub(super) fn same_protocol_state_since(&self, next: &Self) -> bool {
+    pub(super) fn check_protocol_state_since(
+        &self,
+        next: &Self,
+    ) -> Result<(), MutexProtocolMismatch> {
         if self.storage.identity == next.storage.identity {
-            return true;
+            return Ok(());
         }
         if self.storage.entries.len() != next.storage.entries.len()
             || self.storage.locked_count != next.storage.locked_count
             || self.storage.return_obligation_count != next.storage.return_obligation_count
         {
-            return false;
+            return Err(MutexProtocolMismatch::State);
         }
         let mut changed = std::collections::BTreeSet::new();
         let mut cursor = next.storage.as_ref();
         while cursor.identity != self.storage.identity {
             let (Some(previous), Some(mutex)) = (&cursor.predecessor, &cursor.changed_mutex) else {
-                return false;
+                return Err(MutexProtocolMismatch::State);
             };
             changed.insert(mutex);
             cursor = previous.as_ref();
         }
-        changed
-            .into_iter()
-            .all(|mutex| match (self.get(mutex), next.get(mutex)) {
-                (Some(MutexEntry::Unlocked(left)), Some(MutexEntry::Unlocked(right))) => {
-                    left == right
+        for mutex in changed {
+            match (self.get(mutex), next.get(mutex)) {
+                (Some(left), Some(right)) if left.initialization() != right.initialization() => {
+                    return Err(MutexProtocolMismatch::Initialization);
                 }
+                (
+                    Some(MutexEntry::Unlocked {
+                        invariant: left, ..
+                    }),
+                    Some(MutexEntry::Unlocked {
+                        invariant: right, ..
+                    }),
+                ) if left == right => {}
                 (
                     Some(MutexEntry::Locked {
                         invariant: left,
                         epoch: left_epoch,
+                        ..
                     }),
                     Some(MutexEntry::Locked {
                         invariant: right,
                         epoch: right_epoch,
+                        ..
                     }),
-                ) => left == right && left_epoch == right_epoch,
-                (None, None) => true,
-                _ => false,
-            })
+                ) if left == right && left_epoch == right_epoch => {}
+                (None, None) => {}
+                _ => return Err(MutexProtocolMismatch::State),
+            }
+        }
+        Ok(())
     }
 }
 
 impl MutexEntry {
+    fn initialization(&self) -> MutexInitialization {
+        match self {
+            Self::Unlocked { initialization, .. } | Self::Locked { initialization, .. } => {
+                *initialization
+            }
+        }
+    }
+
     fn has_return_obligation(&self) -> bool {
-        !matches!(self, Self::Unlocked(None))
+        !matches!(
+            self,
+            Self::Unlocked {
+                invariant: None,
+                ..
+            }
+        )
     }
 }
 
@@ -1011,9 +1102,115 @@ mod tests {
     }
 
     #[test]
+    fn loop_back_edge_rejects_reinitialization_even_with_the_same_invariant() {
+        let assumptions = PureFactContext::new();
+        for protected in [None, Some(invariant(1, 0))] {
+            let initial = match &protected {
+                Some(fact) => context(fact.clone()),
+                None => MutexContext::new(CState::new()),
+            };
+            // Keep a second mutex alive: the ledger lineage and aggregate
+            // counts alone cannot distinguish replacing the selected mutex.
+            let initial = initial.initialize_empty(mutex(1)).unwrap();
+            let initialize = |state: &MutexContext| match &protected {
+                Some(fact) => state.publish(mutex(0), fact.clone(), &assumptions).unwrap(),
+                None => state.initialize_empty(mutex(0)).unwrap(),
+            };
+            let head = initialize(&initial);
+            let destroyed = head.destroy(&mutex(0), &assumptions).unwrap();
+            let replaced = initialize(&destroyed);
+            assert_eq!(
+                head.state()
+                    .mutex_ledger
+                    .as_ref()
+                    .unwrap()
+                    .check_protocol_state_since(replaced.state().mutex_ledger.as_ref().unwrap()),
+                Err(MutexProtocolMismatch::Initialization),
+            );
+            let error = crate::kernel::c_loop_state_components_match_at_back_edge(
+                head.state(),
+                replaced.state(),
+                &assumptions,
+                &[],
+            )
+            .unwrap_err();
+            assert!(
+                error.contains("requires the same initialization"),
+                "{error}"
+            );
+            // A balanced exchange still preserves the new initialization.
+            let held = replaced.acquire_current(&mutex(0), &assumptions).unwrap();
+            let released = held.release_current(&mutex(0), &assumptions).unwrap();
+            assert_eq!(
+                replaced
+                    .state()
+                    .mutex_ledger
+                    .as_ref()
+                    .unwrap()
+                    .check_protocol_state_since(released.state().mutex_ledger.as_ref().unwrap()),
+                Ok(()),
+            );
+        }
+    }
+
+    #[test]
+    fn initialization_is_generative_and_cannot_be_substituted_on_a_guard() {
+        let assumptions = PureFactContext::new();
+        let initial = MutexContext::new(CState::new());
+        let first = initial.initialize_empty(mutex(0)).unwrap();
+        let second = initial.initialize_empty(mutex(0)).unwrap();
+        let first_id = first
+            .state()
+            .mutex_ledger
+            .as_ref()
+            .unwrap()
+            .get(&mutex(0))
+            .unwrap()
+            .initialization();
+        let second_id = second
+            .state()
+            .mutex_ledger
+            .as_ref()
+            .unwrap()
+            .get(&mutex(0))
+            .unwrap()
+            .initialization();
+        assert_ne!(first_id, second_id);
+        let (held, mut guard) = second.acquire(&mutex(0), &assumptions).unwrap();
+        // Even a witness with the current acquisition number cannot authorize
+        // a transition for a different initialization.
+        guard.initialization = first_id;
+        assert_eq!(
+            held.release_with_invariant(guard, None, &assumptions).err(),
+            Some("mutex guard does not match the current holder")
+        );
+        held.release_current(&mutex(0), &assumptions).unwrap();
+    }
+
+    #[test]
+    fn loop_may_initialize_and_destroy_a_mutex_absent_at_its_head() {
+        let assumptions = PureFactContext::new();
+        let head = MutexContext::new(CState::new())
+            .initialize_empty(mutex(0))
+            .unwrap();
+        let local = head.initialize_empty(mutex(1)).unwrap();
+        let local = local.acquire_current(&mutex(1), &assumptions).unwrap();
+        let local = local.release_current(&mutex(1), &assumptions).unwrap();
+        let next = local.destroy(&mutex(1), &assumptions).unwrap();
+        crate::kernel::c_loop_state_components_match_at_back_edge(
+            head.state(),
+            next.state(),
+            &assumptions,
+            &[],
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn loop_mutex_join_work_tracks_changed_keys_not_unrelated_mutexes() {
         let assumptions = PureFactContext::new();
         let mut work = Vec::new();
+        let mut replacement_work = Vec::new();
         for size in [32, 128, 512] {
             let mut head = MutexContext::new(CState::new());
             for index in 0..size {
@@ -1027,13 +1224,36 @@ mod tests {
                     .mutex_ledger
                     .as_ref()
                     .unwrap()
-                    .same_protocol_state_since(released.state().mutex_ledger.as_ref().unwrap())
+                    .check_protocol_state_since(released.state().mutex_ledger.as_ref().unwrap())
+                    .is_ok()
             });
             assert!(equal);
             work.push(units);
+            let replaced = head
+                .destroy(&selected, &assumptions)
+                .unwrap()
+                .initialize_empty(selected)
+                .unwrap();
+            let (result, units) = crate::persistent::measure_persistent_work(|| {
+                head.state()
+                    .mutex_ledger
+                    .as_ref()
+                    .unwrap()
+                    .check_protocol_state_since(replaced.state().mutex_ledger.as_ref().unwrap())
+            });
+            assert_eq!(result, Err(MutexProtocolMismatch::Initialization));
+            replacement_work.push(units);
         }
         assert!(work[1] <= work[0] + 8, "{work:?}");
         assert!(work[2] <= work[1] + 8, "{work:?}");
+        assert!(
+            replacement_work[1] <= replacement_work[0] + 8,
+            "{replacement_work:?}"
+        );
+        assert!(
+            replacement_work[2] <= replacement_work[1] + 8,
+            "{replacement_work:?}"
+        );
     }
     use crate::kernel::{
         CType, PointerOffsetTerm, ResourceContext, ResourceFieldSchema, ResourceFieldType,
@@ -1149,6 +1369,7 @@ mod tests {
         );
         let stale = MutexGuard {
             mutex: mutex.clone(),
+            initialization: MutexInitialization(0),
             epoch: 0,
         };
         assert_eq!(
