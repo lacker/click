@@ -22,6 +22,14 @@ theorem integer_bounds_establish_c_add_safety(left: int32, right: int32) {
     }
 }
 
+theorem integer_bounds_establish_c_subtract_safety(left: int32, right: int32) {
+    requires to_integer(left) - to_integer(right) >= -2147483648;
+    requires to_integer(left) - to_integer(right) <= 2147483647;
+    ensures defined(left - right) by {
+        apply(int32_subtract_defined_by_integer_bounds(left, right));
+    }
+}
+
 theorem integer_add_bridge(left: int32, right: int32) {
     requires defined(left + right);
     ensures to_integer(left + right) == to_integer(left) + to_integer(right) by {

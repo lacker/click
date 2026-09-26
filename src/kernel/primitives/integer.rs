@@ -326,6 +326,34 @@ impl MachineIntegerType {
     }
 }
 
+/// A signed machine width whose `defined(a + b)` and `defined(a - b)` the
+/// `special` arithmetic certificate's `int32_defined` / `int64_defined` rule
+/// establishes from the operands' constant bounds. One checker serves both
+/// widths; this names which one a node claims.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SignedDefinedWidth {
+    Int32,
+    Int64,
+}
+
+impl SignedDefinedWidth {
+    /// The type name, as the certificate node and diagnostics spell it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Int32 => "int32",
+            Self::Int64 => "int64",
+        }
+    }
+
+    /// The inclusive value range of the width.
+    pub fn range(self) -> (i64, i64) {
+        match self {
+            Self::Int32 => (i64::from(i32::MIN), i64::from(i32::MAX)),
+            Self::Int64 => (i64::MIN, i64::MAX),
+        }
+    }
+}
+
 pub struct SharedMachineIntegerTerm(Arc<SharedMachineIntegerNode>);
 
 struct SharedMachineIntegerNode {

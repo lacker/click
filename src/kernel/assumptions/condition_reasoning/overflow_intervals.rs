@@ -365,17 +365,28 @@ impl PureFactContext {
         (lower <= upper && (lower != i64::MIN || upper != i64::MAX)).then_some((lower, upper))
     }
 
-    /// The exact facts that bound the `int64` term `term` by a constant: the
-    /// order facts indexed under `term` itself and its recorded constant
-    /// equalities, each returned as the condition fact the context holds so
-    /// a certificate can cite it. These are keyed lookups on `term` only;
-    /// each indexed bound costs a bounded number of exact fact lookups.
-    pub(crate) fn int64_constant_bound_facts(&self, term: &Bitvector32Term) -> Vec<Proposition> {
+    /// The exact facts that bound the `width` term `term` by a constant: the
+    /// order facts of that width indexed under `term` itself and its
+    /// recorded constant equalities, each returned as the condition fact the
+    /// context holds so a certificate can cite it. These are keyed lookups on
+    /// `term` only; each indexed bound costs a bounded number of exact fact
+    /// lookups. `int32` and `int64` share this selection and differ only in
+    /// the order index read and the comparison constructors.
+    pub(crate) fn signed_constant_bound_facts(
+        &self,
+        width: SignedDefinedWidth,
+        term: &Bitvector32Term,
+    ) -> Vec<Proposition> {
+        use crate::kernel::proof::arithmetic_special::signed_width_constant;
         let mut facts = Vec::new();
-        if let Some(bounds) = self.int64_signed_order_bounds.get(term) {
+        let index = match width {
+            SignedDefinedWidth::Int32 => &self.signed_order_bounds,
+            SignedDefinedWidth::Int64 => &self.int64_signed_order_bounds,
+        };
+        if let Some(bounds) = index.get(term) {
             for (endpoint, other, strict, is_upper) in bounds.keys() {
                 crate::instrumentation::record_deterministic_work(1);
-                if endpoint != term || other.int64_as_const().is_none() {
+                if endpoint != term || signed_width_constant(width, other).is_none() {
                     continue;
                 }
                 let (lower, upper) = if *is_upper {
@@ -383,48 +394,27 @@ impl PureFactContext {
                 } else {
                     (other.clone(), endpoint.clone())
                 };
-                let pair = || (Box::new(lower.clone()), Box::new(upper.clone()));
-                let reversed = || (Box::new(upper.clone()), Box::new(lower.clone()));
+                let order = |operator: SignedOrder, reversed: bool| {
+                    let (left, right) = if reversed {
+                        (upper.clone(), lower.clone())
+                    } else {
+                        (lower.clone(), upper.clone())
+                    };
+                    signed_order_condition(width, operator, left, right)
+                };
                 let forms = if *strict {
                     [
-                        (
-                            ConditionTerm::Bitvector64SignedLessThan(pair().0, pair().1),
-                            true,
-                        ),
-                        (
-                            ConditionTerm::Bitvector64SignedGreaterThan(reversed().0, reversed().1),
-                            true,
-                        ),
-                        (
-                            ConditionTerm::Bitvector64SignedLessEqual(reversed().0, reversed().1),
-                            false,
-                        ),
-                        (
-                            ConditionTerm::Bitvector64SignedGreaterEqual(pair().0, pair().1),
-                            false,
-                        ),
+                        (order(SignedOrder::LessThan, false), true),
+                        (order(SignedOrder::GreaterThan, true), true),
+                        (order(SignedOrder::LessEqual, true), false),
+                        (order(SignedOrder::GreaterEqual, false), false),
                     ]
                 } else {
                     [
-                        (
-                            ConditionTerm::Bitvector64SignedLessEqual(pair().0, pair().1),
-                            true,
-                        ),
-                        (
-                            ConditionTerm::Bitvector64SignedGreaterEqual(
-                                reversed().0,
-                                reversed().1,
-                            ),
-                            true,
-                        ),
-                        (
-                            ConditionTerm::Bitvector64SignedLessThan(reversed().0, reversed().1),
-                            false,
-                        ),
-                        (
-                            ConditionTerm::Bitvector64SignedGreaterThan(pair().0, pair().1),
-                            false,
-                        ),
+                        (order(SignedOrder::LessEqual, false), true),
+                        (order(SignedOrder::GreaterEqual, true), true),
+                        (order(SignedOrder::LessThan, true), false),
+                        (order(SignedOrder::GreaterThan, false), false),
                     ]
                 };
                 if let Some((condition, value)) = forms
@@ -438,9 +428,16 @@ impl PureFactContext {
         if let Some(equalities) = self.exact_constant_equalities.get(term) {
             crate::instrumentation::record_deterministic_work(equalities.len().max(1));
             for condition in equalities.keys() {
-                if let ConditionTerm::Bitvector64Equal(left, right) = condition
-                    && (left.as_ref() == term && right.int64_as_const().is_some()
-                        || right.as_ref() == term && left.int64_as_const().is_some())
+                let sides = match (width, condition) {
+                    (SignedDefinedWidth::Int32, ConditionTerm::Bitvector32Equal(left, right))
+                    | (SignedDefinedWidth::Int64, ConditionTerm::Bitvector64Equal(left, right)) => {
+                        Some((left, right))
+                    }
+                    _ => None,
+                };
+                if let Some((left, right)) = sides
+                    && (left.as_ref() == term && signed_width_constant(width, right).is_some()
+                        || right.as_ref() == term && signed_width_constant(width, left).is_some())
                 {
                     facts.push(Proposition::ConditionIs(condition.clone(), true));
                 }
@@ -696,9 +693,134 @@ impl PureFactContext {
     }
 }
 
+#[derive(Clone, Copy)]
+enum SignedOrder {
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
+}
+
+/// The signed comparison `left operator right` of `width`.
+fn signed_order_condition(
+    width: SignedDefinedWidth,
+    operator: SignedOrder,
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+) -> ConditionTerm {
+    let (left, right) = (Box::new(left), Box::new(right));
+    match (width, operator) {
+        (SignedDefinedWidth::Int32, SignedOrder::LessThan) => {
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+        }
+        (SignedDefinedWidth::Int32, SignedOrder::LessEqual) => {
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        }
+        (SignedDefinedWidth::Int32, SignedOrder::GreaterThan) => {
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        }
+        (SignedDefinedWidth::Int32, SignedOrder::GreaterEqual) => {
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        }
+        (SignedDefinedWidth::Int64, SignedOrder::LessThan) => {
+            ConditionTerm::Bitvector64SignedLessThan(left, right)
+        }
+        (SignedDefinedWidth::Int64, SignedOrder::LessEqual) => {
+            ConditionTerm::Bitvector64SignedLessEqual(left, right)
+        }
+        (SignedDefinedWidth::Int64, SignedOrder::GreaterThan) => {
+            ConditionTerm::Bitvector64SignedGreaterThan(left, right)
+        }
+        (SignedDefinedWidth::Int64, SignedOrder::GreaterEqual) => {
+            ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `int32_defined` / `int64_defined` closer selects each operand's
+    /// constant bounds by keyed lookup. Its deterministic work must be flat
+    /// in the number of unrelated constant-bound facts of either width, and
+    /// the selected facts must satisfy the kernel checker.
+    #[test]
+    fn signed_constant_bound_selection_is_flat_in_unrelated_bounds() {
+        use crate::kernel::proof::arithmetic_special::{
+            SpecialArithmeticCertificate, SpecialArithmeticNode,
+        };
+        for width in [SignedDefinedWidth::Int32, SignedDefinedWidth::Int64] {
+            let constant = |value: i64| match width {
+                SignedDefinedWidth::Int32 => Bitvector32Term::Constant(value as i32 as u32),
+                SignedDefinedWidth::Int64 => Bitvector32Term::Int64Constant(value),
+            };
+            let less = |left, right| match width {
+                SignedDefinedWidth::Int32 => ConditionTerm::signed_less_than(left, right),
+                SignedDefinedWidth::Int64 => ConditionTerm::int64_signed_less_than(left, right),
+            };
+            let at_least = |left, right| match width {
+                SignedDefinedWidth::Int32 => ConditionTerm::signed_greater_equal(left, right),
+                SignedDefinedWidth::Int64 => ConditionTerm::int64_signed_greater_equal(left, right),
+            };
+            let equal = |left, right| match width {
+                SignedDefinedWidth::Int32 => ConditionTerm::equal(left, right),
+                SignedDefinedWidth::Int64 => ConditionTerm::int64_equal(left, right),
+            };
+            let a = Bitvector32Term::Variable(Variable(94_001));
+            let b = Bitvector32Term::Variable(Variable(94_002));
+            let goal = Proposition::ConditionIs(
+                match width {
+                    SignedDefinedWidth::Int32 => ConditionTerm::Bitvector32SignedAddOverflows(
+                        Box::new(a.clone()),
+                        Box::new(b.clone()),
+                    ),
+                    SignedDefinedWidth::Int64 => ConditionTerm::Bitvector64SignedAddOverflows(
+                        Box::new(a.clone()),
+                        Box::new(b.clone()),
+                    ),
+                },
+                false,
+            );
+            let mut works = Vec::new();
+            for size in [8_u64, 16, 32, 64] {
+                let mut assumptions = PureFactContext::new();
+                for index in 0..size {
+                    let unrelated = Bitvector32Term::Variable(Variable(95_000 + index));
+                    let fact = match index % 3 {
+                        0 => less(unrelated, constant(1_000)),
+                        1 => at_least(unrelated, constant(-1_000)),
+                        _ => equal(unrelated, constant(7)),
+                    };
+                    assumptions = assumptions.assume_condition(fact, true);
+                }
+                assumptions = assumptions
+                    .assume_condition(less(a.clone(), constant(100)), true)
+                    .assume_condition(at_least(a.clone(), constant(-5)), true)
+                    .assume_condition(equal(b.clone(), constant(1)), true);
+                let (facts, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    let mut facts = assumptions.signed_constant_bound_facts(width, &a);
+                    facts.extend(assumptions.signed_constant_bound_facts(width, &b));
+                    facts
+                });
+                assert_eq!(facts.len(), 3, "{width:?} at {size}: {facts:?}");
+                let certificate = SpecialArithmeticCertificate {
+                    nodes: vec![SpecialArithmeticNode::SignedDefined {
+                        width,
+                        bounds: (0..facts.len()).collect(),
+                        result: goal.clone(),
+                    }],
+                    conclusion: 0,
+                };
+                assert_eq!(certificate.check(&goal, &facts), Ok(()), "{width:?}");
+                works.push(work);
+            }
+            assert!(
+                works.iter().all(|work| *work == works[0]),
+                "{width:?} bound selection work grew with unrelated bounds: {works:?}"
+            );
+        }
+    }
 
     #[test]
     fn exact_signed_bounds_avoid_context_scan() {

@@ -1286,15 +1286,18 @@ impl<'a> Proof<'a> {
                         result: lower_result(result)?,
                     }
                 }
-                SpecialArithmeticNode::Int64Defined { bounds, result } => {
-                    KernelNode::Int64Defined {
-                        bounds: bounds
-                            .iter()
-                            .map(|i| premise_ref(*i))
-                            .collect::<Result<_, _>>()?,
-                        result: lower_result(result)?,
-                    }
-                }
+                SpecialArithmeticNode::SignedDefined {
+                    width,
+                    bounds,
+                    result,
+                } => KernelNode::SignedDefined {
+                    width: *width,
+                    bounds: bounds
+                        .iter()
+                        .map(|i| premise_ref(*i))
+                        .collect::<Result<_, _>>()?,
+                    result: lower_result(result)?,
+                },
             };
             nodes.push(lowered);
         }
@@ -1321,20 +1324,33 @@ impl<'a> Proof<'a> {
                         "special arithmetic premise {index} is not exactly available"
                     )),
                 PropositionCloseError::SpecialArithmetic(
-                    SpecialArithmeticCheckError::Int64RangeExceeded { lower, upper, .. },
-                ) => self.step_error(format!(
-                    "`int64_defined` does not follow: the listed bounds and the operands' widths \
-                     put the exact result in [{lower}, {upper}], which leaves int64 \
-                     [{}, {}]; list a bound on each operand that keeps the result in range",
-                    i64::MIN,
-                    i64::MAX
-                )),
+                    SpecialArithmeticCheckError::SignedDefinedRangeExceeded {
+                        width,
+                        lower,
+                        upper,
+                        ..
+                    },
+                ) => {
+                    let (minimum, maximum) = width.range();
+                    let name = width.name();
+                    self.step_error(format!(
+                        "`{name}_defined` does not follow: the listed bounds and the operands' \
+                         widths put the exact result in [{lower}, {upper}], which leaves {name} \
+                         [{minimum}, {maximum}]; list a bound on each operand that keeps the \
+                         result in range"
+                    ))
+                }
                 PropositionCloseError::SpecialArithmetic(
-                    SpecialArithmeticCheckError::Int64BoundUnrelated { premise, .. },
-                ) => self.step_error(format!(
-                    "`int64_defined` premise {premise} is not a constant int64 order or equality \
-                     fact on an operand of the claimed operation"
-                )),
+                    SpecialArithmeticCheckError::SignedDefinedBoundUnrelated {
+                        width, premise, ..
+                    },
+                ) => {
+                    let name = width.name();
+                    self.step_error(format!(
+                        "`{name}_defined` premise {premise} is not a constant {name} order or \
+                         equality fact on an operand of the claimed operation"
+                    ))
+                }
                 PropositionCloseError::SpecialArithmetic(error) => self.step_error(format!(
                     "special arithmetic certificate rejected: {error:?}"
                 )),

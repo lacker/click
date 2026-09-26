@@ -7765,16 +7765,43 @@ pub fn prove_int32_add_defined_by_integer_bounds(
     left: Bitvector32Term,
     right: Bitvector32Term,
 ) -> Theorem {
+    prove_int32_operation_defined_by_integer_bounds(left, right, false)
+}
+
+/// Mathematical bounds on the exact difference establish signed C
+/// subtraction safety.
+pub fn prove_int32_subtract_defined_by_integer_bounds(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+) -> Theorem {
+    prove_int32_operation_defined_by_integer_bounds(left, right, true)
+}
+
+fn prove_int32_operation_defined_by_integer_bounds(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    subtract: bool,
+) -> Theorem {
     let observe = |value| {
         IntegerTerm::from_machine(MachineIntegerType::Int32, value)
             .expect("every int32 bit pattern has a mathematical interpretation")
     };
-    let sum: SharedIntegerTerm =
-        IntegerTerm::Add(observe(left.clone()).into(), observe(right.clone()).into()).into();
+    let (observed_left, observed_right) =
+        (observe(left.clone()).into(), observe(right.clone()).into());
+    let exact: SharedIntegerTerm = if subtract {
+        IntegerTerm::Subtract(observed_left, observed_right).into()
+    } else {
+        IntegerTerm::Add(observed_left, observed_right).into()
+    };
+    let overflows = if subtract {
+        ConditionTerm::signed_subtract_overflows(left, right)
+    } else {
+        ConditionTerm::signed_add_overflows(left, right)
+    };
     Theorem::new(Proposition::Implies(
         Box::new(Proposition::ConditionIs(
             ConditionTerm::IntegerGreaterEqual(
-                sum.clone(),
+                exact.clone(),
                 IntegerTerm::constant_i64(i64::from(i32::MIN)).into(),
             ),
             true,
@@ -7782,15 +7809,12 @@ pub fn prove_int32_add_defined_by_integer_bounds(
         Box::new(Proposition::Implies(
             Box::new(Proposition::ConditionIs(
                 ConditionTerm::IntegerLessEqual(
-                    sum,
+                    exact,
                     IntegerTerm::constant_i64(i64::from(i32::MAX)).into(),
                 ),
                 true,
             )),
-            Box::new(Proposition::ConditionIs(
-                ConditionTerm::signed_add_overflows(left, right),
-                false,
-            )),
+            Box::new(Proposition::ConditionIs(overflows, false)),
         )),
     ))
 }

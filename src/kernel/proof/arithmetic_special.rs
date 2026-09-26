@@ -11,7 +11,7 @@
 
 use super::super::{
     Bitvector32Term, CComparisonOperator, CFloatClassification, CFloatCondition, ConditionTerm,
-    Pointer, PointerBlock, PointerOffsetTerm, Proposition,
+    Pointer, PointerBlock, PointerOffsetTerm, Proposition, SignedDefinedWidth,
 };
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -436,11 +436,19 @@ fn condition_identity(left: &ConditionTerm, right: &ConditionTerm) -> bool {
         | (ConditionTerm::Float64(left), ConditionTerm::Float64(right)) => {
             float_condition_identity(left, right)
         }
-        // An `int64` definedness claim names arbitrary operand terms (loads,
-        // snapshot values, widenings). Both sides were lowered from the
-        // certificate's own explicit text and the goal, so the structural
-        // comparison is linear in that input.
+        // An `int32` or `int64` definedness claim names arbitrary operand
+        // terms (loads, snapshot values, widenings). Both sides were lowered
+        // from the certificate's own explicit text and the goal, so the
+        // structural comparison is linear in that input.
         (
+            ConditionTerm::Bitvector32SignedAddOverflows(left_first, left_second),
+            ConditionTerm::Bitvector32SignedAddOverflows(right_first, right_second),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedSubtractOverflows(left_first, left_second),
+            ConditionTerm::Bitvector32SignedSubtractOverflows(right_first, right_second),
+        )
+        | (
             ConditionTerm::Bitvector64SignedAddOverflows(left_first, left_second),
             ConditionTerm::Bitvector64SignedAddOverflows(right_first, right_second),
         )
@@ -540,12 +548,14 @@ pub(crate) enum SpecialArithmeticNode {
     /// Prove a reflexive IEEE comparison from one exact finite classification.
     FloatReflexive { finite: usize, result: Proposition },
     /// Establish `defined(left + right)` or `defined(left - right)` over
-    /// `int64` from each operand's range: the width range of its root
-    /// constructor (a constant, or a value widened from 32 bits), narrowed
-    /// by the listed premises. Each listed premise is a constant `int64`
-    /// order or equality fact on one operand; the checker reads it directly,
-    /// so its work is one lookup per listed bound and never a context scan.
-    Int64Defined {
+    /// `width` (`int32` or `int64`) from each operand's range: the width
+    /// range of its root constructor (a constant, or for `int64` a value
+    /// widened from 32 bits), narrowed by the listed premises. Each listed
+    /// premise is a constant order or equality fact of that width on one
+    /// operand; the checker reads it directly, so its work is one lookup per
+    /// listed bound and never a context scan.
+    SignedDefined {
+        width: SignedDefinedWidth,
         bounds: Vec<usize>,
         result: Proposition,
     },
@@ -569,16 +579,19 @@ pub(crate) enum SpecialArithmeticCheckError {
     NodeResultMismatch(usize),
     WorkLimitExceeded,
     DoesNotFollow,
-    /// Listed premise `premise` of node `node` is not a constant `int64`
-    /// order or equality fact on an operand of the claimed operation.
-    Int64BoundUnrelated {
+    /// Listed premise `premise` of node `node` is not a constant order or
+    /// equality fact of the node's width on an operand of the claimed
+    /// operation.
+    SignedDefinedBoundUnrelated {
         node: usize,
+        width: SignedDefinedWidth,
         premise: usize,
     },
     /// The operand ranges node `node` establishes put the exact result in
-    /// `[lower, upper]`, which leaves `int64`.
-    Int64RangeExceeded {
+    /// `[lower, upper]`, which leaves the node's width.
+    SignedDefinedRangeExceeded {
         node: usize,
+        width: SignedDefinedWidth,
         lower: i128,
         upper: i128,
     },
@@ -727,7 +740,11 @@ impl SpecialArithmeticCertificate {
                 }
                 Ok(())
             }
-            SpecialArithmeticNode::Int64Defined { bounds, result } => {
+            SpecialArithmeticNode::SignedDefined {
+                width,
+                bounds,
+                result,
+            } => {
                 if crate::instrumentation::deadline_exceeded_with_work(
                     bounds.len().saturating_add(1),
                 ) {
@@ -746,82 +763,150 @@ impl SpecialArithmeticCertificate {
                             .ok_or(SpecialArithmeticCheckError::InvalidPremise(*bound))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                int64_defined(index, &bounds, result)
+                signed_defined(index, *width, &bounds, result)
             }
         }
     }
 }
 
-/// The operation a `defined` claim over `int64` addition or subtraction
-/// names: its two operands and whether it subtracts.
-pub(crate) fn int64_definedness_operands(
+/// The operation a `defined` claim over `int32` or `int64` addition or
+/// subtraction names: its width, its two operands, and whether it subtracts.
+pub(crate) fn signed_definedness_operands(
     proposition: &Proposition,
-) -> Option<(&Bitvector32Term, &Bitvector32Term, bool)> {
-    match proposition {
-        Proposition::ConditionIs(
-            ConditionTerm::Bitvector64SignedAddOverflows(left, right),
-            false,
-        ) => Some((left, right, false)),
-        Proposition::ConditionIs(
-            ConditionTerm::Bitvector64SignedSubtractOverflows(left, right),
-            false,
-        ) => Some((left, right, true)),
+) -> Option<(SignedDefinedWidth, &Bitvector32Term, &Bitvector32Term, bool)> {
+    let Proposition::ConditionIs(condition, false) = proposition else {
+        return None;
+    };
+    match condition {
+        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+            Some((SignedDefinedWidth::Int32, left, right, false))
+        }
+        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+            Some((SignedDefinedWidth::Int32, left, right, true))
+        }
+        ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
+            Some((SignedDefinedWidth::Int64, left, right, false))
+        }
+        ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
+            Some((SignedDefinedWidth::Int64, left, right, true))
+        }
         _ => None,
     }
 }
 
-/// What one constant `int64` fact says about `term`: an inclusive lower
+/// The signed value of `term` when it is a constant of `width`.
+pub(crate) fn signed_width_constant(
+    width: SignedDefinedWidth,
+    term: &Bitvector32Term,
+) -> Option<i64> {
+    match width {
+        SignedDefinedWidth::Int32 => term.as_const().map(|bits| i64::from(bits as i32)),
+        SignedDefinedWidth::Int64 => term.int64_as_const(),
+    }
+}
+
+/// The range a term of `width` has from its root constructor alone. An
+/// `int32` term has no narrower root constructor (`char` and `short` values
+/// share the 32-bit term unchanged), so only a constant narrows it.
+fn signed_width_interval(width: SignedDefinedWidth, term: &Bitvector32Term) -> (i64, i64) {
+    match width {
+        SignedDefinedWidth::Int32 => {
+            signed_width_constant(width, term).map_or_else(|| width.range(), |value| (value, value))
+        }
+        SignedDefinedWidth::Int64 => term.int64_width_interval().unwrap_or(width.range()),
+    }
+}
+
+/// A signed order fact of `width` as `(lower, upper, strict)`.
+fn signed_width_order_fact(
+    width: SignedDefinedWidth,
+    condition: &ConditionTerm,
+    value: bool,
+) -> Option<(Bitvector32Term, Bitvector32Term, bool)> {
+    match width {
+        SignedDefinedWidth::Int32 => {
+            crate::kernel::reasoning::order_reasoning::condition_as_order_fact(condition, value)
+        }
+        SignedDefinedWidth::Int64 => {
+            crate::kernel::reasoning::order_reasoning::condition_as_int64_order_fact(
+                condition, value,
+            )
+        }
+    }
+}
+
+/// The two sides of an equality of `width`.
+fn signed_width_equality(
+    width: SignedDefinedWidth,
+    condition: &ConditionTerm,
+) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+    match (width, condition) {
+        (SignedDefinedWidth::Int32, ConditionTerm::Bitvector32Equal(left, right))
+        | (SignedDefinedWidth::Int64, ConditionTerm::Bitvector64Equal(left, right)) => {
+            Some((left, right))
+        }
+        _ => None,
+    }
+}
+
+/// What one constant fact of `width` says about `term`: an inclusive lower
 /// and upper bound, either of which may be absent. `None` when the fact is
-/// not a constant order or equality fact on `term`.
-pub(crate) fn int64_constant_bound_on(
+/// not a constant order or equality fact of that width on `term`.
+pub(crate) fn signed_constant_bound_on(
+    width: SignedDefinedWidth,
     premise: &Proposition,
     term: &Bitvector32Term,
 ) -> Option<(Option<i64>, Option<i64>)> {
     let Proposition::ConditionIs(condition, value) = premise else {
         return None;
     };
-    if let ConditionTerm::Bitvector64Equal(left, right) = condition {
+    if let Some((left, right)) = signed_width_equality(width, condition) {
         if !*value {
             return None;
         }
-        let constant = if left.as_ref() == term {
-            right.int64_as_const()?
-        } else if right.as_ref() == term {
-            left.int64_as_const()?
+        let constant = if left == term {
+            signed_width_constant(width, right)?
+        } else if right == term {
+            signed_width_constant(width, left)?
         } else {
             return None;
         };
         return Some((Some(constant), Some(constant)));
     }
-    let (lower, upper, strict) =
-        crate::kernel::reasoning::order_reasoning::condition_as_int64_order_fact(
-            condition, *value,
-        )?;
+    let (lower, upper, strict) = signed_width_order_fact(width, condition, *value)?;
     let step = i64::from(strict);
+    let (minimum, maximum) = width.range();
     if &lower == term
-        && let Some(constant) = upper.int64_as_const()
+        && let Some(constant) = signed_width_constant(width, &upper)
     {
-        // `term < c` or `term <= c`. A strict bound below `INT64_MIN` has
-        // no inhabitant; it bounds nothing this rule can use.
-        return Some((None, Some(constant.checked_sub(step)?)));
+        // `term < c` or `term <= c`. A strict bound below the width's
+        // minimum has no inhabitant; it bounds nothing this rule can use.
+        let bound = constant
+            .checked_sub(step)
+            .filter(|bound| *bound >= minimum)?;
+        return Some((None, Some(bound)));
     }
     if &upper == term
-        && let Some(constant) = lower.int64_as_const()
+        && let Some(constant) = signed_width_constant(width, &lower)
     {
-        return Some((Some(constant.checked_add(step)?), None));
+        let bound = constant
+            .checked_add(step)
+            .filter(|bound| *bound <= maximum)?;
+        return Some((Some(bound), None));
     }
     None
 }
 
 /// The range `term` has from its width and the listed bounds on it.
-fn int64_operand_range(
+fn signed_operand_range(
+    width: SignedDefinedWidth,
     term: &Bitvector32Term,
     bounds: &[(usize, &Proposition)],
     used: &mut [bool],
 ) -> (i64, i64) {
-    let (mut lower, mut upper) = term.int64_width_interval().unwrap_or((i64::MIN, i64::MAX));
+    let (mut lower, mut upper) = signed_width_interval(width, term);
     for (position, (_, premise)) in bounds.iter().enumerate() {
-        if let Some((bound_lower, bound_upper)) = int64_constant_bound_on(premise, term) {
+        if let Some((bound_lower, bound_upper)) = signed_constant_bound_on(width, premise, term) {
             used[position] = true;
             if let Some(value) = bound_lower {
                 lower = lower.max(value);
@@ -836,7 +921,7 @@ fn int64_operand_range(
 
 /// The exact result range of `left + right` or `left - right` over the two
 /// operand ranges, computed without overflow.
-pub(crate) fn int64_result_range(
+pub(crate) fn signed_result_range(
     left: (i64, i64),
     right: (i64, i64),
     subtract: bool,
@@ -854,19 +939,25 @@ pub(crate) fn int64_result_range(
     }
 }
 
-fn int64_defined(
+fn signed_defined(
     index: usize,
+    width: SignedDefinedWidth,
     bounds: &[(usize, &Proposition)],
     result: &Proposition,
 ) -> Result<(), SpecialArithmeticCheckError> {
-    let (left, right, subtract) = int64_definedness_operands(result)
+    let (claimed, left, right, subtract) = signed_definedness_operands(result)
         .ok_or(SpecialArithmeticCheckError::NodeResultMismatch(index))?;
+    // The node's spelling names the width; it must be the claim's own.
+    if claimed != width {
+        return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
+    }
     let mut used = vec![false; bounds.len()];
-    let left_range = int64_operand_range(left, bounds, &mut used);
-    let right_range = int64_operand_range(right, bounds, &mut used);
+    let left_range = signed_operand_range(width, left, bounds, &mut used);
+    let right_range = signed_operand_range(width, right, bounds, &mut used);
     if let Some(position) = used.iter().position(|used| !used) {
-        return Err(SpecialArithmeticCheckError::Int64BoundUnrelated {
+        return Err(SpecialArithmeticCheckError::SignedDefinedBoundUnrelated {
             node: index,
+            width,
             premise: bounds[position].0,
         });
     }
@@ -875,10 +966,12 @@ fn int64_defined(
     if left_range.0 > left_range.1 || right_range.0 > right_range.1 {
         return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
     }
-    let (lower, upper) = int64_result_range(left_range, right_range, subtract);
-    if lower < i128::from(i64::MIN) || upper > i128::from(i64::MAX) {
-        return Err(SpecialArithmeticCheckError::Int64RangeExceeded {
+    let (lower, upper) = signed_result_range(left_range, right_range, subtract);
+    let (minimum, maximum) = width.range();
+    if lower < i128::from(minimum) || upper > i128::from(maximum) {
+        return Err(SpecialArithmeticCheckError::SignedDefinedRangeExceeded {
             node: index,
+            width,
             lower,
             upper,
         });
@@ -894,7 +987,7 @@ impl SpecialArithmeticNode {
             | Self::PointerWordEquality { result, .. }
             | Self::PointerWordFromAlignment { result, .. }
             | Self::FloatReflexive { result, .. }
-            | Self::Int64Defined { result, .. } => result,
+            | Self::SignedDefined { result, .. } => result,
         }
     }
 }
@@ -2341,7 +2434,8 @@ mod tests {
         bounds: Vec<usize>,
     ) -> Result<(), SpecialArithmeticCheckError> {
         SpecialArithmeticCertificate {
-            nodes: vec![SpecialArithmeticNode::Int64Defined {
+            nodes: vec![SpecialArithmeticNode::SignedDefined {
+                width: SignedDefinedWidth::Int64,
                 bounds,
                 result: goal.clone(),
             }],
@@ -2376,7 +2470,7 @@ mod tests {
         let subtract = int64_defined_goal(a.clone(), b.clone(), true);
         assert!(matches!(
             check_int64_defined(&subtract, &premises, vec![0, 1]),
-            Err(SpecialArithmeticCheckError::Int64RangeExceeded { .. })
+            Err(SpecialArithmeticCheckError::SignedDefinedRangeExceeded { .. })
         ));
         assert_eq!(
             check_int64_defined(&subtract, &premises, vec![0, 1, 2]),
@@ -2386,7 +2480,8 @@ mod tests {
         assert_eq!(
             check_int64_defined(&add, &premises, vec![0, 1]).and_then(|()| {
                 SpecialArithmeticCertificate {
-                    nodes: vec![SpecialArithmeticNode::Int64Defined {
+                    nodes: vec![SpecialArithmeticNode::SignedDefined {
+                        width: SignedDefinedWidth::Int64,
                         bounds: vec![0, 1],
                         result: add.clone(),
                     }],
@@ -2417,8 +2512,9 @@ mod tests {
         assert_eq!(check_int64_defined(&goal, &premises, vec![0]), Ok(()));
         assert_eq!(
             check_int64_defined(&goal, &premises, vec![0, 1]),
-            Err(SpecialArithmeticCheckError::Int64BoundUnrelated {
+            Err(SpecialArithmeticCheckError::SignedDefinedBoundUnrelated {
                 node: 0,
+                width: SignedDefinedWidth::Int64,
                 premise: 1
             })
         );
@@ -2429,8 +2525,109 @@ mod tests {
         // Without the bound, `2^32 - 1 + INT64_MAX` leaves int64.
         assert!(matches!(
             check_int64_defined(&goal, &premises, vec![]),
-            Err(SpecialArithmeticCheckError::Int64RangeExceeded { .. })
+            Err(SpecialArithmeticCheckError::SignedDefinedRangeExceeded { .. })
         ));
+    }
+
+    fn check_int32_defined(
+        goal: &Proposition,
+        premises: &[Proposition],
+        bounds: Vec<usize>,
+    ) -> Result<(), SpecialArithmeticCheckError> {
+        SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::SignedDefined {
+                width: SignedDefinedWidth::Int32,
+                bounds,
+                result: goal.clone(),
+            }],
+            conclusion: 0,
+        }
+        .check(goal, premises)
+    }
+
+    fn int32_defined_goal(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+        subtract: bool,
+    ) -> Proposition {
+        let condition = if subtract {
+            ConditionTerm::Bitvector32SignedSubtractOverflows(Box::new(left), Box::new(right))
+        } else {
+            ConditionTerm::Bitvector32SignedAddOverflows(Box::new(left), Box::new(right))
+        };
+        Proposition::ConditionIs(condition, false)
+    }
+
+    #[test]
+    fn int32_defined_follows_from_constant_bounds_and_refuses_what_leaves_int32() {
+        let (a, b) = (int64_var(1), int64_var(2));
+        let c = |value: i32| Bitvector32Term::Constant(value as u32);
+        let premises = vec![
+            // `a < 100`, `b == 1`, `-5 <= a` spelled as `not (a < -5)`.
+            int64_fact(
+                ConditionTerm::Bitvector32SignedLessThan(Box::new(a.clone()), Box::new(c(100))),
+                true,
+            ),
+            int64_fact(
+                ConditionTerm::Bitvector32Equal(Box::new(b.clone()), Box::new(c(1))),
+                true,
+            ),
+            int64_fact(
+                ConditionTerm::Bitvector32SignedLessThan(Box::new(a.clone()), Box::new(c(-5))),
+                false,
+            ),
+            // An `int64` bound on `a` is not an `int32` bound.
+            int64_fact(
+                ConditionTerm::Bitvector64SignedLessThan(
+                    Box::new(a.clone()),
+                    Box::new(Bitvector32Term::Int64Constant(100)),
+                ),
+                true,
+            ),
+        ];
+        let add = int32_defined_goal(a.clone(), b.clone(), false);
+        assert_eq!(check_int32_defined(&add, &premises, vec![0, 1]), Ok(()));
+        // `a - b` needs the lower bound on `a`: `INT32_MIN - 1` overflows.
+        let subtract = int32_defined_goal(a.clone(), b.clone(), true);
+        assert_eq!(
+            check_int32_defined(&subtract, &premises, vec![0, 1]),
+            Err(SpecialArithmeticCheckError::SignedDefinedRangeExceeded {
+                node: 0,
+                width: SignedDefinedWidth::Int32,
+                lower: i128::from(i32::MIN) - 1,
+                upper: 98,
+            })
+        );
+        assert_eq!(
+            check_int32_defined(&subtract, &premises, vec![0, 1, 2]),
+            Ok(())
+        );
+        // One bounded operand leaves the other its whole `int32` range.
+        assert!(matches!(
+            check_int32_defined(&add, &premises, vec![0]),
+            Err(SpecialArithmeticCheckError::SignedDefinedRangeExceeded { .. })
+        ));
+        assert_eq!(
+            check_int32_defined(&add, &premises, vec![0, 1, 3]),
+            Err(SpecialArithmeticCheckError::SignedDefinedBoundUnrelated {
+                node: 0,
+                width: SignedDefinedWidth::Int32,
+                premise: 3
+            })
+        );
+        // The node's width must be the claim's own.
+        assert_eq!(
+            check_int64_defined(&add, &premises, vec![0, 1]),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        );
+        // A constant operand is its own range: `a + 7` needs only `a < 100`
+        // and a lower bound on `a`.
+        let constant = int32_defined_goal(a.clone(), c(7), false);
+        assert!(matches!(
+            check_int32_defined(&constant, &premises, vec![2]),
+            Err(SpecialArithmeticCheckError::SignedDefinedRangeExceeded { .. })
+        ));
+        assert_eq!(check_int32_defined(&constant, &premises, vec![0]), Ok(()));
     }
 
     fn pointer(offset: PointerOffsetTerm) -> Pointer {

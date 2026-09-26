@@ -974,6 +974,25 @@ Both bounds are required, including when the final program result is in range.
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md).
 
+### `int32_subtract_defined_by_integer_bounds`
+
+```click
+theorem int32_subtract_defined_by_integer_bounds(left: int32, right: int32) {
+    requires to_integer(left) - to_integer(right) >= -2147483648;
+    requires to_integer(left) - to_integer(right) <= 2147483647;
+    ensures defined(left - right);
+}
+```
+
+Bounds on the mathematical difference establish that signed C subtraction
+does not overflow. It is the subtraction twin of
+`int32_add_defined_by_integer_bounds`, and both bounds are likewise required.
+When constant bounds on the operands themselves suffice, the checked
+`int32_defined` certificate step needs no `to_integer` conversion
+([tactics reference](../tactics/index.md)).
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/lacker/click/blob/master/mdtests/stdlib_every_symbol.md).
+
 ### `int32_add_to_integer`
 
 ```click

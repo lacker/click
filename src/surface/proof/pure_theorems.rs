@@ -2161,6 +2161,7 @@ pub(in crate::surface) fn is_kernel_standard_theorem_name(name: &str) -> bool {
         || matches!(
             name,
             "int32_add_defined_by_integer_bounds"
+                | "int32_subtract_defined_by_integer_bounds"
                 | "int32_add_to_integer"
                 | "int32_less_equal_to_integer"
                 | "int32_subtract_to_integer"
@@ -2216,7 +2217,9 @@ fn verify_kernel_standard_theorem_axiom(
         "nat_integer_succ" | "nat_integer_nonnegative" | "nat_integer_round_trip" => (1, 0),
         "integer_nat_round_trip" => (1, 1),
         name if integer_round_trip_destination(name).is_some() => (1, 2),
-        "int32_add_defined_by_integer_bounds" => (2, 2),
+        "int32_add_defined_by_integer_bounds" | "int32_subtract_defined_by_integer_bounds" => {
+            (2, 2)
+        }
         "int32_add_to_integer" | "int32_less_equal_to_integer" | "int32_subtract_to_integer" => {
             (2, 1)
         }
@@ -2303,6 +2306,12 @@ fn verify_kernel_standard_theorem_axiom(
         match theorem.name() {
             "int32_add_defined_by_integer_bounds" => {
                 crate::kernel::prove_int32_add_defined_by_integer_bounds(value, int32_parameter(1)?)
+            }
+            "int32_subtract_defined_by_integer_bounds" => {
+                crate::kernel::prove_int32_subtract_defined_by_integer_bounds(
+                    value,
+                    int32_parameter(1)?,
+                )
             }
             "int32_add_to_integer" => {
                 crate::kernel::prove_int32_add_to_integer(value, int32_parameter(1)?)

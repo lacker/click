@@ -4,7 +4,7 @@
 use super::*;
 use crate::kernel::proof::arithmetic_special::{
     SpecialArithmeticCertificate as KernelCertificate, SpecialArithmeticNode as KernelNode,
-    int64_constant_bound_on, int64_definedness_operands,
+    signed_constant_bound_on, signed_definedness_operands,
 };
 use crate::kernel::{CFloatClassification, CFloatCondition, ConditionTerm, Proposition};
 use crate::surface::{ArithmeticCertificate, SpecialArithmeticCertificate, SpecialArithmeticNode};
@@ -16,23 +16,24 @@ pub(in crate::surface) fn plan_special_arithmetic_certificate(
     if !charge_proposition(goal) {
         return None;
     }
-    // `defined(a + b)` or `defined(a - b)` over `int64`: cite exactly the
-    // listed premises that bound an operand by a constant. The kernel
-    // recomputes the operand ranges and refuses a result that can leave
-    // `int64`.
-    if let Some((left, right, _)) = int64_definedness_operands(goal) {
+    // `defined(a + b)` or `defined(a - b)` over `int32` or `int64`: cite
+    // exactly the listed premises that bound an operand by a constant of
+    // the goal's width. The kernel recomputes the operand ranges and
+    // refuses a result that can leave that width.
+    if let Some((width, left, right, _)) = signed_definedness_operands(goal) {
         let bounds = premises
             .iter()
             .enumerate()
             .filter_map(|(i, p)| {
                 (charge_proposition(p)
-                    && (int64_constant_bound_on(p, left).is_some()
-                        || int64_constant_bound_on(p, right).is_some()))
+                    && (signed_constant_bound_on(width, p, left).is_some()
+                        || signed_constant_bound_on(width, p, right).is_some()))
                 .then_some(i)
             })
             .collect();
         return Some(KernelCertificate {
-            nodes: vec![KernelNode::Int64Defined {
+            nodes: vec![KernelNode::SignedDefined {
+                width,
                 bounds,
                 result: goal.clone(),
             }],
@@ -172,10 +173,13 @@ pub(in crate::surface) fn special_plan_to_surface_certificate(
                 finite: *finite,
                 result: goal.clone(),
             },
-            KernelNode::Int64Defined { bounds, .. } => SpecialArithmeticNode::Int64Defined {
-                bounds: bounds.clone(),
-                result: goal.clone(),
-            },
+            KernelNode::SignedDefined { width, bounds, .. } => {
+                SpecialArithmeticNode::SignedDefined {
+                    width: *width,
+                    bounds: bounds.clone(),
+                    result: goal.clone(),
+                }
+            }
         })
         .collect();
     ArithmeticCertificate::special(SpecialArithmeticCertificate {

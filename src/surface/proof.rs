@@ -31,9 +31,9 @@ pub(in crate::surface) use proof_object::{
 mod checked_drivers;
 mod execution_state;
 mod guarded_consequents;
-mod int64_definedness;
 mod pure_theorems;
 mod resources;
+mod signed_definedness;
 mod smart_closures;
 mod smart_execution;
 mod structural;

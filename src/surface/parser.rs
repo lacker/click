@@ -6226,13 +6226,25 @@ impl Parser {
                     self.expect(Token::Semicolon)?;
                     nodes.push(SpecialArithmeticNode::FloatReflexive { finite, result });
                 }
-                "int64_defined" => {
+                "int32_defined" | "int64_defined" => {
+                    let width = if keyword == "int32_defined" {
+                        crate::kernel::SignedDefinedWidth::Int32
+                    } else {
+                        crate::kernel::SignedDefinedWidth::Int64
+                    };
                     self.expect_ident_spelling("bounds")?;
-                    let bounds = self.parse_certificate_index_list("int64 bound premise")?;
+                    let bounds = self.parse_certificate_index_list(match width {
+                        crate::kernel::SignedDefinedWidth::Int32 => "int32 bound premise",
+                        crate::kernel::SignedDefinedWidth::Int64 => "int64 bound premise",
+                    })?;
                     self.expect(Token::FatArrow)?;
                     let result = self.parse_proposition()?;
                     self.expect(Token::Semicolon)?;
-                    nodes.push(SpecialArithmeticNode::Int64Defined { bounds, result });
+                    nodes.push(SpecialArithmeticNode::SignedDefined {
+                        width,
+                        bounds,
+                        result,
+                    });
                 }
                 "conclusion" => {
                     if conclusion.is_some() {

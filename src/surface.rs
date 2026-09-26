@@ -5444,9 +5444,11 @@ pub enum SpecialArithmeticNode {
         finite: usize,
         result: ClickProposition,
     },
-    /// `defined(left + right)` or `defined(left - right)` over `int64`,
-    /// from the operands' width ranges and the listed constant bounds.
-    Int64Defined {
+    /// `defined(left + right)` or `defined(left - right)` over `int32`
+    /// (`int32_defined`) or `int64` (`int64_defined`), from the operands'
+    /// width ranges and the listed constant bounds.
+    SignedDefined {
+        width: crate::kernel::SignedDefinedWidth,
         bounds: Vec<usize>,
         result: ClickProposition,
     },

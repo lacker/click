@@ -588,6 +588,47 @@ fn int64_guarded_postcondition_expands_to_int64_defined_and_reverifies() {
     }
 }
 
+/// The `int32` form: the guard's nested `simp` proves it with the checked
+/// `int32_defined` certificate rule citing the operands' constant bounds,
+/// and the expansion re-verifies with no smart tactic left in the claim.
+#[test]
+fn int32_guarded_postcondition_expands_to_int32_defined_and_reverifies() {
+    let relative = "mdtests/int32_defined_from_bounds.md";
+    let (click_source, c_sources) = mdtest_sources(relative);
+    let c_sources = c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let expanded =
+        expand_c0_claim_source(&click_source, &c_sources, "caller", CProofClaim::Grouped)
+            .unwrap_or_else(|error| panic!("`caller` should expand: {}", error.message()));
+    let claim = &expanded[expanded.find("int32 caller(").expect("claim proof")..];
+    let claim = &claim[claim.find("} by {").expect("claim proof body")..];
+    let claim = &claim[..claim[1..].find("\n}").expect("claim end")];
+    assert!(!claim.contains("execute()"), "{expanded}");
+    assert!(!claim.contains("simp()"), "{expanded}");
+    assert!(
+        claim.contains("have defined((old(st.total) + "),
+        "{expanded}"
+    );
+    assert!(
+        claim.contains("arithmetic_certificate special {"),
+        "{expanded}"
+    );
+    assert!(claim.contains("st.total < 100"), "{expanded}");
+    assert!(
+        claim.contains("int32_defined bounds [0, 1] => defined(("),
+        "{expanded}"
+    );
+    assert!(claim.contains("extract(st.total == "), "{expanded}");
+    if let Err(error) = verify_c0_sources(&expanded, &c_sources) {
+        panic!(
+            "the expanded `caller` should re-verify: {}\n{expanded}",
+            error.message()
+        );
+    }
+}
+
 #[test]
 fn branch_continuation_match_expands_and_reverifies() {
     for relative in [

@@ -6986,37 +6986,63 @@ fn integer_machine_operation_axioms_agree_with_boundary_models() {
         }
     }
 
-    let safety = prove_int32_add_defined_by_integer_bounds(
-        Bitvector32Term::Variable(Variable(910)),
-        Bitvector32Term::Variable(Variable(911)),
-    );
-    let Proposition::Implies(lower, tail) = safety.proposition() else {
-        panic!("missing lower bound")
-    };
-    let Proposition::Implies(upper, result) = tail.as_ref() else {
-        panic!("missing upper bound")
-    };
-    let Proposition::ConditionIs(ConditionTerm::IntegerGreaterEqual(sum_lower, min), true) =
-        lower.as_ref()
-    else {
-        panic!("wrong lower bound")
-    };
-    let Proposition::ConditionIs(ConditionTerm::IntegerLessEqual(sum_upper, max), true) =
-        upper.as_ref()
-    else {
-        panic!("wrong upper bound")
-    };
-    let Proposition::ConditionIs(ConditionTerm::Bitvector32SignedAddOverflows(x, y), false) =
-        result.as_ref()
-    else {
-        panic!("wrong safety conclusion")
-    };
-    for a in [i32::MIN, -1, 0, 1, i32::MAX] {
-        for b in [i32::MIN, -1, 0, 1, i32::MAX] {
-            let in_range = integer(sum_lower, a, b) >= integer(min, a, b)
-                && integer(sum_upper, a, b) <= integer(max, a, b);
-            let exact = i64::from(bits(x, a, b) as i32) + i64::from(bits(y, a, b) as i32);
-            assert_eq!(in_range, i32::try_from(exact).is_ok(), "{a}, {b}");
+    for (safety, subtract) in [
+        (
+            prove_int32_add_defined_by_integer_bounds(
+                Bitvector32Term::Variable(Variable(910)),
+                Bitvector32Term::Variable(Variable(911)),
+            ),
+            false,
+        ),
+        (
+            prove_int32_subtract_defined_by_integer_bounds(
+                Bitvector32Term::Variable(Variable(910)),
+                Bitvector32Term::Variable(Variable(911)),
+            ),
+            true,
+        ),
+    ] {
+        let Proposition::Implies(lower, tail) = safety.proposition() else {
+            panic!("missing lower bound")
+        };
+        let Proposition::Implies(upper, result) = tail.as_ref() else {
+            panic!("missing upper bound")
+        };
+        let Proposition::ConditionIs(ConditionTerm::IntegerGreaterEqual(exact_lower, min), true) =
+            lower.as_ref()
+        else {
+            panic!("wrong lower bound")
+        };
+        let Proposition::ConditionIs(ConditionTerm::IntegerLessEqual(exact_upper, max), true) =
+            upper.as_ref()
+        else {
+            panic!("wrong upper bound")
+        };
+        let (x, y) = match (result.as_ref(), subtract) {
+            (
+                Proposition::ConditionIs(ConditionTerm::Bitvector32SignedAddOverflows(x, y), false),
+                false,
+            )
+            | (
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedSubtractOverflows(x, y),
+                    false,
+                ),
+                true,
+            ) => (x, y),
+            _ => panic!("wrong safety conclusion"),
+        };
+        for a in [i32::MIN, -1, 0, 1, i32::MAX] {
+            for b in [i32::MIN, -1, 0, 1, i32::MAX] {
+                let in_range = integer(exact_lower, a, b) >= integer(min, a, b)
+                    && integer(exact_upper, a, b) <= integer(max, a, b);
+                let (x, y) = (
+                    i64::from(bits(x, a, b) as i32),
+                    i64::from(bits(y, a, b) as i32),
+                );
+                let exact = if subtract { x - y } else { x + y };
+                assert_eq!(in_range, i32::try_from(exact).is_ok(), "{a}, {b}");
+            }
         }
     }
     for theorem in [

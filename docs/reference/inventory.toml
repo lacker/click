@@ -3127,6 +3127,10 @@ id = "stdlib.theorem.int32_add_defined_by_integer_bounds"
 path = "reference/library/index.md#int32_add_defined_by_integer_bounds"
 
 [[item]]
+id = "stdlib.theorem.int32_subtract_defined_by_integer_bounds"
+path = "reference/library/index.md#int32_subtract_defined_by_integer_bounds"
+
+[[item]]
 id = "stdlib.theorem.integer_to_int8_round_trip"
 path = "reference/library/index.md#integer_to_int8_round_trip"
 

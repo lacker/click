@@ -869,6 +869,12 @@ theorem int32_add_defined_by_integer_bounds(left: int32, right: int32) {
     ensures defined(left + right);
 }
 
+theorem int32_subtract_defined_by_integer_bounds(left: int32, right: int32) {
+    requires to_integer(left) - to_integer(right) >= -2147483648;
+    requires to_integer(left) - to_integer(right) <= 2147483647;
+    ensures defined(left - right);
+}
+
 theorem integer_to_int8_round_trip(z: Integer) {
     requires z >= -128;
     requires z <= 127;

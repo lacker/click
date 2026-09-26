@@ -685,12 +685,15 @@ fn expand_declared_resource_certificate(
                 .into_iter()
                 .map(|node| {
                     Ok(match node {
-                        SpecialArithmeticNode::Int64Defined { bounds, result } => {
-                            SpecialArithmeticNode::Int64Defined {
-                                bounds,
-                                result: proposition(result)?,
-                            }
-                        }
+                        SpecialArithmeticNode::SignedDefined {
+                            width,
+                            bounds,
+                            result,
+                        } => SpecialArithmeticNode::SignedDefined {
+                            width,
+                            bounds,
+                            result: proposition(result)?,
+                        },
                         other => other,
                     })
                 })

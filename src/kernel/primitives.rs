@@ -31,7 +31,7 @@ pub use integer::{
     AlgebraicIntegerMatchArm, IntegerComparisonOperator, IntegerRangeFoldIndex, IntegerTerm,
     SharedIntegerApplication, SharedIntegerRangeEndpoint, SharedIntegerTerm,
 };
-pub use integer::{MachineIntegerType, SharedMachineIntegerTerm};
+pub use integer::{MachineIntegerType, SharedMachineIntegerTerm, SignedDefinedWidth};
 mod alias_candidates;
 pub(crate) use alias_candidates::{AliasCandidates, BlockKeyed};
 mod derivations;

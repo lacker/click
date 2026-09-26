@@ -1,6 +1,7 @@
 //! Smart closure search and linear script interpretation.
 
 use super::*;
+use crate::kernel::proof::arithmetic_special::signed_definedness_operands;
 use crate::kernel::proof::integer_arithmetic::{
     IntegerAffineClaim, IntegerAffineRelation, IntegerArithmeticCertificate, IntegerArithmeticNode,
     integer_affine_claim,
@@ -1625,7 +1626,7 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(instantiated));
         }
-        if let Some(defined) = self.try_int64_definedness_closure()? {
+        if let Some(defined) = self.try_signed_definedness_closure()? {
             return Ok(Some(defined));
         }
         if let Some(guarded) = self.try_guarded_consequent_closure()? {
@@ -5053,15 +5054,6 @@ impl<'a> Proof<'a> {
         if let Some(closed) = proof.try_restricted_guarded_consequent(surfaces, &premise_pairs) {
             return Some(closed);
         }
-        // An `int64` definedness goal: the listed premises that bound an
-        // operand by a constant, checked by the `int64_defined` rule.
-        if let Some(closed) = proof
-            .try_restricted_int64_definedness_closure(&premise_pairs)
-            .ok()
-            .flatten()
-        {
-            return Some(closed);
-        }
         // A listed implication and its listed antecedent justify extracting
         // the consequent. Keep this route explicitly tied to `using`, rather
         // than allowing an unrelated ambient implication to discharge it.
@@ -5100,7 +5092,11 @@ impl<'a> Proof<'a> {
             .iter()
             .map(|(kernel, _)| kernel.clone())
             .collect::<Vec<_>>();
+        // A definedness goal is left to the typed candidates and the
+        // `int32_defined` / `int64_defined` closer below, so an
+        // operand-specific theorem application keeps its priority.
         if let Some(surface_goal) = proof.surface_goal()
+            && signed_definedness_operands(goal).is_none()
             && let Some(plan) = plan_special_arithmetic_certificate(goal, &restricted)
         {
             let certificate = special_plan_to_surface_certificate(
@@ -5158,6 +5154,16 @@ impl<'a> Proof<'a> {
             // close directly. An arbitrary ambient `assumption` must remain
             // invisible through this explicitly restricted boundary.
             .or_else(|| proof.try_typed_atomic_simp_from_selected_premises(&premise_pairs))
+            // An `int32` or `int64` definedness goal: the listed premises that
+            // bound an operand by a constant, checked by the `int32_defined` /
+            // `int64_defined` rule. It runs after the operand-specific `int32`
+            // theorem applications above, which keep their checked form.
+            .or_else(|| {
+                proof
+                    .try_restricted_signed_definedness_closure(&premise_pairs)
+                    .ok()
+                    .flatten()
+            })
     }
 
     fn try_selected_pointer_inequality_rewrite(
