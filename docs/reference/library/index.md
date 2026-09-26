@@ -26,8 +26,10 @@ abstract resource mutex_guard(mutex: void*);
 resource has exclusive unit ownership, no view, and no memory authority.
 Use `owns mutex_guard(mu)` inside a declared-resource body. Folding consumes
 the existing guard and unfolding returns it; proving `held(mu)` cannot create
-it. Direct or wrapped guards in contracts require abstract protocol state
-and are not supported yet.
+it. Contracts may preserve folded guard-bearing instances using `owns`;
+the helper cannot change mutex protocols. Direct guard clauses and unfolding
+a guard inside an independently checked helper still require abstract
+acquisition state and are not supported yet.
 
 **Verified use:** [`mdtests/mutex_guard_resource_body.md`](https://github.com/lacker/click/blob/master/mdtests/mutex_guard_resource_body.md).
 

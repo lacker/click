@@ -1,17 +1,14 @@
-# A contract cannot hide reinitialization of an acquired mutex
+# An opaque guard cannot hide an untracked nested protocol change
 
-This hostile helper reinitializes and destroys the mutex while claiming to
-preserve its guard wrapper. The preserving contract boundary rejects this
-protocol change even though its entry wrapper stays opaque.
+A preserving contract frames the wrapper and its acquisition. The helper
+receives no permission to change the mutex protocol.
 
 ```c filename=guarded_resource_mutex_flow.c
 #include <pthread.h>
 struct counter { pthread_mutex_t mu; int value; };
 
-void keep(struct counter *counter) {
-    pthread_mutex_init(&counter->mu, 0);
-    pthread_mutex_destroy(&counter->mu);
-}
+void reset(struct counter *counter) { pthread_mutex_init(&counter->mu, 0); }
+void keep(struct counter *counter) { reset(counter); }
 
 int read_counter(struct counter *counter) {
     int value;
@@ -43,6 +40,13 @@ resource counter_state(counter: struct counter*) {
 
 verifying "guarded_resource_mutex_flow.c";
 
+void reset(struct counter *counter) {
+    ensures 0 == 0;
+} by {
+    execute();
+    simp();
+}
+
 void keep(struct counter *counter) {
     owns h: holding(counter);
 } by {
@@ -71,5 +75,5 @@ int32 read_counter(struct counter *counter) {
 ```
 
 ```expect
-fail: preserving guard contracts cannot change mutex protocols
+fail: calls with live mutex protocols require contract protocol effects
 ```

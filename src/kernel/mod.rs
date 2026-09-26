@@ -11,7 +11,7 @@ pub(crate) mod api;
 /// artifacts.  This is deliberately separate from source and compiler
 /// identities: changing the authority interpretation must invalidate an old
 /// certificate even when its inputs are byte-identical.
-pub const RESOURCE_SEMANTICS_VERSION: u32 = 9;
+pub const RESOURCE_SEMANTICS_VERSION: u32 = 10;
 
 pub(crate) mod assumptions;
 mod eval;

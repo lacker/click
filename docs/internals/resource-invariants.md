@@ -230,17 +230,25 @@ resolves the current acquisition identity; folding must separately consume
 that atom from the available resources. Guards compose in ordinary exclusive
 resource bodies and conditional model arms. Guard-containing definitions and their transitive
 wrappers are thread-confined and marked as guard-bearing for contract checks.
-Both function argument binders retain the caller's mutex ledger. Ordinary
-calls with live mutex protocols are refused until contract effects describe
-those protocols; a call must never erase them.
+Both function argument binders retain the caller's mutex ledger. Preserving
+owned instance inputs containing guards additionally freeze mutex transitions
+for the checked body. This boundary is carried in C state, substitution, and
+state equality; nested calls cannot erase it. Returning across it retains the
+caller's acquisition and restores the caller's transition permissions.
 
-Direct and wrapped guard contract inputs/outputs are refused during contract
-transfer and certification. They need abstract protocol and acquisition state
-at contract entry. The hostile reinitializing-helper regression demonstrates
-why preserving an opaque wrapper alone is insufficient. Same-thread contracts that change lock
-state, loop joins across acquisition epochs, live-use and lifecycle authority,
-and shared interference remain later work. Existing return and loop
-restrictions remain. This checkpoint does not add concurrent population access.
+The first contract rule preserves folded guard instances opaquely. It does
+not synthesize acquisitions from a mutex address or from `held(mu)`. Direct
+guard clauses and consumed/produced guard instances are refused in both
+transfer and certification. Calls with live protocols require a preserving
+guard input; suspended workers remain refused. All modeled mutex transitions
+reject a preserving body, even when its abstract entry has no concrete ledger.
+The reinitializing, unlocking, destroying, and nested-reset helper fixtures
+protect this boundary. Opaque entry heldness is not interpreted as false.
+
+Abstract acquisition identities for unfolding inside a helper, lock-changing
+contracts, loop joins across acquisition epochs, lifecycle authority, and
+shared interference remain later work. This checkpoint does not add
+concurrent population access.
 
 The surface's return-resource adapter now checks the obligations returned by
 the kernel before marking its transition checked. Calls involving counted

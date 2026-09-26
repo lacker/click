@@ -2211,10 +2211,11 @@ fn live_thread_return_refusal() -> CStatementOutcome {
 }
 
 fn has_live_mutex(state: &CState) -> bool {
-    state
-        .mutex_ledger
-        .as_ref()
-        .is_some_and(super::super::mutexes::MutexLedger::has_return_obligation)
+    !state.preserves_mutex_protocols
+        && state
+            .mutex_ledger
+            .as_ref()
+            .is_some_and(super::super::mutexes::MutexLedger::has_return_obligation)
 }
 
 fn live_mutex_return_refusal() -> CStatementOutcome {

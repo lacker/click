@@ -2518,6 +2518,9 @@ pub(crate) fn c_state_with_borrowed_contract_inputs(
     arguments: &[CExpression],
     assumptions: &PureFactContext,
 ) -> Result<CState, LoanRefusalDiagnostic> {
+    let mut state = state;
+    state.preserves_mutex_protocols |=
+        crate::kernel::functions::preserves_mutex_protocols(function.contract_interface());
     if !function
         .resource_requires()
         .iter()

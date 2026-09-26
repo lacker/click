@@ -1,7 +1,7 @@
-# Guard-bearing contracts require abstract protocol state
+# A helper preserves an opaque guard wrapper
 
-Even a preserving helper needs abstract protocol state at its contract entry.
-Until that is modeled, a folded wrapper must not bypass the contract refusal.
+A preserving contract frames the wrapper and its acquisition. The helper
+receives no permission to change the mutex protocol.
 
 ```c filename=guarded_resource_mutex_flow.c
 #include <pthread.h>
@@ -67,5 +67,5 @@ int32 read_counter(struct counter *counter) {
 ```
 
 ```expect
-fail: guard-bearing contracts are not supported yet
+pass
 ```

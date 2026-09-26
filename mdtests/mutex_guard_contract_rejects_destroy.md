@@ -1,17 +1,13 @@
-# A contract cannot hide reinitialization of an acquired mutex
+# A preserving helper cannot destroy its mutex
 
-This hostile helper reinitializes and destroys the mutex while claiming to
-preserve its guard wrapper. The preserving contract boundary rejects this
-protocol change even though its entry wrapper stays opaque.
+A preserving contract frames the wrapper and its acquisition. The helper
+receives no permission to change the mutex protocol.
 
 ```c filename=guarded_resource_mutex_flow.c
 #include <pthread.h>
 struct counter { pthread_mutex_t mu; int value; };
 
-void keep(struct counter *counter) {
-    pthread_mutex_init(&counter->mu, 0);
-    pthread_mutex_destroy(&counter->mu);
-}
+void keep(struct counter *counter) { pthread_mutex_destroy(&counter->mu); }
 
 int read_counter(struct counter *counter) {
     int value;

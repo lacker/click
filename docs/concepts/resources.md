@@ -595,12 +595,18 @@ create a guard, and neither `views mutex_guard(mu)` nor a quantity is allowed.
 A wrapper containing a guard is thread-confined, including through nested
 wrappers.
 
-Guard-bearing contracts, including contracts mentioning enclosing wrappers,
-are currently refused. They need abstract protocol state at function entry;
-otherwise a helper could reinitialize a held mutex while claiming to preserve
-the wrapper. Ordinary calls while a mutex protocol is live are also refused
-until contract protocol effects are modeled. Local guard composition works
-within one function; current return and loop restrictions still apply.
+A helper may preserve a folded guard-bearing instance with an ordinary
+`owns h: holding(counter);` clause. The kernel frames its mutex protocol:
+initialization, acquisition, release, and destruction are all forbidden while
+checking that helper, and nested calls must satisfy the same preserving
+boundary. The caller recovers the wrapper and the unchanged acquisition.
+
+This first contract boundary keeps the guard opaque. Unfolding it inside an
+independently checked helper, direct guard clauses, consuming or producing
+guards, and lock-changing helpers still require abstract acquisition state.
+Calls without a preserving guard input remain refused while a mutex protocol
+is live. `held(mu)` cannot inspect an opaque entry protocol. Local guard
+composition within a function continues to work; loop restrictions remain.
 
 A contract clause speaks about parameters, so `consumes t: tree_at(root);`
 names the tree at the entry argument. These tactics are not contract clauses:

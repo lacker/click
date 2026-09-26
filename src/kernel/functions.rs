@@ -11337,6 +11337,8 @@ pub(super) fn bind_c_function_arguments(
             caller_state.enclosing_frame_holds_locals() || !caller_state.locals.is_empty(),
         );
     callee_state.mutex_ledger = caller_state.mutex_ledger.clone();
+    callee_state.preserves_mutex_protocols = caller_state.preserves_mutex_protocols
+        || preserves_mutex_protocols(function.contract_interface());
     callee_state.population_access = caller_state.population_access.clone();
     callee_state.counted_populations = caller_state.counted_populations.clone();
     // A function entry is a lexical/frame rebind, not an authority reset.
@@ -11453,6 +11455,8 @@ fn bind_c_contract_arguments(
             caller_state.enclosing_frame_holds_locals() || !caller_state.locals.is_empty(),
         );
     callee_state.mutex_ledger = caller_state.mutex_ledger.clone();
+    callee_state.preserves_mutex_protocols =
+        caller_state.preserves_mutex_protocols || preserves_mutex_protocols(interface);
     callee_state.population_access = caller_state.population_access.clone();
     callee_state.counted_populations = caller_state.counted_populations.clone();
     callee_state.loan_ledger = caller_state.loan_ledger.clone();
@@ -13421,18 +13425,40 @@ impl ResourceTransitionPurpose {
     }
 }
 
-/// Prepares the resource transition of one contract application; see
-/// [`ResourceTransitionPurpose`] for the two routes.
+fn spec_contains_mutex_guard(interface: &CFunctionContractInterface, spec: &CResourceSpec) -> bool {
+    spec.family() == ResourceFamily::MutexGuard
+        || spec.contained_definition_name().is_some_and(|name| {
+            interface
+                .composite_resource_definition(name)
+                .is_some_and(|definition| definition.contains_mutex_guard)
+        })
+}
+
+pub(crate) fn preserves_mutex_protocols(interface: &CFunctionContractInterface) -> bool {
+    interface
+        .resource_requires()
+        .iter()
+        .any(|spec| spec_contains_mutex_guard(interface, spec))
+}
+
 pub(crate) fn guard_contract_refusal(
     interface: &CFunctionContractInterface,
 ) -> Option<&'static str> {
-    interface.resource_requires().iter().chain(interface.resource_ensures()).any(|spec| {
-        spec.family() == ResourceFamily::MutexGuard || spec.contained_definition_name().is_some_and(|name| {
-            interface.composite_resource_definition(name).is_some_and(|definition| definition.contains_mutex_guard)
+    interface
+        .resource_requires()
+        .iter()
+        .chain(interface.resource_ensures())
+        .any(|spec| {
+            spec_contains_mutex_guard(interface, spec)
+                && (spec.family() != ResourceFamily::Instance
+                    || spec.role() != CResourceTransferRole::Borrow
+                    || spec.is_view())
         })
-    }).then_some("mutex guards in contracts require abstract protocol state; guard-bearing contracts are not supported yet")
+        .then_some("guard-bearing contracts currently require preserving owned instance inputs")
 }
 
+/// Prepares the resource transition of one contract application; see
+/// [`ResourceTransitionPurpose`] for the two routes.
 fn prepare_contract_resource_transfer(
     caller_state: &CState,
     callee_state: &CState,
@@ -13447,10 +13473,13 @@ fn prepare_contract_resource_transfer(
         return Ok(Err(CRuntimeError::FunctionContract(message.into())));
     }
     if purpose.lends()
-        && caller_state
-            .mutex_ledger
-            .as_ref()
-            .is_some_and(super::mutexes::MutexLedger::has_any_mutex)
+        && (caller_state.preserves_mutex_protocols
+            || caller_state
+                .mutex_ledger
+                .as_ref()
+                .is_some_and(super::mutexes::MutexLedger::has_any_mutex))
+        && (purpose == ResourceTransitionPurpose::SuspendedWorker
+            || !preserves_mutex_protocols(interface))
     {
         return Ok(Err(CRuntimeError::FunctionContract(
             "calls with live mutex protocols require contract protocol effects".into(),

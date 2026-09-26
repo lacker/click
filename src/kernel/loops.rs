@@ -2248,6 +2248,9 @@ fn c_loop_state_components_match_at_back_edge_inner(
     if top_state.loan_view_bindings != next_state.loan_view_bindings {
         changed.push("stable-view occurrence bindings");
     }
+    if top_state.preserves_mutex_protocols != next_state.preserves_mutex_protocols {
+        changed.push("mutex protocol frame");
+    }
     if !match (&top_state.mutex_ledger, &next_state.mutex_ledger) {
         (None, None) => true,
         (Some(top), Some(next)) => top.same_protocol_state_since(next),

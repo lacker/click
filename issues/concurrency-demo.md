@@ -179,13 +179,16 @@ on its own. Kernel regressions cover missing/stale authority, invalid
 composition, consumption, and logarithmic indexed work amid unrelated guards.
 
 The surface now supports `owns mutex_guard(mu)` in declared-resource bodies,
-including conditional model arms. Guard-bearing contracts (including wrapped
-guards) are refused until abstract entry protocol state is available: a
-hostile helper must not reinitialize a mutex while preserving a guard wrapper.
-Ordinary calls with live protocols are refused until contract effects track
-them, and argument binding retains the ledger instead of erasing it. Direct
-guard contract inputs/outputs also need abstract entry protocol state;
-lock-changing helpers and loop joins across acquisition epochs remain open
+including conditional model arms. Preserving contracts may now carry folded
+guard instances opaquely through ordinary and nested helpers. Their checked
+bodies freeze all mutex transitions; reinitialization, unlock, destruction,
+and untracked nested calls are rejected. The caller retains the same protocol
+and acquisition. This uses the existing `owns` syntax.
+
+Unfolding guards at abstract contract entry, direct guard clauses, and
+consumed/produced guards still require abstract acquisition identities. Calls
+without preserving guard inputs remain refused while protocols are live.
+Lock-changing helpers and loop joins across acquisition epochs remain open
 before the unchanged parity loop can verify. Protocol lifecycle and shared
 interference are also still open.
 

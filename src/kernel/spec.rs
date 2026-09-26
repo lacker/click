@@ -5467,7 +5467,11 @@ fn lower_spec_predicate_proposition_at_state_in(
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
     if name == MUTEX_HELD_PREDICATE_NAME {
         let [SpecPredicateArgument::Value(mutex)] = arguments else {
-            return Ok(vec![invalid_mutex_held_path(Vec::new(), Vec::new())]);
+            return Ok(vec![invalid_mutex_held_path(
+                Vec::new(),
+                Vec::new(),
+                "held expects one mutex pointer",
+            )]);
         };
         let paths = evaluate_spec_expression_paths_with_algebraic_bindings_in(
             state,
@@ -5481,8 +5485,19 @@ fn lower_spec_predicate_proposition_at_state_in(
             .into_iter()
             .map(|path| {
                 let CValue::Pointer(mutex) = path.value else {
-                    return invalid_mutex_held_path(path.facts, path.obligations);
+                    return invalid_mutex_held_path(
+                        path.facts,
+                        path.obligations,
+                        "held expects one mutex pointer",
+                    );
                 };
+                if state.preserves_mutex_protocols && state.mutex_ledger.is_none() {
+                    return invalid_mutex_held_path(
+                        path.facts,
+                        path.obligations,
+                        "held cannot inspect an opaque contract protocol",
+                    );
+                }
                 let held = state
                     .mutex_ledger
                     .as_ref()
@@ -5604,12 +5619,11 @@ fn lower_spec_predicate_proposition_at_state_in(
 fn invalid_mutex_held_path(
     facts: Vec<ExecutionPureFact>,
     mut obligations: Vec<ProofObligation>,
+    context: &str,
 ) -> SpecPropositionPath {
     let refusal = super::loops::false_equals_true_proposition();
-    obligations.push(
-        ProofObligation::verification_condition(refusal.clone())
-            .with_context("held expects one mutex pointer"),
-    );
+    obligations
+        .push(ProofObligation::verification_condition(refusal.clone()).with_context(context));
     SpecPropositionPath {
         introductions: Vec::new(),
         proposition: refusal,

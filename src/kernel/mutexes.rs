@@ -87,6 +87,9 @@ impl MutexContext {
 
     /// Initialize a mutex that transfers no Click resource at lock/unlock.
     pub(super) fn initialize_empty(&self, mutex: Pointer) -> Result<Self, &'static str> {
+        if self.state.preserves_mutex_protocols {
+            return Err("preserving guard contracts cannot change mutex protocols");
+        }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         if ledger.get(&mutex).is_some() {
             return Err("mutex is already initialized");
@@ -105,6 +108,9 @@ impl MutexContext {
         invariant: CResourceFact,
         assumptions: &PureFactContext,
     ) -> Result<Self, &'static str> {
+        if self.state.preserves_mutex_protocols {
+            return Err("preserving guard contracts cannot change mutex protocols");
+        }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         if ledger.get(&mutex).is_some() {
             return Err("mutex is already initialized");
@@ -152,6 +158,11 @@ impl MutexContext {
         mutex: &Pointer,
         assumptions: &PureFactContext,
     ) -> Result<(Self, MutexGuard), MutexTransitionError> {
+        if self.state.preserves_mutex_protocols {
+            return Err(MutexTransitionError::Refusal(
+                "preserving guard contracts cannot change mutex protocols",
+            ));
+        }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         let invariant = match ledger.get(mutex) {
             Some(MutexEntry::Unlocked(invariant)) => invariant.clone(),
@@ -215,6 +226,9 @@ impl MutexContext {
         mutex: &Pointer,
         assumptions: &PureFactContext,
     ) -> Result<Self, &'static str> {
+        if self.state.preserves_mutex_protocols {
+            return Err("preserving guard contracts cannot change mutex protocols");
+        }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         let (previous, epoch) = match ledger.get(mutex) {
             Some(MutexEntry::Locked { invariant, epoch }) => (invariant, *epoch),
@@ -246,6 +260,11 @@ impl MutexContext {
         mutex: &Pointer,
         assumptions: &PureFactContext,
     ) -> Result<Self, MutexTransitionError> {
+        if self.state.preserves_mutex_protocols {
+            return Err(MutexTransitionError::Refusal(
+                "preserving guard contracts cannot change mutex protocols",
+            ));
+        }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         let invariant = match ledger.get(mutex) {
             Some(MutexEntry::Unlocked(invariant)) => invariant.clone(),
@@ -289,6 +308,9 @@ impl MutexContext {
         restored: Option<CResourceFact>,
         assumptions: &PureFactContext,
     ) -> Result<Self, &'static str> {
+        if self.state.preserves_mutex_protocols {
+            return Err("preserving guard contracts cannot change mutex protocols");
+        }
         let ledger = self.state.mutex_ledger.as_ref().expect("mutex ledger");
         let previous = match ledger.get(&guard.mutex) {
             Some(MutexEntry::Locked { invariant, epoch }) if *epoch == guard.epoch => invariant,
@@ -532,6 +554,37 @@ fn same_instance(previous: &Option<CResourceFact>, restored: &Option<CResourceFa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preserving_contract_freezes_every_mutex_transition() {
+        let assumptions = PureFactContext::new();
+        let address = mutex(0);
+        let initialized = MutexContext::new(CState::new())
+            .initialize_empty(address.clone())
+            .unwrap();
+        let (holding, _) = initialized.acquire(&address, &assumptions).unwrap();
+        let mut state = holding.into_state();
+        state.preserves_mutex_protocols = true;
+        let frozen = MutexContext::new(state.clone());
+        let message = "preserving guard contracts cannot change mutex protocols";
+        assert_eq!(frozen.initialize_empty(mutex(1)).err(), Some(message));
+        assert_eq!(
+            frozen.acquire(&address, &assumptions).err(),
+            Some(MutexTransitionError::Refusal(message))
+        );
+        assert_eq!(
+            frozen.release_current(&address, &assumptions).err(),
+            Some(message)
+        );
+        assert_eq!(
+            frozen.destroy(&address, &assumptions).err(),
+            Some(MutexTransitionError::Refusal(message))
+        );
+        assert_eq!(frozen.state(), &state);
+        let mut unframed = state.clone();
+        unframed.preserves_mutex_protocols = false;
+        assert_ne!(state, unframed);
+    }
 
     #[test]
     fn guard_ownership_is_independent_of_heldness_and_required_by_unlock() {

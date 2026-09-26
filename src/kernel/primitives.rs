@@ -4876,6 +4876,9 @@ pub struct CState {
     /// Initialized mutex invariants and live guards on this C path. `None`
     /// denotes the canonical state before the first mutex operation.
     pub(super) mutex_ledger: Option<super::mutexes::MutexLedger>,
+    /// An opaque guard-bearing input frames its acquisition for this body.
+    /// No mutex transition is permitted until contracts describe those effects.
+    pub(super) preserves_mutex_protocols: bool,
     /// One unresolved modeled pthread creation. The visible state carries
     /// only authority safe in either outcome; this record selects the exact
     /// checked delta when a C condition establishes the returned status.
