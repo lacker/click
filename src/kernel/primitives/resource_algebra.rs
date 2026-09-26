@@ -1739,7 +1739,14 @@ impl ResourceContext {
                 }
             }
         }
-        if !removed_occurrences.is_empty() {
+        // Only an occurrence that carried a loan dependency changes the
+        // dependency state. Minting a new identity for an unchanged map would
+        // detach this context from the loan-binding mirror its state keeps
+        // beside it, which is checked by pointer identity.
+        if removed_occurrences
+            .iter()
+            .any(|occurrence| self.loan_dependencies.map.get(occurrence).is_some())
+        {
             let map = removed_occurrences
                 .into_iter()
                 .fold(self.loan_dependencies.map.clone(), |map, occurrence| {
