@@ -154,7 +154,11 @@ function unmarked(v: int32[], lo: int32, hi: int32) -> Integer {
    array, missing bound, changed endpoint and base pointer, a call writing the
    range, shifted/outside/helper reads, and no granted C read), the kernel
    tests in `src/kernel/fold_read_summary/tests.rs`, and the scaling tests
-   named in the design's status line. Steps 3 (automatic reuse across
+   named in the design's status line. The rule answers the same for every
+   caller, so `simp` reaches it through its snapshot transport closure:
+   `mdtests/sweep_prefix_survives_its_endpoint_store_by_simp.md` closes the
+   same prefix with `simp()`, which `click expand` rewrites into the explicit
+   transport. Steps 3 (automatic reuse across
    statement effects) and 4 (removing the sweep sidecar's prefix-frame
    scaffolding) are not started. This does not remove the DFS point-update
    lemma for an in-range write.

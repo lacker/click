@@ -641,9 +641,6 @@ pub(crate) enum FoldFrameRefusal {
     ShapeMismatch,
     /// No two applications differ, so this rule has nothing to frame.
     NothingToFrame,
-    /// The rule is explicit-source authority and was not consulted, because
-    /// the transport was applied inside a smart search.
-    NotInSmartSearch,
     /// The function has no checked read summary.
     NoSummary {
         name: String,
@@ -667,9 +664,6 @@ impl std::fmt::Display for FoldFrameRefusal {
         match self {
             Self::ShapeMismatch => formatter.write_str(
                 "source and target differ outside the array snapshots of fold applications",
-            ),
-            Self::NotInSmartSearch => formatter.write_str(
-                "fold read framing applies only to an explicit source `transport ... using` step, not inside smart search",
             ),
             Self::NothingToFrame => {
                 formatter.write_str("no fold application differs between source and target")

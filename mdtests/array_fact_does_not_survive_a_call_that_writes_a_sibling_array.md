@@ -5,6 +5,12 @@ callee's declared write set `b[0..n]` is not shown separate from `a`: the caller
 is free to pass one array as both. A structurally separate write set carries a
 whole-array fact across a call; this one is not separate.
 
+The fact carries content: `icount(a, 0, 1) == 5` comes from
+`requires a[0] == 5` through the fold's defining equation, and it reads the
+one cell the step may write, so after the step it is false. An empty-range
+fact would say nothing here: it is true across any write, and the checked fold
+read frame carries it.
+
 ```c filename=array_fact_does_not_survive_a_call_that_writes_a_sibling_array.c
 void scribble(int32 b[], int32 n) {
     b[0] = 1;
@@ -33,6 +39,7 @@ void scribble(int32 b[], int32 n) {
 
 void caller(int32 a[], int32 b[], int32 n) {
     requires 0 < n;
+    requires a[0] == 5;
     consumes b[0..n];
     produces b[0..n];
     views a[0..n];
@@ -42,8 +49,13 @@ void caller(int32 a[], int32 b[], int32 n) {
         unfold(icount(a, 0, 0)) using { 0 <= 0; }
         normalize();
     }
+    have to_integer(a[0]) == 5 by { simp() using { a[0] == 5; }; }
+    have icount(a, 0, 1) == 5 by {
+        unfold(icount(a, 0, 1)) using { 0 <= 0; 0 < 2147483647; }
+        arithmetic() using { icount(a, 0, 0) == 0; to_integer(a[0]) == 5; }
+    }
     step();
-    have icount(a, 0, 0) == 0 by { simp(); }
+    have icount(a, 0, 1) == 5 by { simp(); }
     execute();
     simp();
 }

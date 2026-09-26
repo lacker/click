@@ -10,9 +10,16 @@ below; automatic reuse (step 3) still does. Kernel pointer offsets are exact
 sums of sign-extended scaled `int32` terms, so the framing rule needs no
 representable-extent bound: it reads the written offset exactly and asks one
 exact order fact (`end <= j` or `j < start`), or a stated separation with
-exact membership facts. The rule is not consulted inside a smart search
-scope or closure, so `simp`'s snapshot transport closure does not reuse it;
-the existing `mdtests/array_fact_does_not_survive_*.md` fixtures pin that.
+exact membership facts. The rule is a checked simple step and answers the
+same for every caller, so a smart tactic that composes the checked transport
+reaches it too: `simp`'s snapshot transport closure closes
+`mdtests/sweep_prefix_survives_its_endpoint_store_by_simp.md`, and `click
+expand` rewrites that `simp()` into the explicit transport. That is not step
+3: nothing assumption-dependent enters term naming or a global cache. The
+store, call, branch, composite, sibling and recursive
+`mdtests/array_fact_does_not_survive_*.md` attacks state a fact that reads a
+cell the step may write, so both the whole-array epoch and the fold read
+frame refuse them.
 Regressions: the kernel tests in
 `src/kernel/fold_read_summary/tests.rs` (every unsupported read pattern,
 byte-width boundary overlap, aliasing, lifetime and call edges, session
@@ -22,7 +29,8 @@ unrelated facts, interval length, and store sequences),
 `src/surface/tests.rs`,
 `explicit_fold_read_transport_along_a_store_sequence_is_near_linear` in
 `src/surface/tests/scaling_tests.rs`, and the `mdtests/fold_read_transport_*.md`
-fixtures plus `mdtests/sweep_prefix_survives_its_endpoint_store_by_transport.md`.
+fixtures plus `mdtests/sweep_prefix_survives_its_endpoint_store_by_transport.md`
+and its `_by_simp` twin.
 This design does not approve a general effect language.
 
 ## Decision and surface behavior

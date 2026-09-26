@@ -503,30 +503,21 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
         // write set, and exact order and separation facts of this context;
         // the answer is this query's derivation and is recorded nowhere else.
         //
-        // This is explicit-source authority only (delivery step 2 of
-        // `design/dfs-gaps/fold-read-range-inference.md`). A smart search --
-        // `simp`'s snapshot transport closure, a planned transport -- applies
-        // this same step while it searches, and automatic reuse of fold
-        // framing is a separate, unapproved step, so the rule is not consulted
-        // inside any search scope or smart closure.
-        let fold_frame = if super::super::attempt::inside_search_scope()
-            || crate::kernel::closure_failure_memo_active()
-        {
-            Err(crate::kernel::FoldFrameRefusal::NotInSmartSearch)
-        } else {
-            crate::instrumentation::measure_operation(
-                "surface",
-                "fact transport",
-                "explicit fact transport: fold read frame",
-                || {
-                    crate::kernel::frame_fold_application_transport(
-                        &source,
-                        &target,
-                        available.assumptions(),
-                    )
-                },
-            )
-        };
+        // The rule is a checked simple step and answers the same for every
+        // caller: an explicit `transport ... using`, a planned transport, and
+        // `simp`'s snapshot transport closure all ask it the same question.
+        let fold_frame = crate::instrumentation::measure_operation(
+            "surface",
+            "fact transport",
+            "explicit fact transport: fold read frame",
+            || {
+                crate::kernel::frame_fold_application_transport(
+                    &source,
+                    &target,
+                    available.assumptions(),
+                )
+            },
+        );
         let fold_refusal = match fold_frame {
             Ok(_) => return Ok(CheckedFixedStateFactTransport { source, target }),
             Err(refusal) => refusal,
@@ -551,7 +542,6 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
                 fold_refusal,
                 crate::kernel::FoldFrameRefusal::ShapeMismatch
                     | crate::kernel::FoldFrameRefusal::NothingToFrame
-                    | crate::kernel::FoldFrameRefusal::NotInSmartSearch
             ) {
                 rendered.push_str(&format!("\n  fold read frame: {fold_refusal}"));
             }

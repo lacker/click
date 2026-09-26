@@ -1,5 +1,14 @@
 # epoch attack 1: a store into another array parameter
 
+`b` may be `a`: the caller is free to pass one array as both, so the store to
+`b[j]` may write `a[0]`.
+
+The fact carries content: `icount(a, 0, 1) == 5` comes from
+`requires a[0] == 5` through the fold's defining equation, and it reads the
+one cell the step may write, so after the step it is false. An empty-range
+fact would say nothing here: it is true across any write, and the checked fold
+read frame carries it.
+
 ```c filename=array_fact_does_not_survive_a_store_into_a_sibling_array.c
 void mark_other(int32 a[], int32 b[], int32 n, int32 j) {
     b[j] = 1;
@@ -16,7 +25,8 @@ function icount(p: int32[], lo: int32, hi: int32) -> Integer {
 void mark_other(int32 a[], int32 b[], int32 n, int32 j) {
     requires 0 <= j;
     requires j < n;
-    requires 0 <= n;
+    requires 0 < n;
+    requires a[0] == 5;
     requires n <= 1073741823;
     consumes b[0..n];
     produces b[0..n];
@@ -27,8 +37,13 @@ void mark_other(int32 a[], int32 b[], int32 n, int32 j) {
         unfold(icount(a, 0, 0)) using { 0 <= 0; }
         normalize();
     }
+    have to_integer(a[0]) == 5 by { simp() using { a[0] == 5; }; }
+    have icount(a, 0, 1) == 5 by {
+        unfold(icount(a, 0, 1)) using { 0 <= 0; 0 < 2147483647; }
+        arithmetic() using { icount(a, 0, 0) == 0; to_integer(a[0]) == 5; }
+    }
     step();
-    have icount(a, 0, 0) == 0 by { simp(); }
+    have icount(a, 0, 1) == 5 by { simp(); }
     execute();
     simp();
 }
