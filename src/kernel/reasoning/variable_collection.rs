@@ -4809,6 +4809,51 @@ pub(in crate::kernel) fn collect_pointer_bitvector_variables(
     collect_pointer_offset_bitvector_variables(&pointer.offset, variables);
 }
 
+/// The variables a run's cells mention.
+///
+/// Each slot mentions its pointer's variables and its value's: the value is
+/// the slot's load variable, which also mentions the memory and pointer it
+/// names. Where [`run_shape_representatives`] finds every slot named at one
+/// memory, the slots of one spelling shape mention the same variables except
+/// their own load variables, and a representative slot per shape stands for
+/// the rest. The load variables of the other slots are left out: they are in
+/// the reserved load range no fresh-variable source allocates from, so no
+/// caller that avoids what a memory mentions can collide with one, and every
+/// term that mentions one of them also mentions the memory and pointer it
+/// names, so a caller relating two terms by shared variables still meets
+/// them through the variables every slot has. Where the slots have no such
+/// shared variable — a run over a block no variable names — or are named at
+/// different memories, every slot is visited.
+///
+/// [`run_shape_representatives`]: crate::kernel::reasoning::memory_resolution::run_shape_representatives
+fn collect_cell_run_bitvector_variables(
+    run: &crate::kernel::primitives::CellRun,
+    variables: &mut BTreeSet<Variable>,
+) {
+    let collect_slot = |index: u32, variables: &mut BTreeSet<Variable>| {
+        collect_pointer_bitvector_variables(&run.slot_pointer(index), variables);
+        collect_c_value_bitvector_variables(&run.value(index), variables);
+    };
+    if let Some(representatives) =
+        crate::kernel::reasoning::memory_resolution::run_shape_representatives(run)
+    {
+        let mut shared = BTreeSet::new();
+        for index in &representatives {
+            collect_slot(*index, &mut shared);
+        }
+        let shared_beyond_loads = shared
+            .iter()
+            .any(|variable| !crate::kernel::is_load_variable(variable));
+        if shared_beyond_loads {
+            variables.extend(shared);
+            return;
+        }
+    }
+    for index in run.live_indexes() {
+        collect_slot(index, variables);
+    }
+}
+
 pub(in crate::kernel) fn collect_memory_bitvector_variables(
     memory: &CMemory,
     variables: &mut BTreeSet<Variable>,
@@ -4843,9 +4888,12 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
         }
         collect_bitvector_variables(contents.size(), variables);
     }
-    for (pointer, value) in memory.cells.iter() {
+    for (pointer, value) in memory.cells.concrete().iter() {
         collect_pointer_bitvector_variables(pointer, variables);
         collect_c_value_bitvector_variables(value, variables);
+    }
+    for run in memory.cells.runs() {
+        collect_cell_run_bitvector_variables(run, variables);
     }
     for ((pointer, _), value) in memory.union_cells.iter() {
         collect_pointer_bitvector_variables(pointer, variables);

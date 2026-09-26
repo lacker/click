@@ -124,6 +124,13 @@ pub(in crate::kernel) enum MemoryDagHopJustification {
     SeededStores {
         hops: Vec<MemoryDagHopJustification>,
     },
+    /// A `CellsSeeded` edge crossed because its run's block is proven
+    /// distinct from the cell's: every one of its stores is.
+    SeededStoresDistinctBlock,
+    /// A `CellsSeeded` edge crossed because the cell has the run base's atoms
+    /// and a constant shift whose bytes meet no store of the run: each store
+    /// is at an unequal constant shift with a gap its bytes clear.
+    SeededStoresMissedByShift,
     AssumptionDependent(MemoryDagAssumptionKind),
 }
 
@@ -376,6 +383,27 @@ impl MemoryDagHopJustification {
                     && ranges.iter().zip(mutable_ranges).all(|(evidence, range)| {
                         evidence.checks(range, pointer, bytes, assumptions)
                     })
+            }
+            Self::SeededStoresDistinctBlock => matches!(
+                derivation,
+                CMemoryDerivation::CellsSeeded { run, .. }
+                    if run.base().blocks_proven_distinct(pointer)
+            ),
+            Self::SeededStoresMissedByShift => {
+                let CMemoryDerivation::CellsSeeded { run, .. } = derivation else {
+                    return false;
+                };
+                let crate::kernel::reasoning::memory_resolution::RunAccess::Shift(shift) =
+                    crate::kernel::reasoning::memory_resolution::run_access(run, pointer)
+                else {
+                    return false;
+                };
+                let (low, high) = crate::kernel::reasoning::memory_resolution::run_elements_meeting(
+                    run,
+                    shift,
+                    i64::from(bytes),
+                );
+                (low..high).all(|index| run.holes().contains(index))
             }
             Self::SeededStores { hops } => {
                 let Some(stores) = derivation.seeded_stores() else {

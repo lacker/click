@@ -1830,6 +1830,41 @@ fn loan_preserving_havoc_keeps_cell(
         })
 }
 
+/// [`loan_preserving_havoc_keeps_cell`] for every slot of a run at once. A run
+/// in a preserved block keeps every slot; outside one, a slot survives only
+/// where a loan protects its bytes, so no loan over any of the run's bytes
+/// keeps none. Anything else is asked slot by slot. The run's slots hold no
+/// typed union views (a run is never seeded beside them), so each slot's
+/// width is its value's.
+fn loan_preserving_havoc_keeps_run(
+    run: &CellRun,
+    preserved_blocks: &BTreeSet<PointerBlock>,
+    ledger: Option<&crate::kernel::loans::LoanLedger>,
+) -> (SlotSet, crate::kernel::primitives::RuleAnswer) {
+    let exact = crate::kernel::primitives::RuleAnswer::Exact;
+    if preserved_blocks.contains(&run.base().block) {
+        return (SlotSet::All, exact);
+    }
+    let Some(ledger) = ledger else {
+        return (SlotSet::Nothing, exact);
+    };
+    let whole = CMemoryRange::new_with_element_width(
+        run.base().clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(
+            (run.count().saturating_sub(1))
+                .saturating_mul(run.element_width())
+                .saturating_add(run.value_width()),
+        ),
+        1,
+    );
+    if ledger.permits_memory_access(&whole).is_ok() {
+        (SlotSet::Nothing, exact)
+    } else {
+        (SlotSet::PerSlot, exact)
+    }
+}
+
 /// The widest typed overlay recorded at each address, so that the loan
 /// question above covers every byte the cell can be read as.
 fn union_overlay_widths(memory: &CMemory) -> BTreeMap<Pointer, u32> {
@@ -2561,15 +2596,18 @@ impl CMemory {
         // plus the ones something else keeps (declared locals and
         // loan-protected bytes), charged by `retain`.
         let union_widths = union_overlay_widths(&self);
-        std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, value| {
-            loan_preserving_havoc_keeps_cell(
-                pointer,
-                value,
-                &union_widths,
-                preserved_blocks,
-                ledger,
-            )
-        });
+        std::sync::Arc::make_mut(&mut self.cells).retain_by(
+            |pointer, value| {
+                loan_preserving_havoc_keeps_cell(
+                    pointer,
+                    value,
+                    &union_widths,
+                    preserved_blocks,
+                    ledger,
+                )
+            },
+            |run| loan_preserving_havoc_keeps_run(run, preserved_blocks, ledger),
+        );
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("havoc:{}", variable.0).into(),
             CBlock::new(mutable_ranges.map_or(0, memory_havoc_write_set_fingerprint)),
@@ -2754,15 +2792,18 @@ impl CMemory {
         // heap collections above, and forgets every cell nothing preserves,
         // exactly as the loop havoc does.
         let union_widths = union_overlay_widths(&self);
-        std::sync::Arc::make_mut(&mut self.cells).retain(|pointer, value| {
-            loan_preserving_havoc_keeps_cell(
-                pointer,
-                value,
-                &union_widths,
-                preserved_blocks,
-                ledger,
-            )
-        });
+        std::sync::Arc::make_mut(&mut self.cells).retain_by(
+            |pointer, value| {
+                loan_preserving_havoc_keeps_cell(
+                    pointer,
+                    value,
+                    &union_widths,
+                    preserved_blocks,
+                    ledger,
+                )
+            },
+            |run| loan_preserving_havoc_keeps_run(run, preserved_blocks, ledger),
+        );
         blocks.insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
         self.blocks = std::sync::Arc::new(blocks);
         std::sync::Arc::make_mut(&mut self.forgotten).ended_local_blocks = ended_local_blocks;
@@ -3131,7 +3172,7 @@ impl CMemory {
 
     pub fn load(&self, pointer: &Pointer) -> CExpressionOutcome {
         match self.cells.get(pointer) {
-            Some(value) => CExpressionOutcome::Value(value.clone()),
+            Some(value) => CExpressionOutcome::Value(value),
             None => CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
         }
     }
@@ -3143,9 +3184,76 @@ impl CMemory {
     pub fn differing_cell_pointers(&self, other: &Self) -> Vec<Pointer> {
         let mut pointers = self
             .cells
-            .diff(&other.cells)
-            .map(|change| change.key().clone())
+            .differing_pointers(&other.cells)
+            .into_iter()
             .collect::<BTreeSet<_>>();
+        #[cfg(debug_assertions)]
+        if self
+            .cells
+            .runs()
+            .iter()
+            .chain(other.cells.runs())
+            .all(|run| run.count() <= crate::kernel::primitives::CHECKED_RUN_SLOTS)
+        {
+            crate::instrumentation::uncharged_debug_check(|| {
+                let expected = self
+                    .cells
+                    .diff(&other.cells)
+                    .map(|change| change.key().clone())
+                    .collect::<BTreeSet<_>>();
+                assert_eq!(
+                    pointers, expected,
+                    "the runs' differing slots disagree with the logical diff"
+                );
+            });
+        }
+        pointers.extend(
+            self.union_cells
+                .diff(&other.union_cells)
+                .map(|change| change.key().0.clone()),
+        );
+        pointers.into_iter().collect()
+    }
+
+    /// [`Self::differing_cell_pointers`] for a caller asking about a load of
+    /// `bytes` bytes at `pointer`: a run's differing slots that the load's
+    /// bytes provably miss by their constant distance from it are left out.
+    /// Those cells cannot change what the load reads, which is all the
+    /// callers ask of each differing cell.
+    pub(in crate::kernel) fn differing_cell_pointers_meeting_load(
+        &self,
+        other: &Self,
+        pointer: &Pointer,
+        bytes: u32,
+    ) -> Vec<Pointer> {
+        let differing = self.cells.differing_cells(&other.cells);
+        let mut pointers = differing.pointers.into_iter().collect::<BTreeSet<_>>();
+        for (run, slots) in differing.run_slots {
+            crate::instrumentation::record_deterministic_work(1);
+            match crate::kernel::reasoning::memory_resolution::run_access(&run, pointer) {
+                crate::kernel::reasoning::memory_resolution::RunAccess::DistinctBlock => {}
+                crate::kernel::reasoning::memory_resolution::RunAccess::Shift(shift) => {
+                    let (low, high) =
+                        crate::kernel::reasoning::memory_resolution::run_elements_meeting(
+                            &run,
+                            shift,
+                            i64::from(bytes.max(1)),
+                        );
+                    for index in low..high {
+                        crate::instrumentation::record_deterministic_work(1);
+                        if slots.contains(index) {
+                            pointers.insert(run.slot_pointer(index));
+                        }
+                    }
+                }
+                _ => {
+                    crate::instrumentation::record_deterministic_work(
+                        usize::try_from(slots.count()).unwrap_or(usize::MAX),
+                    );
+                    pointers.extend(slots.indexes().map(|index| run.slot_pointer(index)));
+                }
+            }
+        }
         pointers.extend(
             self.union_cells
                 .diff(&other.union_cells)
@@ -3155,7 +3263,7 @@ impl CMemory {
     }
 
     pub(in crate::kernel) fn known_value(&self, pointer: &Pointer) -> Option<CValue> {
-        self.cells.get(pointer).cloned()
+        self.cells.get(pointer)
     }
 
     pub(in crate::kernel) fn has_known_cell_at(&self, pointer: &Pointer) -> bool {
@@ -3409,7 +3517,19 @@ impl CMemory {
         // every separation fact of the block. Cells ownership does not place
         // go down the ladder unchanged.
         let owned_footprint = assumptions.owned_store_footprint(&normalized_pointer, bytes);
-        std::sync::Arc::make_mut(&mut memory.cells).retain_candidates(&candidates, |cell_pointer, cell_value| {
+        let mut run_forgot = false;
+        let run_rule = |run: &CellRun| {
+            let (kept, forgot) =
+                crate::kernel::reasoning::memory_resolution::run_slots_kept_by_store(
+                    run,
+                    &normalized_pointer,
+                    bytes,
+                    assumptions,
+                );
+            run_forgot |= forgot;
+            (kept, crate::kernel::primitives::RuleAnswer::Sound)
+        };
+        std::sync::Arc::make_mut(&mut memory.cells).retain_candidates_by(&candidates, |cell_pointer, cell_value| {
             let normalized_cell_pointer = Pointer {
                 block: cell_pointer.block.clone(),
                 offset: normalize_exact_memory_loads_in_pointer_offset(
@@ -3483,7 +3603,8 @@ impl CMemory {
                 .is_some();
             forgot_live_knowledge |= !kept;
             kept
-        });
+        }, run_rule);
+        forgot_live_knowledge |= run_forgot;
         candidates.retain_map(
             std::sync::Arc::make_mut(&mut memory.union_cells),
             |(cell_pointer, cell_type), _| {
@@ -4173,13 +4294,33 @@ impl CState {
     /// The values held by memory-resident scalar locals at offset zero.
     /// Resolve names through the local-slot index so framed parameter blocks
     /// are exposed with their source name rather than their internal block id.
-    pub fn local_cell_values(&self) -> impl Iterator<Item = (&str, &CValue)> {
-        self.memory.cells.iter().filter_map(|(pointer, value)| {
-            if pointer.offset != PointerOffsetTerm::Constant(0) {
-                return None;
-            }
-            self.locals.name_for_slot(pointer).map(|name| (name, value))
-        })
+    pub fn local_cell_values(&self) -> impl Iterator<Item = (&str, CValue)> + '_ {
+        // A local's slot is at offset zero of its block, so a run holds one
+        // only at the slot spelled that way, looked up rather than visited.
+        let run_slots = self.memory.cells.runs().iter().filter_map(|run| {
+            let pointer = Pointer {
+                block: run.base().block.clone(),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let index = run.live_slot_index(&pointer)?;
+            Some((pointer, run.value(index)))
+        });
+        let mut values = self
+            .memory
+            .cells
+            .concrete()
+            .iter()
+            .filter(|(pointer, _)| pointer.offset == PointerOffsetTerm::Constant(0))
+            .map(|(pointer, value)| (pointer.clone(), value.clone()))
+            .chain(run_slots)
+            .filter_map(|(pointer, value)| {
+                self.locals
+                    .name_for_slot(&pointer)
+                    .map(|name| (pointer, name, value))
+            })
+            .collect::<Vec<_>>();
+        values.sort_by(|left, right| left.0.cmp(&right.0));
+        values.into_iter().map(|(_, name, value)| (name, value))
     }
 
     /// Refresh caller scalar bindings after call-site code has modified their

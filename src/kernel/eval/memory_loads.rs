@@ -462,28 +462,26 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             // resolution-equal to it, so only the candidates can match, and
             // they are visited in the whole map's order.
             let candidates = AliasCandidates::of_block(&pointer.block);
-            let mut visited = 0usize;
-            let found =
-                candidates
-                    .entries(memory.cells.logical())
-                    .find_map(|(stored_pointer, value)| {
-                        visited += 1;
-                        let equal =
-                            alias_cache.resolution_equal(&pointer, stored_pointer, assumptions);
-                        // A bounded equality query can retain an alias guard before its
-                        // nested separation search reaches a compact resource composition.
-                        // Recheck separation at the top-level query before treating that
-                        // materialized cell as authoritative. If both hold, the alias guard
-                        // describes an unreachable branch and must not manufacture a typed
-                        // load from the disjoint cell.
-                        (equal
-                            && !alias_cache.resolution_distinct(
-                                &pointer,
-                                stored_pointer,
-                                assumptions,
-                            ))
-                        .then(|| value.clone())
-                    });
+            let (found, visited) = memory.cells.find_candidate_by(
+                &candidates,
+                |stored_pointer, _| {
+                    let equal = alias_cache.resolution_equal(&pointer, stored_pointer, assumptions);
+                    // A bounded equality query can retain an alias guard before its
+                    // nested separation search reaches a compact resource composition.
+                    // Recheck separation at the top-level query before treating that
+                    // materialized cell as authoritative. If both hold, the alias guard
+                    // describes an unreachable branch and must not manufacture a typed
+                    // load from the disjoint cell.
+                    equal && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
+                },
+                |run| {
+                    crate::kernel::reasoning::memory_resolution::run_slots_equal_to_load(
+                        run,
+                        &pointer,
+                        assumptions,
+                    )
+                },
+            );
             crate::instrumentation::record_deterministic_work(visited);
             found
         },
@@ -596,8 +594,9 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             // candidates the rule keeps, built without visiting the rest.
             let candidates = AliasCandidates::of_block(&pointer.block);
             let mut reduced = (*memory.cells).clone();
-            let visited =
-                reduced.retain_only_candidates(&candidates, |stored_pointer, stored_value| {
+            let visited = reduced.retain_only_candidates_by(
+                &candidates,
+                |stored_pointer, stored_value| {
                     // Dropping a cell names this load at a snapshot that no longer
                     // records it, so the question is the same byte question
                     // `1a3b2701` put in front of the three snapshot comparisons:
@@ -613,7 +612,16 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                             load_bytes,
                             assumptions,
                         ) == AccessByteOverlap::Separate)
-                });
+                },
+                |run| {
+                    crate::kernel::reasoning::memory_resolution::run_slots_kept_by_load_reduction(
+                        run,
+                        &pointer,
+                        load_bytes,
+                        assumptions,
+                    )
+                },
+            );
             crate::instrumentation::record_deterministic_work(visited);
             if reduced.len() != cells_before_reduction {
                 memory.cells = std::sync::Arc::new(reduced);

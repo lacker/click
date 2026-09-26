@@ -444,8 +444,10 @@ fn memory_only_adds_named_cells(
         };
         let value = after.cells.get(pointer).expect("added cell exists");
         let load = crate::kernel::canonical_form_of_load(base.clone(), pointer.clone());
-        if !cell_value_is_exactly_load(value, &load, pointer) {
-            return Err(describe_unnamed_cell_addition(&base, pointer, value, &load));
+        if !cell_value_is_exactly_load(&value, &load, pointer) {
+            return Err(describe_unnamed_cell_addition(
+                &base, pointer, &value, &load,
+            ));
         }
     }
     Ok(())

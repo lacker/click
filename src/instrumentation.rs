@@ -500,6 +500,10 @@ fn with_default_tactic_time_limit<R>(operation: impl FnOnce() -> R) -> R {
 /// and once one reports exhaustion the rest of the scope stops charging so
 /// the collector can unwind.
 pub(crate) fn record_deterministic_work(units: usize) {
+    #[cfg(debug_assertions)]
+    if UNCHARGED_DEBUG_CHECK.with(Cell::get) {
+        return;
+    }
     if CHECKED_COLLECTION_DEPTH.with(|depth| depth.get() > 0) {
         if CHECKED_COLLECTION_EXHAUSTED.with(Cell::get) {
             return;
@@ -510,6 +514,23 @@ pub(crate) fn record_deterministic_work(units: usize) {
         return;
     }
     charge_deterministic_work(units);
+}
+
+#[cfg(debug_assertions)]
+thread_local! {
+    static UNCHARGED_DEBUG_CHECK: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Runs a debug-build self-check without charging its work: the check
+/// recomputes an answer the release build takes on trust, so charging it
+/// would make a debug run's deterministic work and budgets differ from the
+/// release run's.
+#[cfg(debug_assertions)]
+pub(crate) fn uncharged_debug_check<R>(check: impl FnOnce() -> R) -> R {
+    let previous = UNCHARGED_DEBUG_CHECK.with(|flag| flag.replace(true));
+    let result = check();
+    UNCHARGED_DEBUG_CHECK.with(|flag| flag.set(previous));
+    result
 }
 
 /// Charges `units` to every scaling counter and to the innermost active

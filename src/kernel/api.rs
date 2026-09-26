@@ -1296,13 +1296,13 @@ fn validate_branch_memory_delta_against_loans(
         let mut byte_width = base
             .cells
             .get(&pointer)
-            .map(CValue::byte_width)
+            .map(|value| value.byte_width())
             .unwrap_or(0)
             .max(
                 sibling
                     .cells
                     .get(&pointer)
-                    .map(CValue::byte_width)
+                    .map(|value| value.byte_width())
                     .unwrap_or(0),
             );
         for (union_pointer, c_type) in base.union_cells.keys() {

@@ -630,7 +630,7 @@ fn addressable_parameter_gets_a_fresh_callee_stack_slot() {
     assert!(caller_slot.block.starts_with("local:frame:0:"));
     assert_eq!(
         caller_state.memory().cells.get(&caller_slot),
-        Some(&int32(3))
+        Some(int32(3))
     );
 
     let nested_state = c_function_entry_state(&caller_state, &function, &[c_int32_literal(4)])
@@ -643,11 +643,11 @@ fn addressable_parameter_gets_a_fresh_callee_stack_slot() {
     assert_ne!(caller_slot, nested_slot);
     assert_eq!(
         nested_state.memory().cells.get(&caller_slot),
-        Some(&int32(3))
+        Some(int32(3))
     );
     assert_eq!(
         nested_state.memory().cells.get(&nested_slot),
-        Some(&int32(4))
+        Some(int32(4))
     );
 }
 
@@ -5155,7 +5155,7 @@ fn a_called_frames_declaration_does_not_take_the_callers_block() {
 
     let minted = after.locals().slot("x").expect("the callee's own slot");
     assert_ne!(minted, &callers);
-    assert_eq!(after.memory().cells.get(&callers), Some(&int32(1)));
+    assert_eq!(after.memory().cells.get(&callers), Some(int32(1)));
 }
 
 /// An identity is not free again once its object's lifetime has ended: the

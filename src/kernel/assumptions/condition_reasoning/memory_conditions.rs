@@ -238,15 +238,98 @@ impl PureFactContext {
             return (value.byte_width() == byte_width).then_some(value);
         }
 
+        // The first cell, in pointer order, proven at `pointer` answers; short
+        // of one, a cell neither proven there nor proven elsewhere leaves the
+        // load unresolved. A run answers for its slots as a whole where
+        // `run_slots_resolving_load` can, and slot by slot otherwise.
         let mut unresolved_alias = false;
-        for (cell_pointer, value) in memory.cells.iter() {
+        let mut first_equal: Option<(Pointer, CValue)> = None;
+        let consider = |cell_pointer: &Pointer,
+                        value: &CValue,
+                        first_equal: &mut Option<(Pointer, CValue)>| {
             if pointers_proven_distinct_for_memory_resolution(cell_pointer, pointer, self) {
-                continue;
+                return false;
             }
             if pointers_proven_equal_for_memory_resolution(cell_pointer, pointer, self) {
-                return (value.byte_width() == byte_width).then(|| value.clone());
+                if first_equal
+                    .as_ref()
+                    .is_none_or(|(earlier, _)| cell_pointer < earlier)
+                {
+                    *first_equal = Some((cell_pointer.clone(), value.clone()));
+                }
+                return true;
             }
-            unresolved_alias = true;
+            true
+        };
+        for run in memory.cells.runs() {
+            match crate::kernel::reasoning::memory_resolution::run_slots_resolving_load(
+                run, pointer,
+            ) {
+                Some((equal, unresolved)) => {
+                    #[cfg(debug_assertions)]
+                    if run.count() <= crate::kernel::primitives::CHECKED_RUN_SLOTS {
+                        crate::instrumentation::uncharged_debug_check(|| {
+                            let mut slot_equal = None;
+                            let mut slot_unresolved = false;
+                            for index in run.live_indexes() {
+                                let cell_pointer = run.slot_pointer(index);
+                                if pointers_proven_distinct_for_memory_resolution(
+                                    &cell_pointer,
+                                    pointer,
+                                    self,
+                                ) {
+                                    continue;
+                                }
+                                if pointers_proven_equal_for_memory_resolution(
+                                    &cell_pointer,
+                                    pointer,
+                                    self,
+                                ) {
+                                    slot_equal = slot_equal.or(Some(index));
+                                } else {
+                                    slot_unresolved = true;
+                                }
+                            }
+                            assert_eq!(
+                                (slot_equal, slot_unresolved && slot_equal.is_none()),
+                                (equal, unresolved && equal.is_none()),
+                                "a run's whole-run load resolution disagrees with its slots for {pointer:?} in {run:?}"
+                            );
+                        });
+                    }
+                    unresolved_alias |= unresolved;
+                    if let Some(index) = equal {
+                        let cell_pointer = run.slot_pointer(index);
+                        if first_equal
+                            .as_ref()
+                            .is_none_or(|(earlier, _)| cell_pointer < *earlier)
+                        {
+                            first_equal = Some((cell_pointer, run.value(index)));
+                        }
+                    }
+                }
+                None => {
+                    for index in run.live_indexes() {
+                        let cell_pointer = run.slot_pointer(index);
+                        let value = run.value(index);
+                        let met = consider(&cell_pointer, &value, &mut first_equal);
+                        unresolved_alias |= met
+                            && !first_equal
+                                .as_ref()
+                                .is_some_and(|(equal, _)| *equal == cell_pointer);
+                    }
+                }
+            }
+        }
+        for (cell_pointer, value) in memory.cells.concrete().iter() {
+            let met = consider(cell_pointer, value, &mut first_equal);
+            unresolved_alias |= met
+                && !first_equal
+                    .as_ref()
+                    .is_some_and(|(equal, _)| equal == cell_pointer);
+        }
+        if let Some((_, value)) = first_equal {
+            return (value.byte_width() == byte_width).then_some(value);
         }
 
         if unresolved_alias {

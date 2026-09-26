@@ -503,7 +503,7 @@ impl PureFactContext {
     /// `x + 0`. Compound arithmetic is ranged only when its own signed
     /// evaluation is known not to overflow; this makes nested bounds safe to
     /// reuse.
-    fn signed_interval(&self, term: &Bitvector32Term) -> Option<(i64, i64)> {
+    pub(in crate::kernel) fn signed_interval(&self, term: &Bitvector32Term) -> Option<(i64, i64)> {
         // A successfully reconstructed interval is a function of the fact set
         // and the term alone. Key by fact-set content and
         // term so a nested arithmetic expression reuses its operands' ranges

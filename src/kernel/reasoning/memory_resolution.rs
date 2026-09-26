@@ -1204,7 +1204,7 @@ fn stored_value_at_equal_pointer(
                 block: pointer.block.clone(),
                 offset: PointerOffsetTerm::Add(Box::new(root.clone()), Box::new(PointerOffsetTerm::Constant(i64::MIN))),
             };
-            memory.cells.range(first..)
+            memory.cells.concrete().range(first..)
                 .take_while(|(stored, _)| stored.block == pointer.block
                     && matches!(&stored.offset, PointerOffsetTerm::Add(left, _) if left.as_ref() == root))
                 .find_map(|(stored, value)| {
@@ -1212,6 +1212,71 @@ fn stored_value_at_equal_pointer(
                     pointers_proven_equal_for_memory_resolution(pointer, stored, assumptions)
                         .then(|| value.clone())
                 })
+                .or_else(|| {
+                    memory.cells.runs().iter().find_map(|run| {
+                        run_value_at_equal_displaced_pointer(run, pointer, root, assumptions)
+                    })
+                })
+        })
+}
+
+/// [`stored_value_at_equal_pointer`]'s interval scan over one run: the value
+/// of a live slot spelled `root + shift` that `pointer` is proven equal to.
+///
+/// Only a run based exactly at `root` has such slots (every slot past the
+/// first is spelled `root + shift`). Every slot is `root` plus its own
+/// constant, so a pointer at `root` plus a constant can be proven at only the
+/// slot at that constant; one at `root` plus a scaled index can be proven at
+/// a slot only when the facts pin the index to one value, and then only at
+/// the slot that value names. An index the facts do not pin names no slot.
+/// Any other displacement is asked slot by slot, as the concrete cells are.
+fn run_value_at_equal_displaced_pointer(
+    run: &crate::kernel::primitives::CellRun,
+    pointer: &Pointer,
+    root: &PointerOffsetTerm,
+    assumptions: &PureFactContext,
+) -> Option<CValue> {
+    crate::instrumentation::record_deterministic_work(1);
+    if run.base().block != pointer.block || run.base().offset != *root || run.live_count() == 0 {
+        return None;
+    }
+    let displacement = match run_access(run, pointer) {
+        RunAccess::DistinctBlock => return None,
+        RunAccess::Shift(shift) => Some(shift),
+        RunAccess::Scaled {
+            index,
+            scale,
+            shift,
+        } => {
+            let pinned = crate::kernel::assumptions::exact_signed_constant(&index, assumptions)
+                .or_else(|| {
+                    assumptions
+                        .signed_interval(&index)
+                        .filter(|(low, high)| low == high)
+                        .map(|(low, _)| low)
+                });
+            let pinned = pinned?;
+            pinned
+                .checked_mul(scale)
+                .and_then(|bytes| bytes.checked_add(shift))
+        }
+        RunAccess::Other => None,
+    };
+    if let Some(displacement) = displacement {
+        let width = i64::from(run.element_width());
+        if displacement <= 0 || displacement % width != 0 {
+            return None;
+        }
+        let index = u32::try_from(displacement / width).ok()?;
+        return (index < run.count() && !run.holes().contains(index)).then(|| run.value(index));
+    }
+    run.live_indexes()
+        .filter(|index| *index > 0)
+        .find_map(|index| {
+            crate::instrumentation::record_deterministic_work(1);
+            let stored = run.slot_pointer(index);
+            pointers_proven_equal_for_memory_resolution(pointer, &stored, assumptions)
+                .then(|| run.value(index))
         })
 }
 
@@ -1709,7 +1774,7 @@ fn differing_cell_byte_width(left: &CMemory, right: &CMemory, cell_pointer: &Poi
         memory
             .cells
             .get(cell_pointer)
-            .map(CValue::byte_width)
+            .map(|value| value.byte_width())
             .filter(|bytes| *bytes > 0)
     };
     stored_width(left)
@@ -2026,18 +2091,94 @@ pub(in crate::kernel) fn memories_match_for_pointer_load(
         && observable_blocks_match_for_load(left, right, pointer, &candidates)
         && retirements_agree_for_load(left, right, pointer)
         && observable_heap_metadata_matches_for_load(left, right, pointer, &candidates)
-        && observable_entries_match(
-            &candidates,
-            left.cells.logical(),
-            right.cells.logical(),
-            |cell_pointer| cell_pointer.block.observable_by_load(&pointer.block),
-        )
+        && observable_cells_match(&candidates, left, right, pointer)
         && observable_entries_match(
             &candidates,
             &left.union_cells,
             &right.union_cells,
             |(cell_pointer, _)| cell_pointer.block.observable_by_load(&pointer.block),
         )
+}
+
+/// [`observable_entries_match`] over the cells of two memories: their runs
+/// compared whole ([`CellStore::observable_runs_match`]) and then their
+/// concrete cells, or their logical maps where the runs do not pair up.
+///
+/// [`CellStore::observable_runs_match`]: crate::kernel::primitives::CellStore::observable_runs_match
+fn observable_cells_match(
+    candidates: &AliasCandidates,
+    left: &CMemory,
+    right: &CMemory,
+    pointer: &Pointer,
+) -> bool {
+    let observable = |cell_pointer: &Pointer| cell_pointer.block.observable_by_load(&pointer.block);
+    let runs_match = left.cells.observable_runs_match(&right.cells, |run| {
+        candidates.admits_block(&run.base().block) && observable(run.base())
+    });
+    let answer = match runs_match {
+        Some(false) => false,
+        Some(true) => observable_entries_match(
+            candidates,
+            left.cells.concrete(),
+            right.cells.concrete(),
+            observable,
+        ),
+        None => {
+            // The runs do not pair up. Two maps whose observable cells differ
+            // in number differ; counting needs only each run's live count and
+            // the concrete candidates, where comparing the logical maps would
+            // lay out every slot.
+            let count = |memory: &CMemory| {
+                let concrete = candidates
+                    .entries(memory.cells.concrete())
+                    .filter(|(key, _)| observable(key))
+                    .count();
+                crate::instrumentation::record_deterministic_work(
+                    concrete + memory.cells.runs().len(),
+                );
+                concrete as u64
+                    + memory
+                        .cells
+                        .runs()
+                        .iter()
+                        .filter(|run| {
+                            candidates.admits_block(&run.base().block) && observable(run.base())
+                        })
+                        .map(|run| run.live_count())
+                        .sum::<u64>()
+            };
+            count(left) == count(right)
+                && observable_entries_match(
+                    candidates,
+                    left.cells.logical(),
+                    right.cells.logical(),
+                    observable,
+                )
+        }
+    };
+    #[cfg(debug_assertions)]
+    if runs_match.is_some()
+        && left
+            .cells
+            .runs()
+            .iter()
+            .chain(right.cells.runs())
+            .all(|run| run.count() <= crate::kernel::primitives::CHECKED_RUN_SLOTS)
+    {
+        crate::instrumentation::uncharged_debug_check(|| {
+            assert_eq!(
+                answer,
+                observable_entries_match(
+                    candidates,
+                    left.cells.logical(),
+                    right.cells.logical(),
+                    observable,
+                ),
+                "comparing two memories' runs whole disagrees with comparing their cells for a load at {pointer:?}"
+            );
+        });
+    }
+    answer
 }
 
 /// Whether the candidate entries `observable` accepts are the same in both
@@ -2326,6 +2467,107 @@ pub(in crate::kernel) fn canonical_memory_for_pointer_load(
     result
 }
 
+/// The elements that answer for every live slot of `run` in a per-slot
+/// question about how its slots' loads are named, or `None` when each slot
+/// has to be asked itself.
+///
+/// A slot's value is the canonical load of its own element in the run's
+/// source. When that source holds nothing a load of the run's block could
+/// observe — no cell, no typed view and no live run slot in any block such a
+/// load may alias — every element's load projects the source to the same
+/// memory: the projection depends on the pointer only through the cells and
+/// views it keeps, of which there are none, and through the pointer's block,
+/// which every element shares. A projection with no recorded derivation is
+/// then the point every element's load is named at. What is left to differ
+/// between two elements is the pointer's spelling: element 0 is spelled as
+/// the base itself and every later element as the base plus its constant
+/// shift, so the first live element of each of those two shapes answers for
+/// its shape.
+pub(in crate::kernel) fn run_shape_representatives(
+    run: &crate::kernel::primitives::CellRun,
+) -> Option<Vec<u32>> {
+    let first = run.live_indexes().next()?;
+    let source = run.source().memory();
+    let block = &run.base().block;
+    let observable_candidates = AliasCandidates::of_block(block);
+    let source_observable_by_run =
+        observable_candidates.any_entry(source.cells.concrete(), |cell, _| {
+            cell.block.observable_by_load(block)
+        }) || observable_candidates.any_entry(&source.union_cells, |(cell, _), _| {
+            cell.block.observable_by_load(block)
+        }) || source.cells.runs().iter().any(|other| {
+            other.live_count() > 0
+                && observable_candidates.admits_block(&other.base().block)
+                && other.base().block.observable_by_load(block)
+        });
+    if source_observable_by_run {
+        return None;
+    }
+    let first_later = run.live_indexes().find(|later| *later > 0);
+    let representatives = std::iter::once(first)
+        .chain(first_later.filter(|later| *later != first))
+        .collect::<Vec<_>>();
+    for representative in &representatives {
+        let cell_pointer = run.slot_pointer(*representative);
+        let value = run.value(*representative);
+        if materialized_cell_source(&cell_pointer, &value)
+            .is_some_and(|named_at| named_at.derivation().is_some())
+        {
+            return None;
+        }
+    }
+    Some(representatives)
+}
+
+/// The representative of element `index` among `representatives`
+/// ([`run_shape_representatives`]): element 0 answers for itself, and the
+/// last representative for every later element.
+pub(in crate::kernel) fn run_shape_representative(representatives: &[u32], index: u32) -> u32 {
+    if index == 0 {
+        representatives[0]
+    } else {
+        *representatives.last().expect("a representative")
+    }
+}
+
+/// The load-canonical source of each live slot of `run`, as
+/// [`canonical_memory_for_pointer_load_uncached`] asks it of a cell: one
+/// answer per spelling shape where [`run_shape_representatives`] finds the
+/// slots uniform, and one per slot otherwise.
+fn run_materialization_sources(run: &crate::kernel::primitives::CellRun) -> Vec<Option<CMemory>> {
+    let slot_source = |index: u32| {
+        let cell_pointer = run.slot_pointer(index);
+        let value = run.value(index);
+        let source = materialized_cell_source(&cell_pointer, &value)?;
+        Some(canonical_memory_for_pointer_load(&source, &cell_pointer))
+    };
+    let Some(representatives) = run_shape_representatives(run) else {
+        return run.live_indexes().map(slot_source).collect();
+    };
+    let answers = representatives
+        .iter()
+        .map(|index| slot_source(*index))
+        .collect::<Vec<_>>();
+    #[cfg(debug_assertions)]
+    if run.count() <= crate::kernel::primitives::CHECKED_RUN_SLOTS {
+        crate::instrumentation::uncharged_debug_check(|| {
+            for index in run.live_indexes() {
+                let representative = run_shape_representative(&representatives, index);
+                let position = representatives
+                    .iter()
+                    .position(|candidate| *candidate == representative)
+                    .expect("a listed representative");
+                assert_eq!(
+                    slot_source(index),
+                    answers[position],
+                    "a run's load-canonical source for its spelling shape disagrees with element {index}'s own in {run:?}"
+                );
+            }
+        });
+    }
+    answers
+}
+
 fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointer) -> CMemory {
     // A snapshot met again while its own canonical form is being computed
     // is a cycle through the materialized cells and stands for itself.
@@ -2340,7 +2582,7 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
     let candidates = AliasCandidates::of_block(&pointer.block);
     let mut visited = 0usize;
     let relevant_cells = candidates
-        .entries(memory.cells.logical())
+        .entries(memory.cells.concrete())
         .inspect(|_| visited += 1)
         .filter(|(cell_pointer, _)| cell_pointer.block.observable_by_load(&pointer.block))
         .collect::<Vec<_>>();
@@ -2351,6 +2593,18 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
             let source = materialized_cell_source(cell_pointer, value)?;
             Some(canonical_memory_for_pointer_load(&source, cell_pointer))
         })
+        .chain(
+            memory
+                .cells
+                .runs()
+                .iter()
+                .filter(|run| {
+                    candidates.admits_block(&run.base().block)
+                        && run.base().block.observable_by_load(&pointer.block)
+                        && run.live_count() > 0
+                })
+                .flat_map(run_materialization_sources),
+        )
         .collect::<Option<Vec<_>>>();
     let common_materialization_source = materialization_sources.as_ref().and_then(|sources| {
         let first = sources.first()?;
@@ -2401,10 +2655,14 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
         )
         .collect::<SnapshotMap<_, _>>();
     let mut cells = (*canonical.cells).clone();
-    let mut visited = cells.retain_only_candidates(&candidates, |cell_pointer, value| {
-        cell_pointer.block.observable_by_load(&pointer.block)
-            && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
-    });
+    let mut visited = cells.retain_only_candidates_by(
+        &candidates,
+        |cell_pointer, value| {
+            cell_pointer.block.observable_by_load(&pointer.block)
+                && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
+        },
+        |run| run_slots_kept_by_load_projection(run, pointer),
+    );
     let union_cells = candidates
         .entries(&canonical.union_cells)
         .inspect(|_| visited += 1)
@@ -2473,6 +2731,314 @@ pub(in crate::kernel) fn offset_atoms_and_constant(
     collect(offset, &mut atoms, &mut shift);
     atoms.sort();
     (atoms, shift)
+}
+
+/// Where an access lies relative to the elements of a [`CellRun`], decided for
+/// the whole run: the element slots all share the run base's non-constant
+/// atoms and differ only in their constant byte shift, so every per-cell rule
+/// below that compares an access with a slot by its atoms and constant shift
+/// answers the same way for a whole interval of elements.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::kernel) enum RunAccess {
+    /// The access is in a block proven distinct from the run's.
+    DistinctBlock,
+    /// The access has the run base's atoms and this constant byte shift from
+    /// element 0.
+    Shift(i64),
+    /// The access has the run base's atoms plus one scaled index, and this
+    /// constant byte shift from element 0.
+    Scaled {
+        index: Bitvector32Term,
+        scale: i64,
+        shift: i64,
+    },
+    /// Anything else: another base, a block that may be the run's, or a
+    /// shape with more than one extra atom.
+    Other,
+}
+
+/// [`RunAccess`] for `pointer`, read structurally.
+pub(in crate::kernel) fn run_access(run: &CellRun, pointer: &Pointer) -> RunAccess {
+    if run.base().blocks_proven_distinct(pointer) {
+        return RunAccess::DistinctBlock;
+    }
+    if run.base().block != pointer.block {
+        return RunAccess::Other;
+    }
+    let (base_atoms, base_shift) = offset_atoms_and_constant(&run.base().offset);
+    let (atoms, shift) = offset_atoms_and_constant(&pointer.offset);
+    if atoms == base_atoms {
+        return RunAccess::Shift(shift - base_shift);
+    }
+    // One extra atom beyond the base's: remove the base's atoms one by one.
+    let mut rest = atoms;
+    for atom in &base_atoms {
+        let Some(position) = rest.iter().position(|candidate| candidate == atom) else {
+            return RunAccess::Other;
+        };
+        rest.remove(position);
+    }
+    match rest.as_slice() {
+        [PointerOffsetTerm::Int32Scaled { value, byte_width }] if *byte_width > 0 => {
+            RunAccess::Scaled {
+                index: value.as_ref().clone(),
+                scale: *byte_width,
+                shift: shift - base_shift,
+            }
+        }
+        _ => RunAccess::Other,
+    }
+}
+
+/// [`PureFactContext::resolve_memory_load_value`]'s cell scan over one run:
+/// the live slot whose pointer a load at `pointer` is at, and whether some
+/// other live slot is neither proven at it nor proven elsewhere. `None`
+/// sends the caller slot by slot.
+///
+/// That scan compares start addresses. A pointer in a block proven distinct
+/// from the run's is elsewhere than every slot. One with the base's atoms and
+/// a constant shift is at the slot starting at that shift, if there is one,
+/// and at a different constant distance from every other slot, which the
+/// facts need not be consulted to tell apart.
+///
+/// [`PureFactContext::resolve_memory_load_value`]: crate::kernel::assumptions::PureFactContext::resolve_memory_load_value
+pub(in crate::kernel) fn run_slots_resolving_load(
+    run: &CellRun,
+    pointer: &Pointer,
+) -> Option<(Option<u32>, bool)> {
+    crate::instrumentation::record_deterministic_work(1);
+    match run_access(run, pointer) {
+        RunAccess::DistinctBlock => Some((None, false)),
+        RunAccess::Shift(shift) => {
+            let width = i64::from(run.element_width());
+            let index = (width > 0 && shift >= 0 && shift % width == 0)
+                .then(|| u32::try_from(shift / width).ok())
+                .flatten()
+                .filter(|index| *index < run.count() && !run.holes().contains(*index));
+            Some((index, false))
+        }
+        RunAccess::Scaled { .. } | RunAccess::Other => None,
+    }
+}
+
+/// The elements of `run` whose bytes `[k * width, k * width + value_width)`
+/// meet the access bytes `[shift, shift + bytes)`, as `low..high`.
+pub(in crate::kernel) fn run_elements_meeting(run: &CellRun, shift: i64, bytes: i64) -> (u32, u32) {
+    let width = i64::from(run.element_width()).max(1);
+    let value_width = i64::from(run.value_width()).max(1);
+    // k * width < shift + bytes  and  shift < k * width + value_width
+    let high = (shift + bytes - 1).div_euclid(width) + 1;
+    let low = (shift - value_width).div_euclid(width) + 1;
+    let clamp = |value: i64| value.clamp(0, i64::from(run.count())) as u32;
+    let (low, high) = (clamp(low), clamp(high));
+    (low, high.max(low))
+}
+
+/// Which of `run`'s live slots the distinct-cell reduction of a load of
+/// `bytes` bytes at `pointer` keeps: every slot not both proven distinct from
+/// the load and proven to share none of its bytes.
+pub(in crate::kernel) fn run_slots_kept_by_load_reduction(
+    run: &CellRun,
+    pointer: &Pointer,
+    bytes: u32,
+    assumptions: &PureFactContext,
+) -> (SlotSet, RuleAnswer) {
+    (
+        run_slots_kept_by_load_reduction_set(run, pointer, bytes, assumptions),
+        RuleAnswer::Sound,
+    )
+}
+
+/// The slots of [`run_slots_kept_by_load_reduction`]. Dropping a cell only
+/// renames the load at a snapshot that does not record it, so the answer
+/// has two obligations, not one: it may drop a slot only when the slot's
+/// bytes provably miss the load's, which the constant byte arithmetic of a
+/// `Shift` decides for every slot at once, and it may keep any slot, which is
+/// what it does for a symbolic index (the ladder may still drop an element a
+/// fact bounds away; keeping it names the load at a snapshot that records
+/// one more cell, which the load does not read).
+fn run_slots_kept_by_load_reduction_set(
+    run: &CellRun,
+    pointer: &Pointer,
+    bytes: u32,
+    assumptions: &PureFactContext,
+) -> SlotSet {
+    let normalized = pointer_with_exact_index_constants(pointer, assumptions);
+    match run_access(run, &normalized) {
+        RunAccess::DistinctBlock => SlotSet::Nothing,
+        // Common atoms and unequal constants are distinct addresses, and the
+        // constant gap decides the bytes exactly: a slot survives only where
+        // its bytes meet the load's.
+        RunAccess::Shift(shift) => {
+            let (low, high) = run_elements_meeting(run, shift, i64::from(bytes));
+            SlotSet::Elements(low, high)
+        }
+        // A scaled index is distinct from an element only where the facts
+        // bound it away from that element. When the index's known range
+        // reaches past both ends of the run, no element is bounded away and
+        // every slot stays; anything narrower is asked slot by slot.
+        RunAccess::Scaled { .. } => SlotSet::All,
+        // Another base in a block the run's may be: no constant gap relates
+        // the two, so no slot is shown to miss the load's bytes.
+        RunAccess::Other => SlotSet::All,
+    }
+}
+
+/// Which of `run`'s live slots a store of `bytes` bytes at `pointer` leaves
+/// in place, and whether dropping the others forgot anything the store does
+/// not itself replace ([`CMemory::without_possible_aliasing_cells`]).
+///
+/// At a constant shift from the run's base the store's bytes decide it: a
+/// slot they meet is dropped, and forgotten unless the store covers all of
+/// it, and every other slot keeps its value, being a different address whose
+/// bytes the gap clears. A store the facts place outside the run's whole
+/// extent leaves every slot. Anything else is asked slot by slot. Keeping a
+/// slot needs a proof its bytes are missed, which each branch has; dropping
+/// one is always sound and only forgets.
+pub(in crate::kernel) fn run_slots_kept_by_store(
+    run: &CellRun,
+    pointer: &Pointer,
+    bytes: u32,
+    assumptions: &PureFactContext,
+) -> (SlotSet, bool) {
+    match run_access(run, pointer) {
+        RunAccess::DistinctBlock => (SlotSet::All, false),
+        RunAccess::Shift(shift) => {
+            let (low, high) = run_elements_meeting(run, shift, i64::from(bytes));
+            if low >= high {
+                return (SlotSet::All, false);
+            }
+            let width = i64::from(run.element_width());
+            let value_width = i64::from(run.value_width());
+            let covered = |index: u32| {
+                let start = i64::from(index) * width;
+                shift <= start && start + value_width <= shift + i64::from(bytes)
+            };
+            let forgot = (low..high)
+                .filter(|index| !run.holes().contains(*index))
+                .any(|index| !covered(index));
+            (SlotSet::Except(low, high), forgot)
+        }
+        RunAccess::Scaled { .. } | RunAccess::Other => {
+            if crate::kernel::memory_provenance::typed_ranges_disjoint_from_pointer_evidence(
+                &[run.range()],
+                pointer,
+                bytes,
+                assumptions,
+            )
+            .is_some()
+            {
+                return (SlotSet::All, false);
+            }
+            // The facts bound a scaled index: the store's bytes lie within
+            // what the index's extremes reach, and every slot outside those
+            // keeps its value. The slots inside are asked one by one.
+            if let RunAccess::Scaled {
+                index,
+                scale,
+                shift,
+            } = run_access(run, pointer)
+                && let Some((low, high)) = assumptions.signed_interval(&index)
+                && let (Some(first), Some(extent)) = (
+                    low.checked_mul(scale)
+                        .and_then(|bytes| bytes.checked_add(shift)),
+                    high.checked_sub(low)
+                        .and_then(|span| span.checked_mul(scale))
+                        .and_then(|span| span.checked_add(i64::from(bytes))),
+                )
+            {
+                let (low, high) = run_elements_meeting(run, first, extent);
+                if low >= high {
+                    return (SlotSet::All, false);
+                }
+                return (SlotSet::AskWithin(low, high), false);
+            }
+            (SlotSet::PerSlot, false)
+        }
+    }
+}
+
+/// Which of `run`'s live slots the equal-cell scan of a load at `pointer`
+/// can match: the one element the pointer names, when it names one.
+pub(in crate::kernel) fn run_slots_equal_to_load(
+    run: &CellRun,
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> (SlotSet, RuleAnswer) {
+    let normalized = pointer_with_exact_index_constants(pointer, assumptions);
+    let set = match run_access(run, &normalized) {
+        RunAccess::DistinctBlock => SlotSet::Nothing,
+        RunAccess::Shift(shift) => {
+            let width = i64::from(run.element_width()).max(1);
+            if shift.rem_euclid(width) != 0 {
+                return (SlotSet::Nothing, RuleAnswer::Sound);
+            }
+            let index = shift.div_euclid(width);
+            match u32::try_from(index) {
+                Ok(index) if index < run.count() => SlotSet::Elements(index, index + 1),
+                _ => SlotSet::Nothing,
+            }
+        }
+        // A symbolic index names an element only where a fact fixes it, which
+        // the exact-constant rewrite above already applied; another spelling
+        // names one only through a stated alias. One hop of each is what the
+        // per-cell ladder's first rungs read, and only those are asked.
+        RunAccess::Scaled { .. } | RunAccess::Other => assumptions
+            .exact_pointer_aliases(&normalized)
+            .cloned()
+            .chain(assumptions.exact_pointer_offset_aliases(&normalized))
+            .find_map(|alias| {
+                crate::instrumentation::record_deterministic_work(1);
+                let alias = pointer_with_exact_index_constants(&alias, assumptions);
+                let RunAccess::Shift(shift) = run_access(run, &alias) else {
+                    return None;
+                };
+                let width = i64::from(run.element_width()).max(1);
+                if shift.rem_euclid(width) != 0 {
+                    return None;
+                }
+                u32::try_from(shift.div_euclid(width))
+                    .ok()
+                    .filter(|index| *index < run.count())
+                    .map(|index| SlotSet::Elements(index, index + 1))
+            })
+            .unwrap_or(SlotSet::Nothing),
+    };
+    // A `Shift` names one address exactly, by the byte arithmetic every slot
+    // shares; the per-cell ladder may miss a regrouped spelling of it. A
+    // symbolic index no fact fixes is equal to no single element, so no slot
+    // is the load's value; the load stays symbolic, which is its value too.
+    (set, RuleAnswer::Sound)
+}
+
+/// Which of `run`'s live slots the load-canonical projection keeps: slots an
+/// access at `pointer` can observe and that no constant gap keeps apart from
+/// it (see [`cell_disjoint_from_load_by_constant_offset`]).
+pub(in crate::kernel) fn run_slots_kept_by_load_projection(
+    run: &CellRun,
+    pointer: &Pointer,
+) -> (SlotSet, RuleAnswer) {
+    (
+        run_slots_kept_by_load_projection_set(run, pointer),
+        RuleAnswer::Exact,
+    )
+}
+
+fn run_slots_kept_by_load_projection_set(run: &CellRun, pointer: &Pointer) -> SlotSet {
+    if !run.base().block.observable_by_load(&pointer.block) {
+        return SlotSet::Nothing;
+    }
+    if run.base().block != pointer.block {
+        return SlotSet::All;
+    }
+    match run_access(run, pointer) {
+        RunAccess::Shift(shift) => {
+            let (low, high) =
+                run_elements_meeting(run, shift, crate::kernel::MAX_SCALAR_ACCESS_BYTES);
+            SlotSet::Elements(low, high)
+        }
+        RunAccess::DistinctBlock | RunAccess::Scaled { .. } | RunAccess::Other => SlotSet::All,
+    }
 }
 
 /// True when a cached cell provably cannot alias the loaded pointer because
@@ -2874,7 +3440,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_bounded_alias(
         return false;
     }
     let load_bytes = crate::kernel::load_access_width_at_address_or_widest(pointer);
-    left.differing_cell_pointers(right)
+    left.differing_cell_pointers_meeting_load(right, pointer, load_bytes)
         .into_iter()
         .filter(|cell_pointer| cell_is_observable_by_load(cell_pointer, pointer))
         .all(|cell_pointer| {
@@ -2889,7 +3455,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_bounded_alias(
             // which cells are concrete, not what the load means.
             if cell_pointer == *pointer {
                 return value
-                    .and_then(|value| materialized_cell_source(&cell_pointer, value))
+                    .and_then(|value| materialized_cell_source(&cell_pointer, &value))
                     .is_some_and(|source| {
                         memories_match_for_pointer_load(&source, left, pointer)
                             || memories_match_for_pointer_load(&source, right, pointer)
@@ -2898,7 +3464,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_bounded_alias(
                     });
             }
             value.is_some_and(|value| {
-                cell_disjoint_from_load_by_constant_offset(&cell_pointer, value, pointer)
+                cell_disjoint_from_load_by_constant_offset(&cell_pointer, &value, pointer)
             }) || differing_cell_bytes_miss_the_load(
                 left,
                 right,
@@ -2931,7 +3497,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
     }
 
     let load_bytes = crate::kernel::load_access_width_at_address_or_widest(pointer);
-    left.differing_cell_pointers(right)
+    left.differing_cell_pointers_meeting_load(right, pointer, load_bytes)
         .into_iter()
         .filter(|cell_pointer| cell_is_observable_by_load(cell_pointer, pointer))
         .all(|cell_pointer| {

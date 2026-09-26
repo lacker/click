@@ -1417,9 +1417,21 @@ fn collect_memory_bound_variables(memory: &CMemory, variables: &mut BTreeSet<Var
     for contents in memory.blocks.values() {
         collect_bitvector_bound_variables(contents.size(), variables);
     }
-    for (pointer, value) in memory.cells.as_ref() {
+    for (pointer, value) in memory.cells.concrete().iter() {
         collect_pointer_bound_variables(pointer, variables);
         collect_c_value_bound_variables(value, variables);
+    }
+    // A run's slots are named uniformly per spelling shape wherever
+    // `run_shape_representatives` says so, and then mention the same bound
+    // variables as their shape's representative (a slot's own load variable
+    // is never a binder); otherwise every slot is visited.
+    for run in memory.cells.runs() {
+        let slots = crate::kernel::reasoning::memory_resolution::run_shape_representatives(run)
+            .unwrap_or_else(|| run.live_indexes().collect());
+        for index in slots {
+            collect_pointer_bound_variables(&run.slot_pointer(index), variables);
+            collect_c_value_bound_variables(&run.value(index), variables);
+        }
     }
 }
 
@@ -4990,6 +5002,39 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
     substituted
 }
 
+/// The slot of `run` whose own load `from` is, when `from` is a load variable
+/// registered at one of the run's slot pointers. A substitution of that
+/// variable rewrites that slot's value and, in a run whose slots are uniform,
+/// no other slot: each other slot's value is a different load variable, and
+/// what it mentions (the run's base, a constant shift, the memory it is named
+/// at) is what the other slots of its shape mention too.
+fn run_slot_named_by_load_variable(
+    run: &crate::kernel::primitives::CellRun,
+    from: Variable,
+) -> Option<u32> {
+    if !crate::kernel::is_load_variable(&from) {
+        return None;
+    }
+    let (_, pointer) = crate::kernel::eval::registered_load_for_variable(&from)?;
+    // The registered pointer may spell the slot differently from the run
+    // (a folded constant shift), so the slot is found by its distance from
+    // the run's base.
+    if let Some(index) = run.live_slot_index(&pointer) {
+        return Some(index);
+    }
+    let crate::kernel::reasoning::memory_resolution::RunAccess::Shift(shift) =
+        crate::kernel::reasoning::memory_resolution::run_access(run, &pointer)
+    else {
+        return None;
+    };
+    let width = i64::from(run.element_width());
+    if shift < 0 || width == 0 || shift % width != 0 {
+        return None;
+    }
+    let index = u32::try_from(shift / width).ok()?;
+    (index < run.count() && !run.holes().contains(index)).then_some(index)
+}
+
 fn rewrite_memory_snapshot(memory: &CMemory, from: Variable, to: &Bitvector32Term) -> CMemory {
     crate::instrumentation::measure_operation(
         "kernel",
@@ -5023,14 +5068,17 @@ fn substitute_bitvector_variable_in_memory_contents(
     to: &Bitvector32Term,
 ) -> CMemory {
     crate::instrumentation::record_deterministic_work(
-        memory.cells.len() + memory.union_cells.len() + memory.blocks.len(),
+        memory.cells.representation_len() + memory.union_cells.len() + memory.blocks.len(),
     );
-    let cells = std::sync::Arc::new(memory.cells.map_cells(|pointer, value| {
-        (
-            substitute_bitvector_variable_in_pointer(pointer, from, to),
-            substitute_bitvector_variable_in_c_value(value, from, to),
-        )
-    }));
+    let cells = std::sync::Arc::new(memory.cells.map_cells(
+        |pointer, value| {
+            (
+                substitute_bitvector_variable_in_pointer(pointer, from, to),
+                substitute_bitvector_variable_in_c_value(value, from, to),
+            )
+        },
+        |run| run_slot_named_by_load_variable(run, from),
+    ));
     CMemory {
         blocks: std::sync::Arc::new(
             memory
@@ -6452,12 +6500,15 @@ pub(crate) fn substitute_pointer_variable_in_memory(
                 })
                 .collect(),
         ),
-        cells: std::sync::Arc::new(memory.cells.map_cells(|pointer, value| {
-            (
-                substitute_pointer_variable_in_pointer(pointer, from, to),
-                substitute_pointer_variable_in_c_value(value, from, to),
-            )
-        })),
+        cells: std::sync::Arc::new(memory.cells.map_cells(
+            |pointer, value| {
+                (
+                    substitute_pointer_variable_in_pointer(pointer, from, to),
+                    substitute_pointer_variable_in_c_value(value, from, to),
+                )
+            },
+            |_| None,
+        )),
         union_cells: std::sync::Arc::new(
             memory
                 .union_cells

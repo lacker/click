@@ -300,6 +300,16 @@ fn cell_effect(
         CMemoryDerivation::CellsSeeded { .. } => {
             match seeded_cell_effect(step, pointer, bytes, evidence) {
                 SeededCellEffect::Written(..) => StepEffect::Affected,
+                SeededCellEffect::Separate(mut hops)
+                    if hops.len() == 1
+                        && matches!(
+                            hops[0],
+                            MemoryDagHopJustification::SeededStoresDistinctBlock
+                                | MemoryDagHopJustification::SeededStoresMissedByShift
+                        ) =>
+                {
+                    hop(hops.pop().expect("one hop"))
+                }
                 SeededCellEffect::Separate(hops) => {
                     hop(MemoryDagHopJustification::SeededStores { hops })
                 }
@@ -598,6 +608,7 @@ fn store_cell_effect(
 }
 
 /// What a `CellsSeeded` edge does to one cell.
+#[derive(Debug)]
 pub(in crate::kernel) enum SeededCellEffect {
     /// One of its stores writes the cell: the store's pointer, and the value
     /// the walk reads.
@@ -618,16 +629,57 @@ pub(in crate::kernel) fn seeded_cell_effect(
     bytes: u32,
     evidence: &Evidence<'_>,
 ) -> SeededCellEffect {
-    let stores = step
-        .seeded_stores()
-        .expect("seeded_cell_effect is asked about a CellsSeeded edge");
-    let mut hops = Vec::with_capacity(stores.len());
-    for (write, value) in &stores {
-        crate::instrumentation::record_deterministic_work(1);
-        match store_cell_effect(step, write, value, pointer, bytes, evidence) {
-            StepEffect::Affected => {
-                return SeededCellEffect::Written(write.clone(), value.clone());
+    let CMemoryDerivation::CellsSeeded { run, .. } = step else {
+        unreachable!("seeded_cell_effect is asked about a CellsSeeded edge");
+    };
+    crate::instrumentation::record_deterministic_work(1);
+    match crate::kernel::reasoning::memory_resolution::run_access(run, pointer) {
+        // Every store is in the run's block, which is proven distinct from
+        // this one: each is separate by `StoreDistinctBlocks`.
+        crate::kernel::reasoning::memory_resolution::RunAccess::DistinctBlock => {
+            SeededCellEffect::Separate(vec![MemoryDagHopJustification::SeededStoresDistinctBlock])
+        }
+        // Common atoms: every store at an unequal constant shift whose bytes
+        // miss the access is separate by `StoreCommonBaseUnequalConstants`,
+        // and the newest store whose bytes meet it writes the cell.
+        crate::kernel::reasoning::memory_resolution::RunAccess::Shift(shift) => {
+            let (low, high) = crate::kernel::reasoning::memory_resolution::run_elements_meeting(
+                run,
+                shift,
+                i64::from(bytes),
+            );
+            match (low..high)
+                .rev()
+                .find(|index| !run.holes().contains(*index))
+            {
+                Some(index) => SeededCellEffect::Written(run.slot_pointer(index), run.value(index)),
+                None => SeededCellEffect::Separate(vec![
+                    MemoryDagHopJustification::SeededStoresMissedByShift,
+                ]),
             }
+        }
+        crate::kernel::reasoning::memory_resolution::RunAccess::Scaled { .. }
+        | crate::kernel::reasoning::memory_resolution::RunAccess::Other => {
+            seeded_cell_effect_store_by_store(step, run, pointer, bytes, evidence)
+        }
+    }
+}
+
+/// The stores of a `CellsSeeded` edge asked one by one, newest first.
+fn seeded_cell_effect_store_by_store(
+    step: &CMemoryDerivation,
+    run: &crate::kernel::primitives::CellRun,
+    pointer: &Pointer,
+    bytes: u32,
+    evidence: &Evidence<'_>,
+) -> SeededCellEffect {
+    let mut hops = Vec::new();
+    for index in run.live_indexes_newest_first() {
+        crate::instrumentation::record_deterministic_work(1);
+        let write = run.slot_pointer(index);
+        let value = run.value(index);
+        match store_cell_effect(step, &write, &value, pointer, bytes, evidence) {
+            StepEffect::Affected => return SeededCellEffect::Written(write, value),
             StepEffect::Separate(Separation::Cell(justification)) => hops.push(justification),
             StepEffect::Separate(_) | StepEffect::NotShownSeparate(_) => {
                 return SeededCellEffect::NotShownSeparate;

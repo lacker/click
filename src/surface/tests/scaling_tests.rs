@@ -3446,3 +3446,52 @@ fn explicit_fold_read_transport_along_a_store_sequence_is_near_linear() {
     }
     assert_near_linear_scaling("explicit fold read transport along stores", &samples);
 }
+
+/// A constant range is one run of seeded cells, so a proof over it costs the
+/// same whatever the range's length. Before runs, every element was a stored
+/// cell and each load scanned all of them: `views a[0..100000]` exhausted
+/// the simple-tactic budget, and `views a[0..1000000]` minted enough load
+/// identities to collide.
+#[test]
+fn a_constant_view_costs_the_same_whatever_its_length() {
+    let c_source = "int32 get(int32 *a, int32 i) { return a[i]; }\n";
+    let click_source = |length: u64| {
+        format!(
+            "verifying \"get.c\";\n\nint32 get(int32 *a, int32 i) {{\n    views a[0..{length}];\n    requires 0 <= i;\n    requires i < {length};\n    ensures result == a[i];\n}} by {{\n    execute();\n    simp();\n}}\n"
+        )
+    };
+    // One unmeasured verification first: what the first verification on a
+    // thread pays once (parsing the prelude, filling shared caches) is not
+    // a cost of the range.
+    verify_c0_sources(&click_source(8), &[("get.c", c_source)]).expect("warm-up verifies");
+    let samples = [8u64, 1_000, 1_000_000, 1_000_000_000].map(|length| {
+        let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+            verify_c0_sources(&click_source(length), &[("get.c", c_source)])
+        });
+        verified.unwrap_or_else(|error| {
+            panic!(
+                "a view of {length} elements should verify: {}",
+                error.message()
+            )
+        });
+        (length, work)
+    });
+    let least = samples
+        .iter()
+        .map(|(_, work)| *work)
+        .min()
+        .expect("samples");
+    let most = samples
+        .iter()
+        .map(|(_, work)| *work)
+        .max()
+        .expect("samples");
+    assert!(least > 0, "{samples:?}");
+    // Flat, not merely sublinear: the samples may differ by a few units of
+    // fixed work, and the bound only has to rule out any growth with the
+    // length.
+    assert!(
+        most - least <= 4,
+        "deterministic work depends on the range's length: {samples:?}"
+    );
+}

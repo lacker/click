@@ -3163,7 +3163,7 @@ fn abstract_loop_exit_memory(
             let byte_width = memory
                 .cells
                 .get(pointer)
-                .map(CValue::byte_width)
+                .map(|value| value.byte_width())
                 .unwrap_or(0);
             if byte_width == 0 {
                 continue;
@@ -4869,7 +4869,87 @@ pub(super) fn prepare_loop_top_state(
             assumptions.access_held_by_owned_member(withheld, pointer, bytes)
         })
     };
-    for (pointer, value) in entry_state.memory().cells.iter() {
+    // A run is reinstalled whole where a summary's mutable ranges are proven
+    // clear of all of its bytes, which clears each slot's; with no summary
+    // and nothing withheld no slot is stable. Anything else is asked slot by
+    // slot below.
+    let mut runs_by_slot = Vec::new();
+    for run in entry_state.memory().cells.runs() {
+        crate::instrumentation::record_deterministic_work(1);
+        if run.base().block.starts_with("local:") || run.live_count() == 0 {
+            continue;
+        }
+        if summaries.is_empty() && withheld.is_none() {
+            continue;
+        }
+        let whole_bytes = run
+            .count()
+            .checked_sub(1)
+            .and_then(|last| last.checked_mul(run.element_width()))
+            .and_then(|last| last.checked_add(run.value_width()));
+        let whole_stable = whole_bytes.is_some_and(|bytes| {
+            summaries.iter().any(|summary| {
+                let Proposition::CMemoryEffectSummary { mutable_ranges, .. } = summary else {
+                    return false;
+                };
+                crate::kernel::memory_provenance::typed_ranges_disjoint_from_pointer_evidence(
+                    mutable_ranges,
+                    run.base(),
+                    bytes,
+                    assumptions,
+                )
+                .is_some()
+            })
+        });
+        #[cfg(debug_assertions)]
+        let before = framed_memory.cells.clone();
+        let stable_run = if whole_stable || withheld.is_some() {
+            None
+        } else {
+            run_slots_clear_of_loop_summaries(run, &summaries, assumptions)
+        };
+        if let Some(stable_run) = stable_run
+            && std::sync::Arc::make_mut(&mut framed_memory.cells).install_run(&stable_run)
+        {
+            continue;
+        }
+        if whole_stable && std::sync::Arc::make_mut(&mut framed_memory.cells).install_run(run) {
+            #[cfg(debug_assertions)]
+            if run.count() <= crate::kernel::primitives::CHECKED_RUN_SLOTS {
+                crate::instrumentation::uncharged_debug_check(|| {
+                    let mut expected = (*before).clone();
+                    for index in run.live_indexes() {
+                        expected.insert(run.slot_pointer(index), run.value(index));
+                    }
+                    assert_eq!(
+                        expected.logical(),
+                        framed_memory.cells.logical(),
+                        "installing a run whole disagrees with storing its slots one by one"
+                    );
+                });
+            }
+            continue;
+        }
+        runs_by_slot.push(run.clone());
+    }
+    let slots_asked_one_by_one = runs_by_slot
+        .iter()
+        .flat_map(|run| {
+            run.live_indexes()
+                .map(|index| (run.slot_pointer(index), run.value(index)))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    for (pointer, value) in entry_state
+        .memory()
+        .cells
+        .concrete()
+        .iter()
+        .map(|(pointer, value)| (pointer.clone(), value.clone()))
+        .chain(slots_asked_one_by_one)
+    {
+        let pointer = &pointer;
+        let value = &value;
         if pointer.block.starts_with("local:") {
             continue;
         }
@@ -6854,6 +6934,67 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
 /// these would otherwise be wrongly preserved across the loop havoc. A local
 /// counts as escaped if a live pointer in the pre-loop state already points at
 /// its block, or if the body takes its address syntactically.
+/// The slots of `run` the loop's effect summaries leave in place, as `run`
+/// with every other slot a hole, or `None` when only slot by slot can say.
+///
+/// A slot stays when some summary's mutable ranges all miss it. A range in a
+/// block proven distinct from the run's misses every slot. One over the run's
+/// own base and element width misses the slots below the least value the facts
+/// allow its start and those from the greatest value they allow its end. Any
+/// other range is asked slot by slot. A slot kept this way is proven outside
+/// every range of its summary; one dropped is only forgotten.
+fn run_slots_clear_of_loop_summaries(
+    run: &crate::kernel::primitives::CellRun,
+    summaries: &[Proposition],
+    assumptions: &PureFactContext,
+) -> Option<crate::kernel::primitives::CellRun> {
+    use crate::kernel::primitives::IndexIntervals;
+    let count = run.count();
+    let mut all = IndexIntervals::default();
+    all.insert_range(0, count);
+    let mut kept = IndexIntervals::default();
+    for summary in summaries {
+        let Proposition::CMemoryEffectSummary { mutable_ranges, .. } = summary else {
+            continue;
+        };
+        let mut kept_by_summary = all.clone();
+        for range in mutable_ranges {
+            crate::instrumentation::record_deterministic_work(1);
+            if range.base().blocks_proven_distinct(run.base()) {
+                continue;
+            }
+            if range.base() != run.base()
+                || range.element_width() != run.element_width()
+                || run.value_width() > run.element_width()
+            {
+                return None;
+            }
+            let (start_low, _) = assumptions.signed_interval(range.start())?;
+            let (_, end_high) = assumptions.signed_interval(range.end())?;
+            let clamp = |value: i64| value.clamp(0, i64::from(count)) as u32;
+            let mut missed = IndexIntervals::default();
+            missed.insert_range(0, clamp(start_low));
+            missed.insert_range(clamp(end_high), count);
+            kept_by_summary = kept_by_summary.intersection(&missed);
+        }
+        for (low, high) in kept_by_summary.intervals() {
+            kept.insert_range(low, high);
+        }
+    }
+    let mut holes = run.holes().clone();
+    for (low, high) in all.difference(&kept).intervals() {
+        holes.insert_range(low, high);
+    }
+    Some(crate::kernel::primitives::CellRun::new(
+        run.base().clone(),
+        run.element_width(),
+        run.element_type(),
+        count,
+        run.source().clone(),
+        holes,
+    ))
+}
+
 pub(super) fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -> BTreeSet<String> {
     let mut escaped = BTreeSet::new();
     collect_address_taken_locals(body, &mut escaped);
@@ -6870,8 +7011,18 @@ pub(super) fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -
             record_pointer(value, &mut escaped);
         }
     }
-    for value in state.memory.cells.values() {
+    for value in state.memory.cells.concrete().values() {
         record_pointer(value, &mut escaped);
+    }
+    // A run's slots hold values of its element type, so only a run of
+    // pointers holds a pointer to visit.
+    for run in state.memory.cells.runs() {
+        crate::instrumentation::record_deterministic_work(1);
+        if run.element_type().is_pointer() {
+            for index in run.live_indexes() {
+                record_pointer(&run.value(index), &mut escaped);
+            }
+        }
     }
     for value in state.memory.union_cells.values() {
         record_pointer(value, &mut escaped);

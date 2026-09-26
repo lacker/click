@@ -320,28 +320,31 @@ pub(crate) fn canonical_c_memory_deep(memory: &CMemory) -> CMemory {
 
 fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
     let mut canonical = memory.clone();
-    let cells = canonical.cells.map_cells(|pointer, value| {
-        let key = canonicalize_pointer_loads(pointer);
-        let value = match value {
-            CValue::Void => CValue::Void,
-            CValue::Bool(term) => CValue::Bool(canonicalize_atomic_loads(term)),
-            CValue::Int8(term) => CValue::Int8(canonicalize_atomic_loads(term)),
-            CValue::Int16(term) => CValue::Int16(canonicalize_atomic_loads(term)),
-            CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(term)),
-            CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(term)),
-            CValue::UInt16(term) => CValue::UInt16(canonicalize_atomic_loads(term)),
-            CValue::UInt32(term) => CValue::UInt32(canonicalize_atomic_loads(term)),
-            CValue::Int64(term) => CValue::Int64(canonicalize_atomic_loads(term)),
-            CValue::UInt64(term) => CValue::UInt64(canonicalize_atomic_loads(term)),
-            CValue::Float32(term) => CValue::Float32(canonicalize_atomic_loads(term)),
-            CValue::Float64(term) => CValue::Float64(canonicalize_atomic_loads(term)),
-            CValue::Pointer(pointer) => CValue::typed_pointer(
-                canonicalize_pointer_loads(pointer.pointer()),
-                pointer.c_type(),
-            ),
-        };
-        (key, value)
-    });
+    let cells = canonical.cells.map_cells(
+        |pointer, value| {
+            let key = canonicalize_pointer_loads(pointer);
+            let value = match value {
+                CValue::Void => CValue::Void,
+                CValue::Bool(term) => CValue::Bool(canonicalize_atomic_loads(term)),
+                CValue::Int8(term) => CValue::Int8(canonicalize_atomic_loads(term)),
+                CValue::Int16(term) => CValue::Int16(canonicalize_atomic_loads(term)),
+                CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(term)),
+                CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(term)),
+                CValue::UInt16(term) => CValue::UInt16(canonicalize_atomic_loads(term)),
+                CValue::UInt32(term) => CValue::UInt32(canonicalize_atomic_loads(term)),
+                CValue::Int64(term) => CValue::Int64(canonicalize_atomic_loads(term)),
+                CValue::UInt64(term) => CValue::UInt64(canonicalize_atomic_loads(term)),
+                CValue::Float32(term) => CValue::Float32(canonicalize_atomic_loads(term)),
+                CValue::Float64(term) => CValue::Float64(canonicalize_atomic_loads(term)),
+                CValue::Pointer(pointer) => CValue::typed_pointer(
+                    canonicalize_pointer_loads(pointer.pointer()),
+                    pointer.c_type(),
+                ),
+            };
+            (key, value)
+        },
+        |_| None,
+    );
     canonical.cells = std::sync::Arc::new(cells);
     let union_cells = std::mem::take(&mut canonical.union_cells);
     for ((pointer, c_type), value) in union_cells.iter() {

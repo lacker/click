@@ -35,8 +35,10 @@ pub use integer::{MachineIntegerType, SharedMachineIntegerTerm, SignedDefinedWid
 mod alias_candidates;
 pub(crate) use alias_candidates::{AliasCandidates, BlockKeyed};
 mod cell_store;
+#[cfg(debug_assertions)]
+pub(crate) use cell_store::CHECKED_RUN_SLOTS;
 pub use cell_store::CellRun;
-pub(crate) use cell_store::{CellStore, IndexIntervals};
+pub(crate) use cell_store::{CellStore, IndexIntervals, RuleAnswer, SlotSet};
 mod derivations;
 mod memory_state;
 mod persistent_map;

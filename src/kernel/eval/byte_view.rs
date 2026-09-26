@@ -77,7 +77,7 @@ pub(in crate::kernel) fn containing_integer_cell(
     // cell, which the exact rules read and write; a cell with no byte view
     // is refused.
     if let Some(value) = memory.cells.get(pointer) {
-        return (integer_cell_width(value)? > 1).then(|| ContainingIntegerCell {
+        return (integer_cell_width(&value)? > 1).then(|| ContainingIntegerCell {
             pointer: pointer.clone(),
             value: value.clone(),
             byte: 0,
