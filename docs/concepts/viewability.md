@@ -166,6 +166,16 @@ apply(element_of_a_viewed_range(a, 0, 3, 1)) using {
 }
 ```
 
+Listing the range cites both of its halves. The application owes the extent
+half beside the range, and each of its conditions joins the evidence wherever
+it is an available fact, as it is beside a stated range, so the list does not
+restate `0 <= n - lo` and `n - lo <= 1073741823`. An induction hypothesis's
+range premise is cited the same way
+(`mdtests/induction_hypothesis_cites_a_listed_range_with_its_extent.md`). A
+range the proof narrowed to carries no such facts, so its halves are refused
+until the proof establishes them
+(`mdtests/induction_hypothesis_owes_the_range_extent.md`).
+
 That is also the form the refusal prints when an application cannot establish
 the premise, so what the reader is told to supply is what they write down. A C
 proof supplies it from the readability its own `views` or `owns` clause gives

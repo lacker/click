@@ -2408,10 +2408,24 @@ impl<'a> Proof<'a> {
                 "induction hypothesis `{hypothesis}` expects one argument"
             )));
         };
-        let explicit_premises = surface_premises
+        let lowered_premises = surface_premises
             .iter()
             .map(|premise| self.lower_surface_proposition(premise, "induction premise"))
             .collect::<Result<Vec<_>, _>>()?;
+        // The hypothesis is the theorem's own statement, so a range premise
+        // owes its extent halves beside it. Citing a stated range cites both
+        // halves, by the one rule every `apply using` shares.
+        let mut explicit_premises = Vec::with_capacity(lowered_premises.len());
+        for premise in lowered_premises {
+            crate::surface::proof::theorem_application::cite_range_extent_guards(
+                &premise,
+                &mut explicit_premises,
+                |guard| self.facts().exact_available_across_effects(guard, &[]),
+            );
+            if !explicit_premises.contains(&premise) {
+                explicit_premises.push(premise);
+            }
+        }
 
         let state = CState::new().with_memory(context.theorem_context.memory.clone());
         let mut active_functions = BTreeSet::new();

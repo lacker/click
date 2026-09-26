@@ -118,11 +118,14 @@ What a language or tooling change could remove, largest first:
 3. **Path-condition use of call guarantees** (about 25 DFS lines). Inside the
    branch where `left_result == 0`, opening `left_result == 0 implies X`
    takes an `extract`/`assumption` block each time.
-4. **Pure-theorem extent halves** (6 `using` lines per `apply` in the lemma
-   library). A pure `apply`, smart or explicit, must still name
-   `0 <= n - lo; n - lo <= 1073741823` for a `views` requirement; the C-proof
-   route no longer does. This remains the design question of which premises a
-   pure checker may read.
+4. **Pure-theorem extent halves** (resolved). A listed `views`/`viewable`
+   range premise in a pure `apply … using`, including an induction
+   hypothesis's, cites its extent halves wherever they are available, by the
+   shared `cite_range_extent_guards` rule, so the lemma library no longer
+   restates `0 <= n - lo; n - lo <= 1073741823`
+   (`mdtests/induction_hypothesis_cites_a_listed_range_with_its_extent.md`;
+   a moved range whose halves nobody established is still refused,
+   `mdtests/induction_hypothesis_owes_the_range_extent.md`).
 
 The remaining ~250 DFS lines (contract, ranking, witness construction, the
 closure-summary case analysis) are the claim's own content. If items 1 and 2

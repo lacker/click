@@ -24,8 +24,6 @@ theorem unmarked_nonnegative(v: int32[], lo: int32, n: int32, hi: int32) {
                 hi - 1 <= n;
                 n <= 1073741823;
                 viewable(v[lo..n]);
-                0 <= n - lo;
-                n - lo <= 1073741823;
             }
             have lo <= hi - 1 by { arithmetic() using { 0 <= lo; lo < hi; } }
             have hi - 1 < 2147483647 by { arithmetic() using { 0 <= lo; lo < hi; } }
@@ -90,8 +88,6 @@ theorem unmarked_frame(
                 viewable(a[lo..n]);
                 viewable(b[lo..n]);
                 forall (k: int32) { lo <= k and k < m implies a[k] == b[k] };
-                0 <= n - lo;
-                n - lo <= 1073741823;
             }
             have a[hi - 1] == b[hi - 1] by {
                 instantiate(forall (k: int32) {
@@ -177,8 +173,6 @@ theorem unmarked_point_update(
                     viewable(a[lo..n]);
                     viewable(b[lo..n]);
                     forall (k: int32) { lo <= k and k < j implies a[k] == b[k] };
-                    0 <= n - lo;
-                    n - lo <= 1073741823;
                 }
                 have a[hi - 1] == 0 by { simp() using { a[j] == 0; j == hi - 1; }; }
                 have b[hi - 1] != 0 by { simp() using { b[j] != 0; j == hi - 1; }; }
@@ -235,8 +229,6 @@ theorem unmarked_point_update(
                     b[j] != 0;
                     forall (k: int32) { lo <= k and k < j implies a[k] == b[k] };
                     forall (k: int32) { j < k and k < n implies a[k] == b[k] };
-                    0 <= n - lo;
-                    n - lo <= 1073741823;
                 }
                 have a[hi - 1] == b[hi - 1] by {
                     instantiate(forall (k: int32) {

@@ -73,11 +73,6 @@ theorem walk_frame(a: int32[], b: int32[], n: int32, from: int32, fuel: Nat) {
             }
             Nat::Succ(previous) => {
                 apply(ih(previous));
-                have 0 <= n by { arithmetic() using { 0 <= from; from < n; } }
-                have 0 <= n - 0 by { arithmetic() using { 0 <= n; } }
-                have n - 0 <= 1073741823 by {
-                    arithmetic() using { n <= 1073741823; }
-                }
                 apply(walk_in_range(a, n, from, previous)) using {
                     0 <= from;
                     from < n;
@@ -86,8 +81,6 @@ theorem walk_frame(a: int32[], b: int32[], n: int32, from: int32, fuel: Nat) {
                     forall (k: int32) {
                         0 <= k and k < n implies 0 <= a[k] and a[k] < n
                     };
-                    0 <= n - 0;
-                    n - 0 <= 1073741823;
                 }
                 have a[walk(a, from, previous)] == b[walk(a, from, previous)] by {
                     instantiate(forall (k: int32) {

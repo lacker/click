@@ -35,9 +35,9 @@ does not have. Split at `j`, each instantiation gets the orientation it can
 prove, and the boundary case hands `unmarked_frame` its premise verbatim.
 
 The ranges are `views` clauses. A stated range carries its extent half beside
-its viewability half, so the proof never derives `0 <= n - lo` — but every
-`apply` still owes both halves by name, which is the six `using` lines that
-restate what the clause above them already said.
+its viewability half, so the proof never derives `0 <= n - lo`, and listing
+the range in an `apply … using` cites both halves: every `apply` owes them,
+and none restates them.
 
 ```click
 import "unmarked_count_lemmas.click";
