@@ -56,12 +56,10 @@ that is a measurement, not yet a scaling check.
 Gaps 74 and 75 below were fixed on the way. What stops the last two leaves is
 open: under a `Right` great-grandparent frame, `parent->rb_left == old` is
 decided only after unfolding that frame's other child, and the child cannot be
-refolded. `fold(rb_at(yid), ...)` at the arm's binding is refused twice over:
-a fold's resource arguments do not accept proof-arm bindings (`UnboundVariable`;
-the fields do, through `substitute_fixed_state_locals_in_expression`), and with
-that substitution added the fold still cannot consume cells the unfold
-published under the loaded pointer's spelling ("fold requires ownership of the
-complete instance body", from `without_fact_incrementally`). The same class
+refolded. A fold's resource arguments now accept proof-arm bindings, as its
+fields already did, but `fold(rb_at(yid), ...)` still cannot consume cells the
+unfold published under the loaded pointer's spelling ("fold requires
+ownership of the complete instance body", from `without_fact_incrementally`). The same class
 shows in `have id->word == 5` failing after `p->word = 5` with `p == id`
 proved. Both reproductions are small; they are recorded under open findings.
 
@@ -529,9 +527,10 @@ blocks C3; each is a candidate package when it starts to.
   (A28).
 - **Pointer spellings across a write or a fold** (blocks C3b's last two
   left-left leaves): after `p->word = 5` with `p == id` proved, `have
-  id->word == 5` is refused while `have p->word == 5` holds; a fold's resource
-  arguments cannot name a proof-arm binding; and a fold at an arm binding
-  cannot consume cells an unfold published under a loaded pointer's spelling.
+  id->word == 5` is refused while `have p->word == 5` holds, and a fold at an
+  arm binding cannot consume cells an unfold published under a loaded
+  pointer's spelling. (A fold's resource arguments may now name a proof-arm
+  binding: `mdtests/fold_argument_names_an_arm_binding.md`.)
   Loads in fold arguments (`fold(rb_at(x->left), ...)`) are also unsupported.
 - **Stale prose:** `mdtests/rb_replace_node.md` says a victim with
   children cannot be contracted, which `rb_replace_node_with_children.md`

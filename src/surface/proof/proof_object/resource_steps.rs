@@ -42,6 +42,11 @@ impl<'a> Proof<'a> {
             let ResourceClause::Named { resource, .. } = resource else {
                 unreachable!()
             };
+            // A proof `match` arm's bindings are proof locals, not C locals:
+            // the fields below substitute them, and so do the resource's own
+            // arguments, so `fold(cell_at(id), ...)` names the pointer a
+            // `have` goal spelling `id` does.
+            let resource = &self.substitute_fixed_state_locals_in_resource_arguments(resource)?;
             let lowered = lower_resource_clause_at_current_locals(
                 resource,
                 context.parsed_function.parameters(),

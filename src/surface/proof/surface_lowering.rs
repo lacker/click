@@ -851,4 +851,32 @@ impl<'a> Proof<'a> {
             self.step_error(format!("could not substitute proof locals: {message}"))
         })
     }
+
+    /// The declared resource with proof locals substituted into each of its
+    /// arguments; any other clause is returned unchanged.
+    pub(super) fn substitute_fixed_state_locals_in_resource_arguments(
+        &self,
+        resource: &ResourceClause,
+    ) -> Result<ResourceClause, ClickError> {
+        let ResourceClause::Declared {
+            access,
+            kind,
+            name,
+            arguments,
+            parameter_types,
+        } = resource
+        else {
+            return Ok(resource.clone());
+        };
+        Ok(ResourceClause::Declared {
+            access: *access,
+            kind: *kind,
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| self.substitute_fixed_state_locals_in_expression(argument))
+                .collect::<Result<_, _>>()?,
+            parameter_types: parameter_types.clone(),
+        })
+    }
 }
