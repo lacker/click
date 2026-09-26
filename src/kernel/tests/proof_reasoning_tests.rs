@@ -7848,3 +7848,61 @@ fn reflexive_comparisons_decide_without_facts_and_strict_ones_are_false() {
         &Proposition::ConditionIs(distinct, true)
     ));
 }
+
+/// The condition checker (`decide`) and the memory-resolution order prover
+/// answer every successor and int32-extreme comparison against `x < y` the
+/// same way. Each row names the comparison and whether it follows from
+/// `0 <= x` and `x < y` for every int32 `x` and `y`; the rows that do not
+/// follow (`x + 1` may reach `y`, or `y + 1` / `x + 2` may wrap) are refused
+/// by both.
+#[test]
+fn signed_order_provers_agree_on_successor_terms() {
+    let x = Bitvector32Term::Variable(Variable(89_300));
+    let y = Bitvector32Term::Variable(Variable(89_301));
+    let plus = |t: &Bitvector32Term, c: u32| {
+        Bitvector32Term::Add(Box::new(t.clone()), Box::new(Bitvector32Term::Constant(c)))
+    };
+    let constant = |value: i32| Bitvector32Term::Constant(value as u32);
+    let facts = PureFactContext::new()
+        .assume_condition(ConditionTerm::signed_less_than(x.clone(), y.clone()), true)
+        .assume_condition(
+            ConditionTerm::signed_less_equal(constant(0), x.clone()),
+            true,
+        );
+    let lt = ConditionTerm::signed_less_than;
+    let le = ConditionTerm::signed_less_equal;
+    let gt = ConditionTerm::signed_greater_than;
+    let ge = ConditionTerm::signed_greater_equal;
+    let cases = [
+        ("x < x + 1", lt(x.clone(), plus(&x, 1)), true),
+        ("x <= x + 1", le(x.clone(), plus(&x, 1)), true),
+        ("x + 1 > x", gt(plus(&x, 1), x.clone()), true),
+        ("x + 1 >= x", ge(plus(&x, 1), x.clone()), true),
+        ("x + 1 <= y", le(plus(&x, 1), y.clone()), true),
+        ("y >= x + 1", ge(y.clone(), plus(&x, 1)), true),
+        ("y > x", gt(y.clone(), x.clone()), true),
+        ("y >= x", ge(y.clone(), x.clone()), true),
+        ("x < INT32_MAX", lt(x.clone(), constant(i32::MAX)), true),
+        ("INT32_MAX > x", gt(constant(i32::MAX), x.clone()), true),
+        ("x <= INT32_MAX", le(x.clone(), constant(i32::MAX)), true),
+        (
+            "x + 1 <= INT32_MAX",
+            le(plus(&x, 1), constant(i32::MAX)),
+            true,
+        ),
+        ("0 <= x + 1", le(constant(0), plus(&x, 1)), true),
+        ("0 < x + 1", lt(constant(0), plus(&x, 1)), true),
+        ("1 <= x + 1", le(constant(1), plus(&x, 1)), true),
+        ("x + 1 >= 1", ge(plus(&x, 1), constant(1)), true),
+        ("x + 1 < y", lt(plus(&x, 1), y.clone()), false),
+        ("x + 2 <= y", le(plus(&x, 2), y.clone()), false),
+        ("x < x + 2", lt(x.clone(), plus(&x, 2)), false),
+        ("x < y + 1", lt(x.clone(), plus(&y, 1)), false),
+    ];
+    for (name, condition, follows) in cases {
+        let decided = facts.decide(&condition) == Some(true);
+        let resolved = facts.proves_order_condition_for_memory_resolution(&condition, true);
+        assert_eq!(decided, follows, "condition checker on `{name}`");
+        assert_eq!(resolved, follows, "memory-resolution prover on `{name}`");
+    }
+}

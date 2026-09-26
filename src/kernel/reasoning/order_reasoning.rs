@@ -33,6 +33,81 @@ pub(in crate::kernel) fn condition_as_order_fact(
     }
 }
 
+/// The strict order a non-strict successor bound reduces to.
+///
+/// `a + 1 <= b` holds whenever `a < b` does: `a < b` puts `a` at most
+/// `INT32_MAX - 1`, so `a + 1` does not wrap and is the integer successor of
+/// `a`, which is at most `b`. Both signed-order provers — the condition
+/// checker (`decide`) and the memory-resolution prover — read a successor
+/// bound through this one rule, each asking its own strict question, so they
+/// agree on it. Only the true direction follows; a refuted `a < b` says
+/// nothing about the wrapped `a + 1`.
+pub(in crate::kernel) fn successor_bound_as_strict_order(
+    lower: &Bitvector32Term,
+    upper: &Bitvector32Term,
+    strict: bool,
+) -> Option<(Bitvector32Term, Bitvector32Term)> {
+    if strict {
+        return None;
+    }
+    Some((lower.add_const_base(1)?, upper.clone()))
+}
+
+/// The signed condition `lower < upper` (strict) or `lower <= upper`.
+pub(in crate::kernel) fn order_condition(
+    lower: Bitvector32Term,
+    upper: Bitvector32Term,
+    strict: bool,
+) -> ConditionTerm {
+    if strict {
+        ConditionTerm::signed_less_than(lower, upper)
+    } else {
+        ConditionTerm::signed_less_equal(lower, upper)
+    }
+}
+
+/// The order a constant bound below a successor reduces to.
+///
+/// `c <= a + 1` holds when `c - 1 <= a` and `a < INT32_MAX` (so `a + 1` does
+/// not wrap), and `c < a + 1` when `c <= a` and `a < INT32_MAX`. The bound
+/// `c` is a constant, so `c - 1` is computed exactly; `c = INT32_MIN` is left
+/// to [`order_holds_at_int32_extreme`]. Returns the reduced order as
+/// `(lower, upper, strict)` and the successor's base, whose `base <
+/// INT32_MAX` each prover asks with its own strict question. Shared by both
+/// signed-order provers, as [`successor_bound_as_strict_order`] is.
+pub(in crate::kernel) fn constant_below_successor_as_order(
+    lower: &Bitvector32Term,
+    upper: &Bitvector32Term,
+    strict: bool,
+) -> Option<((Bitvector32Term, Bitvector32Term, bool), Bitvector32Term)> {
+    let constant = lower.as_const()? as i32;
+    let base = upper.add_const_base(1)?;
+    let reduced = if strict {
+        (
+            Bitvector32Term::Constant(constant as u32),
+            base.clone(),
+            false,
+        )
+    } else {
+        let below = constant.checked_sub(1)?;
+        (Bitvector32Term::Constant(below as u32), base.clone(), false)
+    };
+    Some((reduced, base))
+}
+
+/// Whether a non-strict signed order holds because one endpoint is the int32
+/// extreme: every int32 value is at most `INT32_MAX` and at least
+/// `INT32_MIN`. Shared by both signed-order provers.
+pub(in crate::kernel) fn order_holds_at_int32_extreme(
+    lower: &Bitvector32Term,
+    upper: &Bitvector32Term,
+    strict: bool,
+) -> bool {
+    !strict
+        && (upper == &Bitvector32Term::Constant(i32::MAX as u32)
+            || lower == &Bitvector32Term::Constant(i32::MIN as u32))
+}
+
 /// The `int64` counterpart of [`condition_as_order_fact`]: a signed 64-bit
 /// order fact as `(lower, upper, strict)`. The endpoints are 64-bit terms, so
 /// callers must keep these bounds apart from int32 ones.

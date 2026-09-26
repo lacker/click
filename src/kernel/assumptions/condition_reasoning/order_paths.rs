@@ -38,6 +38,32 @@ impl PureFactContext {
         {
             return Some(value);
         }
+        if let Some(value) = self.decide_from_order_rules(condition) {
+            return Some(value);
+        }
+        // Successor rules the memory-resolution prover reads the same way
+        // (`proves_order_condition_for_memory_resolution`), after the direct
+        // rules have missed. Each asks one smaller strict question.
+        let (lower, upper, strict) = condition_as_order_fact(condition, true)?;
+        if let Some((below, above)) = successor_bound_as_strict_order(&lower, &upper, strict)
+            && self.decide(&ConditionTerm::signed_less_than(below, above)) == Some(true)
+        {
+            return Some(true);
+        }
+        if let Some(((below, above, reduced_strict), base)) =
+            constant_below_successor_as_order(&lower, &upper, strict)
+            && self.decide(&order_condition(below, above, reduced_strict)) == Some(true)
+            && self.decide(&ConditionTerm::signed_less_than(
+                base,
+                Bitvector32Term::Constant(i32::MAX as u32),
+            )) == Some(true)
+        {
+            return Some(true);
+        }
+        None
+    }
+
+    fn decide_from_order_rules(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
             ConditionTerm::PointerEqual(left, right) if left == right => Some(true),
             ConditionTerm::PointerEqual(left, right) => {
@@ -273,7 +299,7 @@ impl PureFactContext {
                 ) {
                     return Some(result);
                 }
-                if right == signed_int_max_term() || left == signed_int_min_term() {
+                if order_holds_at_int32_extreme(&left, &right, false) {
                     return Some(true);
                 }
                 if let Some(base) = left.add_const_base(1)
@@ -365,6 +391,15 @@ impl PureFactContext {
                     )
                     || self.has_lower_bound_above(&left, &right)
                     || self.has_add_const_lower_bound_above(&left, &right)
+                    // The mirrors of the `<` rules for a successor and for
+                    // the int32 maximum, so `x + 1 > x` and `INT32_MAX > x`
+                    // are decided as `x < x + 1` and `x < INT32_MAX` are.
+                    || self.positive_offset_is_proven_above(&right, &left)
+                    || left == signed_int_max_term()
+                        && self.decide(&ConditionTerm::signed_less_than(
+                            right.clone(),
+                            left.clone(),
+                        )) == Some(true)
                 {
                     Some(true)
                 } else if self.has_condition_fact(
@@ -390,7 +425,7 @@ impl PureFactContext {
                 ) {
                     return Some(result);
                 }
-                if right == signed_int_min_term() || left == signed_int_max_term() {
+                if order_holds_at_int32_extreme(&right, &left, false) {
                     return Some(true);
                 }
                 if self.has_order_path(&right, &left, false)
@@ -412,6 +447,9 @@ impl PureFactContext {
                     )
                     || self.has_lower_bound_at_or_above(&left, &right)
                     || self.has_add_const_lower_bound_at_or_above(&left, &right)
+                    // The mirror of the `<=` successor rule, so `x + 1 >= x`
+                    // is decided as `x <= x + 1` is.
+                    || self.nonnegative_offset_is_proven_at_or_above(&right, &left)
                     || self.order_facts_force_equal(&left, &right)
                 {
                     Some(true)
@@ -743,6 +781,10 @@ impl PureFactContext {
                     self,
                 )
         };
+        // Every int32 value is at most `INT32_MAX`, so a walk toward it is
+        // done as soon as it has the strictness it needs: `x < y` alone gives
+        // `x < INT32_MAX`, as the condition checker also concludes.
+        let right_is_int32_max = right == &Bitvector32Term::Constant(i32::MAX as u32);
         let mut stack = vec![(left.clone(), false)];
         let mut seen = BTreeSet::new();
         while let Some((current, strict_so_far)) = stack.pop() {
@@ -751,6 +793,9 @@ impl PureFactContext {
             }
             if !seen.insert((current.clone(), strict_so_far)) {
                 continue;
+            }
+            if right_is_int32_max && (!require_strict || strict_so_far) {
+                return true;
             }
             let target_constant_connection = signed_bitvector_constant(&current)
                 .zip(signed_bitvector_constant(right))
@@ -852,9 +897,43 @@ impl PureFactContext {
             );
         }
         condition_as_order_fact(condition, value).is_some_and(|(left, right, strict)| {
-            let left = self.simplify_bitvector_under_assumptions(&left);
-            let right = self.simplify_bitvector_under_assumptions(&right);
-            self.has_order_path_for_memory_resolution(&left, &right, strict)
+            // The extreme and successor rules are the ones the condition
+            // checker reads the same way (`decide_from_order_facts`); the
+            // successor rules run only after the path search has missed.
+            if order_holds_at_int32_extreme(&left, &right, strict) {
+                return true;
+            }
+            let simplified_left = self.simplify_bitvector_under_assumptions(&left);
+            let simplified_right = self.simplify_bitvector_under_assumptions(&right);
+            if self.has_order_path_for_memory_resolution(
+                &simplified_left,
+                &simplified_right,
+                strict,
+            ) {
+                return true;
+            }
+            if let Some((below, above)) = successor_bound_as_strict_order(&left, &right, strict)
+                && self.proves_order_condition_for_memory_resolution(
+                    &ConditionTerm::signed_less_than(below, above),
+                    true,
+                )
+            {
+                return true;
+            }
+            constant_below_successor_as_order(&left, &right, strict).is_some_and(
+                |((below, above, reduced_strict), base)| {
+                    self.proves_order_condition_for_memory_resolution(
+                        &order_condition(below, above, reduced_strict),
+                        true,
+                    ) && self.proves_order_condition_for_memory_resolution(
+                        &ConditionTerm::signed_less_than(
+                            base,
+                            Bitvector32Term::Constant(i32::MAX as u32),
+                        ),
+                        true,
+                    )
+                },
+            )
         })
     }
 }
