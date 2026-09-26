@@ -158,27 +158,22 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
         };
         // A listed premise the lowering folded to a ground constant needs no
         // fact when that constant is the value it asserts: `0 <= 0` at an
-        // instance is `true is true`. The requirement side discharges the same
-        // instance without a premise, so naming it in the list only restates
-        // it. This is a constant structural check, not normalization.
-        if let Proposition::ConditionIs(ConditionTerm::Constant(constant), value) = &premise
-            && constant == value
-        {
-            continue;
-        }
+        // instance is `true is true`, and the availability check below
+        // accepts it by the rule every `using` list shares
+        // (`proposition_holds_without_facts`).
         // An equality listed in the other orientation from the fact held
         // is the same fact; use the held spelling as the premise.
         let premise = match crate::surface::proof::theorem_application::mirrored_equality(&premise)
         {
             Some(mirrored)
-                if !available.available_across_effects(&premise, &[])
+                if !available.listed_premise_available(&premise, &[], true)
                     && available.available_across_effects(&mirrored, &[]) =>
             {
                 mirrored
             }
             _ => premise,
         };
-        if !available.available_across_effects(&premise, &[]) {
+        if !available.listed_premise_available(&premise, &[], true) {
             let available_facts = available.to_vec();
             // Name the listed premise in the reader's own spelling: a
             // premise lowered to a constant or to an internal term says

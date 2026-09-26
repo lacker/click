@@ -3232,10 +3232,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                             for (premise_index, premise) in
                                                 kernels.iter().enumerate()
                                             {
-                                                if !focused
-                                                    .facts()
-                                                    .exact_available_across_effects(premise, &[])
-                                                {
+                                                if !focused.facts().listed_premise_available(
+                                                    premise,
+                                                    &[],
+                                                    false,
+                                                ) {
                                                     return Err(focused.step_error(format!(
                                                         "post-execution `arithmetic using` premise {premise_index} is not exactly available"
                                                     )));

@@ -872,7 +872,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .focused_proposition()
             .ok_or(PropositionCloseError::NotProposition)?;
         for (index, premise) in premises.iter().enumerate() {
-            if !facts.exact_available_across_effects(premise, &[]) {
+            if !facts.listed_premise_available(premise, &[], false) {
                 return Err(PropositionCloseError::IntegerArithmeticPremiseUnavailable(
                     index,
                 ));
@@ -893,7 +893,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .focused_proposition()
             .ok_or(PropositionCloseError::NotProposition)?;
         for (index, premise) in premises.iter().enumerate() {
-            if !facts.exact_available_across_effects(premise, &[]) {
+            if !facts.listed_premise_available(premise, &[], false) {
                 return Err(PropositionCloseError::SignedArithmeticPremiseUnavailable(
                     index,
                 ));
@@ -914,7 +914,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .focused_proposition()
             .ok_or(PropositionCloseError::NotProposition)?;
         for (index, premise) in premises.iter().enumerate() {
-            if !facts.exact_available_across_effects(premise, &[]) {
+            if !facts.listed_premise_available(premise, &[], false) {
                 return Err(PropositionCloseError::SpecialArithmeticPremiseUnavailable(
                     index,
                 ));
@@ -1209,7 +1209,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .focused_proposition()
             .ok_or(PropositionCloseError::NotProposition)?;
         for (index, premise) in explicit_premises.iter().enumerate() {
-            if !facts.available_across_effects(premise, &[]) {
+            if !facts.listed_premise_available(premise, &[], true) {
                 return Err(PropositionCloseError::InstantiatePremiseUnavailable(
                     index,
                     premise.clone(),

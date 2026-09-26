@@ -358,7 +358,7 @@ impl<'a> Proof<'a> {
 
         let mut explicit_premises = Vec::new();
         for (premise, surface) in lowered_premises.iter().zip(surface_premises) {
-            if !self.facts().exact_available_across_effects(premise, &[]) {
+            if !self.facts().listed_premise_available(premise, &[], false) {
                 return Err(self.step_error(format!(
                     "`apply using` requires an unavailable exact premise: `{}`",
                     crate::surface::diagnostics::describe_click_proposition(surface)
@@ -3341,7 +3341,7 @@ impl<'a> Proof<'a> {
         for surface_premise in premises {
             let premise =
                 self.lower_cited_surface_proposition(surface_premise, "`transport using` premise")?;
-            if !self.facts().exact_available_across_effects(&premise, &[]) {
+            if !self.facts().listed_premise_available(&premise, &[], false) {
                 return Err(self.step_error(format!(
                     "`transport using` requires an exact premise: {}",
                     describe_click_proposition(surface_premise)

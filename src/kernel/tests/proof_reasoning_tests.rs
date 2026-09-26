@@ -7811,3 +7811,40 @@ fn constant_normalization_classes_detect_ambiguity_in_any_insertion_order() {
         "replacing the conflict by its negation restores the chain's constant"
     );
 }
+
+#[test]
+fn reflexive_comparisons_decide_without_facts_and_strict_ones_are_false() {
+    let n = Bitvector32Term::Variable(Variable(89_200));
+    let m = Bitvector32Term::Variable(Variable(89_201));
+    let empty = PureFactContext::new();
+    let cases = [
+        (ConditionTerm::signed_less_equal(n.clone(), n.clone()), true),
+        (
+            ConditionTerm::signed_greater_equal(n.clone(), n.clone()),
+            true,
+        ),
+        (ConditionTerm::equal(n.clone(), n.clone()), true),
+        (ConditionTerm::signed_less_than(n.clone(), n.clone()), false),
+        (
+            ConditionTerm::signed_greater_than(n.clone(), n.clone()),
+            false,
+        ),
+    ];
+    for (condition, value) in cases {
+        assert_eq!(condition.reflexive_value(), Some(value), "{condition:?}");
+        assert_eq!(empty.decide(&condition), Some(value), "{condition:?}");
+        assert!(crate::kernel::proposition_holds_without_facts(
+            &Proposition::ConditionIs(condition.clone(), value)
+        ));
+        assert!(!crate::kernel::proposition_holds_without_facts(
+            &Proposition::ConditionIs(condition, !value)
+        ));
+    }
+    // Distinct operands are not reflexive: nothing is decided without facts.
+    let distinct = ConditionTerm::signed_less_equal(n, m);
+    assert_eq!(distinct.reflexive_value(), None);
+    assert_eq!(empty.decide(&distinct), None);
+    assert!(!crate::kernel::proposition_holds_without_facts(
+        &Proposition::ConditionIs(distinct, true)
+    ));
+}

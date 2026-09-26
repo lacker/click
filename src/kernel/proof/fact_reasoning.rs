@@ -152,7 +152,8 @@ pub(crate) fn normalize_using_conditions(
         Vec<(super::fact_keys::IntegerEqualityAlphaKey, bool)>,
     > = std::collections::HashMap::new();
     for (index, premise) in premises.iter().enumerate() {
-        if !facts.contains(premise)
+        if !crate::kernel::proposition_holds_without_facts(premise)
+            && !facts.contains(premise)
             && !condition_polarity_forms(premise)
                 .iter()
                 .any(|form| facts.contains(form))
@@ -2328,22 +2329,33 @@ mod integer_reflexivity_tests {
         );
         let facts = crate::kernel::proof::ProofFacts::from_ordered(std::slice::from_ref(&premise));
         assert!(matches!(
-            normalize_using_conditions(&goal, &[premise], &facts),
+            normalize_using_conditions(&goal, std::slice::from_ref(&premise), &facts),
             Err(ConditionalNormalizationError::DoesNotNormalize)
         ));
 
+        // A cited premise must be available: the list is the whole evidence.
         let missing_facts = crate::kernel::proof::ProofFacts::from_ordered(&[]);
-        let missing = Proposition::ConditionIs(
+        assert!(matches!(
+            normalize_using_conditions(&premise, std::slice::from_ref(&premise), &missing_facts),
+            Err(ConditionalNormalizationError::UnavailablePremise(0))
+        ));
+        // A premise that holds without facts (`0 == 0`) needs none, as in
+        // every other `using` list.
+        let reflexive = Proposition::ConditionIs(
             ConditionTerm::IntegerEqual(
                 IntegerTerm::constant_i64(0).into(),
                 IntegerTerm::constant_i64(0).into(),
             ),
             true,
         );
-        assert!(matches!(
-            normalize_using_conditions(&missing, std::slice::from_ref(&missing), &missing_facts),
-            Err(ConditionalNormalizationError::UnavailablePremise(0))
-        ));
+        assert!(
+            normalize_using_conditions(
+                &reflexive,
+                std::slice::from_ref(&reflexive),
+                &missing_facts
+            )
+            .is_ok()
+        );
     }
 
     #[test]

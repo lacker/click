@@ -1028,6 +1028,30 @@ impl ProofFacts {
             })
     }
 
+    /// Availability of one premise a `using` list names.
+    ///
+    /// A listed premise that holds with no facts at all — a ground constant
+    /// that is the value it asserts (`0 <= 0`), or a comparison of a term with
+    /// itself (`n <= n`) — needs no fact behind it; every other premise must
+    /// be exactly available, across effects when `across_quantifiers` also
+    /// admits a binder-equivalent quantified fact. Every `using` list checks
+    /// its premises through this one method, so a premise is accepted by one
+    /// list exactly when it is accepted by another. Goal-closing tactics such
+    /// as `assumption` do not use it: they remain exact.
+    pub(crate) fn listed_premise_available(
+        &self,
+        premise: &Proposition,
+        framing: &[ExecutionPureFact],
+        across_quantifiers: bool,
+    ) -> bool {
+        crate::kernel::proposition_holds_without_facts(premise)
+            || if across_quantifiers {
+                self.available_across_effects(premise, framing)
+            } else {
+                self.exact_available_across_effects(premise, framing)
+            }
+    }
+
     pub(crate) fn exact_available_across_effects(
         &self,
         required: &Proposition,

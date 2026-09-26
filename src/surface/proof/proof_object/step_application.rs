@@ -1032,7 +1032,7 @@ impl<'a> Proof<'a> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         for (index, premise) in premises.iter().enumerate() {
-            if !self.facts().exact_available_across_effects(premise, &[]) {
+            if !self.facts().listed_premise_available(premise, &[], false) {
                 return Err(self.step_error(format!(
                     "`arithmetic using` premise {index} is not exactly available"
                 )));
@@ -2535,7 +2535,7 @@ impl<'a> Proof<'a> {
         }
         if let Some(missing) = explicit_premises
             .iter()
-            .find(|premise| !self.facts().available_across_effects(premise, &[]))
+            .find(|premise| !self.facts().listed_premise_available(premise, &[], true))
         {
             return Err(self.step_error(format!(
                 "induction premise is not exactly available: {}",

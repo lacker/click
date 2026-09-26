@@ -1807,6 +1807,59 @@ impl PointerOffsetTerm {
 }
 
 impl ConditionTerm {
+    /// The value this condition has because its two operands are the same
+    /// term, when it is a comparison of that kind.
+    ///
+    /// A term compared with itself is equal to itself, and no less or
+    /// greater than itself, whatever value it denotes: `t <= t`, `t >= t`
+    /// and `t == t` are true, `t < t`, `t > t` and `t != t` are false. The
+    /// check is syntactic identity only, never simplification, so it costs
+    /// one structural comparison. Floating-point comparisons are excluded
+    /// because a NaN is not equal to itself, and overflow conditions are not
+    /// comparisons. Algebraic equality is excluded too: an algebraic term can
+    /// be a malformed application the kernel deliberately leaves undecided.
+    pub(crate) fn reflexive_value(&self) -> Option<bool> {
+        match self {
+            Self::Bitvector32SignedLessEqual(left, right)
+            | Self::Bitvector32SignedGreaterEqual(left, right)
+            | Self::Bitvector32Equal(left, right)
+            | Self::Bitvector64SignedLessEqual(left, right)
+            | Self::Bitvector64SignedGreaterEqual(left, right)
+            | Self::Bitvector64UnsignedLessEqual(left, right)
+            | Self::Bitvector64UnsignedGreaterEqual(left, right)
+            | Self::Bitvector64Equal(left, right) => (left == right).then_some(true),
+            Self::Bitvector32SignedLessThan(left, right)
+            | Self::Bitvector32SignedGreaterThan(left, right)
+            | Self::Bitvector64SignedLessThan(left, right)
+            | Self::Bitvector64SignedGreaterThan(left, right)
+            | Self::Bitvector64UnsignedLessThan(left, right)
+            | Self::Bitvector64UnsignedGreaterThan(left, right) => (left == right).then_some(false),
+            Self::IntegerLessEqual(left, right)
+            | Self::IntegerGreaterEqual(left, right)
+            | Self::IntegerEqual(left, right) => (left == right).then_some(true),
+            Self::IntegerLessThan(left, right)
+            | Self::IntegerGreaterThan(left, right)
+            | Self::IntegerNotEqual(left, right) => (left == right).then_some(false),
+            Self::PointerOffsetEqual(left, right) => (left == right).then_some(true),
+            Self::PointerEqual(left, right) => (left == right).then_some(true),
+            Self::AlgebraicEqual(_, _)
+            | Self::Constant(_)
+            | Self::Variable(_)
+            | Self::Bitvector32SignedAddOverflows(_, _)
+            | Self::Bitvector32SignedSubtractOverflows(_, _)
+            | Self::Bitvector32SignedMultiplyOverflows(_, _)
+            | Self::Bitvector32SignedDivideOverflows(_, _)
+            | Self::Bitvector32SignedShiftLeftOverflows(_, _)
+            | Self::Bitvector64SignedAddOverflows(_, _)
+            | Self::Bitvector64SignedSubtractOverflows(_, _)
+            | Self::Bitvector64SignedMultiplyOverflows(_, _)
+            | Self::Bitvector64SignedDivideOverflows(_, _)
+            | Self::Bitvector64SignedShiftLeftOverflows(_, _)
+            | Self::Float32(_)
+            | Self::Float64(_) => None,
+        }
+    }
+
     pub(crate) fn float32_compare(
         left: Bitvector32Term,
         right: Bitvector32Term,
@@ -3660,5 +3713,21 @@ mod shift_overflow_refusal_tests {
             ConditionTerm::Bitvector32SignedShiftLeftOverflows(Box::new(left), Box::new(right),),
             "an out-of-range shift must not become the safe constant false"
         );
+    }
+}
+
+/// Whether a proposition holds with no facts at all, by a constant structural
+/// check: a condition that is the ground constant it asserts (`0 <= 0` lowers
+/// to `true is true`), or a comparison of a term with itself whose value
+/// ([`ConditionTerm::reflexive_value`]) is the one asserted.
+///
+/// Every `using` list consults this one rule, so a premise that states such a
+/// fact needs no fact behind it wherever it is listed, and the kernel's
+/// condition decision answers the same comparisons the same way.
+pub(crate) fn proposition_holds_without_facts(proposition: &Proposition) -> bool {
+    match proposition {
+        Proposition::ConditionIs(ConditionTerm::Constant(constant), value) => constant == value,
+        Proposition::ConditionIs(condition, value) => condition.reflexive_value() == Some(*value),
+        _ => false,
     }
 }

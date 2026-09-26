@@ -282,6 +282,12 @@ impl PureFactContext {
     }
 
     fn decide_inner(&self, condition: &ConditionTerm) -> Option<bool> {
+        // A comparison of a term with itself is decided by its shape, with
+        // no fact: the same one-comparison rule every `using` list applies
+        // (`proposition_holds_without_facts`).
+        if let Some(value) = condition.reflexive_value() {
+            return Some(value);
+        }
         // Wide comparisons may use a recorded constant equality. Consult only
         // the queried terms' equality components, never unrelated conditions.
         let wide_comparison = match condition {

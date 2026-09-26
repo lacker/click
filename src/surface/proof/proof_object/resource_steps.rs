@@ -935,7 +935,7 @@ impl<'a> Proof<'a> {
         let mut available = Vec::new();
         for premise in premises {
             let lowered = lower(premise, "an `unfold ... using` premise")?;
-            if !self.facts().exact_available_across_effects(&lowered, &[]) {
+            if !self.facts().listed_premise_available(&lowered, &[], false) {
                 return Err(self.step_error(format!(
                     "`unfold({name}(...)) using` requires an unavailable exact premise: {}",
                     describe_pure_fact(&lowered, &[], &[])
