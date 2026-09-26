@@ -938,35 +938,17 @@ fn execute_modeled_pthread_mutex_paths(
                     context
                         .acquire_current(mutex.pointer(), &current)
                         .map(|context| context.into_state())
-                        .map_err(|error| match error {
-                            super::mutexes::MutexTransitionError::NotInitialized => {
-                                CRuntimeError::UninitializedMutex {
-                                    mutex: mutex.pointer().clone(),
-                                }
-                            }
-                            super::mutexes::MutexTransitionError::Refusal(message) => {
-                                CRuntimeError::FunctionContract(message.to_string())
-                            }
-                        })
+                        .map_err(|error| error.into_runtime_error(mutex.pointer()))
                 } else if function_name == binding.mutex_unlock_name {
                     context
                         .release_current(mutex.pointer(), &current)
                         .map(|context| context.into_state())
-                        .map_err(|message| CRuntimeError::FunctionContract(message.to_string()))
+                        .map_err(|error| error.into_runtime_error(mutex.pointer()))
                 } else {
                     context
                         .destroy(mutex.pointer(), &current)
                         .map(|context| context.into_state())
-                        .map_err(|error| match error {
-                            super::mutexes::MutexTransitionError::NotInitialized => {
-                                CRuntimeError::UninitializedMutex {
-                                    mutex: mutex.pointer().clone(),
-                                }
-                            }
-                            super::mutexes::MutexTransitionError::Refusal(message) => {
-                                CRuntimeError::FunctionContract(message.to_string())
-                            }
-                        })
+                        .map_err(|error| error.into_runtime_error(mutex.pointer()))
                 }
             };
             match transition {

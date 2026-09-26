@@ -199,6 +199,14 @@ without a protected resource, forged initialization witnesses, and indexed join
 work at increasing mutex counts. Lifecycle resources, use loans, and the
 connection to live C storage remain unimplemented.
 
+Unlock failures now preserve structured missing-resource obligations through
+the kernel/runtime boundary. They report `Requires owns mutex_guard(...)`
+for absent or packaged acquisition authority, and `Requires owns resource(...)`
+for the protected instance that must be restored. The latter identifies the
+instance selected at initialization without requiring its old model values.
+Missing guards take precedence over a separately missing protected instance;
+unsupported preserving-contract transitions retain their limitation message.
+
 Direct named guard clauses and consumed/produced guards still require the
 full abstract acquisition binding and transition model. The current symbolic
 form is restricted to helpers whose mutex protocols cannot change. Calls

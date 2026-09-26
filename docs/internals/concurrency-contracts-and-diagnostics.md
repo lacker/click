@@ -282,6 +282,21 @@ The selected Holding arm of held_state contains the required guard.
 Unfold held_state before this call.
 ```
 
+The implemented unlock diagnostic now leads with
+`Requires owns mutex_guard(&counter->mutex)` when the acquisition is absent,
+already consumed, or still packaged in a resource. It does not yet inspect
+wrappers to suggest an unfolding step. If both guard and protected instance
+are unavailable, it reports the guard first.
+
+When the guard is available but the protected instance is not folded, the
+message instead names the exact resource application, for example
+`Requires owns counter_state(counter)`, and identifies it as the instance
+selected at `pthread_mutex_init`. It does not print internal instance numbers
+or require the instance's historical model-field values. The kernel still
+checks the selected instance identity; another instance of the same resource
+cannot satisfy the obligation. Source binder names and declaration locations
+remain future diagnostic work.
+
 Only make this suggestion when the `Holding` arm is established. Otherwise the
 missing requirement is the model/branch fact selecting that arm, not an
 unconditional instruction to unfold.

@@ -3398,9 +3398,14 @@ pub enum CRuntimeError {
     MissingResource {
         resource: CResourceFact,
     },
-    /// A guard contract requires an acquisition, but this state has none to select.
+    /// An operation requires an acquisition that is not available as owned authority.
     MissingMutexGuard {
         mutex: Pointer,
+    },
+    /// Unlock requires the exact folded instance selected at initialization.
+    /// Its cached fields are not an obligation to restore historical values.
+    MissingMutexInvariant {
+        resource: CResourceFact,
     },
     /// A stable-view call returned a view that no checked input child,
     /// preserved outer binding, owner projection, or read-only block backs.

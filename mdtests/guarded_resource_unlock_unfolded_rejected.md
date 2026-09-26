@@ -31,5 +31,5 @@ void wrong(struct cell *cell) {
 ```
 
 ```expect
-fail: mutex invariant must be folded before unlock
+fail: Requires owns cell_state(cell)
 ```

@@ -838,6 +838,9 @@ pub(in crate::kernel) fn describe_certification_runtime_error(error: &CRuntimeEr
         CRuntimeError::MissingMutexGuard { .. } => {
             "a required mutex_guard resource is not available".to_string()
         }
+        CRuntimeError::MissingMutexInvariant { .. } => {
+            "the protected resource selected at mutex initialization must be restored".to_string()
+        }
         CRuntimeError::MissingResource { .. } => "a required resource is not available".to_string(),
         CRuntimeError::UnbackedReturnedView { .. } => {
             CRuntimeError::UNBACKED_RETURNED_VIEW.to_string()

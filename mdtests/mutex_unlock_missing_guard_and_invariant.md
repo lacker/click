@@ -1,4 +1,4 @@
-# mutex guard rejects unlock while folded
+# Unlock reports the guard before a separately missing protected resource
 
 The guard folds into an ordinary exclusive resource and must be recovered
 before unlock. The protected counter assertion remains a separate resource.
@@ -47,7 +47,6 @@ int32 read_counter(struct counter *counter) {
     let held = fold(holding(counter), { tag: 0 });
     unfold(state);
     step();
-    fold(state);
     step();
     step();
     step();

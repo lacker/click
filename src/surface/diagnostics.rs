@@ -835,6 +835,23 @@ pub(super) fn describe_runtime_error(
             "Requires owns mutex_guard({})",
             describe_mutex_pointer(mutex, parameters, arguments)
         ),
+        crate::kernel::CRuntimeError::MissingMutexInvariant { resource } => {
+            let required = match resource.resource() {
+                CResource::Instance(instance) => format!(
+                    "owns {}",
+                    format_declared_resource(
+                        instance.name(),
+                        instance.arguments(),
+                        parameters,
+                        arguments
+                    )
+                ),
+                _ => describe_resource_fact(resource, parameters, arguments),
+            };
+            format!(
+                "Requires {required}\nRestore the resource instance selected at pthread_mutex_init before unlocking."
+            )
+        }
         crate::kernel::CRuntimeError::MissingResource { resource } => {
             let fact = describe_resource_fact(resource, parameters, arguments);
             if matches!(resource.resource(), CResource::MutexGuard(_)) {
