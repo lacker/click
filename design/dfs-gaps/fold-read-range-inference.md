@@ -29,7 +29,7 @@ unrelated facts, interval length, and store sequences),
 `src/surface/tests.rs`,
 `explicit_fold_read_transport_along_a_store_sequence_is_near_linear` in
 `src/surface/tests/scaling_tests.rs`, and the `mdtests/fold_read_transport_*.md`
-fixtures plus `mdtests/sweep_prefix_survives_its_endpoint_store_by_transport.md`
+fixtures plus `mdtests/sweep_maintains_a_zero_unmarked_count.md`
 and its `_by_simp` twin.
 This design does not approve a general effect language.
 

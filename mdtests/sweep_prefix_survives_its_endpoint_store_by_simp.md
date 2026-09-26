@@ -1,6 +1,6 @@
 # simp carries the sweep's prefix count across the endpoint store
 
-This is `sweep_prefix_survives_its_endpoint_store_by_transport.md` with its
+This is `sweep_maintains_a_zero_unmarked_count.md` with its
 explicit `transport(...) using { ... }` replaced by `simp()`. `simp`'s
 snapshot transport closure proposes the iteration-entry fact as the source and
 asks the same checked transport, which reaches the checked fold read frame:
