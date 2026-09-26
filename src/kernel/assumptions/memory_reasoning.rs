@@ -801,10 +801,13 @@ impl PureFactContext {
         if range_base.block != base.block {
             return false;
         }
-        let Some(element_width) = scaled_extent_element_width(bytes) else {
-            return false;
-        };
-        if scaled_extent_element_width(range_bytes) != Some(element_width) {
+        // A range of one-byte elements lowers its extent unscaled — the byte
+        // count of `p[a..b]` over `uint8` is `b - a` itself — so an extent
+        // with no width factor is read at byte granularity. The argument
+        // below holds at `w = 1` unchanged, and
+        // `assumed_range_is_a_valid_byte_extent` already answers for it.
+        let element_width = scaled_extent_element_width(bytes).unwrap_or(1);
+        if scaled_extent_element_width(range_bytes).unwrap_or(1) != element_width {
             return false;
         }
         let (Some(goal_count), Some(range_count)) = (

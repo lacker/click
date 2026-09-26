@@ -1052,6 +1052,18 @@ fn synthesize_zero_based_loadable_segment(
             state,
             bound_variables,
         )?)?
+    } else if !matches!(bytes, Bitvector32Term::Subtract(_, _)) {
+        // A range of one-byte elements keeps its extent unscaled: `a[0..n]`
+        // over `uint8` is `n` bytes. The spelling is a candidate only; every
+        // caller re-lowers it and keeps it only when it names this fact, so
+        // over a wider element it lowers to `n * w` and is refused.
+        contract_expression_to_c_fragment(&synthesize_surface_bitvector(
+            bytes,
+            parameters,
+            arguments,
+            state,
+            bound_variables,
+        )?)?
     } else {
         return None;
     };

@@ -6438,3 +6438,33 @@ fn symbolic_zero_based_membership_requires_index_and_byte_extent_bounds() {
         "symbolic bounds require facts"
     );
 }
+
+/// A range of one-byte elements narrows by its endpoints as a range of wider
+/// elements does: `loadable(a[0..n])` over `uint8`, whose extent is the
+/// unscaled `n`, gives `loadable(a[0..k])` from `0 <= k` and `k <= n`, and
+/// gives nothing without `k <= n`.
+#[test]
+fn a_byte_range_narrows_by_its_endpoints() {
+    let memory = CMemory::new();
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Variable(Variable(9_310_000)),
+    };
+    let n = Bitvector32Term::Variable(Variable(9_310_001));
+    let k = Bitvector32Term::Variable(Variable(9_310_002));
+    let held = PureFactContext::new()
+        .assume_proposition(Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: base.clone(),
+            bytes: n.clone(),
+        })
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), k.clone()),
+            true,
+        );
+    let bounded = held
+        .clone()
+        .assume_condition(ConditionTerm::signed_less_equal(k.clone(), n.clone()), true);
+    assert!(bounded.proves_memory_loadable(&memory, &base, &k));
+    assert!(!held.proves_memory_loadable(&memory, &base, &k));
+}
