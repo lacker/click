@@ -3465,7 +3465,7 @@ fn execute_c_while_exit_paths(
     for failure in &head.resource_failures {
         loop_check_obligations.push(
             ProofObligation::verification_condition(false_equals_true_proposition())
-                .with_context(failure.clone()),
+                .with_context(failure.context()),
         );
     }
     append_required_proof_obligations(&mut loop_check_obligations, assumptions, &entry_obligations);
@@ -4677,11 +4677,34 @@ pub(super) struct CLoopHead {
     pub(super) summaries: Vec<Proposition>,
     /// Why a declared loop resource could not be taken from the enclosing
     /// resource context. A non-empty list is a verification failure.
-    pub(super) resource_failures: Vec<String>,
+    pub(super) resource_failures: Vec<CLoopResourceFailure>,
     /// The loop's effect checks with every declared-resource frame installed
     /// from the checked evaluation of the loop's own resource specs at entry.
     /// Every later check of this loop reads these, never the originals.
     pub(super) effect_checks: Vec<CLoopEffectCheck>,
+}
+
+/// Why a declared loop resource could not be taken from the enclosing
+/// context. An unheld resource keeps the fact and the state it was
+/// evaluated over, so the surface can spell it in the source's names.
+#[derive(Clone, Debug)]
+pub(super) enum CLoopResourceFailure {
+    Message(String),
+    Unheld { fact: CResourceFact, state: CState },
+}
+
+impl CLoopResourceFailure {
+    pub(super) const UNHELD: &'static str =
+        "loop declares a resource the enclosing function does not hold";
+
+    /// The failure as an obligation context, where no state is at hand to
+    /// spell the resource; the loop-head refusal carries it instead.
+    pub(super) fn context(&self) -> String {
+        match self {
+            Self::Message(message) => message.clone(),
+            Self::Unheld { .. } => Self::UNHELD.to_string(),
+        }
+    }
 }
 
 impl CLoopHead {
@@ -4834,7 +4857,7 @@ pub(super) fn prepare_loop_top_state(
                 .or_else(|| checked_owned_entry_footprint(entry_state.resources()));
             validate_loop_havoc_stable_loans(ledger, validated.as_deref(), assumptions).err()
         });
-    let mut resource_failures = Vec::new();
+    let mut resource_failures: Vec<CLoopResourceFailure> = Vec::new();
     let mut top_state = havoc_loop_modified_locals(
         entry_state,
         body,
@@ -5041,9 +5064,13 @@ pub(super) fn prepare_loop_top_state(
             loop_havoc_ranges.as_deref(),
         )
     };
-    resource_failures.append(&mut rebound_failures);
+    resource_failures.extend(
+        rebound_failures
+            .drain(..)
+            .map(CLoopResourceFailure::Message),
+    );
     resource_failures.extend(body_failures);
-    resource_failures.extend(havoc_loan_failure);
+    resource_failures.extend(havoc_loan_failure.map(CLoopResourceFailure::Message));
     // D7 at a loop head: the invariants play the part of a contract's
     // requirements, so a folded matched instance publishes the cells of the
     // arm they select. That is what lets a guard such as `root->left != 0`
@@ -5144,7 +5171,7 @@ fn loop_declared_and_withheld_resources(
     resource_specs: &[CResourceSpec],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Result<(ResourceContext, ResourceContext), String>> {
+) -> ExecutionResult<Result<(ResourceContext, ResourceContext), CLoopResourceFailure>> {
     let declared = match evaluate_function_resource_context(
         entry_state,
         resource_specs,
@@ -5157,17 +5184,19 @@ fn loop_declared_and_withheld_resources(
     )? {
         Ok(declared) => declared,
         Err(error) => {
-            return Ok(Err(format!(
-                "loop declares a resource the enclosing function does not hold: {error:?}"
-            )));
+            return Ok(Err(CLoopResourceFailure::Message(format!(
+                "loop declares a resource the enclosing function does not hold: {}",
+                super::api::contract_certification::describe_certification_runtime_error(&error)
+            ))));
         }
     };
     let mut withheld = entry_state.resources().clone();
     for fact in declared.facts() {
         let Some(remaining) = withheld.clone().without_fact(fact, assumptions) else {
-            return Ok(Err(format!(
-                "loop declares a resource the enclosing function does not hold: {fact:?}"
-            )));
+            return Ok(Err(CLoopResourceFailure::Unheld {
+                fact: fact.clone(),
+                state: entry_state.clone(),
+            }));
         };
         withheld = remaining;
     }
@@ -5180,7 +5209,7 @@ fn loop_body_resource_context(
     resource_specs: &[CResourceSpec],
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<(CState, Vec<String>)> {
+) -> ExecutionResult<(CState, Vec<CLoopResourceFailure>)> {
     if resource_specs.is_empty() {
         return Ok((top_state.clone(), Vec::new()));
     }
@@ -6008,7 +6037,8 @@ pub(super) fn evaluate_loop_effect_segment(
         Ok(CValue::Pointer(pointer)) => pointer.into_pointer(),
         Ok(value) => {
             return Ok(Err(format!(
-                "segment base evaluated to {value:?}, not pointer"
+                "segment base evaluated to a {} value, not a pointer",
+                super::functions::c_type_spelling(value.c_type())
             )));
         }
         Err(message) => return Ok(Err(message)),
@@ -6023,7 +6053,8 @@ pub(super) fn evaluate_loop_effect_segment(
         Ok(CValue::Int32(value)) => value,
         Ok(value) => {
             return Ok(Err(format!(
-                "segment start evaluated to {value:?}, not int32"
+                "segment start evaluated to a {} value, not an int32",
+                super::functions::c_type_spelling(value.c_type())
             )));
         }
         Err(message) => return Ok(Err(message)),
@@ -6038,7 +6069,8 @@ pub(super) fn evaluate_loop_effect_segment(
         Ok(CValue::Int32(value)) => value,
         Ok(value) => {
             return Ok(Err(format!(
-                "segment end evaluated to {value:?}, not int32"
+                "segment end evaluated to a {} value, not an int32",
+                super::functions::c_type_spelling(value.c_type())
             )));
         }
         Err(message) => return Ok(Err(message)),
@@ -6084,7 +6116,8 @@ pub(super) fn evaluate_loop_effect_segment_with_facts(
         Ok(CValue::Pointer(pointer)) => pointer.into_pointer(),
         Ok(value) => {
             return Ok(Err(format!(
-                "segment base evaluated to {value:?}, not pointer"
+                "segment base evaluated to a {} value, not a pointer",
+                super::functions::c_type_spelling(value.c_type())
             )));
         }
         Err(message) => return Ok(Err(message)),
@@ -6093,7 +6126,8 @@ pub(super) fn evaluate_loop_effect_segment_with_facts(
         Ok(CValue::Int32(value)) => value,
         Ok(value) => {
             return Ok(Err(format!(
-                "segment start evaluated to {value:?}, not int32"
+                "segment start evaluated to a {} value, not an int32",
+                super::functions::c_type_spelling(value.c_type())
             )));
         }
         Err(message) => return Ok(Err(message)),
@@ -6102,7 +6136,8 @@ pub(super) fn evaluate_loop_effect_segment_with_facts(
         Ok(CValue::Int32(value)) => value,
         Ok(value) => {
             return Ok(Err(format!(
-                "segment end evaluated to {value:?}, not int32"
+                "segment end evaluated to a {} value, not an int32",
+                super::functions::c_type_spelling(value.c_type())
             )));
         }
         Err(message) => return Ok(Err(message)),
@@ -6154,9 +6189,17 @@ fn evaluate_loop_effect_segment_value_with_facts(
         return Ok(Err(format!("{label} had no evaluation path")));
     };
     if !path.obligations.is_empty() {
+        // Named by the sentences their lowering wrote; the kernel has no
+        // source spelling of the conditions themselves.
+        let contexts = path
+            .obligations
+            .iter()
+            .map(|obligation| obligation.context().unwrap_or("an unnamed condition"))
+            .collect::<Vec<_>>();
         return Ok(Err(format!(
-            "{label} left proof obligations: {:?}",
-            path.obligations
+            "{label} left {} proof obligation(s): {}",
+            contexts.len(),
+            contexts.join("; ")
         )));
     }
     match path.outcome {
@@ -6174,7 +6217,10 @@ fn evaluate_loop_effect_segment_value_with_facts(
             if let CRuntimeError::MissingResource { resource } = &error {
                 crate::kernel::functions::record_resource_dependency(resource.clone());
             }
-            Ok(Err(format!("{label} produced runtime error: {error:?}")))
+            Ok(Err(format!(
+                "{label} produced runtime error: {}",
+                super::api::contract_certification::describe_certification_runtime_error(&error)
+            )))
         }
     }
 }

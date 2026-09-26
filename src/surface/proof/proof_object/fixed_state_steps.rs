@@ -2071,9 +2071,14 @@ impl<'a> Proof<'a> {
                 PropositionCloseError::NotProposition => {
                     self.step_error("`instantiate` requires a proposition goal")
                 }
-                PropositionCloseError::InstantiatePremiseUnavailable(premise) => {
+                PropositionCloseError::InstantiatePremiseUnavailable(index, premise) => {
+                    let written = surface_premises.get(index).map_or_else(
+                        || crate::surface::proof_diagnostics::render::render_proposition(&premise),
+                        describe_click_proposition,
+                    );
                     self.step_error(format!(
-                        "`instantiate using` requires an unavailable exact premise: {premise:?}"
+                        "`instantiate using` premise {} `{written}` is not an available exact fact",
+                        index + 1
                     ))
                 }
                 PropositionCloseError::InstantiateQuantifiedUnavailable => {
@@ -2131,7 +2136,47 @@ impl<'a> Proof<'a> {
         );
         let equality =
             Box::new(self.lower_surface_proposition(surface_equality, "`rewrite` equality")?);
-        self.finish_rewrite(goal, equality, surface_equality, (&[], &[]))
+        let (parameters, arguments) = self.diagnostic_naming_tables();
+        self.finish_rewrite(goal, equality, surface_equality, (&parameters, &arguments))
+    }
+
+    /// The names a diagnostic spells this proof's lowered terms with: a pure
+    /// theorem's parameters, or the locals of the execution state a nested
+    /// `have` reads, so a refusal never prints a kernel variable where the
+    /// reader wrote a name.
+    pub(in crate::surface::proof) fn diagnostic_naming_tables(
+        &self,
+    ) -> (Vec<syntax::C0Parameter>, Vec<CExpression>) {
+        // The state's locals first, then the entry parameters: a local names
+        // the value it holds here, and a parameter the value it was entered
+        // with, and either may be what a lowered term reads.
+        let with_locals = |state: &CState,
+                           parameters: &[syntax::C0Parameter],
+                           arguments: &[CExpression]| {
+            let (mut names, mut values) = crate::surface::diagnostics::local_naming_tables(state);
+            names.extend(parameters.iter().cloned());
+            values.extend(arguments.iter().cloned());
+            (names, values)
+        };
+        match self.context.as_ref() {
+            ProofContext::Pure(context) => {
+                crate::surface::diagnostics::value_naming_tables(&context.theorem_context.values)
+            }
+            ProofContext::FixedState(context) => {
+                with_locals(context.state, context.parameters, context.arguments)
+            }
+            ProofContext::Execution(context) => match self.execution() {
+                Some(execution) => with_locals(
+                    &execution.core.state,
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                ),
+                None => (
+                    context.parsed_function.parameters().to_vec(),
+                    context.arguments.to_vec(),
+                ),
+            },
+        }
     }
 
     // Keep fixed-state lowering and unfold temporaries out of the common rewrite
@@ -2203,12 +2248,11 @@ impl<'a> Proof<'a> {
                 self.step_error(format!("could not unfold `rewrite` equality: {message}"))
             })?,
         );
-        self.finish_rewrite(
-            goal,
-            equality,
-            surface_equality,
-            (view.parameters, view.arguments),
-        )
+        let (mut parameters, mut arguments) =
+            crate::surface::diagnostics::local_naming_tables(view.state);
+        parameters.extend(view.parameters.iter().cloned());
+        arguments.extend(view.arguments.iter().cloned());
+        self.finish_rewrite(goal, equality, surface_equality, (&parameters, &arguments))
     }
 
     // Keep the by-value goal/equality pair in the rewrite worker rather than

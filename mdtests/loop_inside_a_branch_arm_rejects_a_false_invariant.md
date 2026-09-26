@@ -2,7 +2,9 @@
 
 The arm's path condition is a premise of the loop's obligations, not a licence
 to skip them. `invariant i <= 0` is false after the body increments `i`, so the
-back-edge bundle stays open exactly as it would for a top-level loop.
+back-edge bundle stays open exactly as it would for a top-level loop. The
+refusal names the member that stayed open, `i <= 0`; it used to say only that
+the body "did not prove every invariant obligation".
 
 ```c filename=loop_inside_a_branch_arm_rejects_a_false_invariant.c
 int32 count_up(int32 n) {
@@ -43,5 +45,5 @@ int32 count_up(int32 n) {
 ```
 
 ```expect
-fail: closure body did not prove every invariant obligation
+fail: closure body did not prove every invariant obligation: `i <= 0` remained open
 ```

@@ -836,6 +836,7 @@ fn certified_transitions_from_execution(
                                 describe_derivation_failure(
                                     &premise,
                                     &theorem_context,
+                                    state,
                                     environment,
                                     predicate_environment,
                                 ),
@@ -885,6 +886,7 @@ fn certified_transitions_from_execution(
                             describe_derivation_failure(
                                 proposition,
                                 pure_facts,
+                                state,
                                 environment,
                                 predicate_environment,
                             ),
@@ -957,6 +959,7 @@ fn certified_transitions_from_execution(
                                         describe_derivation_failure(
                                 proposition,
                                 pure_facts,
+                                state,
                                 environment,
                                 predicate_environment,
                             ),
@@ -974,6 +977,7 @@ fn certified_transitions_from_execution(
                                     describe_derivation_failure(
                                 proposition,
                                 pure_facts,
+                                state,
                                 environment,
                                 predicate_environment,
                             ),
@@ -1024,6 +1028,7 @@ fn certified_transitions_from_execution(
                                     describe_derivation_failure(
                                         proposition,
                                         pure_facts,
+                                        state,
                                         environment,
                                         predicate_environment,
                                     ),
@@ -1072,6 +1077,7 @@ fn certified_transitions_from_execution(
                                     describe_derivation_failure(
                                 proposition,
                                 pure_facts,
+                                state,
                                 environment,
                                 predicate_environment,
                             ),
@@ -1095,6 +1101,7 @@ fn certified_transitions_from_execution(
                                     describe_derivation_failure(
                                         proposition,
                                         pure_facts,
+                                        state,
                                         environment,
                                         predicate_environment,
                                     ),
@@ -1123,6 +1130,7 @@ fn certified_transitions_from_execution(
                                             describe_derivation_failure(
                                                 proposition,
                                                 &derivation_facts,
+                                                state,
                                                 environment,
                                                 predicate_environment,
                                             ),

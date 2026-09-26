@@ -732,9 +732,9 @@ fn recover_candidate_stable_view_resources(
                 if caller_state.memory().is_read_only_block(&range.base().block)
         );
         if !returned_input && !preserved_outer && !projected_from_owner && !intrinsic_read_only {
-            return Err(CRuntimeError::FunctionContract(format!(
-                "stable-view call returned a view without a checked input child or preserved outer binding: {fact:?}"
-            )));
+            return Err(CRuntimeError::UnbackedReturnedView {
+                view: (*fact).clone(),
+            });
         }
     }
     for stable_view in plan.stable_views() {
@@ -4684,7 +4684,19 @@ fn snake_case_contract_name(name: &str) -> String {
 /// spelled by its pointer type. The skeleton is source the user edits, and
 /// this is the one slot they may have to correct.
 fn c_parameter_type_spelling(parameter: &CParameter) -> String {
-    let base = match parameter.c_type() {
+    let base = c_type_spelling(parameter.c_type());
+    if parameter.pointee_is_constant() {
+        format!("const {base}")
+    } else {
+        base.to_string()
+    }
+}
+
+/// The C0 spelling of a kernel C type, for a diagnostic that has to say what
+/// type a value had. An aggregate pointer is spelled by its pointer type, as
+/// [`c_parameter_type_spelling`] explains.
+pub(crate) fn c_type_spelling(c_type: CType) -> &'static str {
+    match c_type {
         CType::Void => "void",
         CType::Bool => "bool",
         CType::VoidPointer => "void*",
@@ -4731,11 +4743,6 @@ fn c_parameter_type_spelling(parameter: &CParameter) -> String {
         CType::Float32Array(_) => "float32*",
         CType::Float64Array(_) => "float64*",
         CType::PointerArray(element, _) => element.decayed_type_spelling(),
-    };
-    if parameter.pointee_is_constant() {
-        format!("const {base}")
-    } else {
-        base.to_string()
     }
 }
 
@@ -25551,9 +25558,11 @@ mod stable_view_call_tests {
             matches!(
                 paths.as_slice(),
                 [CFunctionPath {
-                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+                    outcome: CFunctionOutcome::RuntimeError(
+                        CRuntimeError::UnbackedReturnedView { .. }
+                    ),
                     ..
-                }] if message.contains("without a checked input child")
+                }]
             ),
             "unexpected output result: {paths:?}"
         );
@@ -25650,11 +25659,7 @@ mod stable_view_call_tests {
         let error = recover_with_extra_returned_view(false)
             .expect_err("fact equality against an owner is not provenance");
         assert!(
-            matches!(
-                &error,
-                CRuntimeError::FunctionContract(message)
-                    if message.contains("without a checked input child")
-            ),
+            matches!(&error, CRuntimeError::UnbackedReturnedView { .. }),
             "unexpected refusal: {error:?}"
         );
     }
@@ -25737,12 +25742,18 @@ mod stable_view_call_tests {
     fn candidate_rejects_a_carried_view_of_mutable_storage() {
         let error = recover_with_a_carried_view_of_another_block(false)
             .expect_err("a view of mutable storage the caller never lent has no provenance");
+        // The refusal carries the carried view itself, so the surface can
+        // name it rather than print a kernel dump of it.
+        let carried = CResourceFact::view_memory(CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::Concrete("global:candidate_table#file-static:t.c".to_string()),
+                offset: PointerOffsetTerm::Constant(0),
+            },
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(2),
+        ));
         assert!(
-            matches!(
-                &error,
-                CRuntimeError::FunctionContract(message)
-                    if message.contains("without a checked input child")
-            ),
+            matches!(&error, CRuntimeError::UnbackedReturnedView { view } if *view == carried),
             "unexpected refusal: {error:?}"
         );
     }
@@ -25764,9 +25775,9 @@ mod stable_view_call_tests {
         assert!(matches!(
             paths.as_slice(),
             [CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::UnbackedReturnedView { .. }),
                 ..
-            }] if message.contains("without a checked input child")
+            }]
         ));
     }
 

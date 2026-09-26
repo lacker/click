@@ -2995,8 +2995,13 @@ fn verify_c0_sources_with_context(
                     Ok(Ok((_, checked))) => Some(checked),
                     Ok(Err(error)) => {
                         return Err(ClickError::new(format!(
-                            "`{}`: could not evaluate the checked storage resource transition: {error:?}",
-                            function_block.signature.name()
+                            "`{}`: could not evaluate the checked storage resource transition: {}",
+                            function_block.signature.name(),
+                            crate::surface::diagnostics::describe_runtime_error(
+                                &error,
+                                parsed_function.parameters(),
+                                &certification_arguments
+                            )
                         )));
                     }
                     Err(limit) => {
@@ -3081,10 +3086,11 @@ fn verify_c0_sources_with_context(
                                 function_block.signature.name()
                             )));
                         }
-                        Err(error) => {
+                        Err(limit) => {
                             return Err(ClickError::new(format!(
-                                "`{}` path {path_index}: storage write check failed: {error:?}",
-                                function_block.signature.name()
+                                "`{}` path {path_index}: storage write check stopped at {}",
+                                function_block.signature.name(),
+                                limit.describe()
                             )));
                         }
                     }
@@ -4528,7 +4534,7 @@ pub(in crate::surface) fn termination_measure_source(expression: &ContractExpres
         ContractExpression::Binding(name)
         | ContractExpression::CBinding(name)
         | ContractExpression::QualifiedC { name, .. } => name.clone(),
-        ContractExpression::CFragment(expression) => crate::kernel::c_ranking_measure_source(
+        ContractExpression::CFragment(expression) => crate::kernel::c_ranking_measure_identity(
             &crate::kernel::CRankingComponent::CExpression(expression.clone()),
         ),
         ContractExpression::Field { base, field, .. } => {
@@ -4566,8 +4572,11 @@ pub(in crate::surface) fn termination_measure_source(expression: &ContractExpres
             termination_measure_source(index)
         ),
         // A form without a rendering here still needs a stable identity, and
-        // both sides render the same clause, so the structural form is one.
-        expression => format!("{expression:?}"),
+        // both sides render the same clause. The fully parenthesized source
+        // printer is one, and it is also what a diagnostic can show: the
+        // structural `Debug` form it replaced read
+        // `BitwiseAnd(CFragment(Variable("n")), IntegerLiteral("7"))`.
+        expression => crate::surface::diagnostics::describe_contract_expression(expression),
     }
 }
 

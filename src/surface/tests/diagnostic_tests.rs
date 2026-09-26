@@ -243,6 +243,47 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
     verify_c0_sources(&expanded, &sources).expect("expanded push proof should check");
 }
 
+/// Every external pointer parameter shares one block, so a store to
+/// `visited[cur]` can also be spelled through `next`, with the difference of
+/// the two bases folded into the index. When the index has no source name —
+/// `cur` has since been reassigned, so its store-time value is a term only the
+/// lowering names — both spellings read `name[…]`, and the shorter text used
+/// to win: a `simp` refusal about `visited[k]` named "the store to `next[…]`".
+/// The address belongs to the base its bare index is taken from.
+#[test]
+fn an_unnamed_store_index_is_spelled_through_its_own_base() {
+    let base = |variable: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+            byte_width: 4,
+        },
+    };
+    let parameters = vec![
+        syntax::C0Parameter::new(C0Type::Int32Pointer, "next".to_string(), None),
+        syntax::C0Parameter::new(C0Type::Int32Pointer, "visited".to_string(), None),
+    ];
+    let arguments = vec![
+        CExpression::Value(CValue::typed_pointer(base(100_000), CType::Int32Pointer)),
+        CExpression::Value(CValue::typed_pointer(base(100_001), CType::Int32Pointer)),
+    ];
+    // `visited + old_cur * 4`, with `old_cur` a variable no local names.
+    let store = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Add(
+            Box::new(base(100_001).offset),
+            Box::new(PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::Variable(Variable(1_000_000))),
+                byte_width: 4,
+            }),
+        ),
+    };
+    assert_eq!(
+        super::diagnostics::source_cell_text_for_tests(&store, &parameters, &arguments).as_deref(),
+        Some("visited[…]")
+    );
+}
+
 #[test]
 fn exact_struct_field_offsets_remain_resolvable_after_deadline() {
     let base = Pointer {
@@ -358,13 +399,17 @@ fn execution_effect_diagnostics_omit_raw_memory_snapshots() {
 
 #[test]
 fn certificate_reconstruction_diagnostics_summarize_internal_snapshots() {
-    let memory = CMemory::new().with_block("hidden-snapshot", 4);
+    // The read is spelled with its address and the value it is compared to;
+    // the rest of the snapshot it reads, here an unrelated block, is not.
+    let memory = CMemory::new()
+        .with_block("read-cell", 4)
+        .with_block("hidden-snapshot", 4);
     let fact = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::MemoryLoad(
                 crate::kernel::intern_c_memory(memory),
                 Box::new(Pointer {
-                    block: "hidden-snapshot".into(),
+                    block: "read-cell".into(),
                     offset: PointerOffsetTerm::Constant(0),
                 }),
             )),
@@ -385,7 +430,10 @@ fn certificate_reconstruction_diagnostics_summarize_internal_snapshots() {
 
     let rendered = super::diagnostics::describe_unexpressed_pure_facts(&failures, &[], &[]);
 
-    assert!(rendered.contains("int32 equality is true"), "{rendered}");
+    assert!(
+        rendered.contains("load(read-cell@0) == 1 is true"),
+        "{rendered}"
+    );
     assert!(rendered.contains("no checkable surface form"), "{rendered}");
     assert!(rendered.contains("8 more omitted"), "{rendered}");
     assert!(!rendered.contains("CMemory"), "{rendered}");
@@ -452,8 +500,10 @@ fn condition_certificate_search_reports_its_budget_without_dumping_snapshots() {
             .contains("condition-certificate premise search exceeded"),
         "{error:?}"
     );
+    // The target's operands are kernel variables no name spells, so they
+    // read `…` rather than as variable ids.
     assert!(
-        error.message().contains("int32 equality is true"),
+        error.message().contains("target: … == … is true"),
         "{error:?}"
     );
     assert!(
@@ -465,6 +515,50 @@ fn condition_certificate_search_reports_its_budget_without_dumping_snapshots() {
     assert!(
         !error.message().contains("wide-hidden-snapshot"),
         "{error:?}"
+    );
+}
+
+/// A condition search that finds no derivation prints the goal it looked for
+/// and the premises it searched, each with its operands in the source's names.
+/// It used to read "did not derive signed less-or-equal is true from 2
+/// ambient condition facts: [signed less-or-equal is true, ...]", which names
+/// neither the goal nor any premise.
+#[test]
+fn a_condition_search_miss_spells_its_goal_and_premises() {
+    let x = Bitvector32Term::Variable(Variable(1));
+    let y = Bitvector32Term::Variable(Variable(2));
+    let at_most = |term: &Bitvector32Term, bound: u32| {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(
+                Box::new(term.clone()),
+                Box::new(Bitvector32Term::Constant(bound)),
+            ),
+            true,
+        )
+    };
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessEqual(Box::new(x.clone()), Box::new(y.clone())),
+        true,
+    );
+    let parameters = vec![
+        syntax::C0Parameter::new(C0Type::Int32, "x".to_string(), None),
+        syntax::C0Parameter::new(C0Type::Int32, "y".to_string(), None),
+    ];
+    let arguments = vec![
+        CExpression::Value(CValue::Int32(x.clone())),
+        CExpression::Value(CValue::Int32(y.clone())),
+    ];
+    let message = super::proof::describe_condition_search_miss(
+        &goal,
+        &[at_most(&x, 10), at_most(&y, 10)],
+        &parameters,
+        &arguments,
+    );
+    assert!(
+        message.contains(
+            "did not derive `x <= y` from 2 ambient condition facts: [x <= 10 is true, y <= 10 is true]"
+        ),
+        "{message}"
     );
 }
 

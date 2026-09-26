@@ -89,6 +89,8 @@ pub(super) use execution_state::{
     capture_cpp_prepared_project_tactic_expansion, capture_cpp_prepared_proof_site_expansion,
     capture_cpp_prepared_tactic_expansion,
 };
+#[cfg(test)]
+pub(super) use fact_reasoning::describe_condition_search_miss;
 use fact_reasoning::*;
 pub(super) use fact_reasoning::{
     condition_polarity_equivalent, exactly_available_fact, search_condition_derivation,
@@ -2773,7 +2775,12 @@ fn evaluate_entry_resource_context(
         Ok(Ok(propositions)) => propositions,
         Ok(Err(error)) => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` setup failed: could not evaluate the contract entry resources: {error:?}"
+                "`{claim_label}` setup failed: could not evaluate the contract entry resources: {}",
+                crate::surface::diagnostics::describe_runtime_error(
+                    &error,
+                    parsed_function.parameters(),
+                    arguments
+                )
             )));
         }
         Err(limit) => {
@@ -2816,7 +2823,12 @@ fn evaluate_entry_resource_context(
                     )));
                 }
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` setup failed: could not evaluate the contract entry resources: {error:?}"
+                    "`{claim_label}` setup failed: could not evaluate the contract entry resources: {}",
+                    crate::surface::diagnostics::describe_runtime_error(
+                        &error,
+                        parsed_function.parameters(),
+                        arguments
+                    )
                 )));
             }
             Err(limit) => {

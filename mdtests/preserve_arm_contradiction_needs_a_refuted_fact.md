@@ -7,9 +7,11 @@ alone: the named proposition and its negation both have to be there.
 
 This arm names `n >= 0`, which the contract requires and the `have` restates,
 so it is available — and nothing on the path denies it. The arm stays open, and
-the refusal names the proposition as it was written rather than only its
-lowered form, so the reader can see which of several `contradiction`s in a body
-failed.
+the refusal names the proposition as it was written, so the reader can see
+which of several `contradiction`s in a body failed, and says which half of the
+refutation was missing: the fact is held, its negation is not. It used to end
+in a kernel dump of the lowered proposition,
+`ConditionIs(Bitvector32SignedGreaterEqual(Variable(Variable(1)), Constant(0)), true)`.
 
 ```c filename=preserve_arm_contradiction_needs_a_refuted_fact.c
 struct cell {
@@ -91,5 +93,5 @@ void bump_n(struct cell* node, int32 n) {
 ```
 
 ```expect
-fail: `contradiction(n >= 0)` requires an exact fact and its exact negation or opposite condition polarity
+fail: `contradiction(n >= 0)` requires an exact fact and its exact negation or opposite condition polarity: `n >= 0` is available, but neither `not (n >= 0)` nor its opposite comparison is
 ```

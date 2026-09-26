@@ -706,7 +706,9 @@ impl<'a> Proof<'a> {
                     if old != new {
                         let description = match self.context.as_ref() {
                             ProofContext::Execution(context) => trace_resource_fact(fact, context),
-                            _ => format!("{fact:?}"),
+                            _ => {
+                                crate::surface::diagnostics::describe_resource_fact(fact, &[], &[])
+                            }
                         };
                         detail
                             .resources
@@ -2456,12 +2458,11 @@ impl<'a> Proof<'a> {
                 PropositionCloseError::NotProposition => {
                     self.step_error("induction application requires a proposition goal")
                 }
-                PropositionCloseError::InstantiatePremiseUnavailable(premise) => {
-                    self.step_error(format!(
+                PropositionCloseError::InstantiatePremiseUnavailable(_, premise) => self
+                    .step_error(format!(
                         "induction premise is not exactly available: {}",
                         crate::surface::proof_diagnostics::render::render_proposition(&premise)
-                    ))
-                }
+                    )),
                 PropositionCloseError::InstantiateQuantifiedUnavailable => {
                     self.step_error("induction hypothesis is not exactly available")
                 }

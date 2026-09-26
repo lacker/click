@@ -421,6 +421,25 @@ pub(super) fn describe_unavailable_theorem_requirement(
     bindings: &[(String, String)],
     lowered: &Proposition,
 ) -> String {
+    describe_unavailable_theorem_requirement_spelled(
+        theorem_name,
+        requirement_index,
+        requirement,
+        bindings,
+        &crate::surface::proof_diagnostics::render::render_proposition(lowered),
+    )
+}
+
+/// [`describe_unavailable_theorem_requirement`] with the instantiation
+/// already spelled, for a caller that holds the names the proof state gives
+/// the lowered terms.
+pub(super) fn describe_unavailable_theorem_requirement_spelled(
+    theorem_name: &str,
+    requirement_index: usize,
+    requirement: &ClickProposition,
+    bindings: &[(String, String)],
+    instantiation: &str,
+) -> String {
     let mut referenced = BTreeSet::new();
     crate::surface::lowering::collect_click_proposition_referenced_names(
         requirement,
@@ -440,7 +459,7 @@ pub(super) fn describe_unavailable_theorem_requirement(
         "required exact fact for theorem `{theorem_name}` is unavailable: requirement {} `{}`{bound} instantiates to {}",
         requirement_index + 1,
         crate::surface::diagnostics::describe_click_proposition(requirement),
-        crate::surface::proof_diagnostics::render::render_proposition(lowered)
+        instantiation
     )
 }
 
@@ -916,11 +935,19 @@ pub(super) fn theorem_application_bindings(
                 &mut active_functions,
             )?;
             if !c_value_matches_click_type(&value, parameter_type) {
+                let (naming_parameters, naming_arguments) =
+                    crate::surface::diagnostics::value_naming_tables(context.values);
                 return Err(format!(
-                    "theorem `{}` parameter `{}` expects {}, got {value:?}",
+                    "theorem `{}` parameter `{}` expects {}, got `{}` of type `{}`",
                     theorem.name(),
                     parameter.name(),
-                    describe_c0_type(parameter_type)
+                    describe_c0_type(parameter_type),
+                    crate::surface::diagnostics::describe_c_value(
+                        &value,
+                        &naming_parameters,
+                        &naming_arguments
+                    ),
+                    crate::kernel::c_type_spelling(value.c_type())
                 ));
             }
             values.insert(parameter.name().to_string(), value);

@@ -839,6 +839,9 @@ pub(in crate::kernel) fn describe_certification_runtime_error(error: &CRuntimeEr
             "a required mutex_guard resource is not available".to_string()
         }
         CRuntimeError::MissingResource { .. } => "a required resource is not available".to_string(),
+        CRuntimeError::UnbackedReturnedView { .. } => {
+            CRuntimeError::UNBACKED_RETURNED_VIEW.to_string()
+        }
         CRuntimeError::UninitializedMutex { .. } => {
             "the mutex has not been initialized on this path".to_string()
         }

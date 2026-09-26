@@ -11,6 +11,11 @@ thread_local! {
     /// Whether a driver declined because the arm that continues past a split
     /// ran out of tactics before the function exits.
     static SHORT_OF_EXIT_DECLINED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Why the checked linear driver declined the last written operation it
+    /// could not run, such as the premise an `apply` was missing, so the
+    /// terminal diagnostic names it instead of only the proof shape.
+    static DECLINED_OPERATION: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
     /// The deepest region depth the structural driver entered, for the
     /// depth-accounting regression tests.
     #[cfg(test)]
@@ -55,6 +60,24 @@ fn decline_region_depth<T>() -> Result<Option<T>, ClickError> {
 /// last take, and clears it.
 pub(in crate::surface::proof) fn take_region_depth_decline() -> bool {
     REGION_DEPTH_DECLINED.with(|declined| declined.replace(false))
+}
+
+/// Declines a written operation for a stated reason, recorded for the
+/// terminal diagnostic.
+#[track_caller]
+fn decline_operation<T>(operation: String, reason: &ClickError) -> Result<Option<T>, ClickError> {
+    let reason = reason.message();
+    let reason = reason.split("\nproof context:").next().unwrap_or(reason);
+    DECLINED_OPERATION.with(|declined| {
+        *declined.borrow_mut() = Some(format!("{operation} was refused: {}", reason.trim()));
+    });
+    decline()
+}
+
+/// Takes the reason the checked linear driver last declined a written
+/// operation for, and clears it.
+pub(in crate::surface::proof) fn take_declined_operation() -> Option<String> {
+    DECLINED_OPERATION.with(|declined| declined.borrow_mut().take())
 }
 
 /// Takes the recorded decline locations, in order.
@@ -770,10 +793,23 @@ fn advance_checked_linear_continuation<'a>(
         } else if let ProofTactic::LetSatisfy(binding) = &indexed.tactic {
             proof.apply_step_at(ProofStep::LetSatisfy(binding.clone()), indexed.source_index)?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
-            let Some(applied) = proof.try_theorem_application(application)? else {
-                return decline();
-            };
-            applied
+            // The same selection `try_theorem_application` makes, keeping the
+            // selector's refusal: a declined `apply` is reported by the
+            // premise it was missing, not only as a declined shape.
+            match proof.select_theorem_application_step(application) {
+                Ok(Some(step)) => proof.apply_selected_theorem_application(step)?,
+                Ok(None) => return decline(),
+                Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
+                Err(error) => {
+                    let written = crate::surface::printing::format_partial_tactic_sequence(
+                        std::slice::from_ref(&indexed.tactic),
+                    );
+                    return decline_operation(
+                        format!("`{}`", written.trim().trim_end_matches(';')),
+                        &error,
+                    );
+                }
+            }
         } else if let ProofTactic::Transport { source, target } = &indexed.tactic {
             match proof.try_execution_fact_transport(source, target)? {
                 Some(transported) => transported,
@@ -1809,6 +1845,7 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                         tactics: vec![indexed.clone()],
                         continuation: Box::new(InternalProofNode::Done),
                     };
+                    let _ = take_declined_operation();
                     let advanced = advance_checked_linear_continuation(
                         proof.clone(),
                         &segment,
@@ -1819,6 +1856,15 @@ pub(in crate::surface::proof) fn advance_preservation_region<'a>(
                     )?
                     .filter(|(_, unconsumed)| unconsumed.is_empty());
                     let Some((advanced, _)) = advanced else {
+                        // A refusal with a stated reason (an `apply` whose
+                        // premise is missing) is that reason, not a shape
+                        // limitation.
+                        if let Some(reason) = take_declined_operation() {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {}: {reason}",
+                                indexed.index
+                            )));
+                        }
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {}: `{}` did not verify as a checked preservation operation. The preservation driver declined it; this is a proof-shape limitation, not a failed proposition check. For proposition-only work, move the operation into `have proposition by {{ ... }}`.",
                             indexed.index,

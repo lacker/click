@@ -3158,8 +3158,11 @@ mod tests {
         let unavailable = INSTANTIATE_BOUND.replace("requires x < limit;", "");
         let error = verify_instantiation_theorem(&unavailable)
             .expect_err("a named guard must be available");
+        // Named by its position and as written, not as a kernel term.
         assert!(
-            error.message().contains("unavailable exact premise"),
+            error
+                .message()
+                .contains("premise 2 `x < limit` is not an available exact fact"),
             "{}",
             error.message()
         );

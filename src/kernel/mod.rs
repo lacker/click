@@ -113,6 +113,7 @@ pub(crate) use eval::{
 pub(crate) use functions::ResourceModelArmDecision;
 pub(crate) use functions::ResourceModelArmSelection;
 pub(crate) use functions::arm_binding_program_spelling;
+pub(crate) use functions::c_type_spelling;
 pub(crate) use functions::checked_composite_projection_evidence;
 pub(crate) use functions::decide_resource_model_arm;
 pub(crate) use functions::establish_resource_derived_loop_frames;

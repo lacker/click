@@ -1551,9 +1551,20 @@ fn lower_resource_clause_with_values_mode_at_entry(
                     c_value_matches_click_type(&value, *parameter_type)
                 };
                 if !matches_type {
+                    let (naming_parameters, naming_arguments) =
+                        crate::surface::diagnostics::value_naming_tables(values);
                     return Err(ClickError::new(format!(
-                        "resource `{name}` argument {index} evaluated to {value:?}, which does not match {:?}",
-                        parameter_type
+                        "resource `{name}` argument {index} `{}` evaluated to `{}` of type `{}`, which does not match the parameter type `{}`",
+                        crate::surface::diagnostics::describe_contract_expression(
+                            &original_argument
+                        ),
+                        crate::surface::diagnostics::describe_c_value(
+                            &value,
+                            &naming_parameters,
+                            &naming_arguments
+                        ),
+                        crate::kernel::c_type_spelling(value.c_type()),
+                        crate::surface::validation::describe_c0_type(*parameter_type)
                     )));
                 }
                 resource_values.push(value);

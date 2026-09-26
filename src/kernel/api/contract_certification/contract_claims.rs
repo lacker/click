@@ -1400,11 +1400,16 @@ fn unproved_path_obligation_message(obligation: &ProofObligation) -> String {
         }
         return format!("could not prove the declared resource fact {site}: `{fact}`");
     }
-    format!(
-        "{:?} ({})",
-        obligation.proposition(),
-        obligation.context().unwrap_or("no context")
-    )
+    // The kernel has no source spelling of the condition itself; its context
+    // is the sentence the lowering wrote for it. A captured failure carries
+    // the proposition to the surface, which renders it in the certification
+    // trace, so the message never prints a kernel term dump.
+    match obligation.context() {
+        Some(context) => context.to_string(),
+        None => {
+            "a condition with no recorded source context (see the certification trace)".to_string()
+        }
+    }
 }
 
 fn function_claim_holds_on_prepared_path(
@@ -3250,5 +3255,33 @@ mod heap_status_equality_tests {
             &right,
             &assumptions,
         ));
+    }
+}
+
+#[cfg(test)]
+mod unproved_path_obligation_message_tests {
+    use super::*;
+
+    /// A certification refusal names the condition by the sentence its
+    /// lowering wrote, never as a kernel term dump.
+    #[test]
+    fn names_the_obligation_by_its_context_without_a_term_dump() {
+        let condition = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(
+                Box::new(Bitvector32Term::Variable(Variable(7))),
+                Box::new(Bitvector32Term::Constant(3)),
+            ),
+            true,
+        );
+        let with_context = ProofObligation::verification_condition(condition.clone())
+            .with_context("loop ranking component `n` is nonnegative at the back edge");
+        assert_eq!(
+            unproved_path_obligation_message(&with_context),
+            "loop ranking component `n` is nonnegative at the back edge"
+        );
+        let without_context = ProofObligation::verification_condition(condition);
+        let message = unproved_path_obligation_message(&without_context);
+        assert!(!message.contains("ConditionIs"), "{message}");
+        assert!(!message.contains("Variable"), "{message}");
     }
 }

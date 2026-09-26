@@ -169,9 +169,14 @@ pub(crate) enum PropositionCloseError {
     MissingDisjunct(Proposition),
     ExpectedFiniteUniversal,
     MissingFiniteInstance,
-    ContradictionUnavailable(Proposition),
+    /// `contradiction(fact)` found no refutation; `fact_held` says whether
+    /// the fact itself was available, so the missing half can be named.
+    ContradictionUnavailable {
+        fact_held: bool,
+    },
     ExtractUnavailable(Proposition),
-    InstantiatePremiseUnavailable(Proposition),
+    /// The explicit premise at this index of the `using` list is not held.
+    InstantiatePremiseUnavailable(usize, Proposition),
     InstantiateQuantifiedUnavailable,
     InstantiateInvalid(super::fact_reasoning::ForallInt32InstantiationError),
 }
@@ -1139,12 +1144,13 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .open_branches
             .get(self.focused_branch)
             .ok_or(PropositionCloseError::Unavailable)?;
-        branch
-            .state
-            .facts
+        let facts = &branch.state.facts;
+        facts
             .contradicts(fact)
             .then(|| self.closed_focused())
-            .ok_or_else(|| PropositionCloseError::ContradictionUnavailable(fact.clone()))
+            .ok_or_else(|| PropositionCloseError::ContradictionUnavailable {
+                fact_held: facts.holds_contradiction_fact(fact),
+            })
     }
 
     pub(crate) fn apply_extract(
@@ -1202,9 +1208,10 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         let (_, facts) = self
             .focused_proposition()
             .ok_or(PropositionCloseError::NotProposition)?;
-        for premise in explicit_premises {
+        for (index, premise) in explicit_premises.iter().enumerate() {
             if !facts.available_across_effects(premise, &[]) {
                 return Err(PropositionCloseError::InstantiatePremiseUnavailable(
+                    index,
                     premise.clone(),
                 ));
             }

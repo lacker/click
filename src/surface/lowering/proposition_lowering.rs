@@ -1,5 +1,22 @@
 use super::*;
 
+/// Two lowered operands whose C types have no common comparison, named by
+/// value and type rather than as kernel term dumps.
+fn incomparable_values(left: &CValue, right: &CValue) -> ClickError {
+    let describe = |value: &CValue| {
+        format!(
+            "`{}` of type `{}`",
+            crate::surface::diagnostics::describe_c_value(value, &[], &[]),
+            crate::kernel::c_type_spelling(value.c_type())
+        )
+    };
+    ClickError::new(format!(
+        "cannot compare {} with {} in a proposition",
+        describe(left),
+        describe(right)
+    ))
+}
+
 pub(in crate::surface) fn comparison_proposition(
     left: CValue,
     operator: ComparisonOperator,
@@ -49,16 +66,10 @@ pub(in crate::surface) fn comparison_proposition(
         ));
     }
     if matches!(left, CValue::UInt64(_)) || matches!(right, CValue::UInt64(_)) {
-        let left = promoted_uint64_term(&left).ok_or_else(|| {
-            ClickError::new(format!(
-                "cannot compare `{left:?}` and `{right:?}` in proposition"
-            ))
-        })?;
-        let right = promoted_uint64_term(&right).ok_or_else(|| {
-            ClickError::new(format!(
-                "cannot compare `{left:?}` and `{right:?}` in proposition"
-            ))
-        })?;
+        let (Some(left), Some(right)) = (promoted_uint64_term(&left), promoted_uint64_term(&right))
+        else {
+            return Err(incomparable_values(&left, &right));
+        };
         let condition = match operator {
             ComparisonOperator::Equal | ComparisonOperator::NotEqual => {
                 ConditionTerm::uint64_equal(left, right)
@@ -77,16 +88,10 @@ pub(in crate::surface) fn comparison_proposition(
         ));
     }
     if matches!(left, CValue::Int64(_)) || matches!(right, CValue::Int64(_)) {
-        let left = promoted_int64_term(&left).ok_or_else(|| {
-            ClickError::new(format!(
-                "cannot compare `{left:?}` and `{right:?}` in proposition"
-            ))
-        })?;
-        let right = promoted_int64_term(&right).ok_or_else(|| {
-            ClickError::new(format!(
-                "cannot compare `{left:?}` and `{right:?}` in proposition"
-            ))
-        })?;
+        let (Some(left), Some(right)) = (promoted_int64_term(&left), promoted_int64_term(&right))
+        else {
+            return Err(incomparable_values(&left, &right));
+        };
         let condition = match operator {
             ComparisonOperator::Equal | ComparisonOperator::NotEqual => {
                 ConditionTerm::int64_equal(left, right)
@@ -122,9 +127,7 @@ pub(in crate::surface) fn comparison_proposition(
         };
         Ok(Proposition::ConditionIs(condition, value))
     } else {
-        Err(ClickError::new(format!(
-            "cannot compare `{left:?}` and `{right:?}` in proposition"
-        )))
+        Err(incomparable_values(&left, &right))
     }
 }
 

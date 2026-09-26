@@ -2190,10 +2190,17 @@ impl<'a> Proof<'a> {
         self.state
             .apply_contradiction(&fact)
             .map_err(|error| match error {
-                PropositionCloseError::ContradictionUnavailable(fact) => self.step_error(format!(
-                    "`contradiction({})` requires an exact fact and its exact negation or opposite condition polarity: {fact:?}",
-                    crate::surface::diagnostics::describe_click_proposition(surface)
-                )),
+                PropositionCloseError::ContradictionUnavailable { fact_held } => {
+                    let written = crate::surface::diagnostics::describe_click_proposition(surface);
+                    let missing = if fact_held {
+                        format!("`{written}` is available, but neither `not ({written})` nor its opposite comparison is")
+                    } else {
+                        format!("`{written}` itself is not an available fact")
+                    };
+                    self.step_error(format!(
+                        "`contradiction({written})` requires an exact fact and its exact negation or opposite condition polarity: {missing}"
+                    ))
+                }
                 PropositionCloseError::Unavailable => {
                     self.step_error("`contradiction` requires an open proof branch")
                 }

@@ -398,9 +398,13 @@ pub(super) fn describe_pure_fact(
         Proposition::ConditionIs(ConditionTerm::Constant(constant), value) => {
             format!("constant condition `{constant}` is {value}")
         }
-        Proposition::ConditionIs(condition, value) => {
-            format!("{} is {value}", condition_kind(condition))
-        }
+        // A condition is shown with its operands: "int32 equality is true"
+        // names a shape, and a list of several of them tells a reader nothing
+        // about which fact is which.
+        Proposition::ConditionIs(condition, value) => format!(
+            "{} is {value}",
+            describe_condition_with_context(condition, parameters, arguments)
+        ),
         Proposition::Predicate {
             name,
             arguments: predicate_arguments,
@@ -661,6 +665,13 @@ pub(super) fn describe_loop_head_refusal(
 ) -> String {
     let (proposition, context, invariant, state) = match refusal {
         crate::kernel::CLoopHeadRefusal::Message(message) => return message.clone(),
+        crate::kernel::CLoopHeadRefusal::UnheldResource { fact, state } => {
+            let (parameters, arguments) = local_naming_tables(state);
+            return format!(
+                "loop declares a resource the enclosing function does not hold: `{}`",
+                describe_resource_fact(fact, &parameters, &arguments)
+            );
+        }
         crate::kernel::CLoopHeadRefusal::MissingPrerequisite {
             proposition,
             context,
@@ -689,13 +700,19 @@ pub(super) fn describe_loop_head_refusal(
 /// kernel variables a step or a loop head minted for them read as the
 /// locals' names.
 pub(super) fn describe_stated_fact_over_locals(fact: &Proposition, state: &CState) -> String {
+    let (parameters, arguments) = local_naming_tables(state);
+    describe_stated_fact(fact, &parameters, &arguments)
+}
+
+/// The naming tables of `state`'s locals: the kernel variables a step or a
+/// loop head minted for them read as the locals' names.
+pub(super) fn local_naming_tables(state: &CState) -> (Vec<syntax::C0Parameter>, Vec<CExpression>) {
     let values = state
         .locals()
         .object_values()
         .map(|(name, value)| (name.to_string(), value.clone()))
         .collect();
-    let (parameters, arguments) = value_naming_tables(&values);
-    describe_stated_fact(fact, &parameters, &arguments)
+    value_naming_tables(&values)
 }
 
 /// A runtime error spelled over `state`'s locals, so an address a loop head
@@ -704,12 +721,7 @@ pub(super) fn describe_runtime_error_over_locals(
     error: &crate::kernel::CRuntimeError,
     state: &CState,
 ) -> String {
-    let values = state
-        .locals()
-        .object_values()
-        .map(|(name, value)| (name.to_string(), value.clone()))
-        .collect();
-    let (parameters, arguments) = value_naming_tables(&values);
+    let (parameters, arguments) = local_naming_tables(state);
     describe_runtime_error(error, &parameters, &arguments)
 }
 
@@ -831,6 +843,11 @@ pub(super) fn describe_runtime_error(
                 format!("missing resource fact `{fact}`")
             }
         }
+        crate::kernel::CRuntimeError::UnbackedReturnedView { view } => format!(
+            "{}: `{}`",
+            crate::kernel::CRuntimeError::UNBACKED_RETURNED_VIEW,
+            describe_resource_fact(view, parameters, arguments)
+        ),
         crate::kernel::CRuntimeError::MissingVerifiedFunctionRule(name) => format!(
             "cannot execute call to `{name}` opaquely: its contract has not been verified yet"
         ),
@@ -2255,6 +2272,17 @@ fn describe_same_object_store_cause(
     }
 }
 
+/// The source spelling [`describe_source_cell`] gives an address, for the
+/// surface tests.
+#[cfg(test)]
+pub(in crate::surface) fn source_cell_text_for_tests(
+    pointer: &Pointer,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<String> {
+    describe_source_cell(pointer, parameters, arguments).map(|cell| cell.text())
+}
+
 /// [`describe_same_object_store_cause`] driven from the surface tests with
 /// the plain data the byte question is asked with: one object, the two
 /// element spellings, and the three widths. The renderer's own types stay
@@ -2547,7 +2575,14 @@ fn describe_source_cell(
     // can express the address -- `b[j]` is also `a[(b - a) + j]`. The
     // shortest spelling is the one written through the parameter the address
     // actually belongs to, and picking it is deterministic.
-    let mut best: Option<SourceCell> = None;
+    //
+    // When no candidate's index has a source spelling, every candidate reads
+    // `name[…]` and the text no longer shows which base the address belongs
+    // to. The raw index still does: through its own base the index is the
+    // bare element offset, through another it also carries the difference of
+    // the two bases. So among unnamed candidates the index with fewer
+    // variables wins, and only then the shorter text.
+    let mut best: Option<(SourceCell, usize)> = None;
     for (parameter, argument) in parameters.iter().zip(arguments) {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
@@ -2577,15 +2612,17 @@ fn describe_source_cell(
             },
             element_bytes: u32::try_from(element_width).ok(),
         };
-        if best
-            .as_ref()
-            .is_none_or(|best| prefer_source_cell(&spelled, best))
-        {
-            best = Some(spelled);
+        let mut index_variables = std::collections::BTreeSet::new();
+        crate::kernel::collect_bitvector_variables(&index, &mut index_variables);
+        let weight = index_variables.len();
+        if best.as_ref().is_none_or(|(best, best_weight)| {
+            prefer_source_cell(&spelled, weight, best, *best_weight)
+        }) {
+            best = Some((spelled, weight));
         }
     }
-    if best.is_some() {
-        return best;
+    if let Some((best, _)) = best {
+        return Some(best);
     }
     let declared = describe_memory_block(&pointer.block, parameters, arguments)?;
     match &pointer.offset {
@@ -2620,15 +2657,25 @@ fn describe_source_cell(
     }
 }
 
-/// A spelling the reader can act on beats one they cannot, and among equals
-/// the shortest wins. Deterministic either way.
-fn prefer_source_cell(candidate: &SourceCell, best: &SourceCell) -> bool {
+/// A spelling the reader can act on beats one they cannot. Among two unnamed
+/// ones the raw index with fewer variables (`index_variables`) wins, since the
+/// text is `name[…]` either way; then the shortest text. Deterministic either
+/// way.
+fn prefer_source_cell(
+    candidate: &SourceCell,
+    candidate_index_variables: usize,
+    best: &SourceCell,
+    best_index_variables: usize,
+) -> bool {
     match (
         candidate.named_index().is_some(),
         best.named_index().is_some(),
     ) {
         (true, false) => true,
         (false, true) => false,
+        (false, false) if candidate_index_variables != best_index_variables => {
+            candidate_index_variables < best_index_variables
+        }
         _ => candidate.text().len() < best.text().len(),
     }
 }
@@ -3953,6 +4000,19 @@ pub(super) fn describe_code_region_ref(region: &CodeRegionRef) -> String {
     }
 }
 
+/// A kernel variable no local, parameter, load, or model field names: a term
+/// only the lowering has a name for. It reads `…`, never as the kernel's
+/// variable id, which is an identity the reader cannot write
+/// (`docs/internals/resource-tracker.md`). `CLICK_FULL_DIAGNOSTICS` keeps the
+/// id for engine debugging.
+fn lowering_only_variable(prefix: &str, id: u64) -> String {
+    if std::env::var_os(FULL_DIAGNOSTICS_ENV).is_some() {
+        format!("{prefix}{id}")
+    } else {
+        "…".to_string()
+    }
+}
+
 pub(super) fn describe_bitvector(term: &Bitvector32Term) -> String {
     describe_bitvector_with_context(term, &[], &[])
 }
@@ -3991,7 +4051,7 @@ pub(super) fn describe_bitvector_with_context(
             crate::kernel::model_fields::model_field_spelling(*variable)
                 .expect("checked registered above")
         }
-        Bitvector32Term::Variable(variable) => format!("v{}", variable.0),
+        Bitvector32Term::Variable(variable) => lowering_only_variable("v", variable.0),
         Bitvector32Term::Add(left, right) => {
             describe_binary_bitvector_with_context(left, "+", right, parameters, arguments)
         }
@@ -4247,7 +4307,7 @@ pub(super) fn describe_binary_bitvector_with_context(
 pub(super) fn describe_pointer_offset(offset: &PointerOffsetTerm) -> String {
     match offset {
         PointerOffsetTerm::Constant(value) => value.to_string(),
-        PointerOffsetTerm::Variable(variable) => format!("off{}", variable.0),
+        PointerOffsetTerm::Variable(variable) => lowering_only_variable("off", variable.0),
         PointerOffsetTerm::Add(left, right) => format!(
             "({} + {})",
             describe_pointer_offset(left),
@@ -4311,7 +4371,7 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
             describe_integer_comparison(left, "!=", right)
         }
         ConditionTerm::Constant(value) => value.to_string(),
-        ConditionTerm::Variable(variable) => format!("cond{}", variable.0),
+        ConditionTerm::Variable(variable) => lowering_only_variable("cond", variable.0),
         ConditionTerm::Bitvector32SignedLessThan(left, right) => {
             describe_binary_condition(left, "<", right)
         }
@@ -4433,22 +4493,16 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
     }
 }
 
-/// A fact spelled with its operands through the C parameter names, where the
-/// kind-level `describe_pure_fact` says only "int32 equality is true". For a
+/// A fact spelled with its operands through the C parameter names, for a
 /// message that must show two lowered terms side by side, such as a rewrite
-/// whose equality was not found in its goal.
+/// whose equality was not found in its goal. It is [`describe_pure_fact`],
+/// which now spells a condition's operands itself.
 pub(super) fn describe_pure_fact_spelled(
     fact: &Proposition,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
-    match fact {
-        Proposition::ConditionIs(condition, value) => format!(
-            "{} is {value}",
-            describe_condition_with_context(condition, parameters, arguments)
-        ),
-        other => describe_pure_fact(other, parameters, arguments),
-    }
+    describe_pure_fact(fact, parameters, arguments)
 }
 
 /// A fact as a proof would state it: a true condition is the condition

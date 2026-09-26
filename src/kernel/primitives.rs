@@ -3400,6 +3400,11 @@ pub enum CRuntimeError {
     MissingMutexGuard {
         mutex: Pointer,
     },
+    /// A stable-view call returned a view that no checked input child,
+    /// preserved outer binding, owner projection, or read-only block backs.
+    UnbackedReturnedView {
+        view: CResourceFact,
+    },
     MissingVerifiedFunctionRule(String),
     UnsupportedOpaqueFunctionContract(String),
     AbstractFunctionPointerCall(String),
@@ -3531,6 +3536,11 @@ impl CRuntimeError {
     /// A kernel-side one-line rendering, for messages built where no C
     /// parameter names are at hand. The surface describers spell pointers
     /// through their parameters; this spells them as the kernel does.
+    /// The sentence for [`CRuntimeError::UnbackedReturnedView`], which the
+    /// surface completes with the view in source terms.
+    pub const UNBACKED_RETURNED_VIEW: &'static str =
+        "stable-view call returned a view without a checked input child or preserved outer binding";
+
     pub fn kernel_summary(&self) -> String {
         match self {
             CRuntimeError::LoadTypeMismatch {
@@ -7955,9 +7965,7 @@ impl CCheckedFunctionExecution {
                         Proposition::Implies(right_premise, right_body),
                     ) => {
                         if left_premise != right_premise {
-                            return Err(format!(
-                                "premise {index} differs: {left_premise:?} versus {right_premise:?}"
-                            ));
+                            return Err(format!("premise {index} differs"));
                         }
                         index += 1;
                         left = left_body;
@@ -8022,20 +8030,21 @@ impl CCheckedFunctionExecution {
                 return Err(format!("path {index}: the assumptions differ"));
             }
             if left.facts != right.facts {
+                // Counted, not dumped: the kernel has no source spelling of
+                // a path fact, and a caller that needs the facts has both
+                // executions in hand.
                 let missing = right
                     .facts
                     .iter()
                     .filter(|fact| !left.facts.contains(fact))
-                    .map(|fact| format!("{:?}", fact.proposition()))
-                    .collect::<Vec<_>>();
+                    .count();
                 let extra = left
                     .facts
                     .iter()
                     .filter(|fact| !right.facts.contains(fact))
-                    .map(|fact| format!("{:?}", fact.proposition()))
-                    .collect::<Vec<_>>();
+                    .count();
                 return Err(format!(
-                    "path {index}: the facts differ; missing {missing:?}, extra {extra:?}"
+                    "path {index}: the facts differ; {missing} of the other's facts are missing and {extra} are extra"
                 ));
             }
             if left.effect_facts != right.effect_facts {

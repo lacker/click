@@ -249,37 +249,43 @@ fn condition_search_budget_error(proposition: &Proposition, candidate_count: usi
     ))
 }
 
-pub(super) fn describe_condition_search_miss(
+pub(in crate::surface) fn describe_condition_search_miss(
     proposition: &Proposition,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> String {
-    let candidate_count = available
+    let candidates = available
         .iter()
         .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
-        .count();
+        .cloned()
+        .collect::<Vec<_>>();
+    // The goal and every premise searched are spelled with their operands,
+    // through the same names, so the reader can see what was compared.
     format!(
-        "condition-certificate premise search did not derive {} from {candidate_count} ambient condition facts: {}; smart search tries individual facts and pairs and is heuristic, so split the execution into smaller steps or provide the exact premises with simple tactics",
-        describe_pure_fact(proposition, parameters, arguments),
-        describe_pure_facts(
-            &available
-                .iter()
-                .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
-                .cloned()
-                .collect::<Vec<_>>()
+        "condition-certificate premise search did not derive `{}` from {} ambient condition facts: {}; smart search tries individual facts and pairs and is heuristic, so split the execution into smaller steps or provide the exact premises with simple tactics",
+        crate::surface::diagnostics::describe_stated_fact(proposition, parameters, arguments),
+        candidates.len(),
+        crate::surface::diagnostics::describe_pure_facts_for_diagnostic(
+            &candidates,
+            parameters,
+            arguments
         ),
     )
 }
 
+/// Why a statement's premise had no checkable derivation, spelled over the
+/// locals of `state`, the state the statement runs from.
 pub(super) fn describe_derivation_failure(
     proposition: &Proposition,
     available: &[Proposition],
+    state: &CState,
     environment: &CExecutionEnvironment,
     predicate_environment: Option<&PredicateEnvironment>,
 ) -> String {
+    let (parameters, arguments) = crate::surface::diagnostics::local_naming_tables(state);
     if matches!(proposition, Proposition::ConditionIs(_, _)) {
-        describe_condition_search_miss(proposition, available, &[], &[])
+        describe_condition_search_miss(proposition, available, &parameters, &arguments)
     } else if matches!(
         proposition,
         Proposition::Predicate { name, .. }
@@ -290,8 +296,8 @@ pub(super) fn describe_derivation_failure(
         // replaces it rather than only the refusal.
         describe_pure_fact_with_environment(
             proposition,
-            &[],
-            &[],
+            &parameters,
+            &arguments,
             environment,
             predicate_environment,
         )
@@ -299,7 +305,7 @@ pub(super) fn describe_derivation_failure(
         // Every other shape goes through the same bounded sentence the rest
         // of the proof diagnostics use. `Debug` here dumped the kernel
         // proposition, schemas and snapshots included.
-        describe_pure_fact(proposition, &[], &[])
+        describe_pure_fact(proposition, &parameters, &arguments)
     }
 }
 

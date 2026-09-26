@@ -413,6 +413,129 @@ impl<'a> Proof<'a> {
         self.apply_selected_theorem_application(step)
     }
 
+    /// The refusal for a requirement an execution-frontier `apply` cannot
+    /// discharge: the written clause, what its parameters were bound to, its
+    /// instantiation spelled through the proof's names, and for a `viewable`
+    /// which memory it reads, so a requirement over the current state never
+    /// reads like the `at(iter, …)` fact beside it.
+    fn describe_unavailable_execution_requirement(
+        &self,
+        theorem_environment: &TheoremEnvironment,
+        application: &TheoremApplication,
+        requirement_index: usize,
+        requirement: &Proposition,
+    ) -> String {
+        let source = theorem_environment
+            .get(&application.name)
+            .and_then(|theorem| {
+                let requirements =
+                    crate::surface::proof::pure_theorems::theorem_requirement_propositions(theorem)
+                        .ok()?;
+                let written = requirements.get(requirement_index)?.clone();
+                let bindings = theorem
+                    .parameters()
+                    .iter()
+                    .zip(&application.arguments)
+                    .map(|(parameter, argument)| {
+                        (
+                            parameter.name().to_string(),
+                            crate::surface::diagnostics::describe_contract_expression(argument),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                Some((written, bindings))
+            });
+        let message = match source {
+            Some((written, bindings)) => {
+                // Spell the instantiation through the frontier's locals, so
+                // its terms read as the names the reader wrote.
+                let (parameters, arguments) = self.diagnostic_naming_tables();
+                let instantiation = crate::surface::diagnostics::describe_stated_fact(
+                    requirement,
+                    &parameters,
+                    &arguments,
+                );
+                crate::surface::proof::theorem_application::describe_unavailable_theorem_requirement_spelled(
+                    &application.name,
+                    requirement_index,
+                    &written,
+                    &bindings,
+                    &format!("`{instantiation}`"),
+                )
+            }
+            None => format!(
+                "theorem application `{}` requires an unavailable exact premise: {}",
+                application.name,
+                crate::surface::proof_diagnostics::render::render_proposition(requirement)
+            ),
+        };
+        format!(
+            "{message}{}",
+            self.describe_viewable_memory_note(requirement)
+        )
+    }
+
+    /// For a missing `viewable` requirement, which memory it reads and which
+    /// memory the available `viewable` facts of the same range read. The
+    /// bounded renderer labels snapshots per rendering, so without this a
+    /// requirement over the current state and a fact at `at(iter, …)` print
+    /// alike.
+    fn describe_viewable_memory_note(&self, requirement: &Proposition) -> String {
+        let Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        } = requirement
+        else {
+            return String::new();
+        };
+        let Some(execution) = self.execution() else {
+            return String::new();
+        };
+        let name_memory = |candidate: &crate::kernel::CMemory| {
+            if candidate == execution.core.state.memory() {
+                return "the current state".to_string();
+            }
+            execution
+                .presentation
+                .recorded_snapshots
+                .iter()
+                .find(|(_, state)| state.memory() == candidate)
+                .map(|(selector, _)| {
+                    format!(
+                        "`at({}, …)`",
+                        crate::surface::diagnostics::describe_snapshot_selector(selector)
+                    )
+                })
+                .unwrap_or_else(|| "an earlier state no proof mark names".to_string())
+        };
+        let others = self
+            .facts()
+            .propositions()
+            .filter_map(|fact| match fact {
+                Proposition::CMemoryLoadable {
+                    memory: held,
+                    base: held_base,
+                    bytes: held_bytes,
+                } if held_base == base && held_bytes == bytes && held != memory => {
+                    Some(name_memory(held))
+                }
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let mut note = format!(
+            "\n  the required `viewable` reads the memory of {}",
+            name_memory(memory)
+        );
+        if !others.is_empty() {
+            note.push_str(&format!(
+                "; the available `viewable` of the same range reads {}",
+                others.into_iter().collect::<Vec<_>>().join(" and ")
+            ));
+        }
+        note
+    }
+
     pub(super) fn select_theorem_application_step(
         &self,
         application: &TheoremApplication,
@@ -536,15 +659,19 @@ impl<'a> Proof<'a> {
         })?;
 
         let mut premises = Vec::new();
-        for requirement in requirements {
+        for (requirement_index, requirement) in requirements.into_iter().enumerate() {
             if matches!(normalize_proposition(&requirement), SimpProposition::True) {
                 continue;
             }
-            let matched = self                .facts()                .matching_fact_across_effects(&requirement, &[])
+            let matched = self
+                .facts()
+                .matching_fact_across_effects(&requirement, &[])
                 .ok_or_else(|| {
-                    self.step_error(format!(
-                        "theorem application `{}` requires an unavailable exact premise: {requirement:?}",
-                        application.name
+                    self.step_error(self.describe_unavailable_execution_requirement(
+                        theorem_environment,
+                        application,
+                        requirement_index,
+                        &requirement,
                     ))
                 })?;
 

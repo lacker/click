@@ -1789,13 +1789,18 @@ fn recursion_paths(
     Ok(walk_termination_paths(&walk, statement, lower_bounds)?.continuing)
 }
 
-fn termination_measure_display(measure: &CExpression) -> String {
+/// The identity spelling of a measure, which [`loop_measures_name_same_declaration`]
+/// compares a pure component's written source against and which a pure
+/// component's source is built from. It must keep telling different measures
+/// apart, so a form it has no spelling for stays structural. Diagnostics use
+/// [`termination_measure_display`] instead.
+fn termination_measure_key(measure: &CExpression) -> String {
     use CExpression::*;
     let binary = |left: &CExpression, right: &CExpression, operator: &str| {
         format!(
             "{} {operator} {}",
-            termination_measure_display(left),
-            termination_measure_display(right)
+            termination_measure_key(left),
+            termination_measure_key(right)
         )
     };
     match measure {
@@ -1812,6 +1817,68 @@ fn termination_measure_display(measure: &CExpression) -> String {
         // The kernel expression no longer carries a field's name, so a read is
         // shown as the dereference it is, with its byte offset.
         TypedLoad { pointer, .. } | Load(pointer) => {
+            format!("*({})", termination_measure_key(pointer))
+        }
+        PointerOffsetBytes { pointer, bytes } => {
+            format!("{} + {bytes} bytes", termination_measure_key(pointer))
+        }
+        Index(base, index) => format!(
+            "{}[{}]",
+            termination_measure_key(base),
+            termination_measure_key(index)
+        ),
+        Cast { expression, .. } => termination_measure_key(expression),
+        _ => format!("{measure:?}"),
+    }
+}
+
+/// A measure as the diagnostics show it. A part with no source spelling —
+/// a value only the lowering has a name for — reads `…`, never as a kernel
+/// term dump. This is presentation only; declarations are identified by
+/// [`termination_measure_key`].
+fn termination_measure_display(measure: &CExpression) -> String {
+    use CExpression::*;
+    let binary = |left: &CExpression, right: &CExpression, operator: &str| {
+        format!(
+            "{} {operator} {}",
+            termination_measure_display(left),
+            termination_measure_display(right)
+        )
+    };
+    let unary = |operand: &CExpression, operator: &str| {
+        format!("{operator}({})", termination_measure_display(operand))
+    };
+    match measure {
+        Variable(name) => name.clone(),
+        Value(CValue::Int32(term)) | Value(CValue::UInt8(term)) => match term.as_const() {
+            Some(value) => format!("{}", value as i32),
+            None => "…".to_string(),
+        },
+        Add(left, right) => binary(left, right, "+"),
+        Subtract(left, right) => binary(left, right, "-"),
+        Multiply(left, right) => binary(left, right, "*"),
+        Divide(left, right) => binary(left, right, "/"),
+        Remainder(left, right) => binary(left, right, "%"),
+        ShiftLeft(left, right) => binary(left, right, "<<"),
+        ShiftRight(left, right) => binary(left, right, ">>"),
+        BitwiseAnd(left, right) => binary(left, right, "&"),
+        BitwiseOr(left, right) => binary(left, right, "|"),
+        BitwiseXor(left, right) => binary(left, right, "^"),
+        LessThan(left, right) => binary(left, right, "<"),
+        LessEqual(left, right) => binary(left, right, "<="),
+        GreaterThan(left, right) => binary(left, right, ">"),
+        GreaterEqual(left, right) => binary(left, right, ">="),
+        Equal(left, right) => binary(left, right, "=="),
+        NotEqual(left, right) => binary(left, right, "!="),
+        And(left, right) => binary(left, right, "&&"),
+        Or(left, right) => binary(left, right, "||"),
+        BitwiseNot(operand) => unary(operand, "~"),
+        Not(operand) => unary(operand, "!"),
+        AddressOf(operand) => unary(operand, "&"),
+        FunctionAddress(name) => format!("&{name}"),
+        // The kernel expression no longer carries a field's name, so a read is
+        // shown as the dereference it is, with its byte offset.
+        TypedLoad { pointer, .. } | Load(pointer) => {
             format!("*({})", termination_measure_display(pointer))
         }
         PointerOffsetBytes { pointer, bytes } => {
@@ -1823,7 +1890,9 @@ fn termination_measure_display(measure: &CExpression) -> String {
             termination_measure_display(index)
         ),
         Cast { expression, .. } => termination_measure_display(expression),
-        _ => format!("{measure:?}"),
+        Conditional { .. } | FloatNegate(_) | FloatClassification { .. } | Value(_) => {
+            "…".to_string()
+        }
     }
 }
 
@@ -2375,6 +2444,18 @@ pub(super) fn c_ranking_measures_display(measures: &[CRankingComponent]) -> Stri
     join_measure_components(measures.iter().map(c_ranking_measure_display))
 }
 
+/// The identity spelling of one `decreases` component: what a pure
+/// component's written source is built from and compared with (see
+/// [`termination_measure_key`]).
+pub(super) fn c_ranking_measure_key(measure: &CRankingComponent) -> String {
+    match measure {
+        CRankingComponent::CExpression(expression) => termination_measure_key(expression),
+        CRankingComponent::Pure { source, .. } | CRankingComponent::PureInteger { source, .. } => {
+            source.clone()
+        }
+    }
+}
+
 /// Whether a certified loop measure and the plan's measure name one
 /// declaration. They are equal keys, except that a component naming a proof
 /// binder (a proof `match` payload or a `let { field: name } = unfold(...)`
@@ -2398,7 +2479,7 @@ fn loop_measures_name_same_declaration(
                         (
                             CRankingMeasureKey::Pure(source),
                             CRankingMeasureKey::CExpression(written),
-                        ) => *source == termination_measure_display(written),
+                        ) => *source == termination_measure_key(written),
                         (certified, planned) => certified == planned,
                     }
                 })

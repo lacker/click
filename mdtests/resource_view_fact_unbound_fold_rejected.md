@@ -2,7 +2,9 @@
 
 A fact that reads current memory may be admitted by the resource definition,
 but folding it requires the exact live stable-view dependency that supplied the
-read.  An ordinary unbound view must fail closed.
+read.  An ordinary unbound view must fail closed. The refusal names the missing
+fact with its operands, `load(p) == 0`; it used to name only its kind, "int32
+equality is true".
 
 ```c filename=resource_view_fact_unbound_fold_rejected.c
 int32 make_readback(int32 p[]) {
@@ -28,5 +30,5 @@ int32 make_readback(int32 p[]) {
 ```
 
 ```expect
-fail: missing pure fact
+fail: missing pure fact: load(p) == 0 is true
 ```

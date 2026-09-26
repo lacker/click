@@ -955,6 +955,38 @@ pub(crate) enum LoanRefusal {
     IdentitySpaceExhausted,
 }
 
+/// A refusal's reason as a sentence fragment, for a kernel message that has
+/// no subject to name. A refusal with one goes through
+/// [`LoanRefusal::diagnostic_with_subject`] and the surface renderer instead.
+impl std::fmt::Display for LoanRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::NotOwnership => "the lent resource is not an ownership fact",
+            Self::WrongArena => "the loan evidence belongs to a different authority arena",
+            Self::MissingLoan => "the loan is not recorded in the ledger",
+            Self::MissingScope => "the loan scope is not recorded in the ledger",
+            Self::MissingShare => "the loan share is not recorded in the ledger",
+            Self::WrongHolder => "the loan evidence names the wrong participant",
+            Self::WrongScope => "the loan evidence names the wrong scope",
+            Self::ScopeEnded => "the loan scope has already ended",
+            Self::ScopeStillActive => "the loan scope is still active",
+            Self::ShareStillSplit => "the loan share is still split",
+            Self::NotSiblings => "the loan shares are not siblings",
+            Self::AlreadyRecovered => "the loan was already recovered",
+            Self::StalePredecessor => "the loan evidence uses a stale predecessor state",
+            Self::InvalidEvidence => "the loan evidence is invalid",
+            Self::UnsupportedResource => "this resource shape is outside stable-view support",
+            Self::UnsupportedPartition => {
+                "the verifier could not prove the access separate from the live borrowed footprint"
+            }
+            Self::ActiveDependency => "the access overlaps a live borrowed footprint",
+            Self::MissingBacking => "the required loan backing is missing",
+            Self::MissingLoanBinding => "the required loan binding is missing",
+            Self::IdentitySpaceExhausted => "the loan identity space is exhausted",
+        })
+    }
+}
+
 impl LoanRefusal {
     pub(crate) fn diagnostic(self, operation: LoanRefusalOperation) -> LoanRefusalDiagnostic {
         self.diagnostic_with_subject(operation, LoanRefusalSubject::none())

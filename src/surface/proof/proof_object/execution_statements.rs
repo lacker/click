@@ -3,6 +3,25 @@
 use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
 
+thread_local! {
+    /// The source spelling of the bundle member the invariant-bundle planner
+    /// last found open, so a refused closure names the invariant it did not
+    /// prove. Diagnostic only: cleared before each closure attempt and read
+    /// only on its refusal.
+    static UNCLOSED_BUNDLE_MEMBER: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn record_unclosed_bundle_member(spelling: Option<String>) {
+    if let Some(spelling) = spelling {
+        UNCLOSED_BUNDLE_MEMBER.with(|member| *member.borrow_mut() = Some(spelling));
+    }
+}
+
+fn take_unclosed_bundle_member() -> Option<String> {
+    UNCLOSED_BUNDLE_MEMBER.with(|member| member.borrow_mut().take())
+}
+
 /// Names the ranking members a ranked loop's bundle carries, so an explicit
 /// `preserve by` body written before the `decreases` clause existed reports
 /// what it now has to close instead of only that the bundle stayed open.
@@ -220,6 +239,21 @@ impl<'a> Proof<'a> {
     /// candidate advances this same `Proof`, so the retained certificate is
     /// the explicit proof `click expand` prints and re-verifies.
     pub(in crate::surface::proof) fn plan_invariant_bundle_closure(
+        &self,
+        premises: &[NamedArithmeticPremise],
+        loop_head_surfaces: &[ClickProposition],
+    ) -> Result<Option<Self>, ClickError> {
+        let result = self.plan_invariant_bundle_member_closure(premises, loop_head_surfaces)?;
+        // A conjunction passes its open child's record up unchanged; any
+        // other member that stays open is the one a refusal names, replacing
+        // whatever leaf inside it was recorded first.
+        if result.is_none() && !matches!(self.goal(), Some(Proposition::And(_, _))) {
+            record_unclosed_bundle_member(self.bundle_member_spelling());
+        }
+        Ok(result)
+    }
+
+    fn plan_invariant_bundle_member_closure(
         &self,
         premises: &[NamedArithmeticPremise],
         loop_head_surfaces: &[ClickProposition],
@@ -565,6 +599,25 @@ impl<'a> Proof<'a> {
     /// two program points the loop rule itself owns. The candidate must lower
     /// alpha-equivalently to the focused kernel goal; attaching it changes no
     /// facts, proof topology, or checked proposition.
+    /// The focused bundle member as a refusal names it: its source spelling,
+    /// else the lowered member spelled over the back-edge locals.
+    fn bundle_member_spelling(&self) -> Option<String> {
+        let presented = self.with_synthesized_bundle_member_surface();
+        if let Some(surface) = presented.surface_goal() {
+            let spelled = crate::surface::printing::source_click_proposition(surface);
+            if !spelled.contains("__click_") {
+                return Some(spelled);
+            }
+        }
+        let goal = self.goal()?;
+        let (parameters, arguments) = self.diagnostic_naming_tables();
+        Some(crate::surface::diagnostics::describe_stated_fact(
+            goal,
+            &parameters,
+            &arguments,
+        ))
+    }
+
     fn with_synthesized_bundle_member_surface(&self) -> Self {
         if self.surface_goal().is_some() {
             return self.clone();
@@ -1071,6 +1124,7 @@ impl<'a> Proof<'a> {
         // This smart request owns two bounded strategies on the same root:
         // ordinary simplification, then the loop-specific member planner.
         // Explicit source bodies use the source driver exactly once.
+        let _ = take_unclosed_bundle_member();
         let attempted = if body == [ProofTactic::Simp] {
             match crate::instrumentation::measure_operation(
                 "surface",
@@ -1116,8 +1170,13 @@ impl<'a> Proof<'a> {
             }
         };
         let Some(completed) = attempted else {
+            // The member planner stops at the first bundle member it cannot
+            // close, so that member is the one to name.
+            let open_member = take_unclosed_bundle_member()
+                .map(|member| format!(": `{member}` remained open"))
+                .unwrap_or_default();
             let error = root.step_error(format!(
-                "closure body did not prove every invariant obligation{}",
+                "closure body did not prove every invariant obligation{open_member}{}",
                 ranking_member_diagnostic(&bundle.ranking_measures)
             ));
             return Err(error.with_search_failures(search.finish()));

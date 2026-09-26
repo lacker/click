@@ -409,6 +409,9 @@ pub enum CLoopHeadRefusal {
         /// The loop-top state the premise is stated over.
         state: CState,
     },
+    /// A resource the loop declares that the enclosing context does not
+    /// hold, evaluated over `state`.
+    UnheldResource { fact: CResourceFact, state: CState },
 }
 
 impl From<String> for CLoopHeadRefusal {
@@ -520,7 +523,17 @@ fn c_loop_preservation_contexts_with_mode(
         )
     })?;
     if let Some(failure) = head.resource_failures.first() {
-        return Err(failure.clone().into());
+        return Err(match failure {
+            super::loops::CLoopResourceFailure::Message(message) => {
+                CLoopHeadRefusal::Message(message.clone())
+            }
+            super::loops::CLoopResourceFailure::Unheld { fact, state } => {
+                CLoopHeadRefusal::UnheldResource {
+                    fact: fact.clone(),
+                    state: state.clone(),
+                }
+            }
+        });
     }
     // Preservation runs the body with the loop's declared resources.
     let top_state = head.body;
@@ -782,6 +795,13 @@ pub fn c_reject_address_escaped_loop_measures(
 /// The source form of one declared `decreases` component, for diagnostics.
 pub fn c_ranking_measure_source(measure: &CRankingComponent) -> String {
     crate::kernel::termination::c_ranking_measure_display(measure)
+}
+
+/// The identity spelling of one declared `decreases` component: the form a
+/// pure component's written source is keyed by, which must keep telling
+/// different measures apart even where it has no source spelling.
+pub fn c_ranking_measure_identity(measure: &CRankingComponent) -> String {
+    crate::kernel::termination::c_ranking_measure_key(measure)
 }
 
 /// The source form of a whole declared `decreases` clause, for diagnostics.
@@ -1328,7 +1348,7 @@ fn validate_branch_memory_delta_against_loans(
         );
         if let Err(error) = ledger.permits_memory_access(&range) {
             return Err(format!(
-                "branch memory join changes an active stable-view footprint: {error:?}"
+                "branch memory join changes an active stable-view footprint: {error}"
             ));
         }
     }
@@ -2890,7 +2910,10 @@ pub fn c_function_contract_entry_state(
         &mut budget,
     ) {
         Ok(Ok(state)) => Ok(state),
-        Ok(Err(error)) => Err(format!("could not prepare contract resources: {error:?}")),
+        Ok(Err(error)) => Err(format!(
+            "could not prepare contract resources: {}",
+            contract_certification::describe_certification_runtime_error(&error)
+        )),
         Err(limit) => Err(format!(
             "contract resource preparation stopped at {}",
             limit.describe()

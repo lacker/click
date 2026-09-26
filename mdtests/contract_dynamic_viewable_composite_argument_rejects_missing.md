@@ -30,5 +30,5 @@ contract void DynamicDependentPair(struct node* node, int32 n) {
 ```
 
 ```expect
-fail: could not evaluate the contract entry resources: FunctionContract("could not evaluate `node->left` while checking `owns cell(node->left)`
+fail: could not evaluate the contract entry resources: function contract could not be applied: could not evaluate `node->left` while checking `owns cell(node->left)`
 ```

@@ -9,9 +9,11 @@ example a load of another width, or a value where the goal has a load. Gaps
 67 and 70 in [`rbtree-example.md`](../issues/rbtree-example.md) were both a
 4-byte read of an 8-byte cell hidden behind that sentence.
 
-The refusal now prints the lowered equality and the lowered goal, in the
-kernel's own spelling, so the mismatch is visible where it is decided. Here
-the mismatch is honest: the goal `c == c` names no `a`.
+The refusal now prints the lowered equality and the lowered goal, so the
+mismatch is visible where it is decided. Their terms are spelled through the
+names the proof state gives them, here the parameters; they used to print as
+the kernel's variables (`v0 == v1`, `v2 == v2`). Here the mismatch is honest:
+the goal `c == c` names no `a`.
 
 ```c filename=rw.c
 int pick(int a, int b, int c) {
@@ -37,6 +39,6 @@ int pick(int a, int b, int c) {
 
 ```expect
 fail: `rewrite` equality does not occur in the current goal
-  equality: v0 == v1 is true
-  goal: v2 == v2 is true
+  equality: a == b is true
+  goal: c == c is true
 ```
