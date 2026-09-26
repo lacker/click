@@ -4,6 +4,7 @@
 use super::*;
 use crate::kernel::proof::arithmetic_special::{
     SpecialArithmeticCertificate as KernelCertificate, SpecialArithmeticNode as KernelNode,
+    int64_constant_bound_on, int64_definedness_operands,
 };
 use crate::kernel::{CFloatClassification, CFloatCondition, ConditionTerm, Proposition};
 use crate::surface::{ArithmeticCertificate, SpecialArithmeticCertificate, SpecialArithmeticNode};
@@ -14,6 +15,29 @@ pub(in crate::surface) fn plan_special_arithmetic_certificate(
 ) -> Option<KernelCertificate> {
     if !charge_proposition(goal) {
         return None;
+    }
+    // `defined(a + b)` or `defined(a - b)` over `int64`: cite exactly the
+    // listed premises that bound an operand by a constant. The kernel
+    // recomputes the operand ranges and refuses a result that can leave
+    // `int64`.
+    if let Some((left, right, _)) = int64_definedness_operands(goal) {
+        let bounds = premises
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| {
+                (charge_proposition(p)
+                    && (int64_constant_bound_on(p, left).is_some()
+                        || int64_constant_bound_on(p, right).is_some()))
+                .then_some(i)
+            })
+            .collect();
+        return Some(KernelCertificate {
+            nodes: vec![KernelNode::Int64Defined {
+                bounds,
+                result: goal.clone(),
+            }],
+            conclusion: 0,
+        });
     }
     if let Some(finite) = float_finite_premise(goal, premises) {
         return Some(KernelCertificate {
@@ -146,6 +170,10 @@ pub(in crate::surface) fn special_plan_to_surface_certificate(
             }
             KernelNode::FloatReflexive { finite, .. } => SpecialArithmeticNode::FloatReflexive {
                 finite: *finite,
+                result: goal.clone(),
+            },
+            KernelNode::Int64Defined { bounds, .. } => SpecialArithmeticNode::Int64Defined {
+                bounds: bounds.clone(),
                 result: goal.clone(),
             },
         })

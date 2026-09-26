@@ -5444,6 +5444,12 @@ pub enum SpecialArithmeticNode {
         finite: usize,
         result: ClickProposition,
     },
+    /// `defined(left + right)` or `defined(left - right)` over `int64`,
+    /// from the operands' width ranges and the listed constant bounds.
+    Int64Defined {
+        bounds: Vec<usize>,
+        result: ClickProposition,
+    },
 }
 
 /// The mathematical Integer rule family. Every node carries its source

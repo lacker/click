@@ -365,6 +365,90 @@ impl PureFactContext {
         (lower <= upper && (lower != i64::MIN || upper != i64::MAX)).then_some((lower, upper))
     }
 
+    /// The exact facts that bound the `int64` term `term` by a constant: the
+    /// order facts indexed under `term` itself and its recorded constant
+    /// equalities, each returned as the condition fact the context holds so
+    /// a certificate can cite it. These are keyed lookups on `term` only;
+    /// each indexed bound costs a bounded number of exact fact lookups.
+    pub(crate) fn int64_constant_bound_facts(&self, term: &Bitvector32Term) -> Vec<Proposition> {
+        let mut facts = Vec::new();
+        if let Some(bounds) = self.int64_signed_order_bounds.get(term) {
+            for (endpoint, other, strict, is_upper) in bounds.keys() {
+                crate::instrumentation::record_deterministic_work(1);
+                if endpoint != term || other.int64_as_const().is_none() {
+                    continue;
+                }
+                let (lower, upper) = if *is_upper {
+                    (endpoint.clone(), other.clone())
+                } else {
+                    (other.clone(), endpoint.clone())
+                };
+                let pair = || (Box::new(lower.clone()), Box::new(upper.clone()));
+                let reversed = || (Box::new(upper.clone()), Box::new(lower.clone()));
+                let forms = if *strict {
+                    [
+                        (
+                            ConditionTerm::Bitvector64SignedLessThan(pair().0, pair().1),
+                            true,
+                        ),
+                        (
+                            ConditionTerm::Bitvector64SignedGreaterThan(reversed().0, reversed().1),
+                            true,
+                        ),
+                        (
+                            ConditionTerm::Bitvector64SignedLessEqual(reversed().0, reversed().1),
+                            false,
+                        ),
+                        (
+                            ConditionTerm::Bitvector64SignedGreaterEqual(pair().0, pair().1),
+                            false,
+                        ),
+                    ]
+                } else {
+                    [
+                        (
+                            ConditionTerm::Bitvector64SignedLessEqual(pair().0, pair().1),
+                            true,
+                        ),
+                        (
+                            ConditionTerm::Bitvector64SignedGreaterEqual(
+                                reversed().0,
+                                reversed().1,
+                            ),
+                            true,
+                        ),
+                        (
+                            ConditionTerm::Bitvector64SignedLessThan(reversed().0, reversed().1),
+                            false,
+                        ),
+                        (
+                            ConditionTerm::Bitvector64SignedGreaterThan(pair().0, pair().1),
+                            false,
+                        ),
+                    ]
+                };
+                if let Some((condition, value)) = forms
+                    .into_iter()
+                    .find(|(condition, value)| self.condition_facts.get(condition) == Some(value))
+                {
+                    facts.push(Proposition::ConditionIs(condition, value));
+                }
+            }
+        }
+        if let Some(equalities) = self.exact_constant_equalities.get(term) {
+            crate::instrumentation::record_deterministic_work(equalities.len().max(1));
+            for condition in equalities.keys() {
+                if let ConditionTerm::Bitvector64Equal(left, right) = condition
+                    && (left.as_ref() == term && right.int64_as_const().is_some()
+                        || right.as_ref() == term && left.int64_as_const().is_some())
+                {
+                    facts.push(Proposition::ConditionIs(condition.clone(), true));
+                }
+            }
+        }
+        facts
+    }
+
     fn signed_multiplication_interval_nonoverflow(
         &self,
         left: &Bitvector32Term,

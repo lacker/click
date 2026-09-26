@@ -812,6 +812,15 @@ fn write_special_arithmetic_certificate(
                 "float_reflexive finite {finite} => {};",
                 source_click_proposition(result)
             ),
+            SpecialArithmeticNode::Int64Defined { bounds, result } => format!(
+                "int64_defined bounds [{}] => {};",
+                bounds
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                source_click_proposition(result)
+            ),
         };
         line(output, &body, &text);
     }

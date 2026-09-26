@@ -1625,6 +1625,9 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(instantiated));
         }
+        if let Some(defined) = self.try_int64_definedness_closure()? {
+            return Ok(Some(defined));
+        }
         if let Some(guarded) = self.try_guarded_consequent_closure()? {
             return Ok(Some(guarded));
         }
@@ -5045,6 +5048,15 @@ impl<'a> Proof<'a> {
         // consequent, and continue from the list with the consequent in the
         // implication's place.
         if let Some(closed) = proof.try_restricted_guarded_consequent(surfaces, &premise_pairs) {
+            return Some(closed);
+        }
+        // An `int64` definedness goal: the listed premises that bound an
+        // operand by a constant, checked by the `int64_defined` rule.
+        if let Some(closed) = proof
+            .try_restricted_int64_definedness_closure(&premise_pairs)
+            .ok()
+            .flatten()
+        {
             return Some(closed);
         }
         // A listed implication and its listed antecedent justify extracting

@@ -436,6 +436,18 @@ fn condition_identity(left: &ConditionTerm, right: &ConditionTerm) -> bool {
         | (ConditionTerm::Float64(left), ConditionTerm::Float64(right)) => {
             float_condition_identity(left, right)
         }
+        // An `int64` definedness claim names arbitrary operand terms (loads,
+        // snapshot values, widenings). Both sides were lowered from the
+        // certificate's own explicit text and the goal, so the structural
+        // comparison is linear in that input.
+        (
+            ConditionTerm::Bitvector64SignedAddOverflows(left_first, left_second),
+            ConditionTerm::Bitvector64SignedAddOverflows(right_first, right_second),
+        )
+        | (
+            ConditionTerm::Bitvector64SignedSubtractOverflows(left_first, left_second),
+            ConditionTerm::Bitvector64SignedSubtractOverflows(right_first, right_second),
+        ) => left_first == right_first && left_second == right_second,
         _ => false,
     }
 }
@@ -527,6 +539,16 @@ pub(crate) enum SpecialArithmeticNode {
     },
     /// Prove a reflexive IEEE comparison from one exact finite classification.
     FloatReflexive { finite: usize, result: Proposition },
+    /// Establish `defined(left + right)` or `defined(left - right)` over
+    /// `int64` from each operand's range: the width range of its root
+    /// constructor (a constant, or a value widened from 32 bits), narrowed
+    /// by the listed premises. Each listed premise is a constant `int64`
+    /// order or equality fact on one operand; the checker reads it directly,
+    /// so its work is one lookup per listed bound and never a context scan.
+    Int64Defined {
+        bounds: Vec<usize>,
+        result: Proposition,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -547,6 +569,19 @@ pub(crate) enum SpecialArithmeticCheckError {
     NodeResultMismatch(usize),
     WorkLimitExceeded,
     DoesNotFollow,
+    /// Listed premise `premise` of node `node` is not a constant `int64`
+    /// order or equality fact on an operand of the claimed operation.
+    Int64BoundUnrelated {
+        node: usize,
+        premise: usize,
+    },
+    /// The operand ranges node `node` establishes put the exact result in
+    /// `[lower, upper]`, which leaves `int64`.
+    Int64RangeExceeded {
+        node: usize,
+        lower: i128,
+        upper: i128,
+    },
 }
 
 impl SpecialArithmeticCertificate {
@@ -692,8 +727,163 @@ impl SpecialArithmeticCertificate {
                 }
                 Ok(())
             }
+            SpecialArithmeticNode::Int64Defined { bounds, result } => {
+                if crate::instrumentation::deadline_exceeded_with_work(
+                    bounds.len().saturating_add(1),
+                ) {
+                    return Err(SpecialArithmeticCheckError::WorkLimitExceeded);
+                }
+                let mut seen = HashSet::new();
+                if bounds.iter().any(|bound| !seen.insert(*bound)) {
+                    return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
+                }
+                let bounds = bounds
+                    .iter()
+                    .map(|bound| {
+                        premises
+                            .get(*bound)
+                            .map(|premise| (*bound, premise))
+                            .ok_or(SpecialArithmeticCheckError::InvalidPremise(*bound))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                int64_defined(index, &bounds, result)
+            }
         }
     }
+}
+
+/// The operation a `defined` claim over `int64` addition or subtraction
+/// names: its two operands and whether it subtracts.
+pub(crate) fn int64_definedness_operands(
+    proposition: &Proposition,
+) -> Option<(&Bitvector32Term, &Bitvector32Term, bool)> {
+    match proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector64SignedAddOverflows(left, right),
+            false,
+        ) => Some((left, right, false)),
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector64SignedSubtractOverflows(left, right),
+            false,
+        ) => Some((left, right, true)),
+        _ => None,
+    }
+}
+
+/// What one constant `int64` fact says about `term`: an inclusive lower
+/// and upper bound, either of which may be absent. `None` when the fact is
+/// not a constant order or equality fact on `term`.
+pub(crate) fn int64_constant_bound_on(
+    premise: &Proposition,
+    term: &Bitvector32Term,
+) -> Option<(Option<i64>, Option<i64>)> {
+    let Proposition::ConditionIs(condition, value) = premise else {
+        return None;
+    };
+    if let ConditionTerm::Bitvector64Equal(left, right) = condition {
+        if !*value {
+            return None;
+        }
+        let constant = if left.as_ref() == term {
+            right.int64_as_const()?
+        } else if right.as_ref() == term {
+            left.int64_as_const()?
+        } else {
+            return None;
+        };
+        return Some((Some(constant), Some(constant)));
+    }
+    let (lower, upper, strict) =
+        crate::kernel::reasoning::order_reasoning::condition_as_int64_order_fact(
+            condition, *value,
+        )?;
+    let step = i64::from(strict);
+    if &lower == term
+        && let Some(constant) = upper.int64_as_const()
+    {
+        // `term < c` or `term <= c`. A strict bound below `INT64_MIN` has
+        // no inhabitant; it bounds nothing this rule can use.
+        return Some((None, Some(constant.checked_sub(step)?)));
+    }
+    if &upper == term
+        && let Some(constant) = lower.int64_as_const()
+    {
+        return Some((Some(constant.checked_add(step)?), None));
+    }
+    None
+}
+
+/// The range `term` has from its width and the listed bounds on it.
+fn int64_operand_range(
+    term: &Bitvector32Term,
+    bounds: &[(usize, &Proposition)],
+    used: &mut [bool],
+) -> (i64, i64) {
+    let (mut lower, mut upper) = term.int64_width_interval().unwrap_or((i64::MIN, i64::MAX));
+    for (position, (_, premise)) in bounds.iter().enumerate() {
+        if let Some((bound_lower, bound_upper)) = int64_constant_bound_on(premise, term) {
+            used[position] = true;
+            if let Some(value) = bound_lower {
+                lower = lower.max(value);
+            }
+            if let Some(value) = bound_upper {
+                upper = upper.min(value);
+            }
+        }
+    }
+    (lower, upper)
+}
+
+/// The exact result range of `left + right` or `left - right` over the two
+/// operand ranges, computed without overflow.
+pub(crate) fn int64_result_range(
+    left: (i64, i64),
+    right: (i64, i64),
+    subtract: bool,
+) -> (i128, i128) {
+    if subtract {
+        (
+            i128::from(left.0) - i128::from(right.1),
+            i128::from(left.1) - i128::from(right.0),
+        )
+    } else {
+        (
+            i128::from(left.0) + i128::from(right.0),
+            i128::from(left.1) + i128::from(right.1),
+        )
+    }
+}
+
+fn int64_defined(
+    index: usize,
+    bounds: &[(usize, &Proposition)],
+    result: &Proposition,
+) -> Result<(), SpecialArithmeticCheckError> {
+    let (left, right, subtract) = int64_definedness_operands(result)
+        .ok_or(SpecialArithmeticCheckError::NodeResultMismatch(index))?;
+    let mut used = vec![false; bounds.len()];
+    let left_range = int64_operand_range(left, bounds, &mut used);
+    let right_range = int64_operand_range(right, bounds, &mut used);
+    if let Some(position) = used.iter().position(|used| !used) {
+        return Err(SpecialArithmeticCheckError::Int64BoundUnrelated {
+            node: index,
+            premise: bounds[position].0,
+        });
+    }
+    // Contradictory bounds leave an operand without a value; this rule
+    // does not conclude from them.
+    if left_range.0 > left_range.1 || right_range.0 > right_range.1 {
+        return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
+    }
+    let (lower, upper) = int64_result_range(left_range, right_range, subtract);
+    if lower < i128::from(i64::MIN) || upper > i128::from(i64::MAX) {
+        return Err(SpecialArithmeticCheckError::Int64RangeExceeded {
+            node: index,
+            lower,
+            upper,
+        });
+    }
+    Ok(())
 }
 
 impl SpecialArithmeticNode {
@@ -703,7 +893,8 @@ impl SpecialArithmeticNode {
             | Self::PointerAlignment { result, .. }
             | Self::PointerWordEquality { result, .. }
             | Self::PointerWordFromAlignment { result, .. }
-            | Self::FloatReflexive { result, .. } => result,
+            | Self::FloatReflexive { result, .. }
+            | Self::Int64Defined { result, .. } => result,
         }
     }
 }
@@ -2122,6 +2313,125 @@ fn float_reflexive(finite: &Proposition, result: &Proposition) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn int64_var(id: u64) -> Bitvector32Term {
+        Bitvector32Term::Variable(crate::kernel::Variable(id))
+    }
+
+    fn int64_fact(condition: ConditionTerm, value: bool) -> Proposition {
+        Proposition::ConditionIs(condition, value)
+    }
+
+    fn int64_defined_goal(
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+        subtract: bool,
+    ) -> Proposition {
+        let condition = if subtract {
+            ConditionTerm::Bitvector64SignedSubtractOverflows(Box::new(left), Box::new(right))
+        } else {
+            ConditionTerm::Bitvector64SignedAddOverflows(Box::new(left), Box::new(right))
+        };
+        Proposition::ConditionIs(condition, false)
+    }
+
+    fn check_int64_defined(
+        goal: &Proposition,
+        premises: &[Proposition],
+        bounds: Vec<usize>,
+    ) -> Result<(), SpecialArithmeticCheckError> {
+        SpecialArithmeticCertificate {
+            nodes: vec![SpecialArithmeticNode::Int64Defined {
+                bounds,
+                result: goal.clone(),
+            }],
+            conclusion: 0,
+        }
+        .check(goal, premises)
+    }
+
+    #[test]
+    fn int64_defined_follows_from_constant_bounds_on_both_operands() {
+        let (a, b) = (int64_var(1), int64_var(2));
+        let c = Bitvector32Term::Int64Constant;
+        let premises = vec![
+            // `a < 100`, `b == 1`, `-5 <= a` spelled as `not (a < -5)`.
+            int64_fact(
+                ConditionTerm::Bitvector64SignedLessThan(Box::new(a.clone()), Box::new(c(100))),
+                true,
+            ),
+            int64_fact(
+                ConditionTerm::Bitvector64Equal(Box::new(b.clone()), Box::new(c(1))),
+                true,
+            ),
+            int64_fact(
+                ConditionTerm::Bitvector64SignedLessThan(Box::new(a.clone()), Box::new(c(-5))),
+                false,
+            ),
+        ];
+        // `a + b <= 100`, and `a >= INT64_MIN` keeps the low end in range.
+        let add = int64_defined_goal(a.clone(), b.clone(), false);
+        assert_eq!(check_int64_defined(&add, &premises, vec![0, 1]), Ok(()));
+        // `a - b` needs the lower bound on `a`: `INT64_MIN - 1` overflows.
+        let subtract = int64_defined_goal(a.clone(), b.clone(), true);
+        assert!(matches!(
+            check_int64_defined(&subtract, &premises, vec![0, 1]),
+            Err(SpecialArithmeticCheckError::Int64RangeExceeded { .. })
+        ));
+        assert_eq!(
+            check_int64_defined(&subtract, &premises, vec![0, 1, 2]),
+            Ok(())
+        );
+        // The certificate must conclude the goal it names.
+        assert_eq!(
+            check_int64_defined(&add, &premises, vec![0, 1]).and_then(|()| {
+                SpecialArithmeticCertificate {
+                    nodes: vec![SpecialArithmeticNode::Int64Defined {
+                        bounds: vec![0, 1],
+                        result: add.clone(),
+                    }],
+                    conclusion: 0,
+                }
+                .check(&subtract, &premises)
+            }),
+            Err(SpecialArithmeticCheckError::DoesNotFollow)
+        );
+    }
+
+    #[test]
+    fn int64_defined_uses_widening_ranges_and_refuses_unrelated_or_missing_bounds() {
+        let tag = Bitvector32Term::Int64FromUInt32(Box::new(int64_var(3)));
+        let b = int64_var(4);
+        let c = Bitvector32Term::Int64Constant;
+        let upper = int64_fact(
+            ConditionTerm::Bitvector64SignedLessEqual(Box::new(b.clone()), Box::new(c(99))),
+            true,
+        );
+        let unrelated = int64_fact(
+            ConditionTerm::Bitvector64SignedLessEqual(Box::new(int64_var(5)), Box::new(c(0))),
+            true,
+        );
+        let premises = vec![upper, unrelated];
+        // A widened `unsigned int` is in `[0, 2^32)`; only `b` needs a bound.
+        let goal = int64_defined_goal(tag.clone(), b.clone(), false);
+        assert_eq!(check_int64_defined(&goal, &premises, vec![0]), Ok(()));
+        assert_eq!(
+            check_int64_defined(&goal, &premises, vec![0, 1]),
+            Err(SpecialArithmeticCheckError::Int64BoundUnrelated {
+                node: 0,
+                premise: 1
+            })
+        );
+        assert_eq!(
+            check_int64_defined(&goal, &premises, vec![0, 0]),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        );
+        // Without the bound, `2^32 - 1 + INT64_MAX` leaves int64.
+        assert!(matches!(
+            check_int64_defined(&goal, &premises, vec![]),
+            Err(SpecialArithmeticCheckError::Int64RangeExceeded { .. })
+        ));
+    }
 
     fn pointer(offset: PointerOffsetTerm) -> Pointer {
         Pointer {

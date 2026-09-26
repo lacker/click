@@ -680,6 +680,21 @@ fn expand_declared_resource_certificate(
                 .into_iter()
                 .map(proposition)
                 .collect::<Result<Vec<_>, ClickError>>()?;
+            special.nodes = special
+                .nodes
+                .into_iter()
+                .map(|node| {
+                    Ok(match node {
+                        SpecialArithmeticNode::Int64Defined { bounds, result } => {
+                            SpecialArithmeticNode::Int64Defined {
+                                bounds,
+                                result: proposition(result)?,
+                            }
+                        }
+                        other => other,
+                    })
+                })
+                .collect::<Result<Vec<_>, ClickError>>()?;
             ArithmeticCertificateFamily::Special(special)
         }
     };
