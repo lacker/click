@@ -39,10 +39,27 @@ pub(in crate::surface) fn plan_signed_arithmetic_certificate_with_weakening(
     plan_signed_arithmetic_certificate_with_mode(goal, premises, true)
 }
 
+/// Plans once from the premises' own bounds, and only when that finds no
+/// certificate plans again letting an atom's `int32` range stand in for a
+/// bound no premise states (`Planner::int32_range_fallback`). Keeping the
+/// range out of the first pass leaves every certificate the planner already
+/// found unchanged; the second pass runs only where the first failed, so a
+/// miss costs at most one more bounded plan.
 fn plan_signed_arithmetic_certificate_with_mode(
     goal: &Proposition,
     premises: &[Proposition],
     allow_weakening: bool,
+) -> Option<SignedArithmeticCertificate> {
+    plan_signed_arithmetic_certificate_in_pass(goal, premises, allow_weakening, false).or_else(
+        || plan_signed_arithmetic_certificate_in_pass(goal, premises, allow_weakening, true),
+    )
+}
+
+fn plan_signed_arithmetic_certificate_in_pass(
+    goal: &Proposition,
+    premises: &[Proposition],
+    allow_weakening: bool,
+    int32_range_fallback: bool,
 ) -> Option<SignedArithmeticCertificate> {
     if premises.len() > MAX_SELECTED_PREMISES {
         return None;
@@ -79,18 +96,22 @@ fn plan_signed_arithmetic_certificate_with_mode(
     }
     if comparison_terms(goal).is_some_and(|(left, right, _)| {
         !contains_machine_operation(left) && !contains_machine_operation(right)
-    }) && let Some(plan) =
-        plan_affine_from_selected_claims(premises, &claims, &expected, allow_weakening)
-    {
+    }) && let Some(plan) = plan_affine_from_selected_claims(
+        premises,
+        &claims,
+        &expected,
+        allow_weakening,
+        int32_range_fallback,
+    ) {
         return Some(plan);
     }
-    if let Some(plan) = plan_affine_one_premise(&claims, &expected) {
+    if !int32_range_fallback && let Some(plan) = plan_affine_one_premise(&claims, &expected) {
         return Some(plan);
     }
-    if let Some(plan) = plan_machine_affine_goal(goal, premises, &claims) {
+    if let Some(plan) = plan_machine_affine_goal(goal, premises, &claims, int32_range_fallback) {
         return Some(plan);
     }
-    if let Some(plan) = plan_interval_goal(goal, premises, &claims) {
+    if let Some(plan) = plan_interval_goal(goal, premises, &claims, int32_range_fallback) {
         return Some(plan);
     }
     None
@@ -101,8 +122,9 @@ fn plan_affine_from_selected_claims(
     claims: &[(usize, SignedArithmeticClaim)],
     expected: &SignedArithmeticClaim,
     allow_weakening: bool,
+    int32_range_fallback: bool,
 ) -> Option<SignedArithmeticCertificate> {
-    let mut planner = Planner::new(premises, claims);
+    let mut planner = Planner::new(premises, claims, int32_range_fallback);
     let conclusion = planner.affine_claim(expected, allow_weakening)?;
     Some(certificate(planner.nodes, conclusion))
 }
@@ -492,10 +514,11 @@ fn plan_machine_affine_goal(
     goal: &Proposition,
     premises: &[Proposition],
     claims: &[(usize, SignedArithmeticClaim)],
+    int32_range_fallback: bool,
 ) -> Option<SignedArithmeticCertificate> {
     let (left_operation, right_operation) = affine_operation_terms(goal)?;
     let expected = decomposed_signed_claim(goal)?;
-    let mut planner = Planner::new(premises, claims);
+    let mut planner = Planner::new(premises, claims, int32_range_fallback);
     let left_evidence = match left_operation {
         Some(term) => {
             // Affine conclusions decompose their operation roots using the
@@ -852,11 +875,19 @@ struct Planner<'a> {
     bound_index: Option<HashMap<SignedArithmeticAtom, BoundCandidates>>,
     term_hash_cache: HashMap<usize, u64>,
     premise_cache: HashMap<usize, usize>,
+    /// Whether `derived_bound` may use an atom's own `int32` range where no
+    /// premise bounds it (the planner's second pass only).
+    int32_range_fallback: bool,
 }
 
 impl<'a> Planner<'a> {
-    fn new(premises: &'a [Proposition], claims: &'a [(usize, SignedArithmeticClaim)]) -> Self {
+    fn new(
+        premises: &'a [Proposition],
+        claims: &'a [(usize, SignedArithmeticClaim)],
+        int32_range_fallback: bool,
+    ) -> Self {
         Self {
+            int32_range_fallback,
             premises,
             claims,
             nodes: Vec::new(),
@@ -1482,6 +1513,12 @@ impl<'a> Planner<'a> {
     /// leaves a bound on `atom` alone. `i >= 0` and `i < n` give `n >= 1`
     /// this way, which is what shows `n - i` defined.
     ///
+    /// When no premise bounds the other atom, its int32 range does
+    /// (`Int32Range`, `other <= INT32_MAX` or `INT32_MIN <= other`), provided
+    /// it is an opaque atom: `i < n` then gives `i <= INT32_MAX - 1`, which is
+    /// what shows `i + 1` defined. A non-strict `i <= n` gives only
+    /// `i <= INT32_MAX`, which shows nothing.
+    ///
     /// The result is `Ok(None)` when no premise pair states one, and `None`
     /// only when the work budget is spent. The scan reads each claim once
     /// and looks the other atom's bound up in the index, so it is linear in
@@ -1498,7 +1535,7 @@ impl<'a> Planner<'a> {
         let mut best: Option<(
             usize,
             SignedArithmeticClaim,
-            usize,
+            Option<usize>,
             SignedArithmeticClaim,
             i64,
         )> = None;
@@ -1528,13 +1565,29 @@ impl<'a> Planner<'a> {
                         BoundSide::Lower => candidates.lower,
                         BoundSide::Upper => candidates.upper,
                     });
-            let Some(candidate) = candidate else {
-                continue;
+            let (other_premise, other_claim) = match candidate {
+                Some(candidate) => {
+                    let Some((other_premise, other_claim)) = self.claims.get(candidate.position)
+                    else {
+                        continue;
+                    };
+                    (Some(*other_premise), other_claim.clone())
+                }
+                None if !self.int32_range_fallback => continue,
+                None => {
+                    // The other atom's own int32 range is on the side that
+                    // cancels it: an upper bound on `atom` adds the other
+                    // atom's upper bound, a lower one its lower bound.
+                    let Some(range) = crate::kernel::proof::signed_arithmetic::int32_range_bound(
+                        other.clone(),
+                        matches!(side, BoundSide::Upper),
+                    ) else {
+                        continue;
+                    };
+                    (None, range)
+                }
             };
-            let Some((other_premise, other_claim)) = self.claims.get(candidate.position) else {
-                continue;
-            };
-            let Some(sum) = add_claim(claim, other_claim) else {
+            let Some(sum) = add_claim(claim, &other_claim) else {
                 continue;
             };
             // The sum names `atom` alone, with the coefficient of this side.
@@ -1553,20 +1606,19 @@ impl<'a> Planner<'a> {
                 (Some((_, _, _, _, current)), BoundSide::Upper) => bound < *current,
             };
             if better {
-                best = Some((
-                    *premise,
-                    claim.clone(),
-                    *other_premise,
-                    other_claim.clone(),
-                    bound,
-                ));
+                best = Some((*premise, claim.clone(), other_premise, other_claim, bound));
             }
         }
         let Some((premise, claim, other_premise, other_claim, bound)) = best else {
             return Some(None);
         };
         let left = self.premise(premise, &claim)?;
-        let right = self.premise(other_premise, &other_claim)?;
+        let right = match other_premise {
+            Some(other_premise) => self.premise(other_premise, &other_claim)?,
+            None => self.push(SignedArithmeticNode::Int32Range {
+                result: other_claim.clone(),
+            })?,
+        };
         let result = add_claim(&claim, &other_claim)?;
         let node = self.push(SignedArithmeticNode::Add {
             left,
@@ -2027,9 +2079,10 @@ fn plan_interval_goal(
     goal: &Proposition,
     premises: &[Proposition],
     claims: &[(usize, SignedArithmeticClaim)],
+    int32_range_fallback: bool,
 ) -> Option<SignedArithmeticCertificate> {
     let (left, right, comparison) = comparison_terms(goal)?;
-    let mut planner = Planner::new(premises, claims);
+    let mut planner = Planner::new(premises, claims, int32_range_fallback);
     let left_node = planner.build_interval(left)?;
     let right_node = planner.build_interval(right)?;
     let result = SignedArithmeticComparison::from_comparison(comparison);
@@ -2881,7 +2934,7 @@ mod tests {
 
     #[test]
     fn planner_rejects_node_count_above_the_certificate_bound() {
-        let mut planner = Planner::new(&[], &[]);
+        let mut planner = Planner::new(&[], &[], false);
         let result = SignedArithmeticClaim {
             carrier: SignedArithmeticCarrier::SignedInt32,
             relation: SignedArithmeticRelation::LessEqual,

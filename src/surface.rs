@@ -286,6 +286,7 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "initialize",
     "instantiate",
     "int32",
+    "int32_range",
     "intro",
     "invariant",
     "left",
@@ -5299,6 +5300,11 @@ pub enum SignedArithmeticStep {
         result: ClickProposition,
     },
     Trivial {
+        result: ClickProposition,
+    },
+    /// One opaque term's int32 range bound, `t <= 2147483647` or
+    /// `-2147483648 <= t`.
+    Int32Range {
         result: ClickProposition,
     },
     IntervalFromAffine {

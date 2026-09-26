@@ -74,6 +74,7 @@ documentation inventory keep the following accepted words synchronized.
 | `eq_from_bounds` | Closes an equality from opposite non-strict bounds. |
 | `lt_from_neq` | Sharpens a non-strict bound to a strict one with a disequality on the same sides. |
 | `trivial` | Checks a context-free affine identity. |
+| `int32_range` | States one opaque `int32` term's own range as an affine bound, `t <= 2147483647` or `-2147483648 <= t`. |
 | `interval_from_affine`, `interval_from_affine_direct`, `interval_atom`, `interval_intersect` | Introduce, import, or intersect, checked signed-machine intervals. `interval_from_affine_direct` is required when the cited affine premise already contains a compound machine operation; it does not silently decompose that operation. |
 | `defined`, `interval_add`, `interval_add_bounded`, `interval_subtract`, `interval_multiply`, `interval_remainder`, `interval_shift_left`, `interval_arithmetic_shift_right`, `interval_bitwise_and`, `interval_sign_bit_flip`, `interval_compare` | Record exact definedness premises and bounded interval-operation evidence for signed-machine expressions. |
 | `affine_conclusion`, `affine_conclusion_pair` | Bridge an affine claim to a machine proposition using one, or separately named left and right, interval/definedness evidence. The pair form is required when both comparison sides contain compound operations. |

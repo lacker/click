@@ -1001,6 +1001,25 @@ impl<'a> Proof<'a> {
                         .or_else(|| claim_surface(result))
                 }
                 SignedArithmeticNode::Trivial { result } => claim_surface(result),
+                SignedArithmeticNode::Int32Range { result } => {
+                    let (atom, coefficient) = result.terms.iter().next()?;
+                    let atom = term(&crate::kernel::Bitvector32Term::Variable(
+                        atom.as_variable()?,
+                    ))?;
+                    Some(if coefficient.is_positive() {
+                        ClickProposition::Comparison {
+                            left: atom,
+                            operator: ComparisonOperator::LessEqual,
+                            right: surface_signed_integer_literal(&BigInt::from(i32::MAX)),
+                        }
+                    } else {
+                        ClickProposition::Comparison {
+                            left: surface_signed_integer_literal(&BigInt::from(i32::MIN)),
+                            operator: ComparisonOperator::LessEqual,
+                            right: atom,
+                        }
+                    })
+                }
                 SignedArithmeticNode::IntervalCompare { .. }
                 | SignedArithmeticNode::AffineConclusion { .. }
                 | SignedArithmeticNode::AffineConclusionWithEvidence { .. } => {
@@ -1060,6 +1079,9 @@ impl<'a> Proof<'a> {
                 },
                 SignedArithmeticNode::Trivial { .. } => {
                     SignedArithmeticStep::Trivial { result: result()? }
+                }
+                SignedArithmeticNode::Int32Range { .. } => {
+                    SignedArithmeticStep::Int32Range { result: result()? }
                 }
                 SignedArithmeticNode::IntervalFromAffine {
                     source,

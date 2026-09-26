@@ -780,6 +780,9 @@ fn expand_declared_resource_signed_step(
         SignedArithmeticStep::Trivial { result } => SignedArithmeticStep::Trivial {
             result: proposition(result)?,
         },
+        SignedArithmeticStep::Int32Range { result } => SignedArithmeticStep::Int32Range {
+            result: proposition(result)?,
+        },
         SignedArithmeticStep::IntervalFromAffine {
             source,
             term,

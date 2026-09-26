@@ -901,6 +901,9 @@ fn write_signed_int32_certificate(
             SignedArithmeticStep::Trivial { result } => {
                 format!("trivial => {};", source_click_proposition(result))
             }
+            SignedArithmeticStep::Int32Range { result } => {
+                format!("int32_range => {};", source_click_proposition(result))
+            }
             SignedArithmeticStep::IntervalFromAffine {
                 source,
                 term,

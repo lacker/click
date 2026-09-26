@@ -85,6 +85,14 @@ impl SignedArithmeticAtom {
         signed_atom_work(self)
     }
 
+    /// The variable this atom is, when it is exactly one variable.
+    pub(crate) fn as_variable(&self) -> Option<Variable> {
+        match self.tokens.as_slice() {
+            [SignedArithmeticAtomToken::Variable(variable)] => Some(*variable),
+            _ => None,
+        }
+    }
+
     fn is_opaque_root(&self) -> bool {
         matches!(
             self.tokens.first(),
@@ -610,6 +618,15 @@ pub(crate) enum SignedArithmeticNode {
     Trivial {
         result: SignedArithmeticClaim,
     },
+    /// The int32 range of one opaque atom as an affine bound: `t <=
+    /// INT32_MAX` or `INT32_MIN <= t`, true of every int32 value. It is the
+    /// bound that lets a strict premise `x < y` bound `x` by
+    /// `INT32_MAX - 1` when nothing else bounds `y`. Only an opaque root
+    /// (a variable or pure-function application) qualifies, as for
+    /// [`SignedArithmeticNode::IntervalAtom`].
+    Int32Range {
+        result: SignedArithmeticClaim,
+    },
     /// Obtain an interval for an exact one-atom affine bound.
     IntervalFromAffine {
         source: usize,
@@ -901,6 +918,14 @@ impl SignedArithmeticCertificate {
                 }
                 SignedArithmeticNode::Trivial { result } => {
                     if !is_trivial(result) || result.carrier != SignedArithmeticCarrier::SignedInt32
+                    {
+                        return Err(SignedArithmeticCheckError::NodeResultMismatch(node_index));
+                    }
+                    CheckedValue::Affine(result.clone())
+                }
+                SignedArithmeticNode::Int32Range { result } => {
+                    if result.carrier != SignedArithmeticCarrier::SignedInt32
+                        || !is_int32_range_bound(result)
                     {
                         return Err(SignedArithmeticCheckError::NodeResultMismatch(node_index));
                     }
@@ -1770,6 +1795,44 @@ fn equality_from_bounds(
         relation: SignedArithmeticRelation::Equal,
         terms: lower.terms.clone(),
         constant: lower.constant.clone(),
+    })
+}
+
+/// Whether a claim is exactly one opaque atom's int32 range bound:
+/// `t - INT32_MAX <= 0` or `INT32_MIN - t <= 0`.
+fn is_int32_range_bound(claim: &SignedArithmeticClaim) -> bool {
+    if claim.relation != SignedArithmeticRelation::LessEqual || claim.terms.len() != 1 {
+        return false;
+    }
+    let Some((atom, coefficient)) = claim.terms.iter().next() else {
+        return false;
+    };
+    if !atom.is_opaque_root() {
+        return false;
+    }
+    (coefficient.is_one() && claim.constant == BigInt::from(-SIGNED_MAX))
+        || (*coefficient == BigInt::from(-1) && claim.constant == BigInt::from(SIGNED_MIN))
+}
+
+/// The int32 range bound of one variable atom on the given side, in the form
+/// [`SignedArithmeticNode::Int32Range`] checks. The checker accepts any
+/// opaque root; a planner asks only for a variable, the one atom whose
+/// source spelling a printed certificate can always name.
+pub(crate) fn int32_range_bound(
+    atom: SignedArithmeticAtom,
+    upper: bool,
+) -> Option<SignedArithmeticClaim> {
+    atom.as_variable()?;
+    let (coefficient, constant) = if upper {
+        (BigInt::one(), BigInt::from(-SIGNED_MAX))
+    } else {
+        (BigInt::from(-1), BigInt::from(SIGNED_MIN))
+    };
+    Some(SignedArithmeticClaim {
+        carrier: SignedArithmeticCarrier::SignedInt32,
+        relation: SignedArithmeticRelation::LessEqual,
+        terms: BTreeMap::from([(atom, coefficient)]),
+        constant,
     })
 }
 

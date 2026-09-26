@@ -6402,6 +6402,12 @@ impl Parser {
                     self.expect(Token::Semicolon)?;
                     SignedArithmeticStep::Trivial { result }
                 }
+                "int32_range" => {
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::Int32Range { result }
+                }
                 "interval_from_affine" => {
                     let source = self.expect_index("affine source")?;
                     let term = self.parse_contract_expression()?;
