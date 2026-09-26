@@ -274,6 +274,31 @@ fn rewrite_through_load_variable(
     )))
 }
 
+/// Rewrites every occurrence of a symbolic pointer by its proven-equal
+/// form in a goal the structural pointer rewrite does not handle, such as a
+/// 64-bit comparison over an address (`(uint64)p`). Only an equality whose left side is a whole
+/// symbolic pointer (`p == q`, not `p + 4 == q`) qualifies; the rewrite then
+/// replaces that pointer variable and composes any displacement at each
+/// occurrence, which is exact term congruence bounded by the goal's size.
+/// Reached only for a goal shape the structural rewrite does not handle at
+/// all, so every goal it rewrites keeps its result.
+fn pointer_variable_rewrite(
+    goal: &Proposition,
+    left: &Pointer,
+    right: &Pointer,
+) -> Option<Proposition> {
+    let PointerBlock::Symbolic(variable) = left.block else {
+        return None;
+    };
+    if left.offset != PointerOffsetTerm::Constant(0) {
+        return None;
+    }
+    let rewritten =
+        crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_variable(variable, right)
+            .proposition(goal);
+    (&rewritten != goal).then_some(rewritten)
+}
+
 fn rewrite_atomic_proposition_by_exact_equality(
     goal: &Proposition,
     equality: &Proposition,
@@ -1056,9 +1081,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
                         )
                     }
                     _ => {
-                        return Err(
+                        return pointer_variable_rewrite(goal, left, right).ok_or_else(|| {
                             "`rewrite` pointer equality does not occur in this goal".to_string()
-                        );
+                        });
                     }
                 };
                 Proposition::ConditionIs(rewritten, *expected)
@@ -1080,7 +1105,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 )
             }
             _ => {
-                return Err("`rewrite` pointer equality expects a condition goal".to_string());
+                return pointer_variable_rewrite(goal, left, right).ok_or_else(|| {
+                    "`rewrite` pointer equality expects a condition goal".to_string()
+                });
             }
         };
         if &rewritten == goal {

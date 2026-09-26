@@ -36,6 +36,40 @@ Fix what slows the work before completing the example:
    efficiency contract.
 4. **Then the remaining exits of C3**, as separate packages by exit path.
 
+## State, 2026-09-26
+
+**C3b is started on the left-left frames.** The model gains
+`ctx_insert_case3_left_step` / `_right_step` (in-order, `is_rb_root`, parent
+consistency, and the sibling's black root, all stated on the context the loop
+hands back at the `break`) and the parent-consistency converse and swap lemmas
+they rest on (`plug_parent_consistent_ctx`, `ctx_consistent_swap`). In the
+frontier, the black-uncle arm of the cursor-`Left`, grandparent-`Left`
+combination runs case 3 to the `break` on six of its eight leaves: the split is
+the parent's other child (empty or a node, for `if (tmp)`) times the
+grandparent's own frame (`Top`, `Left`, `Right`, for `__rb_change_child`, which
+`step()` executes inside one inline call). The report is now at statement 42,
+`augment_rotate(gparent, parent)`, with 9 `break`s and 4 `continue`s complete;
+`tests/examples.rs` pins it. Verify time of the frontier went from 1.5s to 3.7s
+on a warm release build for six new leaves, each about 150 lines of proof;
+that is a measurement, not yet a scaling check.
+
+Gaps 74 and 75 below were fixed on the way. What stops the last two leaves is
+open: under a `Right` great-grandparent frame, `parent->rb_left == old` is
+decided only after unfolding that frame's other child, and the child cannot be
+refolded. `fold(rb_at(yid), ...)` at the arm's binding is refused twice over:
+a fold's resource arguments do not accept proof-arm bindings (`UnboundVariable`;
+the fields do, through `substitute_fixed_state_locals_in_expression`), and with
+that substitution added the fold still cannot consume cells the unfold
+published under the loaded pointer's spelling ("fold requires ownership of the
+complete instance body", from `without_fact_incrementally`). The same class
+shows in `have id->word == 5` failing after `p->word = 5` with `p == id`
+proved. Both reproductions are small; they are recorded under open findings.
+
+The remaining C3b work after that gap: the empty-uncle leaves of the same
+combination (the text is the same after refolding the uncle as `Empty`), the
+other three combinations (the two inner ones add case 2's rotation first; the
+model has `ctx_insert_case2_*` but no `_step` form yet), then C3c.
+
 ## State, 2026-09-25
 
 **C3a is written on all four frame combinations.** The uncle-red `continue`
@@ -439,6 +473,8 @@ commit that closed it. Reproductions live in the named fixtures.
 | 71 | `contradiction` in a `preserve` arm only as its sole tactic | ccf9a340 |
 | 72 | A read through a symbolic identity proved equal to a C pointer was refused: the read lookup resolved to the alias and looked only there | a3b96c12 |
 | 73 | `if (parent != tmp)` undecided with both nodes owned: the separation rule read only assumed compositions, and two instances opened one at a time never shared one; a comparison now composes its own two holders through the alias component | 9e1c4281 |
+| 74 | A fold's arm fact lowered a frame identity through its proved-equal C local inside a pure-function argument, so the fact proved in the model's spelling did not count; body facts are now also matched after substituting one pointer by an exact alias | this change (frontier leaves) |
+| 75 | `rewrite(p == 0)` did not reach `(uint64)p` in a 64-bit goal, and `address(null)` was opaque to `normalize` | this change, `mdtests/rewrite_pointer_null_into_an_address.md` |
 
 ## Open findings, not scheduled
 
@@ -491,6 +527,12 @@ blocks C3; each is a candidate package when it starts to.
   a time only read authority is published, not a full arm re-decision,
   because a per-clause re-decision broke the near-linear width contract
   (A28).
+- **Pointer spellings across a write or a fold** (blocks C3b's last two
+  left-left leaves): after `p->word = 5` with `p == id` proved, `have
+  id->word == 5` is refused while `have p->word == 5` holds; a fold's resource
+  arguments cannot name a proof-arm binding; and a fold at an arm binding
+  cannot consume cells an unfold published under a loaded pointer's spelling.
+  Loads in fold arguments (`fold(rb_at(x->left), ...)`) are also unsupported.
 - **Stale prose:** `mdtests/rb_replace_node.md` says a victim with
   children cannot be contracted, which `rb_replace_node_with_children.md`
   contradicts.

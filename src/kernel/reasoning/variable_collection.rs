@@ -2998,6 +2998,34 @@ fn collect_bitvector_capture_variables_seen(
     }
 }
 
+/// The pointer-block and bitvector variables a proposition captures,
+/// including the pointers inside pure-function arguments, which the plain
+/// bitvector collection does not descend into. Conditions and their
+/// connectives are traversed with the capture walk; any other proposition
+/// shape falls back to [`collect_proposition_bitvector_variables`].
+pub(in crate::kernel) fn collect_proposition_capture_variables(
+    proposition: &Proposition,
+    variables: &mut BTreeSet<Variable>,
+) {
+    let mut integer_seen = BTreeSet::new();
+    let mut pending = vec![proposition];
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            Proposition::ConditionIs(condition, _) => {
+                collect_condition_capture_variables(condition, variables, &mut integer_seen);
+            }
+            Proposition::And(left, right)
+            | Proposition::Or(left, right)
+            | Proposition::Implies(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            Proposition::Not(body) => pending.push(body),
+            proposition => collect_proposition_bitvector_variables(proposition, variables),
+        }
+    }
+}
+
 fn collect_condition_capture_variables(
     condition: &ConditionTerm,
     variables: &mut BTreeSet<Variable>,
