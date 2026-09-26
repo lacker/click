@@ -1995,23 +1995,25 @@ pub(super) fn heap_allocation_proven_separate_from_pointer(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
-    let allocation_token = CResourceFact::own_allocation(allocation_base.clone(), bytes.clone())
-        .resource()
-        .clone();
+    // Only the allocation's *memory* can be separate from a cell by address.
+    // The allocation token is a separate resource from every memory range,
+    // including the one it covers: a composite holding `allocation(p, n)`
+    // and `owns p[0..k]` states the two members separate, and reading that as
+    // "the freed bytes miss `p[0]`" framed a load of freed memory across its
+    // own `free`.
     let cell = CResource::Memory(CMemoryRange::new(
         pointer.clone(),
         Bitvector32Term::Constant(0),
         Bitvector32Term::Constant(1),
     ));
-    assumptions.proves_resource_separate(&allocation_token, &cell)
-        || int32_element_count_from_bytes(bytes).is_some_and(|count| {
-            let allocation_memory = CResource::Memory(CMemoryRange::new(
-                allocation_base.clone(),
-                Bitvector32Term::Constant(0),
-                count,
-            ));
-            assumptions.proves_resource_separate(&allocation_memory, &cell)
-        })
+    int32_element_count_from_bytes(bytes).is_some_and(|count| {
+        let allocation_memory = CResource::Memory(CMemoryRange::new(
+            allocation_base.clone(),
+            Bitvector32Term::Constant(0),
+            count,
+        ));
+        assumptions.proves_resource_separate(&allocation_memory, &cell)
+    })
 }
 
 /// Produces checked evidence that two loads are equal from the memory DAG: both sides are
