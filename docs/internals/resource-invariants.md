@@ -250,8 +250,13 @@ of an owned body supplies it. Folding consumes it. An exposed guard establishes
 Symbolic atoms remain distinct from concrete acquisition epochs. A concrete
 preserved guard requirement selects the entry acquisition, even if a later
 state contains a replacement acquisition at the same address. Direct
-guard clauses and consumed/produced guard instances are refused in both
-transfer and certification. Calls with live protocols require a preserving
+`owns mutex_guard(mu)` clauses now use this rule: abstract entry construction
+assumes the atom and freezes protocols before resource evaluation, while calls
+must supply checked ownership. The ordinary owned-borrow transfer retains the
+entry atom for return. Concrete atoms retain their acquisition address for
+source-level missing-resource diagnostics; that address is immutable provenance,
+not a variable that changes acquisition identity during substitution. Named
+primitive binders and consumed/produced guards remain refused. Calls with live protocols require a preserving
 guard input; suspended workers remain refused. All modeled mutex transitions
 reject a preserving body, even when its abstract entry has no concrete ledger.
 The reinitializing, unlocking, destroying, and nested-reset helper fixtures

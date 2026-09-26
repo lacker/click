@@ -1589,7 +1589,8 @@ pub(in crate::kernel) fn collect_c_resource_bitvector_variables(
 ) {
     match resource {
         CResource::MutexGuard(identity) => {
-            if let Some(pointer) = &identity.abstract_mutex {
+            if identity.epoch.is_none() {
+                let pointer = &identity.mutex;
                 collect_pointer_bitvector_variables(pointer, variables);
             }
         }

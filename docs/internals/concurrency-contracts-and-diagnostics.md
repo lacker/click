@@ -13,8 +13,9 @@ classification is described in [proof-failure triage](../concepts/proof-failure-
 
 ## What exists and what would change
 
-Today, `mutex_guard(mu)` can occur in declared resource bodies. `owns h:
-holding(counter)` can preserve a folded guard wrapper through a helper. The
+Today, `owns mutex_guard(mu)` can occur directly in preserving function
+contracts and in declared resource bodies. `owns h: holding(counter)` can
+preserve a folded guard wrapper through a helper. The
 helper can unfold and refold the wrapper, establish `held(mu)` from the exposed
 guard, and use separately supplied protected memory. It cannot change mutex
 protocols. This is a conservative implementation
@@ -26,6 +27,7 @@ The proposed next surface is:
 | --- | --- | --- |
 | `guarded_by counter->mutex;` | Keep the existing spelling | This resource assertion is the one this mutex protects. |
 | `owns mutex_guard(mu)` in a resource body | Keep the existing spelling | This resource contains ownership of a current acquisition, not merely knowledge that the mutex is locked. |
+| Direct `owns mutex_guard(mu);` clauses | Implemented for preserving helpers | Receives and returns the entry acquisition; all mutex transitions remain prohibited. |
 | Direct named guard clauses, such as `owns g: mutex_guard(mu);` | Extend contract support; not supported today | The function receives and returns the same guard occurrence. |
 | `consumes` and `produces` for guards | Extend existing clause semantics; not supported today | The function can surrender an acquisition or return a newly established one. |
 | `mutex_live(mu)` | Agreed name for a proposed new built-in resource | Lifecycle ownership of this initialized mutex, including responsibility for destruction. |

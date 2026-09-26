@@ -1,20 +1,19 @@
-# A guard contract cannot consume an opaque guard
+# A direct guard contract preserves its acquisition
 
-A preserving contract frames the wrapper and its acquisition. The helper
-receives no permission to change the mutex protocol.
+The helper receives the acquisition directly and returns the same authority.
+Its protected memory remains a separate input resource.
 
 ```c filename=guarded_resource_mutex_flow.c
 #include <pthread.h>
 struct counter { pthread_mutex_t mu; int value; };
 
-void keep(struct counter *counter) {}
+int read_locked(struct counter *counter) { return counter->value; }
 
 int read_counter(struct counter *counter) {
     int value;
     pthread_mutex_init(&counter->mu, 0);
     pthread_mutex_lock(&counter->mu);
-    keep(counter);
-    value = counter->value;
+    value = read_locked(counter);
     pthread_mutex_unlock(&counter->mu);
     pthread_mutex_destroy(&counter->mu);
     return value;
@@ -25,11 +24,6 @@ int read_counter(struct counter *counter) {
 target "x86_64-linux-userspace";
 runtime "modeled-pthread";
 
-resource holding(counter: struct counter*) {
-    field tag: int32;
-    owns mutex_guard(&counter->mu);
-}
-
 resource counter_state(counter: struct counter*) {
     field value: int32;
     guarded_by counter->mu;
@@ -39,10 +33,15 @@ resource counter_state(counter: struct counter*) {
 
 verifying "guarded_resource_mutex_flow.c";
 
-void keep(struct counter *counter) {
-    consumes h: holding(counter);
+int32 read_locked(struct counter *counter) {
+    owns mutex_guard(&counter->mu);
+    owns state: counter_state(counter);
+    ensures result == state.value;
 } by {
+    have held(&counter->mu) by simp;
+    unfold(state);
     execute();
+    fold(state);
     simp();
 }
 
@@ -53,12 +52,7 @@ int32 read_counter(struct counter *counter) {
     step();
     step(pthread_mutex_init(&counter->mu, 0), { invariant: state });
     step();
-    let held = fold(holding(counter), { tag: 0 });
-    step(keep(counter), { h: held });
-    unfold(held);
-    unfold(state);
-    step();
-    fold(state);
+    step(read_locked(counter), { state: state });
     step();
     step();
     step();
@@ -67,5 +61,5 @@ int32 read_counter(struct counter *counter) {
 ```
 
 ```expect
-fail: guard-bearing contracts currently require preserving owned inputs
+pass
 ```

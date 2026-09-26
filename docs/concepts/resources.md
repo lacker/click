@@ -601,12 +601,28 @@ initialization, acquisition, release, and destruction are all forbidden while
 checking that helper, and nested calls must satisfy the same preserving
 boundary. The caller recovers the wrapper and the unchanged acquisition.
 
-This first contract boundary keeps the guard opaque. Unfolding it inside an
-independently checked helper, direct guard clauses, consuming or producing
-guards, and lock-changing helpers still require abstract acquisition state.
-Calls without a preserving guard input remain refused while a mutex protocol
-is live. `held(mu)` cannot inspect an opaque entry protocol. Local guard
-composition within a function continues to work; loop restrictions remain.
+A helper can unfold and refold that wrapper, or receive the guard directly:
+
+<!-- verified-example: mdtests/mutex_guard_direct_contract.md -->
+```click
+int32 read_locked(struct counter *counter) {
+    owns mutex_guard(&counter->mu);
+    owns state: counter_state(counter);
+    ensures result == state.value;
+}
+```
+
+The direct clause preserves the entry acquisition, including when the C body
+reassigns its pointer parameter. The guard establishes `held(mu)`; the separate
+`counter_state` supplies memory authority. A caller with a folded guard wrapper
+must unfold it before passing the direct guard, and may refold it after return.
+Missing guard inputs are reported as `Requires owns mutex_guard(...)`.
+
+Named primitive binders such as `owns g: mutex_guard(mu)`, consuming or producing
+guards, and lock-changing helper contracts remain unsupported. Calls without a
+preserving guard input remain refused while a mutex protocol is live. An opaque
+entry protocol without exposed guard authority does not establish `not held(mu)`.
+Loop restrictions remain.
 
 A contract clause speaks about parameters, so `consumes t: tree_at(root);`
 names the tree at the entry argument. These tactics are not contract clauses:

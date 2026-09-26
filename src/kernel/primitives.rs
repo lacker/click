@@ -3396,6 +3396,10 @@ pub enum CRuntimeError {
     MissingResource {
         resource: CResourceFact,
     },
+    /// A guard contract requires an acquisition, but this state has none to select.
+    MissingMutexGuard {
+        mutex: Pointer,
+    },
     MissingVerifiedFunctionRule(String),
     UnsupportedOpaqueFunctionContract(String),
     AbstractFunctionPointerCall(String),
@@ -5516,8 +5520,17 @@ pub enum CResource {
 /// are meaningful only while every mutex transition is prohibited.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct MutexGuardIdentity {
-    pub(in crate::kernel) epoch: u64,
-    pub(in crate::kernel) abstract_mutex: Option<Pointer>,
+    /// `None` is the unchanged acquisition assumed at abstract contract entry.
+    pub(in crate::kernel) epoch: Option<u64>,
+    /// For concrete acquisitions this is immutable diagnostic provenance;
+    /// only an abstract acquisition's address participates in substitution.
+    pub(in crate::kernel) mutex: Pointer,
+}
+
+impl MutexGuardIdentity {
+    pub(crate) fn mutex(&self) -> &Pointer {
+        &self.mutex
+    }
 }
 
 impl CResource {

@@ -819,10 +819,18 @@ pub(super) fn describe_runtime_error(
             format!("wrong argument count: expected {expected}, got {actual}")
         }
         crate::kernel::CRuntimeError::MissingReturn => "missing return".to_string(),
-        crate::kernel::CRuntimeError::MissingResource { resource } => format!(
-            "missing resource fact `{}`",
-            describe_resource_fact(resource, parameters, arguments)
+        crate::kernel::CRuntimeError::MissingMutexGuard { mutex } => format!(
+            "Requires owns mutex_guard({})",
+            describe_mutex_pointer(mutex, parameters, arguments)
         ),
+        crate::kernel::CRuntimeError::MissingResource { resource } => {
+            let fact = describe_resource_fact(resource, parameters, arguments);
+            if matches!(resource.resource(), CResource::MutexGuard(_)) {
+                format!("Requires {fact}")
+            } else {
+                format!("missing resource fact `{fact}`")
+            }
+        }
         crate::kernel::CRuntimeError::MissingVerifiedFunctionRule(name) => format!(
             "cannot execute call to `{name}` opaquely: its contract has not been verified yet"
         ),
@@ -1085,8 +1093,12 @@ pub(super) fn describe_resource_fact(
         );
     }
     match resource {
-        CResourceFact::Own(CResource::MutexGuard(_), _)
-        | CResourceFact::View(CResource::MutexGuard(_)) => "mutex guard".to_string(),
+        CResourceFact::Own(CResource::MutexGuard(identity), _)
+        | CResourceFact::View(CResource::MutexGuard(identity)) => format!(
+            "{} mutex_guard({})",
+            if resource.is_own() { "owns" } else { "views" },
+            describe_mutex_pointer(identity.mutex(), parameters, arguments)
+        ),
         CResourceFact::Own(CResource::Instance(instance), _)
         | CResourceFact::View(CResource::Instance(instance)) => format!(
             "{} instance {}#{}",
@@ -1211,7 +1223,10 @@ fn describe_c_resource(
             name,
             arguments: resource_arguments,
         } => format_declared_resource(name, resource_arguments, parameters, arguments),
-        CResource::MutexGuard(_) => "mutex guard".to_string(),
+        CResource::MutexGuard(identity) => format!(
+            "mutex_guard({})",
+            describe_mutex_pointer(identity.mutex(), parameters, arguments)
+        ),
         CResource::Iterated(iterated) => describe_iterated_memory(iterated, parameters, arguments),
     }
 }
@@ -2714,6 +2729,44 @@ fn describe_memory_block(
         // would tell the reader nothing they wrote.
         _ => None,
     }
+}
+
+/// Spell mutex storage as an address, including a field at offset zero, rather
+/// than rendering the containing object or an array-element value.
+fn describe_mutex_pointer(
+    pointer: &Pointer,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        let CExpression::Value(CValue::Pointer(base)) = argument else {
+            continue;
+        };
+        let Some(layout) = parameter
+            .pointee_struct_layout()
+            .or_else(|| parameter.struct_layout())
+        else {
+            continue;
+        };
+        let Some(offset) = diagnostic_pointer_element_index_from_base(pointer, base, 1)
+            .and_then(|offset| offset.as_const())
+        else {
+            continue;
+        };
+        if let Some((name, _)) = layout
+            .fields()
+            .iter()
+            .find(|(_, field)| field.offset_bytes() == offset)
+        {
+            let selector = if parameter.is_struct_value() {
+                "."
+            } else {
+                "->"
+            };
+            return format!("&{}{selector}{name}", parameter.name());
+        }
+    }
+    describe_pointer(pointer, parameters, arguments)
 }
 
 pub(super) fn describe_pointer(

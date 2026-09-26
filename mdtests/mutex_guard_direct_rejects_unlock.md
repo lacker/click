@@ -1,4 +1,4 @@
-# A guard contract cannot consume an opaque guard
+# A preserving helper cannot unlock its mutex
 
 A preserving contract frames the wrapper and its acquisition. The helper
 receives no permission to change the mutex protocol.
@@ -7,7 +7,7 @@ receives no permission to change the mutex protocol.
 #include <pthread.h>
 struct counter { pthread_mutex_t mu; int value; };
 
-void keep(struct counter *counter) {}
+void keep(struct counter *counter) { pthread_mutex_unlock(&counter->mu); }
 
 int read_counter(struct counter *counter) {
     int value;
@@ -40,7 +40,7 @@ resource counter_state(counter: struct counter*) {
 verifying "guarded_resource_mutex_flow.c";
 
 void keep(struct counter *counter) {
-    consumes h: holding(counter);
+    owns mutex_guard(&counter->mu);
 } by {
     execute();
     simp();
@@ -53,9 +53,7 @@ int32 read_counter(struct counter *counter) {
     step();
     step(pthread_mutex_init(&counter->mu, 0), { invariant: state });
     step();
-    let held = fold(holding(counter), { tag: 0 });
-    step(keep(counter), { h: held });
-    unfold(held);
+    step(keep(counter), {});
     unfold(state);
     step();
     fold(state);
@@ -67,5 +65,5 @@ int32 read_counter(struct counter *counter) {
 ```
 
 ```expect
-fail: guard-bearing contracts currently require preserving owned inputs
+fail: preserving guard contracts cannot change mutex protocols
 ```

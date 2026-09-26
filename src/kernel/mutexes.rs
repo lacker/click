@@ -66,10 +66,29 @@ pub(super) struct MutexGuard {
 impl MutexGuard {
     fn resource_fact(&self) -> CResourceFact {
         CResourceFact::own(CResource::MutexGuard(super::MutexGuardIdentity {
-            epoch: self.epoch,
-            abstract_mutex: None,
+            epoch: Some(self.epoch),
+            mutex: self.mutex.clone(),
         }))
     }
+}
+
+/// Describe the acquisition selected by a resource clause. This does not insert
+/// ownership. Abstract entry construction may assume this atom just as it assumes
+/// other declared input resources; execution must consume checked ownership.
+pub(super) fn guard_resource(
+    state: &CState,
+    mutex: &Pointer,
+    abstract_entry: bool,
+) -> Option<CResourceFact> {
+    if let Some(ledger) = &state.mutex_ledger {
+        return ledger.guard_resource(mutex);
+    }
+    (abstract_entry || state.preserves_mutex_protocols).then(|| {
+        CResourceFact::own(CResource::MutexGuard(super::MutexGuardIdentity {
+            epoch: None,
+            mutex: mutex.clone(),
+        }))
+    })
 }
 
 impl MutexContext {
@@ -387,8 +406,8 @@ impl MutexLedger {
         match self.get(mutex) {
             Some(MutexEntry::Locked { epoch, .. }) => Some(CResourceFact::own(
                 CResource::MutexGuard(super::MutexGuardIdentity {
-                    epoch: *epoch,
-                    abstract_mutex: None,
+                    epoch: Some(*epoch),
+                    mutex: mutex.clone(),
                 }),
             )),
             _ => None,

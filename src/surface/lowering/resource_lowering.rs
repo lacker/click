@@ -288,7 +288,10 @@ pub(in crate::surface) fn initial_call_state(
         materialize_symbolic_access_resource_cells(memory, requires, parameters, &arguments)?;
     let state = state.with_memory(memory);
     let resources = resource_context_from_requirements(requires, parameters, &arguments, &state)?;
-    Ok((state.with_resource_context(resources), arguments))
+    Ok((
+        crate::kernel::c_state_with_assumed_guard_inputs(state.with_resource_context(resources)),
+        arguments,
+    ))
 }
 
 /// A contract may transfer memory reached through a copied pointer value,
@@ -1554,6 +1557,21 @@ fn lower_resource_clause_with_values_mode_at_entry(
                     )));
                 }
                 resource_values.push(value);
+            }
+            if name == "mutex_guard" {
+                let [CValue::Pointer(mutex)] = resource_values.as_slice() else {
+                    return Err(ClickError::new("mutex_guard expects one mutex pointer"));
+                };
+                let guard = crate::kernel::c_mutex_guard_resource(
+                    state,
+                    mutex.pointer(),
+                    allow_symbolic_resource_arguments,
+                )
+                .ok_or_else(|| ClickError::new("mutex_guard requires a live acquisition"))?;
+                return Ok(match access {
+                    ResourceAccessMode::Own => guard,
+                    ResourceAccessMode::View => CResourceFact::View(guard.resource().clone()),
+                });
             }
             let resource = match kind {
                 ResourceKind::Composite => CResource::Composite {

@@ -185,7 +185,10 @@ helpers can unfold and refold them, establish `held(mu)` from exposed guards,
 and access separately supplied protected memory. Their checked
 bodies freeze all mutex transitions; reinitialization, unlock, destruction,
 and untracked nested calls are rejected. The caller retains the same protocol
-and acquisition. This uses the existing `owns` syntax.
+and acquisition. Direct `owns mutex_guard(mu)` inputs also work, including
+nested preserving calls and wrapper exchanges. They return the entry acquisition
+and report missing input authority as `Requires owns mutex_guard(...)`. This
+uses the existing `owns` syntax.
 
 Direct named guard clauses and consumed/produced guards still require the
 full abstract acquisition binding and transition model. The current symbolic

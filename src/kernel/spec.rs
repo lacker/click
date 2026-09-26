@@ -5493,8 +5493,8 @@ fn lower_spec_predicate_proposition_at_state_in(
                 };
                 if state.preserves_mutex_protocols && state.mutex_ledger.is_none() {
                     let guard = CResourceFact::own(CResource::MutexGuard(MutexGuardIdentity {
-                        epoch: 0,
-                        abstract_mutex: Some(mutex.pointer().clone()),
+                        epoch: None,
+                        mutex: mutex.pointer().clone(),
                     }));
                     if state.resources.satisfies_fact(&guard, assumptions) {
                         return SpecPropositionPath {

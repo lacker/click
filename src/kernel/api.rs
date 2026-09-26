@@ -2489,6 +2489,28 @@ pub(crate) fn c_evaluate_spec_resource_expression_with_checked_obligations(
     Ok((path.value.clone(), path.obligations.clone()))
 }
 
+/// Freeze protocols before evaluating an independent contract's assumed guard
+/// inputs. This grants no resources and is not a call-site transfer operation.
+pub(crate) fn c_state_with_assumed_guard_inputs(mut state: CState) -> CState {
+    if state
+        .resources
+        .facts()
+        .iter()
+        .any(|fact| matches!(fact.resource(), CResource::MutexGuard(_)))
+    {
+        state.preserves_mutex_protocols = true;
+    }
+    state
+}
+
+pub(crate) fn c_mutex_guard_resource(
+    state: &CState,
+    mutex: &Pointer,
+    abstract_entry: bool,
+) -> Option<CResourceFact> {
+    crate::kernel::mutexes::guard_resource(state, mutex, abstract_entry)
+}
+
 pub fn c_function_entry_state(
     caller_state: &CState,
     function: &CFunction,

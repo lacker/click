@@ -1,4 +1,4 @@
-# A guard contract cannot consume an opaque guard
+# A folded guard must be exposed before a direct guard call
 
 A preserving contract frames the wrapper and its acquisition. The helper
 receives no permission to change the mutex protocol.
@@ -7,14 +7,13 @@ receives no permission to change the mutex protocol.
 #include <pthread.h>
 struct counter { pthread_mutex_t mu; int value; };
 
-void keep(struct counter *counter) {}
+int read_locked(struct counter *counter) { return counter->value; }
 
 int read_counter(struct counter *counter) {
     int value;
     pthread_mutex_init(&counter->mu, 0);
     pthread_mutex_lock(&counter->mu);
-    keep(counter);
-    value = counter->value;
+    value = read_locked(counter);
     pthread_mutex_unlock(&counter->mu);
     pthread_mutex_destroy(&counter->mu);
     return value;
@@ -39,10 +38,15 @@ resource counter_state(counter: struct counter*) {
 
 verifying "guarded_resource_mutex_flow.c";
 
-void keep(struct counter *counter) {
-    consumes h: holding(counter);
+int32 read_locked(struct counter *counter) {
+    owns mutex_guard(&counter->mu);
+    owns state: counter_state(counter);
+    ensures result == state.value;
 } by {
+    have held(&counter->mu) by simp;
+    unfold(state);
     execute();
+    fold(state);
     simp();
 }
 
@@ -54,11 +58,8 @@ int32 read_counter(struct counter *counter) {
     step(pthread_mutex_init(&counter->mu, 0), { invariant: state });
     step();
     let held = fold(holding(counter), { tag: 0 });
-    step(keep(counter), { h: held });
+    step(read_locked(counter), { state: state });
     unfold(held);
-    unfold(state);
-    step();
-    fold(state);
     step();
     step();
     step();
@@ -67,5 +68,5 @@ int32 read_counter(struct counter *counter) {
 ```
 
 ```expect
-fail: guard-bearing contracts currently require preserving owned inputs
+fail: Requires owns mutex_guard(&counter->mu)
 ```
