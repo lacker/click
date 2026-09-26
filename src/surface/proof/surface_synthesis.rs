@@ -36,6 +36,33 @@ thread_local! {
     /// read the source performs.
     static SYNTHESIS_STRUCT_OWNERS: std::cell::RefCell<Option<std::sync::Arc<SynthesisStructOwners>>> =
         const { std::cell::RefCell::new(None) };
+    /// The names the source wrote for kernel quantifier binders, when the
+    /// proposition being spelled came from lowering a written quantifier.
+    /// A synthesized binder takes its written name instead of a generated
+    /// `__click_q` one, so a proof focused on the synthesized goal names it
+    /// the way the source did.
+    static SYNTHESIS_BINDER_NAMES: std::cell::RefCell<Option<std::sync::Arc<BTreeMap<Variable, String>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `synthesize` with `names` as the written names of kernel quantifier
+/// binders; see `SYNTHESIS_BINDER_NAMES`. A name is used only where it does
+/// not collide with a parameter, a local, or an enclosing binder, and the
+/// caller still validates the result by lowering it.
+pub(in crate::surface) fn with_synthesis_binder_names<T>(
+    names: &std::sync::Arc<BTreeMap<Variable, String>>,
+    synthesize: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Option<std::sync::Arc<BTreeMap<Variable, String>>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SYNTHESIS_BINDER_NAMES.with(|slot| {
+                slot.replace(self.0.take());
+            });
+        }
+    }
+    let _restore = Restore(SYNTHESIS_BINDER_NAMES.with(|slot| slot.replace(Some(names.clone()))));
+    synthesize()
 }
 
 #[derive(Default)]
@@ -912,21 +939,33 @@ fn synthesize_surface_quantified_proposition(
             if *sort != Sort::CInt32 {
                 return None;
             }
-            let mut suffix = bound_variables.len();
-            let name = loop {
-                let candidate = format!("__click_q{suffix}");
-                let conflicts = parameters
+            let conflicts = |candidate: &str| {
+                parameters
                     .iter()
                     .any(|parameter| parameter.name() == candidate)
                     || state
                         .locals()
                         .object_values()
                         .any(|(name, _)| name == candidate)
-                    || bound_variables.values().any(|name| name == &candidate);
-                if !conflicts {
-                    break candidate;
+                    || bound_variables.values().any(|name| name == candidate)
+            };
+            let written = SYNTHESIS_BINDER_NAMES.with(|slot| {
+                slot.borrow()
+                    .as_ref()
+                    .and_then(|names| names.get(var).cloned())
+            });
+            let name = match written {
+                Some(written) if !conflicts(&written) => written,
+                _ => {
+                    let mut suffix = bound_variables.len();
+                    loop {
+                        let candidate = format!("__click_q{suffix}");
+                        if !conflicts(&candidate) {
+                            break candidate;
+                        }
+                        suffix += 1;
+                    }
                 }
-                suffix += 1;
             };
             let mut body_variables = bound_variables.clone();
             body_variables.insert(*var, name.clone());

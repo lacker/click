@@ -818,6 +818,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             declared_invariant_surfaces: invariant_surfaces.clone(),
             loop_head_premises: Vec::new(),
             binders: preservation.binders().to_vec(),
+            binder_names: Arc::new(written_invariant_binder_names(invariant_checks)),
         })),
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),

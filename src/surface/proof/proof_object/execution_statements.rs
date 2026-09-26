@@ -31,8 +31,9 @@ fn ranking_member_diagnostic(ranking_measures: &[crate::kernel::CRankingComponen
 
 /// A premise the bundle closer may hand to `arithmetic() using`, as the
 /// exact pair of lowered kernel proposition and the source text that lowers
-/// to it. Only the loop head's guard and invariants at iteration entry and
-/// the function's written preconditions ever become one of these.
+/// to it. Only the loop head's guard and invariants at iteration entry, the
+/// function's written preconditions, and the written antecedent a quantified
+/// bundle member introduces ever become one of these.
 pub(in crate::surface::proof) type NamedArithmeticPremise = (Proposition, ClickProposition);
 
 /// Splits a written contract clause into the conjuncts a source proof would
@@ -255,6 +256,39 @@ impl<'a> Proof<'a> {
             }
             return Ok(result);
         }
+        // A quantified member, such as the extent guard a quantified
+        // `viewable` invariant owes for every value of its binder, is the
+        // same descent one binder further in: `intro` the binder under the
+        // member's own source form, so the leaf can name it, then `intro`
+        // its written antecedent and cite that antecedent's conjuncts beside
+        // the loop head's premises. The added premises are the antecedent's
+        // written conjuncts only, so the premise list grows with the member,
+        // not with the ambient facts.
+        if matches!(goal, Proposition::ForAll { .. }) {
+            let presented = self.with_synthesized_bundle_member_surface();
+            // The ordinary member closer answers a quantified member it can
+            // close whole, such as one a named universal fact states; the
+            // descent below is for the leaf it cannot.
+            if let Some(closed) = presented.close_bundle_member(premises, loop_head_surfaces)? {
+                scope.succeed();
+                return Ok(Some(closed));
+            }
+            let Some(introduced) =
+                attempt::candidate_outcome(presented.apply_step(ProofStep::Intro))?
+            else {
+                return Ok(None);
+            };
+            let Some((introduced, premises)) =
+                introduced.introduce_bundle_member_antecedent(premises)?
+            else {
+                return Ok(None);
+            };
+            let result = introduced.plan_invariant_bundle_closure(&premises, loop_head_surfaces)?;
+            if result.is_some() {
+                scope.succeed();
+            }
+            return Ok(result);
+        }
         let surface_goal = self.surface_goal().cloned();
         if matches!(goal, Proposition::Or(_, _))
             && let Some(surface_goal) = surface_goal.as_ref()
@@ -303,6 +337,63 @@ impl<'a> Proof<'a> {
             scope.succeed();
         }
         Ok(result)
+    }
+
+    /// Introduces the written antecedent of a quantified bundle member whose
+    /// binder was just introduced, and returns `premises` extended with that
+    /// antecedent's conjuncts: each is extracted by the ordinary checked
+    /// `extract` step when it is only a proper conjunct, and cited only when
+    /// it is then exactly available and supported by the arithmetic checker.
+    /// A member with no implication under its binder is returned unchanged;
+    /// one with no source form is introduced without citing anything new.
+    fn introduce_bundle_member_antecedent(
+        &self,
+        premises: &[NamedArithmeticPremise],
+    ) -> Result<Option<(Self, Vec<NamedArithmeticPremise>)>, ClickError> {
+        let mut premises = premises.to_vec();
+        if !matches!(self.goal(), Some(Proposition::Implies(_, _))) {
+            return Ok(Some((self.clone(), premises)));
+        }
+        let antecedent = self
+            .surface_goal()
+            .and_then(crate::surface::proof::surface_certificates::surface_implication_parts)
+            .map(|(antecedent, _)| antecedent);
+        let Some(mut proof) = attempt::candidate_outcome(self.apply_step(ProofStep::Intro))? else {
+            return Ok(None);
+        };
+        let Some(antecedent) = antecedent else {
+            return Ok(Some((proof, premises)));
+        };
+        let leaves =
+            crate::surface::proof::smart_closures::collect_bounded_surface_conjunct_leaves(
+                &antecedent,
+            )?;
+        for surface in leaves {
+            let Ok(lowered) =
+                proof.lower_cited_surface_proposition(&surface, "loop closure antecedent premise")
+            else {
+                continue;
+            };
+            if !proof.facts().contains_top_level(&lowered)
+                && proof.facts().contains_proper_conjunct(&lowered)
+            {
+                let Some(extracted) = attempt::candidate_outcome(
+                    proof.apply_step(ProofStep::Extract(surface.clone())),
+                )?
+                else {
+                    continue;
+                };
+                proof = extracted;
+            }
+            if !proof.facts().exact_available_across_effects(&lowered, &[])
+                || !crate::surface::checking::signed_arithmetic_premise_supported(&lowered)
+                || premises.iter().any(|(kernel, _)| kernel == &lowered)
+            {
+                continue;
+            }
+            premises.push((lowered, surface));
+        }
+        Ok(Some((proof, premises)))
     }
 
     /// One bundle member. The arithmetic candidate is tried first: its
@@ -424,21 +515,37 @@ impl<'a> Proof<'a> {
         let execution = self.execution()?;
         let bundle = context.constants.invariant_body_context.as_deref()?;
         let synthesize_at = |state: &CState, selector: &SnapshotSelector| {
-            crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
-                goal,
-                context.parsed_function.parameters(),
-                context.arguments,
-                context.old_reference_state(&execution.core.frontier, &execution.core.state),
-                &execution.core.state,
-                Some((state, selector)),
-            )
-            .filter(|surface| {
+            let synthesize = || {
+                crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
+                    goal,
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    context.old_reference_state(&execution.core.frontier, &execution.core.state),
+                    &execution.core.state,
+                    Some((state, selector)),
+                )
+            };
+            let accepted = |surface: &ClickProposition| {
                 self.lower_surface_goal(surface, "loop invariant bundle member")
                     .ok()
                     .is_some_and(|lowered| {
                         crate::kernel::proof::propositions_are_alpha_equal(&lowered, goal)
                     })
-            })
+            };
+            if bundle.binder_names.is_empty() {
+                return synthesize().filter(accepted);
+            }
+            // A binder takes the name its invariant wrote. The generated name
+            // remains the fallback, tried only when the written spelling came
+            // out different and does not lower back to this member.
+            let written = crate::surface::proof::surface_synthesis::with_synthesis_binder_names(
+                &bundle.binder_names,
+                synthesize,
+            )?;
+            if accepted(&written) {
+                return Some(written);
+            }
+            synthesize().filter(|generated| generated != &written && accepted(generated))
         };
         bundle
             .iteration_entry_selector
@@ -828,17 +935,23 @@ impl<'a> Proof<'a> {
                     } else {
                         None
                     };
+                    // The whole bundle's spelling names each quantified
+                    // member's binder as its invariant wrote it; the surface
+                    // is validated by lowering wherever a proof relies on it.
                     PropositionPresentation {
-                        surface: crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
-                            goal,
-                            context.parsed_function.parameters(),
-                            context.arguments,
-                            context.old_reference_state(&execution.core.frontier, &execution.core.state),
-                            &execution.core.state,
-                            bundle
-                                .iteration_entry_selector
-                                .as_ref()
-                                .map(|selector| (&bundle.iteration_entry_state, selector)),
+                        surface: crate::surface::proof::surface_synthesis::with_synthesis_binder_names(
+                            &bundle.binder_names,
+                            || crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
+                                goal,
+                                context.parsed_function.parameters(),
+                                context.arguments,
+                                context.old_reference_state(&execution.core.frontier, &execution.core.state),
+                                &execution.core.state,
+                                bundle
+                                    .iteration_entry_selector
+                                    .as_ref()
+                                    .map(|selector| (&bundle.iteration_entry_state, selector)),
+                            ),
                         )
                         .map(Arc::new),
                         surface_bindings: PersistentMap::default(),

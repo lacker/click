@@ -85,8 +85,11 @@ Its quantified form `forall (k: int32) { 0 <= k and k <= n implies
 viewable(a[0..k]) }` now initializes with the function body's
 `intro(); intro(); extract(..); extract(..); simp();`
 (`mdtests/loop_initialize_narrows_a_held_range_under_a_universal.md`). Its back
-edge still owes the extent under the quantifier in the unsigned spelling
-`(-2147483648 ^ k) <= -1073741825`, which `close_invariants()` does not derive.
+edge owes the extent under the quantifier in the unsigned spelling
+`(-2147483648 ^ k) <= -1073741825`; `close_invariants()` now introduces `k` and
+its antecedent and decides it by signed order, and a written `both` over the
+bundle names the member's binder `k` as the invariant wrote it
+(`mdtests/loop_bundle_names_a_quantified_invariant_binder_as_written.md`).
 
 ## The owned range in a store refusal is spelled against the wrong base
 

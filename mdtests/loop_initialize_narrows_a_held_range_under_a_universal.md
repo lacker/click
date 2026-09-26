@@ -16,8 +16,11 @@ A fixed-state proof now offers its own state to that planner.
 
 The back edge owes the invariant's extent bound for every `k` in the kernel's
 unsigned spelling, `(-2147483648 ^ k) <= -1073741825` (that is,
-`k <=u 1073741823`); `close_invariants()` does not yet derive it under the
-quantifier, so the preservation proof states it.
+`k <=u 1073741823`). `close_invariants()` closes that member the way it closes
+an unquantified one: it introduces `k` and the antecedent `0 <= k and k <= n`,
+and decides the bound from those two conjuncts and `n <= 1073741823` by signed
+order. It used to stop at the quantifier, so the preservation proof had to
+state the biased bound itself.
 
 ```c filename=loop_initialize_narrows_a_held_range_under_a_universal.c
 int32 count_up(int32 *a, int32 n) {
@@ -65,13 +68,6 @@ int32 count_up(int32 *a, int32 n) {
                 extract(0 <= k);
                 extract(k <= n);
                 simp();
-            }
-            have forall (k: int32) { 0 <= k and k <= n implies (-2147483648 ^ k) <= -1073741825 } by {
-                intro();
-                intro();
-                extract(0 <= k);
-                extract(k <= n);
-                arithmetic() using { 0 <= k; k <= n; n <= 1073741823; }
             }
             close_invariants();
         }

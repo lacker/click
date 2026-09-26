@@ -87,6 +87,53 @@ pub(in crate::surface::proof) struct InvariantBodyContext {
     /// The back edge binds those names again on whatever the body ends
     /// holding before any invariant reads a binder field.
     pub(in crate::surface::proof) binders: Vec<crate::kernel::CLoopBinder>,
+    /// The written names of the `int32` quantifier binders the declared
+    /// invariants introduce, by the kernel variable each lowers its binder
+    /// to. A bundle member synthesized from such an invariant, such as the
+    /// extent guard a quantified `viewable` invariant owes, spells its binder
+    /// with the written name, so a proof focused on it can name it.
+    pub(in crate::surface::proof) binder_names: Arc<BTreeMap<crate::kernel::Variable, String>>,
+}
+
+/// The written `int32` quantifier binders of `checks`, keyed by the kernel
+/// variable each binds. The walk visits each declared proposition once and
+/// descends only its logical connectives, so it is linear in the written
+/// invariants.
+pub(in crate::surface::proof) fn written_invariant_binder_names(
+    checks: &[CLoopInvariantCheck],
+) -> BTreeMap<crate::kernel::Variable, String> {
+    use crate::kernel::SpecProposition;
+    let mut names = BTreeMap::new();
+    let mut pending = checks
+        .iter()
+        .map(CLoopInvariantCheck::proposition)
+        .collect::<Vec<_>>();
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            SpecProposition::ForAllInt32 {
+                name,
+                variable,
+                body,
+            }
+            | SpecProposition::ExistsInt32 {
+                name,
+                variable,
+                body,
+            } => {
+                names.entry(*variable).or_insert_with(|| name.clone());
+                pending.push(body);
+            }
+            SpecProposition::And(left, right)
+            | SpecProposition::Or(left, right)
+            | SpecProposition::Implies(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            SpecProposition::Not(body) => pending.push(body),
+            _ => {}
+        }
+    }
+    names
 }
 
 /// The per-proof constants of an execution proof: which claim is being
