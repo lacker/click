@@ -7263,6 +7263,14 @@ pub struct PureFactContext {
         Pointer,
         crate::persistent::PersistentMap<Pointer, ConditionTerm>,
     >,
+    /// The keys of `pointer_block_aliases` again, filed under each
+    /// pointer's offset term. A same-block comparison names only its two
+    /// offsets, so this is what recovers, by one keyed lookup, the block
+    /// spellings an offset was proved equal to across blocks.
+    pub(super) pointer_block_aliases_by_offset: crate::persistent::PersistentMap<
+        PointerOffsetTerm,
+        crate::persistent::PersistentSet<Pointer>,
+    >,
     /// Normalized same-block pointer equalities, indexed under each offset.
     pub(super) pointer_offset_aliases: crate::persistent::PersistentMap<
         PointerOffsetTerm,

@@ -1383,6 +1383,54 @@ pub(in crate::kernel) fn pointer_same_object_proposition(
     )
 }
 
+/// The two owned members of the held resources that hold the compared
+/// addresses, as one composition: distinct owned members are separate, so
+/// the addresses inside them differ. Each side is looked up under its own
+/// spelling and the spellings exact equalities give it, through the base
+/// index, as a store's member is; nothing is opened and nothing else is
+/// visited. The composition is assumed for the comparison and kept as a path
+/// fact, as `functions::store_opened_instance_composition` keeps a store's,
+/// so the pointer disequality rule reads the same two members wherever the
+/// comparison is re-asked. `None` when either side lies in no owned member,
+/// or both lie in one. String literal storage is not a holder: two
+/// occurrences with identical bytes may be one object, so their ranges are
+/// deliberately never separated.
+fn compared_pointer_holders_composition(
+    state: &CState,
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &PureFactContext,
+) -> Option<ResourceContext> {
+    let resources = state.resources();
+    let holder = |pointer: &Pointer| {
+        assumptions
+            .pointer_equality_component(pointer)
+            .into_iter()
+            .find_map(|(spelling, _)| {
+                crate::instrumentation::record_deterministic_work(1);
+                assumptions
+                    .owned_member_holding_access(resources, &spelling, 1)
+                    .filter(|range| {
+                        !matches!(range.base().block, PointerBlock::StringLiteral { .. })
+                    })
+                    .cloned()
+            })
+    };
+    let left_member = holder(left)?;
+    let right_member = holder(right)?;
+    if left_member == right_member {
+        return None;
+    }
+    ResourceContext::new()
+        .try_compose_with_facts_delaying_normalization(
+            [left_member, right_member]
+                .into_iter()
+                .map(CResourceFact::own_memory),
+            assumptions,
+        )
+        .ok()
+}
+
 fn apply_c_comparison(
     state: &CState,
     operator: CComparisonOperator,
@@ -3774,12 +3822,13 @@ pub(in crate::kernel) fn evaluate_c_equal_paths(
         assumptions,
         budget,
         |left, right, facts, obligations| {
-            apply_c_equal(left, right, facts, obligations, assumptions)
+            apply_c_equal(state, left, right, facts, obligations, assumptions)
         },
     )
 }
 
 pub(in crate::kernel) fn apply_c_equal(
+    state: &CState,
     left: CValue,
     right: CValue,
     facts: Vec<ExecutionPureFact>,
@@ -3818,8 +3867,17 @@ pub(in crate::kernel) fn apply_c_equal(
             if !pointer_types_compatible(&left, &right) {
                 vec![c_type_mismatch_expression_path(facts, obligations)]
             } else {
+                let (left, right) = (left.into_pointer(), right.into_pointer());
+                let mut facts = facts;
+                if let Some(holders) =
+                    compared_pointer_holders_composition(state, &left, &right, assumptions)
+                {
+                    facts.push(ExecutionPureFact::new(Proposition::CResourceComposition(
+                        holders,
+                    )));
+                }
                 condition_as_c_int32_paths(
-                    pointer_equality_condition(left.into_pointer(), right.into_pointer()),
+                    pointer_equality_condition(left, right),
                     facts,
                     obligations,
                     assumptions,
@@ -3921,12 +3979,13 @@ pub(in crate::kernel) fn evaluate_c_not_equal_paths(
         assumptions,
         budget,
         |left, right, facts, obligations| {
-            apply_c_not_equal(left, right, facts, obligations, assumptions)
+            apply_c_not_equal(state, left, right, facts, obligations, assumptions)
         },
     )
 }
 
 pub(in crate::kernel) fn apply_c_not_equal(
+    state: &CState,
     left: CValue,
     right: CValue,
     facts: Vec<ExecutionPureFact>,
@@ -3965,8 +4024,17 @@ pub(in crate::kernel) fn apply_c_not_equal(
             if !pointer_types_compatible(&left, &right) {
                 vec![c_type_mismatch_expression_path(facts, obligations)]
             } else {
+                let (left, right) = (left.into_pointer(), right.into_pointer());
+                let mut facts = facts;
+                if let Some(holders) =
+                    compared_pointer_holders_composition(state, &left, &right, assumptions)
+                {
+                    facts.push(ExecutionPureFact::new(Proposition::CResourceComposition(
+                        holders,
+                    )));
+                }
                 condition_as_c_int32_not_paths(
-                    pointer_equality_condition(left.into_pointer(), right.into_pointer()),
+                    pointer_equality_condition(left, right),
                     facts,
                     obligations,
                     assumptions,

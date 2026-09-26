@@ -2791,11 +2791,29 @@ impl PureFactContext {
             } else {
                 aliases.without_key(alias)
             };
-            self.pointer_block_aliases = if aliases.is_empty() {
-                self.pointer_block_aliases.without_key(key)
-            } else {
+            let filed = !aliases.is_empty();
+            self.pointer_block_aliases = if filed {
                 self.pointer_block_aliases
                     .with_inserted(key.clone(), aliases)
+            } else {
+                self.pointer_block_aliases.without_key(key)
+            };
+            let spellings = self
+                .pointer_block_aliases_by_offset
+                .get(&key.offset)
+                .cloned()
+                .unwrap_or_default();
+            let spellings = if filed {
+                spellings.with_value(key.clone())
+            } else {
+                spellings.without_value(key)
+            };
+            self.pointer_block_aliases_by_offset = if spellings.is_empty() {
+                self.pointer_block_aliases_by_offset
+                    .without_key(&key.offset)
+            } else {
+                self.pointer_block_aliases_by_offset
+                    .with_inserted(key.offset.clone(), spellings)
             };
         }
     }
@@ -3066,6 +3084,7 @@ impl PureFactContext {
         self.condition_facts_by_sides = crate::persistent::PersistentMap::default();
         self.open_condition_facts = crate::persistent::PersistentMap::default();
         self.pointer_block_aliases = crate::persistent::PersistentMap::default();
+        self.pointer_block_aliases_by_offset = crate::persistent::PersistentMap::default();
         self.pointer_offset_aliases = crate::persistent::PersistentMap::default();
         self.pointer_offset_aliases_by_root = crate::persistent::PersistentMap::default();
         let conditions = self.condition_facts.clone();

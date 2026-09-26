@@ -399,16 +399,182 @@ impl PureFactContext {
     /// `Some(true)`; two pointers may be equal for reasons no index holds.
     fn decide_pointer_disequality(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
-            ConditionTerm::PointerEqual(left, right) => {
-                let left = self.pointer_nullness(left)?;
-                let right = self.pointer_nullness(right)?;
-                (left != right).then_some(false)
-            }
+            ConditionTerm::PointerEqual(left, right) => self
+                .pointers_distinct_by_nullness(left, right)
+                .or_else(|| self.pointers_distinct_by_owned_anchors(left, right)),
             ConditionTerm::PointerOffsetEqual(left, right) => self
                 .offsets_distinct_by_nullness(left, right)
-                .or_else(|| self.offsets_distinct_by_separation(left, right)),
+                .or_else(|| self.offsets_distinct_by_separation(left, right))
+                .or_else(|| self.offsets_distinct_by_owned_anchors(left, right)),
             _ => None,
         }
+    }
+
+    fn pointers_distinct_by_nullness(&self, left: &Pointer, right: &Pointer) -> Option<bool> {
+        let left = self.pointer_nullness(left)?;
+        let right = self.pointer_nullness(right)?;
+        (left != right).then_some(false)
+    }
+
+    /// The spellings exact equalities give one pointer: itself and every
+    /// pointer the alias indexes connect it to, through block aliases and
+    /// same-block offset aliases alike. Each spelling is paired with the
+    /// spelling it was reached from, so the equalities a conclusion rests
+    /// on can be taken back through the exact check. This is the walk
+    /// `has_indexed_pointer_equality_path` takes: each adjacency is a keyed
+    /// lookup, and the walk visits only the equality component reachable
+    /// from `start`.
+    pub(in crate::kernel) fn pointer_equality_component(
+        &self,
+        start: &Pointer,
+    ) -> Vec<(Pointer, Option<Pointer>)> {
+        let mut seen = std::collections::BTreeSet::from([start.clone()]);
+        let mut reached = vec![(start.clone(), None)];
+        let mut frontier = vec![start.clone()];
+        while let Some(current) = frontier.pop() {
+            let aliases = self
+                .exact_pointer_aliases(&current)
+                .cloned()
+                .chain(self.exact_pointer_offset_aliases(&current))
+                .collect::<Vec<_>>();
+            for alias in aliases {
+                crate::instrumentation::record_deterministic_work(1);
+                if seen.insert(alias.clone()) {
+                    reached.push((alias.clone(), Some(current.clone())));
+                    frontier.push(alias);
+                }
+            }
+        }
+        reached
+    }
+
+    /// Records the exact equalities that connect `start` to the spelling at
+    /// `index` of its component, one per hop, each taken back through the
+    /// exact check. Fails when a hop is no longer an exact fact, which a
+    /// derived index never allows, so the conclusion never rests on it.
+    fn record_pointer_equality_path(
+        &self,
+        component: &[(Pointer, Option<Pointer>)],
+        index: usize,
+    ) -> Option<()> {
+        let mut current = &component[index];
+        while let Some(previous) = &current.1 {
+            crate::instrumentation::record_deterministic_work(1);
+            let condition = if previous.block == current.0.block {
+                ConditionTerm::pointer_offset_equal(
+                    previous.offset.clone(),
+                    current.0.offset.clone(),
+                )
+            } else {
+                ConditionTerm::pointer_equal(previous.clone(), current.0.clone())
+            };
+            if self.exact_condition_value(&condition) != Some(true) {
+                return None;
+            }
+            current = component.iter().find(|(pointer, _)| pointer == previous)?;
+        }
+        Some(())
+    }
+
+    /// Two pointers differ when each, or a pointer exact equalities prove it
+    /// equal to, lies inside an owned memory member of one held composition,
+    /// and the two members are distinct: the composition law separates its
+    /// owned members, and one address cannot lie in both. The members may
+    /// lie in different blocks, which is how a symbolic identity payload and
+    /// a loaded pointer are told apart once each is proved equal to the base
+    /// its cells are owned under. Each member is found by the base index
+    /// under the spelling's additive bases, as a store's member is. String
+    /// literal storage never counts: two occurrences with identical bytes
+    /// may be one object, so their ranges are deliberately never separated.
+    fn pointers_distinct_by_owned_anchors(&self, left: &Pointer, right: &Pointer) -> Option<bool> {
+        if self.resource_compositions.is_empty() {
+            return None;
+        }
+        let lefts = self.pointer_equality_component(left);
+        let rights = self.pointer_equality_component(right);
+        if lefts
+            .iter()
+            .any(|(pointer, _)| rights.iter().any(|(other, _)| other == pointer))
+        {
+            // One equality chain connects the two sides: they are one
+            // address, and no owned member can say otherwise.
+            return None;
+        }
+        for resources in self.resource_compositions.iter() {
+            for (left_index, (left_spelling, _)) in lefts.iter().enumerate() {
+                let Some(left_member) =
+                    self.owned_member_holding_access(resources, left_spelling, 1)
+                else {
+                    continue;
+                };
+                for (right_index, (right_spelling, _)) in rights.iter().enumerate() {
+                    let Some(right_member) =
+                        self.owned_member_holding_access(resources, right_spelling, 1)
+                    else {
+                        continue;
+                    };
+                    if left_member == right_member
+                        || matches!(left_member.base().block, PointerBlock::StringLiteral { .. })
+                        || matches!(
+                            right_member.base().block,
+                            PointerBlock::StringLiteral { .. }
+                        )
+                    {
+                        continue;
+                    }
+                    self.record_pointer_equality_path(&lefts, left_index)?;
+                    self.record_pointer_equality_path(&rights, right_index)?;
+                    record_implicit_reasoning_provenance(
+                        self,
+                        &Proposition::CResourceComposition(resources.clone()),
+                    );
+                    return Some(false);
+                }
+            }
+        }
+        None
+    }
+
+    /// The same-block form of [`Self::pointers_distinct_by_owned_anchors`].
+    /// The comparison names only its two offsets, so the block spellings
+    /// come from the pointers of those offsets that an exact equality has
+    /// aliased across blocks; two pointers of one block are equal exactly
+    /// when their offsets are, so a block that tells the two offsets apart
+    /// decides the comparison whatever block it came from.
+    fn offsets_distinct_by_owned_anchors(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+    ) -> Option<bool> {
+        if left == right {
+            return None;
+        }
+        let spellings = |offset: &PointerOffsetTerm| {
+            self.pointer_block_aliases_by_offset
+                .get(offset)
+                .into_iter()
+                .flat_map(|pointers| pointers.iter().cloned())
+                .collect::<Vec<_>>()
+        };
+        for pointer in spellings(left) {
+            let other = Pointer {
+                block: pointer.block.clone(),
+                offset: right.clone(),
+            };
+            if self.pointers_distinct_by_owned_anchors(&pointer, &other) == Some(false) {
+                return Some(false);
+            }
+        }
+        for pointer in spellings(right) {
+            let other = Pointer {
+                block: pointer.block.clone(),
+                offset: left.clone(),
+            };
+            if self.pointers_distinct_by_owned_anchors(&other, &pointer) == Some(false) {
+                return Some(false);
+            }
+        }
+        None
     }
 
     /// Whether an exact fact settles this pointer's null-ness.
