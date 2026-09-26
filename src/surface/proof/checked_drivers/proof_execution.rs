@@ -2409,6 +2409,12 @@ fn advance_focused_execution_arm<'a>(
                 return decline();
             };
             next
+        } else if matches!(indexed.tactic, ProofTactic::Simp) {
+            // `simp` closes the outcome claims at function exit and does
+            // not execute; a script that stepped through every statement
+            // still stands before the body's end. Say what is left rather
+            // than declining the whole shape.
+            return Err(proof.step_error(simp_before_exit_reason(&proof)));
         } else {
             return decline();
         };
@@ -3876,6 +3882,34 @@ pub(in crate::surface::proof) fn add_proof_branch_path(
 
 /// The diagnostic for an execution tactic written after execution already
 /// reached function exit: the tactic has no statement to run.
+/// Why `simp` cannot run at an execution frontier that has not reached the
+/// function exit: what still lies ahead, and the two ways to get there.
+fn simp_before_exit_reason(proof: &Proof<'_>) -> String {
+    let ahead = proof
+        .execution_view()
+        .ok()
+        .and_then(|view| match &view.frontier.position {
+            FrontierPosition::StatementEntry { remaining } => {
+                Some(match frontier_head_statement(remaining) {
+                    Some(statement) => format!(
+                        "the frontier is at statement {}, `{}`",
+                        view.frontier.next_statement_index,
+                        describe_statement_head(statement)
+                    ),
+                    None => {
+                        "the frontier is at the end of a block, one step before the function exit"
+                            .to_string()
+                    }
+                })
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| "execution has not reached the function exit".to_string());
+    format!(
+        "`simp` closes the outcome claims at function exit and does not execute: {ahead}. Step to the exit first with `step()` (the end of the body is one step) or `execute()`."
+    )
+}
+
 fn post_exit_execution_tactic_error(tactic: &ProofTactic) -> Option<String> {
     let name = match tactic {
         ProofTactic::Step => "step()".to_string(),

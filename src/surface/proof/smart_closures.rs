@@ -5737,22 +5737,33 @@ impl<'a> Proof<'a> {
             // distinguishable from the same failure inside another.
             proof = proof.at_block_position(index);
             if proof.focused_discharged() {
-                // A final `assumption` after a step that already discharged
-                // the goal (a `transport` whose target is the goal, an exact
-                // theorem conclusion) asserts a closed judgment: a harmless
-                // no-op that emits no redundant certificate step. A final
-                // `simp` likewise. Any other suffix after closure is a
-                // declined shape.
-                if index + 1 == tactics.len()
-                    && matches!(tactic, ProofTactic::Assumption | ProofTactic::Simp)
-                {
+                // A closer after a step that already discharged the goal (a
+                // `transport` whose target is the goal, an exact theorem
+                // conclusion, an `unfold` whose refreshed goal was already
+                // an available fact) asserts a closed judgment: a harmless
+                // no-op that emits no redundant certificate step. That is
+                // `assumption`, `simp`, and the context-free `normalize`,
+                // in any position, so `unfold(f(x)); normalize();` means the
+                // same whether or not the unfold alone closed the goal. Any
+                // other suffix after closure is a declined shape, named with
+                // the tactic that closed the goal.
+                if matches!(
+                    tactic,
+                    ProofTactic::Assumption
+                        | ProofTactic::Simp
+                        | ProofTactic::Normalize
+                        | ProofTactic::NormalizeUsing(_)
+                ) {
                     continue;
                 }
-                if matches!(tactic, ProofTactic::Simp) {
-                    continue;
-                }
+                let closer = index
+                    .checked_sub(1)
+                    .and_then(|previous| tactics.get(previous))
+                    .map_or("an earlier tactic".to_string(), |closer| {
+                        format!("`{}`", tactic_name(closer))
+                    });
                 return Err(proof.step_error(format!(
-                    "`{}` follows a goal-closing tactic",
+                    "`{}` follows a goal-closing tactic: {closer} already closed this goal, so only `assumption`, `simp`, or `normalize` may follow it",
                     tactic_name(tactic)
                 )));
             }

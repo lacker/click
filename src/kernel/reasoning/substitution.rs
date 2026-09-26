@@ -36,6 +36,55 @@ pub(crate) fn resolve_minted_load_pointer(
 }
 
 #[cfg(test)]
+mod alias_resolution_tests {
+    use super::*;
+
+    fn symbolic(identity: u64) -> Pointer {
+        Pointer {
+            block: PointerBlock::Symbolic(Variable(identity)),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    fn concrete(name: &str) -> Pointer {
+        Pointer {
+            block: PointerBlock::Concrete(name.to_string()),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    /// The hop reads the alias index under the pointer, so it finds the
+    /// equality whichever side named the symbolic pointer, ignores a false
+    /// one and a symbolic-to-symbolic one, and leaves a pointer with no
+    /// concrete alias alone.
+    #[test]
+    fn a_symbolic_pointer_resolves_through_its_indexed_alias() {
+        let havoc = symbolic(7);
+        let other = symbolic(8);
+        let object = concrete("node");
+        let assumptions = PureFactContext::default()
+            .assume_condition(
+                ConditionTerm::pointer_equal(other.clone(), havoc.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::pointer_equal(havoc.clone(), concrete("wrong")),
+                false,
+            )
+            .assume_condition(
+                ConditionTerm::pointer_equal(object.clone(), havoc.clone()),
+                true,
+            );
+        assert_eq!(resolve_symbolic_pointer_alias(&havoc, &assumptions), object);
+        assert_eq!(resolve_symbolic_pointer_alias(&other, &assumptions), other);
+        assert_eq!(
+            resolve_symbolic_pointer_alias(&object, &assumptions),
+            object
+        );
+    }
+}
+
+#[cfg(test)]
 mod resource_frame_substitution_tests {
     use super::*;
 
@@ -228,7 +277,9 @@ mod resource_frame_substitution_tests {
 /// Rewrites a havoced symbolic pointer local through one explicit pointer
 /// equality. The equality is deliberately limited to an exact fact and one
 /// hop: resource lookup can use the concrete block's index without turning
-/// alias reasoning into an unbounded graph walk.
+/// alias reasoning into an unbounded graph walk. The true pointer equalities
+/// naming this pointer are filed under it (`pointer_block_aliases`), so the
+/// hop is a keyed lookup rather than a scan of every condition fact.
 pub(crate) fn resolve_symbolic_pointer_alias(
     pointer: &Pointer,
     assumptions: &PureFactContext,
@@ -237,24 +288,9 @@ pub(crate) fn resolve_symbolic_pointer_alias(
         return pointer.clone();
     }
     assumptions
-        .condition_facts
-        .iter()
-        .find_map(|(condition, value)| {
-            if !*value {
-                return None;
-            }
-            let ConditionTerm::PointerEqual(left, right) = condition else {
-                return None;
-            };
-            if left.as_ref() == pointer && !matches!(right.block, PointerBlock::Symbolic(_)) {
-                Some(right.as_ref().clone())
-            } else if right.as_ref() == pointer && !matches!(left.block, PointerBlock::Symbolic(_))
-            {
-                Some(left.as_ref().clone())
-            } else {
-                None
-            }
-        })
+        .exact_pointer_aliases(pointer)
+        .find(|alias| !matches!(alias.block, PointerBlock::Symbolic(_)))
+        .cloned()
         .unwrap_or_else(|| pointer.clone())
 }
 

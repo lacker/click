@@ -166,6 +166,18 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
         {
             continue;
         }
+        // An equality listed in the other orientation from the fact held
+        // is the same fact; use the held spelling as the premise.
+        let premise = match crate::surface::proof::theorem_application::mirrored_equality(&premise)
+        {
+            Some(mirrored)
+                if !available.available_across_effects(&premise, &[])
+                    && available.available_across_effects(&mirrored, &[]) =>
+            {
+                mirrored
+            }
+            _ => premise,
+        };
         if !available.available_across_effects(&premise, &[]) {
             let available_facts = available.to_vec();
             // Name the listed premise in the reader's own spelling: a
