@@ -3820,9 +3820,12 @@ impl<'a> Proof<'a> {
                         selected.get_or_insert((index, rewritten));
                     }
                 }
-                if selected.is_some() {
-                    break;
-                }
+                // Every remaining equality is offered the chance to close
+                // the goal before one that merely applies is committed to.
+                // A rewrite that applies without closing can move the goal
+                // away from the equality that would: with `q == p` stated at
+                // two points, rewriting `p` to the older `q` first leaves no
+                // rewrite by the newer one that reaches a reflexive goal.
             }
             let (index, rewritten) = selected?;
             remaining.remove(index);
