@@ -7940,7 +7940,8 @@ mod modeled_pthread_binding_tests {
             .modeled_pthread_binding
             .as_ref()
             .unwrap();
-        assert_eq!(binding.specification_version, 2);
+        assert_eq!(binding.specification_version, 3);
+        assert_eq!(binding.mutex_storage_bytes, 40);
         assert_eq!(binding.target, CTarget::X86_64LinuxUserspace);
     }
 

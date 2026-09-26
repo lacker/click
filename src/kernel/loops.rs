@@ -897,7 +897,7 @@ fn execute_modeled_pthread_mutex_paths(
                 let selected = environment.selected_call_binders.as_ref();
                 if selected.is_none() {
                     super::mutexes::MutexContext::new(state.clone())
-                        .initialize_empty(mutex.pointer().clone())
+                        .initialize_empty(mutex.pointer().clone(), binding.mutex_storage_bytes)
                         .map(|context| context.into_state())
                         .map_err(|message| CRuntimeError::FunctionContract(message.to_string()))
                 } else {
@@ -927,7 +927,7 @@ fn execute_modeled_pthread_mutex_paths(
                         }
                         let fact = CResourceFact::own(CResource::Instance(instance.clone()));
                         super::mutexes::MutexContext::new(state.clone())
-                            .publish(expected, fact, &current)
+                            .publish(expected, fact, &current, binding.mutex_storage_bytes)
                             .map(|context| context.into_state())
                     })
                     .map_err(|message| CRuntimeError::FunctionContract(message.to_string()))

@@ -835,6 +835,8 @@ pub(in crate::kernel) fn describe_certification_runtime_error(error: &CRuntimeEr
             format!("wrong argument count: expected {expected}, got {actual}")
         }
         CRuntimeError::MissingReturn => "missing return".to_string(),
+        CRuntimeError::MutexStorageInUse { .. } => "allocation storage still contains an initialized mutex".into(),
+        CRuntimeError::UnsupportedMutexStorageRetirement => "allocation retirement in a preserving guard contract needs checked mutex lifetime authority".into(),
         CRuntimeError::MissingMutexGuard { .. } => {
             "a required mutex_guard resource is not available".to_string()
         }

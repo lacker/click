@@ -1,4 +1,4 @@
-# Modeled pthread create/join and mutex specification, version 2
+# Modeled pthread create/join and mutex specification, version 3
 
 This trusted specification is an explicit assumption of a conditional Click
 client proof. It does not certify an operating system's pthread implementation.
@@ -31,7 +31,18 @@ client proof. It does not certify an operating system's pthread implementation.
 
 The checked mutex transitions currently apply to one C path with no worker
 sharing. Creation of a worker while a mutex is initialized is refused.
-Every initialized mutex must be destroyed before its C function returns.
+The current modeled ABI gives each mutex a 40-byte storage footprint. An
+allocation overlapping any initialized footprint cannot be freed, reallocated,
+or retired by a helper contract until the mutex is destroyed. Lock/unlock do
+not release this dependency. Distinct storage can still be released. Abstract
+preserving-guard contracts cannot yet retire allocations because their
+lifetime dependencies are not represented by checked lifecycle inputs.
+
+Functions cannot return with held guards or escrowed protected resources unless
+a preserving guard contract carries them. An unlocked empty mutex currently
+has no return obligation. Storage validity at initialization, ordinary writes
+to the mutex representation, and automatic-storage lifetime checks are still
+separate implementation gaps; the heap-retirement check does not establish them.
 
 The C client still owes its worker proof, creation failure paths, ownership
 separation, parent access checks, and every source-level continuation. The

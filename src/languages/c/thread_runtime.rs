@@ -17,6 +17,8 @@ pub struct ModeledPthreadBinding {
     pub mutex_init_name: &'static str,
     pub mutex_lock_name: &'static str,
     pub mutex_unlock_name: &'static str,
+    /// Storage extent fixed by the selected modeled pthread ABI.
+    pub mutex_storage_bytes: u32,
     pub mutex_destroy_name: &'static str,
     pub requires_null_attributes: bool,
     pub requires_direct_worker: bool,
@@ -27,7 +29,7 @@ impl ModeledPthreadBinding {
     pub fn builtin() -> Self {
         Self {
             target: super::target::CTarget::X86_64LinuxUserspace,
-            specification_version: 2,
+            specification_version: 3,
             header_digest: Sha256::digest(include_str!("modeled_pthread.h").as_bytes()).into(),
             specification_digest: Sha256::digest(
                 include_str!("modeled_pthread_spec.md").as_bytes(),
@@ -38,6 +40,7 @@ impl ModeledPthreadBinding {
             mutex_init_name: "pthread_mutex_init",
             mutex_lock_name: "pthread_mutex_lock",
             mutex_unlock_name: "pthread_mutex_unlock",
+            mutex_storage_bytes: 40,
             mutex_destroy_name: "pthread_mutex_destroy",
             requires_null_attributes: true,
             requires_direct_worker: true,
@@ -69,6 +72,7 @@ impl ModeledPthreadBinding {
             self.mutex_lock_name.as_bytes(),
             self.mutex_unlock_name.as_bytes(),
             self.mutex_destroy_name.as_bytes(),
+            &self.mutex_storage_bytes.to_be_bytes(),
             &[
                 self.requires_null_attributes as u8,
                 self.requires_direct_worker as u8,

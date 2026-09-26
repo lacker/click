@@ -370,6 +370,19 @@ fn stable_loan_memory_range_outcome(
         .map(|diagnostic| CStatementOutcome::RuntimeError(CRuntimeError::LoanRefusal(diagnostic)))
 }
 
+fn allocation_retirement_outcome(
+    state: &CState,
+    range: &CMemoryRange,
+    assumptions: &PureFactContext,
+) -> Option<CStatementOutcome> {
+    if let Some(error) =
+        super::super::mutexes::storage_retirement_refusal(state, range, assumptions)
+    {
+        return Some(CStatementOutcome::RuntimeError(error));
+    }
+    stable_loan_memory_range_outcome(state, range, assumptions)
+}
+
 pub(in crate::kernel) fn write_c_lvalue_paths(
     state: &CState,
     lvalue: CLValue,
@@ -1638,11 +1651,9 @@ pub(crate) fn execute_c_realloc_assign_paths(
             // Ownership of the old allocation and its complete access is
             // established, so a refusal here names the live loan that keeps
             // these bytes from being reallocated.
-            if let Some(outcome) = stable_loan_memory_range_outcome(
-                state,
-                &old_allocation_range,
-                &effective_assumptions,
-            ) {
+            if let Some(outcome) =
+                allocation_retirement_outcome(state, &old_allocation_range, &effective_assumptions)
+            {
                 paths.push(CStatementExecutionPath {
                     loop_invariant_correspondence: Default::default(),
                     outcome,
@@ -2011,7 +2022,7 @@ fn execute_c_heap_free_paths(
         // The free is authorized by the allocation and its complete access, so
         // a refusal here is about a live loan of these bytes, not ownership.
         if let Some(outcome) =
-            stable_loan_memory_range_outcome(state, &full_allocation_range, &effective_assumptions)
+            allocation_retirement_outcome(state, &full_allocation_range, &effective_assumptions)
         {
             paths.push(CStatementExecutionPath {
                 loop_invariant_correspondence: Default::default(),

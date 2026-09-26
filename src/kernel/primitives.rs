@@ -3424,6 +3424,11 @@ pub enum CRuntimeError {
     /// The modeled runtime has no sound shared-mutex transition for workers.
     /// This is a verifier limitation, not a missing client proof premise.
     UnsupportedConcurrentMutex,
+    MutexStorageInUse {
+        mutex: Pointer,
+        allocation: Pointer,
+    },
+    UnsupportedMutexStorageRetirement,
     InvalidFree(CInvalidFree),
     UnresolvedAllocationOutcome,
     LiveAllocationLeak {

@@ -63,15 +63,18 @@ enum MutexEntry {
 /// Identity of one successful initialization, independent of its address and
 /// protected assertion. Lock/unlock retain it; destroy/init must replace it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct MutexInitialization(u64);
+struct MutexInitialization(u64, u32);
 
 impl MutexInitialization {
-    fn fresh() -> Result<Self, &'static str> {
+    fn fresh(storage_bytes: u32) -> Result<Self, &'static str> {
+        if storage_bytes == 0 {
+            return Err("mutex storage extent must be nonzero");
+        }
         static NEXT: AtomicU64 = AtomicU64::new(1);
         NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)
         })
-        .map(Self)
+        .map(|identity| Self(identity, storage_bytes))
         .map_err(|_| "mutex initialization identity space exhausted")
     }
 }
@@ -97,6 +100,7 @@ pub(super) struct MutexLedger {
 struct MutexLedgerStorage {
     identity: u64,
     entries: PersistentMap<Pointer, MutexEntry>,
+    by_block: PersistentMap<super::PointerBlock, PersistentMap<Pointer, u32>>,
     locked_count: usize,
     return_obligation_count: usize,
     /// A loop join need only revisit mutexes changed since its head. Keeping
@@ -141,6 +145,23 @@ pub(super) fn guard_resource(
     })
 }
 
+/// A storage release must not leave a live initialization behind. Abstract
+/// guard contracts lack checked lifecycle inputs for deciding this dependency;
+/// refuse retirement there until the lifetime-loan model can discharge it.
+pub(super) fn storage_retirement_refusal(
+    state: &CState,
+    allocation: &super::CMemoryRange,
+    assumptions: &PureFactContext,
+) -> Option<super::CRuntimeError> {
+    if state.preserves_mutex_protocols && state.mutex_ledger.is_none() {
+        return Some(super::CRuntimeError::UnsupportedMutexStorageRetirement);
+    }
+    state
+        .mutex_ledger
+        .as_ref()?
+        .storage_retirement_refusal(allocation, assumptions)
+}
+
 impl MutexContext {
     pub(super) fn new(mut state: CState) -> Self {
         state.mutex_ledger.get_or_insert_with(MutexLedger::new);
@@ -156,7 +177,11 @@ impl MutexContext {
     }
 
     /// Initialize a mutex that transfers no Click resource at lock/unlock.
-    pub(super) fn initialize_empty(&self, mutex: Pointer) -> Result<Self, &'static str> {
+    pub(super) fn initialize_empty(
+        &self,
+        mutex: Pointer,
+        storage_bytes: u32,
+    ) -> Result<Self, &'static str> {
         if self.state.preserves_mutex_protocols {
             return Err("preserving guard contracts cannot change mutex protocols");
         }
@@ -168,7 +193,7 @@ impl MutexContext {
         state.mutex_ledger = Some(ledger.with_inserted(
             mutex,
             MutexEntry::Unlocked {
-                initialization: MutexInitialization::fresh()?,
+                initialization: MutexInitialization::fresh(storage_bytes)?,
                 invariant: None,
             },
         ));
@@ -183,6 +208,7 @@ impl MutexContext {
         mutex: Pointer,
         invariant: CResourceFact,
         assumptions: &PureFactContext,
+        storage_bytes: u32,
     ) -> Result<Self, &'static str> {
         if self.state.preserves_mutex_protocols {
             return Err("preserving guard contracts cannot change mutex protocols");
@@ -227,7 +253,7 @@ impl MutexContext {
         state.mutex_ledger = Some(ledger.with_inserted(
             mutex,
             MutexEntry::Unlocked {
-                initialization: MutexInitialization::fresh()?,
+                initialization: MutexInitialization::fresh(storage_bytes)?,
                 invariant: Some(invariant),
             },
         ));
@@ -484,6 +510,7 @@ impl MutexLedger {
             storage: Arc::new(MutexLedgerStorage {
                 identity: Self::fresh_identity(),
                 entries: PersistentMap::default(),
+                by_block: PersistentMap::default(),
                 locked_count: 0,
                 return_obligation_count: 0,
                 predecessor: None,
@@ -494,6 +521,54 @@ impl MutexLedger {
 
     fn get(&self, mutex: &Pointer) -> Option<&MutexEntry> {
         self.storage.entries.get(mutex)
+    }
+
+    /// Visit only initialization footprints in the allocation's symbolic block.
+    /// Ambiguous same-block overlaps require proof of separation; distinct
+    /// concrete allocations never scan each other's mutexes.
+    fn storage_retirement_refusal(
+        &self,
+        allocation: &super::CMemoryRange,
+        assumptions: &PureFactContext,
+    ) -> Option<super::CRuntimeError> {
+        let entries = self.storage.by_block.get(&allocation.base().block)?;
+        let allocation_resource = CResource::Memory(allocation.clone());
+        for (mutex, bytes) in entries.iter() {
+            crate::instrumentation::record_deterministic_work(1);
+            let storage = CResource::Memory(super::CMemoryRange::new_with_element_width(
+                mutex.clone(),
+                0u32.into(),
+                (*bytes).into(),
+                1,
+            ));
+            // Heap byte lengths are unsigned. Do not compare them using
+            // signed 32-bit element arithmetic: a large allocation or a
+            // footprint crossing INT32_MAX could otherwise appear disjoint.
+            let disjoint = (|| {
+                if allocation.element_width() != 1 || allocation.start().as_const() != Some(0) {
+                    return None;
+                }
+                let extent = i64::from(allocation.end().as_const()?);
+                let delta = mutex.exact_element_delta_from_base(allocation.base(), 1, None)?;
+                if !delta.is_constant() {
+                    return None;
+                }
+                let end = delta.constant.checked_add(i64::from(*bytes))?;
+                Some(end <= 0 || delta.constant >= extent)
+            })() == Some(true);
+            if !disjoint
+                && !assumptions.proves_exact(&super::Proposition::CResourceSeparate {
+                    left: allocation_resource.clone(),
+                    right: storage,
+                })
+            {
+                return Some(super::CRuntimeError::MutexStorageInUse {
+                    mutex: mutex.clone(),
+                    allocation: allocation.base().clone(),
+                });
+            }
+        }
+        None
     }
 
     pub(super) fn guard_resource(&self, mutex: &Pointer) -> Option<CResourceFact> {
@@ -522,6 +597,20 @@ impl MutexLedger {
         Self {
             storage: Arc::new(MutexLedgerStorage {
                 identity: Self::fresh_identity(),
+                by_block: if self.get(&mutex).is_none() {
+                    let entries = self
+                        .storage
+                        .by_block
+                        .get(&mutex.block)
+                        .cloned()
+                        .unwrap_or_default()
+                        .with_inserted(mutex.clone(), entry.initialization().1);
+                    self.storage
+                        .by_block
+                        .with_inserted(mutex.block.clone(), entries)
+                } else {
+                    self.storage.by_block.clone()
+                },
                 entries: self.storage.entries.with_inserted(mutex.clone(), entry),
                 locked_count: self.storage.locked_count + usize::from(now_locked)
                     - usize::from(was_locked),
@@ -543,6 +632,21 @@ impl MutexLedger {
             storage: Arc::new(MutexLedgerStorage {
                 identity: Self::fresh_identity(),
                 entries: self.storage.entries.without_key(mutex),
+                by_block: {
+                    let entries = self
+                        .storage
+                        .by_block
+                        .get(&mutex.block)
+                        .expect("initialized mutex storage")
+                        .without_key(mutex);
+                    if entries.is_empty() {
+                        self.storage.by_block.without_key(&mutex.block)
+                    } else {
+                        self.storage
+                            .by_block
+                            .with_inserted(mutex.block.clone(), entries)
+                    }
+                },
                 locked_count: self.storage.locked_count - usize::from(was_locked),
                 return_obligation_count: self.storage.return_obligation_count
                     - usize::from(had_return_obligation),
@@ -741,7 +845,7 @@ mod tests {
         let assumptions = PureFactContext::new();
         let address = mutex(0);
         let entry = MutexContext::new(CState::new())
-            .initialize_empty(address.clone())
+            .initialize_empty(address.clone(), 40)
             .unwrap()
             .acquire_current(&address, &assumptions)
             .unwrap();
@@ -806,7 +910,7 @@ mod tests {
                 .is_err()
         );
         let concrete = MutexContext::new(CState::new())
-            .initialize_empty(mutex(0))
+            .initialize_empty(mutex(0), 40)
             .unwrap()
             .acquire_current(&mutex(0), &assumptions)
             .unwrap();
@@ -866,14 +970,14 @@ mod tests {
         let assumptions = PureFactContext::new();
         let address = mutex(0);
         let initialized = MutexContext::new(CState::new())
-            .initialize_empty(address.clone())
+            .initialize_empty(address.clone(), 40)
             .unwrap();
         let (holding, _) = initialized.acquire(&address, &assumptions).unwrap();
         let mut state = holding.into_state();
         state.preserves_mutex_protocols = true;
         let frozen = MutexContext::new(state.clone());
         let message = "preserving guard contracts cannot change mutex protocols";
-        assert_eq!(frozen.initialize_empty(mutex(1)).err(), Some(message));
+        assert_eq!(frozen.initialize_empty(mutex(1), 40).err(), Some(message));
         assert_eq!(
             frozen.acquire(&address, &assumptions).err(),
             Some(MutexTransitionError::Refusal(message))
@@ -897,7 +1001,7 @@ mod tests {
         let assumptions = PureFactContext::new();
         let mutex = mutex(0);
         let initialized = MutexContext::new(CState::new())
-            .initialize_empty(mutex.clone())
+            .initialize_empty(mutex.clone(), 40)
             .unwrap();
         let (holding, guard) = initialized.acquire(&mutex, &assumptions).unwrap();
         let fact = guard.resource_fact();
@@ -959,7 +1063,7 @@ mod tests {
         let assumptions = PureFactContext::new();
         let protected = invariant(1, 7);
         let initialized = context(protected.clone())
-            .publish(mutex(0), protected.clone(), &assumptions)
+            .publish(mutex(0), protected.clone(), &assumptions, 40)
             .unwrap();
         let (mut held, guard) = initialized.acquire(&mutex(0), &assumptions).unwrap();
         let guard_fact = guard.resource_fact();
@@ -1018,7 +1122,7 @@ mod tests {
     fn guard_algebra_is_exclusive_unit_ownership_without_views_or_memory() {
         let assumptions = PureFactContext::new();
         let (holding, guard) = MutexContext::new(CState::new())
-            .initialize_empty(mutex(0))
+            .initialize_empty(mutex(0), 40)
             .unwrap()
             .acquire(&mutex(0), &assumptions)
             .unwrap();
@@ -1087,13 +1191,13 @@ mod tests {
         for size in [16usize, 64, 256, 1024] {
             let mut context = MutexContext::new(CState::new());
             for index in 0..size {
-                context = context.initialize_empty(mutex(index)).unwrap();
+                context = context.initialize_empty(mutex(index), 40).unwrap();
                 context = context
                     .acquire_current(&mutex(index), &assumptions)
                     .unwrap();
             }
             let target = mutex(size);
-            context = context.initialize_empty(target.clone()).unwrap();
+            context = context.initialize_empty(target.clone(), 40).unwrap();
             let ((holding, released), work) =
                 crate::instrumentation::measure_deterministic_work(|| {
                     let holding = context.acquire_current(&target, &assumptions).unwrap();
@@ -1118,7 +1222,7 @@ mod tests {
         let assumptions = PureFactContext::new();
         let mutex = mutex(0);
         let initialized = MutexContext::new(CState::new())
-            .initialize_empty(mutex.clone())
+            .initialize_empty(mutex.clone(), 40)
             .unwrap();
         assert!(
             !initialized
@@ -1130,7 +1234,7 @@ mod tests {
         );
         assert!(initialized.state().resources.facts().is_empty());
         assert_eq!(
-            initialized.initialize_empty(mutex.clone()).err(),
+            initialized.initialize_empty(mutex.clone(), 40).err(),
             Some("mutex is already initialized")
         );
 
@@ -1167,12 +1271,130 @@ mod tests {
         assert!(destroyed.state().mutex_ledger.is_none());
     }
 
+    fn allocation_range(base: Pointer, bytes: u32) -> super::super::CMemoryRange {
+        super::super::CMemoryRange::new_with_element_width(base, 0u32.into(), bytes.into(), 1)
+    }
+
+    #[test]
+    fn initialized_storage_cannot_be_retired_until_destroyed() {
+        let assumptions = PureFactContext::new();
+        let base = mutex(0);
+        let address = base.offset_by_bytes(8);
+        let state = MutexContext::new(CState::new())
+            .initialize_empty(address.clone(), 40)
+            .unwrap();
+        let whole = allocation_range(base.clone(), 48);
+        let expected = Some(super::super::CRuntimeError::MutexStorageInUse {
+            mutex: address.clone(),
+            allocation: base,
+        });
+        assert_eq!(
+            storage_retirement_refusal(state.state(), &whole, &assumptions),
+            expected
+        );
+        let held = state.acquire_current(&address, &assumptions).unwrap();
+        assert_eq!(
+            storage_retirement_refusal(held.state(), &whole, &assumptions),
+            expected
+        );
+        let released = held.release_current(&address, &assumptions).unwrap();
+        assert_eq!(
+            storage_retirement_refusal(released.state(), &whole, &assumptions),
+            expected
+        );
+        let destroyed = released.destroy(&address, &assumptions).unwrap();
+        assert_eq!(
+            storage_retirement_refusal(destroyed.state(), &whole, &assumptions),
+            None
+        );
+        // The end of a mutex's footprint matters, not only its first byte.
+        let tail = allocation_range(address.offset_by_bytes(36), 4);
+        assert!(storage_retirement_refusal(state.state(), &tail, &assumptions).is_some());
+        let beside = allocation_range(address.offset_by_bytes(40), 4);
+        assert_eq!(
+            storage_retirement_refusal(state.state(), &beside, &assumptions),
+            None
+        );
+        let elsewhere = allocation_range(mutex(1), 48);
+        assert_eq!(
+            storage_retirement_refusal(state.state(), &elsewhere, &assumptions),
+            None
+        );
+    }
+
+    #[test]
+    fn storage_retirement_uses_unsigned_heap_extents_and_wide_offsets() {
+        let assumptions = PureFactContext::new();
+        for (extent, offset) in [(u32::MAX, 8), (i32::MAX as u32, i32::MAX as u32 - 8)] {
+            let base = mutex(0);
+            let state = MutexContext::new(CState::new())
+                .initialize_empty(base.offset_by_bytes(offset), 40)
+                .unwrap();
+            assert!(
+                storage_retirement_refusal(
+                    state.state(),
+                    &allocation_range(base, extent),
+                    &assumptions
+                )
+                .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn abstract_guard_storage_retirement_requires_lifecycle_support() {
+        let state = CState::new().with_resource_context(super::super::ResourceContext::new());
+        let mut state = state;
+        state.preserves_mutex_protocols = true;
+        assert_eq!(
+            storage_retirement_refusal(
+                &state,
+                &allocation_range(mutex(0), 48),
+                &PureFactContext::new()
+            ),
+            Some(super::super::CRuntimeError::UnsupportedMutexStorageRetirement)
+        );
+    }
+
+    #[test]
+    fn storage_retirement_lookup_ignores_unrelated_mutex_blocks() {
+        let mut samples = Vec::new();
+        let assumptions = PureFactContext::new();
+        for size in [16, 64, 256, 1024] {
+            let mut state = MutexContext::new(CState::new());
+            for index in 0..size {
+                state = state.initialize_empty(mutex(index), 40).unwrap();
+            }
+            let range = allocation_range(mutex(size / 2), 40);
+            let (refusal, work) = crate::persistent::measure_persistent_work(|| {
+                storage_retirement_refusal(state.state(), &range, &assumptions)
+            });
+            assert!(refusal.is_some());
+            samples.push(work);
+            // Destroying one of multiple mutexes in a block retains the other.
+            let other = mutex(size / 2).offset_by_bytes(48);
+            let state = state.initialize_empty(other.clone(), 40).unwrap();
+            let state = state.destroy(range.base(), &assumptions).unwrap();
+            assert!(
+                storage_retirement_refusal(
+                    state.state(),
+                    &allocation_range(other, 40),
+                    &assumptions
+                )
+                .is_some()
+            );
+        }
+        for pair in samples.windows(2) {
+            assert!(pair[1] <= pair[0] + 16, "{samples:?}");
+        }
+    }
+
     #[test]
     fn loop_back_edge_checks_mutex_ownership_and_accepts_a_balanced_exchange() {
         let assumptions = PureFactContext::new();
         let mutex = mutex(0);
         let head = MutexContext::new(CState::new())
-            .initialize_empty(mutex.clone())
+            .initialize_empty(mutex.clone(), 40)
             .unwrap();
         let held = head.acquire_current(&mutex, &assumptions).unwrap();
         let mismatch = crate::kernel::c_loop_state_components_match_at_back_edge(
@@ -1204,10 +1426,12 @@ mod tests {
             };
             // Keep a second mutex alive: the ledger lineage and aggregate
             // counts alone cannot distinguish replacing the selected mutex.
-            let initial = initial.initialize_empty(mutex(1)).unwrap();
+            let initial = initial.initialize_empty(mutex(1), 40).unwrap();
             let initialize = |state: &MutexContext| match &protected {
-                Some(fact) => state.publish(mutex(0), fact.clone(), &assumptions).unwrap(),
-                None => state.initialize_empty(mutex(0)).unwrap(),
+                Some(fact) => state
+                    .publish(mutex(0), fact.clone(), &assumptions, 40)
+                    .unwrap(),
+                None => state.initialize_empty(mutex(0), 40).unwrap(),
             };
             let head = initialize(&initial);
             let destroyed = head.destroy(&mutex(0), &assumptions).unwrap();
@@ -1250,8 +1474,8 @@ mod tests {
     fn initialization_is_generative_and_cannot_be_substituted_on_a_guard() {
         let assumptions = PureFactContext::new();
         let initial = MutexContext::new(CState::new());
-        let first = initial.initialize_empty(mutex(0)).unwrap();
-        let second = initial.initialize_empty(mutex(0)).unwrap();
+        let first = initial.initialize_empty(mutex(0), 40).unwrap();
+        let second = initial.initialize_empty(mutex(0), 40).unwrap();
         let first_id = first
             .state()
             .mutex_ledger
@@ -1286,9 +1510,9 @@ mod tests {
     fn loop_may_initialize_and_destroy_a_mutex_absent_at_its_head() {
         let assumptions = PureFactContext::new();
         let head = MutexContext::new(CState::new())
-            .initialize_empty(mutex(0))
+            .initialize_empty(mutex(0), 40)
             .unwrap();
-        let local = head.initialize_empty(mutex(1)).unwrap();
+        let local = head.initialize_empty(mutex(1), 40).unwrap();
         let local = local.acquire_current(&mutex(1), &assumptions).unwrap();
         let local = local.release_current(&mutex(1), &assumptions).unwrap();
         let next = local.destroy(&mutex(1), &assumptions).unwrap();
@@ -1309,7 +1533,7 @@ mod tests {
         for size in [32, 128, 512] {
             let mut head = MutexContext::new(CState::new());
             for index in 0..size {
-                head = head.initialize_empty(mutex(index)).unwrap();
+                head = head.initialize_empty(mutex(index), 40).unwrap();
             }
             let selected = mutex(size / 2);
             let held = head.acquire_current(&selected, &assumptions).unwrap();
@@ -1327,7 +1551,7 @@ mod tests {
             let replaced = head
                 .destroy(&selected, &assumptions)
                 .unwrap()
-                .initialize_empty(selected)
+                .initialize_empty(selected, 40)
                 .unwrap();
             let (result, units) = crate::persistent::measure_persistent_work(|| {
                 head.state()
@@ -1393,7 +1617,7 @@ mod tests {
         let updated = invariant(1, 1);
         let mutex = mutex(0);
         let published = context(old.clone())
-            .publish(mutex.clone(), old.clone(), &assumptions)
+            .publish(mutex.clone(), old.clone(), &assumptions, 40)
             .unwrap();
         assert!(
             !published
@@ -1441,7 +1665,7 @@ mod tests {
         let old = invariant(1, 0);
         let mutex = mutex(0);
         let published = context(old.clone())
-            .publish(mutex.clone(), old.clone(), &assumptions)
+            .publish(mutex.clone(), old.clone(), &assumptions, 40)
             .unwrap();
         let (holding, guard) = published.acquire(&mutex, &assumptions).unwrap();
         let mut unfolded = holding.clone();
@@ -1466,7 +1690,7 @@ mod tests {
         );
         let stale = MutexGuard {
             mutex: mutex.clone(),
-            initialization: MutexInitialization(0),
+            initialization: MutexInitialization(0, 40),
             epoch: 0,
         };
         assert_eq!(
@@ -1485,15 +1709,15 @@ mod tests {
         let initial = context(fact.clone());
         assert_eq!(
             initial
-                .publish(mutex.clone(), invariant(2, 0), &assumptions)
+                .publish(mutex.clone(), invariant(2, 0), &assumptions, 40)
                 .err(),
             Some("mutex invariant is not held as a folded resource")
         );
         let published = initial
-            .publish(mutex.clone(), fact.clone(), &assumptions)
+            .publish(mutex.clone(), fact.clone(), &assumptions, 40)
             .unwrap();
         assert_eq!(
-            published.publish(mutex, fact, &assumptions).err(),
+            published.publish(mutex, fact, &assumptions, 40).err(),
             Some("mutex is already initialized")
         );
     }
@@ -1504,7 +1728,7 @@ mod tests {
         let fact = invariant(1, 0);
         let mutex = mutex(0);
         let initialized = context(fact.clone())
-            .publish(mutex.clone(), fact.clone(), &assumptions)
+            .publish(mutex.clone(), fact.clone(), &assumptions, 40)
             .unwrap();
         assert_eq!(
             initialized.release_current(&mutex, &assumptions).err(),

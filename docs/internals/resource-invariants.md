@@ -273,6 +273,17 @@ The loop checker reports replacement of a loop-head initialization as an
 unsupported contract, not as evidence that the C program is incorrect.
 This does not yet implement `mutex_live`, use loans, or storage-lifetime checks.
 
+Heap retirement now checks an index of initialized mutex footprints. The
+modeled binding supplies the complete ABI storage extent, retained through
+lock/unlock and removed on destruction. Direct free/realloc and allocation
+retirement at verified calls use the same check, including contracts whose
+allocation continuity is unknown. Lookup visits only footprints in the affected
+symbolic block; unrelated concrete blocks incur no scan. Ambiguous same-block
+overlap requires checked separation. Abstract preserving helpers cannot yet
+retire allocations, since their lifetime dependencies lack checked inputs.
+This does not yet reserve mutex bytes against writes, validate their initial
+storage, or handle automatic-storage expiry.
+
 Direct named primitive guard binders, lock-changing contracts, loop joins
 across acquisition epochs, lifecycle authority, and
 shared interference remain later work. This checkpoint does not add

@@ -3079,6 +3079,7 @@ fn execute_verified_function_applications_with_suspension(
             interface,
             &allocation_assumptions,
             post_state.loan_ledger(),
+            caller_state,
         );
         drop(allocation_delta_timing);
         let (memory, allocation_effects) = match allocation_delta {
@@ -10114,6 +10115,54 @@ mod allocation_continuity_tests {
     }
 
     #[test]
+    fn contract_allocation_retirement_respects_initialized_mutex_storage() {
+        for continuity_undecided in [false, true] {
+            let base = external_pointer(930_004);
+            let bytes = Bitvector32Term::Constant(48);
+            let input = ResourceContext::new()
+                .try_compose_with_fact(
+                    CResourceFact::own_allocation(base.clone(), bytes.clone()),
+                    &PureFactContext::new(),
+                )
+                .unwrap();
+            let empty = ResourceContext::new();
+            let output = if continuity_undecided {
+                ResourceContext::new()
+                    .try_compose_with_fact(
+                        CResourceFact::own_allocation(external_pointer(930_005), bytes.clone()),
+                        &PureFactContext::new(),
+                    )
+                    .unwrap()
+            } else {
+                ResourceContext::new()
+            };
+            let interface = CFunctionContractInterface::new(CType::Void, vec![]);
+            let state = super::super::mutexes::MutexContext::new(CState::new())
+                .initialize_empty(base.offset_by_bytes(8), 40)
+                .unwrap()
+                .into_state();
+            let result = apply_verified_heap_allocation_delta(
+                state.memory.clone(),
+                &state.memory,
+                &input,
+                &empty,
+                &output,
+                &[],
+                &interface,
+                &PureFactContext::new(),
+                None,
+                &state,
+            );
+            assert!(matches!(
+                result,
+                Err(VerifiedAllocationDeltaError::Runtime(
+                    CRuntimeError::MutexStorageInUse { .. }
+                ))
+            ));
+        }
+    }
+
+    #[test]
     fn continuity_requires_both_the_allocation_base_and_size() {
         let assumptions = PureFactContext::new();
         let input = external_pointer(930_000);
@@ -10295,6 +10344,7 @@ fn apply_verified_heap_allocation_delta(
     interface: &CFunctionContractInterface,
     assumptions: &PureFactContext,
     ledger: Option<&LoanLedger>,
+    mutex_state: &CState,
 ) -> Result<(CMemory, Vec<ExecutionPureFact>), VerifiedAllocationDeltaError> {
     let mut effects = Vec::new();
     // What the callee consumed is read where it was consumed: at the call's
@@ -10428,6 +10478,20 @@ fn apply_verified_heap_allocation_delta(
                 // the scan above cannot see a view the caller still holds
                 // over these bytes; the ledger can (docs/internals/stable-views.md).
                 refuse_retiring_a_lent_allocation(ledger, &base, &bytes, &allocation_assumptions)?;
+                let allocation_range = CMemoryRange::new_with_element_width(
+                    base.clone(),
+                    0u32.into(),
+                    bytes.clone(),
+                    1,
+                );
+                if let Some(error) = super::mutexes::storage_retirement_refusal(
+                    mutex_state,
+                    &allocation_range,
+                    &allocation_assumptions,
+                ) {
+                    return Err(VerifiedAllocationDeltaError::Runtime(error));
+                }
+
                 memory = memory.retire_contract_heap_allocation_claim(
                     &base,
                     &bytes,
@@ -10453,6 +10517,16 @@ fn apply_verified_heap_allocation_delta(
             ));
         }
         refuse_retiring_a_lent_allocation(ledger, &base, &bytes, &allocation_assumptions)?;
+        let allocation_range =
+            CMemoryRange::new_with_element_width(base.clone(), 0u32.into(), bytes.clone(), 1);
+        if let Some(error) = super::mutexes::storage_retirement_refusal(
+            mutex_state,
+            &allocation_range,
+            &allocation_assumptions,
+        ) {
+            return Err(VerifiedAllocationDeltaError::Runtime(error));
+        }
+
         let before_free = memory.clone();
         if memory.live_heap_block_size(&base).is_none() {
             memory = memory

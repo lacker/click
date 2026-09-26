@@ -29,6 +29,15 @@ message. A mutex may still be initialized and destroyed entirely within an
 iteration. This is groundwork for lifecycle authority; it does not establish
 storage lifetime or implement `mutex_live`/`mutex_use`.
 
+Heap allocation retirement now checks initialized mutex storage. The modeled
+ABI records a 40-byte mutex footprint, indexed by memory block. Direct `free`,
+`realloc`, and helper contracts that retire or may replace an allocation refuse
+an overlapping initialized mutex. Destruction removes this dependency; unlocking
+does not. Abstract preserving-guard contracts conservatively refuse allocation
+retirement until checked lifecycle inputs can describe their dependencies.
+This adds no surface syntax. Initialization validity, writes to mutex bytes,
+automatic-storage lifetime, and use loans remain unimplemented.
+
 The proposed next surface is:
 
 | Surface | Status in this proposal | What a reader should understand |
@@ -452,3 +461,35 @@ Keep the frozen C unchanged. Preserve the current green checkpoint until the
 new semantic rules and their diagnostics pass the ordinary gate. This document
 does not authorize implementing unresolved syntax choices or claiming that the
 example diagnostics already exist.
+
+## Remaining semantic implementation boundaries
+
+The heap-retirement checkpoint does not make the remaining migration mechanical.
+Three substantial semantic boundaries still need careful implementation and
+hostile certificate tests:
+
+1. **Storage and lifetime authority.** Initialization must establish live,
+   exclusive storage; initialized bytes must resist ordinary writes and scope
+   exit. `mutex_live`/`mutex_use` need checked lending, reborrowing, worker join
+   recovery, and returned guards that keep their lender alive. The current heap
+   refusal is a conservative dependency check, not this resource protocol.
+2. **Abstract guard transitions.** Contracts need generative initialization and
+   acquisition bindings, preserving versus consuming/producing occurrences,
+   and sound instantiation at calls. Named primitive binders should use that
+   occurrence machinery, without becoming field-bearing wrapper instances.
+   The current blanket transition freeze must remain until this is checked.
+3. **Interference and loop abstraction.** Acquiring shared protected state must
+   establish a fresh observation without reviving earlier-memory facts. Loop
+   assertions need existential, possibly conditional acquisition ownership,
+   rather than the current concrete-status comparison. The frozen parity and
+   shared-counter sources are acceptance targets, not passing demonstrations.
+
+Exact concurrent counter results additionally need conserved contribution
+accounting connected to the invariant. Existing `Count` does not itself supply
+thread safety or a global-population observation. Atomic publication is a
+separate memory-model extension.
+
+Once these transition rules and adversarial examples are fixed, declaration
+plumbing, precise binder/source diagnostics, documentation, and regression
+coverage are suitable bounded implementation tasks. The whole concurrency
+migration is not yet a routine implementation handoff.

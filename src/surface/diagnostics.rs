@@ -831,6 +831,16 @@ pub(super) fn describe_runtime_error(
             format!("wrong argument count: expected {expected}, got {actual}")
         }
         crate::kernel::CRuntimeError::MissingReturn => "missing return".to_string(),
+        crate::kernel::CRuntimeError::MutexStorageInUse { mutex, .. } => {
+            let subject = if matches!(mutex.block, crate::kernel::PointerBlock::Heap(_)) {
+                "a mutex in this allocation".to_string()
+            } else {
+                format!("mutex {}", describe_mutex_pointer(mutex, parameters, arguments))
+            };
+            format!("Cannot release allocation storage while {subject} remains initialized; call pthread_mutex_destroy before releasing its storage")
+        }
+        crate::kernel::CRuntimeError::UnsupportedMutexStorageRetirement =>
+            "Click does not yet support freeing or reallocating storage in a preserving guard contract; checked mutex lifetime authority is required".into(),
         crate::kernel::CRuntimeError::MissingMutexGuard { mutex } => format!(
             "Requires owns mutex_guard({})",
             describe_mutex_pointer(mutex, parameters, arguments)
@@ -952,7 +962,10 @@ pub(super) fn describe_runtime_error(
 /// reported as internal errors.
 pub(super) fn runtime_refusal_kind(error: &crate::kernel::CRuntimeError) -> ClickErrorKind {
     match error {
-        crate::kernel::CRuntimeError::UnsupportedConcurrentMutex => ClickErrorKind::Internal,
+        crate::kernel::CRuntimeError::UnsupportedConcurrentMutex
+        | crate::kernel::CRuntimeError::UnsupportedMutexStorageRetirement => {
+            ClickErrorKind::Internal
+        }
         _ => ClickErrorKind::Proof,
     }
 }

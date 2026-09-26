@@ -207,6 +207,14 @@ instance selected at initialization without requiring its old model values.
 Missing guards take precedence over a separately missing protected instance;
 unsupported preserving-contract transitions retain their limitation message.
 
+Heap allocation retirement now refuses overlap with an initialized mutex's
+full modeled ABI footprint, including direct free/realloc and retiring helper
+contracts. The index drops a footprint only on destruction, and unrelated
+allocation blocks remain independently releasable. Abstract guard contracts
+cannot yet retire allocations without checked lifecycle inputs. Initialization
+storage validity, ordinary-write exclusion, automatic-storage lifetimes, and
+use loans remain open; this is not full `mutex_live`/`mutex_use` support.
+
 Direct named guard clauses and consumed/produced guards still require the
 full abstract acquisition binding and transition model. The current symbolic
 form is restricted to helpers whose mutex protocols cannot change. Calls
