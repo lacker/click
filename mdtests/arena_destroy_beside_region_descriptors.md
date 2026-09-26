@@ -3,7 +3,7 @@
 `examples/arena`'s `arena_pipeline` ends every path in `arena_destroy(arena)`
 while it still owns its region descriptors. This is that call in isolation,
 with the `arena_destroy` contract of the arena's earlier prefix model and the
-lifecycle resources of `examples/arena/arena_resources.click`: the caller
+lifecycle resources the retired fixed-interval model declared: the caller
 lends `arena_empty(arena)`, which owns both backing arrays and their
 allocation authority, and keeps `object(first)` and `object(second)`.
 

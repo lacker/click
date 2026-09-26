@@ -26,27 +26,23 @@ The C is the fixed implementation boundary for the resource-modeling work;
 A caller can use a callee's contract only when the callee is verified earlier
 in the same sidecar, and imports carry resources but not C function specs.
 
-- `arena_cells.click` is the arena's model: the per-cell occupancy
-  representation, every C function over it (`arena_init`, `arena_alloc`,
-  `arena_free`, `arena_write`, `arena_read`, `arena_destroy`,
-  `arena_region_length`), then `arena_pipeline` and `arena_reuse`. It
-  declares its own resources.
-- `arena.click` keeps the earlier fixed-interval model: `arena_metadata`,
-  `arena_region`, `arena_available`, the specialized first allocation of
-  `arena_alloc`, and `arena_region_length`, `arena_read`, `arena_write`, and
-  `arena_free` over one fixed interval. It imports the lifecycle resources
-  (`arena_initialized_storage`, `arena_initialized_access`,
-  `arena_init_result`, `arena_empty`) from the declaration module
-  `arena_resources.click`, which a directory target does not select as an
-  entry.
+`arena_cells.click` is the arena's only sidecar: the per-cell occupancy
+representation, every C function over it (`arena_init`, `arena_alloc`,
+`arena_free`, `arena_write`, `arena_read`, `arena_destroy`,
+`arena_region_length`), then `arena_pipeline` and `arena_reuse`. It declares
+its own resources.
 
-An earlier model held the occupied cells as a prefix beside a free suffix
-(`arena_prefix_state`, `arena_prefix_region`). It verified the pipeline,
-whose frees in reverse order it expresses as prefix shrinks, but it could not
-express a free out of allocation order, and it is retired now that the
-per-cell model carries the pipeline. The resource-level negatives written
-against its resources (`mdtests/arena_prefix_region_double_free.md`,
-`mdtests/arena_prefix_regions_reject_overlap.md`) are self-contained and
+Two earlier models are retired. One held the occupied cells as a prefix
+beside a free suffix (`arena_prefix_state`, `arena_prefix_region`). It
+verified the pipeline, whose frees in reverse order it expresses as prefix
+shrinks, but it could not express a free out of allocation order. The other
+verified `arena_alloc` only as the first allocation from an empty arena and
+the region functions over one fixed interval. The per-cell model verifies
+each of those functions under a more general contract, so neither is the
+only coverage of anything. The mdtests written against the earlier resources
+(`mdtests/arena_prefix_region_double_free.md`,
+`mdtests/arena_prefix_regions_reject_overlap.md`,
+`mdtests/arena_destroy_beside_region_descriptors.md`) declare them inline and
 stay.
 
 ## The per-cell model
@@ -186,7 +182,11 @@ holds an occupied cell).
 - A call that lends an iterated fact havocs every cell the fact could hold,
   whatever the callee writes; the caller's frame across it comes only from
   the cells it keeps owning.
-- The two frontiers `arena_reuse` routes around, above.
-- A guarded equality over `int64` terms still needs its bounds stated in the
-  guard's own spelling
-  (`mdtests/guarded_postcondition_int64_bounds_frontier.md`).
+- `arena_reuse` still copies `middle->arena` into a local and returns the
+  state as `arena_state(old(middle->arena))`; both frontiers that forced
+  that are closed (above), and the simpler contract has not been retried.
+
+A guarded equality over `int64` terms no longer needs its bounds restated in
+the guard's own spelling: `simp` discharges an `int64` sum's or difference's
+definedness guard from the bounds in scope
+(`mdtests/guarded_postcondition_int64_bounds.md`).

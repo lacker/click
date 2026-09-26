@@ -56,9 +56,7 @@ Current projects:
   any order, reads, writes, and destruction over per-cell occupancy with
   iterated guarded ownership, the end-to-end `arena_pipeline` over them, and
   `arena_reuse`, which frees the middle of three regions and places the next
-  allocation of its size among the freed cells; `arena.click` keeps the
-  fixed-interval region model over the lifecycle resources in the
-  declaration module `arena_resources.click`.
+  allocation of its size among the freed cells.
 - `input-cursor/` verifies independently mutable cursors over a shared viewed
   input resource.
 - `jsonc-refcount/` verifies synthetic json-c-shaped field reads and writes on
