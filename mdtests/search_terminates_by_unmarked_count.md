@@ -165,7 +165,6 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
         preserve by {
             mark iter;
             let (previous: Nat) satisfy { walk(next, from, previous) == cur };
-            have n <= n by { simp(); }
             have at(iter, forall (k: int32) {
                 0 <= k and k < n implies 0 <= next[k] and next[k] < n
             }) by { assumption(); }
@@ -273,10 +272,7 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
                 }
                 assumption();
             }
-            have at(iter, visited[cur]) == 0 by { simp(); }
-            have visited[cur] != 0 by { simp(); }
             have viewable(visited[0..n]) by { simp(); }
-            have at(iter, viewable(visited[0..n])) by { simp(); }
             apply(unmarked_point_update(at(iter, visited), visited, 0, n, n, cur));
             apply(unmarked_nonnegative(visited, 0, n, n));
             have unmarked(visited, 0, n) < unmarked(at(iter, visited), 0, n) by {
@@ -285,10 +281,6 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
                 }
             }
             step();
-            have at(iter, walk(next, from, previous)) == at(iter, cur) by {
-                simp();
-            }
-            have at(iter, viewable(next[0..n])) by { simp(); }
             have viewable(next[0..n]) by { simp(); }
             apply(walk_frame(at(iter, next), next, n, from, previous));
             have walk(next, from, previous) == at(iter, cur) by {
@@ -300,7 +292,6 @@ int32 search(int32 *next, int32 *visited, int32 n, int32 from, int32 to) {
             have next[walk(next, from, previous)] == next[at(iter, cur)] by {
                 simp() using { walk(next, from, previous) == at(iter, cur); }
             }
-            have next[at(iter, cur)] == cur by { simp(); }
             have exists (fuel: Nat) { walk(next, from, fuel) == cur } by {
                 witness(fuel = Nat::Succ(previous));
                 unfold(walk(next, from, Nat::Succ(previous)));
