@@ -6481,7 +6481,10 @@ pub(super) fn assume_condition_truthiness(
 pub(super) fn undecided_loop_guard_context(outcome: &CStatementOutcome) -> String {
     let reason = match outcome {
         CStatementOutcome::UndefinedBehavior(undefined_behavior) => {
-            format!("it reaches undefined behavior ({undefined_behavior:?})")
+            format!(
+                "it reaches undefined behavior ({})",
+                undefined_behavior.description()
+            )
         }
         CStatementOutcome::RuntimeError(error) => {
             crate::kernel::api::describe_certification_runtime_error(error)

@@ -2908,3 +2908,35 @@ fn the_universal_witness_range_is_disjoint_from_every_other_producer() {
         "the first witness identity must be recognized as one"
     );
 }
+
+/// A loop invariant the entry lowering cannot evaluate names where it
+/// stopped, never the kernel's `ExecutionLimit` variant. It used to read
+/// `could not lower entry invariants: ResourceFieldInstanceUnavailable`.
+#[test]
+fn loop_entry_lowering_limit_is_spelled_in_words() {
+    let state = CState::new().with_local("i", int32(0));
+    let proposition = SpecProposition::Comparison {
+        left: SpecExpression::Value(int32(0)),
+        operator: CComparisonOperator::LessEqual,
+        right: SpecExpression::ResourceField {
+            projection: ResourceFieldProjection {
+                identity: Variable(10),
+                children: vec![],
+                field_index: 0,
+                at_entry: false,
+            },
+            c_type: CType::Int32,
+        },
+    };
+    let checks = vec![CLoopInvariantCheck::new(
+        proposition,
+        Some("invariant 0".to_string()),
+        None,
+    )];
+    let assumptions = PureFactContext::new();
+    let refusal = c_loop_entry_goals(&state, &checks, &assumptions).unwrap_err();
+    assert_eq!(
+        refusal,
+        "could not lower entry invariants: they stopped at a model field of a resource instance this state does not hold"
+    );
+}

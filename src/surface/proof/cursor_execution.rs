@@ -2763,7 +2763,11 @@ fn execute_step_from_frontier_position_selecting_path(
                     .find(|fact| !exact_fact_is_available(fact, available_pure_facts))
             {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` is missing exact prerequisite needed to select the safe statement transition: {required:?}"
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` is missing exact prerequisite needed to select the safe statement transition: `{}`",
+                    crate::surface::diagnostics::describe_stated_fact_over_locals(
+                        required,
+                        &current_state
+                    )
                 )));
             }
         }

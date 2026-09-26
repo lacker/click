@@ -1,5 +1,8 @@
 # Integer theorem application rejects an altered explicit guard
 
+The refusal names the premise as it was written; it used to print the
+kernel proposition's Debug form.
+
 ```click
 theorem guarded(x: Integer) {
     requires x == 0;
@@ -15,5 +18,5 @@ theorem altered_guard_using(x: Integer) {
 ```
 
 ```expect
-fail: unavailable exact premise
+fail: `apply using` requires an unavailable exact premise: `x == 1`
 ```

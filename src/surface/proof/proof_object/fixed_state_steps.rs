@@ -356,10 +356,11 @@ impl<'a> Proof<'a> {
             .map(|premise| self.lower_surface_proposition(premise, "`apply using` premise"))
             .collect::<Result<Vec<_>, _>>()?;
 
-        for premise in &explicit_premises {
+        for (premise, surface) in explicit_premises.iter().zip(surface_premises) {
             if !self.facts().exact_available_across_effects(premise, &[]) {
                 return Err(self.step_error(format!(
-                    "`apply using` requires an unavailable exact premise: {premise:?}"
+                    "`apply using` requires an unavailable exact premise: `{}`",
+                    crate::surface::diagnostics::describe_click_proposition(surface)
                 )));
             }
         }

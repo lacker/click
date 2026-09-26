@@ -1976,7 +1976,12 @@ fn pure_integer_ranking_measure_term(
         reader.assumptions,
         reader.budget,
     )
-    .map_err(|error| format!("could not evaluate a termination measure: {error:?}"))?;
+    .map_err(|error| {
+        format!(
+            "could not evaluate a termination measure: it stopped at {}",
+            error.describe()
+        )
+    })?;
     let [path] = paths.as_slice() else {
         return Err(format!(
             "a termination measure must have exactly one value at this state; this one has {}",
@@ -2013,7 +2018,12 @@ fn pure_ranking_measure_term(
         reader.assumptions,
         reader.budget,
     )
-    .map_err(|error| format!("could not evaluate a termination measure: {error:?}"))?;
+    .map_err(|error| {
+        format!(
+            "could not evaluate a termination measure: it stopped at {}",
+            error.describe()
+        )
+    })?;
     let [path] = paths.as_slice() else {
         return Err(format!(
             "a termination measure must have exactly one value at this state; this one has {}",
@@ -2039,7 +2049,10 @@ fn c_ranking_measure_read(
     }
     let paths = evaluate_c_expression_paths(state, expression, reader.assumptions, reader.budget)
         .map_err(|error| {
-        format!("could not evaluate a termination measure's read: {error:?}")
+        format!(
+            "could not evaluate a termination measure's read: it stopped at {}",
+            error.describe()
+        )
     })?;
     let [path] = paths.as_slice() else {
         return Err(

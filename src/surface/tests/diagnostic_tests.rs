@@ -1074,3 +1074,23 @@ fn empty_footprint_rejects_a_fact_aliased_write_and_effect_range() {
         assert!(error.message().contains("outside the mutable footprint"));
     }
 }
+
+/// A conditional term's guard is spelled as the comparison it means. The
+/// kernel states a 32-bit unsigned comparison as a signed one over operands
+/// with their sign bit flipped; rendered context-free, that used to read as
+/// the raw bias.
+#[test]
+fn a_conditional_term_spells_its_unsigned_guard() {
+    let x = Bitvector32Term::Variable(crate::kernel::Variable(7));
+    let term = Bitvector32Term::If {
+        condition: Box::new(ConditionTerm::unsigned_less_than(
+            x.clone(),
+            Bitvector32Term::Constant(4),
+        )),
+        then_term: Box::new(x),
+        else_term: Box::new(Bitvector32Term::Constant(5)),
+    };
+    let rendered = super::diagnostics::describe_bitvector(&term);
+    assert!(rendered.contains(" < 4 (unsigned)"), "{rendered}");
+    assert!(!rendered.contains('^'), "{rendered}");
+}

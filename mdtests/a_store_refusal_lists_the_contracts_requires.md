@@ -14,6 +14,10 @@ that whole context and passes its fact list only as the statement-local delta,
 and the refusal listed the delta alone. It now lists the context the step was
 checked against, with each true condition spelled as the comparison it states.
 
+The note naming the uncovered end used to appear only when the held and needed
+ranges shared a start; `owns b[0..n]` against `b[1..2]` now says the held range
+covers it only when `2 <= n`.
+
 ```c filename=a_store_refusal_lists_the_contracts_requires.c
 void walk(int32 *a, int32 *b, int32 n) {
     b[1] = 1;
@@ -35,6 +39,7 @@ void walk(int32 *a, int32 *b, int32 n) {
 
 ```expect
 fail: missing resource fact `owns b[1..2]`
+  note: held `owns b[0..n]` covers `b[1..2]` only when `2 <= n`
   C operation: *(b + 1) = 1
 proof context:
   pure facts: [0 <= n, 1 <= n, n <= 1073741823, n <= 1073741823 (unsigned), viewable(base=a, bytes=(n * 4)), viewable(base=b, bytes=(n * 4)), separate(memory(b[0..n]), memory(a[0..n]))]

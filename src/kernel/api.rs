@@ -513,7 +513,12 @@ fn c_loop_preservation_contexts_with_mode(
         &mut budget,
         &mut variables,
     )
-    .map_err(|error| format!("could not prepare loop effects: {error:?}"))?;
+    .map_err(|error| {
+        format!(
+            "could not prepare the loop head: it stopped at {}",
+            error.describe()
+        )
+    })?;
     if let Some(failure) = head.resource_failures.first() {
         return Err(failure.clone().into());
     }
@@ -561,7 +566,12 @@ fn c_loop_preservation_contexts_with_mode(
                 true,
                 &mut budget,
             )
-            .map_err(|error| format!("could not assume the loop condition: {error:?}"))?
+            .map_err(|error| {
+                format!(
+                    "could not assume the loop condition: it stopped at {}",
+                    error.describe()
+                )
+            })?
         };
         // A disjunctive guard such as `while (a || b)` has one way *in* per
         // disjunct, and the body runs on each of them with only that path's
@@ -727,7 +737,10 @@ fn loop_head_invariant_failure(
             );
         }
     }
-    format!("could not assume loop invariants: {error:?}")
+    format!(
+        "could not assume loop invariants: they stopped at {}",
+        error.describe()
+    )
 }
 
 pub fn c_loop_invariant_obligations_at_back_edge(
@@ -744,7 +757,12 @@ pub fn c_loop_invariant_obligations_at_back_edge(
         assumptions,
         &mut ExecutionBudget::beside_live_state(),
     )
-    .map_err(|error| format!("could not lower back-edge invariants: {error:?}"))
+    .map_err(|error| {
+        format!(
+            "could not lower back-edge invariants: they stopped at {}",
+            error.describe()
+        )
+    })
 }
 
 /// Refuses a loop `decreases` component whose variables can be written
@@ -862,7 +880,12 @@ pub fn c_loop_entry_goals(
         &mut ExecutionBudget::beside_live_state(),
         &mut declarations,
     )
-    .map_err(|error| format!("could not lower entry invariants: {error:?}"))?;
+    .map_err(|error| {
+        format!(
+            "could not lower entry invariants: they stopped at {}",
+            error.describe()
+        )
+    })?;
     Ok(CLoopEntryGoals { declarations })
 }
 
@@ -879,7 +902,12 @@ pub fn c_loop_invariant_obligations_at_entry(
         assumptions,
         &mut ExecutionBudget::beside_live_state(),
     )
-    .map_err(|error| format!("could not lower entry invariants: {error:?}"))
+    .map_err(|error| {
+        format!(
+            "could not lower entry invariants: they stopped at {}",
+            error.describe()
+        )
+    })
 }
 
 pub fn c_loop_effects_hold_at_back_edge(
@@ -903,7 +931,12 @@ pub fn c_loop_effects_hold_at_back_edge(
         assumptions,
         &mut ExecutionBudget::beside_live_state(),
     )
-    .map_err(|error| format!("could not lower back-edge effects: {error:?}"))?;
+    .map_err(|error| {
+        format!(
+            "could not lower back-edge effects: they stopped at {}",
+            error.describe()
+        )
+    })?;
     if let Some(obligation) = obligations.first() {
         return Err(format!(
             "missing loop effect fact{}: {:?}",
@@ -930,7 +963,12 @@ pub fn c_loop_invariants_hold_at_entry(
         assumptions,
         &mut ExecutionBudget::beside_live_state(),
     )
-    .map_err(|error| format!("could not lower entry invariants: {error:?}"))?;
+    .map_err(|error| {
+        format!(
+            "could not lower entry invariants: they stopped at {}",
+            error.describe()
+        )
+    })?;
     if let Some(obligation) = obligations.first() {
         return Err(format!(
             "missing invariant fact{}",

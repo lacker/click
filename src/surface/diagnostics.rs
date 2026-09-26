@@ -599,7 +599,7 @@ pub(super) fn describe_undecided_statement_successors(
                     .all(|other| other.path_facts.contains(fact))
             })
             .take(item_limit)
-            .map(|fact| describe_pure_fact(fact, parameters, arguments))
+            .map(|fact| format!("`{}`", describe_stated_fact(fact, parameters, arguments)))
             .collect::<Vec<_>>();
         if distinguishing.is_empty() {
             continue;
@@ -677,13 +677,7 @@ pub(super) fn describe_loop_head_refusal(
             state,
         } => (proposition, context, invariant, state),
     };
-    let values = state
-        .locals()
-        .object_values()
-        .map(|(name, value)| (name.to_string(), value.clone()))
-        .collect();
-    let (parameters, arguments) = value_naming_tables(&values);
-    let fact = describe_stated_fact(proposition, &parameters, &arguments);
+    let fact = describe_stated_fact_over_locals(proposition, state);
     let context = context
         .as_ref()
         .map(|context| format!(" ({context})"))
@@ -698,6 +692,19 @@ pub(super) fn describe_loop_head_refusal(
         })
         .unwrap_or_default();
     format!("missing loop-head prerequisite{context}: `{fact}`{owner}")
+}
+
+/// A fact as a proof would state it, spelled over `state`'s locals: the
+/// kernel variables a step or a loop head minted for them read as the
+/// locals' names.
+pub(super) fn describe_stated_fact_over_locals(fact: &Proposition, state: &CState) -> String {
+    let values = state
+        .locals()
+        .object_values()
+        .map(|(name, value)| (name.to_string(), value.clone()))
+        .collect();
+    let (parameters, arguments) = value_naming_tables(&values);
+    describe_stated_fact(fact, &parameters, &arguments)
 }
 
 pub(super) fn describe_missing_proof_obligations(
@@ -1316,11 +1323,14 @@ fn parameter_relative_endpoints(
     )
 }
 
-/// A note for a missing memory range that a held range of the same base and
-/// start would cover if it were long enough. The verdict compared the two
-/// ends; say which comparison was not established, so `owns b[0..n]` against
-/// `b[0..1]` reads as `1 <= n` (the held range may be empty) rather than as a
-/// resource the proof never held.
+/// A note for a missing memory range that a held range over the same base
+/// would cover if its bounds reached. The verdict compared the endpoints;
+/// say which comparisons were not established, so `owns b[0..n]` against
+/// `b[0..1]` reads as `1 <= n` (the held range may be empty) and against
+/// `b[1..2]` as `2 <= n`, rather than as a resource the proof never held.
+/// Both ranges are spelled against the parameter they index when one names
+/// them, so a range whose base pointer already carries an offset is compared
+/// with the held range at the same scale.
 pub(super) fn describe_missing_range_end_note(
     error: &crate::kernel::CRuntimeError,
     resource_facts: &[CResourceFact],
@@ -1336,37 +1346,100 @@ pub(super) fn describe_missing_range_end_note(
     else {
         return String::new();
     };
-    let Some(held_fact) = resource_facts.iter().find(|fact| {
-        let held = if resource.is_own() {
-            fact.memory_own_range()
+    let required_parameter = parameter_relative_base(required, parameters, arguments);
+    // Endpoints of the held range and of the required one, on one scale.
+    let comparable = |held: &CMemoryRange| {
+        let held_index = if held.base() == required.base() {
+            match &required_parameter {
+                Some((_, index)) => index.clone(),
+                None => {
+                    return Some((
+                        held.start().clone(),
+                        held.end().clone(),
+                        required.start().clone(),
+                        required.end().clone(),
+                    ));
+                }
+            }
         } else {
-            fact.memory_own_range().or_else(|| fact.memory_view_range())
+            let (required_parameter, _) = required_parameter.as_ref()?;
+            let (held_parameter, index) = parameter_relative_base(held, parameters, arguments)?;
+            if !std::ptr::eq(held_parameter, *required_parameter) {
+                return None;
+            }
+            index
         };
-        held.is_some_and(|held| {
-            held.base() == required.base()
-                && held.start() == required.start()
-                && held.end() != required.end()
+        let (_, required_index) = required_parameter.as_ref()?;
+        let (held_start, held_end) = parameter_relative_endpoints(&held_index, held);
+        let (required_start, required_end) = parameter_relative_endpoints(required_index, required);
+        Some((held_start, held_end, required_start, required_end))
+    };
+    let candidates = resource_facts
+        .iter()
+        .filter_map(|fact| {
+            let held = if resource.is_own() {
+                fact.memory_own_range()
+            } else {
+                fact.memory_own_range().or_else(|| fact.memory_view_range())
+            }?;
+            let (held_start, held_end, required_start, required_end) = comparable(held)?;
+            let mut sides = Vec::new();
+            if held_start != required_start {
+                sides.push((held_start, required_start));
+            }
+            if held_end != required_end {
+                sides.push((required_end, held_end));
+            }
+            (!sides.is_empty()).then_some((fact, sides))
         })
-    }) else {
+        .collect::<Vec<_>>();
+    // A held range that shares the needed start differs only in its end, the
+    // closest miss; prefer it over one that differs on both sides.
+    let Some((held_fact, sides)) = candidates
+        .iter()
+        .min_by_key(|(_, sides)| sides.len())
+        .cloned()
+    else {
         return String::new();
     };
-    let held = held_fact
-        .memory_own_range()
-        .or_else(|| held_fact.memory_view_range())
-        .expect("selected a memory range fact");
-    let (required_end, held_end) = match parameter_relative_base(required, parameters, arguments) {
-        Some((_, base_index)) => (
-            parameter_relative_endpoints(&base_index, required).1,
-            parameter_relative_endpoints(&base_index, held).1,
-        ),
-        None => (required.end().clone(), held.end().clone()),
+    let decided = |lower: &Bitvector32Term, upper: &Bitvector32Term| {
+        Some(lower.as_const()? as i32 <= upper.as_const()? as i32)
     };
+    if sides
+        .iter()
+        .any(|(lower, upper)| decided(lower, upper) == Some(false))
+    {
+        let (lower, upper) = sides
+            .iter()
+            .find(|(lower, upper)| decided(lower, upper) == Some(false))
+            .expect("found a refuted side above");
+        return format!(
+            "\n  note: held `{}` does not cover `{}`: `{} <= {}` is false",
+            describe_resource_fact(held_fact, parameters, arguments),
+            describe_memory_range(required, parameters, arguments),
+            describe_bitvector_with_context(lower, parameters, arguments),
+            describe_bitvector_with_context(upper, parameters, arguments),
+        );
+    }
+    let conditions = sides
+        .iter()
+        .filter(|(lower, upper)| decided(lower, upper).is_none())
+        .map(|(lower, upper)| {
+            format!(
+                "`{} <= {}`",
+                describe_bitvector_with_context(lower, parameters, arguments),
+                describe_bitvector_with_context(upper, parameters, arguments),
+            )
+        })
+        .collect::<Vec<_>>();
+    if conditions.is_empty() {
+        return String::new();
+    }
     format!(
-        "\n  note: held `{}` covers `{}` only when `{} <= {}`",
+        "\n  note: held `{}` covers `{}` only when {}",
         describe_resource_fact(held_fact, parameters, arguments),
         describe_memory_range(required, parameters, arguments),
-        describe_bitvector_with_context(&required_end, parameters, arguments),
-        describe_bitvector_with_context(&held_end, parameters, arguments),
+        conditions.join(" and "),
     )
 }
 
@@ -3991,7 +4064,7 @@ pub(super) fn describe_bitvector_with_context(
             else_term,
         } => format!(
             "if {} then {} else {}",
-            describe_condition(condition),
+            describe_condition_with_context(condition, parameters, arguments),
             describe_bitvector_with_context(then_term, parameters, arguments),
             describe_bitvector_with_context(else_term, parameters, arguments)
         ),
@@ -4157,6 +4230,9 @@ fn describe_integer_term(term: &crate::kernel::IntegerTerm) -> String {
 }
 
 pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
+    if let Some(unsigned) = describe_unsigned_comparison(condition, &[], &[]) {
+        return unsigned;
+    }
     match condition {
         ConditionTerm::AlgebraicEqual(_, _) => "algebraic equality".to_string(),
         ConditionTerm::IntegerLessThan(left, right) => {
