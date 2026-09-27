@@ -3035,28 +3035,27 @@ impl Pointer {
         }
     }
 
-    /// The pointer value a load of a pointer-typed cell denotes, where
-    /// `bits` names what the cell holds: a raw `MemoryLoad` or the load
-    /// variable minted for it. Every construction of a loaded pointer goes
-    /// through here, so the encoding is decided in one place: today, the
-    /// block of the storage it was read from, displaced by the loaded bits
-    /// times the pointee's width.
+    /// FLIP: the pointer value a load denotes has an identity of its own.
     pub(crate) fn loaded(block: PointerBlock, bits: Bitvector32Term, pointee_width: i64) -> Self {
-        Self {
-            block,
-            offset: PointerOffsetTerm::scale_int32(bits, pointee_width),
+        let variable = match &bits {
+            Bitvector32Term::Variable(variable) if crate::kernel::is_load_variable(variable) => {
+                Some(*variable)
+            }
+            Bitvector32Term::MemoryLoad(_, _) => {
+                crate::kernel::load_variable_for_term(&bits).map(|(variable, _)| variable)
+            }
+            _ => None,
+        };
+        match variable {
+            Some(variable) => Self::symbolic(variable),
+            None => Self {
+                block,
+                offset: PointerOffsetTerm::scale_int32(bits, pointee_width),
+            },
         }
     }
 
-    /// The parts `Pointer::loaded` built this pointer from, when its form is
-    /// a loaded pointer's: the storage block, the loaded bits (a raw
-    /// `MemoryLoad` or a load variable), and the pointee width. Consumers
-    /// decode a loaded pointer here rather than by pattern-matching its
-    /// representation, so the representation can change in one place.
-    ///
-    /// The storage-relative form is also the form of an array element whose
-    /// index was loaded (`a[i]`), so a consumer still checks, as before, that
-    /// the load is of the cell it means.
+    /// FLIP decoder.
     pub(crate) fn as_loaded(&self) -> Option<(&PointerBlock, &Bitvector32Term, i64)> {
         let PointerOffsetTerm::Int32Scaled { value, byte_width } = &self.offset else {
             return None;

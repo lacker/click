@@ -1295,6 +1295,26 @@ fn canonicalized_symbolic_load_value_with_identity(
     let CValue::Pointer(pointer_value) = &value else {
         return Some(value);
     };
+    if let PointerBlock::Symbolic(variable) = &pointer_value.pointer().block
+        && pointer_value.pointer().offset == PointerOffsetTerm::Constant(0)
+        && let Some((memory, cell)) = registered_load_for_variable(variable)
+    {
+        let load = Bitvector32Term::MemoryLoad(memory, Box::new(cell.clone()));
+        let named =
+            earlier_equal_load_variable(*variable, &cell, &load, assumptions).unwrap_or(*variable);
+        let (named_memory, named_cell) =
+            registered_load_for_variable(&named).expect("a candidate name is registered");
+        record_load_variable_defining_fact_with_source(
+            named,
+            Bitvector32Term::MemoryLoad(named_memory, Box::new(named_cell)),
+            facts,
+            source,
+        );
+        return Some(CValue::typed_pointer(
+            Pointer::symbolic(named),
+            pointer_value.c_type(),
+        ));
+    }
     let Some((block, bits, byte_width)) = pointer_value.pointer().as_loaded() else {
         return Some(value);
     };
@@ -1425,6 +1445,9 @@ thread_local! {
     /// origin recorded under an older one, which belongs to a DAG the
     /// current function's effect snapshots never connect to.
     static LOAD_ORIGIN_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static LOAD_VARIABLES_AT_ADDRESS: std::cell::RefCell<
+        std::collections::HashMap<Pointer, Vec<Variable>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
     static LOAD_VARIABLE_CACHE: std::cell::RefCell<
         std::collections::HashMap<Bitvector32Term, (Variable, Bitvector32Term)>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -1452,6 +1475,7 @@ pub(crate) fn clear_load_canonicalization_caches() {
 
 pub(crate) fn clear_load_variable_registry() {
     LOAD_VARIABLE_REGISTRY.with(|registry| registry.borrow_mut().clear());
+    LOAD_VARIABLES_AT_ADDRESS.with(|index| index.borrow_mut().clear());
     // Access widths are scoped to the verification that observed them. A
     // `local:` address is spelled the same in the next function, so a width
     // left behind would answer for an unrelated cell there.
@@ -3248,6 +3272,13 @@ fn mint_load_variable_identity(
                             bytes,
                         ),
                     );
+                    LOAD_VARIABLES_AT_ADDRESS.with(|index| {
+                        index
+                            .borrow_mut()
+                            .entry(pointer.clone())
+                            .or_default()
+                            .push(variable)
+                    });
                     return variable;
                 }
             }
@@ -3356,6 +3387,13 @@ fn materialized_pointer_cell_load_variable(
     let CValue::Pointer(value) = memory.cells.get(pointer)? else {
         return None;
     };
+    let stored = value.pointer();
+    if let PointerBlock::Symbolic(variable) = &stored.block
+        && stored.offset == PointerOffsetTerm::Constant(0)
+        && let Some((_, registered)) = registered_load_for_variable(variable)
+    {
+        return (registered == *pointer).then_some(*variable);
+    }
     let (storage, index, byte_width) = value.pointer().as_loaded()?;
     if *storage != pointer.block {
         return None;
@@ -3370,6 +3408,38 @@ fn materialized_pointer_cell_load_variable(
     };
     let (_, registered) = registered_load_for_variable(variable)?;
     (registered == *pointer).then_some(*variable)
+}
+
+fn earlier_equal_load_variable(
+    variable: Variable,
+    cell: &Pointer,
+    load: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> Option<Variable> {
+    let candidates = LOAD_VARIABLES_AT_ADDRESS.with(|index| {
+        index
+            .borrow()
+            .get(cell)
+            .map(|variables| {
+                variables
+                    .iter()
+                    .copied()
+                    .take_while(|c| *c != variable)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    });
+    candidates.into_iter().find(|candidate| {
+        crate::instrumentation::record_deterministic_work(1);
+        let Some((memory, pointer)) = registered_load_for_variable(candidate) else {
+            return false;
+        };
+        crate::kernel::reasoning::memory_resolution::bitvector_terms_proven_equal_for_memory_resolution(
+            &Bitvector32Term::MemoryLoad(memory, Box::new(pointer)),
+            load,
+            assumptions,
+        )
+    })
 }
 
 /// Binds a load term to its load variable and records the defining
