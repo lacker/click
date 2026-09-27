@@ -3466,6 +3466,10 @@ pub enum CRuntimeError {
         allocation: CMemoryRange,
         storage: CMemoryRange,
     },
+    MutexStorageWrite {
+        write: CMemoryRange,
+        storage: CMemoryRange,
+    },
     MissingMutexStorageAlignment {
         mutex: Pointer,
         alignment: u32,

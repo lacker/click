@@ -4187,6 +4187,16 @@ fn prepare_verified_function_call<'a>(
     // rejecting all mutation would also reject the supported viewed-field /
     // owned-field partition.
     let mutable_ranges = projection.ranges;
+    if let Some(error) = mutable_ranges.iter().find_map(|range| {
+        super::mutexes::storage_write_refusal(caller_state, range, &effective_assumptions)
+    }) {
+        return Ok(Err(CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(error),
+            facts,
+            obligations,
+            loan_evidence: empty_checked_loan_evidence_sequence(),
+        }));
+    }
     let projection_range_sources = projection.range_sources;
     {
         // Compare the effects against the complete checked view frontier, not

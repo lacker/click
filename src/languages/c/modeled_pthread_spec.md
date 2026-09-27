@@ -1,4 +1,4 @@
-# Modeled pthread create/join and mutex specification, version 5
+# Modeled pthread create/join and mutex specification, version 6
 
 This trusted specification is an explicit assumption of a conditional Click
 client proof. It does not certify an operating system's pthread implementation.
@@ -58,9 +58,18 @@ normal or abrupt scope exit, including function return. Folding its owner into
 a resource does not remove this storage dependency. Unresolved symbolic mutex
 storage conservatively blocks expiry when it might alias the local object.
 Initialization now checks storage ownership, known lifetime expiry, read-only
-storage, alignment, and stable loans. It does not yet reserve its footprint
-against another overlapping initialization or ordinary writes after initialization;
-those checks belong to the remaining storage-reservation boundary.
+storage, alignment, and stable loans. Successful initialization reserves its
+footprint against ordinary C stores, aggregate writes, call-result assignments,
+and modular calls whose mutable footprint may overlap it. Another initialization
+must also be separate. Unlocking or folding lifecycle ownership does not release
+the reservation; destruction does. Missing separation reports `Requires separate(...)`.
+Every checked mutex runtime transition may change its opaque bytes, forgets their
+old values, and must respect active stable storage loans.
+
+Reservations are retained in the concrete runtime ledger. Abstract preserving
+helper bodies still use the protocol freeze; their mutable footprints are checked
+against the caller's concrete reservations at application. This does not implement
+standalone abstract reservation inputs, lifecycle outputs, or `mutex_use` loans.
 
 The C client still owes its worker proof, creation failure paths, ownership
 separation, parent access checks, and every source-level continuation. The

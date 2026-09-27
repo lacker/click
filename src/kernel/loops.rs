@@ -218,10 +218,10 @@ mod pointee_const_return_tests {
                         &PureFactContext::new(),
                     );
                     assert_eq!(
-                        result.is_some(),
+                        result.is_ok(),
                         !immutable && (!source_const || destination_const)
                     );
-                    if result.is_some() {
+                    if result.is_ok() {
                         assert!(
                             matches!(state.locals.binding("text"), Some(CLocalBinding::Object { value: CValue::Pointer(pointer), pointee_constant, .. })
                             if *pointee_constant == destination_const && pointer.pointee_constant() == destination_const)
@@ -241,7 +241,7 @@ mod pointee_const_return_tests {
                 &mut Vec::new(),
                 &PureFactContext::new()
             )
-            .is_some()
+            .is_ok()
         );
         assert!(matches!(
             state.locals.binding("temporary"),
@@ -249,6 +249,26 @@ mod pointee_const_return_tests {
                 pointee_constant: true,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn call_result_cannot_overwrite_reserved_mutex_storage() {
+        let state = CState::new().with_local("result", int32(0));
+        let pointer = state.locals.slot("result").unwrap().clone();
+        let mut state = crate::kernel::mutexes::MutexContext::new(state)
+            .initialize_empty(pointer, 40)
+            .unwrap()
+            .into_state();
+        assert!(matches!(
+            assign_call_result(
+                &mut state,
+                "result",
+                int32(1),
+                &mut Vec::new(),
+                &PureFactContext::new()
+            ),
+            Err(CRuntimeError::MutexStorageWrite { .. })
         ));
     }
 
@@ -314,9 +334,9 @@ fn assign_call_result(
     value: CValue,
     obligations: &mut Vec<ProofObligation>,
     assumptions: &PureFactContext,
-) -> Option<()> {
+) -> Result<(), CRuntimeError> {
     if value == CValue::Void {
-        return None;
+        return Err(CRuntimeError::TypeMismatch);
     }
     let (c_type, volatile, pointee_volatile, pointee_constant) = match state.locals.binding(target)
     {
@@ -347,11 +367,11 @@ fn assign_call_result(
             },
         ) => {
             if *constant {
-                return None;
+                return Err(CRuntimeError::TypeMismatch);
             }
             (*c_type, *volatile, *pointee_volatile, *pointee_constant)
         }
-        Some(_) => return None,
+        Some(_) => return Err(CRuntimeError::TypeMismatch),
         None => (
             value.c_type(),
             false,
@@ -365,8 +385,20 @@ fn assign_call_result(
         pointee_constant,
         obligations,
         assumptions,
-    )?
+    )
+    .ok_or(CRuntimeError::TypeMismatch)?
     .with_pointer_pointee_volatile(pointee_volatile);
+    if let Some(pointer) = state.locals.slot(target) {
+        let range = CMemoryRange::new_with_element_width(
+            pointer.clone(),
+            0u32.into(),
+            1u32.into(),
+            value.byte_width(),
+        );
+        if let Some(error) = super::mutexes::storage_write_refusal(state, &range, assumptions) {
+            return Err(error);
+        }
+    }
     sync_stack_local(state, target, &value);
     state.locals.set_typed_with_all_qualifiers(
         target.to_string(),
@@ -377,7 +409,7 @@ fn assign_call_result(
         false,
         pointee_constant,
     );
-    Some(())
+    Ok(())
 }
 
 pub(super) fn execute_c_call_assign_paths(
@@ -570,7 +602,7 @@ pub(super) fn execute_c_call_assign_paths(
                             loan_evidence: path.loan_evidence.clone(),
                         };
                     };
-                    if let Some(outcome) = crate::kernel::eval::stable_loan_memory_write_outcome(
+                    if let Some(outcome) = crate::kernel::eval::memory_write_permission_outcome(
                         &state,
                         &slot,
                         layout.size_bytes(),
@@ -627,18 +659,15 @@ pub(super) fn execute_c_call_assign_paths(
                         loan_evidence: path.loan_evidence.clone(),
                     };
                 }
-                if assign_call_result(
-                    &mut state,
-                    target,
-                    value,
-                    &mut path.obligations,
+                let current = crate::kernel::reasoning::path_facts::assumptions_with_path_context(
                     assumptions,
-                )
-                .is_some()
+                    &path.facts,
+                    &path.obligations,
+                );
+                match assign_call_result(&mut state, target, value, &mut path.obligations, &current)
                 {
-                    CStatementOutcome::Normal(state)
-                } else {
-                    CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                    Ok(()) => CStatementOutcome::Normal(state),
+                    Err(error) => CStatementOutcome::RuntimeError(error),
                 }
             }
             CFunctionOutcome::Throw { value, state } => CStatementOutcome::Throw { value, state },
@@ -903,7 +932,25 @@ fn execute_modeled_pthread_mutex_paths(
                         &current,
                     )
                 })
-                .flatten();
+                .flatten()
+                .or_else(|| {
+                    if initializing || state.preserves_mutex_protocols {
+                        return None;
+                    }
+                    let storage = CMemoryRange::new_with_element_width(
+                        mutex.pointer().clone(),
+                        0u32.into(),
+                        binding.mutex_storage_bytes.into(),
+                        1,
+                    );
+                    state
+                        .stable_loan_memory_access_refusal(
+                            &storage,
+                            &current,
+                            super::LoanRefusalOperation::MemoryAccess,
+                        )
+                        .map(CRuntimeError::LoanRefusal)
+                });
             let transition: Result<CState, CRuntimeError> = if let Some(error) = storage_refusal {
                 Err(error)
             } else if initializing {
@@ -966,7 +1013,9 @@ fn execute_modeled_pthread_mutex_paths(
             };
             match transition {
                 Ok(mut next) => {
-                    if initializing {
+                    // Every runtime transition may change the opaque representation.
+                    // Only this checked path bypasses its ordinary-write reservation.
+                    {
                         let storage =
                             super::primitives::storage_pointer_spellings(mutex.pointer(), &current)
                                 .pop()
@@ -985,7 +1034,7 @@ fn execute_modeled_pthread_mutex_paths(
                         );
                         next.set_memory(memory);
                     }
-                    if target.is_some_and(|target| {
+                    if let Some(error) = target.and_then(|target| {
                         assign_call_result(
                             &mut next,
                             target,
@@ -993,9 +1042,9 @@ fn execute_modeled_pthread_mutex_paths(
                             &mut path.obligations,
                             &current,
                         )
-                        .is_none()
+                        .err()
                     }) {
-                        refusal("modeled-pthread mutex status target is not writable")
+                        CStatementOutcome::RuntimeError(error)
                     } else {
                         CStatementOutcome::Normal(next)
                     }
@@ -1250,7 +1299,7 @@ fn execute_modeled_pthread_create_paths(
                                     &mut path.obligations,
                                     &current,
                                 )
-                                .is_none()
+                                .is_err()
                                     || assign_call_result(
                                         &mut failure,
                                         target,
@@ -1258,7 +1307,7 @@ fn execute_modeled_pthread_create_paths(
                                         &mut path.obligations,
                                         &current,
                                     )
-                                    .is_none()
+                                    .is_err()
                                 {
                                     refusal("modeled-pthread create status target is not writable")
                                 } else {
@@ -1368,7 +1417,7 @@ fn execute_modeled_pthread_join_paths(
                 Ok((joined, facts)) => {
                     path.facts.extend(facts);
                     let mut next = joined.parent().clone();
-                    if target.is_some_and(|target| {
+                    if let Some(error) = target.and_then(|target| {
                         assign_call_result(
                             &mut next,
                             target,
@@ -1376,9 +1425,9 @@ fn execute_modeled_pthread_join_paths(
                             &mut path.obligations,
                             &current,
                         )
-                        .is_none()
+                        .err()
                     }) {
-                        CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                        CStatementOutcome::RuntimeError(error)
                     } else {
                         CStatementOutcome::Normal(next)
                     }
@@ -1428,18 +1477,23 @@ fn execute_c_indirect_call_assign_paths(
                 CFunctionOutcome::Return { value, mut state } => {
                     if value == CValue::Void || state.locals.is_array_object(target) {
                         CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
-                    } else if assign_call_result(
-                        &mut state,
-                        target,
-                        value,
-                        &mut path.obligations,
-                        assumptions,
-                    )
-                    .is_some()
-                    {
-                        CStatementOutcome::Normal(state)
                     } else {
-                        CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                        let current =
+                            crate::kernel::reasoning::path_facts::assumptions_with_path_context(
+                                assumptions,
+                                &path.facts,
+                                &path.obligations,
+                            );
+                        match assign_call_result(
+                            &mut state,
+                            target,
+                            value,
+                            &mut path.obligations,
+                            &current,
+                        ) {
+                            Ok(()) => CStatementOutcome::Normal(state),
+                            Err(error) => CStatementOutcome::RuntimeError(error),
+                        }
                     }
                 }
                 CFunctionOutcome::Throw { value, state } => {

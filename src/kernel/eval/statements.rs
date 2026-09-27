@@ -341,7 +341,7 @@ fn c_update_expression(
     }
 }
 
-pub(in crate::kernel) fn stable_loan_memory_write_outcome(
+pub(in crate::kernel) fn memory_write_permission_outcome(
     state: &CState,
     pointer: &Pointer,
     bytes: u32,
@@ -353,6 +353,9 @@ pub(in crate::kernel) fn stable_loan_memory_write_outcome(
         Bitvector32Term::Constant(1),
         bytes,
     );
+    if let Some(error) = super::super::mutexes::storage_write_refusal(state, &range, assumptions) {
+        return Some(CStatementOutcome::RuntimeError(error));
+    }
     stable_loan_memory_range_outcome(state, &range, assumptions)
 }
 
@@ -493,7 +496,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 }]);
             }
             if let Some(pointer) = state.locals.slot(&name).cloned()
-                && let Some(outcome) = stable_loan_memory_write_outcome(
+                && let Some(outcome) = memory_write_permission_outcome(
                     state,
                     &pointer,
                     value.byte_width(),
@@ -638,7 +641,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             // The write is owner-authorized here, so a refusal below names the
             // stable loan it conflicts with rather than masking the ordinary
             // missing-ownership diagnostic above.
-            if let Some(outcome) = stable_loan_memory_write_outcome(
+            if let Some(outcome) = memory_write_permission_outcome(
                 state,
                 &pointer,
                 value.byte_width(),
@@ -875,7 +878,7 @@ fn execute_c_aggregate_copy_paths(
                 });
                 continue;
             }
-            if let Some(outcome) = stable_loan_memory_write_outcome(
+            if let Some(outcome) = memory_write_permission_outcome(
                 state,
                 target_pointer.pointer(),
                 layout.size_bytes(),

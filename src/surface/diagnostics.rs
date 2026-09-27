@@ -843,6 +843,12 @@ pub(super) fn describe_runtime_error(
                     left: CResource::Memory(allocation.clone()),
                     right: CResource::Memory(storage.clone()),
                 }, parameters, arguments)),
+        crate::kernel::CRuntimeError::MutexStorageWrite { write, storage } =>
+            format!("Requires {}; initialized mutex storage is reserved until pthread_mutex_destroy",
+                describe_pure_fact(&Proposition::CResourceSeparate {
+                    left: CResource::Memory(write.clone()),
+                    right: CResource::Memory(storage.clone()),
+                }, parameters, arguments)),
         crate::kernel::CRuntimeError::MissingMutexStorageAlignment { mutex, alignment } =>
             format!("Requires aligned({}, {alignment})", describe_mutex_pointer(mutex, parameters, arguments)),
         crate::kernel::CRuntimeError::UnsupportedMutexStorageRetirement =>

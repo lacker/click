@@ -39,9 +39,8 @@ required `separate(...)` fact. Destruction removes this dependency; unlocking
 does not. Abstract preserving-guard contracts conservatively refuse allocation
 retirement until checked lifecycle inputs can describe their dependencies.
 This retirement check adds no surface syntax. Initialization storage checks
-are described below; reservation against later writes and use loans remain
-unimplemented. Automatic-storage expiry is now checked
-as described below.
+and write reservations are described below; use loans remain unimplemented.
+Automatic-storage expiry is now checked as described below.
 
 The first lifecycle ownership layer now implements `owns mutex_live(mu)` in
 preserving contracts and declared resource bodies. Initialization creates one
@@ -53,8 +52,7 @@ generation's resource cannot substitute for the owner. Missing ownership reports
 memory access. It cannot be viewed, counted, or transferred to workers yet.
 
 This is an ownership checkpoint, **not a complete lifetime proof**. It does not
-yet reserve bytes against ordinary writes or overlapping initializations. `mutex_use` loans and their guard and worker dependencies are not
-implemented. Preserving lifecycle contracts
+yet implement `mutex_use` loans and their guard and worker dependencies. Preserving lifecycle contracts
 retain the same conservative transition freeze as preserving guard contracts;
 `consumes`/`produces` and named primitive lifecycle binders remain unsupported.
 
@@ -104,9 +102,24 @@ make each initialization scan the whole resource context. Nonconstant bounds
 can be proved for a single owned span at the selected base; this checker does
 not search an ambiguous symbolic partition or implicitly join separate ranges.
 
-This is still a storage-access checkpoint. Reserving bytes throughout the
-initialized lifetime, excluding overlapping initializations, and use lending
-remain required before the mutex lifecycle model is complete.
+Successful initialization now reserves that footprint until destruction.
+Ordinary stores, aggregate writes, call-result assignments, and overlapping
+initializations require separation from every possibly affected reservation.
+A preserving helper's mutable contract footprint is checked at application too,
+so a modular call cannot bypass the restriction. Adjacent payload remains writable;
+unlocking, hiding the owner inside a resource, or removing its visible atom does
+not release the reservation. Failure reports `Requires separate(...)` using the
+attempted write and reserved byte ranges. No new surface predicate is added.
+
+The reservation index selects overlapping concrete byte intervals, including
+multiple mutexes inside one object. Ambiguous symbolic footprints require
+separation evidence. Checked runtime mutex calls bypass the ordinary-write gate
+but still respect stable storage loans and forget old representation values.
+
+This is a concrete-runtime reservation checkpoint. Abstract preserving helper
+bodies retain the existing protocol freeze; their effects are checked against
+concrete reservations at the call boundary. Standalone abstract reservation
+inputs, lifecycle outputs, and `mutex_use` lending remain future work.
 
 The surface status is:
 

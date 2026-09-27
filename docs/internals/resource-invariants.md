@@ -302,8 +302,14 @@ implicit storage ownership. Stable views do not authorize this operation, and
 active storage loans block it. The transition forgets the previous byte values
 of the footprint. Addressed opaque union fields can supply ordinary byte
 ownership with `owns &holder->mu`. An indexed byte-span query selects constant
-owned storage without scanning unrelated fields. Reservation against overlapping
-initializations and later writes remains unimplemented.
+owned storage without scanning unrelated fields. Initialized footprints are now
+reserved against ordinary stores, aggregate writes, call-result assignments,
+modular mutable footprints, and overlapping initializations. The ledger keeps
+this restriction independently of visible ownership and heldness until destroy.
+A dyadic interval index selects concrete same-object overlaps. Runtime transitions
+may change representation bytes and respect stable loans. Abstract preserving
+bodies are still checked through the protocol freeze and the caller's concrete
+reservation at application; abstract reservation inputs remain future work.
 
 The lifecycle owner now lives in the same resource context as guards, as
 `CResource::MutexLive`. Initialization mints exactly one owned atom; destruction
@@ -319,9 +325,9 @@ Direct preserving `owns mutex_live(mu)` contracts and field-bearing wrappers
 use the same entry-snapshot transport and abstract-protocol freeze as guards.
 The shared mutex-authority validity index tracks only duplicate or malformed
 atoms. Multi-size tests exercise initialization/destruction amid unrelated owners.
-These facts do not yet justify worker transfer, lifecycle replacement at calls,
-or a claim that initialization storage has been checked. Checked use lending,
-reborrowing, guard holds, and join recovery remain the next semantic boundary.
+These facts do not yet justify worker transfer or lifecycle replacement at calls.
+Checked use lending, reborrowing, guard holds, and join recovery remain the next
+semantic boundary.
 
 Direct named primitive guard/lifecycle binders, lock-changing contracts, loop joins
 across acquisition epochs, borrowed lifetime authority, and

@@ -154,6 +154,7 @@ struct MutexLedgerStorage {
     identity: u64,
     entries: PersistentMap<Pointer, MutexEntry>,
     by_block: PersistentMap<super::PointerBlock, PersistentMap<Pointer, u32>>,
+    reserved: MutexStorageIndex,
     by_provenance: PersistentMap<StorageProvenance, PersistentMap<Pointer, u32>>,
     /// Initializations whose symbolic provenance may name any automatic object.
     /// Kept separately so a scope exit never scans unrelated concrete mutexes.
@@ -164,6 +165,165 @@ struct MutexLedgerStorage {
     /// this path avoids scanning unrelated mutexes on every back edge.
     predecessor: Option<Arc<MutexLedgerStorage>>,
     changed_mutex: Option<Pointer>,
+}
+
+/// Dyadic byte intervals select overlapping storage without visiting unrelated
+/// mutexes in the same object. Symbolic bounds remain conservative candidates.
+#[derive(Clone, Default)]
+struct MutexStorageIndex {
+    intervals: PersistentMap<super::ResourceMemoryIntervalNode, PersistentMap<Pointer, u32>>,
+    subtrees: PersistentMap<super::ResourceMemoryIntervalNode, PersistentMap<Pointer, u32>>,
+    symbolic: PersistentMap<super::PointerBlock, PersistentMap<Pointer, u32>>,
+}
+
+fn storage_range(mutex: &Pointer, bytes: u32) -> super::CMemoryRange {
+    super::CMemoryRange::new_with_element_width(mutex.clone(), 0u32.into(), bytes.into(), 1)
+}
+
+impl MutexStorageIndex {
+    fn changed(&self, mutex: &Pointer, bytes: u32, insert: bool) -> Self {
+        fn update<K: Ord + Clone>(
+            map: &mut PersistentMap<K, PersistentMap<Pointer, u32>>,
+            key: K,
+            mutex: &Pointer,
+            bytes: u32,
+            insert: bool,
+        ) {
+            let bucket = map.get(&key).cloned().unwrap_or_default();
+            let bucket = if insert {
+                bucket.with_inserted(mutex.clone(), bytes)
+            } else {
+                bucket.without_key(mutex)
+            };
+            *map = if bucket.is_empty() {
+                map.without_key(&key)
+            } else {
+                map.with_inserted(key, bucket)
+            };
+        }
+        let mut next = self.clone();
+        if let Some(nodes) = super::primitives::memory_interval_nodes(&storage_range(mutex, bytes))
+        {
+            let mut ancestors = std::collections::BTreeSet::new();
+            for node in nodes {
+                ancestors.extend(super::primitives::memory_interval_ancestors(&node));
+                update(&mut next.intervals, node, mutex, bytes, insert);
+            }
+            for node in ancestors {
+                update(&mut next.subtrees, node, mutex, bytes, insert);
+            }
+        } else {
+            update(
+                &mut next.symbolic,
+                mutex.block.clone(),
+                mutex,
+                bytes,
+                insert,
+            );
+        }
+        next
+    }
+
+    fn overlapping(
+        &self,
+        range: &super::CMemoryRange,
+    ) -> Option<std::collections::BTreeMap<Pointer, u32>> {
+        let nodes = super::primitives::memory_interval_nodes(range)?;
+        let mut candidates = std::collections::BTreeMap::new();
+        for node in nodes {
+            for ancestor in super::primitives::memory_interval_ancestors(&node) {
+                crate::instrumentation::record_deterministic_work(1);
+                if let Some(bucket) = self.intervals.get(&ancestor) {
+                    candidates.extend(
+                        bucket
+                            .iter()
+                            .map(|(pointer, bytes)| (pointer.clone(), *bytes)),
+                    );
+                }
+            }
+            if let Some(bucket) = self.subtrees.get(&node) {
+                candidates.extend(
+                    bucket
+                        .iter()
+                        .map(|(pointer, bytes)| (pointer.clone(), *bytes)),
+                );
+            }
+        }
+        if let Some(bucket) = self.symbolic.get(&range.base().block) {
+            candidates.extend(
+                bucket
+                    .iter()
+                    .map(|(pointer, bytes)| (pointer.clone(), *bytes)),
+            );
+        }
+        Some(candidates)
+    }
+}
+
+/// Ordinary writes cannot spend a mutex's reserved representation bytes.
+/// The ledger retains the reservation when lifecycle ownership is folded.
+/// Contract application checks its entire mutable footprint through this same
+/// gate, including effects of an abstract preserving helper.
+pub(super) fn storage_write_refusal(
+    state: &CState,
+    write: &super::CMemoryRange,
+    assumptions: &PureFactContext,
+) -> Option<super::CRuntimeError> {
+    let ledger = state.mutex_ledger.as_ref()?;
+    if !ledger.has_any_mutex() || write.start() == write.end() {
+        return None;
+    }
+    let block = &write.base().block;
+    let direct = ledger
+        .storage
+        .reserved
+        .overlapping(write)
+        .unwrap_or_else(|| {
+            ledger
+                .storage
+                .by_block
+                .get(block)
+                .into_iter()
+                .flat_map(|bucket| bucket.iter())
+                .map(|(pointer, bytes)| (pointer.clone(), *bytes))
+                .collect()
+        });
+    let possible_aliases = StorageProvenance::of(block)
+        .cross_block_candidates()
+        .iter()
+        .filter_map(|provenance| ledger.storage.by_provenance.get(provenance))
+        .flat_map(|bucket| bucket.iter())
+        .filter(|(mutex, _)| &mutex.block != block && !mutex.block.proven_distinct(block));
+    for (mutex, bytes) in direct.iter().chain(possible_aliases) {
+        crate::instrumentation::record_deterministic_work(1);
+        let storage = storage_range(mutex, *bytes);
+        // Evaluate ranges in byte units with checked signed arithmetic. This
+        // covers interior writes, adjacent fields, and mixed element widths.
+        let disjoint = (|| {
+            let delta = mutex.exact_element_delta_from_base(write.base(), 1, None)?;
+            if !delta.is_constant() {
+                return None;
+            }
+            let start = i64::from(write.start().as_const()? as i32)
+                .checked_mul(i64::from(write.element_width()))?;
+            let end = i64::from(write.end().as_const()? as i32)
+                .checked_mul(i64::from(write.element_width()))?;
+            let storage_end = delta.constant.checked_add(i64::from(*bytes))?;
+            Some(start == end || (start < end && (storage_end <= start || end <= delta.constant)))
+        })() == Some(true);
+        if !disjoint
+            && !assumptions.proves_resource_separate(
+                &CResource::Memory(write.clone()),
+                &CResource::Memory(storage.clone()),
+            )
+        {
+            return Some(super::CRuntimeError::MutexStorageWrite {
+                write: write.clone(),
+                storage,
+            });
+        }
+    }
+    None
 }
 
 /// An acquisition identity. The private fields cannot be synthesized from a
@@ -269,6 +429,9 @@ pub(super) fn initialization_storage_refusal(
             mutex: mutex.clone(),
             alignment,
         });
+    }
+    if let Some(error) = storage_write_refusal(state, &range, assumptions) {
+        return Some(error);
     }
     state
         .stable_loan_memory_access_refusal(
@@ -379,8 +542,8 @@ impl MutexContext {
         let mut state = self.state.clone();
         state.resources = state
             .resources
-            .try_compose_with_fact(
-                initialization.resource_fact(&mutex),
+            .try_compose_with_facts_delaying_normalization(
+                [initialization.resource_fact(&mutex)],
                 &PureFactContext::new(),
             )
             .map_err(|_| "mutex lifetime authority conflicts with current resources")?;
@@ -440,12 +603,15 @@ impl MutexContext {
             .state
             .resources
             .clone()
-            .without_fact(&invariant, assumptions)
+            .without_fact_delaying_normalization(&invariant, assumptions)
             .ok_or("mutex invariant cannot be moved to escrow")?;
         let mut state = self.state.clone();
         let initialization = MutexInitialization::fresh(storage_bytes)?;
         state.resources = resources
-            .try_compose_with_fact(initialization.resource_fact(&mutex), assumptions)
+            .try_compose_with_facts_delaying_normalization(
+                [initialization.resource_fact(&mutex)],
+                assumptions,
+            )
             .map_err(|_| "mutex lifetime authority conflicts with current resources")?;
         state.mutex_ledger = Some(ledger.with_inserted(
             mutex,
@@ -489,7 +655,7 @@ impl MutexContext {
             self.state
                 .resources
                 .clone()
-                .try_compose_with_fact(invariant.clone(), assumptions)
+                .try_compose_with_facts_delaying_normalization([invariant.clone()], assumptions)
                 .map_err(|_| {
                     MutexTransitionError::Refusal(
                         "mutex invariant conflicts with current authority",
@@ -513,7 +679,7 @@ impl MutexContext {
             epoch,
         };
         state.resources = resources
-            .try_compose_with_fact(guard.resource_fact(), assumptions)
+            .try_compose_with_facts_delaying_normalization([guard.resource_fact()], assumptions)
             .map_err(|_| {
                 MutexTransitionError::Refusal("mutex guard conflicts with current authority")
             })?;
@@ -613,11 +779,11 @@ impl MutexContext {
             .state
             .resources
             .clone()
-            .without_fact(&live, assumptions)
+            .without_fact_delaying_normalization(&live, assumptions)
             .ok_or_else(|| MutexTransitionError::MissingLive(mutex.clone()))?;
         let resources = if let Some(invariant) = invariant {
             resources
-                .try_compose_with_fact(invariant, assumptions)
+                .try_compose_with_facts_delaying_normalization([invariant], assumptions)
                 .map_err(|_| {
                     MutexTransitionError::Refusal(
                         "destroyed mutex invariant conflicts with current authority",
@@ -688,14 +854,14 @@ impl MutexContext {
             self.state
                 .resources
                 .clone()
-                .without_fact(restored, assumptions)
+                .without_fact_delaying_normalization(restored, assumptions)
                 .ok_or("mutex invariant cannot be returned to escrow")?
         } else {
             self.state.resources.clone()
         };
         let mut state = self.state.clone();
         state.resources = resources
-            .without_fact(&guard_fact, assumptions)
+            .without_fact_delaying_normalization(&guard_fact, assumptions)
             .ok_or("mutex guard cannot be consumed")?;
         state.mutex_ledger = Some(ledger.with_inserted(
             guard.mutex,
@@ -720,6 +886,7 @@ impl MutexLedger {
                 identity: Self::fresh_identity(),
                 entries: PersistentMap::default(),
                 by_block: PersistentMap::default(),
+                reserved: MutexStorageIndex::default(),
                 by_provenance: PersistentMap::default(),
                 ambiguous_automatic_storage: PersistentMap::default(),
                 locked_count: 0,
@@ -839,6 +1006,13 @@ impl MutexLedger {
         Self {
             storage: Arc::new(MutexLedgerStorage {
                 identity: Self::fresh_identity(),
+                reserved: if self.get(&mutex).is_none() {
+                    self.storage
+                        .reserved
+                        .changed(&mutex, entry.initialization().1, true)
+                } else {
+                    self.storage.reserved.clone()
+                },
                 by_provenance: if self.get(&mutex).is_none() {
                     let provenance = StorageProvenance::of(&mutex.block);
                     let entries = self
@@ -895,6 +1069,14 @@ impl MutexLedger {
         Self {
             storage: Arc::new(MutexLedgerStorage {
                 identity: Self::fresh_identity(),
+                reserved: self.storage.reserved.changed(
+                    mutex,
+                    self.get(mutex)
+                        .expect("initialized mutex")
+                        .initialization()
+                        .1,
+                    false,
+                ),
                 entries: self.storage.entries.without_key(mutex),
                 ambiguous_automatic_storage: if may_alias_automatic_storage(&mutex.block) {
                     self.storage.ambiguous_automatic_storage.without_key(mutex)
@@ -1920,6 +2102,256 @@ mod tests {
     }
 
     #[test]
+    fn reserved_storage_survives_unlock_and_hidden_authority_until_destroy() {
+        use super::super::*;
+        let base = mutex(91_100);
+        let address = base.offset_by_bytes(8);
+        let assumptions = PureFactContext::new();
+        let initialized = MutexContext::new(CState::new())
+            .initialize_empty(address.clone(), 40)
+            .unwrap();
+        let held = initialized.acquire_current(&address, &assumptions).unwrap();
+        let unlocked = held.release_current(&address, &assumptions).unwrap();
+        let mut hidden = unlocked.state().clone();
+        hidden.resources = ResourceContext::new();
+        for state in [initialized.state(), held.state(), unlocked.state(), &hidden] {
+            for (offset, bytes) in [(8, 1), (47, 1), (4, 8), (0, 56)] {
+                let write = storage_range(&base.offset_by_bytes(offset), bytes);
+                assert!(matches!(
+                    storage_write_refusal(state, &write, &assumptions),
+                    Some(CRuntimeError::MutexStorageWrite { .. })
+                ));
+            }
+            for (offset, bytes) in [(0, 8), (48, 8)] {
+                assert!(
+                    storage_write_refusal(
+                        state,
+                        &storage_range(&base.offset_by_bytes(offset), bytes),
+                        &assumptions
+                    )
+                    .is_none()
+                );
+            }
+            // Element indices are not byte offsets: this eight-byte write
+            // covers byte 47 even though its index is outside 0..40.
+            let mixed =
+                CMemoryRange::new_with_element_width(base.clone(), 5u32.into(), 6u32.into(), 8);
+            assert!(storage_write_refusal(state, &mixed, &assumptions).is_some());
+        }
+        let destroyed = unlocked.destroy(&address, &assumptions).unwrap();
+        assert!(
+            storage_write_refusal(
+                destroyed.state(),
+                &storage_range(&address, 40),
+                &assumptions
+            )
+            .is_none()
+        );
+        assert!(
+            storage_write_refusal(
+                initialized.state(),
+                &storage_range(&address, 40),
+                &assumptions
+            )
+            .is_some(),
+            "destroy must not mutate the predecessor's reservation"
+        );
+    }
+
+    #[test]
+    fn ordinary_c_store_rejects_live_storage_and_accepts_destroyed_storage() {
+        use super::super::*;
+        let (state, address) = automatic_holder();
+        register_block_alignment(&address.block, 8);
+        let context = MutexContext::new(state)
+            .initialize_empty(address.clone(), 40)
+            .unwrap();
+        let statement = c_typed_store(
+            CExpression::Value(CValue::pointer(address.clone())),
+            c_int32_literal(7),
+            CType::Int32,
+        );
+        let assumptions = PureFactContext::new();
+        let outcome = eval::execute_c_statement(context.state(), &statement, &assumptions);
+        assert!(
+            matches!(
+                outcome,
+                Some(CStatementOutcome::RuntimeError(
+                    CRuntimeError::MutexStorageWrite { .. }
+                ))
+            ),
+            "{outcome:?}"
+        );
+        let destroyed = context.destroy(&address, &assumptions).unwrap();
+        let Some(CStatementOutcome::Normal(after)) =
+            eval::execute_c_statement(destroyed.state(), &statement, &assumptions)
+        else {
+            panic!("destroyed storage should be writable");
+        };
+        assert_eq!(
+            after.memory().load(&address),
+            CExpressionOutcome::Value(int32(7))
+        );
+    }
+
+    #[test]
+    fn checked_runtime_transitions_forget_reserved_representation_values() {
+        use super::super::*;
+        let assumptions = PureFactContext::new();
+        for name in [
+            "pthread_mutex_lock",
+            "pthread_mutex_unlock",
+            "pthread_mutex_destroy",
+        ] {
+            let (state, address) = automatic_holder();
+            let mut context = MutexContext::new(state)
+                .initialize_empty(address.clone(), 40)
+                .unwrap();
+            if name == "pthread_mutex_unlock" {
+                context = context.acquire_current(&address, &assumptions).unwrap();
+            }
+            let state = context.state().clone().with_memory(
+                context
+                    .state()
+                    .memory()
+                    .clone()
+                    .store(address.clone(), int8(17)),
+            );
+            let environment = CExecutionEnvironment::new().with_modeled_pthread_binding(Some(
+                crate::languages::c::thread_runtime::ModeledPthreadBinding::builtin(),
+            ));
+            let statement = CStatement::Call {
+                function_name: name.into(),
+                arguments: vec![CExpression::Value(CValue::pointer(address.clone()))],
+            };
+            let paths = eval::execute_c_statement_paths(
+                &state,
+                &statement,
+                &assumptions,
+                &environment,
+                CExecutionSemantics::EXECUTE_BODIES,
+                &mut ExecutionBudget::new(),
+            )
+            .unwrap();
+            let CStatementOutcome::Normal(after) = &paths[0].outcome else {
+                panic!("{name}: {paths:?}");
+            };
+            assert_ne!(
+                after.memory().load(&address),
+                CExpressionOutcome::Value(int8(17)),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn reservation_requires_separation_from_a_symbolic_alias() {
+        use super::super::*;
+        let address = Pointer::symbolic(Variable(91_101));
+        let context = MutexContext::new(CState::new())
+            .initialize_empty(address.clone(), 40)
+            .unwrap();
+        let write = storage_range(&mutex(91_102), 8);
+        let assumptions = PureFactContext::new();
+        assert!(storage_write_refusal(context.state(), &write, &assumptions).is_some());
+        let separated = assumptions.assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(write.clone()),
+            right: CResource::Memory(storage_range(&address, 40)),
+        });
+        assert!(storage_write_refusal(context.state(), &write, &separated).is_none());
+    }
+
+    #[test]
+    fn initialization_rejects_an_interior_overlap_and_accepts_adjacent_storage() {
+        use super::super::*;
+        let base = mutex(91_103);
+        register_block_alignment(&base.block, 8);
+        let state = CState::new().with_resource_context(
+            ResourceContext::new()
+                .unchecked_with_fact(CResourceFact::own_memory(storage_range(&base, 128))),
+        );
+        let initialized = MutexContext::new(state)
+            .initialize_empty(base.clone(), 40)
+            .unwrap();
+        let assumptions = PureFactContext::new();
+        for offset in [0, 8, 32] {
+            assert!(matches!(
+                initialization_storage_refusal(
+                    initialized.state(),
+                    &base.offset_by_bytes(offset),
+                    40,
+                    8,
+                    &assumptions
+                ),
+                Some(CRuntimeError::MutexStorageWrite { .. })
+            ));
+        }
+        assert!(
+            initialization_storage_refusal(
+                initialized.state(),
+                &base.offset_by_bytes(40),
+                40,
+                8,
+                &assumptions
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn reservation_index_queries_same_object_in_logarithmic_work() {
+        use super::super::*;
+        let assumptions = PureFactContext::new();
+        let base = mutex(91_104);
+        let mut samples = Vec::new();
+        for size in [16, 64, 256, 1024] {
+            let mut context = MutexContext::new(CState::new());
+            for index in 0..size {
+                context = context
+                    .initialize_empty(base.offset_by_bytes(index * 64), 40)
+                    .unwrap();
+            }
+            let (_, work) = crate::persistent::measure_persistent_work(|| {
+                for index in [0, size / 2, size - 1] {
+                    assert!(
+                        storage_write_refusal(
+                            context.state(),
+                            &storage_range(&base.offset_by_bytes(index * 64 + 39), 1),
+                            &assumptions
+                        )
+                        .is_some()
+                    );
+                    assert!(
+                        storage_write_refusal(
+                            context.state(),
+                            &storage_range(&base.offset_by_bytes(index * 64 + 40), 24),
+                            &assumptions
+                        )
+                        .is_none()
+                    );
+                }
+                let selected = base.offset_by_bytes((size / 2) * 64);
+                let next = context.destroy(&selected, &assumptions).unwrap();
+                assert!(
+                    storage_write_refusal(
+                        next.state(),
+                        &storage_range(&selected, 40),
+                        &assumptions
+                    )
+                    .is_none()
+                );
+            });
+            samples.push(work);
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1] <= pair[0] + 4096,
+                "reservation queries/updates must grow logarithmically: {samples:?}"
+            );
+        }
+    }
+
+    #[test]
     fn initialization_requires_the_complete_owned_storage_and_alignment() {
         use super::super::*;
         let pointer = Pointer::symbolic(Variable(91_000));
@@ -2072,6 +2504,40 @@ mod tests {
             initialization_storage_refusal(&state, &pointer, 40, 8, &assumptions),
             Some(CRuntimeError::LoanRefusal(_))
         ));
+        for name in [
+            "pthread_mutex_lock",
+            "pthread_mutex_unlock",
+            "pthread_mutex_destroy",
+        ] {
+            let mut context = MutexContext::new(state.clone())
+                .initialize_empty(pointer.clone(), 40)
+                .unwrap();
+            if name == "pthread_mutex_unlock" {
+                context = context.acquire_current(&pointer, &assumptions).unwrap();
+            }
+            let environment = CExecutionEnvironment::new().with_modeled_pthread_binding(Some(
+                crate::languages::c::thread_runtime::ModeledPthreadBinding::builtin(),
+            ));
+            let paths = eval::execute_c_statement_paths(
+                context.state(),
+                &CStatement::Call {
+                    function_name: name.into(),
+                    arguments: vec![CExpression::Value(CValue::pointer(pointer.clone()))],
+                },
+                &assumptions,
+                &environment,
+                CExecutionSemantics::EXECUTE_BODIES,
+                &mut ExecutionBudget::new(),
+            )
+            .unwrap();
+            assert!(
+                matches!(
+                    paths[0].outcome,
+                    CStatementOutcome::RuntimeError(CRuntimeError::LoanRefusal(_))
+                ),
+                "{name}: {paths:?}"
+            );
+        }
     }
 
     #[test]
