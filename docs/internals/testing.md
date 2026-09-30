@@ -206,15 +206,19 @@ the gate, and unsupported C++ does not fall back to the C parser.
 ## What the gate runs
 
 `scripts/check.sh` with no options is the single source of truth for "is this
-tree green", and CI runs that full gate for code-affecting changes. In order it
-runs `cargo fmt --check`, then
+tree green". In order it runs `cargo fmt --check`, then
 `cargo clippy --all-targets -- -D warnings`, then the mdBook render and the
-docs lint, then `cargo nextest run --lib --bins --test documentation`, then
-the mdtest, example, C compiler-import, and C++ semantic-import fixture
-harnesses one after the other. For docs-only changes, CI and the explicit
-`scripts/check.sh --docs-only` path run only the focused documentation gate
-described above. The proof fixtures verify their inputs on every core. Judge
-the verdict from the script's exit status.
+docs lint, then the unit tests, followed by the mdtest, example, C
+compiler-import, and C++ semantic-import fixture harnesses one after the
+other. CI uses the same script in two internal modes for code-affecting
+changes: `--ci-prepare` runs the shared checks and unit tests, then archives
+the fixture test binaries; four ordinary runners use `--ci-shard` with
+deterministic nextest slices of that archive. Each runner keeps fixture tests
+serial locally, while the independent slices run concurrently. A final `test`
+check requires preparation and every slice to pass. For docs-only changes, CI
+and the explicit `scripts/check.sh --docs-only` path run only the focused
+documentation gate described above. The proof fixtures verify their inputs on
+every core. Judge the verdict from the script's exit status.
 
 The mdtest harness checks each `mdtests/*.click` file as an entry module as
 well as each Markdown fixture. An import exposes a library theorem's statement

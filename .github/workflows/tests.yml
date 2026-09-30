@@ -13,9 +13,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  scope:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,8 +50,15 @@ jobs:
           else
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           fi
-      # Cache actions restore before setup and save after the job. Setup can
-      # reuse installed tools, and the completed run refreshes the caches.
+
+  prepare:
+    needs: scope
+    if: needs.scope.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # Restore installed tools before the shared setup script runs.
       - uses: actions/cache@v4
         with:
           path: ~/.cache/click/tools
@@ -59,21 +67,90 @@ jobs:
         with:
           path: ~/.cargo/bin/cargo-nextest
           key: ${{ runner.os }}-click-nextest-${{ hashFiles('scripts/setup-environment.sh') }}
-      # One provisioning script serves CI and future cloud environments. Its
-      # docs-only mode skips LLVM packages used only by the full gate.
-      - name: Set up environment for documentation checks
-        if: steps.scope.outputs.docs_only == 'true'
-        run: scripts/setup-environment.sh --docs-only
-      - name: Set up environment for full checks
-        if: steps.scope.outputs.docs_only != 'true'
+      - name: Set up full test environment
         run: scripts/setup-environment.sh
-      # Restore Rust build artifacts after the pinned toolchain is available;
-      # updated artifacts are saved automatically after the job completes.
       - uses: Swatinem/rust-cache@v2
-      # The same script a developer runs locally, so the two cannot drift.
+      # This runs the quality checks and unit tests, then builds fixture test
+      # binaries once for the parallel runners below.
+      - name: Prepare fixture test archive
+        run: scripts/check.sh --ci-prepare target/nextest-archive.tar.zst
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive
+          path: target/nextest-archive.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+
+  fixture_shards:
+    needs: [scope, prepare]
+    if: needs.scope.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/click/tools
+          key: ${{ runner.os }}-click-tools-${{ hashFiles('scripts/tools.sh') }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-click-nextest-${{ hashFiles('scripts/setup-environment.sh') }}
+      - name: Set up full test environment
+        run: scripts/setup-environment.sh
+      - uses: actions/download-artifact@v4
+        with:
+          name: nextest-archive
+          path: target
+      - name: Run fixture partition ${{ matrix.shard }} of 4
+        run: scripts/check.sh --ci-shard target/nextest-archive.tar.zst "slice:${{ matrix.shard }}/4"
+
+  docs:
+    needs: scope
+    if: needs.scope.outputs.docs_only == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/click/tools
+          key: ${{ runner.os }}-click-tools-${{ hashFiles('scripts/tools.sh') }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-click-nextest-${{ hashFiles('scripts/setup-environment.sh') }}
+      - name: Set up documentation environment
+        run: scripts/setup-environment.sh --docs-only
       - name: Run documentation-only gate
-        if: steps.scope.outputs.docs_only == 'true'
-        run: ./scripts/check.sh --docs-only
-      - name: Run full gate
-        if: steps.scope.outputs.docs_only != 'true'
-        run: ./scripts/check.sh
+        run: scripts/check.sh --docs-only
+
+  test:
+    # Keep one stable required check named `test` while the fixture suite runs
+    # in parallel and docs-only changes continue to use their focused gate.
+    if: always()
+    needs: [scope, prepare, fixture_shards, docs]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require the selected gate to pass
+        env:
+          DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          SHARDS_RESULT: ${{ needs.fixture_shards.result }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+        run: |
+          if [[ "$SCOPE_RESULT" != success ]]; then
+            echo "check scope failed"
+            exit 1
+          fi
+          if [[ "$DOCS_ONLY" == true ]]; then
+            [[ "$DOCS_RESULT" == success ]] || { echo "documentation gate did not pass"; exit 1; }
+          else
+            [[ "$PREPARE_RESULT" == success ]] || { echo "full-gate preparation did not pass"; exit 1; }
+            [[ "$SHARDS_RESULT" == success ]] || { echo "one or more fixture partitions did not pass"; exit 1; }
+          fi

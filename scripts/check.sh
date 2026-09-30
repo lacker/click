@@ -17,6 +17,38 @@ if [[ "${1:-}" == "--docs-only" ]]; then
     exec scripts/check-docs.sh "$@"
 fi
 
+fixture_targets=(
+    --test mdtests
+    --test examples
+    --test compiler_import
+    --test cpp_import
+    --test bitcoin_core_money_range
+)
+
+if [[ "${1:-}" == "--ci-shard" ]]; then
+    archive="${2:?usage: scripts/check.sh --ci-shard ARCHIVE PARTITION}"
+    partition="${3:?usage: scripts/check.sh --ci-shard ARCHIVE PARTITION}"
+
+    # A few expansion regressions recurse deeply enough to overflow the
+    # default per-test thread stack on otherwise healthy runners.
+    export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
+
+    # C++ import tests refresh one artifact through the repository-owned
+    # exporter, so make the same backend available in every archive runner.
+    export CLICK_CPP_EXPORTER
+    CLICK_CPP_EXPORTER="$(scripts/build-cpp-exporter.sh)"
+
+    cargo nextest run --archive-file "$archive" --partition "$partition" --test-threads 1 --no-capture
+    exit 0
+fi
+
+ci_archive=""
+nextest_args=("$@")
+if [[ "${1:-}" == "--ci-prepare" ]]; then
+    ci_archive="${2:?usage: scripts/check.sh --ci-prepare ARCHIVE}"
+    nextest_args=()
+fi
+
 # A few expansion regressions recurse deeply enough to overflow the default
 # per-test thread stack on otherwise healthy runners.
 export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
@@ -61,11 +93,17 @@ fi
 # Cargo also discovers those source files as standalone binaries under
 # `src/bin/`, so `--bins` runs their identical test bodies a second time.
 # Test the shipped entry point once; clippy above still checks every target.
-cargo nextest run --lib --bin click --test documentation --test condition_transport_api "$@"
+cargo nextest run --lib --bin click --test documentation --test condition_transport_api "${nextest_args[@]}"
 # The fixture harnesses run one at a time, and each verifies its fixtures on
 # every core. Their proof verdicts come from deterministic tactic-work
 # budgets; nextest's outer timeout is process-level hang containment, not a
 # proof budget. Their output is not captured: each fixture prints a line when
 # it starts and when it finishes, so a stall is visible as it happens and
 # named.
-cargo nextest run --test mdtests --test examples --test compiler_import --test cpp_import --test bitcoin_core_money_range --test-threads 1 --no-capture "$@"
+if [[ -n "$ci_archive" ]]; then
+    # CI builds each fixture target once, then runs deterministic partitions
+    # of the archived binaries on independent standard runners.
+    cargo nextest archive "${fixture_targets[@]}" --archive-file "$ci_archive"
+else
+    cargo nextest run "${fixture_targets[@]}" --test-threads 1 --no-capture "${nextest_args[@]}"
+fi
