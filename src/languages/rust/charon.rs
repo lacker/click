@@ -550,6 +550,39 @@ impl BodyAdapter<'_, '_> {
                     value: Box::new(self.operand(op)?),
                 }
             }
+            a::Rvalue::UnaryOp(
+                a::UnOp::Cast(a::CastKind::Unsize(
+                    source,
+                    destination,
+                    a::UnsizingMetadata::Length(length),
+                )),
+                op,
+            ) => {
+                let a::TyKind::Ref(_, array, source_kind) = source.kind() else {
+                    return Err(unsupported("array unsize source"));
+                };
+                let a::TyKind::Array(element, extent, _) = array.kind() else {
+                    return Err(unsupported("array unsize source"));
+                };
+                let Some(extent) = extent.as_usize_literal() else {
+                    return Err(unsupported("symbolic array unsize"));
+                };
+                let mutable = matches!(destination.kind(), a::TyKind::Ref(_, _, a::RefKind::Mut));
+                if self.adapter.ty(source)? != self.adapter.ty(op.ty())?
+                    || self.adapter.ty(destination)? != self.adapter.ty(ty)?
+                    || self.adapter.ty(element)? != Type::U8
+                    || self.adapter.ty(destination)? != (Type::ByteSlice { mutable })
+                    || (mutable && *source_kind != a::RefKind::Mut)
+                    || length.as_usize_literal() != Some(extent)
+                    || extent > i32::MAX as u128
+                {
+                    return Err(unsupported("array unsize pointer/length/type mismatch"));
+                }
+                E::ArrayToSlice {
+                    array: Box::new(self.operand(op)?),
+                    mutable,
+                }
+            }
             a::Rvalue::UnaryOp(a::UnOp::Cast(a::CastKind::Scalar(..)), op) => E::Cast {
                 value: Box::new(self.operand(op)?),
                 value_type: self.adapter.ty(ty)?,
@@ -966,6 +999,14 @@ pub(super) fn decode(
         let mut parameters = Vec::new();
         let mut locals = Vec::new();
         let mut local_names = BTreeSet::new();
+        let mut occurrences = BTreeMap::<&str, usize>::new();
+        let mut reserved = BTreeSet::new();
+        for local in &body.locals.locals {
+            if let Some(name) = &local.name {
+                *occurrences.entry(name).or_default() += 1;
+                reserved.insert(name.clone());
+            }
+        }
         for local in &body.locals.locals {
             let param = local.index.index() > 0 && local.index.index() <= body.locals.arg_count;
             let n = if param {
@@ -973,13 +1014,20 @@ pub(super) fn decode(
                     .name
                     .clone()
                     .ok_or_else(|| unsupported("unnamed parameter"))?
-            } else if local.index.index() != 0 {
-                local
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| format!("__rust_mir_{}", local.index.index()))
+            } else if let Some(name) = &local.name
+                && occurrences[name.as_str()] == 1
+                && local.index.index() != 0
+            {
+                name.clone()
             } else {
-                "__rust_mir_0".into()
+                // rustc gives every nested `for` temporary the name `iter`.
+                // Preserve unique source names; ambiguous/unnamed locals use
+                // their compiler IDs in a namespace disjoint from source names.
+                let mut generated = format!("__rust_mir_{}", local.index.index());
+                while !reserved.insert(generated.clone()) {
+                    generated.push('_');
+                }
+                generated
             };
             if !local_names.insert(n.clone()) {
                 return Err(unsupported("local identity collision"));
@@ -1131,6 +1179,195 @@ mod tests {
             &prepared,
         )
         .unwrap();
+    }
+
+    const NESTED_ARTIFACT: &[u8] =
+        include_bytes!("../../../design/charon-trial/nested/nested.ullbc");
+    const NESTED_SOURCE: &[u8] = include_bytes!("../../../design/charon-trial/nested/nested.rs");
+
+    #[test]
+    fn charon_nested_loops_keep_distinct_iterator_identities() {
+        let export = decode(NESTED_ARTIFACT, "nested.rs", NESTED_SOURCE).unwrap();
+        let mir = export
+            .functions
+            .iter()
+            .find(|f| f.name == "nested")
+            .unwrap()
+            .mir
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            mir.locals
+                .iter()
+                .map(|p| &p.name)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            mir.locals.len()
+        );
+        assert_eq!(
+            mir.blocks
+                .iter()
+                .filter(|b| matches!(
+                    b.terminator,
+                    T::If {
+                        condition: E::ChunkHasNext { .. },
+                        ..
+                    }
+                ))
+                .count(),
+            2
+        );
+        let (functions, _) = super::super::lowering::lower(&export).unwrap();
+        let kernel = functions
+            .iter()
+            .find(|f| f.name() == "nested")
+            .unwrap()
+            .to_kernel_function();
+        fn visit(s: &crate::kernel::CStatement, depth: usize, loops: &mut Vec<usize>) {
+            use crate::kernel::CStatement as C;
+            match s {
+                C::Seq(a, b) => {
+                    visit(a, depth, loops);
+                    visit(b, depth, loops);
+                }
+                C::While { body, .. } => {
+                    loops.push(depth);
+                    visit(body, depth + 1, loops);
+                }
+                C::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    visit(then_branch, depth, loops);
+                    visit(else_branch, depth, loops);
+                }
+                _ => (),
+            }
+        }
+        let mut loops = Vec::new();
+        visit(kernel.body(), 0, &mut loops);
+        assert_eq!(loops, [0, 1]);
+    }
+
+    #[test]
+    fn charon_generated_local_names_do_not_collide_with_source_names() {
+        let mut artifact: TrialArtifact = serde_json::from_slice(NESTED_ARTIFACT).unwrap();
+        let body = artifact.data.translated.fun_decls.iter_mut().find_map(|function| {
+            if !matches!(function.item_meta.name.name.last(), Some(a::PathElem::Ident(name, _)) if name == "nested") { return None; }
+            let a::Body::Unstructured(body) = &mut function.body else { return None; };
+            Some(body)
+        }).unwrap();
+        body.locals.locals[a::LocalId::from_usize(1)].name = Some("__rust_mir_0".into());
+        body.locals.locals[a::LocalId::from_usize(7)].name = Some("__rust_mir_8".into());
+        let export = decode(
+            &serde_json::to_vec(&artifact).unwrap(),
+            "nested.rs",
+            NESTED_SOURCE,
+        )
+        .unwrap();
+        let function = export
+            .functions
+            .iter()
+            .find(|f| f.name == "nested")
+            .unwrap();
+        let names = function
+            .parameters
+            .iter()
+            .chain(&function.mir.as_ref().unwrap().locals)
+            .map(|p| &p.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names.iter().copied().collect::<BTreeSet<_>>().len(),
+            names.len()
+        );
+        assert!(names.iter().any(|n| n.as_str() == "__rust_mir_0_"));
+        assert!(names.iter().any(|n| n.as_str() == "__rust_mir_8_"));
+    }
+
+    #[test]
+    fn charon_array_unsize_rejects_mismatched_metadata_and_reference_types() {
+        for mutation in 0..4 {
+            let mut artifact: TrialArtifact = serde_json::from_slice(NESTED_ARTIFACT).unwrap();
+            let mut changed = false;
+            'functions: for function in artifact.data.translated.fun_decls.iter_mut() {
+                let a::Body::Unstructured(body) = &mut function.body else {
+                    continue;
+                };
+                for statement in body.body.iter_mut().flat_map(|block| &mut block.statements) {
+                    let u::StatementKind::Assign(
+                        _,
+                        a::Rvalue::UnaryOp(
+                            a::UnOp::Cast(a::CastKind::Unsize(
+                                source,
+                                destination,
+                                a::UnsizingMetadata::Length(length),
+                            )),
+                            _,
+                        ),
+                    ) = &mut statement.kind
+                    else {
+                        continue;
+                    };
+                    match mutation {
+                        0 => *length = a::ConstantExpr::mk_usize(9),
+                        1 => std::mem::swap(source, destination),
+                        2 => source.with_kind_mut(|kind| {
+                            let a::TyKind::Ref(_, _, ref_kind) = kind else {
+                                panic!()
+                            };
+                            *ref_kind = a::RefKind::Mut;
+                        }),
+                        3 => destination.with_kind_mut(|kind| {
+                            let a::TyKind::Ref(_, _, ref_kind) = kind else {
+                                panic!()
+                            };
+                            *ref_kind = a::RefKind::Mut;
+                        }),
+                        _ => unreachable!(),
+                    }
+                    changed = true;
+                    break 'functions;
+                }
+            }
+            assert!(changed);
+            assert!(
+                decode(
+                    &serde_json::to_vec(&artifact).unwrap(),
+                    "nested.rs",
+                    NESTED_SOURCE
+                )
+                .is_err(),
+                "mutation {mutation}"
+            );
+        }
+    }
+
+    #[test]
+    fn charon_array_unsize_metadata_has_bounded_work_across_lengths() {
+        let export = decode(NESTED_ARTIFACT, "nested.rs", NESTED_SOURCE).unwrap();
+        let prepared = super::super::import::prepared_for_test(export).unwrap();
+        let mut samples = Vec::new();
+        for (name, length) in [
+            ("empty_array_len", 0),
+            ("array_len", 8),
+            ("medium_array_len", 1024),
+            ("large_array_len", 1_000_000),
+        ] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let claim = format!(
+                "verifying \"nested.rs\"; uint64 {name}() {{ ensures result == {length}u64; }} by {{ execute(); simp(); }}"
+            );
+            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                C0VerificationSession::new_program_prepared(&claim, &prepared)
+            });
+            verified.unwrap();
+            samples.push(work);
+        }
+        assert!(
+            samples[0] <= 40_000 && samples[1..].iter().all(|work| *work <= samples[1] + 128),
+            "{samples:?}"
+        );
     }
 
     const CHUNK_ARTIFACT: &[u8] =

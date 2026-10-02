@@ -71,6 +71,24 @@ pub(super) fn lower(
                     c_declare(length, CType::UInt64),
                 )
             }
+            Type::Reference { mutable, pointee }
+                if matches!(pointee.as_ref(), Type::Array { .. }) =>
+            {
+                let Type::Array { element, length } = pointee.as_ref() else {
+                    unreachable!()
+                };
+                let element = scalar_type(element)?.to_kernel_type();
+                cx.arrays
+                    .insert(local.name.clone(), (*length, element, !mutable));
+                c_declare_with_all_qualifiers(
+                    &local.name,
+                    scalar_type(&local.value_type)?.to_kernel_type(),
+                    false,
+                    false,
+                    false,
+                    !mutable,
+                )
+            }
             Type::Array { element, length } => {
                 let element = scalar_type(element)?.to_kernel_type();
                 if !matches!(element, CType::Int32 | CType::UInt8 | CType::UInt32)

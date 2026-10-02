@@ -1,5 +1,5 @@
-//! Recognize disjoint single-entry, single-exit natural while regions. Reject
-//! nested/irreducible cycles and extra exits rather than guessing a structure.
+//! Recognize a forest of single-entry, single-exit natural while regions.
+//! Collapse inner regions once; reject irreducible cycles and extra exits.
 use super::*;
 
 /// Interpret the scalar header in assignment order. Only total comparisons,
@@ -92,36 +92,36 @@ impl Flow {
         let exit = mir.blocks.len();
         let mut order = Vec::new();
         let mut colors = vec![0_u8; exit];
-        let mut stack = vec![(0, false)];
+        if exit == 0 {
+            return Err("invalid MIR entry".into());
+        }
+        let mut stack = vec![(0, 0)];
         let mut latches: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        while let Some((block, finished)) = stack.pop() {
-            if block >= exit {
-                return Err("invalid MIR successor".into());
-            }
-            if finished {
+        colors[0] = 1;
+        while let Some((block, next)) = stack.pop() {
+            crate::instrumentation::record_deterministic_work(1);
+            let targets = successors(&mir.blocks[block].terminator, exit);
+            if next == targets.len() {
                 colors[block] = 2;
                 order.push(block);
                 continue;
             }
-            if colors[block] == 2 {
+            stack.push((block, next + 1));
+            let target = targets[next];
+            if target == exit && matches!(mir.blocks[block].terminator, T::Return | T::Unreachable)
+            {
                 continue;
             }
-            colors[block] = 1;
-            stack.push((block, true));
-            for target in successors(&mir.blocks[block].terminator, exit) {
-                if target == exit
-                    && matches!(mir.blocks[block].terminator, T::Return | T::Unreachable)
-                {
-                    continue;
+            if target >= exit {
+                return Err("invalid MIR successor".into());
+            }
+            match colors[target] {
+                1 => latches.entry(target).or_default().push(block),
+                0 => {
+                    colors[target] = 1;
+                    stack.push((target, 0));
                 }
-                if target >= exit {
-                    return Err("invalid MIR successor".into());
-                }
-                if colors[target] == 1 {
-                    latches.entry(target).or_default().push(block);
-                } else {
-                    stack.push((target, false));
-                }
+                _ => (),
             }
         }
         let mut predecessors = vec![Vec::new(); exit];
@@ -132,26 +132,48 @@ impl Flow {
                 }
             }
         }
+        // Process inner headers first in DFS postorder. Union-find represents
+        // an already validated inner region by its header, so outer regions
+        // visit immediate children rather than rescanning all descendant blocks.
+        fn root(parents: &mut [usize], mut node: usize) -> usize {
+            let start = node;
+            while parents[node] != node {
+                crate::instrumentation::record_deterministic_work(1);
+                node = parents[node];
+            }
+            let result = node;
+            node = start;
+            while parents[node] != node {
+                let next = parents[node];
+                parents[node] = result;
+                node = next;
+            }
+            result
+        }
         let mut owners = vec![None; exit];
-        let mut loops = BTreeMap::new();
-        for (header, tails) in latches {
+        let mut parents = (0..exit).collect::<Vec<_>>();
+        let mut membership = vec![None; exit];
+        let mut loops: BTreeMap<usize, While> = BTreeMap::new();
+        for &header in &order {
+            let Some(tails) = latches.remove(&header) else {
+                continue;
+            };
             let mut members = Vec::new();
             let mut pending = tails;
             pending.push(header);
-            while let Some(block) = pending.pop() {
-                if let Some(owner) = owners[block] {
-                    if owner != header {
-                        return Err("nested or overlapping MIR loops are not supported".into());
-                    }
+            while let Some(raw) = pending.pop() {
+                crate::instrumentation::record_deterministic_work(1);
+                let block = root(&mut parents, raw);
+                if membership[block] == Some(header) {
                     continue;
                 }
-                owners[block] = Some(header);
+                membership[block] = Some(header);
                 members.push(block);
                 if block != header {
                     pending.extend(&predecessors[block]);
                 }
             }
-            if owners[0] == Some(header) && header != 0 {
+            if membership[root(&mut parents, 0)] == Some(header) && header != 0 {
                 return Err("MIR loop has an entry bypassing its header".into());
             }
             let T::If {
@@ -162,9 +184,8 @@ impl Flow {
             else {
                 return Err("MIR loop requires a conditional while header".into());
             };
-            let inside = |target: usize| owners[target] == Some(header);
-            let body_on_true = inside(then_target);
-            if body_on_true == inside(else_target) {
+            let body_on_true = membership[root(&mut parents, then_target)] == Some(header);
+            if body_on_true == (membership[root(&mut parents, else_target)] == Some(header)) {
                 return Err("MIR while header requires one body and one exit".into());
             }
             let (body, after) = if body_on_true {
@@ -172,20 +193,32 @@ impl Flow {
             } else {
                 (else_target, then_target)
             };
-            for block in members {
+            for &block in &members {
                 if block == header {
                     continue;
                 }
-                if predecessors[block]
-                    .iter()
-                    .any(|p| owners[*p] != Some(header))
-                {
-                    return Err("MIR loop has an entry bypassing its header".into());
+                for &predecessor in &predecessors[block] {
+                    crate::instrumentation::record_deterministic_work(1);
+                    if membership[root(&mut parents, predecessor)] != Some(header) {
+                        return Err("MIR loop has an entry bypassing its header".into());
+                    }
                 }
-                for target in successors(&mir.blocks[block].terminator, exit) {
-                    if target == exit || !inside(target) {
+                let targets = if let Some(inner) = loops.get(&block) {
+                    vec![inner.exit]
+                } else {
+                    successors(&mir.blocks[block].terminator, exit)
+                };
+                for target in targets {
+                    crate::instrumentation::record_deterministic_work(1);
+                    if target == exit || membership[root(&mut parents, target)] != Some(header) {
                         return Err("MIR while body has an unsupported extra exit".into());
                     }
+                }
+            }
+            for block in members {
+                if block != header {
+                    owners[block] = Some(header);
+                    parents[block] = header;
                 }
             }
             loops.insert(
@@ -205,20 +238,21 @@ impl Flow {
             .iter()
             .enumerate()
             .map(|(block, b)| {
-                if let Some(loop_) = loops.get(&block) {
+                let targets = if let Some(loop_) = loops.get(&block) {
                     vec![loop_.exit]
                 } else {
                     successors(&b.terminator, exit)
-                        .into_iter()
-                        .map(|target| {
-                            if owners[block].is_some() && owners[block] == Some(target) {
-                                exit
-                            } else {
-                                target
-                            }
-                        })
-                        .collect()
-                }
+                };
+                targets
+                    .into_iter()
+                    .map(|target| {
+                        if owners[block] == Some(target) {
+                            exit
+                        } else {
+                            target
+                        }
+                    })
+                    .collect()
             })
             .collect::<Vec<_>>();
         let joins = graph_postdominators(&graph, &order);
@@ -279,7 +313,7 @@ mod tests {
         }
     }
     #[test]
-    fn mir_while_rejects_extra_exits_nested_cycles_and_invalid_entries() {
+    fn mir_while_rejects_extra_exits_and_invalid_entries() {
         for (blocks, expected) in [
             (vec![block(T::Goto { target: 9 })], "invalid MIR successor"),
             (
@@ -303,16 +337,6 @@ mod tests {
                     block(T::Return),
                 ],
                 "entry bypassing",
-            ),
-            (
-                vec![
-                    block(branch(1, 4)),
-                    block(branch(2, 3)),
-                    block(T::Goto { target: 1 }),
-                    block(T::Goto { target: 0 }),
-                    block(T::Return),
-                ],
-                "overlapping",
             ),
         ] {
             let f = function(blocks);
@@ -388,6 +412,67 @@ mod tests {
             assert_eq!(assignments, 5 * count);
         }
     }
+    #[test]
+    fn nested_while_regions_have_linear_analysis_work_and_emitted_size() {
+        for depth in [8, 32, 128] {
+            let mut blocks = (0..depth)
+                .map(|header| block(branch(header + 1, 2 * depth - header)))
+                .collect::<Vec<_>>();
+            blocks.push(block(T::Goto { target: depth - 1 }));
+            for offset in 1..depth {
+                blocks.push(block(T::Goto {
+                    target: depth - 1 - offset,
+                }));
+            }
+            blocks.push(block(T::Return));
+            for b in blocks.iter_mut().take(2 * depth) {
+                b.statements.push(S::Assign {
+                    target: E::Local {
+                        name: "marker".into(),
+                    },
+                    value: E::Integer { value: 0 },
+                });
+            }
+            let f = function(blocks);
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                Flow::analyze(&f, f.mir.as_ref().unwrap())
+            });
+            let flow = result.unwrap();
+            assert_eq!(flow.order.len(), 2 * depth + 1);
+            assert_eq!(flow.loops.len(), depth);
+            assert!(work < 64 * depth, "depth {depth}: {work}");
+            let export = RustExport {
+                schema: 8,
+                compiler_commit: String::new(),
+                target: String::new(),
+                edition: "2024".into(),
+                overflow_checks: true,
+                panic: "abort".into(),
+                mir_opt_level: 0,
+                logical_source: "flow.rs".into(),
+                records: vec![],
+                functions: vec![f],
+            };
+            let (functions, _) = super::super::super::lower(&export).unwrap();
+            let kernel = functions[0].to_kernel_function();
+            let mut pending = vec![kernel.body()];
+            let (mut count, mut assignments) = (0, 0);
+            while let Some(s) = pending.pop() {
+                match s {
+                    CStatement::Seq(a, b) => pending.extend([a.as_ref(), b.as_ref()]),
+                    CStatement::While { body, .. } => {
+                        count += 1;
+                        pending.push(body);
+                    }
+                    CStatement::Assign { name, .. } if name == "marker" => assignments += 1,
+                    _ => (),
+                }
+            }
+            assert_eq!(count, depth);
+            assert_eq!(assignments, 3 * depth);
+        }
+    }
+
     #[test]
     fn mir_while_guard_substitution_preserves_order_and_bounds_expression_growth() {
         let local = |name: &str| E::Local { name: name.into() };

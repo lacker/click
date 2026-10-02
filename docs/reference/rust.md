@@ -12,7 +12,8 @@ checked arithmetic, owned guard cleanup, borrowed while loops with a live
 restoring guard, resolved unsigned conversions, compact scalar arrays, and
 shared/mutable byte slices with full-width length, dynamic bounds, reborrows and
 local calls, plus stored shared exact-chunk state, owned moves, typed
-`next`/Option dispatch and remainder through one ULLBC body representation
+`next`/Option dispatch and remainder, nested iterator loops, and shared/mutable
+byte-array coercions through one ULLBC body representation
 and the same engine. It has a separate pinned compiler/profile and a narrower
 accepted subset. The sections below describe the existing default frontend;
 the trial is the migration path being evaluated before replacing that frontend.

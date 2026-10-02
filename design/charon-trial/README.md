@@ -10,7 +10,7 @@ coverage switch and no generated processed count.
 The trial is narrower than the existing frontend. It accepts `i32`, `u8`, `u16`,
 `u32`, bools, scalar/reference locals and fields, flat structs, direct local
 calls, scalar casts, comparisons, checked addition/subtraction/multiplication,
-acyclic branches, disjoint natural while loops, whole-value moves, precise drops,
+acyclic branches, nested natural while loops, whole-value moves, precise drops,
 resolved unsigned `From` conversions, the scalar arrays, byte slices, and shared exact-chunk protocol described below.
 General traits/generics, nested owned fields, and returned references are not
 enabled by this adapter yet. Extraction coverage in the
@@ -76,8 +76,11 @@ cargo nextest run --test rust_import --run-ignored only -E 'test(charon_borrowed
 ```
 
 The adapter recognizes single-entry natural while regions with one conditional
-header and one normal exit. Body diamonds and sequential loops are supported;
-nested or overlapping cycles, irreducible entries, and extra exits are rejected.
+header and one normal exit. Body diamonds, sequential loops, and nested loops are supported;
+irreducible entries and extra exits are rejected. Inner regions are validated
+and collapsed before their parents, with indexed predecessors and union-find
+membership. Deterministic regressions at nesting depths 8, 32, and 128 check
+linear analysis work and emitted size.
 Headers accept total scalar copies, literals, comparisons, and boolean negation.
 Memory reads, calls, arithmetic, borrows, and ownership changes in a header are
 rejected. Header assignments execute on every taken iteration and once after
@@ -161,7 +164,7 @@ signed-index bounds derived from the `usize` preconditions. Verification,
 profiling, auditing, expansion, and expanded-certificate rechecking share the
 same engine.
 
-Array-to-slice coercions, subslices/split operations, general iterators,
+Subslices/split operations, general iterators,
 slice fields/returns, and non-byte slices are not yet accepted by this adapter.
 Other remaining ULLBC assertions are rejected rather than discarded. The default
 frontend's broader slice and iterator coverage remains a migration parity gate.
@@ -206,11 +209,48 @@ certificate rechecking use the same engine. The live compiler regression rejects
 writes through shared chunks, reuse after an owned move, and unmodeled protocols.
 
 This increment accepts the assessed owned-loop and explicit-match shapes.
-Borrowed `for` loops, nested loops, mutable chunks, general iterator adapters,
+Borrowed `for` loops, mutable chunks, general iterator adapters,
 iterator parameters/returns, and non-byte elements remain migration gates.
 The current fixture uses internal local/state names and statement selectors for
 its preservation proof; stable source/proof observations still need a separate
-interface. The unchanged adler2 loop also needs nested iterator composition.
+interface. The nested iterator checkpoint below now exercises that composition.
+
+## Nested chunks and byte-array coercions
+
+[`nested/nested.rs`](nested/nested.rs) and its [sidecar](nested/nested.click)
+compose a stored outer four-byte chunk iterator with inner two-byte iterators.
+For an eight-byte input, the contract proves termination, checks both reads in
+all four inner chunks, and preserves every original byte. Each iterator has its
+own cursor, remaining length, size, tail, and move liveness; there is no generated
+processed count. The proof uses a checked reusable offset lemma and expanded
+certificates. Compiler locals with duplicate names (including nested `iter`
+temporaries) receive collision-free names derived from their local IDs. Unique
+source names and parameter names remain available.
+
+`byte-array-unsize-v1` accepts typed shared/mutable byte-array reference casts to
+byte-slice references. It checks concrete length metadata against the source
+array extent, argument/destination types and mutability, and the signed memory
+extent. Lifetime IDs may change during coercion; normalized reference types
+ignore these IDs, while rustc still checks source borrow legality. The coercion
+uses existing array storage and slice metadata and creates no memory authority.
+Contracts check length, mutable writes, dynamic reads, empty arrays and lengths
+8, 1024, and one million. Nonempty metadata verification work stays constant
+across these lengths; the empty-storage case has a separate deterministic bound.
+Mismatched metadata/types, out-of-bounds reads, false byte/result claims and
+shared writes are rejected. General unsizing, non-byte slices and symbolic
+extents remain outside this model.
+
+```sh
+cargo run --bin click -- import lock design/charon-trial/nested/nested.click
+cargo run --bin click -- verify design/charon-trial/nested/nested.click
+cargo nextest run --test rust_import --run-ignored only -E 'test(charon_nested_live_refresh_and_rejected_array_borrows)'
+```
+
+Ordinary verification, profiling, auditing, expansion and expanded-certificate
+rechecking exercise this checkpoint. The nested proof is a fixed-length
+composition regression; importing the unchanged checksum loop and proving its
+arithmetic are still separate adoption gates. Source/proof observations still
+need a stable interface before making Charon the default.
 
 ## Profile, locks, and trust
 
@@ -271,5 +311,5 @@ unsigned conversion, repeated initialization, uniform copy, indexing, and owned
 cleanup. The byte-slice checkpoint carries full-width metadata, dynamic bounds,
 reborrows and local calls through that same boundary. Stored exact-chunk state,
 owned moves, typed Option dispatch and remainder now pass through it as well.
-Next bring nested iterator composition and array-to-slice coercions through it,
-then establish supported-fixture parity before switching the default and retiring legacy extraction.
+Nested iterator composition and byte-array coercions now pass through it too.
+Next import the unchanged checksum loop and establish supported-fixture parity before switching the default and retiring legacy extraction.

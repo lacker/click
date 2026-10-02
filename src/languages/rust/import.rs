@@ -80,7 +80,7 @@ fn import_identity(
     driver: &Option<String>,
 ) -> String {
     match driver {
-        Some(driver) if c.backend.as_deref() == Some("charon-trial") => digest(format!("click-charon-trial-v1\n{config}\n{source}\n{exporter}\n{artifact}\n{driver}\n{}\n{}\nflat-record-drop-v1\nunsigned-from-v1\ncompact-uniform-scalar-array-v1\nbyte-slice-metadata-v1\nshared-byte-chunks-exact-v1", super::charon::COMMIT, super::charon::COMPILER).as_bytes()),
+        Some(driver) if c.backend.as_deref() == Some("charon-trial") => digest(format!("click-charon-trial-v1\n{config}\n{source}\n{exporter}\n{artifact}\n{driver}\n{}\n{}\nflat-record-drop-v1\nunsigned-from-v1\ncompact-uniform-scalar-array-v1\nbyte-slice-metadata-v1\nshared-byte-chunks-exact-v1\nnested-natural-while-v1\nbyte-array-unsize-v1", super::charon::COMMIT, super::charon::COMPILER).as_bytes()),
         _ => identity(config, source, exporter, artifact),
     }
 }

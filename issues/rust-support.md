@@ -257,8 +257,8 @@ compiler-resolved length calls and paired pointer/length origins; typed indices
 restore panic obligations removed by Charon's selected transform. Missing bounds
 and authority, high-bit indices, and false cleanup claims are rejected. Metadata
 work remains bounded for empty, small, million-byte and maximum-width lengths;
-proof tools recheck the same certificates. Array coercions, subslices, returned
-slices and slice fields remain parity work. The stored exact-chunk checkpoint now
+proof tools recheck the same certificates. Subslices, returned slices and slice
+fields remain parity work. The stored exact-chunk checkpoint now
 imports shared byte iterators, fixed remainders, owned moves, `IntoIterator`,
 typed `next`/Option dispatch and natural loops through ULLBC. Checked liveness
 rejects missing construction and duplicate moves; payload extraction requires
@@ -267,9 +267,18 @@ and preserve the original bytes, including zero iterations. Full-width sizes,
 empty/exact/short boundaries, permission failures, explicit matches and proof-tool
 agreement have regressions; metadata work stays bounded across input lengths and
 protocol normalization is indexed with linear scaling coverage. The named model
-`shared-byte-chunks-exact-v1` is lock-bound. Next bring nested iterator composition,
-borrowed loops and array-to-slice coercions through the adapter, then the unchanged
-checksum loop. Stable observations and broader iterator parity remain gates.
+`shared-byte-chunks-exact-v1` is lock-bound. The nested checkpoint now composes
+outer four-byte and inner two-byte iterators, proving termination, both byte
+reads, and preservation for an eight-byte input. Nested natural regions have
+linear analysis/emission scaling regressions at depths 8, 32, and 128; extra
+exits and irreducible entries remain rejected. Duplicate compiler temporary
+names have distinct identities without renaming the Rust source.
+`byte-array-unsize-v1` checks concrete extent metadata, normalized reference types
+and mutability, with compiler borrow checking and existing memory authority.
+Shared/mutable coercions, dynamic indexing, empty and million-byte arrays,
+negative metadata/type cases and proof-tool agreement have regressions.
+Next import the unchanged checksum loop, broaden iterator composition proofs,
+and cover borrowed loops. Stable observations and broader iterator parity remain gates.
 Establish stable source/proof observations and equivalent coverage before
 switching production imports. Preserve source metadata and a
 Click-owned semantic boundary; do not rebuild rustc's HIR-to-MIR semantics just
