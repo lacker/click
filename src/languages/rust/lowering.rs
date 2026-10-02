@@ -1032,6 +1032,19 @@ impl Context<'_> {
         }
     }
     fn slice_parts(&self, e: &E) -> Result<(CExpression, CExpression), String> {
+        if let E::Borrow {
+            place,
+            value_type: Type::ByteSlice { mutable },
+        } = e
+        {
+            let E::Local { name } = place.as_ref() else {
+                return Err("slice reborrow requires a slice local".into());
+            };
+            if *mutable && self.slices.get(name).is_none_or(|(_, constant)| *constant) {
+                return Err("mutable slice reborrow requires a mutable source".into());
+            }
+            return self.slice_parts(place);
+        }
         if let E::ChunkRemainder { iterator } = e {
             if !self.chunk_iterators.contains(iterator) {
                 return Err("unknown Rust chunk iterator".into());

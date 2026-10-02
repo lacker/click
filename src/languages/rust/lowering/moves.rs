@@ -44,6 +44,25 @@ pub(super) fn lower(
                     ),
                 )
             }
+            Type::ByteSlice { mutable } => {
+                let length = format!("{}_len", local.name);
+                if !cx.locals.insert(length.clone()) {
+                    return Err("MIR slice local length collision".into());
+                }
+                cx.slices
+                    .insert(local.name.clone(), (length.clone(), !mutable));
+                c_seq(
+                    c_declare_with_all_qualifiers(
+                        &local.name,
+                        CType::UInt8Pointer,
+                        false,
+                        false,
+                        false,
+                        !mutable,
+                    ),
+                    c_declare(length, CType::UInt64),
+                )
+            }
             Type::Array { element, length } => {
                 let element = scalar_type(element)?.to_kernel_type();
                 if !matches!(element, CType::Int32 | CType::UInt8 | CType::UInt32)
@@ -472,6 +491,8 @@ fn accesses(expressions: &[&E], live: &BTreeMap<&str, String>) -> CStatement {
             | E::Cast { value, .. }
             | E::IntegerFrom { value, .. } => pending.push(value),
             E::Borrow { place, .. } => pending.push(place),
+            E::SliceLength { slice } => pending.push(slice),
+            E::ArrayToSlice { array, .. } => pending.push(array),
             E::Deref { reference, .. } => pending.push(reference),
             E::Field { base, .. } => pending.push(base),
             E::Call { arguments, .. } => pending.extend(arguments),

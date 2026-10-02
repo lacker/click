@@ -131,12 +131,40 @@ The source fixture and negative claims also run through verification, profiling,
 auditing, expansion, and expanded-certificate rechecking.
 
 General snapshot copies, copies after an element override, whole-array
-reassignment, by-value array parameters/returns, array fields, nested arrays,
-and dynamic-index compiler assertions remain outside this increment. Unsupported
+reassignment, by-value array parameters/returns, array fields and nested arrays
+remain outside the compact-array increment. Unsupported
 bulk source/storage shapes produce a bounded checked execution failure; they are
 never assumed uniform. Fixed indices in this fixture are constant-folded by the
-compiler, while Click independently checks their normalized bounds. General
-slices and iterator models remain adoption gates.
+compiler, while Click independently checks their normalized bounds. Iterator
+models remain adoption gates.
+
+## Byte-slice checkpoint
+
+[`slices/slices.rs`](slices/slices.rs) and its [sidecar](slices/slices.click)
+exercise shared/mutable byte-slice parameters, `.len()`, dynamic reads/writes,
+local reborrows and local calls, plus a restoring guard and unsigned conversion.
+The named interpretation `byte-slice-metadata-v1` represents each slice as its
+qualified data pointer and full-width `usize` length. Reborrows require both
+components to originate from the same typed slice; shared access cannot be
+strengthened to mutable access. Compiler-resolved `SliceLen` declarations are
+checked for identity, signature, generic arguments, safety, and argument types.
+No byte resource is required just to read metadata, including length zero and
+`u64::MAX`; deterministic metadata proof work stays bounded across those sizes.
+
+Charon's selected fallible-operation reconstruction also removes index panic
+branches. Each ULLBC typed index therefore becomes an independently checked
+full-width bounds obligation. Click checks the signed memory-model extent before
+narrowing an offset and requires views/ownership for reads/writes. Missing bounds,
+missing authority, out-of-bounds and high-bit indices, false results and false
+restoration claims are rejected. Cross-width guard framing uses explicit proved
+signed-index bounds derived from the `usize` preconditions. Verification,
+profiling, auditing, expansion, and expanded-certificate rechecking share the
+same engine.
+
+Array-to-slice coercions, subslices/split operations, stored iterators,
+slice fields/returns, and non-byte slices are not yet accepted by this adapter.
+Other remaining ULLBC assertions are rejected rather than discarded. The default
+frontend's broader slice and iterator coverage remains a migration parity gate.
 
 ## Profile, locks, and trust
 
@@ -157,10 +185,11 @@ outside the accepted slice. Precise drops and ULLBC are required. No preset,
 index-to-call, operation-to-call, or borrow-check bypass is enabled.
 
 The one newly selected transform, `reconstruct_fallible_operations`, replaces
-the overflow tuple/assert pattern with a panic-on-overflow operation. This loses
+the overflow tuple/assert pattern with a panic-on-overflow operation and
+removes index panic checks in favor of typed index projections. This loses
 unwind detail, which the abort profile excludes. The adapter accepts only the
-assessed operators and overflow modes; Click reintroduces their checked range
-obligations. Neither wrapping nor unchecked arithmetic receives checked Rust
+assessed operators and overflow modes; Click reintroduces their checked
+arithmetic range and index bounds obligations. Neither wrapping nor unchecked arithmetic receives checked Rust
 semantics accidentally. Charon clears consumed rustc arguments in its serialized
 options, so the refresh-owned envelope separately records the exact compiler
 flags and checked compiler identity.
@@ -193,5 +222,7 @@ to the legacy exporter per function. The borrowed-loop checkpoint now composes
 a live restoring guard with checked
 iteration and termination. The conversions/arrays checkpoint composes resolved
 unsigned conversion, repeated initialization, uniform copy, indexing, and owned
-cleanup. Next bring slice metadata/bounds and stored iterator state through the
-same boundary before switching the default and retiring legacy extraction.
+cleanup. The byte-slice checkpoint carries full-width metadata, dynamic bounds,
+reborrows and local calls through that same boundary. Next bring stored iterator
+state and `chunks_exact`/remainder through it, then establish supported-fixture
+parity before switching the default and retiring legacy extraction.

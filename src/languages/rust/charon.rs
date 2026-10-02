@@ -155,6 +155,10 @@ fn concrete_size(size: &a::Size) -> Result<u32, String> {
     u32::try_from(*value).map_err(|_| unsupported("large layout"))
 }
 
+fn byte_slice(ty: &a::Ty) -> bool {
+    matches!(ty.kind(), a::TyKind::Slice(element, _) if matches!(element.kind(), a::TyKind::Scalar(a::ScalarTy::Integer(a::IntegerTy::Unsigned(a::UIntTy::U8)))))
+}
+
 struct Adapter<'a> {
     krate: &'a a::TranslatedCrate,
     records: BTreeMap<a::TypeDeclId, String>,
@@ -175,6 +179,12 @@ impl Adapter<'_> {
                 a::UIntTy::Usize => Type::Usize,
                 _ => return Err(unsupported("integer width")),
             },
+            a::TyKind::Ref(_, pointee, kind) if byte_slice(pointee) => Type::ByteSlice {
+                mutable: *kind == a::RefKind::Mut,
+            },
+            a::TyKind::Ref(_, pointee, _) if matches!(pointee.kind(), a::TyKind::Slice(..)) => {
+                return Err(unsupported("slice elements other than u8"));
+            }
             a::TyKind::Ref(_, pointee, kind) => Type::Reference {
                 mutable: *kind == a::RefKind::Mut,
                 pointee: Box::new(self.ty(pointee)?),
@@ -250,9 +260,8 @@ struct BodyAdapter<'a, 'b> {
     names: BTreeMap<a::LocalId, String>,
 }
 impl BodyAdapter<'_, '_> {
-    /// `unsigned-from-v1`: only a compiler-resolved standard-library From
-    /// implementation on supported unsigned scalars is interpreted as a cast.
-    fn integer_conversion(&self, t: &u::Terminator) -> Result<Option<S>, String> {
+    /// Named interpretations for compiler-resolved slice length and unsigned From.
+    fn modeled_call(&self, t: &u::Terminator) -> Result<Option<S>, String> {
         let u::TerminatorKind::Call { call, .. } = &t.kind else {
             return Ok(None);
         };
@@ -266,6 +275,39 @@ impl BodyAdapter<'_, '_> {
             .fun_decls
             .get(id)
             .ok_or_else(|| unsupported("missing call definition"))?;
+        if callee.item_meta.lang_item == Some(LangItem::SliceLen) {
+            let [argument] = call.args.as_slice() else {
+                return Err(unsupported("slice len arity"));
+            };
+            let signature = matches!(callee.signature.inputs.as_slice(), [input]
+                if matches!(input.kind(), a::TyKind::Ref(_, pointee, a::RefKind::Shared)
+                    if matches!(pointee.kind(), a::TyKind::Slice(element, _)
+                        if matches!(element.kind(), a::TyKind::TypeVar(a::DeBruijnVar::Bound(depth, id)) if depth.index == 0 && id.index() == 0))));
+            if callee.item_meta.is_local
+                || !matches!(callee.src, a::FunSource::Normal)
+                || callee.signature.is_unsafe
+                || callee.signature.is_variadic
+                || callee.signature.abi != a::Abi::Rust
+                || call.safety == a::CallSafety::Unsafe
+                || callee.generics.types.len() != 1
+                || !callee.generics.const_generics.is_empty()
+                || !signature
+                || self.adapter.ty(&callee.signature.output)? != Type::Usize
+                || ptr.generics.types.len() != 1
+                || self.adapter.ty(&ptr.generics.types[0])? != Type::U8
+                || !ptr.generics.const_generics.is_empty()
+                || self.adapter.ty(argument.ty())? != (Type::ByteSlice { mutable: false })
+                || self.adapter.ty(&call.dest.ty)? != Type::Usize
+            {
+                return Err(unsupported("slice len declaration/type mismatch"));
+            }
+            return Ok(Some(S::Assign {
+                target: self.place(&call.dest)?,
+                value: E::SliceLength {
+                    slice: Box::new(self.operand(argument)?),
+                },
+            }));
+        }
         let a::FunSource::TraitImpl {
             trait_ref,
             impl_ref,
@@ -351,6 +393,19 @@ impl BodyAdapter<'_, '_> {
             a::PlaceKind::Local(id) => E::Local {
                 name: self.local(*id)?,
             },
+            a::PlaceKind::Projection(base, a::ProjectionElem::PtrMetadata)
+                if matches!(self.adapter.ty(&base.ty)?, Type::ByteSlice { .. })
+                    && self.adapter.ty(&p.ty)? == Type::Usize =>
+            {
+                E::SliceLength {
+                    slice: Box::new(self.place(base)?),
+                }
+            }
+            a::PlaceKind::Projection(base, a::ProjectionElem::Deref)
+                if matches!(self.adapter.ty(&base.ty)?, Type::ByteSlice { .. }) =>
+            {
+                self.place(base)?
+            }
             a::PlaceKind::Projection(base, a::ProjectionElem::Deref)
                 if matches!(base.ty.kind(), a::TyKind::Ref(..)) =>
             {
@@ -379,10 +434,12 @@ impl BodyAdapter<'_, '_> {
                     offset,
                     from_end: false,
                 },
-            ) if matches!(self.adapter.ty(&base.ty)?, Type::Array { .. }) => E::Index {
-                slice: Box::new(self.place(base)?),
-                index: Box::new(self.operand(offset)?),
-            },
+            ) if matches!(base.ty.kind(), a::TyKind::Array(..)) || byte_slice(&base.ty) => {
+                E::Index {
+                    slice: Box::new(self.place(base)?),
+                    index: Box::new(self.operand(offset)?),
+                }
+            }
             _ => return Err(unsupported("place projection")),
         })
     }
@@ -425,6 +482,9 @@ impl BodyAdapter<'_, '_> {
     fn rvalue(&self, v: &a::Rvalue, ty: &a::Ty) -> Result<E, String> {
         Ok(match v {
             a::Rvalue::Use(op, _) => self.operand(op)?,
+            a::Rvalue::Len(place, _, _) if byte_slice(&place.ty) => E::SliceLength {
+                slice: Box::new(self.place(place)?),
+            },
             a::Rvalue::Repeat(value, _, length, _) => E::Repeat {
                 value: Box::new(self.operand(value)?),
                 length: length
@@ -438,6 +498,33 @@ impl BodyAdapter<'_, '_> {
                     .map(|value| self.operand(value))
                     .collect::<Result<_, _>>()?,
             },
+            a::Rvalue::Ref {
+                place,
+                kind,
+                ptr_metadata,
+            } if byte_slice(&place.ty) => {
+                let a::PlaceKind::Projection(base, a::ProjectionElem::Deref) = &place.kind else {
+                    return Err(unsupported("slice reborrow place"));
+                };
+                let source = self.adapter.ty(&base.ty)?;
+                let destination = self.adapter.ty(ty)?;
+                let mutable = matches!(kind, a::BorrowKind::Mut | a::BorrowKind::TwoPhaseMut);
+                if !matches!(
+                    kind,
+                    a::BorrowKind::Shared | a::BorrowKind::Mut | a::BorrowKind::TwoPhaseMut
+                ) || destination != (Type::ByteSlice { mutable })
+                    || !matches!(source, Type::ByteSlice { mutable: source } if !mutable || source)
+                    || !matches!(ptr_metadata, a::Operand::Copy(p) | a::Operand::Move(p)
+                        if matches!(&p.kind, a::PlaceKind::Projection(metadata_base, a::ProjectionElem::PtrMetadata) if metadata_base == base)
+                            && self.adapter.ty(&p.ty)? == Type::Usize)
+                {
+                    return Err(unsupported("slice reborrow pointer/metadata/type mismatch"));
+                }
+                E::Borrow {
+                    place: Box::new(self.place(base)?),
+                    value_type: destination,
+                }
+            }
             a::Rvalue::Ref {
                 place,
                 kind: a::BorrowKind::Shared | a::BorrowKind::Mut | a::BorrowKind::TwoPhaseMut,
@@ -908,7 +995,7 @@ pub(super) fn decode(
                 .into_iter()
                 .flatten()
                 .collect();
-            let conversion = b.integer_conversion(&block.terminator)?;
+            let conversion = b.modeled_call(&block.terminator)?;
             let terminator = if let Some(conversion) = conversion {
                 statements.push(conversion);
                 let u::TerminatorKind::Call { target, .. } = &block.terminator.kind else {
@@ -968,6 +1055,106 @@ mod tests {
         include_bytes!("../../../design/charon-trial/conversions-arrays/arrays.rs");
     const ARRAY_CLAIM: &str =
         include_str!("../../../design/charon-trial/conversions-arrays/arrays.click");
+
+    const SLICE_ARTIFACT: &[u8] =
+        include_bytes!("../../../design/charon-trial/slices/slices.ullbc");
+    const SLICE_SOURCE: &[u8] = include_bytes!("../../../design/charon-trial/slices/slices.rs");
+
+    #[test]
+    fn charon_slice_length_checks_declaration_identity_and_types() {
+        for mutation in 0..4 {
+            let mut artifact: TrialArtifact = serde_json::from_slice(SLICE_ARTIFACT).unwrap();
+            let callee = artifact
+                .data
+                .translated
+                .fun_decls
+                .iter_mut()
+                .find(|f| f.item_meta.lang_item == Some(LangItem::SliceLen))
+                .unwrap();
+            match mutation {
+                0 => callee.item_meta.lang_item = None,
+                1 => callee.item_meta.is_local = true,
+                2 => callee.signature.is_unsafe = true,
+                3 => callee.signature.inputs.clear(),
+                _ => unreachable!(),
+            }
+            assert!(
+                decode(
+                    &serde_json::to_vec(&artifact).unwrap(),
+                    "slices.rs",
+                    SLICE_SOURCE
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn charon_slice_reborrow_rejects_unrelated_metadata() {
+        let mut artifact: TrialArtifact = serde_json::from_slice(SLICE_ARTIFACT).unwrap();
+        let mut changed = false;
+        for function in artifact.data.translated.fun_decls.iter_mut() {
+            let a::Body::Unstructured(body) = &mut function.body else {
+                continue;
+            };
+            for statement in body.body.iter_mut().flat_map(|block| &mut block.statements) {
+                let u::StatementKind::Assign(
+                    _,
+                    a::Rvalue::Ref {
+                        place,
+                        ptr_metadata,
+                        ..
+                    },
+                ) = &mut statement.kind
+                else {
+                    continue;
+                };
+                if !byte_slice(&place.ty) {
+                    continue;
+                }
+                let (a::Operand::Copy(metadata) | a::Operand::Move(metadata)) = ptr_metadata else {
+                    panic!("expected slice metadata projection")
+                };
+                let a::PlaceKind::Projection(base, a::ProjectionElem::PtrMetadata) =
+                    &mut metadata.kind
+                else {
+                    panic!("expected slice metadata projection")
+                };
+                base.kind = a::PlaceKind::Local(a::LocalId::from_usize(0));
+                changed = true;
+            }
+        }
+        assert!(changed);
+        let error = decode(
+            &serde_json::to_vec(&artifact).unwrap(),
+            "slices.rs",
+            SLICE_SOURCE,
+        )
+        .unwrap_err();
+        assert!(error.contains("pointer/metadata/type mismatch"), "{error}");
+    }
+
+    #[test]
+    fn charon_slice_metadata_verification_work_is_independent_of_length() {
+        let export = decode(SLICE_ARTIFACT, "slices.rs", SLICE_SOURCE).unwrap();
+        let prepared = super::super::import::prepared_for_test(export).unwrap();
+        let mut samples = Vec::new();
+        for length in [0u64, 8, 1024, 1_000_000, u64::MAX] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let claim = format!(
+                "verifying \"slices.rs\"; uint64 length(const uint8* bytes, uint64 bytes_len) {{ requires bytes_len == {length}u64; ensures result == {length}u64; }} by {{ execute(); simp(); }}"
+            );
+            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                C0VerificationSession::new_program_prepared(&claim, &prepared)
+            });
+            verified.unwrap();
+            samples.push(work);
+        }
+        assert!(
+            samples.iter().all(|work| *work <= samples[0] + 64),
+            "{samples:?}"
+        );
+    }
 
     #[test]
     fn charon_unsigned_from_checks_resolved_identity_and_signature() {

@@ -66,6 +66,141 @@ fn charon_project() -> Project {
     .unwrap();
     p
 }
+const CHARON_SLICE_SOURCE: &str = include_str!("../design/charon-trial/slices/slices.rs");
+const CHARON_SLICE_SIDECAR: &str = include_str!("../design/charon-trial/slices/slices.click");
+fn charon_slice_project() -> Project {
+    let p = Project::new(CHARON_SLICE_SOURCE);
+    for (name, bytes) in [
+        ("slices.rs", CHARON_SLICE_SOURCE.as_bytes()),
+        ("borrow.click", CHARON_SLICE_SIDECAR.as_bytes()),
+        (
+            "borrow.click.import.json",
+            include_bytes!("../design/charon-trial/slices/slices.click.import.json").as_slice(),
+        ),
+        (
+            "slices.ullbc",
+            include_bytes!("../design/charon-trial/slices/slices.ullbc").as_slice(),
+        ),
+        (
+            "borrow.click.import.json.lock",
+            include_bytes!("../design/charon-trial/slices/slices.click.import.json.lock")
+                .as_slice(),
+        ),
+    ] {
+        fs::write(p.root.join(name), bytes).unwrap();
+    }
+    p
+}
+#[test]
+fn charon_slices_preserve_metadata_permissions_and_cleanup() {
+    let p = charon_slice_project();
+    let prepared = load_import(&p.config()).unwrap();
+    C0VerificationSession::new_program_prepared(CHARON_SLICE_SIDECAR, &prepared).unwrap();
+    for invalid in [
+        CHARON_SLICE_SIDECAR.replace("ensures result == bytes_len;", "ensures result == 0;"),
+        CHARON_SLICE_SIDECAR.replace("ensures result == value;", "ensures result == value + 1;"),
+        CHARON_SLICE_SIDECAR.replace(
+            "ensures value[0] == old(value[0]);",
+            "ensures value[0] == 7;",
+        ),
+        CHARON_SLICE_SIDECAR.replace("    requires index < bytes_len;\n", ""),
+        CHARON_SLICE_SIDECAR.replace(
+            "    requires index < bytes_len;",
+            "    requires index == bytes_len;",
+        ),
+        CHARON_SLICE_SIDECAR.replace(
+            "    requires index < bytes_len;",
+            "    requires index == 4294967296u64;",
+        ),
+        CHARON_SLICE_SIDECAR.replace("    requires bytes_len <= 2147483647u64;\n", ""),
+        CHARON_SLICE_SIDECAR.replace("    views bytes[0..(int32)(uint32)bytes_len];\n", ""),
+        CHARON_SLICE_SIDECAR.replace("    owns bytes[0..(int32)(uint32)bytes_len];\n", ""),
+    ] {
+        assert!(
+            C0VerificationSession::new_program_prepared(&invalid, &prepared).is_err(),
+            "accepted {invalid}"
+        );
+    }
+    // Contract owns/views composition already establishes byte separation.
+    let composed = CHARON_SLICE_SIDECAR.replace(
+        "    requires separate(memory(value[0..1]), memory(bytes[0..(int32)(uint32)bytes_len]));\n",
+        "",
+    );
+    C0VerificationSession::new_program_prepared(&composed, &prepared).unwrap();
+    // Metadata alone requires no memory resource, including empty and very large slices.
+    for length in [0u64, 8, 1024, 1_000_000, u64::MAX] {
+        let claim = format!(
+            "verifying \"slices.rs\"; uint64 length(const uint8* bytes, uint64 bytes_len) {{ requires bytes_len == {length}u64; ensures result == {length}u64; }} by {{ execute(); simp(); }}"
+        );
+        C0VerificationSession::new_program_prepared(&claim, &prepared).unwrap();
+    }
+}
+#[test]
+fn charon_slice_failure_does_not_suggest_unsupported_trace() {
+    let p = charon_slice_project();
+    fs::write(
+        p.root.join("borrow.click"),
+        CHARON_SLICE_SIDECAR.replace("ensures result == bytes_len;", "ensures result == 0;"),
+    )
+    .unwrap();
+    let output = p.cli(&["verify"]);
+    assert!(!output.status.success());
+    let error = String::from_utf8(output.stderr).unwrap();
+    assert!(error.contains("proof error:"), "{error}");
+    assert!(!error.contains("--trace-proof"), "{error}");
+}
+#[test]
+fn charon_slice_cli_tools_recheck_expanded_certificates() {
+    let p = charon_slice_project();
+    for command in ["verify", "profile", "audit"] {
+        assert_cli(&p, &[command]);
+    }
+    for claim in [
+        "length.contract",
+        "write_read.contract",
+        "guarded_read.contract",
+    ] {
+        assert_cli(&p, &["expand", "--claim", claim, "--in-place"]);
+        assert_cli(&p, &["verify"]);
+    }
+}
+#[test]
+#[ignore = "requires the separately built pinned Charon/compiler"]
+fn charon_slices_live_refresh_and_borrow_checking() {
+    let p = charon_slice_project();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(p.config()).unwrap()).unwrap();
+    config["exporter"] = serde_json::json!(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/charon/debug/charon")
+    );
+    fs::write(p.config(), serde_json::to_vec(&config).unwrap()).unwrap();
+    refresh_import(&p.config()).unwrap();
+    C0VerificationSession::new_program_prepared(
+        CHARON_SLICE_SIDECAR,
+        &load_import(&p.config()).unwrap(),
+    )
+    .unwrap();
+    for (source, diagnostic) in [
+        ("pub fn bad(x:&[u8]) { x[0]=7; }", "E0594"),
+        (
+            "pub fn bad(x:&mut [u8]) -> u8 { let y=&mut *x; x[0]=7; y[0] }",
+            "E0503",
+        ),
+        (
+            "pub fn bad(x:&[u16])->usize { x.len() }",
+            "slice elements other than u8",
+        ),
+    ] {
+        fs::remove_file(p.root.join("slices.ullbc")).unwrap();
+        fs::write(p.root.join("slices.rs"), source).unwrap();
+        let error = refresh_import(&p.config()).unwrap_err();
+        assert!(error.contains(diagnostic), "{error}");
+        assert!(!p.root.join("slices.ullbc").exists());
+        fs::write(p.root.join("slices.rs"), CHARON_SLICE_SOURCE).unwrap();
+        refresh_import(&p.config()).unwrap();
+    }
+}
+
 const CHARON_ARRAY_SOURCE: &str =
     include_str!("../design/charon-trial/conversions-arrays/arrays.rs");
 const CHARON_ARRAY_SIDECAR: &str =

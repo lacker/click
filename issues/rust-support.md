@@ -249,11 +249,19 @@ repeated initialization, uniform whole-array copy, and restoring `Drop` guard.
 Its shared compact initialization operation checks authority and initialization;
 8-, 1024-, and million-element arrays retain bounded node count, storage, and
 deterministic proof work. Empty initializer calls execute once. General snapshot
-copies, copies after element overrides, whole-array reassignment, dynamic-index
-compiler assertions, and slice/iterator coverage remain migration work. Next
-bring slice metadata and bounds through the same adapter, then stored
-`chunks_exact`/remainder state and checksum loop composition. Establish stable
-source/proof observations and equivalent coverage before switching production imports. Preserve source metadata and a
+copies, copies after element overrides, and whole-array reassignment remain
+migration work. The byte-slice checkpoint now carries shared/mutable parameters,
+full-width length metadata, dynamic read/write bounds, reborrows and local calls
+through ULLBC, including restoring guard cleanup. `byte-slice-metadata-v1` checks
+compiler-resolved length calls and paired pointer/length origins; typed indices
+restore panic obligations removed by Charon's selected transform. Missing bounds
+and authority, high-bit indices, and false cleanup claims are rejected. Metadata
+work remains bounded for empty, small, million-byte and maximum-width lengths;
+proof tools recheck the same certificates. Array coercions, subslices, returned
+slices, slice fields and iterators remain parity work. Next bring stored
+`chunks_exact`/remainder state and checksum loop composition through the adapter.
+Establish stable source/proof observations and equivalent coverage before
+switching production imports. Preserve source metadata and a
 Click-owned semantic boundary; do not rebuild rustc's HIR-to-MIR semantics just
 to retain syntax. Use the assessment's configuration rather than adopting an
 unaudited preset. Then consolidate semantic
