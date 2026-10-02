@@ -1,5 +1,7 @@
 //! Opt-in, deliberately narrow ULLBC adapter. All bodies use the same CFG path.
 //! Charon owns Rust normalization; Click owns execution and checked authority.
+mod chunks;
+
 use super::schema::{self as out, Expression as E, MirStatement as S, MirTerminator as T, Type};
 use crate::languages::compiler_process::{CompilerLimits, run_compiler};
 use charon_lib::ast::from_rustc::LangItem;
@@ -196,6 +198,8 @@ impl Adapter<'_> {
                     .ok_or_else(|| unsupported("symbolic array length"))?
                     as u64,
             },
+            a::TyKind::Adt(_) if self.chunk_type(t) => Type::ChunkIterator,
+            a::TyKind::Adt(_) if self.chunk_option_type(t) => Type::ChunkOption,
             a::TyKind::Adt(r) if r.id == a::TypeDeclId::UNIT => Type::Unit,
             a::TyKind::Adt(r)
                 if r.generics.types.is_empty() && r.generics.const_generics.is_empty() =>
@@ -258,10 +262,15 @@ struct BodyAdapter<'a, 'b> {
     adapter: &'a Adapter<'b>,
     body: &'a u::ExprBody,
     names: BTreeMap<a::LocalId, String>,
+    chunk_refs: BTreeMap<a::LocalId, a::LocalId>,
+    chunk_discriminants: BTreeMap<a::LocalId, a::LocalId>,
 }
 impl BodyAdapter<'_, '_> {
     /// Named interpretations for compiler-resolved slice length and unsigned From.
     fn modeled_call(&self, t: &u::Terminator) -> Result<Option<S>, String> {
+        if let Some(statement) = self.chunk_call(t)? {
+            return Ok(Some(statement));
+        }
         let u::TerminatorKind::Call { call, .. } = &t.kind else {
             return Ok(None);
         };
@@ -389,6 +398,9 @@ impl BodyAdapter<'_, '_> {
             .ok_or_else(|| unsupported("unknown local identity"))
     }
     fn place(&self, p: &a::Place) -> Result<E, String> {
+        if let Some(value) = self.chunk_projection(p)? {
+            return Ok(value);
+        }
         Ok(match &p.kind {
             a::PlaceKind::Local(id) => E::Local {
                 name: self.local(*id)?,
@@ -567,6 +579,9 @@ impl BodyAdapter<'_, '_> {
         })
     }
     fn statement(&self, s: &u::Statement) -> Result<Option<S>, String> {
+        if let Some(statement) = self.chunk_statement(s)? {
+            return Ok(statement);
+        }
         Ok(match &s.kind {
             u::StatementKind::Assign(p, v) => {
                 if self.adapter.ty(&p.ty)? == Type::Unit {
@@ -625,6 +640,9 @@ impl BodyAdapter<'_, '_> {
         })
     }
     fn terminator(&self, t: &u::Terminator) -> Result<T, String> {
+        if let Some(terminator) = self.chunk_switch(t)? {
+            return Ok(terminator);
+        }
         Ok(match &t.kind {
             u::TerminatorKind::Goto { target } => T::Goto {
                 target: target.index(),
@@ -943,6 +961,7 @@ pub(super) fn decode(
         let a::Body::Unstructured(body) = &f.body else {
             return Err(unsupported("missing or non-CFG source body"));
         };
+        let (chunk_refs, chunk_discriminants) = chunks::bindings(&adapter, body)?;
         let mut names = BTreeMap::new();
         let mut parameters = Vec::new();
         let mut locals = Vec::new();
@@ -968,7 +987,11 @@ pub(super) fn decode(
             names.insert(local.index, n.clone());
             let place = out::Place {
                 name: n,
-                value_type: adapter.ty(&local.ty)?,
+                value_type: if chunk_discriminants.contains_key(&local.index) {
+                    Type::Bool
+                } else {
+                    adapter.ty(&local.ty)?
+                },
                 span: span(local.span),
             };
             if param {
@@ -981,6 +1004,8 @@ pub(super) fn decode(
             adapter: &adapter,
             body,
             names,
+            chunk_refs,
+            chunk_discriminants,
         };
         let mut blocks = Vec::new();
         for block in &b.body.body {
@@ -1018,6 +1043,7 @@ pub(super) fn decode(
                 terminator,
             });
         }
+        chunks::split_next_branches(&mut blocks)?;
         functions.push(out::Function {
             name: name.clone(),
             return_type: adapter.ty(&f.signature.output)?,
@@ -1055,6 +1081,284 @@ mod tests {
         include_bytes!("../../../design/charon-trial/conversions-arrays/arrays.rs");
     const ARRAY_CLAIM: &str =
         include_str!("../../../design/charon-trial/conversions-arrays/arrays.click");
+
+    #[test]
+    fn charon_chunks_keep_state_and_owned_moves() {
+        let export = decode(
+            include_bytes!("../../../design/charon-trial/chunks/chunks.ullbc"),
+            "chunks.rs",
+            include_bytes!("../../../design/charon-trial/chunks/chunks.rs"),
+        )
+        .unwrap();
+        let walk = export
+            .functions
+            .iter()
+            .find(|f| f.name == "walk")
+            .unwrap()
+            .mir
+            .as_ref()
+            .unwrap();
+        assert!(
+            walk.blocks
+                .iter()
+                .flat_map(|b| &b.statements)
+                .any(|s| matches!(s, S::ChunkMove { .. }))
+        );
+        assert_eq!(
+            walk.blocks
+                .iter()
+                .filter(|b| matches!(
+                    b.terminator,
+                    T::If {
+                        condition: E::ChunkHasNext { .. },
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            walk.blocks
+                .iter()
+                .flat_map(|b| &b.statements)
+                .filter(|s| matches!(s, S::ChunkNext { .. }))
+                .count(),
+            2
+        );
+        let prepared = super::super::import::prepared_for_test(export).unwrap();
+        C0VerificationSession::new_program_prepared(
+            include_str!("../../../design/charon-trial/chunks/chunks.click"),
+            &prepared,
+        )
+        .unwrap();
+    }
+
+    const CHUNK_ARTIFACT: &[u8] =
+        include_bytes!("../../../design/charon-trial/chunks/chunks.ullbc");
+    const CHUNK_SOURCE: &[u8] = include_bytes!("../../../design/charon-trial/chunks/chunks.rs");
+
+    #[test]
+    fn charon_chunk_models_check_resolved_identity_and_signature() {
+        for mutation in 0..7 {
+            let mut artifact: TrialArtifact = serde_json::from_slice(CHUNK_ARTIFACT).unwrap();
+            let callee =
+                artifact
+                    .data
+                    .translated
+                    .fun_decls
+                    .iter_mut()
+                    .find(|f| {
+                        f.item_meta.name.name.last().is_some_and(
+                            |p| matches!(p, a::PathElem::Ident(name, _) if name == "next"),
+                        )
+                    })
+                    .unwrap();
+            match mutation {
+                0 => callee.item_meta.is_local = true,
+                1 => callee.signature.is_unsafe = true,
+                2 => callee.signature.output = callee.signature.inputs[0].clone(),
+                3..=5 => {
+                    let a::FunSource::TraitImpl {
+                        trait_ref,
+                        impl_ref,
+                        ..
+                    } = &callee.src
+                    else {
+                        panic!()
+                    };
+                    if mutation == 3 {
+                        artifact.data.translated.trait_decls[trait_ref.id]
+                            .item_meta
+                            .diagnostic_item = Some("Lookalike".into());
+                    }
+                    if mutation == 4 {
+                        artifact.data.translated.trait_impls[impl_ref.id].is_negative = true;
+                    }
+                    if mutation == 5 {
+                        artifact.data.translated.trait_impls[impl_ref.id]
+                            .impl_trait
+                            .generics
+                            .types
+                            .clear();
+                    }
+                }
+                6 => {
+                    let option = artifact
+                        .data
+                        .translated
+                        .type_decls
+                        .iter_mut()
+                        .find(|t| t.item_meta.lang_item == Some(LangItem::Option))
+                        .unwrap();
+                    option.item_meta.is_local = true;
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                decode(
+                    &serde_json::to_vec(&artifact).unwrap(),
+                    "chunks.rs",
+                    CHUNK_SOURCE
+                )
+                .is_err(),
+                "mutation {mutation}"
+            );
+        }
+    }
+
+    #[test]
+    fn charon_chunk_missing_initialization_and_duplicate_moves_fail() {
+        for duplicate in [false, true] {
+            let mut export = decode(CHUNK_ARTIFACT, "chunks.rs", CHUNK_SOURCE).unwrap();
+            let name = if duplicate { "walk" } else { "tail" };
+            let mir = export
+                .functions
+                .iter_mut()
+                .find(|f| f.name == name)
+                .unwrap()
+                .mir
+                .as_mut()
+                .unwrap();
+            if duplicate {
+                let block = mir
+                    .blocks
+                    .iter_mut()
+                    .find(|b| {
+                        b.statements
+                            .iter()
+                            .any(|s| matches!(s, S::ChunkMove { .. }))
+                    })
+                    .unwrap();
+                let index = block
+                    .statements
+                    .iter()
+                    .position(|s| matches!(s, S::ChunkMove { .. }))
+                    .unwrap();
+                block
+                    .statements
+                    .insert(index + 1, block.statements[index].clone());
+            } else {
+                for block in &mut mir.blocks {
+                    block
+                        .statements
+                        .retain(|s| !matches!(s, S::ChunkInitialize { .. }));
+                }
+            }
+            let prepared = super::super::import::prepared_for_test(export).unwrap();
+            assert!(
+                C0VerificationSession::new_program_prepared(
+                    include_str!("../../../design/charon-trial/chunks/chunks.click"),
+                    &prepared
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn charon_chunk_option_projection_checks_variant_and_field() {
+        let mut artifact: TrialArtifact = serde_json::from_slice(CHUNK_ARTIFACT).unwrap();
+        let mut changed = false;
+        for function in artifact.data.translated.fun_decls.iter_mut() {
+            let a::Body::Unstructured(body) = &mut function.body else {
+                continue;
+            };
+            for statement in body.body.iter_mut().flat_map(|block| &mut block.statements) {
+                let u::StatementKind::Assign(_, a::Rvalue::Use(a::Operand::Copy(place), _)) =
+                    &mut statement.kind
+                else {
+                    continue;
+                };
+                let a::PlaceKind::Projection(_, a::ProjectionElem::Field(Some(variant), field)) =
+                    &mut place.kind
+                else {
+                    continue;
+                };
+                if variant.index() == 1 && field.index() == 0 {
+                    *field = a::FieldId::from_usize(1);
+                    changed = true;
+                }
+            }
+        }
+        assert!(changed);
+        let error = decode(
+            &serde_json::to_vec(&artifact).unwrap(),
+            "chunks.rs",
+            CHUNK_SOURCE,
+        )
+        .unwrap_err();
+        assert!(error.contains("chunk Option projection"), "{error}");
+    }
+
+    #[test]
+    fn charon_chunk_none_cannot_supply_a_slice_payload() {
+        let mut export = decode(CHUNK_ARTIFACT, "chunks.rs", CHUNK_SOURCE).unwrap();
+        let mir = export
+            .functions
+            .iter_mut()
+            .find(|f| f.name == "next_len")
+            .unwrap()
+            .mir
+            .as_mut()
+            .unwrap();
+        let payload = mir
+            .blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .find(|s| {
+                matches!(
+                    s,
+                    S::Assign {
+                        value: E::ChunkOptionSlice { .. },
+                        ..
+                    }
+                )
+            })
+            .unwrap()
+            .clone();
+        let none_edge = mir
+            .blocks
+            .iter()
+            .find_map(|b| match b.terminator {
+                T::If {
+                    condition: E::ChunkHasNext { .. },
+                    else_target,
+                    ..
+                } => Some(else_target),
+                _ => None,
+            })
+            .unwrap();
+        let T::Goto { target: none } = mir.blocks[none_edge].terminator else {
+            panic!()
+        };
+        mir.blocks[none].statements.insert(0, payload);
+        let prepared = super::super::import::prepared_for_test(export).unwrap();
+        let claim = "verifying \"chunks.rs\"; uint64 next_len(const uint8* bytes, uint64 bytes_len) { requires bytes_len == 0u64; ensures result == 0u64; } by { execute(); simp(); }";
+        assert!(C0VerificationSession::new_program_prepared(claim, &prepared).is_err());
+    }
+
+    #[test]
+    fn charon_chunk_metadata_work_is_independent_of_input_length() {
+        let export = decode(CHUNK_ARTIFACT, "chunks.rs", CHUNK_SOURCE).unwrap();
+        let prepared = super::super::import::prepared_for_test(export).unwrap();
+        let mut samples = Vec::new();
+        for length in [0u64, 8, 1024, 1_000_000] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let claim = format!(
+                "verifying \"chunks.rs\"; uint64 tail(const uint8* bytes, uint64 bytes_len, uint64 size) {{ requires bytes_len == {length}u64; requires size == 4u64; ensures result == {}u64; }} by {{ execute(); simp(); }}",
+                length % 4
+            );
+            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                C0VerificationSession::new_program_prepared(&claim, &prepared)
+            });
+            verified.unwrap();
+            samples.push(work);
+        }
+        assert!(
+            samples.iter().all(|work| *work <= samples[0] + 64),
+            "{samples:?}"
+        );
+    }
 
     const SLICE_ARTIFACT: &[u8] =
         include_bytes!("../../../design/charon-trial/slices/slices.ullbc");

@@ -258,8 +258,18 @@ restore panic obligations removed by Charon's selected transform. Missing bounds
 and authority, high-bit indices, and false cleanup claims are rejected. Metadata
 work remains bounded for empty, small, million-byte and maximum-width lengths;
 proof tools recheck the same certificates. Array coercions, subslices, returned
-slices, slice fields and iterators remain parity work. Next bring stored
-`chunks_exact`/remainder state and checksum loop composition through the adapter.
+slices and slice fields remain parity work. The stored exact-chunk checkpoint now
+imports shared byte iterators, fixed remainders, owned moves, `IntoIterator`,
+typed `next`/Option dispatch and natural loops through ULLBC. Checked liveness
+rejects missing construction and duplicate moves; payload extraction requires
+`Some`. The fixed-source loop proves that chunks reach the tail without gaps
+and preserve the original bytes, including zero iterations. Full-width sizes,
+empty/exact/short boundaries, permission failures, explicit matches and proof-tool
+agreement have regressions; metadata work stays bounded across input lengths and
+protocol normalization is indexed with linear scaling coverage. The named model
+`shared-byte-chunks-exact-v1` is lock-bound. Next bring nested iterator composition,
+borrowed loops and array-to-slice coercions through the adapter, then the unchanged
+checksum loop. Stable observations and broader iterator parity remain gates.
 Establish stable source/proof observations and equivalent coverage before
 switching production imports. Preserve source metadata and a
 Click-owned semantic boundary; do not rebuild rustc's HIR-to-MIR semantics just

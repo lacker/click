@@ -14,11 +14,19 @@ pub(super) fn lower(
     let mut live = BTreeMap::new();
     let mut declarations = c_skip();
     for (index, local) in mir.locals.iter().enumerate() {
+        if matches!(local.value_type, Type::ChunkIterator | Type::ChunkOption) {
+            declarations = c_seq(
+                declarations,
+                cx.chunk_storage(&local.name, local.value_type == Type::ChunkOption)?,
+            );
+            continue;
+        }
         if !cx.locals.insert(local.name.clone()) {
             return Err("duplicate MIR local identity".into());
         }
         let statement = match &local.value_type {
             Type::Unit => c_skip(),
+            Type::Reference { pointee, .. } if **pointee == Type::ChunkIterator => c_skip(),
             Type::Record { name } => {
                 cx.owned_locals.insert(local.name.clone());
                 let flag = format!("__rust_owned_live_{index}");
@@ -143,6 +151,9 @@ pub(super) fn lower(
                     Some(_) => {
                         return Err("destructor body missing from prepared Rust input".into());
                     }
+                    None if cx.mir_chunk_iterators.contains(local) => {
+                        c_assign(format!("{local}_live"), c_int32_literal(0))
+                    }
                     None => c_skip(),
                 };
                 c_seq(
@@ -175,6 +186,13 @@ pub(super) fn lower(
         let mut statements = c_skip();
         for s in &mir.blocks[block].statements {
             let statement = match s {
+                S::ChunkInitialize {
+                    target,
+                    slice,
+                    size,
+                } => cx.chunk_initialize_mir(target, slice, size)?,
+                S::ChunkMove { target, source } => cx.chunk_move(target, source)?,
+                S::ChunkNext { iterator, option } => cx.chunk_next(iterator, option)?,
                 S::Assign {
                     target: E::Local { name },
                     value,
@@ -316,6 +334,9 @@ pub(super) fn lower(
                         } else {
                             c_assign(flag, c_int32_literal(0))
                         }
+                    }
+                    None if cx.mir_chunk_iterators.contains(local) => {
+                        c_assign(format!("{local}_live"), c_int32_literal(0))
                     }
                     None => c_skip(),
                 },
@@ -632,6 +653,8 @@ mod tests {
             let functions = BTreeMap::new();
             let mut cx = Context {
                 chunk_iterators: BTreeSet::new(),
+                mir_chunk_iterators: BTreeSet::new(),
+                chunk_options: BTreeSet::new(),
                 local_arrays: BTreeSet::new(),
                 arrays: BTreeMap::new(),
                 owned_locals: BTreeSet::new(),

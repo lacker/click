@@ -30,6 +30,9 @@ pub struct Span {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Type {
+    // Named Charon-only shared-byte chunk protocol; not general external ADTs.
+    ChunkIterator,
+    ChunkOption,
     I32,
     U8,
     U16,
@@ -83,6 +86,15 @@ pub enum Expression {
         value: Box<Self>,
         source_type: Type,
         value_type: Type,
+    },
+    ChunkHasNext {
+        iterator: String,
+    },
+    ChunkOptionSlice {
+        option: String,
+    },
+    ChunkOptionTag {
+        option: String,
     },
     ChunkRemainder {
         iterator: String,
@@ -228,6 +240,19 @@ pub struct MirBlock {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MirStatement {
+    ChunkInitialize {
+        target: String,
+        slice: Expression,
+        size: Expression,
+    },
+    ChunkMove {
+        target: String,
+        source: String,
+    },
+    ChunkNext {
+        iterator: String,
+        option: String,
+    },
     Assign {
         target: Expression,
         value: Expression,

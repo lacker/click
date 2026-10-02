@@ -11,8 +11,8 @@ The trial is narrower than the existing frontend. It accepts `i32`, `u8`, `u16`,
 `u32`, bools, scalar/reference locals and fields, flat structs, direct local
 calls, scalar casts, comparisons, checked addition/subtraction/multiplication,
 acyclic branches, disjoint natural while loops, whole-value moves, precise drops,
-resolved unsigned `From` conversions, and the scalar arrays described below. Slices,
-general traits/generics, nested owned fields, and returned references are not
+resolved unsigned `From` conversions, the scalar arrays, byte slices, and shared exact-chunk protocol described below.
+General traits/generics, nested owned fields, and returned references are not
 enabled by this adapter yet. Extraction coverage in the
 [assessment](../rust-charon-assessment.md) is broader than checked coverage here.
 
@@ -161,10 +161,56 @@ signed-index bounds derived from the `usize` preconditions. Verification,
 profiling, auditing, expansion, and expanded-certificate rechecking share the
 same engine.
 
-Array-to-slice coercions, subslices/split operations, stored iterators,
+Array-to-slice coercions, subslices/split operations, general iterators,
 slice fields/returns, and non-byte slices are not yet accepted by this adapter.
 Other remaining ULLBC assertions are rejected rather than discarded. The default
 frontend's broader slice and iterator coverage remains a migration parity gate.
+
+## Stored exact-chunk checkpoint
+
+[`chunks/chunks.rs`](chunks/chunks.rs) and its [sidecar](chunks/chunks.click)
+import stored shared `ChunksExact<u8>` iterators, a saved remainder, whole-value
+moves, owned `IntoIterator`, typed `next`/`Option` matching, and a natural loop.
+The loop reads both ends of each four-byte chunk. Its contract proves termination,
+that the cursor reaches the fixed remainder without gaps, and preservation of
+every input byte for lengths zero through 1000. A generic constructor contract
+proves the remainder length for every nonzero target-width size and supported
+input length. Separate probes check an explicit `next` match and a tail byte.
+
+```sh
+cargo run --bin click -- import lock design/charon-trial/chunks/chunks.click
+cargo run --bin click -- verify design/charon-trial/chunks/chunks.click
+cargo nextest run --test rust_import --run-ignored only -E 'test(charon_chunks_live_refresh_and_rejected_protocols)'
+```
+
+`shared-byte-chunks-exact-v1` checks external standard-library declarations,
+trait/implementation identities, generic receiver and result types, safe method
+signatures, and exact `Option` tags/projections. The iterator has a cursor,
+remaining complete-byte length, full-width size, fixed tail pointer/length, and
+checked move liveness. The option has a tag and qualified slice metadata; its
+payload requires `Some`. No processed count is generated. Normalization separates
+the assessed `next` dispatch into a pure state guard and two edge-local state
+transitions, preserving the final `None` call. Extra dispatch effects or incoming
+edges fail closed. Predecessors and reference roots are indexed once; output and
+charged normalization work grow linearly with the number of protocol instances.
+
+The model uses existing checked assignments, assertions, branches, and loops.
+It creates no read/write authority. Zero chunk sizes fail the panic obligation;
+input lengths must fit the signed memory model before offsets are narrowed.
+Oversized full-width sizes produce no chunks and preserve the entire remainder.
+Regressions cover empty input, exact multiples, short tails, explicit `Some` and
+`None`, missing bounds/authority, false byte/result claims, missing construction,
+and duplicate moves. Metadata proof work stays bounded across lengths zero, 8,
+1024, and one million. Verification, profiling, auditing, expansion, and expanded
+certificate rechecking use the same engine. The live compiler regression rejects
+writes through shared chunks, reuse after an owned move, and unmodeled protocols.
+
+This increment accepts the assessed owned-loop and explicit-match shapes.
+Borrowed `for` loops, nested loops, mutable chunks, general iterator adapters,
+iterator parameters/returns, and non-byte elements remain migration gates.
+The current fixture uses internal local/state names and statement selectors for
+its preservation proof; stable source/proof observations still need a separate
+interface. The unchanged adler2 loop also needs nested iterator composition.
 
 ## Profile, locks, and trust
 
@@ -223,6 +269,7 @@ a live restoring guard with checked
 iteration and termination. The conversions/arrays checkpoint composes resolved
 unsigned conversion, repeated initialization, uniform copy, indexing, and owned
 cleanup. The byte-slice checkpoint carries full-width metadata, dynamic bounds,
-reborrows and local calls through that same boundary. Next bring stored iterator
-state and `chunks_exact`/remainder through it, then establish supported-fixture
-parity before switching the default and retiring legacy extraction.
+reborrows and local calls through that same boundary. Stored exact-chunk state,
+owned moves, typed Option dispatch and remainder now pass through it as well.
+Next bring nested iterator composition and array-to-slice coercions through it,
+then establish supported-fixture parity before switching the default and retiring legacy extraction.

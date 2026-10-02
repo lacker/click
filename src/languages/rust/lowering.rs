@@ -206,6 +206,8 @@ fn lower_function(
     }
     let mut cx = Context {
         chunk_iterators: BTreeSet::new(),
+        mir_chunk_iterators: BTreeSet::new(),
+        chunk_options: BTreeSet::new(),
         local_arrays: BTreeSet::new(),
         owned_locals: BTreeSet::new(),
         slices,
@@ -253,6 +255,8 @@ fn lower_function(
 }
 struct Context<'a> {
     chunk_iterators: BTreeSet<String>,
+    mir_chunk_iterators: BTreeSet<String>,
+    chunk_options: BTreeSet<String>,
     local_arrays: BTreeSet<String>,
     owned_locals: BTreeSet<String>,
     slices: BTreeMap<String, (String, bool)>,
@@ -736,13 +740,22 @@ impl Context<'_> {
             return self.assign_array(self.array_pointer(name)?, element, length, e);
         }
         if let Some((length, constant)) = self.slices.get(name).cloned() {
+            let checks = self.chunk_slice_checks(e)?;
             let (pointer, length_value) = self.slice_parts(e)?;
             return Ok(c_seq(
-                c_assign(
-                    name,
-                    c_cast_with_pointee_qualifiers(pointer, CType::UInt8Pointer, false, constant),
+                checks,
+                c_seq(
+                    c_assign(
+                        name,
+                        c_cast_with_pointee_qualifiers(
+                            pointer,
+                            CType::UInt8Pointer,
+                            false,
+                            constant,
+                        ),
+                    ),
+                    c_assign(length, length_value),
                 ),
-                c_assign(length, length_value),
             ));
         }
         if let Some((length, element, constant)) = self.arrays.get(name).copied() {
@@ -1032,6 +1045,15 @@ impl Context<'_> {
         }
     }
     fn slice_parts(&self, e: &E) -> Result<(CExpression, CExpression), String> {
+        if let E::ChunkOptionSlice { option } = e {
+            if !self.chunk_options.contains(option) {
+                return Err("unknown chunk Option".into());
+            }
+            return Ok((
+                c_variable(format!("{option}_pointer")),
+                c_variable(format!("{option}_len")),
+            ));
+        }
         if let E::Borrow {
             place,
             value_type: Type::ByteSlice { mutable },
@@ -1185,7 +1207,14 @@ impl Context<'_> {
     }
     fn expr(&mut self, e: &E) -> Result<CExpression, String> {
         match e {
-            E::ChunkRemainder { .. } | E::ArrayToSlice { .. } => {
+            E::ChunkHasNext { iterator } => self.chunk_has_next(iterator),
+            E::ChunkOptionTag { option } => {
+                if !self.chunk_options.contains(option) {
+                    return Err("unknown chunk Option".into());
+                }
+                Ok(c_variable(format!("{option}_some")))
+            }
+            E::ChunkOptionSlice { .. } | E::ChunkRemainder { .. } | E::ArrayToSlice { .. } => {
                 Err("Rust slices require pointer-plus-length preparation".into())
             }
             E::Array { .. } | E::Repeat { .. } => {

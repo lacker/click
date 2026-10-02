@@ -66,6 +66,143 @@ fn charon_project() -> Project {
     .unwrap();
     p
 }
+const CHARON_CHUNK_SOURCE: &str = include_str!("../design/charon-trial/chunks/chunks.rs");
+const CHARON_CHUNK_SIDECAR: &str = include_str!("../design/charon-trial/chunks/chunks.click");
+fn charon_chunk_project() -> Project {
+    let p = Project::new(CHARON_CHUNK_SOURCE);
+    for (name, bytes) in [
+        ("chunks.rs", CHARON_CHUNK_SOURCE.as_bytes()),
+        ("borrow.click", CHARON_CHUNK_SIDECAR.as_bytes()),
+        (
+            "borrow.click.import.json",
+            include_bytes!("../design/charon-trial/chunks/chunks.click.import.json").as_slice(),
+        ),
+        (
+            "chunks.ullbc",
+            include_bytes!("../design/charon-trial/chunks/chunks.ullbc").as_slice(),
+        ),
+        (
+            "borrow.click.import.json.lock",
+            include_bytes!("../design/charon-trial/chunks/chunks.click.import.json.lock")
+                .as_slice(),
+        ),
+    ] {
+        fs::write(p.root.join(name), bytes).unwrap();
+    }
+    p
+}
+#[test]
+fn charon_chunks_check_boundaries_authority_and_false_claims() {
+    let p = charon_chunk_project();
+    let prepared = load_import(&p.config()).unwrap();
+    C0VerificationSession::new_program_prepared(CHARON_CHUNK_SIDECAR, &prepared).unwrap();
+    for (length, size) in [
+        (0u64, 4u64),
+        (4, 4),
+        (7, 4),
+        (8, 4),
+        (3, 4),
+        (7, u64::MAX),
+        (7, 4294967296),
+    ] {
+        let claim = format!(
+            "verifying \"chunks.rs\"; uint64 tail(const uint8* bytes, uint64 bytes_len, uint64 size) {{ requires bytes_len == {length}u64; requires size == {size}u64; ensures result == {}u64; }} by {{ execute(); simp(); }}",
+            length % size
+        );
+        C0VerificationSession::new_program_prepared(&claim, &prepared).unwrap();
+    }
+    for length in [0u64, 3, 4, 7, 8] {
+        let result = if length < 4 { 0 } else { 4 };
+        let claim = format!(
+            "verifying \"chunks.rs\"; uint64 next_len(const uint8* bytes, uint64 bytes_len) {{ requires bytes_len == {length}u64; ensures result == {result}u64; }} by {{ execute(); simp(); }}"
+        );
+        C0VerificationSession::new_program_prepared(&claim, &prepared).unwrap();
+    }
+    for length in [1u64, 3, 5, 7] {
+        let offset = length - length % 4;
+        let claim = format!(
+            "verifying \"chunks.rs\"; uint8 tail_byte(const uint8* bytes, uint64 bytes_len) {{ requires bytes_len == {length}u64; views bytes[0..{length}]; ensures result == old(bytes[{offset}]); }} by {{ have ((int32)(uint32)(bytes_len - bytes_len % 4u64)) == {offset} by {{ rewrite(bytes_len == {length}u64); simp(); }} execute(); simp(); }}"
+        );
+        C0VerificationSession::new_program_prepared(&claim, &prepared).unwrap();
+    }
+    for invalid in [
+        CHARON_CHUNK_SIDECAR.replace("requires size != 0u64;", "requires size == 0u64;"),
+        CHARON_CHUNK_SIDECAR.replace(
+            "ensures result == bytes_len % size;",
+            "ensures result == bytes_len;",
+        ),
+        CHARON_CHUNK_SIDECAR.replace("    requires bytes_len <= 2147483647u64;\n", ""),
+        CHARON_CHUNK_SIDECAR.replace("    views bytes[0..(int32)(uint32)bytes_len];\n", ""),
+        CHARON_CHUNK_SIDECAR.replace("requires bytes_len == 7u64;", "requires bytes_len == 8u64;"),
+        CHARON_CHUNK_SIDECAR.replace("ensures result == old(bytes[4]);", "ensures result == 7;"),
+    ] {
+        assert_ne!(invalid, CHARON_CHUNK_SIDECAR);
+        assert!(
+            C0VerificationSession::new_program_prepared(&invalid, &prepared).is_err(),
+            "accepted {invalid}"
+        );
+    }
+}
+#[test]
+fn charon_chunk_cli_tools_recheck_expanded_certificates() {
+    let p = charon_chunk_project();
+    for command in ["verify", "profile", "audit"] {
+        assert_cli(&p, &[command]);
+    }
+    for claim in [
+        "tail.contract",
+        "walk.contract",
+        "next_len.contract",
+        "tail_byte.contract",
+    ] {
+        assert_cli(&p, &["expand", "--claim", claim, "--in-place"]);
+        assert_cli(&p, &["verify"]);
+    }
+}
+#[test]
+#[ignore = "requires the separately built pinned Charon/compiler"]
+fn charon_chunks_live_refresh_and_rejected_protocols() {
+    let p = charon_chunk_project();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(p.config()).unwrap()).unwrap();
+    config["exporter"] = serde_json::json!(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/charon/debug/charon")
+    );
+    fs::write(p.config(), serde_json::to_vec(&config).unwrap()).unwrap();
+    refresh_import(&p.config()).unwrap();
+    C0VerificationSession::new_program_prepared(
+        CHARON_CHUNK_SIDECAR,
+        &load_import(&p.config()).unwrap(),
+    )
+    .unwrap();
+    for (source, diagnostic) in [
+        (
+            "pub fn bad(x:&[u8]) { let chunks=x.chunks_exact(4); for chunk in chunks { chunk[0]=7; } }",
+            "E0594",
+        ),
+        (
+            "pub fn bad(x:&[u8])->usize { let chunks=x.chunks_exact(4); for chunk in chunks { let a=chunk[0]; } chunks.remainder().len() }",
+            "E0382",
+        ),
+        (
+            "pub fn bad(x:&[u16])->usize { x.chunks_exact(4).remainder().len() }",
+            "Charon trial does not support",
+        ),
+        (
+            "pub fn bad(x:&[u8]) { for chunk in x.chunks_exact(4).rev() { let a=chunk[0]; } }",
+            "Charon trial does not support",
+        ),
+    ] {
+        fs::remove_file(p.root.join("chunks.ullbc")).unwrap();
+        fs::write(p.root.join("chunks.rs"), source).unwrap();
+        let error = refresh_import(&p.config()).unwrap_err();
+        assert!(error.contains(diagnostic), "{error}");
+        assert!(!p.root.join("chunks.ullbc").exists());
+        fs::write(p.root.join("chunks.rs"), CHARON_CHUNK_SOURCE).unwrap();
+        refresh_import(&p.config()).unwrap();
+    }
+}
+
 const CHARON_SLICE_SOURCE: &str = include_str!("../design/charon-trial/slices/slices.rs");
 const CHARON_SLICE_SIDECAR: &str = include_str!("../design/charon-trial/slices/slices.click");
 fn charon_slice_project() -> Project {

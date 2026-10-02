@@ -34,7 +34,10 @@ pub(super) fn header_condition(
                     value.clone()
                 }
             }
-            E::Integer { .. } | E::UnsignedInteger { .. } | E::Boolean { .. } => value.clone(),
+            E::ChunkHasNext { .. }
+            | E::Integer { .. }
+            | E::UnsignedInteger { .. }
+            | E::Boolean { .. } => value.clone(),
             E::Not { value } => E::Not {
                 value: Box::new(substitute(value, definitions, scalar, remaining)?),
             },
