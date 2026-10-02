@@ -44,6 +44,27 @@ pub(super) fn lower(
                     ),
                 )
             }
+            Type::Array { element, length } => {
+                let element = scalar_type(element)?.to_kernel_type();
+                if !matches!(element, CType::Int32 | CType::UInt8 | CType::UInt32)
+                    || *length > i32::MAX as u64 / u64::from(element.byte_width())
+                {
+                    return Err(
+                        "compact arrays require i32/u8/u32 elements and signed-word storage".into(),
+                    );
+                }
+                cx.local_arrays.insert(local.name.clone());
+                cx.arrays
+                    .insert(local.name.clone(), (*length, element, false));
+                c_begin_aggregate_construction(
+                    local.name.clone(),
+                    CAggregateLayout::new(
+                        *length as u32 * element.byte_width(),
+                        element.byte_width(),
+                        vec![],
+                    ),
+                )
+            }
             t => c_declare(local.name.clone(), scalar_type(t)?.to_kernel_type()),
         };
         declarations = c_seq(declarations, statement);
@@ -138,12 +159,60 @@ pub(super) fn lower(
                 S::Assign {
                     target: E::Local { name },
                     value,
+                } if cx.local_arrays.contains(name) => {
+                    let (length, element, _) = cx.arrays[name];
+                    let pointer = cx.array_pointer(name)?;
+                    match value {
+                        E::Array { .. } => cx.assign_array(pointer, element, length, value)?,
+                        E::Repeat {
+                            value,
+                            length: count,
+                        } if *count == length => {
+                            let (checks, value) = cx.prepared_expr(value)?;
+                            c_seq(
+                                checks,
+                                c_initialize_scalar_array(
+                                    pointer,
+                                    value,
+                                    element,
+                                    length as u32,
+                                    false,
+                                ),
+                            )
+                        }
+                        E::Repeat { .. } => {
+                            return Err("array repeat length disagrees with destination".into());
+                        }
+                        value => {
+                            let (source, count, source_element) = cx.indexed_parts(value)?;
+                            if count != c_uint64_literal(length) || source_element != element {
+                                return Err("array copy type disagrees with destination".into());
+                            }
+                            c_initialize_scalar_array(pointer, source, element, length as u32, true)
+                        }
+                    }
+                }
+                S::Assign {
+                    target: E::Local { name },
+                    value,
                 } if !records.contains_key(name.as_str()) => cx.assign(name, value)?,
                 S::Assign { target, value } => {
-                    let (checks, value) = cx.prepared_expr(value)?;
+                    let (mut checks, mut value) = cx.prepared_expr(value)?;
+                    if matches!(target, E::Index { .. }) {
+                        let value_type = match cx.place_type(target)? {
+                            CType::UInt8 => Type::U8,
+                            CType::UInt32 => Type::U32,
+                            CType::Int32 => Type::I32,
+                            _ => return Err("unsupported Rust indexed assignment type".into()),
+                        };
+                        let (capture, name) = cx.capture_operand(value, &value_type)?;
+                        checks = c_seq(checks, capture);
+                        value = c_variable(name);
+                    }
+                    let (target_checks, address) = cx.prepared_address(target)?;
                     c_seq(
-                        checks,
-                        c_typed_store(cx.address(target)?, value, cx.place_type(target)?),
+                        c_seq(checks, target_checks),
+                        c_typed_store(address, value, cx.place_type(target)?),
                     )
                 }
                 S::Initialize {
@@ -392,6 +461,12 @@ fn accesses(expressions: &[&E], live: &BTreeMap<&str, String>) -> CStatement {
                 pending.push(left);
                 pending.push(right);
             }
+            E::Index { slice, index } => {
+                pending.push(slice);
+                pending.push(index);
+            }
+            E::Array { elements } => pending.extend(elements),
+            E::Repeat { value, .. } => pending.push(value),
             E::Not { value }
             | E::BitwiseNot { value, .. }
             | E::Cast { value, .. }

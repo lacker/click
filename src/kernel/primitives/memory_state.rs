@@ -3781,6 +3781,123 @@ impl CMemory {
         Ok(self)
     }
 
+    /// Checked compact initialization of one fresh automatic scalar array.
+    /// The caller has separately checked read/write authority and coercion.
+    pub(in crate::kernel) fn initialize_scalar_array(
+        mut self,
+        base: &Pointer,
+        element_type: CType,
+        count: u32,
+        value: CValue,
+        copy: bool,
+    ) -> Result<Self, CRuntimeError> {
+        let bytes = count
+            .checked_mul(element_type.byte_width())
+            .filter(|bytes| *bytes <= i32::MAX as u32)
+            .ok_or(CRuntimeError::TypeMismatch)?;
+        if !matches!(element_type, CType::Int32 | CType::UInt8 | CType::UInt32)
+            || !base.block.starts_with("local:")
+            || base.offset != PointerOffsetTerm::Constant(0)
+            || self
+                .block_size(&base.block)
+                .and_then(Bitvector32Term::as_const)
+                != Some(bytes)
+            || !self.run_can_stand_for_cells_at(base)
+            || AliasCandidates::only_block(&base.block)
+                .entries(self.cells.concrete())
+                .next()
+                .is_some()
+            || self.cells.runs_in_block(&base.block).next().is_some()
+        {
+            return Err(CRuntimeError::FunctionContract(
+                "scalar-array initialization requires fresh complete local storage".into(),
+            ));
+        }
+        let (mode, source) = if copy {
+            let CValue::Pointer(pointer) = value else {
+                return Err(CRuntimeError::TypeMismatch);
+            };
+            let pointer = pointer.pointer();
+            if !pointer.block.starts_with("local:")
+                || pointer.offset != PointerOffsetTerm::Constant(0)
+                || self
+                    .block_size(&pointer.block)
+                    .and_then(Bitvector32Term::as_const)
+                    != Some(bytes)
+                || (bytes != 0 && !self.has_initialized_bytes_at(pointer, bytes))
+            {
+                return Err(CRuntimeError::FunctionContract(
+                    "scalar-array copy requires a complete initialized local source".into(),
+                ));
+            }
+            if count == 0 {
+                return Ok(self.with_initialized_object(base, bytes));
+            }
+            let uniform =
+                self.cells
+                    .runs_based_at(&pointer.block, &pointer.offset)
+                    .find_map(|run| {
+                        if self.cells.runs_in_block(&pointer.block).take(2).count() != 1
+                            || run.base() != pointer
+                            || run.count() != count
+                            || run.element_type() != element_type
+                            || run.element_width() != element_type.byte_width()
+                            || run.holes().count() != 0
+                            || AliasCandidates::only_block(&pointer.block)
+                                .entries(self.cells.concrete())
+                                .next()
+                                .is_some()
+                        {
+                            return None;
+                        }
+                        match run.value_mode() {
+                            RunValueMode::Constant(value) if value.c_type() == element_type => {
+                                Some(value.clone())
+                            }
+                            _ => None,
+                        }
+                    })
+                    .ok_or_else(|| {
+                        CRuntimeError::FunctionContract(
+                "compact scalar-array copies currently require a complete uniform source".into()
+            )
+                    })?;
+            (
+                RunValueMode::Constant(uniform),
+                crate::kernel::intern_c_memory(CMemory::new()),
+            )
+        } else {
+            if value.c_type() != element_type {
+                return Err(CRuntimeError::TypeMismatch);
+            }
+            (
+                RunValueMode::Constant(value),
+                crate::kernel::intern_c_memory(CMemory::new()),
+            )
+        };
+        if count != 0 {
+            let run = CellRun::new_with_mode(
+                base.clone(),
+                element_type.byte_width(),
+                element_type,
+                count,
+                source,
+                mode,
+                IndexIntervals::default(),
+            );
+            let derivation_base = intern_derivation_base(&mut self);
+            std::sync::Arc::make_mut(&mut self.cells).add_run(run.clone());
+            record_c_memory_derivation(
+                &mut self,
+                CMemoryDerivation::CellsSeeded {
+                    base: derivation_base,
+                    run: std::sync::Arc::new(run),
+                },
+            );
+        }
+        Ok(self.with_initialized_object(base, bytes))
+    }
+
     /// Whether a run at `base` stands for the cells it seeds with nothing
     /// else to do: no typed union view to displace, and no live allocation
     /// the base may lie in to mark initialized.

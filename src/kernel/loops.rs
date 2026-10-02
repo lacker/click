@@ -2297,6 +2297,9 @@ pub(super) fn execute_c_statement_verification_paths(
                 CStatement::Declare { .. } => "verification statement: declare",
                 CStatement::DeclareAggregate { .. } => "verification statement: declare aggregate",
                 CStatement::CopyAggregate { .. } => "verification statement: aggregate copy",
+                CStatement::InitializeScalarArray { .. } => {
+                    "verification statement: scalar array initialization"
+                }
                 CStatement::Assign { .. } => "verification statement: assign",
                 CStatement::CallAssign { .. } => "verification statement: call assign",
                 CStatement::Call { .. } => "verification statement: call",
@@ -7528,6 +7531,7 @@ pub(super) fn statement_may_write_memory(state: &CState, statement: &CStatement)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
         | CStatement::CopyAggregate { .. }
+        | CStatement::InitializeScalarArray { .. }
         | CStatement::Update { .. } => true,
         CStatement::Seq(first, second) => {
             statement_may_write_memory(state, first) || statement_may_write_memory(state, second)
@@ -7636,7 +7640,8 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
-        | CStatement::CopyAggregate { .. } => {}
+        | CStatement::CopyAggregate { .. }
+        | CStatement::InitializeScalarArray { .. } => {}
         CStatement::Update { target, .. } => {
             if let CExpression::Variable(name) = target {
                 names.insert(name.clone());
@@ -7822,7 +7827,8 @@ pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
             collect_address_taken_in_expression(pointer, names);
             collect_address_taken_in_expression(value, names);
         }
-        CStatement::CopyAggregate { target, source, .. } => {
+        CStatement::CopyAggregate { target, source, .. }
+        | CStatement::InitializeScalarArray { target, source, .. } => {
             collect_address_taken_in_expression(target, names);
             collect_address_taken_in_expression(source, names);
         }

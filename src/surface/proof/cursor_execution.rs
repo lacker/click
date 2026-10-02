@@ -4957,6 +4957,21 @@ pub(super) fn describe_statement_head(statement: &CStatement) -> String {
                 describe_c_expression(value)
             )
         }
+        CStatement::InitializeScalarArray {
+            target,
+            count,
+            copy,
+            ..
+        } => format!(
+            "initialize {} with {} scalar elements{}",
+            describe_c_expression(target),
+            count,
+            if *copy {
+                " by uniform copy"
+            } else {
+                " by repetition"
+            }
+        ),
         CStatement::CopyAggregate { target, source, .. } => format!(
             "copy aggregate {} <- {}",
             describe_c_expression(target),

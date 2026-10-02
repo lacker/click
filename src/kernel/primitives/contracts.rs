@@ -2513,6 +2513,7 @@ fn statement_contains_internal_throw(statement: &CStatement) -> bool {
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. }
         | CStatement::CopyAggregate { .. }
+        | CStatement::InitializeScalarArray { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }
         | CStatement::Call { .. }

@@ -12843,6 +12843,24 @@ fn statement_writes_aggregate_parameter(
                 *unknown_write = true;
             }
         }
+        CStatement::InitializeScalarArray {
+            target,
+            element_type,
+            count,
+            ..
+        } => {
+            if let Some(offset) = c_expression_parameter_offset(target, parameter_name) {
+                if let Some(bytes) = element_type.byte_width().checked_mul(*count)
+                    && let Some(range) = parameter_access_range(offset, bytes)
+                {
+                    writes.push(range);
+                } else {
+                    *unknown_write = true;
+                }
+            } else if c_expression_uses_object_address(target, parameter_name) {
+                *unknown_write = true;
+            }
+        }
         CStatement::CopyAggregate { target, layout, .. } => {
             if let Some(offset) = c_expression_parameter_offset(target, parameter_name) {
                 if let Some(range) = parameter_access_range(offset, layout.size_bytes()) {
@@ -15078,7 +15096,8 @@ fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CEx
         | CStatement::Declare { .. }
         | CStatement::DeclareAggregate { .. } => {}
         CStatement::ForStep { step, .. } => collect_c_memory_read_expressions(step, reads),
-        CStatement::CopyAggregate { target, source, .. } => {
+        CStatement::CopyAggregate { target, source, .. }
+        | CStatement::InitializeScalarArray { target, source, .. } => {
             lvalue_address(target, reads);
             values(source, reads);
         }

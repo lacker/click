@@ -492,7 +492,8 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
             collect_c_expression_bitvector_variables(pointer, variables);
             collect_c_expression_bitvector_variables(value, variables);
         }
-        CStatement::CopyAggregate { target, source, .. } => {
+        CStatement::CopyAggregate { target, source, .. }
+        | CStatement::InitializeScalarArray { target, source, .. } => {
             collect_c_expression_bitvector_variables(target, variables);
             collect_c_expression_bitvector_variables(source, variables);
         }

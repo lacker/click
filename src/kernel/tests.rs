@@ -242,6 +242,7 @@ mod iterated_ownership_tests;
 mod memory_dag_tests;
 mod memory_scaling_tests;
 mod resource_scaling_tests;
+mod scalar_array_tests;
 
 mod heap_tests;
 mod loan_model_tests;

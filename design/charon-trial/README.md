@@ -10,7 +10,8 @@ coverage switch and no generated processed count.
 The trial is narrower than the existing frontend. It accepts `i32`, `u8`, `u16`,
 `u32`, bools, scalar/reference locals and fields, flat structs, direct local
 calls, scalar casts, comparisons, checked addition/subtraction/multiplication,
-acyclic branches, disjoint natural while loops, whole-value moves, and precise drops. Arrays, slices,
+acyclic branches, disjoint natural while loops, whole-value moves, precise drops,
+resolved unsigned `From` conversions, and the scalar arrays described below. Slices,
 general traits/generics, nested owned fields, and returned references are not
 enabled by this adapter yet. Extraction coverage in the
 [assessment](../rust-charon-assessment.md) is broader than checked coverage here.
@@ -92,6 +93,51 @@ The zero-iteration proof retains its exact constant equality and both signed
 bounds, then emits a checked arithmetic certificate. Removing any of those
 premises invalidates the proof.
 
+## Resolved conversions and compact scalar arrays
+
+[`conversions-arrays/arrays.rs`](conversions-arrays/arrays.rs) combines
+`u32::from(x)` with a repeated array, a whole-array copy, and a restoring owned
+guard. Other contracts cover a million-element repeated array and its copy,
+explicit element initialization and mutation, a truncating `as` cast, and a
+zero-length initializer whose function call still executes exactly once.
+
+```sh
+cargo run --bin click -- import lock design/charon-trial/conversions-arrays/arrays.click
+cargo run --bin click -- verify design/charon-trial/conversions-arrays/arrays.click
+cargo nextest run --test rust_import --run-ignored only -E 'test(charon_arrays_live_refresh_and_rejected_source_shapes)'
+```
+
+`unsigned-from-v1` requires a compiler-resolved external standard-library `From`
+trait implementation, the matching method and signature, and compatible unsigned
+source/destination widths among `u8`, `u16`, `u32`, and target-width `usize`.
+Narrowing conversions and lookalikes fail closed. `as` continues to use Rust's
+truncating scalar-cast semantics. Compiler-generated two-phase mutable call
+borrows use the same exclusive reference interpretation as ordinary mutable
+borrows; source borrow checking still runs.
+
+`compact-uniform-scalar-array-v1` supports local `i32`/`u8`/`u32` arrays with
+concrete lengths and byte extents at most `INT32_MAX`. Repeated initialization
+stores one evaluated value in one typed run. A complete uniform initialized
+array can be copied into fresh complete local storage in one checked operation;
+subsequent source writes cannot change that copy. Explicit element lists use
+ordinary typed stores, with work proportional to their written source. Index
+reads and writes retain full-width bounds obligations.
+
+Bulk operations check complete destination write authority, source read
+authority, initialization, type, extent, and fresh storage. Empty arrays access
+no bytes. Lengths 8, 1024, and 1,000,000 have the same emitted statement count,
+zero generated aggregate fields, and bounded deterministic verification work.
+The source fixture and negative claims also run through verification, profiling,
+auditing, expansion, and expanded-certificate rechecking.
+
+General snapshot copies, copies after an element override, whole-array
+reassignment, by-value array parameters/returns, array fields, nested arrays,
+and dynamic-index compiler assertions remain outside this increment. Unsupported
+bulk source/storage shapes produce a bounded checked execution failure; they are
+never assumed uniform. Fixed indices in this fixture are constant-folded by the
+compiler, while Click independently checks their normalized bounds. General
+slices and iterator models remain adoption gates.
+
 ## Profile, locks, and trust
 
 Configuration schema 3 with `backend: "charon-trial"` selects this path. The
@@ -132,8 +178,9 @@ The trusted compiler/extractor/adapter establishes correspondence with Rust;
 the shared checker establishes the claims and rejects forged resource transfers.
 rustc still establishes source borrow legality. Live loan graphs are not added
 by this increment. The normalized CFG temporarily uses the existing internal
-Rust vocabulary and local names. This trial does not complete the planned stable
-proof-observation interface or compact array/kernel work.
+Rust vocabulary and local names. The compact scalar-array operation is shared kernel vocabulary. This trial
+does not complete the stable proof-observation interface or general array-copy
+coverage.
 
 ## Migration decision
 
@@ -144,5 +191,7 @@ equivalent coverage, named library models, stable source/proof observations, and
 scaling evidence. Extend the single ULLBC adapter rather than adding a fallback
 to the legacy exporter per function. The borrowed-loop checkpoint now composes
 a live restoring guard with checked
-iteration and termination. Next bring conversions and compact arrays through the
+iteration and termination. The conversions/arrays checkpoint composes resolved
+unsigned conversion, repeated initialization, uniform copy, indexing, and owned
+cleanup. Next bring slice metadata/bounds and stored iterator state through the
 same boundary before switching the default and retiring legacy extraction.

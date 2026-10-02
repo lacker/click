@@ -1806,7 +1806,8 @@ fn c_statement_source_cost(statement: &CStatement) -> CSourceCost {
                 cost.add_expression(1usize.saturating_add(c_expression_source_steps(pointer)));
                 cost.add_expression(c_expression_source_steps(value));
             }
-            CStatement::CopyAggregate { target, source, .. } => {
+            CStatement::CopyAggregate { target, source, .. }
+            | CStatement::InitializeScalarArray { target, source, .. } => {
                 cost.add_expression(c_expression_source_steps(target));
                 cost.add_expression(c_expression_source_steps(source));
             }

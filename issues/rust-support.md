@@ -244,8 +244,16 @@ It rejects unsupported CFG exits/entries and effectful guards; scaling checks
 cover sequential loops and diamonds. Shared pointer framing retains exact alias
 and separation premises, rather than inferring provenance from local storage.
 Keep migration opt-in until the supported fixtures have equivalent coverage.
-Next bring resolved conversions and compact arrays through the same adapter, and establish stable source/proof
-observations and scaling checks before switching production imports. Preserve source metadata and a
+The conversions/arrays checkpoint now composes a resolved `u32::from` call,
+repeated initialization, uniform whole-array copy, and restoring `Drop` guard.
+Its shared compact initialization operation checks authority and initialization;
+8-, 1024-, and million-element arrays retain bounded node count, storage, and
+deterministic proof work. Empty initializer calls execute once. General snapshot
+copies, copies after element overrides, whole-array reassignment, dynamic-index
+compiler assertions, and slice/iterator coverage remain migration work. Next
+bring slice metadata and bounds through the same adapter, then stored
+`chunks_exact`/remainder state and checksum loop composition. Establish stable
+source/proof observations and equivalent coverage before switching production imports. Preserve source metadata and a
 Click-owned semantic boundary; do not rebuild rustc's HIR-to-MIR semantics just
 to retain syntax. Use the assessment's configuration rather than adopting an
 unaudited preset. Then consolidate semantic

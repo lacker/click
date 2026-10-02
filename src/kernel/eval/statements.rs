@@ -1,5 +1,6 @@
 use super::*;
 use crate::kernel::loans::empty_checked_loan_evidence_sequence;
+mod scalar_arrays;
 
 pub(in crate::kernel) fn execute_c_statement(
     state: &CState,
@@ -2536,6 +2537,7 @@ fn collect_scope_declared_names(statement: &CStatement, names: &mut Vec<String>)
         | CStatement::Goto { .. }
         | CStatement::ForStep { .. }
         | CStatement::CopyAggregate { .. }
+        | CStatement::InitializeScalarArray { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }
         | CStatement::Call { .. }
@@ -3014,6 +3016,22 @@ fn execute_c_statement_leaf_paths(
             source,
             layout,
         } => execute_c_aggregate_copy_paths(state, target, source, layout, assumptions, budget)?,
+        CStatement::InitializeScalarArray {
+            target,
+            source,
+            element_type,
+            count,
+            copy,
+        } => scalar_arrays::execute(
+            state,
+            target,
+            source,
+            *element_type,
+            *count,
+            *copy,
+            assumptions,
+            budget,
+        )?,
         CStatement::Assign { name, expression } => execute_c_lvalue_assignment_paths(
             state,
             &c_variable(name.clone()),

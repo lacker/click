@@ -184,6 +184,7 @@ pub(in crate::surface::proof) fn kernel_loop_by_index<'a>(
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
         | CStatement::CopyAggregate { .. }
+        | CStatement::InitializeScalarArray { .. }
         | CStatement::Update { .. }
         | CStatement::Assert { .. } => None,
         CStatement::ForStep { .. } => None,

@@ -1921,6 +1921,22 @@ pub fn c_copy_aggregate(
     }
 }
 
+pub fn c_initialize_scalar_array(
+    target: CExpression,
+    source: CExpression,
+    element_type: CType,
+    count: u32,
+    copy: bool,
+) -> CStatement {
+    CStatement::InitializeScalarArray {
+        target,
+        source,
+        element_type,
+        count,
+        copy,
+    }
+}
+
 pub fn c_assert(condition: CExpression) -> CStatement {
     CStatement::Assert {
         condition,

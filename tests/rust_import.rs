@@ -66,6 +66,113 @@ fn charon_project() -> Project {
     .unwrap();
     p
 }
+const CHARON_ARRAY_SOURCE: &str =
+    include_str!("../design/charon-trial/conversions-arrays/arrays.rs");
+const CHARON_ARRAY_SIDECAR: &str =
+    include_str!("../design/charon-trial/conversions-arrays/arrays.click");
+fn charon_array_project() -> Project {
+    let p = Project::new(CHARON_ARRAY_SOURCE);
+    for (name, bytes) in [
+        ("arrays.rs", CHARON_ARRAY_SOURCE.as_bytes()),
+        ("borrow.click", CHARON_ARRAY_SIDECAR.as_bytes()),
+        (
+            "borrow.click.import.json",
+            include_bytes!("../design/charon-trial/conversions-arrays/arrays.click.import.json")
+                .as_slice(),
+        ),
+        (
+            "arrays.ullbc",
+            include_bytes!("../design/charon-trial/conversions-arrays/arrays.ullbc").as_slice(),
+        ),
+        (
+            "borrow.click.import.json.lock",
+            include_bytes!(
+                "../design/charon-trial/conversions-arrays/arrays.click.import.json.lock"
+            )
+            .as_slice(),
+        ),
+    ] {
+        fs::write(p.root.join(name), bytes).unwrap();
+    }
+    p
+}
+#[test]
+fn charon_arrays_compose_with_resolved_conversion_and_drop() {
+    let p = charon_array_project();
+    let prepared = load_import(&p.config()).unwrap();
+    C0VerificationSession::new_program_prepared(CHARON_ARRAY_SIDECAR, &prepared).unwrap();
+    for invalid in [
+        CHARON_ARRAY_SIDECAR.replace("ensures result == x;", "ensures result == x + 1;"),
+        CHARON_ARRAY_SIDECAR.replace("value[0] == old(value[0]);", "value[0] == 7;"),
+        CHARON_ARRAY_SIDECAR.replace("ensures result == 7;", "ensures result == 8;"),
+        CHARON_ARRAY_SIDECAR.replace("ensures result == 9;", "ensures result == 2;"),
+        CHARON_ARRAY_SIDECAR.replace("ensures result == 1;", "ensures result == 257;"),
+        CHARON_ARRAY_SIDECAR.replace(
+            "value[0] == old(value[0]) + 1;",
+            "value[0] == old(value[0]);",
+        ),
+        CHARON_ARRAY_SIDECAR.replace("    owns value[0..1];\n", ""),
+        CHARON_ARRAY_SIDECAR.replace("    requires value[0] < 2147483647;\n", ""),
+    ] {
+        assert!(
+            C0VerificationSession::new_program_prepared(&invalid, &prepared).is_err(),
+            "accepted {invalid}"
+        );
+    }
+}
+#[test]
+fn charon_array_cli_tools_recheck_expanded_certificates() {
+    let p = charon_array_project();
+    for command in ["verify", "profile", "audit"] {
+        assert_cli(&p, &[command]);
+    }
+    for claim in [
+        "guarded_array.contract",
+        "large_array.contract",
+        "empty_array.contract",
+    ] {
+        assert_cli(&p, &["expand", "--claim", claim, "--in-place"]);
+        assert_cli(&p, &["verify"]);
+    }
+}
+#[test]
+#[ignore = "requires the separately built pinned Charon/compiler"]
+fn charon_arrays_live_refresh_and_rejected_source_shapes() {
+    let p = charon_array_project();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(p.config()).unwrap()).unwrap();
+    config["exporter"] = serde_json::json!(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/charon/debug/charon")
+    );
+    fs::write(p.config(), serde_json::to_vec(&config).unwrap()).unwrap();
+    refresh_import(&p.config()).unwrap();
+    C0VerificationSession::new_program_prepared(
+        CHARON_ARRAY_SIDECAR,
+        &load_import(&p.config()).unwrap(),
+    )
+    .unwrap();
+    for (source, diagnostic) in [
+        ("pub fn bad(x:u32)->u8 { u8::from(x) }", "E0277"),
+        (
+            "struct Fake; impl Fake { fn from(x:u16)->u32 { x as u32 } } pub fn bad(x:u16)->u32 { Fake::from(x) }",
+            "nested or disambiguated source items",
+        ),
+        ("pub fn bad()->u16 { let x=[7u16;4]; x[0] }", "i32/u8/u32"),
+        (
+            "pub fn bad()->u32 { let x=[7u32;536870912]; x[0] }",
+            "signed-word storage",
+        ),
+    ] {
+        fs::remove_file(p.root.join("arrays.ullbc")).unwrap();
+        fs::write(p.root.join("arrays.rs"), source).unwrap();
+        let error = refresh_import(&p.config()).unwrap_err();
+        assert!(error.contains(diagnostic), "{error}");
+        assert!(!p.root.join("arrays.ullbc").exists());
+        fs::write(p.root.join("arrays.rs"), CHARON_ARRAY_SOURCE).unwrap();
+        refresh_import(&p.config()).unwrap();
+    }
+}
+
 const CHARON_LOOP_SOURCE: &str = include_str!("../design/charon-trial/borrowed-loop/loop.rs");
 const CHARON_LOOP_SIDECAR: &str = include_str!("../design/charon-trial/borrowed-loop/loop.click");
 fn charon_loop_project() -> Project {

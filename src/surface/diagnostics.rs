@@ -4171,7 +4171,8 @@ pub(super) fn describe_c_statement_head(statement: &CStatement) -> String {
         }
         CStatement::Declare { name, .. } => format!("declaration of `{name}`"),
         CStatement::DeclareAggregate { name, .. } => format!("aggregate declaration of `{name}`"),
-        CStatement::CopyAggregate { target, source, .. } => format!(
+        CStatement::CopyAggregate { target, source, .. }
+        | CStatement::InitializeScalarArray { target, source, .. } => format!(
             "{} = {};",
             describe_c_expression(target),
             describe_c_expression(source)

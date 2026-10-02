@@ -172,11 +172,19 @@ impl Adapter<'_> {
                 a::UIntTy::U8 => Type::U8,
                 a::UIntTy::U16 => Type::U16,
                 a::UIntTy::U32 => Type::U32,
+                a::UIntTy::Usize => Type::Usize,
                 _ => return Err(unsupported("integer width")),
             },
             a::TyKind::Ref(_, pointee, kind) => Type::Reference {
                 mutable: *kind == a::RefKind::Mut,
                 pointee: Box::new(self.ty(pointee)?),
+            },
+            a::TyKind::Array(element, length, _) => Type::Array {
+                element: Box::new(self.ty(element)?),
+                length: length
+                    .as_usize_literal()
+                    .ok_or_else(|| unsupported("symbolic array length"))?
+                    as u64,
             },
             a::TyKind::Adt(r) if r.id == a::TypeDeclId::UNIT => Type::Unit,
             a::TyKind::Adt(r)
@@ -192,7 +200,7 @@ impl Adapter<'_> {
             }
             _ => {
                 return Err(unsupported(
-                    "type (arrays, raw pointers, and general generics remain later work)",
+                    "type (raw pointers and general generics remain later work)",
                 ));
             }
         })
@@ -242,6 +250,96 @@ struct BodyAdapter<'a, 'b> {
     names: BTreeMap<a::LocalId, String>,
 }
 impl BodyAdapter<'_, '_> {
+    /// `unsigned-from-v1`: only a compiler-resolved standard-library From
+    /// implementation on supported unsigned scalars is interpreted as a cast.
+    fn integer_conversion(&self, t: &u::Terminator) -> Result<Option<S>, String> {
+        let u::TerminatorKind::Call { call, .. } = &t.kind else {
+            return Ok(None);
+        };
+        let a::FnOperand::Regular(ptr) = &call.func else {
+            return Ok(None);
+        };
+        let id = self.adapter.resolve(ptr)?;
+        let callee = self
+            .adapter
+            .krate
+            .fun_decls
+            .get(id)
+            .ok_or_else(|| unsupported("missing call definition"))?;
+        let a::FunSource::TraitImpl {
+            trait_ref,
+            impl_ref,
+            item_id,
+            ..
+        } = &callee.src
+        else {
+            return Ok(None);
+        };
+        let tr = self
+            .adapter
+            .krate
+            .trait_decls
+            .get(trait_ref.id)
+            .ok_or_else(|| unsupported("missing conversion trait"))?;
+        if tr.item_meta.diagnostic_item.as_deref() != Some("From") {
+            return Ok(None);
+        }
+        let imp = self
+            .adapter
+            .krate
+            .trait_impls
+            .get(impl_ref.id)
+            .ok_or_else(|| unsupported("missing conversion implementation"))?;
+        let [argument] = call.args.as_slice() else {
+            return Err(unsupported("integer From arity"));
+        };
+        let width = |ty: &Type| match ty {
+            Type::U8 => Some(8),
+            Type::U16 => Some(16),
+            Type::U32 => Some(32),
+            Type::Usize => Some(64),
+            _ => None,
+        };
+        let source = self.adapter.ty(argument.ty())?;
+        let destination = self.adapter.ty(&call.dest.ty)?;
+        if callee.item_meta.is_local
+            || imp.item_meta.is_local
+            || tr.item_meta.is_local
+            || call.safety == a::CallSafety::Unsafe
+            || callee.signature.is_unsafe
+            || !ptr.generics.types.is_empty()
+            || !ptr.generics.const_generics.is_empty()
+            || tr
+                .methods
+                .get(*item_id)
+                .is_none_or(|method| method.skip_binder.name.0.as_str() != "from")
+            || imp.impl_trait.id != trait_ref.id
+            || imp
+                .methods
+                .get(*item_id)
+                .is_none_or(|method| method.skip_binder.id != id)
+            || imp.impl_trait.generics.types.len() != 2
+            || imp
+                .impl_trait
+                .generics
+                .types
+                .iter()
+                .ne([&call.dest.ty, argument.ty()])
+            || callee.signature.inputs.as_slice() != [argument.ty().clone()]
+            || callee.signature.output != call.dest.ty
+            || !matches!((width(&source), width(&destination)), (Some(a), Some(b)) if a <= b)
+        {
+            return Err(unsupported("integer From implementation/type mismatch"));
+        }
+        Ok(Some(S::Assign {
+            target: self.place(&call.dest)?,
+            value: E::IntegerFrom {
+                value: Box::new(self.operand(argument)?),
+                source_type: source,
+                value_type: destination,
+            },
+        }))
+    }
     fn local(&self, id: a::LocalId) -> Result<String, String> {
         self.names
             .get(&id)
@@ -275,6 +373,16 @@ impl BodyAdapter<'_, '_> {
                         .clone(),
                 }
             }
+            a::PlaceKind::Projection(
+                base,
+                a::ProjectionElem::Index {
+                    offset,
+                    from_end: false,
+                },
+            ) if matches!(self.adapter.ty(&base.ty)?, Type::Array { .. }) => E::Index {
+                slice: Box::new(self.place(base)?),
+                index: Box::new(self.operand(offset)?),
+            },
             _ => return Err(unsupported("place projection")),
         })
     }
@@ -285,6 +393,12 @@ impl BodyAdapter<'_, '_> {
                 E::Integer {
                     value: i32::try_from(*value)
                         .map_err(|_| unsupported("invalid i32 constant"))?,
+                }
+            }
+            a::ConstantExprKind::Integer(a::IntegerValue::Unsigned(a::UIntTy::Usize, value)) => {
+                E::UsizeInteger {
+                    value: u64::try_from(*value)
+                        .map_err(|_| unsupported("invalid usize constant"))?,
                 }
             }
             a::ConstantExprKind::Integer(a::IntegerValue::Unsigned(_, value)) => {
@@ -311,9 +425,22 @@ impl BodyAdapter<'_, '_> {
     fn rvalue(&self, v: &a::Rvalue, ty: &a::Ty) -> Result<E, String> {
         Ok(match v {
             a::Rvalue::Use(op, _) => self.operand(op)?,
+            a::Rvalue::Repeat(value, _, length, _) => E::Repeat {
+                value: Box::new(self.operand(value)?),
+                length: length
+                    .as_usize_literal()
+                    .ok_or_else(|| unsupported("symbolic array repeat"))?
+                    as u64,
+            },
+            a::Rvalue::Aggregate(a::AggregateKind::Array(..), elements) => E::Array {
+                elements: elements
+                    .iter()
+                    .map(|value| self.operand(value))
+                    .collect::<Result<_, _>>()?,
+            },
             a::Rvalue::Ref {
                 place,
-                kind: a::BorrowKind::Shared | a::BorrowKind::Mut,
+                kind: a::BorrowKind::Shared | a::BorrowKind::Mut | a::BorrowKind::TwoPhaseMut,
                 ptr_metadata,
             } if ptr_metadata.ty().is_unit() => E::Borrow {
                 place: Box::new(self.place(place)?),
@@ -770,7 +897,7 @@ pub(super) fn decode(
         };
         let mut blocks = Vec::new();
         for block in &b.body.body {
-            let statements = block
+            let mut statements: Vec<S> = block
                 .statements
                 .iter()
                 .map(|s| {
@@ -781,7 +908,19 @@ pub(super) fn decode(
                 .into_iter()
                 .flatten()
                 .collect();
-            let terminator = b.terminator(&block.terminator).map_err(|e| {
+            let conversion = b.integer_conversion(&block.terminator)?;
+            let terminator = if let Some(conversion) = conversion {
+                statements.push(conversion);
+                let u::TerminatorKind::Call { target, .. } = &block.terminator.kind else {
+                    unreachable!();
+                };
+                Ok(T::Goto {
+                    target: target.index(),
+                })
+            } else {
+                b.terminator(&block.terminator)
+            }
+            .map_err(|e| {
                 format!(
                     "{source}:{} in {name}: {e}",
                     block.terminator.span.data().beg.line
@@ -822,6 +961,148 @@ mod tests {
     const ARTIFACT: &[u8] = include_bytes!("../../../design/charon-trial/trial.ullbc");
     const SOURCE: &[u8] = include_bytes!("../../../design/charon-trial/trial.rs");
     const CLAIM: &str = include_str!("../../../design/charon-trial/trial.click");
+
+    const ARRAY_ARTIFACT: &[u8] =
+        include_bytes!("../../../design/charon-trial/conversions-arrays/arrays.ullbc");
+    const ARRAY_SOURCE: &[u8] =
+        include_bytes!("../../../design/charon-trial/conversions-arrays/arrays.rs");
+    const ARRAY_CLAIM: &str =
+        include_str!("../../../design/charon-trial/conversions-arrays/arrays.click");
+
+    #[test]
+    fn charon_unsigned_from_checks_resolved_identity_and_signature() {
+        for mutation in 0..4 {
+            let mut artifact: TrialArtifact = serde_json::from_slice(ARRAY_ARTIFACT).unwrap();
+            let tr = artifact
+                .data
+                .translated
+                .trait_decls
+                .iter_mut()
+                .find(|tr| tr.item_meta.diagnostic_item.as_deref() == Some("From"))
+                .unwrap();
+            let trait_id = tr.def_id;
+            if mutation == 0 {
+                tr.item_meta.diagnostic_item = Some("Lookalike".into());
+            }
+            if mutation == 1 {
+                tr.item_meta.is_local = true;
+            }
+            let callee = artifact.data.translated.fun_decls.iter_mut().find(|f| matches!(&f.src, a::FunSource::TraitImpl { trait_ref, .. } if trait_ref.id == trait_id)).unwrap();
+            if mutation == 2 {
+                callee.signature.output = callee.signature.inputs[0].clone();
+            }
+            if mutation == 3 {
+                callee.signature.is_unsafe = true;
+            }
+            assert!(
+                decode(
+                    &serde_json::to_vec(&artifact).unwrap(),
+                    "arrays.rs",
+                    ARRAY_SOURCE
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn charon_array_index_bounds_remain_checked_after_normalization() {
+        let mut export = decode(ARRAY_ARTIFACT, "arrays.rs", ARRAY_SOURCE).unwrap();
+        let mir = export
+            .functions
+            .iter_mut()
+            .find(|f| f.name == "large_array")
+            .unwrap()
+            .mir
+            .as_mut()
+            .unwrap();
+        let index = mir
+            .blocks
+            .iter_mut()
+            .flat_map(|b| &mut b.statements)
+            .find_map(|s| match s {
+                S::Assign {
+                    value: E::UsizeInteger { value, .. },
+                    ..
+                } if *value == 999_999 => Some(value),
+                _ => None,
+            })
+            .unwrap();
+        *index = 1_000_000;
+        let prepared = super::super::import::prepared_for_test(export).unwrap();
+        assert!(C0VerificationSession::new_program_prepared(ARRAY_CLAIM, &prepared).is_err());
+    }
+
+    #[test]
+    fn charon_array_lowering_and_verification_work_do_not_expand_with_length() {
+        use crate::kernel::CStatement as C;
+        fn shape(s: &C) -> (usize, usize) {
+            match s {
+                C::Seq(a, b) => {
+                    let a = shape(a);
+                    let b = shape(b);
+                    (1 + a.0 + b.0, a.1 + b.1)
+                }
+                C::DeclareAggregate { layout, .. } => (1, layout.fields().len()),
+                _ => (1, 0),
+            }
+        }
+        let mut samples = Vec::new();
+        for length in [8, 1024, 1_000_000] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let mut export = decode(ARRAY_ARTIFACT, "arrays.rs", ARRAY_SOURCE).unwrap();
+            let mir = export
+                .functions
+                .iter_mut()
+                .find(|f| f.name == "large_array")
+                .unwrap()
+                .mir
+                .as_mut()
+                .unwrap();
+            for local in &mut mir.locals {
+                if let Type::Array { length: n, .. } = &mut local.value_type {
+                    *n = length;
+                }
+            }
+            for statement in mir.blocks.iter_mut().flat_map(|b| &mut b.statements) {
+                match statement {
+                    S::Assign {
+                        value: E::Repeat { length: n, .. },
+                        ..
+                    } => *n = length,
+                    S::Assign {
+                        value: E::UsizeInteger { value, .. },
+                        ..
+                    } if *value == 999_999 => *value = length - 1,
+                    _ => {}
+                }
+            }
+            let (functions, _) = super::super::lowering::lower(&export).unwrap();
+            let function = functions
+                .iter()
+                .find(|f| f.name() == "large_array")
+                .unwrap()
+                .to_kernel_function();
+            let shape = shape(function.body());
+            assert_eq!(shape.1, 0);
+            let prepared = super::super::import::prepared_for_test(export).unwrap();
+            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                C0VerificationSession::new_program_prepared(
+                    "verifying \"arrays.rs\"; uint8 large_array() { ensures result == 7; } by { execute(); simp(); }",
+                    &prepared,
+                )
+            });
+            verified.unwrap();
+            samples.push((length, shape, work));
+        }
+        eprintln!("array proof (length, nodes/fields, work): {samples:?}");
+        assert!(
+            samples
+                .iter()
+                .all(|(_, shape, work)| *shape == samples[0].1 && *work <= samples[0].2 + 64),
+            "{samples:?}"
+        );
+    }
 
     #[test]
     fn charon_borrowed_loop_keeps_a_real_while_guard() {

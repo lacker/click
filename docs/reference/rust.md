@@ -8,8 +8,9 @@ kernel execution vocabulary. Verification uses the same sidecars, tactics,
 certificates, and bounded engine as C and C++.
 
 An opt-in [Charon adapter trial](https://github.com/clicklang/click/blob/master/design/charon-trial/README.md) now routes
-checked arithmetic, owned guard cleanup, and borrowed while loops with a live
-restoring guard through one ULLBC body representation
+checked arithmetic, owned guard cleanup, borrowed while loops with a live
+restoring guard, resolved unsigned conversions, and compact scalar arrays through
+one ULLBC body representation
 and the same engine. It has a separate pinned compiler/profile and a narrower
 accepted subset. The sections below describe the existing default frontend;
 the trial is the migration path being evaluated before replacing that frontend.

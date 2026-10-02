@@ -2287,6 +2287,16 @@ pub enum CStatement {
         source: CExpression,
         layout: CAggregateLayout,
     },
+    /// Initialize fresh scalar-array storage with one evaluated repeated value
+    /// or a copy of a complete uniform initialized local array. Storage and memory
+    /// authority are checked independently; count never expands into nodes.
+    InitializeScalarArray {
+        target: CExpression,
+        source: CExpression,
+        element_type: CType,
+        count: u32,
+        copy: bool,
+    },
     Assign {
         name: String,
         expression: CExpression,

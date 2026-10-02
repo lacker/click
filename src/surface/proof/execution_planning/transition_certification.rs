@@ -589,7 +589,7 @@ fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool
         | CStatement::If { .. }
         | CStatement::While { .. }
         | CStatement::Switch { .. } => true,
-        CStatement::CopyAggregate { .. } => true,
+        CStatement::CopyAggregate { .. } | CStatement::InitializeScalarArray { .. } => true,
     }
 }
 
@@ -675,7 +675,8 @@ pub(in crate::surface::proof) fn statement_contains_call(statement: &CStatement)
         | CStatement::Update { .. } => false,
         CStatement::HeapAllocate { .. }
         | CStatement::HeapFree { .. }
-        | CStatement::CopyAggregate { .. } => false,
+        | CStatement::CopyAggregate { .. }
+        | CStatement::InitializeScalarArray { .. } => false,
     }
 }
 
