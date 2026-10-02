@@ -10,6 +10,7 @@ coverage switch and no generated processed count.
 The trial is narrower than the existing frontend. It accepts `i32`, `u8`, `u16`,
 `u32`, bools, scalar/reference locals and fields, flat structs, direct local
 calls, scalar casts, comparisons, checked addition/subtraction/multiplication,
+unsigned division/remainder, shifts and bitwise operations,
 acyclic branches, nested natural while loops, whole-value moves, precise drops,
 resolved unsigned `From` conversions, the scalar arrays, byte slices, and shared exact-chunk protocol described below.
 General traits/generics, nested owned fields, and returned references are not
@@ -251,6 +252,44 @@ rechecking exercise this checkpoint. The nested proof is a fixed-length
 composition regression; importing the unchanged checksum loop and proving its
 arithmetic are still separate adoption gates. Source/proof observations still
 need a stable interface before making Charon the default.
+
+## Checksum arithmetic checkpoint
+
+[`arithmetic/arithmetic.rs`](arithmetic/arithmetic.rs) retains the existing
+unsigned arithmetic regression source unchanged and adds width and panic probes.
+Its [sidecar](arithmetic/arithmetic.click) proves the exact remainder modulo
+65521, shift/OR checksum packing, lossless byte accumulation, narrow truncation,
+unsigned division/remainder, complements, masks, full-width shifts and guarded
+division. These are operator regressions, not a verification of Adler-32.
+
+`unsigned-checksum-operators-v1` accepts compiler-typed `Div`, `Rem`, `Shl` and
+`Shr` with `Panic` mode for unsigned `u8`, `u16`, `u32` and `usize`, plus bitwise
+AND/OR/XOR and complement at those widths. Division/remainder and binary bitwise
+operations require matching operand types. Shift counts retain their original
+integer type and width; the shared checked evaluator validates the full-width
+bounds before constructing the shift term. Negative, width-sized, high-bit and
+maximum-width counts fail the Rust panic obligation. Left shifts may discard
+value bits, as Rust requires. Division/remainder by zero are rejected, including
+when the operands occupy only eight or sixteen bits.
+
+The selected reconstruction converts the assessed compiler checks into typed
+panic-mode operations. Click reintroduces and checks those obligations using the
+existing Rust lowering and kernel. Wrap/UB modes, wrapping-method calls and signed
+division/shifts remain rejected by this adapter. A conditional division probe
+checks that an untaken division needs no nonzero premise. False reductions,
+incorrect packing and overflow claims are rejected. Verification, profiling,
+auditing, expansion and expanded-certificate rechecking exercise the same model;
+a matching default-frontend regression checks shared shift-count lowering.
+
+```sh
+cargo run --bin click -- import lock design/charon-trial/arithmetic/arithmetic.click
+cargo run --bin click -- verify design/charon-trial/arithmetic/arithmetic.click
+cargo nextest run --test rust_import --run-ignored only -E 'test(charon_checksum_arithmetic_live_refresh_and_rejected_modes)'
+```
+
+The unchanged adler2 path still needs array fields, array/shared-element
+iteration, resolved custom operators and crate-level import coverage. Continue
+those checkpoints before claiming checksum verification or changing the default.
 
 ## Profile, locks, and trust
 

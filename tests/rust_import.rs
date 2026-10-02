@@ -66,6 +66,138 @@ fn charon_project() -> Project {
     .unwrap();
     p
 }
+const CHARON_ARITHMETIC_SOURCE: &str =
+    include_str!("../design/charon-trial/arithmetic/arithmetic.rs");
+const CHARON_ARITHMETIC_SIDECAR: &str =
+    include_str!("../design/charon-trial/arithmetic/arithmetic.click");
+fn charon_arithmetic_project() -> Project {
+    let p = Project::new(CHARON_ARITHMETIC_SOURCE);
+    for (name, bytes) in [
+        ("arithmetic.rs", CHARON_ARITHMETIC_SOURCE.as_bytes()),
+        ("borrow.click", CHARON_ARITHMETIC_SIDECAR.as_bytes()),
+        (
+            "borrow.click.import.json",
+            include_bytes!("../design/charon-trial/arithmetic/arithmetic.click.import.json")
+                .as_slice(),
+        ),
+        (
+            "arithmetic.ullbc",
+            include_bytes!("../design/charon-trial/arithmetic/arithmetic.ullbc").as_slice(),
+        ),
+        (
+            "borrow.click.import.json.lock",
+            include_bytes!("../design/charon-trial/arithmetic/arithmetic.click.import.json.lock")
+                .as_slice(),
+        ),
+    ] {
+        fs::write(p.root.join(name), bytes).unwrap();
+    }
+    p
+}
+#[test]
+fn charon_checksum_arithmetic_checks_panic_bounds_and_full_width_values() {
+    let p = charon_arithmetic_project();
+    let prepared = load_import(&p.config()).unwrap();
+    C0VerificationSession::new_program_prepared(CHARON_ARITHMETIC_SIDECAR, &prepared).unwrap();
+    for claim in [
+        "uint32 reduce(uint32 value) { requires value == 4294967295u32; ensures result == 224u32; }",
+        "uint64 wide_quotient(uint64 value, uint64 divisor) { requires value == 18446744073709551615u64; requires divisor == 1u64; ensures result == 18446744073709551615u64; }",
+        "uint64 wide_left(uint64 value, uint64 count) { requires value == 18446744073709551615u64; requires count == 1u64; ensures result == 18446744073709551614u64; }",
+        "uint64 wide_right(uint64 value, uint64 count) { requires value == 18446744073709551615u64; requires count == 63u64; ensures result == 1u64; }",
+        "uint16 word_right(uint16 value, uint64 count) { requires value == 65535; requires count == 15u64; ensures result == 1; }",
+        "uint8 shifted_byte(uint8 value, uint32 count) { requires value == 128; requires count == 1u32; ensures result == 0; }",
+        "uint32 conditional_divide(uint32 value, uint32 divisor, bool skip) { requires skip != 0; requires divisor == 0u32; ensures result == 0u32; }",
+    ] {
+        let claim = format!("verifying \"arithmetic.rs\"; {claim} by {{ execute(); simp(); }}");
+        C0VerificationSession::new_program_prepared(&claim, &prepared).unwrap();
+    }
+    for invalid in [
+        CHARON_ARITHMETIC_SIDECAR.replace("requires sum <= 4294967040u32;", ""),
+        CHARON_ARITHMETIC_SIDECAR.replace("requires count < 8u32;", "requires count == 8u32;"),
+        CHARON_ARITHMETIC_SIDECAR.replace("requires count < 64u64;", "requires count == 64u64;"),
+        CHARON_ARITHMETIC_SIDECAR.replace(
+            "requires 0 <= count and count < 32;",
+            "requires count == -1;",
+        ),
+        CHARON_ARITHMETIC_SIDECAR.replace("requires divisor != 0u32;", "requires divisor == 0u32;"),
+        CHARON_ARITHMETIC_SIDECAR.replace("requires divisor != 0u64;", "requires divisor == 0u64;"),
+        CHARON_ARITHMETIC_SIDECAR.replace("value % 65521u32", "value % 65519u32"),
+        CHARON_ARITHMETIC_SIDECAR.replace("((high << 16) | low)", "((high << 15) | low)"),
+    ] {
+        assert_ne!(invalid, CHARON_ARITHMETIC_SIDECAR);
+        assert!(C0VerificationSession::new_program_prepared(&invalid, &prepared).is_err());
+    }
+    for count in [64u64, 4294967296, u64::MAX] {
+        let claim = format!(
+            "verifying \"arithmetic.rs\"; uint64 wide_left(uint64 value, uint64 count) {{ requires value == 0u64; requires count == {count}u64; ensures result == 0u64; }} by {{ execute(); }}"
+        );
+        let error = C0VerificationSession::new_program_prepared(&claim, &prepared)
+            .err()
+            .expect("invalid shift accepted");
+        assert!(
+            error.message().contains("Rust shl panic check"),
+            "{}",
+            error.message()
+        );
+    }
+}
+#[test]
+fn charon_checksum_arithmetic_cli_tools_recheck_certificates() {
+    let p = charon_arithmetic_project();
+    for command in ["verify", "profile", "audit"] {
+        assert_cli(&p, &[command]);
+    }
+    for claim in [
+        "reduce.contract",
+        "pack.contract",
+        "wide_left.contract",
+        "signed_count.contract",
+        "conditional_divide.contract",
+    ] {
+        assert_cli(&p, &["expand", "--claim", claim, "--in-place"]);
+        assert_cli(&p, &["verify"]);
+    }
+}
+#[test]
+fn rust_and_charon_unsigned_shifts_preserve_full_width_counts() {
+    let p = Project::new(CHARON_ARITHMETIC_SOURCE);
+    refresh_import(&p.config()).unwrap();
+    let sidecar = CHARON_ARITHMETIC_SIDECAR.replace("arithmetic.rs", "borrow.rs");
+    C0VerificationSession::new_program_prepared(&sidecar, &load_import(&p.config()).unwrap())
+        .unwrap();
+}
+#[test]
+#[ignore = "requires the separately built pinned Charon/compiler"]
+fn charon_checksum_arithmetic_live_refresh_and_rejected_modes() {
+    let p = charon_arithmetic_project();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(p.config()).unwrap()).unwrap();
+    config["exporter"] = serde_json::json!(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/charon/debug/charon")
+    );
+    fs::write(p.config(), serde_json::to_vec(&config).unwrap()).unwrap();
+    refresh_import(&p.config()).unwrap();
+    C0VerificationSession::new_program_prepared(
+        CHARON_ARITHMETIC_SIDECAR,
+        &load_import(&p.config()).unwrap(),
+    )
+    .unwrap();
+    for source in [
+        "pub fn bad(x:u32, count:u32)->u32 { x.wrapping_shl(count) }",
+        "pub fn bad(x:u32, count:u32)->u32 { x.wrapping_shr(count) }",
+        "pub fn bad(x:i32, count:u32)->i32 { x << count }",
+        "pub fn bad(x:i32, divisor:i32)->i32 { x / divisor }",
+    ] {
+        fs::remove_file(p.root.join("arithmetic.ullbc")).unwrap();
+        fs::write(p.root.join("arithmetic.rs"), source).unwrap();
+        let error = refresh_import(&p.config()).unwrap_err();
+        assert!(error.contains("Charon trial does not support"), "{error}");
+        assert!(!p.root.join("arithmetic.ullbc").exists());
+        fs::write(p.root.join("arithmetic.rs"), CHARON_ARITHMETIC_SOURCE).unwrap();
+        refresh_import(&p.config()).unwrap();
+    }
+}
+
 const CHARON_NESTED_SOURCE: &str = include_str!("../design/charon-trial/nested/nested.rs");
 const CHARON_NESTED_SIDECAR: &str = include_str!("../design/charon-trial/nested/nested.click");
 fn charon_nested_project() -> Project {

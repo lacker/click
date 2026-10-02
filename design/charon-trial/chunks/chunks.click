@@ -111,20 +111,9 @@ uint64 walk(const uint8* bytes, uint64 bytes_len) {
             }
         }
         have iter_cursor == (bytes + (((int32)((uint32)(bytes_len - (bytes_len % 4u64)))) - iter_remaining)) by {
-            intro();
-            intro();
-            intro();
-            intro();
-            intro();
             normalize();
         }
         have 0 <= (((int32)((uint32)(bytes_len - (bytes_len % 4u64)))) - iter_remaining) and (((int32)((uint32)(bytes_len - (bytes_len % 4u64)))) - iter_remaining) <= 1000 by {
-            intro();
-            intro();
-            intro();
-            intro();
-            intro();
-            intro();
             split();
         }
     }

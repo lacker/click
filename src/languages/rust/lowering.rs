@@ -1299,14 +1299,11 @@ impl Context<'_> {
                     );
                 }
                 let mut l = self.expr(left)?;
-                let mut r = self.expr(right)?;
-                if matches!(operator.as_str(), "shl" | "shr") {
-                    // The checked Rust guard has already excluded negative
-                    // and oversized counts, independently of the RHS width.
-                    // Valid Rust counts are below 64, so the narrowed count
-                    // is nonnegative even in the shared signed-word model.
-                    r = c_cast(c_cast(r, CType::UInt32), CType::Int32);
-                }
+                let r = self.expr(right)?;
+                // Keep the RHS at its source width. The shared shift evaluator
+                // checks signed/nonnegative and full-width upper bounds before
+                // forming its word-sized shift term. Narrowing here would lose
+                // the exact relation to Rust's already checked count.
                 if matches!(left_type, Type::U8 | Type::U16) {
                     // Rust narrow unsigned operations use unsigned words;
                     // the checked result is coerced to its original width.

@@ -550,6 +550,17 @@ impl BodyAdapter<'_, '_> {
                     value: Box::new(self.operand(op)?),
                 }
             }
+            a::Rvalue::UnaryOp(a::UnOp::Not, op)
+                if matches!(
+                    self.adapter.ty(op.ty())?,
+                    Type::U8 | Type::U16 | Type::U32 | Type::Usize
+                ) =>
+            {
+                E::BitwiseNot {
+                    value: Box::new(self.operand(op)?),
+                    value_type: self.adapter.ty(op.ty())?,
+                }
+            }
             a::Rvalue::UnaryOp(
                 a::UnOp::Cast(a::CastKind::Unsize(
                     source,
@@ -588,10 +599,21 @@ impl BodyAdapter<'_, '_> {
                 value_type: self.adapter.ty(ty)?,
             },
             a::Rvalue::BinaryOp(op, l, r) => {
+                let left_type = self.adapter.ty(l.ty())?;
+                let right_type = self.adapter.ty(r.ty())?;
+                let unsigned = matches!(left_type, Type::U8 | Type::U16 | Type::U32 | Type::Usize);
+                let same_unsigned = unsigned && left_type == right_type;
                 let operator = match op {
                     a::BinOp::Add(a::OverflowMode::Panic) => "add",
                     a::BinOp::Sub(a::OverflowMode::Panic) => "sub",
                     a::BinOp::Mul(a::OverflowMode::Panic) => "mul",
+                    a::BinOp::Div(a::OverflowMode::Panic) if same_unsigned => "div",
+                    a::BinOp::Rem(a::OverflowMode::Panic) if same_unsigned => "rem",
+                    a::BinOp::Shl(a::OverflowMode::Panic) if unsigned => "shl",
+                    a::BinOp::Shr(a::OverflowMode::Panic) if unsigned => "shr",
+                    a::BinOp::BitAnd if same_unsigned => "bit_and",
+                    a::BinOp::BitOr if same_unsigned => "bit_or",
+                    a::BinOp::BitXor if same_unsigned => "bit_xor",
                     a::BinOp::Eq => "eq",
                     a::BinOp::Ne => "ne",
                     a::BinOp::Lt => "lt",
@@ -602,8 +624,8 @@ impl BodyAdapter<'_, '_> {
                 };
                 E::Binary {
                     operator: operator.into(),
-                    left_type: self.adapter.ty(l.ty())?,
-                    right_type: self.adapter.ty(r.ty())?,
+                    left_type,
+                    right_type,
                     left: Box::new(self.operand(l)?),
                     right: Box::new(self.operand(r)?),
                 }
@@ -1179,6 +1201,87 @@ mod tests {
             &prepared,
         )
         .unwrap();
+    }
+
+    const ARITHMETIC_ARTIFACT: &[u8] =
+        include_bytes!("../../../design/charon-trial/arithmetic/arithmetic.ullbc");
+    const ARITHMETIC_SOURCE: &[u8] =
+        include_bytes!("../../../design/charon-trial/arithmetic/arithmetic.rs");
+
+    #[test]
+    fn charon_checksum_operators_reject_wrapping_and_unchecked_modes() {
+        for name in ["quotient", "reduce", "wide_left", "wide_right"] {
+            for mode in [a::OverflowMode::Wrap, a::OverflowMode::UB] {
+                let mut artifact: TrialArtifact =
+                    serde_json::from_slice(ARITHMETIC_ARTIFACT).unwrap();
+                let function = artifact.data.translated.fun_decls.iter_mut().find(|f| matches!(f.item_meta.name.name.last(), Some(a::PathElem::Ident(n, _)) if n == name)).unwrap();
+                let a::Body::Unstructured(body) = &mut function.body else {
+                    panic!()
+                };
+                let mut changed = false;
+                for statement in body.body.iter_mut().flat_map(|block| &mut block.statements) {
+                    let u::StatementKind::Assign(_, a::Rvalue::BinaryOp(operator, _, _)) =
+                        &mut statement.kind
+                    else {
+                        continue;
+                    };
+                    match operator {
+                        a::BinOp::Div(m)
+                        | a::BinOp::Rem(m)
+                        | a::BinOp::Shl(m)
+                        | a::BinOp::Shr(m) => {
+                            *m = mode;
+                            changed = true;
+                        }
+                        _ => (),
+                    }
+                }
+                assert!(changed);
+                let error = decode(
+                    &serde_json::to_vec(&artifact).unwrap(),
+                    "arithmetic.rs",
+                    ARITHMETIC_SOURCE,
+                )
+                .unwrap_err();
+                assert!(
+                    error.contains("binary operation or overflow mode"),
+                    "{error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn charon_checksum_unsigned_operator_types_must_match() {
+        let mut artifact: TrialArtifact = serde_json::from_slice(ARITHMETIC_ARTIFACT).unwrap();
+        let function = artifact.data.translated.fun_decls.iter_mut().find(|f| matches!(f.item_meta.name.name.last(), Some(a::PathElem::Ident(n, _)) if n == "quotient")).unwrap();
+        let a::Body::Unstructured(body) = &mut function.body else {
+            panic!()
+        };
+        let mut changed = false;
+        for statement in body.body.iter_mut().flat_map(|block| &mut block.statements) {
+            let u::StatementKind::Assign(_, a::Rvalue::BinaryOp(a::BinOp::Div(_), _, operand)) =
+                &mut statement.kind
+            else {
+                continue;
+            };
+            let (a::Operand::Copy(right) | a::Operand::Move(right)) = operand else {
+                continue;
+            };
+            right.ty =
+                a::TyKind::Scalar(a::ScalarTy::Integer(a::IntegerTy::Unsigned(a::UIntTy::U16)))
+                    .into_ty();
+            changed = true;
+        }
+        assert!(changed);
+        assert!(
+            decode(
+                &serde_json::to_vec(&artifact).unwrap(),
+                "arithmetic.rs",
+                ARITHMETIC_SOURCE
+            )
+            .is_err()
+        );
     }
 
     const NESTED_ARTIFACT: &[u8] =

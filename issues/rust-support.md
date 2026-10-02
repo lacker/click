@@ -277,8 +277,16 @@ names have distinct identities without renaming the Rust source.
 and mutability, with compiler borrow checking and existing memory authority.
 Shared/mutable coercions, dynamic indexing, empty and million-byte arrays,
 negative metadata/type cases and proof-tool agreement have regressions.
-Next import the unchanged checksum loop, broaden iterator composition proofs,
-and cover borrowed loops. Stable observations and broader iterator parity remain gates.
+The arithmetic checkpoint now accepts typed panic-mode unsigned division,
+remainder and shifts, plus bitwise AND/OR/XOR and complement. The original
+unsigned regression functions import unchanged, including reduction modulo
+65521 and checksum packing. Width, zero-divisor, negative/oversized/high-bit
+shift, unsupported mode and false-result regressions exercise the shared checked
+engine. Shift counts preserve their source width through shared lowering, with
+matching Charon and default-frontend proofs. `unsigned-checksum-operators-v1` is
+lock-bound. Next add array fields, array/shared-element iteration and resolved
+custom operators for the unchanged checksum path, broaden iterator composition
+proofs, and cover borrowed loops. Stable observations and broader iterator parity remain gates.
 Establish stable source/proof observations and equivalent coverage before
 switching production imports. Preserve source metadata and a
 Click-owned semantic boundary; do not rebuild rustc's HIR-to-MIR semantics just
