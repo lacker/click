@@ -460,6 +460,7 @@ fn reject_aggregate_parameter_storage_resource(
                 pointer,
                 value_type:
                     CType::Int32Array(_)
+                    | CType::UInt32Array(_)
                     | CType::UInt8Array(_)
                     | CType::Int64Array(_)
                     | CType::UInt64Array(_),

@@ -66,6 +66,106 @@ fn charon_project() -> Project {
     .unwrap();
     p
 }
+const CHARON_FIELDS_SOURCE: &str = include_str!("../design/charon-trial/array-fields/fields.rs");
+const CHARON_FIELDS_SIDECAR: &str =
+    include_str!("../design/charon-trial/array-fields/fields.click");
+fn charon_fields_project() -> Project {
+    let p = Project::new(CHARON_FIELDS_SOURCE);
+    for (name, bytes) in [
+        ("fields.rs", CHARON_FIELDS_SOURCE.as_bytes()),
+        ("borrow.click", CHARON_FIELDS_SIDECAR.as_bytes()),
+        (
+            "borrow.click.import.json",
+            include_bytes!("../design/charon-trial/array-fields/fields.click.import.json")
+                .as_slice(),
+        ),
+        (
+            "fields.ullbc",
+            include_bytes!("../design/charon-trial/array-fields/fields.ullbc").as_slice(),
+        ),
+        (
+            "borrow.click.import.json.lock",
+            include_bytes!("../design/charon-trial/array-fields/fields.click.import.json.lock")
+                .as_slice(),
+        ),
+    ] {
+        fs::write(p.root.join(name), bytes).unwrap();
+    }
+    p
+}
+#[test]
+fn charon_array_fields_check_bounds_authority_and_frames() {
+    let p = charon_fields_project();
+    let prepared = load_import(&p.config()).unwrap();
+    C0VerificationSession::new_program_prepared(CHARON_FIELDS_SIDECAR, &prepared).unwrap();
+    for invalid in [
+        CHARON_FIELDS_SIDECAR.replace("requires index < 4u64;", "requires index == 4u64;"),
+        CHARON_FIELDS_SIDECAR.replace("requires index < 7u64;", "requires index == 4294967296u64;"),
+        CHARON_FIELDS_SIDECAR.replace("views state->values[0..4];", ""),
+        CHARON_FIELDS_SIDECAR.replace("owns state->values[0..4];", "views state->values[0..4];"),
+        CHARON_FIELDS_SIDECAR.replace(
+            "ensures state->values[(int32)(uint32)index] == value;",
+            "ensures state->values[(int32)(uint32)index] != value;",
+        ),
+        CHARON_FIELDS_SIDECAR.replace(
+            "result == old(state->_0[(int32)(uint32)index])",
+            "result != old(state->_0[(int32)(uint32)index])",
+        ),
+    ] {
+        assert_ne!(invalid, CHARON_FIELDS_SIDECAR);
+        assert!(C0VerificationSession::new_program_prepared(&invalid, &prepared).is_err());
+    }
+}
+#[test]
+fn charon_array_fields_cli_tools_recheck_borrowed_field_certificates() {
+    let p = charon_fields_project();
+    for command in ["verify", "profile", "audit"] {
+        assert_cli(&p, &[command]);
+    }
+    for claim in [
+        "read.contract",
+        "write.contract",
+        "borrowed_first.contract",
+        "borrowed_byte.contract",
+    ] {
+        assert_cli(&p, &["expand", "--claim", claim, "--in-place"]);
+        assert_cli(&p, &["verify"]);
+    }
+}
+#[test]
+#[ignore = "requires the separately built pinned Charon/compiler"]
+fn charon_array_fields_live_refresh_and_rejected_owned_operations() {
+    let p = charon_fields_project();
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(p.config()).unwrap()).unwrap();
+    config["exporter"] = serde_json::json!(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/charon/debug/charon")
+    );
+    fs::write(p.config(), serde_json::to_vec(&config).unwrap()).unwrap();
+    refresh_import(&p.config()).unwrap();
+    C0VerificationSession::new_program_prepared(
+        CHARON_FIELDS_SIDECAR,
+        &load_import(&p.config()).unwrap(),
+    )
+    .unwrap();
+    for source in [
+        "pub struct A { pub values:[u32;4] } pub fn bad()->u32 { let x=A{values:[0;4]}; x.values[0] }",
+        "pub struct A { pub values:[u32;4] } pub fn bad(x:&A)->u32 { let values=x.values; values[0] }",
+        "pub struct A { pub values:[u32;4] } pub fn bad(x:&mut A) { x.values=[0;4]; }",
+        "pub struct A { pub values:[u16;4] } pub fn bad(x:&A)->u16 { x.values[0] }",
+        "#[repr(C,packed)] pub struct A { pub values:[u32;4] } pub fn bad(x:&A)->u32 { x.values[0] }",
+        "pub struct A { pub values:[u32;4] } pub fn bad(x:&A) { x.values[0]=1; }",
+    ] {
+        fs::remove_file(p.root.join("fields.ullbc")).unwrap();
+        fs::write(p.root.join("fields.rs"), source).unwrap();
+        let error = refresh_import(&p.config()).unwrap_err();
+        assert!(!error.contains("panicked"), "{error}");
+        assert!(!p.root.join("fields.ullbc").exists());
+        fs::write(p.root.join("fields.rs"), CHARON_FIELDS_SOURCE).unwrap();
+        refresh_import(&p.config()).unwrap();
+    }
+}
+
 const CHARON_ARITHMETIC_SOURCE: &str =
     include_str!("../design/charon-trial/arithmetic/arithmetic.rs");
 const CHARON_ARITHMETIC_SIDECAR: &str =

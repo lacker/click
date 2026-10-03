@@ -35,6 +35,29 @@ fn scalar_type(t: &Type) -> Result<C0Type, String> {
         _ => Err("Rust value type outside direct scalar/reference lowering".into()),
     }
 }
+// Embedded arrays retain one ABI field and their concrete extent. Never
+// flatten a field into one layout entry per element.
+fn record_field_type(t: &Type) -> Result<C0Type, String> {
+    let Type::Array { element, length } = t else {
+        return scalar_type(t);
+    };
+    let element = scalar_type(element)?.to_kernel_type();
+    let length = arrays::array_length(element, *length)?;
+    Ok(match element {
+        CType::Int32 => C0Type::Int32Array(length),
+        CType::UInt8 => C0Type::UInt8Array(length),
+        CType::UInt32 => C0Type::UInt32Array(length),
+        _ => unreachable!(),
+    })
+}
+fn array_field_parts(t: CType) -> Option<(CType, u32)> {
+    match t {
+        CType::Int32Array(n) => Some((CType::Int32, n)),
+        CType::UInt8Array(n) => Some((CType::UInt8, n)),
+        CType::UInt32Array(n) => Some((CType::UInt32, n)),
+        _ => None,
+    }
+}
 // Rust narrow unsigned casts truncate; the shared coercion requires a range
 // proof. Mask first and use the existing checked coercion on that value.
 fn rust_scalar_cast(value: CExpression, target: CType) -> CExpression {
@@ -79,9 +102,11 @@ pub(crate) fn lower(export: &RustExport) -> Result<LoweredRust, String> {
             .map(|f| {
                 Ok((
                     f.name.clone(),
-                    scalar_type(&f.value_type)?,
+                    record_field_type(&f.value_type)?,
                     f.offset,
-                    scalar_type(&f.value_type)?.to_kernel_type().byte_width(),
+                    record_field_type(&f.value_type)?
+                        .to_kernel_type()
+                        .byte_width(),
                 ))
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -97,7 +122,7 @@ pub(crate) fn lower(export: &RustExport) -> Result<LoweredRust, String> {
             if fields
                 .insert(
                     (record.name.as_str(), f.name.as_str()),
-                    (f.offset, scalar_type(&f.value_type)?.to_kernel_type()),
+                    (f.offset, record_field_type(&f.value_type)?.to_kernel_type()),
                 )
                 .is_some()
             {
@@ -152,6 +177,7 @@ fn lower_function(
     let mut locals = BTreeSet::new();
     let mut slices = BTreeMap::new();
     let mut arrays = BTreeMap::new();
+    let mut references = BTreeMap::new();
     for p in &f.parameters {
         if !locals.insert(p.name.clone()) {
             return Err("duplicate Rust parameter".into());
@@ -175,6 +201,9 @@ fn lower_function(
                 .push(c_parameter(&p.name, CType::UInt8Pointer).with_pointee_constant(!mutable));
             kernel_parameters.push(c_parameter(length, CType::UInt64));
             continue;
+        }
+        if let Type::Reference { mutable, .. } = &p.value_type {
+            references.insert(p.name.clone(), !mutable);
         }
         let c_type = scalar_type(&p.value_type)?;
         if let Type::Reference { mutable, pointee } = &p.value_type
@@ -212,6 +241,7 @@ fn lower_function(
         owned_locals: BTreeSet::new(),
         slices,
         arrays,
+        references,
         source: &export.logical_source,
         function: &f.name,
         fields,
@@ -261,6 +291,7 @@ struct Context<'a> {
     owned_locals: BTreeSet<String>,
     slices: BTreeMap<String, (String, bool)>,
     arrays: BTreeMap<String, (u64, CType, bool)>,
+    references: BTreeMap<String, bool>,
     source: &'a str,
     function: &'a str,
     fields: &'a BTreeMap<(&'a str, &'a str), (u32, CType)>,
@@ -306,6 +337,9 @@ impl Context<'_> {
                 body,
             } => self.slice_for(iterator, slice, binding, *by_reference, body),
             S::Declare { place, initializer } => {
+                if let Type::Reference { mutable, .. } = &place.value_type {
+                    self.references.insert(place.name.clone(), !mutable);
+                }
                 if !self.locals.insert(place.name.clone()) {
                     return Err("duplicate Rust local identity".into());
                 }
@@ -1044,7 +1078,7 @@ impl Context<'_> {
             _ => Ok((c_skip(), self.expr(e)?)),
         }
     }
-    fn slice_parts(&self, e: &E) -> Result<(CExpression, CExpression), String> {
+    fn slice_parts(&mut self, e: &E) -> Result<(CExpression, CExpression), String> {
         if let E::ChunkOptionSlice { option } = e {
             if !self.chunk_options.contains(option) {
                 return Err("unknown chunk Option".into());
@@ -1104,6 +1138,17 @@ impl Context<'_> {
                 .map(|a| a.2)
                 .ok_or("unknown array source".into()),
             E::Deref { reference, .. } => self.array_source_is_constant(reference),
+            E::Field { base, .. } => match base.as_ref() {
+                E::Deref { reference, .. } => match reference.as_ref() {
+                    E::Local { name } => self
+                        .references
+                        .get(name)
+                        .copied()
+                        .ok_or("unknown record reference".into()),
+                    _ => Err("array field requires a record reference local".into()),
+                },
+                _ => Err("array field requires a borrowed record".into()),
+            },
             E::Borrow {
                 value_type: Type::Reference { mutable, .. },
                 ..
@@ -1111,13 +1156,43 @@ impl Context<'_> {
             _ => Err("array coercion requires a fixed array place".into()),
         }
     }
-    fn indexed_parts(&self, e: &E) -> Result<(CExpression, CExpression, CType), String> {
+    fn indexed_parts(&mut self, e: &E) -> Result<(CExpression, CExpression, CType), String> {
         match e {
-            E::Borrow { place, .. } => self.indexed_parts(place),
+            E::Borrow { place, value_type } => {
+                if matches!(value_type, Type::Reference { mutable: true, .. })
+                    && self.array_source_is_constant(place)?
+                {
+                    return Err(
+                        "mutable array field borrow requires a mutable record reference".into(),
+                    );
+                }
+                self.indexed_parts(place)
+            }
             E::Deref { reference, .. } => self.indexed_parts(reference),
             E::Local { name } if self.arrays.contains_key(name) => {
                 let (length, element, _) = self.arrays[name];
                 Ok((self.array_pointer(name)?, c_uint64_literal(length), element))
+            }
+            E::Field { record, field, .. } => {
+                let (_, ty) = *self
+                    .fields
+                    .get(&(record.as_str(), field.as_str()))
+                    .ok_or("unknown Rust array field")?;
+                let (element, length) =
+                    array_field_parts(ty).ok_or("indexed Rust field is not a scalar array")?;
+                let constant = self.array_source_is_constant(e)?;
+                let pointer_type = match element {
+                    CType::Int32 => CType::Int32Pointer,
+                    CType::UInt8 => CType::UInt8Pointer,
+                    CType::UInt32 => CType::UInt32Pointer,
+                    _ => unreachable!(),
+                };
+                let pointer = self.address(e)?;
+                Ok((
+                    c_cast_with_pointee_qualifiers(pointer, pointer_type, false, constant),
+                    c_uint64_literal(u64::from(length)),
+                    element,
+                ))
             }
             _ => {
                 let (pointer, length) = self.slice_parts(e)?;
@@ -1146,6 +1221,17 @@ impl Context<'_> {
             let (checks, value) = self.prepared_expr(index)?;
             let (capture, name) = self.capture_operand(value, &Type::Usize)?;
             let index = c_variable(name);
+            // Fixed-array extents have already been checked against signed-word
+            // storage. Only after the full-width Rust bound below succeeds may
+            // their index use the shared model's signed-word offset.
+            let offset = if matches!(
+                length,
+                CExpression::Value(CValue::UInt64(Bitvector32Term::UInt64Constant(_)))
+            ) {
+                c_cast(c_cast(index.clone(), CType::UInt32), CType::Int32)
+            } else {
+                index.clone()
+            };
             return Ok((
                 c_seq(
                     checks,
@@ -1162,7 +1248,7 @@ impl Context<'_> {
                         ),
                     ),
                 ),
-                c_add(pointer, index),
+                c_add(pointer, offset),
             ));
         }
         Ok((c_skip(), self.address(e)?))
@@ -1193,7 +1279,7 @@ impl Context<'_> {
             _ => Err("only reference-backed Rust places can be borrowed or stored".into()),
         }
     }
-    fn place_type(&self, e: &E) -> Result<CType, String> {
+    fn place_type(&mut self, e: &E) -> Result<CType, String> {
         match e {
             E::Index { slice, .. } => Ok(self.indexed_parts(slice)?.2),
             E::Field { record, field, .. } => self
@@ -1253,10 +1339,24 @@ impl Context<'_> {
                 Ok(c_variable(name))
             }
             E::Not { value } => Ok(c_not(self.expr(value)?)),
-            E::Borrow { place, value_type } => Ok(c_cast(
-                self.address(place)?,
-                scalar_type(value_type)?.to_kernel_type(),
-            )),
+            E::Borrow { place, value_type } => {
+                if let E::Field { record, field, .. } = place.as_ref()
+                    && self
+                        .fields
+                        .get(&(record.as_str(), field.as_str()))
+                        .is_some_and(|(_, ty)| array_field_parts(*ty).is_some())
+                    && matches!(value_type, Type::Reference { mutable: true, .. })
+                    && self.array_source_is_constant(place)?
+                {
+                    return Err(
+                        "mutable array field borrow requires a mutable record reference".into(),
+                    );
+                }
+                Ok(c_cast(
+                    self.address(place)?,
+                    scalar_type(value_type)?.to_kernel_type(),
+                ))
+            }
             E::Cast { value, value_type } => Ok(rust_scalar_cast(
                 self.expr(value)?,
                 scalar_type(value_type)?.to_kernel_type(),
@@ -1266,6 +1366,9 @@ impl Context<'_> {
                 scalar_type(value_type)?.to_kernel_type(),
             )),
             E::Deref { .. } | E::Field { .. } => {
+                if array_field_parts(self.place_type(e)?).is_some() {
+                    return Err("array fields must be borrowed or indexed; owned field copies are unsupported".into());
+                }
                 let pointer = self.address(e)?;
                 let occurrence = self.next_load;
                 self.next_load = self

@@ -284,8 +284,15 @@ unsigned regression functions import unchanged, including reduction modulo
 shift, unsupported mode and false-result regressions exercise the shared checked
 engine. Shift counts preserve their source width through shared lowering, with
 matching Charon and default-frontend proofs. `unsigned-checksum-operators-v1` is
-lock-bound. Next add array fields, array/shared-element iteration and resolved
-custom operators for the unchanged checksum path, broaden iterator composition
+lock-bound. The borrowed array-field checkpoint preserves compiler-selected
+array offsets, element types, extents and shared/mutable qualifiers. Named and
+tuple-field reads, indexed mutation with neighboring cells preserved, local
+array-borrow calls, byte-field coercions and empty fields have verified probes.
+One layout entry per field and bounded work at 4/1024/1,000,000 elements prevent
+extent-dependent flattening. The lock names `borrowed-scalar-array-fields-v1`;
+owned array-field construction, whole-field copies and assignment remain rejected
+pending compact region semantics. Next add that owned-array checkpoint,
+array/shared-element iteration and resolved custom operators for the unchanged checksum path, broaden iterator composition
 proofs, and cover borrowed loops. Stable observations and broader iterator parity remain gates.
 Establish stable source/proof observations and equivalent coverage before
 switching production imports. Preserve source metadata and a

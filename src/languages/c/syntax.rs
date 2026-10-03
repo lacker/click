@@ -3697,6 +3697,16 @@ impl C0StructLayout {
         let mut previous_end = 0u32;
         for (name, c_type, offset_bytes, byte_width) in fields {
             let (expected_width, expected_alignment) = match c_type {
+                C0Type::Int32Array(length) | C0Type::UInt32Array(length) => (
+                    length
+                        .checked_mul(4)
+                        .filter(|width| *width <= i32::MAX as u32)
+                        .ok_or_else(|| {
+                            format!("explicit struct field `{name}` array exceeds modeled storage")
+                        })?,
+                    4,
+                ),
+                C0Type::UInt8Array(length) if length <= i32::MAX as u32 => (length, 1),
                 C0Type::UInt8 => (1, 1),
                 C0Type::Int64 => (8, 8),
                 C0Type::UInt16 => (2, 2),
@@ -3716,8 +3726,9 @@ impl C0StructLayout {
                 .ok_or_else(|| format!("explicit struct field `{name}` layout overflows"))?;
             if name.is_empty()
                 || byte_width != expected_width
+                || alignment_bytes < expected_alignment
                 || offset_bytes % expected_alignment != 0
-                || offset_bytes < previous_end
+                || (byte_width != 0 && offset_bytes < previous_end)
                 || end > size_bytes
             {
                 return Err(format!("explicit struct field `{name}` has invalid layout"));
@@ -3733,8 +3744,17 @@ impl C0StructLayout {
                         enum_name: None,
                         union_name: None,
                         function_pointer_signature: None,
-                        array_element_width: None,
-                        array_shape: None,
+                        array_element_width: match c_type {
+                            C0Type::Int32Array(_) | C0Type::UInt32Array(_) => Some(4),
+                            C0Type::UInt8Array(_) => Some(1),
+                            _ => None,
+                        },
+                        array_shape: match c_type {
+                            C0Type::Int32Array(n)
+                            | C0Type::UInt32Array(n)
+                            | C0Type::UInt8Array(n) => Some(vec![n]),
+                            _ => None,
+                        },
                         offset_bytes,
                         byte_width,
                     },
@@ -3749,7 +3769,7 @@ impl C0StructLayout {
                 offset_bytes,
                 c_type,
             });
-            previous_end = end;
+            previous_end = previous_end.max(end);
         }
         Ok(Self {
             fields: named_fields,
@@ -6219,6 +6239,7 @@ fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
 fn struct_scalar_array_shape(field: &C0StructField) -> Option<(C0Type, Vec<u32>)> {
     let (element_type, length) = match field.c_type {
         C0Type::Int32Array(length) => (C0Type::Int32, length),
+        C0Type::UInt32Array(length) => (C0Type::UInt32, length),
         C0Type::Int64Array(length) => (C0Type::Int64, length),
         C0Type::UInt64Array(length) => (C0Type::UInt64, length),
         C0Type::CharArray(length) => (C0Type::Char, length),
@@ -20457,6 +20478,48 @@ mod scope_metadata_tests {
             invalid[1].3 = width;
             assert!(C0StructLayout::from_explicit_fields(invalid, 4, 2).is_err());
         }
+    }
+
+    #[test]
+    fn explicit_scalar_array_fields_preserve_extent_and_check_full_layout() {
+        for length in [1, 1024, 1_000_000] {
+            let width = length * 4;
+            let fields = vec![
+                ("values".into(), C0Type::UInt32Array(length), 0, width),
+                ("marker".into(), C0Type::UInt8, width, 1),
+            ];
+            let layout =
+                C0StructLayout::from_explicit_fields(fields.clone(), width + 4, 4).unwrap();
+            assert_eq!(
+                layout.field("values").unwrap().array_shape(),
+                Some(&[length][..])
+            );
+            assert_eq!(layout.to_kernel_aggregate_layout().fields().len(), 2);
+            for (offset, bytes) in [(1, width), (0, width - 1), (4, width)] {
+                let mut bad = fields.clone();
+                bad[0].2 = offset;
+                bad[0].3 = bytes;
+                assert!(C0StructLayout::from_explicit_fields(bad, width + 4, 4).is_err());
+            }
+        }
+        let empty = C0StructLayout::from_explicit_fields(
+            vec![
+                ("marker".into(), C0Type::UInt8, 0, 1),
+                ("empty".into(), C0Type::UInt8Array(0), 0, 0),
+            ],
+            1,
+            1,
+        )
+        .unwrap();
+        assert_eq!(empty.field("empty").unwrap().byte_width(), 0);
+        assert!(
+            C0StructLayout::from_explicit_fields(
+                vec![("too_big".into(), C0Type::UInt32Array(u32::MAX), 0, 0)],
+                4,
+                4
+            )
+            .is_err()
+        );
     }
 
     #[test]

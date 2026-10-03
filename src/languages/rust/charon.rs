@@ -428,16 +428,18 @@ impl BodyAdapter<'_, '_> {
             }
             a::PlaceKind::Projection(base, a::ProjectionElem::Field(None, field)) => {
                 let id = self.adapter.record_id(&base.ty)?;
+                let declaration = self
+                    .adapter
+                    .fields(id)?
+                    .get(*field)
+                    .ok_or_else(|| unsupported("invalid field"))?;
+                if self.adapter.ty(&p.ty)? != self.adapter.ty(&declaration.ty)? {
+                    return Err(unsupported("field projection type mismatch"));
+                }
                 E::Field {
                     base: Box::new(self.place(base)?),
                     record: self.adapter.records[&id].clone(),
-                    field: self
-                        .adapter
-                        .fields(id)?
-                        .get(*field)
-                        .ok_or_else(|| unsupported("invalid field"))?
-                        .name
-                        .clone(),
+                    field: declaration.name.clone(),
                 }
             }
             a::PlaceKind::Projection(
@@ -539,12 +541,22 @@ impl BodyAdapter<'_, '_> {
             }
             a::Rvalue::Ref {
                 place,
-                kind: a::BorrowKind::Shared | a::BorrowKind::Mut | a::BorrowKind::TwoPhaseMut,
+                kind:
+                    kind @ (a::BorrowKind::Shared | a::BorrowKind::Mut | a::BorrowKind::TwoPhaseMut),
                 ptr_metadata,
-            } if ptr_metadata.ty().is_unit() => E::Borrow {
-                place: Box::new(self.place(place)?),
-                value_type: self.adapter.ty(ty)?,
-            },
+            } if ptr_metadata.ty().is_unit() => {
+                let destination = self.adapter.ty(ty)?;
+                let source = self.adapter.ty(&place.ty)?;
+                let mutable = matches!(kind, a::BorrowKind::Mut | a::BorrowKind::TwoPhaseMut);
+                if !matches!(&destination, Type::Reference { mutable: m, pointee } if *m == mutable && **pointee == source)
+                {
+                    return Err(unsupported("borrow kind/pointee/type mismatch"));
+                }
+                E::Borrow {
+                    place: Box::new(self.place(place)?),
+                    value_type: destination,
+                }
+            }
             a::Rvalue::UnaryOp(a::UnOp::Not, op) if self.adapter.ty(op.ty())? == Type::Bool => {
                 E::Not {
                     value: Box::new(self.operand(op)?),
@@ -1201,6 +1213,110 @@ mod tests {
             &prepared,
         )
         .unwrap();
+    }
+
+    const FIELDS_ARTIFACT: &[u8] =
+        include_bytes!("../../../design/charon-trial/array-fields/fields.ullbc");
+    const FIELDS_SOURCE: &[u8] =
+        include_bytes!("../../../design/charon-trial/array-fields/fields.rs");
+    #[test]
+    fn charon_array_field_layout_and_verification_work_are_independent_of_extent() {
+        let mut samples = Vec::new();
+        for length in [4, 1024, 1_000_000] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let mut export = decode(FIELDS_ARTIFACT, "fields.rs", FIELDS_SOURCE).unwrap();
+            export.functions.retain(|f| f.name == "read");
+            export.records.retain(|r| r.name == "Lanes");
+            for local in &mut export.functions[0].mir.as_mut().unwrap().locals {
+                if let Type::Reference { pointee, .. } = &mut local.value_type
+                    && let Type::Array { length: n, .. } = pointee.as_mut()
+                {
+                    *n = u64::from(length);
+                }
+            }
+            let record = &mut export.records[0];
+            record.size = length * 4 + 4;
+            for field in &mut record.fields {
+                if let Type::Array { length: n, .. } = &mut field.value_type {
+                    *n = u64::from(length);
+                } else {
+                    field.offset = length * 4;
+                }
+            }
+            let (_, layouts) = super::super::lowering::lower(&export).unwrap();
+            assert_eq!(
+                layouts["Lanes"].to_kernel_aggregate_layout().fields().len(),
+                2
+            );
+            let prepared = super::super::import::prepared_for_test(export).unwrap();
+            let sidecar = format!(
+                "verifying \"fields.rs\"; uint32 read(const struct Lanes* state, uint64 index) {{ requires index == 0u64; views state->values[0..{length}]; ensures result == old(state->values[(int32)(uint32)index]); }} by {{ execute(); simp(); }}"
+            );
+            let (verified, work) = crate::instrumentation::measure_deterministic_work(|| {
+                C0VerificationSession::new_program_prepared(&sidecar, &prepared)
+            });
+            verified.unwrap();
+            samples.push(work);
+        }
+        assert!(
+            samples.iter().all(|work| *work <= samples[0] + 128),
+            "{samples:?}"
+        );
+    }
+    #[test]
+    fn charon_array_fields_reject_overlapping_layouts_and_forged_mutability() {
+        let mut export = decode(FIELDS_ARTIFACT, "fields.rs", FIELDS_SOURCE).unwrap();
+        let original = export.clone();
+        let record = export
+            .records
+            .iter_mut()
+            .find(|r| r.name == "Lanes")
+            .unwrap();
+        record
+            .fields
+            .iter_mut()
+            .find(|f| f.name == "marker")
+            .unwrap()
+            .offset = 0;
+        assert!(
+            super::super::lowering::lower(&export)
+                .unwrap_err()
+                .contains("invalid layout")
+        );
+        export = original;
+        let function = export
+            .functions
+            .iter_mut()
+            .find(|f| f.name == "borrowed_first")
+            .unwrap();
+        let mut changed = false;
+        for statement in function
+            .mir
+            .as_mut()
+            .unwrap()
+            .blocks
+            .iter_mut()
+            .flat_map(|b| &mut b.statements)
+        {
+            if let S::Assign {
+                value:
+                    E::Borrow {
+                        value_type: Type::Reference { mutable, .. },
+                        place,
+                    },
+                ..
+            } = statement
+                && matches!(place.as_ref(), E::Field { .. })
+            {
+                *mutable = true;
+                changed = true;
+            }
+        }
+        assert!(changed);
+        let Err(error) = super::super::lowering::lower(&export) else {
+            panic!("forged mutable array borrow must be rejected");
+        };
+        assert!(error.contains("mutable array field borrow"));
     }
 
     const ARITHMETIC_ARTIFACT: &[u8] =

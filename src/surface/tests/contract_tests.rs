@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn unsigned_word_array_field_contracts_decay_to_typed_addresses() {
+    let source = "struct packet { uint32 values[4]; }; uint32 read(struct packet* p, int32 k) { return p->values[k]; }";
+    let proof = r#"verifying "fields.c";
+        uint32 read(struct packet* p, int32 k) {
+            requires 0 <= k and k < 4;
+            views p->values[0..4];
+            ensures result == old(p->values[k]);
+        } by { execute(); simp(); }"#;
+    verify_c0_sources(proof, &[("fields.c", source)]).unwrap();
+    assert!(
+        verify_c0_sources(
+            &proof.replace("views p->values[0..4];", ""),
+            &[("fields.c", source)]
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn modular_exceptional_call_continues_through_a_normal_assignment() {
     let c_source = r#"
         int32 helper(int32 x) { return x; }

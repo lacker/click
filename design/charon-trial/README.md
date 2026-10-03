@@ -12,7 +12,7 @@ The trial is narrower than the existing frontend. It accepts `i32`, `u8`, `u16`,
 calls, scalar casts, comparisons, checked addition/subtraction/multiplication,
 unsigned division/remainder, shifts and bitwise operations,
 acyclic branches, nested natural while loops, whole-value moves, precise drops,
-resolved unsigned `From` conversions, the scalar arrays, byte slices, and shared exact-chunk protocol described below.
+resolved unsigned `From` conversions, the scalar arrays, byte slices, borrowed scalar array fields, and shared exact-chunk protocol described below.
 General traits/generics, nested owned fields, and returned references are not
 enabled by this adapter yet. Extraction coverage in the
 [assessment](../rust-charon-assessment.md) is broader than checked coverage here.
@@ -253,6 +253,41 @@ composition regression; importing the unchanged checksum loop and proving its
 arithmetic are still separate adoption gates. Source/proof observations still
 need a stable interface before making Charon the default.
 
+## Borrowed array-field checkpoint
+
+[`array-fields/fields.rs`](array-fields/fields.rs) and its
+[sidecar](array-fields/fields.click) exercise fixed `u8` and `u32` array
+fields through compiler-selected record offsets and the shared memory model.
+Named and tuple fields may be indexed and borrowed from shared or mutable record
+references. Borrowed byte fields may coerce to slices and call local functions;
+borrowed word arrays retain their extent when passed to local functions. The
+trial proves reads, a mutation's neighboring-cell/marker frame, and an empty
+field's length. Charon calls the tuple field `_0` in the locked artifact; its
+Rust source still uses `.0`. Stable proof observations remain an adoption gate.
+
+`borrowed-scalar-array-fields-v1` binds this interpretation into the import lock.
+Each field retains one layout entry and a concrete extent, including a zero
+extent. ABI validation checks byte widths, offsets, alignment and overlap across
+the complete array, without flattening its elements. Extents must fit the
+signed-word memory model. Full-width index bounds are checked before fixed-array
+indices become signed-word offsets. Pointer qualifiers follow the record
+reference; mutable array borrows from shared records are rejected. The shared
+contract path also treats `u32` array fields as typed addresses, with a C
+regression for the same rule.
+
+Use explicit array-field segments for memory authority. Deterministic checks at
+lengths 4, 1024 and 1,000,000 keep layout cardinality and verification work bounded
+independently of the field extent. Negative cases cover out-of-bounds/high-bit
+indices, missing write authority, false results, invalid layouts and forged
+mutable borrows. Verification, profiling, auditing and expanded-certificate
+rechecking agree on the trial.
+
+Owned records containing arrays, whole-field copies and whole-field assignments
+remain rejected. They need compact region initialization and copying that preserve
+neighboring fields; the existing fresh whole-local array operation does not
+provide those semantics. Add that checkpoint and shared array iteration before
+claiming support for adler2's owned `U32X4` computation.
+
 ## Checksum arithmetic checkpoint
 
 [`arithmetic/arithmetic.rs`](arithmetic/arithmetic.rs) retains the existing
@@ -287,8 +322,8 @@ cargo run --bin click -- verify design/charon-trial/arithmetic/arithmetic.click
 cargo nextest run --test rust_import --run-ignored only -E 'test(charon_checksum_arithmetic_live_refresh_and_rejected_modes)'
 ```
 
-The unchanged adler2 path still needs array fields, array/shared-element
-iteration, resolved custom operators and crate-level import coverage. Continue
+The unchanged adler2 path still needs owned array-field construction/moves,
+array/shared-element iteration, resolved custom operators and crate-level import coverage. Continue
 those checkpoints before claiming checksum verification or changing the default.
 
 ## Profile, locks, and trust

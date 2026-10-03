@@ -24,10 +24,23 @@ pub(super) fn lower(
         if !cx.locals.insert(local.name.clone()) {
             return Err("duplicate MIR local identity".into());
         }
+        if let Type::Reference { mutable, .. } = &local.value_type {
+            cx.references.insert(local.name.clone(), !mutable);
+        }
         let statement = match &local.value_type {
             Type::Unit => c_skip(),
             Type::Reference { pointee, .. } if **pointee == Type::ChunkIterator => c_skip(),
             Type::Record { name } => {
+                if cx
+                    .records
+                    .get(name.as_str())
+                    .ok_or("missing owned record")?
+                    .fields
+                    .iter()
+                    .any(|f| matches!(f.value_type, Type::Array { .. }))
+                {
+                    return Err("owned records with array fields require compact region construction and moves".into());
+                }
                 cx.owned_locals.insert(local.name.clone());
                 let flag = format!("__rust_owned_live_{index}");
                 if !cx.locals.insert(flag.clone()) {
@@ -215,6 +228,9 @@ pub(super) fn lower(
                     target: E::Local { name },
                     value,
                 } if cx.local_arrays.contains(name) => {
+                    if matches!(value, E::Field { .. }) {
+                        return Err("owned array field copies require compact region copies".into());
+                    }
                     let (length, element, _) = cx.arrays[name];
                     let pointer = cx.array_pointer(name)?;
                     match value {
@@ -252,6 +268,16 @@ pub(super) fn lower(
                     value,
                 } if !records.contains_key(name.as_str()) => cx.assign(name, value)?,
                 S::Assign { target, value } => {
+                    if let E::Field { record, field, .. } = target
+                        && cx
+                            .fields
+                            .get(&(record.as_str(), field.as_str()))
+                            .is_some_and(|(_, ty)| array_field_parts(*ty).is_some())
+                    {
+                        return Err(
+                            "whole-array field assignment requires compact region updates".into(),
+                        );
+                    }
                     let (mut checks, mut value) = cx.prepared_expr(value)?;
                     if matches!(target, E::Index { .. }) {
                         let value_type = match cx.place_type(target)? {
@@ -670,6 +696,7 @@ mod tests {
             let records = BTreeMap::new();
             let functions = BTreeMap::new();
             let mut cx = Context {
+                references: BTreeMap::new(),
                 chunk_iterators: BTreeSet::new(),
                 mir_chunk_iterators: BTreeSet::new(),
                 chunk_options: BTreeSet::new(),

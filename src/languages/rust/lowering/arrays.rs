@@ -2,7 +2,7 @@
 //! copies. Constructor operands are captured before any destination write.
 use super::*;
 
-fn array_length(element: CType, length: u64) -> Result<u32, String> {
+pub(super) fn array_length(element: CType, length: u64) -> Result<u32, String> {
     if !matches!(element, CType::UInt8 | CType::UInt32 | CType::Int32) {
         return Err("fixed arrays require i32, u8 or u32 elements".into());
     }
