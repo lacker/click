@@ -929,8 +929,7 @@ impl<'a> ProofScope<'a> {
                         context.arguments,
                         &pre_state,
                         (*execution.core.state).clone(),
-                        context.predicate_environment,
-                        context.click_function_environment,
+                        context.spec_definitions,
                         &execution.core.unfolded_predicates,
                         preserve_exposed_body,
                     )?;

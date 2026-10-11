@@ -1000,8 +1000,7 @@ fn synthesized_surface_matches_proposition(
         state,
         None,
         &RecordedSnapshots::default(),
-        &PredicateEnvironment::new(&[]),
-        &ClickFunctionEnvironment::new(&[]),
+        SpecDefinitions::new(&PredicateEnvironment::new(&[]), &ClickFunctionEnvironment::new(&[])),
         &std::collections::BTreeSet::new(),
         crate::surface::lowering::parameter_pointer_element_widths(parameters),
     );

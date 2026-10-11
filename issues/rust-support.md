@@ -92,9 +92,13 @@ addition prove the exact deferred prefix-length times seed contribution,
 including the exact length-cast observation. B also passes through the scalar
 and lane reductions, ordered weighted corrections and four scalar additions,
 with checked native subtraction, multiplication, addition and store bridges.
-Both prefix residues hold before the tail. The scalar-tail induction and
-final checksum postconditions remain pending, as do the arbitrary-length
-computation’s nested loops. Full original-computation smart audits
+Both prefix residues pass through the original scalar tail: each actual
+post-`Next` remaining count identifies the returned byte and the next common
+prefix, and both checked native additions preserve their residues. The B step
+uses the newly updated A value. Signed subtraction definedness and the exact
+native-to-Integer byte and assignment observations are checked explicitly.
+The loop-exit bridge and final checksum postconditions remain pending, as do
+the arbitrary-length computation’s nested loops. Full original-computation smart audits
 currently exhaust the standard ten-minute run bound before completing a site,
 while ordinary verification succeeds. This is an audit-tool limitation, not a
 reported proof failure; continue checksum proof work with ordinary verification

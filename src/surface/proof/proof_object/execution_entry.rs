@@ -21,8 +21,7 @@ impl<'a> Proof<'a> {
         arguments: &'a [CExpression],
         function_environment: &'a CExecutionEnvironment,
         resource_environment: &'a ResourceEnvironment,
-        predicate_environment: &'a PredicateEnvironment,
-        click_function_environment: &'a ClickFunctionEnvironment,
+        spec_definitions: SpecDefinitions<'a>,
         theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
         // The proof root is the entry's own fact lineage when the execution
@@ -58,8 +57,7 @@ impl<'a> Proof<'a> {
                 arguments,
                 function_environment,
                 resource_environment,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 theorem_environment,
                 step_tactic_name: "step()",
                 constants: Arc::new(constants),

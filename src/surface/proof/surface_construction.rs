@@ -9,8 +9,7 @@ fn checked_surface_fact_in_state_with_assumptions(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<ClickProposition, ClickError> {
     let check = |surface: &ClickProposition| {
         lower_fixed_state_proposition_with_assumptions(
@@ -22,8 +21,7 @@ fn checked_surface_fact_in_state_with_assumptions(
             state,
             None,
             view.recorded_snapshots,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(ClickError::new)
     };
@@ -283,8 +281,7 @@ pub(super) fn checked_surface_comparison_fact_in_state(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<ClickProposition, ClickError> {
     let assumptions = assumptions_from_propositions(available);
     checked_surface_comparison_fact_in_state_with_availability(
@@ -298,8 +295,7 @@ pub(super) fn checked_surface_comparison_fact_in_state(
         parameters,
         arguments,
         state,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
 }
 
@@ -313,8 +309,7 @@ pub(super) fn checked_surface_comparison_fact_in_state_with_indexed_facts(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<ClickProposition, ClickError> {
     checked_surface_comparison_fact_in_state_with_availability(
         view,
@@ -327,8 +322,7 @@ pub(super) fn checked_surface_comparison_fact_in_state_with_indexed_facts(
         parameters,
         arguments,
         state,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
 }
 
@@ -344,8 +338,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<ClickProposition, ClickError> {
     let _qualified_sources =
         super::surface_synthesis::QualifiedSynthesisScope::enter(view.surface_propositions);
@@ -394,8 +387,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             state,
             None,
             view.recorded_snapshots,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .as_ref()
         .is_ok_and(&fact_is_available)
@@ -439,8 +431,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                     state,
                     None,
                     view.recorded_snapshots,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                 )
                 .is_ok_and(|lowered| lowered == *kernel && fact_is_available(&lowered))
             };
@@ -535,8 +526,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                 parameters,
                 arguments,
                 state,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )
             .is_ok()
         {
@@ -557,8 +547,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             parameters,
             arguments,
             state,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         && strictly_available(&surface)
     {
@@ -607,8 +596,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                     parameters,
                     arguments,
                     state,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                 )
                 .is_ok_and(|lowered| {
                     matches_kernel(&lowered)
@@ -635,8 +623,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                     parameters,
                     arguments,
                     state,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                 )
                 .is_ok_and(|lowered| matches_kernel(&lowered))
                 && strictly_available(&candidate)
@@ -680,8 +667,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                     parameters,
                     arguments,
                     state,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                 );
                 if lowered.is_ok_and(|lowered| matches_kernel(&lowered))
                     && strictly_available(&candidate)
@@ -709,8 +695,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                     parameters,
                     arguments,
                     state,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                 )
                 .is_ok_and(|lowered| matches_kernel(&lowered))
                     && strictly_available(&candidate)
@@ -728,8 +713,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             parameters,
             arguments,
             state,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         ) && strictly_available(&surface)
         {
             return Ok(surface);

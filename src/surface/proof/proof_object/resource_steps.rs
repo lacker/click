@@ -472,8 +472,7 @@ impl<'a> Proof<'a> {
                     pre_state,
                     before,
                     &execution.presentation.recorded_snapshots,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                 )
                 .map_err(|message| {
                     // The kernel can only say the identity is absent. Here the
@@ -616,7 +615,8 @@ impl<'a> Proof<'a> {
                                 definition,
                                 |name| {
                                     context
-                                        .click_function_environment
+                                        .spec_definitions
+                                        .functions
                                         .algebraic_type_definitions
                                         .get(name)
                                 },
@@ -669,7 +669,7 @@ impl<'a> Proof<'a> {
             });
             crate::surface::proof::resources::pair_instance_body_clause_presentations(
                 context.resource_environment,
-                context.click_function_environment,
+                context.spec_definitions.functions,
                 instance,
                 &rewrite.body_clauses,
                 &parameter_values(context.parsed_function.parameters(), context.arguments)?,
@@ -708,7 +708,7 @@ impl<'a> Proof<'a> {
             );
             crate::surface::proof::resources::materialize_unfolded_instance_arm_cells(
                 context.resource_environment,
-                context.click_function_environment,
+                context.spec_definitions.functions,
                 context.parsed_function.parameters(),
                 context.arguments,
                 after,
@@ -885,8 +885,7 @@ impl<'a> Proof<'a> {
                     &state,
                     None,
                     &RecordedSnapshots::new(),
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                     BTreeMap::new(),
                 )
             }
@@ -907,8 +906,7 @@ impl<'a> Proof<'a> {
                     context.state,
                     context.result,
                     context.recorded_snapshots,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                     crate::surface::lowering::parameter_pointer_element_widths(context.parameters),
                 )
             }
@@ -932,8 +930,7 @@ impl<'a> Proof<'a> {
                     view.state,
                     view.result,
                     view.recorded_snapshots,
-                    view.predicate_environment,
-                    view.click_function_environment,
+                    view.spec_definitions,
                     crate::surface::lowering::parameter_pointer_element_widths(view.parameters),
                 )
             }
@@ -963,8 +960,7 @@ impl<'a> Proof<'a> {
                     &execution.core.state,
                     None,
                     &execution.presentation.recorded_snapshots,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                     crate::surface::lowering::parameter_pointer_element_widths(
                         context.parsed_function.parameters(),
                     ),
@@ -989,11 +985,11 @@ impl<'a> Proof<'a> {
         state: &CState,
         result: Option<&CValue>,
         recorded_snapshots: &RecordedSnapshots,
-        predicate_environment: &PredicateEnvironment,
-        click_function_environment: &ClickFunctionEnvironment,
+        spec_definitions: SpecDefinitions<'_>,
         parameter_pointer_element_widths: BTreeMap<String, u32>,
     ) -> Result<CheckedFocusedTransition, ClickError> {
-        let definition = click_function_environment
+        let definition = spec_definitions
+            .functions
             .get(&application.name)
             .ok_or_else(|| {
                 self.step_error(format!(
@@ -1062,8 +1058,7 @@ impl<'a> Proof<'a> {
                 state,
                 result,
                 recorded_snapshots,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 &BTreeSet::from([application.name.clone()]),
                 parameter_pointer_element_widths.clone(),
             )
@@ -1094,8 +1089,7 @@ impl<'a> Proof<'a> {
                 state,
                 result,
                 recorded_snapshots,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 &parameter_pointer_element_widths,
             )?;
             let mut facts = self.facts().clone();
@@ -1147,8 +1141,7 @@ impl<'a> Proof<'a> {
                                 state,
                                 result,
                                 recorded_snapshots,
-                                predicate_environment,
-                                click_function_environment,
+                                spec_definitions,
                                 &opaque_calls,
                                 parameter_pointer_element_widths.clone(),
                             )
@@ -1282,8 +1275,7 @@ impl<'a> Proof<'a> {
                         state,
                         result,
                         recorded_snapshots,
-                        predicate_environment,
-                        click_function_environment,
+                        spec_definitions,
                         &opaque_calls,
                         parameter_pointer_element_widths,
                     )
@@ -1358,8 +1350,7 @@ impl<'a> Proof<'a> {
         state: &CState,
         result: Option<&CValue>,
         recorded_snapshots: &RecordedSnapshots,
-        predicate_environment: &PredicateEnvironment,
-        click_function_environment: &ClickFunctionEnvironment,
+        spec_definitions: SpecDefinitions<'_>,
         parameter_pointer_element_widths: &BTreeMap<String, u32>,
     ) -> Result<Proposition, ClickError> {
         let name = &application.name;
@@ -1382,8 +1373,7 @@ impl<'a> Proof<'a> {
                     state,
                     result,
                     recorded_snapshots,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                     &opaque_calls,
                     parameter_pointer_element_widths.clone(),
                 )
@@ -1726,15 +1716,13 @@ impl<'a> Proof<'a> {
         match self.context.as_ref() {
             ProofContext::Pure(context) => self.apply_proposition_predicate_unfold(
                 name,
-                context.predicate_environment,
-                context.click_function_environment,
+                context.spec_definitions,
                 context.claim_label,
                 self.node.depth,
             ),
             ProofContext::FixedState(context) => self.apply_proposition_predicate_unfold(
                 name,
-                context.predicate_environment,
-                context.click_function_environment,
+                context.spec_definitions,
                 context.claim_label,
                 context.tactic_index,
             ),
@@ -1744,8 +1732,7 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(context) if self.focused_outcome_data().is_some() => self
                 .apply_proposition_predicate_unfold(
                     name,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                     context.claim_label,
                     context.tactic_index,
                 ),
@@ -1756,16 +1743,14 @@ impl<'a> Proof<'a> {
     pub(super) fn apply_proposition_predicate_unfold(
         &self,
         name: &String,
-        predicate_environment: &PredicateEnvironment,
-        click_function_environment: &ClickFunctionEnvironment,
+        spec_definitions: SpecDefinitions<'_>,
         claim_label: &str,
         tactic_index: usize,
     ) -> Result<CheckedFocusedTransition, ClickError> {
         let checked = check_unfold_predicate_in_facts(
             self.facts(),
             name,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             claim_label,
             tactic_index,
         )?;
@@ -1774,7 +1759,7 @@ impl<'a> Proof<'a> {
                 let surface = match &goal.surface {
                     Some(surface) => Some(
                         unfold_structural_invariant_proposition(
-                            predicate_environment,
+                            spec_definitions.predicates,
                             surface,
                             std::slice::from_ref(name),
                         )
@@ -1801,8 +1786,7 @@ impl<'a> Proof<'a> {
                             context.state,
                             context.result,
                             context.recorded_snapshots,
-                            context.predicate_environment,
-                            context.click_function_environment,
+                            context.spec_definitions,
                         )
                         .map_err(|message| self.step_error(message))?
                     }
@@ -1822,14 +1806,12 @@ impl<'a> Proof<'a> {
                             view.state,
                             view.result,
                             view.recorded_snapshots,
-                            view.predicate_environment,
-                            view.click_function_environment,
+                            view.spec_definitions,
                         )
                         .map_err(|message| self.step_error(message))?
                     }
                     _ => unfold_predicates_in_proposition(
-                        predicate_environment,
-                        click_function_environment,
+                        spec_definitions,
                         std::slice::from_ref(name),
                         goal.kernel(),
                         checked.facts.assumptions(),
@@ -1895,7 +1877,7 @@ impl<'a> Proof<'a> {
                     .as_deref()
                     .map(|surface| {
                         unfold_structural_invariant_proposition(
-                            context.predicate_environment,
+                            context.spec_definitions.predicates,
                             surface,
                             std::slice::from_ref(name),
                         )
@@ -1916,16 +1898,14 @@ impl<'a> Proof<'a> {
                             &execution.core.state,
                             None,
                             &execution.presentation.recorded_snapshots,
-                            context.predicate_environment,
-                            context.click_function_environment,
+                            context.spec_definitions,
                         )
                         .map_err(|message| {
                             self.step_error(format!("could not unfold proposition goal: {message}"))
                         })?
                     }
                     None => unfold_predicates_in_proposition(
-                        context.predicate_environment,
-                        context.click_function_environment,
+                        context.spec_definitions,
                         std::slice::from_ref(name),
                         goal.kernel(),
                         checked.facts.assumptions(),
@@ -2079,8 +2059,7 @@ impl<'a> Proof<'a> {
             self.facts().clone(),
             &mut execution.presentation.surface_propositions,
             &mut execution.core.function_entry_derivations,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             context.claim_label,
             context.tactic_index,
         )?;
@@ -2154,8 +2133,7 @@ impl<'a> Proof<'a> {
             (*execution.core.state).clone(),
             self.facts().clone(),
             &mut execution.presentation.surface_propositions,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             context.claim_label,
             context.tactic_index,
             true,
@@ -2246,8 +2224,7 @@ impl<'a> Proof<'a> {
             context.arguments,
             &pre_state,
             (*execution.core.state).clone(),
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             &execution.core.unfolded_predicates,
             family_reaches_population,
         )?;
@@ -2342,8 +2319,7 @@ impl<'a> Proof<'a> {
             (*data.core.state).clone(),
             self.facts().clone(),
             &mut data.surface_propositions,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             context.claim_label,
             context.tactic_index,
             false,
@@ -2462,8 +2438,7 @@ impl<'a> Proof<'a> {
             context.arguments,
             pre_state,
             outcome,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             &self.active_unfolded_predicates(),
             closure,
             family_reaches_population,

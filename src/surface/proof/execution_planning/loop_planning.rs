@@ -431,8 +431,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
         None,
         &recorded_snapshots,
         &context.surface_propositions,
-        environment.predicate_environment,
-        environment.click_function_environment,
+        environment.spec_definitions,
         environment.theorem_environment,
         &[],
         &[],
@@ -890,8 +889,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
         environment.arguments,
         environment.function_environment,
         environment.resource_environment,
-        environment.predicate_environment,
-        environment.click_function_environment,
+        environment.spec_definitions,
         environment.theorem_environment,
     )
     .with_surface_local_scope(&phase_proof_scope(environment));
@@ -1170,8 +1168,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             preservation.state(),
             None,
             &recorded_snapshots,
-            environment.predicate_environment,
-            environment.click_function_environment,
+            environment.spec_definitions,
         )
     {
         let surface = surface_at_snapshot(
@@ -1225,8 +1222,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         environment.arguments,
         environment.function_environment,
         environment.resource_environment,
-        environment.predicate_environment,
-        environment.click_function_environment,
+        environment.spec_definitions,
         environment.theorem_environment,
     )
     .with_surface_local_scope(&phase_proof_scope(environment));

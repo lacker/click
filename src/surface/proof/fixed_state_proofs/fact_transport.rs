@@ -14,8 +14,7 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
     arguments: &[CExpression],
     view: ExecutionView<'_>,
     state: &CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Vec<ClickProposition>, ClickError> {
     let mut candidates = available
         .iter()
@@ -28,8 +27,7 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
                 parameters,
                 arguments,
                 state,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )
             .ok();
             surface.map(|surface| (kernel.clone(), surface))
@@ -215,8 +213,7 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
     result: Option<&CValue>,
     recorded_snapshots: &RecordedSnapshots,
     surface_propositions: &SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CheckedFixedStateFactTransport, ClickError> {
     // One explicit transport can ask the same failed alias/frame question
     // through several proof routes. Share their existing, fully keyed failure
@@ -237,8 +234,7 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
             result,
             recorded_snapshots,
             surface_propositions,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
     })
 }
@@ -259,8 +255,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
     result: Option<&CValue>,
     recorded_snapshots: &RecordedSnapshots,
     surface_propositions: &SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CheckedFixedStateFactTransport, ClickError> {
     // Resource compositions keep separation compact. Materialize only a
     // listed separation premise on the local checked snapshot so explicit
@@ -283,8 +278,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
                 state,
                 result,
                 recorded_snapshots,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )
             .map_err(|message| {
                 ClickError::new(format!(
@@ -345,8 +339,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
             state,
             result,
             recorded_snapshots,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(|message| {
             ClickError::new(format!(
@@ -376,8 +369,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
             state,
             result,
             recorded_snapshots,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .unwrap_or(ordinary_source)
     } else {
@@ -451,8 +443,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
         state,
         result,
         recorded_snapshots,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| {
         ClickError::new(format!(
@@ -852,8 +843,7 @@ pub(in crate::surface::proof) fn fact_transport_candidates_at_outcome(
     result: &CValue,
     view: ExecutionView<'_>,
     unfolded_predicates: &[String],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Vec<ClickProposition>, ClickError> {
     let mut candidates = Vec::new();
     for kernel in available {
@@ -869,8 +859,7 @@ pub(in crate::surface::proof) fn fact_transport_candidates_at_outcome(
             pre_state,
             post_state,
             result,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         ) && !candidates.contains(&surface)
         {
             candidates.push(surface);

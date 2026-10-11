@@ -196,8 +196,7 @@ impl<'a> Proof<'a> {
             context.old_reference_state(&execution.core.frontier, &execution.core.state),
             &execution.core.state,
             &execution.presentation.recorded_snapshots,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
         )
         .map_err(|message| {
             self.step_error(format!("could not lower match scrutinee: {message}"))
@@ -499,7 +498,7 @@ impl<'a> Proof<'a> {
         let clause_presentations = if let Some(instance) = plan.matched_instance.as_ref() {
             crate::surface::proof::resources::pair_instance_body_clause_presentations(
                 context.resource_environment,
-                context.click_function_environment,
+                context.spec_definitions.functions,
                 instance,
                 plan.partition
                     .body_clauses_for_case(plan.case_indices[index])

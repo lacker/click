@@ -282,8 +282,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
     function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
     function_source_registry: Arc<FunctionSourceRegistry>,
@@ -322,8 +321,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
                 function_block,
                 parsed_function,
                 resource_environment,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 claim_label,
                 Some(&caller_source_owner),
             )
@@ -353,8 +351,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         parsed_function,
         &state,
         &arguments,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         resource_environment,
         Some(ResourceFrameEntry {
             assumptions: &assumptions_from_propositions(&pure_facts),
@@ -486,8 +483,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         parsed_function,
         claim_label,
         function_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         resource_environment,
         theorem_environment,
         &function,
@@ -507,8 +503,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
             parsed_function,
             claim_label,
             function_environment,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             resource_environment,
             theorem_environment,
             &function,
@@ -524,8 +519,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
             parsed_function,
             &proof_claims,
             false,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             resource_environment,
             theorem_environment,
             function_environment,
@@ -561,8 +555,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
     parsed_function: &syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
     function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
     function_source_registry: Arc<FunctionSourceRegistry>,
@@ -607,8 +600,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
                 function_block,
                 parsed_function,
                 resource_environment,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 &proof_label,
                 Some(&caller_source_owner),
             )
@@ -638,8 +630,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         parsed_function,
         &state,
         &arguments,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         resource_environment,
         Some(ResourceFrameEntry {
             assumptions: &assumptions_from_propositions(&pure_facts),
@@ -763,8 +754,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         parsed_function,
         &proof_label,
         function_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         resource_environment,
         theorem_environment,
         &function,
@@ -784,8 +774,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
             parsed_function,
             &proof_label,
             function_environment,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             resource_environment,
             theorem_environment,
             &function,
@@ -801,8 +790,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
             parsed_function,
             claims,
             true,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             resource_environment,
             theorem_environment,
             function_environment,
@@ -838,8 +826,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_auto(
     parsed_function: &syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
     function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
     function_source_registry: Arc<FunctionSourceRegistry>,
@@ -856,8 +843,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_auto(
         parsed_function,
         claims,
         function_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         resource_environment,
         theorem_environment,
         function_source_registry,
@@ -877,8 +863,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_script(
     parsed_function: &syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
     function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
     function_source_registry: Arc<FunctionSourceRegistry>,
@@ -891,8 +876,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_script(
         parsed_function,
         claims,
         function_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         resource_environment,
         theorem_environment,
         function_source_registry,
@@ -1395,8 +1379,7 @@ fn close_claim_directly_from_outcome<'a>(
     entry_facts: &[Proposition],
     execution_paths: &[crate::kernel::CFunctionExecutionCandidate],
     parameters: &[syntax::C0Parameter],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Result<Proof<'a>, ClickError>, ClickError> {
     let surface = describe_click_proposition(surface_goal);
     let failure = |reason: String| {
@@ -1482,8 +1465,7 @@ fn close_claim_directly_from_outcome<'a>(
                     state,
                     Some(value),
                     &RecordedSnapshots::new(),
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                     &BTreeSet::new(),
                 )
                 .ok()
@@ -1720,8 +1702,7 @@ pub(super) fn finish_ordered_proof<'a>(
     parsed_function: &syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
     require_explicit_closers: bool,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     resource_environment: &ResourceEnvironment,
     _theorem_environment: &TheoremEnvironment,
     function_environment: &CExecutionEnvironment,
@@ -1802,8 +1783,7 @@ pub(super) fn finish_ordered_proof<'a>(
                 parsed_function,
                 pre_state,
                 arguments,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 resource_environment,
                 Some(ResourceFrameEntry {
                     assumptions: &assumptions_from_propositions(entry_pure_facts.as_slice()),
@@ -1864,8 +1844,7 @@ pub(super) fn finish_ordered_proof<'a>(
         // unfolded requirement while kernel certification sees only the
         // opaque predicate and rejects the verified loop rule.
         certification_facts = requirements_with_structural_unfolds(
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             frontier_function_block
                 .as_ref()
                 .unwrap_or(&**function_block),
@@ -2184,8 +2163,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     post_state,
                                     result,
                                     &proof_execution.presentation.recorded_snapshots,
-                                    predicate_environment,
-                                    click_function_environment,
+                                    spec_definitions,
                                 )
                                 .ok(),
                                 _ => None,
@@ -2826,8 +2804,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         result,
                                         proof_execution.view(proof_context),
                                         &path_unfolds,
-                                        predicate_environment,
-                                        click_function_environment,
+                                        spec_definitions,
                                     )?)
                                 } else {
                                     None
@@ -3240,8 +3217,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             arguments,
                                             pre_state,
                                             &outcome,
-                                            predicate_environment,
-                                            click_function_environment,
+                                            spec_definitions,
                                             &proof_execution.presentation.recorded_snapshots,
                                             &unfolded_predicates,
                                         )
@@ -3552,8 +3528,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 arguments,
                                                 pre_state,
                                                 &outcome,
-                                                predicate_environment,
-                                                click_function_environment,
+                                                spec_definitions,
                                                 &proof_execution.presentation.recorded_snapshots,
                                                 &unfolded_predicates,
                                             )
@@ -3833,8 +3808,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 arguments,
                                                 pre_state,
                                                 &outcome,
-                                                predicate_environment,
-                                                click_function_environment,
+                                                spec_definitions,
                                                 &proof_execution.presentation.recorded_snapshots,
                                                 &unfolded_predicates,
                                             )
@@ -4258,7 +4232,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 && !direct_resource_claims.is_empty()
                                             {
                                                 unfold_structural_invariant_proposition(
-                                                    predicate_environment,
+                                                    spec_definitions.predicates,
                                                     surface_goal,
                                                     &unfolded_predicates,
                                                 )
@@ -4336,8 +4310,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                         entry_pure_facts.as_slice(),
                                                         execution.paths(),
                                                         parsed_function.parameters(),
-                                                        predicate_environment,
-                                                        click_function_environment,
+                                                        spec_definitions,
                                                     )?
                                                     .err()
                                                     .map(|reason| format!("\n{}", reason.raw_summary()))
@@ -4369,7 +4342,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     && !direct_resource_claims.is_empty()
                                                 {
                                                     unfold_structural_invariant_proposition(
-                                                        predicate_environment,
+                                                        spec_definitions.predicates,
                                                         goal,
                                                         &unfolded_predicates,
                                                     )
@@ -4586,8 +4559,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         entry_pure_facts.as_slice(),
                                         execution.paths(),
                                         parsed_function.parameters(),
-                                        predicate_environment,
-                                        click_function_environment,
+                                        spec_definitions,
                                     )? {
                                         reasons.push(reason.raw_summary().to_owned());
                                     }
@@ -4800,8 +4772,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     entry_pure_facts.as_slice(),
                                     execution.paths(),
                                     parsed_function.parameters(),
-                                    predicate_environment,
-                                    click_function_environment,
+                                    spec_definitions,
                                 )? {
                                     Ok(completed) => {
                                         closures[claim_index] =

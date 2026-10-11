@@ -34,15 +34,13 @@ pub(super) fn resolve_code_region_ref(
 }
 
 pub(super) fn requirements_with_structural_unfolds(
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     function_block: &FunctionBlock,
     requirement_pure_facts: &PureFactList,
 ) -> Result<PureFactList, String> {
     let unfolded_predicates = structural_unfold_tactic_names(function_block);
     let unfolded = unfold_available_predicate_facts(
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         &unfolded_predicates,
         requirement_pure_facts,
     )?;

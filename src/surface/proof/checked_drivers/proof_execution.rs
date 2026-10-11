@@ -1023,8 +1023,7 @@ pub(in crate::surface::proof) fn try_check_flat_function_proof<'a>(
     parsed_function: &'a syntax::C0Function,
     claim_label: &'a str,
     function_environment: &'a CExecutionEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'a>,
     resource_environment: &'a ResourceEnvironment,
     theorem_environment: &'a TheoremEnvironment,
     function: &'a CFunction,
@@ -1044,8 +1043,7 @@ pub(in crate::surface::proof) fn try_check_flat_function_proof<'a>(
         parsed_function,
         claim_label,
         function_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         resource_environment,
         theorem_environment,
         function,
@@ -1071,8 +1069,7 @@ fn try_check_flat_function_proof_inner<'a>(
     parsed_function: &'a syntax::C0Function,
     claim_label: &'a str,
     function_environment: &'a CExecutionEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'a>,
     resource_environment: &'a ResourceEnvironment,
     theorem_environment: &'a TheoremEnvironment,
     function: &'a CFunction,
@@ -1096,8 +1093,7 @@ fn try_check_flat_function_proof_inner<'a>(
         arguments,
         function_environment,
         resource_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         theorem_environment,
     );
     let Some((mut proof, remaining)) = advance_checked_linear_continuation(
@@ -1158,8 +1154,7 @@ pub(in crate::surface::proof) fn try_check_structural_function_proof<'a>(
     parsed_function: &'a syntax::C0Function,
     claim_label: &'a str,
     function_environment: &'a CExecutionEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'a>,
     resource_environment: &'a ResourceEnvironment,
     theorem_environment: &'a TheoremEnvironment,
     function: &'a CFunction,
@@ -1185,8 +1180,7 @@ pub(in crate::surface::proof) fn try_check_structural_function_proof<'a>(
         parsed_function,
         claim_label,
         function_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         resource_environment,
         theorem_environment,
         function,
@@ -1212,8 +1206,7 @@ fn try_check_structural_function_proof_inner<'a>(
     parsed_function: &'a syntax::C0Function,
     claim_label: &'a str,
     function_environment: &'a CExecutionEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'a>,
     resource_environment: &'a ResourceEnvironment,
     theorem_environment: &'a TheoremEnvironment,
     function: &'a CFunction,
@@ -1235,8 +1228,7 @@ fn try_check_structural_function_proof_inner<'a>(
         arguments,
         function_environment,
         resource_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         theorem_environment,
     );
     let mut current = program;
@@ -4796,8 +4788,8 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
     let tactic_index = proof_context.tactic_index;
     let parameters = proof_context.parsed_function.parameters();
     let arguments = proof_context.arguments;
-    let predicate_environment = proof_context.predicate_environment;
-    let click_function_environment = proof_context.click_function_environment;
+    let predicate_environment = proof_context.spec_definitions.predicates;
+    let click_function_environment = proof_context.spec_definitions.functions;
     let claim_label = proof_context.claim_label;
 
     if execution.core.frontier.is_at_function_exit()
@@ -4819,8 +4811,7 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
             &execution.core.state,
             None,
             &execution.presentation.recorded_snapshots,
-            predicate_environment,
-            click_function_environment,
+            SpecDefinitions::new(predicate_environment, click_function_environment),
         ) {
             let surface_fact = if value {
                 condition.clone()
@@ -4887,8 +4878,7 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
         &execution.core.state,
         None,
         &execution.presentation.recorded_snapshots,
-        predicate_environment,
-        click_function_environment,
+        SpecDefinitions::new(predicate_environment, click_function_environment),
     )
     .map_err(|message| {
         ClickError::new(format!(

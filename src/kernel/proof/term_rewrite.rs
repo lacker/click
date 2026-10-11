@@ -1492,15 +1492,20 @@ impl<'a> TermRewrite<'a> {
         rewrite
     }
 
-    /// Enable origin materialization for a checked fold-step substitution.
-    /// Ordinary machine rewrites keep registered load variables opaque; the
-    /// fold step is the narrow caller that must expose a binder-dependent
-    /// address so the selected snapshot load can be rewritten.
+    /// Expose registered read addresses for checked fold substitution or
+    /// pointer congruence. Ordinary machine rewrites keep these reads opaque.
     pub(crate) fn enable_registered_load_resolution(&mut self) {
         self.resolve_registered_loads = true;
     }
 
     fn rewrite_registered_load(&mut self, variable: Variable) -> Option<Variable> {
+        // Registered addresses can themselves name reads. Charge each lookup,
+        // including cache hits, so this relevant-address traversal shares the
+        // enclosing tactic's work and deadline bounds.
+        if crate::instrumentation::deadline_exceeded_with_work(1) {
+            self.integer_work_exhausted = true;
+            return None;
+        }
         if !self.registered_load_pointer_active.insert(variable) {
             // A reserved load variable with a cyclic registry origin cannot
             // be rewritten soundly.  Let checked callers reject the result
@@ -1515,7 +1520,17 @@ impl<'a> TermRewrite<'a> {
             self.changed |= rewritten != variable;
             return Some(rewritten);
         }
-        let Some((memory, pointer)) = crate::kernel::eval::registered_load_for_variable(&variable)
+        // A pointer equality can expose another cell. Its observed snapshot,
+        // rather than a projected identity for the original cell, is the same
+        // source used by native pointer rewriting. Fold substitution keeps its
+        // existing defining-snapshot semantics.
+        let origin = (self.pointer_variable.is_some()
+            || self.pointer_exact.is_some()
+            || self.pointer_offset_exact.is_some())
+        .then(|| crate::kernel::registered_load_origin_for_variable(&variable))
+        .flatten();
+        let Some((memory, pointer)) =
+            origin.or_else(|| crate::kernel::eval::registered_load_for_variable(&variable))
         else {
             self.registered_load_pointer_active.remove(&variable);
             self.unsupported_integer_scope = true;
@@ -3758,6 +3773,17 @@ impl<'a> TermRewrite<'a> {
         }
         Pointer {
             block: match &p.block {
+                PointerBlock::Symbolic(variable)
+                    if self.resolve_registered_loads
+                        && (self.pointer_variable.is_some()
+                            || self.pointer_exact.is_some()
+                            || self.pointer_offset_exact.is_some())
+                        && crate::kernel::is_load_variable(variable) =>
+                {
+                    PointerBlock::Symbolic(
+                        self.rewrite_registered_load(*variable).unwrap_or(*variable),
+                    )
+                }
                 PointerBlock::PureFunctionApplication(application) => {
                     self.charge_rewrite_work(1);
                     let key = (

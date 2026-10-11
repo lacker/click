@@ -114,6 +114,12 @@ fn reject_compute(contract: &str, before: &str, after: &str) {
         2,
     )
     .expect_err("invalid computation contract was accepted");
+    assert_eq!(
+        error.kind(),
+        click::surface::ClickErrorKind::Proof,
+        "{}",
+        error.message()
+    );
     assert!(
         !error.message().contains("budget exhausted"),
         "{}",
@@ -195,9 +201,19 @@ fn reject_helper_contracts(index: usize, mutations: &[(&str, &str)]) {
     for (before, after) in mutations {
         let invalid = proof.replace(before, after);
         assert_ne!(invalid, proof, "missing mutation: {before}");
+        let error = C0VerificationSession::new_program_prepared(&invalid, &prepared)
+            .err()
+            .expect("false helper contract was accepted");
+        assert_eq!(
+            error.kind(),
+            click::surface::ClickErrorKind::Proof,
+            "{}",
+            error.message()
+        );
         assert!(
-            C0VerificationSession::new_program_prepared(&invalid, &prepared).is_err(),
-            "accepted {before} -> {after}"
+            !error.message().contains("budget exhausted"),
+            "{}",
+            error.message()
         );
     }
 }
@@ -1436,6 +1452,25 @@ fn charon_adler2_small_batch_compute_rejects_missing_view_and_full_outer_batch()
 }
 
 #[test]
+#[ignore = "nightly: scalar-tail read must use the actual post-Next byte position"]
+fn charon_adler2_small_batch_compute_rejects_wrong_scalar_byte() {
+    let count = "(((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32))";
+    let goal =
+        format!("have to_integer(__rust_mir_144) == to_integer((bytes[({count} - 1)] as i32)) by");
+    reject_compute(SMALL_BATCH_COMPUTE, &goal, &goal.replace(" - 1)", " - 2)"));
+}
+
+#[test]
+#[ignore = "nightly: scalar B update must include the newly added byte"]
+fn charon_adler2_small_batch_compute_rejects_stale_scalar_a() {
+    reject_compute(
+        SMALL_BATCH_COMPUTE,
+        "have to_integer(at(tail_add_b, __rust_mir_147)) == to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144));",
+        "have to_integer(at(tail_add_b, __rust_mir_147)) == to_integer(at(tail_add_a, a));",
+    );
+}
+
+#[test]
 #[ignore = "nightly: original 0..22207-byte vector and tail computation from canonical states"]
 fn charon_adler2_small_batch_compute_proves_original_body() {
     let p = compute_project(SMALL_BATCH_COMPUTE);
@@ -1470,7 +1505,7 @@ fn charon_adler2_small_batch_compute_rejects_false_vector_prefix_a() {
     let representative = "adler_lane_a(to_integer(a), to_integer(a_vec.0[0]), to_integer(a_vec.0[1]), to_integer(a_vec.0[2]), to_integer(a_vec.0[3]))";
     let old_representative = "adler_lane_a(to_integer(a), to_integer(at(vector_a, a_vec.0[0])), to_integer(at(vector_a, a_vec.0[1])), to_integer(at(vector_a, a_vec.0[2])), to_integer(at(vector_a, a_vec.0[3])))";
     let bytes = format!(
-        "to_integer((int32)bytes[{previous}]) + to_integer((int32)bytes[{previous} + 1]) + to_integer((int32)bytes[{previous} + 2]) + to_integer((int32)bytes[{previous} + 3])"
+        "to_integer((bytes[{previous}] as i32)) + to_integer((bytes[{previous} + 1] as i32)) + to_integer((bytes[{previous} + 2] as i32)) + to_integer((bytes[{previous} + 3] as i32))"
     );
     reject_compute(
         SMALL_BATCH_COMPUTE,
@@ -1505,9 +1540,9 @@ fn charon_adler2_small_batch_compute_rejects_false_vector_prefix_b() {
         "adler_lane_b(to_integer(b) + to_integer({previous}) * to_integer(a), to_integer(at(vector_a, a_vec.0[1])), to_integer(at(vector_a, a_vec.0[2])), to_integer(at(vector_a, a_vec.0[3])), to_integer(at(vector_a, b_vec.0[0])), to_integer(at(vector_a, b_vec.0[1])), to_integer(at(vector_a, b_vec.0[2])), to_integer(at(vector_a, b_vec.0[3])))"
     );
     let old_a = "adler_lane_a(to_integer(a), to_integer(at(vector_a, a_vec.0[0])), to_integer(at(vector_a, a_vec.0[1])), to_integer(at(vector_a, a_vec.0[2])), to_integer(at(vector_a, a_vec.0[3])))";
-    let first_byte = format!("to_integer((int32)bytes[{previous}])");
+    let first_byte = format!("to_integer((bytes[{previous}] as i32))");
     let weighted = format!(
-        "(4 * {first_byte} + 3 * to_integer((int32)bytes[{previous} + 1]) + 2 * to_integer((int32)bytes[{previous} + 2]) + to_integer((int32)bytes[{previous} + 3]))"
+        "(4 * {first_byte} + 3 * to_integer((bytes[{previous} + 1] as i32)) + 2 * to_integer((bytes[{previous} + 2] as i32)) + to_integer((bytes[{previous} + 3] as i32)))"
     );
     let goal =
         format!("have {representative} == ({old_representative} + 4 * {old_a} + {weighted}) by");
@@ -2170,7 +2205,7 @@ fn charon_adler2_helpers_from_rejects_wrong_mathematical_bytes() {
             ),
             (
                 "old(to_integer((bytes[0] as i32)))",
-                "old(to_integer((int32)bytes[0])) + 1",
+                "old(to_integer((bytes[0] as i32))) + 1",
             ),
         ],
     );

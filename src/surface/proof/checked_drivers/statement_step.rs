@@ -48,8 +48,8 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
     let function = proof_context.function;
     let parsed_function = proof_context.parsed_function;
     let arguments = proof_context.arguments;
-    let predicate_environment = proof_context.predicate_environment;
-    let click_function_environment = proof_context.click_function_environment;
+    let predicate_environment = proof_context.spec_definitions.predicates;
+    let click_function_environment = proof_context.spec_definitions.functions;
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
@@ -93,8 +93,7 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
                 state,
                 None,
                 &execution.presentation.recorded_snapshots,
-                predicate_environment,
-                click_function_environment,
+                SpecDefinitions::new(predicate_environment, click_function_environment),
             )
             .map_err(|message| {
                 ClickError::new(format!(

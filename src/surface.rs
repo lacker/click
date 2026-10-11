@@ -5986,6 +5986,23 @@ pub enum SmartTactic {
     Simp,
 }
 
+/// The pure definitions a specification is lowered against: its predicates
+/// and its Click functions.
+#[derive(Clone, Copy)]
+struct SpecDefinitions<'a> {
+    predicates: &'a PredicateEnvironment,
+    functions: &'a ClickFunctionEnvironment,
+}
+
+impl<'a> SpecDefinitions<'a> {
+    fn new(predicates: &'a PredicateEnvironment, functions: &'a ClickFunctionEnvironment) -> Self {
+        Self {
+            predicates,
+            functions,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PredicateEnvironment {
     definitions: BTreeMap<String, PredicateDefinition>,

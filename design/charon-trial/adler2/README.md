@@ -566,8 +566,13 @@ scalar and lane reductions, all three ordered lane corrections and the four
 scalar additions. The reduction proof preserves the nonnegative representative;
 native subtraction, multiplication, addition and store checkpoints connect the
 actual weighted values to the common B prefix residue. Both scalar residues
-are established before the tail. The scalar tail and final checksum
-postconditions remain pending. Nightly mutations reject a duplicated lane
+pass through the original scalar tail. Its invariants relate the current
+A and B words to the common prefix at `length - remaining`, using the stored
+iterator state. Each returned byte is checked against its actual post-`Next`
+position; the signed prefix advances by one, the native A addition preserves
+its residue, and B includes the newly updated A value. Definedness bounds,
+byte casts and native assignment observations are explicit checked steps.
+The loop-exit bridge and final checksum postconditions remain pending. Nightly mutations reject a duplicated lane
 byte in the A transition, a changed completed-prefix A seed, an incorrect B
 byte weight, an omitted B seed contribution, a duplicated A lane during scalar
 recombination, changed recombined-prefix seeds, and an incorrect native B lane
@@ -577,7 +582,7 @@ The source-proved one-byte A and B recurrences advance both residues at the
 scalar-tail index. The B recurrence includes the updated A contribution. A
 native read bridge identifies the byte returned by `Next` using
 `length - remaining - 1`, checks its signed-index observation, and rejects
-a shifted byte. These lemmas prepare the scalar-tail induction.
+a shifted byte. The original scalar-tail induction applies these lemmas.
 
 The fixture is assembled with the existing helper bodies, recombination
 lemmas, iterator bounds, the common specification and lane-state lemmas,

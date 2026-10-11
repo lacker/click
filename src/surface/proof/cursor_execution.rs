@@ -29,8 +29,8 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     let tactic_index = proof_context.tactic_index;
     let parameters = proof_context.parsed_function.parameters();
     let arguments = proof_context.arguments;
-    let predicate_environment = proof_context.predicate_environment;
-    let click_function_environment = proof_context.click_function_environment;
+    let predicate_environment = proof_context.spec_definitions.predicates;
+    let click_function_environment = proof_context.spec_definitions.functions;
     let resource_environment = proof_context.resource_environment;
     let claim_label = proof_context.claim_label;
 
@@ -53,8 +53,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                         state,
                         None,
                         &execution.presentation.recorded_snapshots,
-                        predicate_environment,
-                        click_function_environment,
+                        SpecDefinitions::new(predicate_environment, click_function_environment),
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
@@ -281,8 +280,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                     &abstract_state,
                     None,
                     &execution.presentation.recorded_snapshots,
-                    predicate_environment,
-                    click_function_environment,
+                    SpecDefinitions::new(predicate_environment, click_function_environment),
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
@@ -840,7 +838,7 @@ fn execute_concrete_loop_head_step(
                 available_pure_facts,
                 &CStatement::Skip,
                 proof_context.function_environment,
-                Some(proof_context.predicate_environment),
+                Some(proof_context.spec_definitions.predicates),
                 CExecutionSemantics::APPLY_VERIFIED_RULES,
                 &transition_label,
                 &mut next_opaque_call,
@@ -1509,7 +1507,7 @@ pub(super) fn route_throw_to_handler(
             &facts,
             &statement,
             function_environment,
-            Some(proof_context.predicate_environment),
+            Some(proof_context.spec_definitions.predicates),
             CExecutionSemantics::APPLY_VERIFIED_RULES,
             &transition_label,
             &mut execution.core.next_opaque_call,
@@ -1786,7 +1784,7 @@ pub(super) fn prepare_call_outcome_split(
         available_pure_facts,
         &statement,
         proof_context.function_environment,
-        Some(proof_context.predicate_environment),
+        Some(proof_context.spec_definitions.predicates),
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         &transition_label,
         &mut next_opaque_call,
@@ -2324,7 +2322,7 @@ fn execute_step_from_frontier_position_selecting_path(
         available_pure_facts,
         &step_statement,
         function_environment,
-        Some(proof_context.predicate_environment),
+        Some(proof_context.spec_definitions.predicates),
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         &transition_label,
         &mut execution.core.next_opaque_call,
@@ -2388,7 +2386,7 @@ fn execute_step_from_frontier_position_selecting_path(
             available_pure_facts,
             &whole_suffix,
             function_environment,
-            Some(proof_context.predicate_environment),
+            Some(proof_context.spec_definitions.predicates),
             CExecutionSemantics::APPLY_VERIFIED_RULES,
             &transition_label,
             &mut next_opaque_call,

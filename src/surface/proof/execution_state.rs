@@ -1034,8 +1034,7 @@ pub(super) fn surface_branch_path_for_outcome(
     post_state: &CState,
     result: &CValue,
     recorded_snapshots: &RecordedSnapshots,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Vec<bool>, String> {
     let mut branch_path = Vec::new();
     let mut current = tactics;
@@ -1054,8 +1053,7 @@ pub(super) fn surface_branch_path_for_outcome(
             result,
             available,
             &proof_if.condition,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             recorded_snapshots,
         )?;
         let assumptions = assumptions_from_propositions(available);

@@ -994,6 +994,18 @@ impl adler2::Adler32 {
      apply(uint32_to_integer_bounds(b));
      have to_integer(a) <= adler_tail_a_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), ((__rust_mir_138_remaining as u32) as i32))) by { rewrite(adler_tail_consumed(((remainder_len as u32) as i32), ((__rust_mir_138_remaining as u32) as i32)) == 0); rewrite(adler_tail_a_ceiling(0) == 327600); assumption(); }
      have to_integer(b) <= adler_tail_b_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), ((__rust_mir_138_remaining as u32) as i32))) by { rewrite(adler_tail_consumed(((remainder_len as u32) as i32), ((__rust_mir_138_remaining as u32) as i32)) == 0); rewrite(adler_tail_b_ceiling(0) == 1506966); assumption(); }
+     have old(to_integer((self.a as u32))) == to_integer(at(vector_prefix, a));
+     have old(to_integer((self.b as u32))) == to_integer(at(vector_prefix, b));
+     apply(uint32_to_integer_bounds(old((self.a as u32)))) using {};
+     apply(uint32_less_equal_to_integer(old((self.a as u32)), 65520u32)) using { old((self.a as u32)) <= 65520u32; };
+     have ((__rust_mir_138_remaining as u32) as i32) <= ((bytes.len() as u32) as i32) by arithmetic() using { ((__rust_mir_138_remaining as u32) as i32) == ((remainder_len as u32) as i32); ((remainder_len as u32) as i32) <= ((bytes.len() as u32) as i32); };
+     apply(int32_nonnegative_subtract_within_value_is_defined(((bytes.len() as u32) as i32), ((__rust_mir_138_remaining as u32) as i32))) using { 0 <= ((__rust_mir_138_remaining as u32) as i32); ((__rust_mir_138_remaining as u32) as i32) <= ((bytes.len() as u32) as i32); };
+     have (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) == (((bytes.len() - bytes.len() % 4u64) as u32) as i32) by { rewrite(((__rust_mir_138_remaining as u32) as i32) == ((remainder_len as u32) as i32)); assumption(); }
+     have 0 <= old(to_integer((self.a as u32))) by assumption();
+     have old(to_integer((self.a as u32))) <= 65520 by assumption();
+     apply(uint32_to_integer_bounds(at(vector_prefix, b))) using {};
+     have truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)), old(to_integer((self.a as u32)))) by { rewrite((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) == (((bytes.len() - bytes.len() % 4u64) as u32) as i32)); rewrite(old(to_integer((self.a as u32))) == to_integer(at(vector_prefix, a))); assumption(); }
+     have truncating_remainder(to_integer(b), 65521) == adler_spec_b(bytes, (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)), old(to_integer((self.a as u32))), old(to_integer((self.b as u32)))) by { rewrite((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) == (((bytes.len() - bytes.len() % 4u64) as u32) as i32)); rewrite(old(to_integer((self.a as u32))) == to_integer(at(vector_prefix, a))); rewrite(old(to_integer((self.b as u32))) == to_integer(at(vector_prefix, b))); assumption(); }
      loop {
       decreases __rust_mir_138_remaining;
       views *bytes;
@@ -1008,6 +1020,11 @@ impl adler2::Adler32 {
        invariant remainder_len <= bytes.len();
        invariant __rust_mir_138_remaining <= remainder_len;
        invariant __rust_mir_138_cursor == bytes + (bytes.len() - __rust_mir_138_remaining);
+      invariant defined((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)));
+      invariant 0 <= old(to_integer((self.a as u32))) and old(to_integer((self.a as u32))) <= 65520;
+      invariant 0 <= old(to_integer((self.b as u32)));
+      invariant truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)), old(to_integer((self.a as u32))));
+      invariant truncating_remainder(to_integer(b), 65521) == adler_spec_b(bytes, (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)), old(to_integer((self.a as u32))), old(to_integer((self.b as u32))));
       invariant 0 <= to_integer(a) and to_integer(a) <= adler_tail_a_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), ((__rust_mir_138_remaining as u32) as i32)));
       invariant 0 <= to_integer(b) and to_integer(b) <= adler_tail_b_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), ((__rust_mir_138_remaining as u32) as i32)));
       preserve by {
@@ -1022,17 +1039,45 @@ impl adler2::Adler32 {
        mark tail_head;
        have 1 <= at(tail_head, ((__rust_mir_138_remaining as u32) as i32));
        have at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) <= ((remainder_len as u32) as i32);
+       have at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) <= ((bytes.len() as u32) as i32) by arithmetic() using { at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) <= ((remainder_len as u32) as i32); ((remainder_len as u32) as i32) <= ((bytes.len() as u32) as i32); };
        have to_integer(a) <= adler_tail_a_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), at(tail_head, ((__rust_mir_138_remaining as u32) as i32))));
        have to_integer(b) <= adler_tail_b_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), at(tail_head, ((__rust_mir_138_remaining as u32) as i32))));
         have 1u64 <= at(tail_head, __rust_mir_138_remaining);
         have at(tail_head, __rust_mir_138_remaining) <= remainder_len;
         have at(tail_head, __rust_mir_138_cursor) == bytes + (bytes.len() - at(tail_head, __rust_mir_138_remaining));
         have bytes.len() - at(tail_head, __rust_mir_138_remaining) < bytes.len() by arithmetic() using { 1u64 <= at(tail_head, __rust_mir_138_remaining); at(tail_head, __rust_mir_138_remaining) <= remainder_len; remainder_len <= bytes.len(); };
+       have truncating_remainder(to_integer(at(tail_head, a)), 65521) == adler_spec_a(bytes, (((bytes.len() as u32) as i32) - at(tail_head, ((__rust_mir_138_remaining as u32) as i32))), old(to_integer((self.a as u32))));
+       have truncating_remainder(to_integer(at(tail_head, b)), 65521) == adler_spec_b(bytes, (((bytes.len() as u32) as i32) - at(tail_head, ((__rust_mir_138_remaining as u32) as i32))), old(to_integer((self.a as u32))), old(to_integer((self.b as u32))));
        execute_until(assignment(byte, 0));
        have __rust_mir_155 == at(tail_head, __rust_mir_138_cursor);
         have __rust_mir_155 == bytes + (bytes.len() - at(tail_head, __rust_mir_138_remaining)) by { rewrite(__rust_mir_155 == at(tail_head, __rust_mir_138_cursor)); assumption(); }
        step();
        execute_until(assignment(__rust_mir_144, 0)); step();
+       have __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64;
+       have ((__rust_mir_138_remaining as u32) as i32) == at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) - 1 by { rewrite(__rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64); simp(); }
+       have __rust_mir_138_remaining <= bytes.len() by arithmetic() using { __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64; 1u64 <= at(tail_head, __rust_mir_138_remaining); at(tail_head, __rust_mir_138_remaining) <= remainder_len; remainder_len <= bytes.len(); };
+       have 1u64 <= bytes.len() - __rust_mir_138_remaining by arithmetic() using { __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64; 1u64 <= at(tail_head, __rust_mir_138_remaining); at(tail_head, __rust_mir_138_remaining) <= remainder_len; remainder_len <= bytes.len(); };
+       have 0 <= ((__rust_mir_138_remaining as u32) as i32) by arithmetic() using { ((__rust_mir_138_remaining as u32) as i32) == at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) - 1; 1 <= at(tail_head, ((__rust_mir_138_remaining as u32) as i32)); at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) <= ((bytes.len() as u32) as i32); };
+       have at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) - 1 <= ((bytes.len() as u32) as i32) by arithmetic() using { 1 <= at(tail_head, ((__rust_mir_138_remaining as u32) as i32)); at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) <= ((bytes.len() as u32) as i32); };
+       have ((__rust_mir_138_remaining as u32) as i32) <= ((bytes.len() as u32) as i32) by { rewrite(((__rust_mir_138_remaining as u32) as i32) == at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) - 1); assumption(); }
+       apply(int32_nonnegative_subtract_within_value_is_defined(((bytes.len() as u32) as i32), ((__rust_mir_138_remaining as u32) as i32))) using { 0 <= ((__rust_mir_138_remaining as u32) as i32); ((__rust_mir_138_remaining as u32) as i32) <= ((bytes.len() as u32) as i32); };
+       have 1 <= (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) by arithmetic() using { ((__rust_mir_138_remaining as u32) as i32) == at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) - 1; 1 <= at(tail_head, ((__rust_mir_138_remaining as u32) as i32)); at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) <= ((bytes.len() as u32) as i32); ((bytes.len() as u32) as i32) <= 22207; };
+       apply(int32_nonnegative_subtract_within_value_is_defined((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)), 1)) using { 0 <= 1; 1 <= (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)); };
+       have ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) == (((bytes.len() as u32) as i32) - at(tail_head, ((__rust_mir_138_remaining as u32) as i32))) by arithmetic() using { ((__rust_mir_138_remaining as u32) as i32) == at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) - 1; 1 <= at(tail_head, ((__rust_mir_138_remaining as u32) as i32)); at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) <= ((bytes.len() as u32) as i32); ((bytes.len() as u32) as i32) <= 22207; };
+       have 0 <= ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) by arithmetic() using { ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) == (((bytes.len() as u32) as i32) - at(tail_head, ((__rust_mir_138_remaining as u32) as i32))); 1 <= at(tail_head, ((__rust_mir_138_remaining as u32) as i32)); at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) <= ((bytes.len() as u32) as i32); ((bytes.len() as u32) as i32) <= 22207; };
+       have ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) <= 2147483646 by arithmetic() using { ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) == (((bytes.len() as u32) as i32) - at(tail_head, ((__rust_mir_138_remaining as u32) as i32))); 1 <= at(tail_head, ((__rust_mir_138_remaining as u32) as i32)); at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) <= ((bytes.len() as u32) as i32); ((bytes.len() as u32) as i32) <= 22207; };
+       have (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) == ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) + 1 by arithmetic() using { 0 <= ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1); ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) <= 2147483646; ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) == (((bytes.len() as u32) as i32) - at(tail_head, ((__rust_mir_138_remaining as u32) as i32))); ((__rust_mir_138_remaining as u32) as i32) == at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) - 1; 1 <= at(tail_head, ((__rust_mir_138_remaining as u32) as i32)); at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) <= ((bytes.len() as u32) as i32); ((bytes.len() as u32) as i32) <= 22207; };
+       have bytes.len() - __rust_mir_138_remaining - 1u64 == bytes.len() - at(tail_head, __rust_mir_138_remaining) by arithmetic() using { __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64; 1u64 <= at(tail_head, __rust_mir_138_remaining); at(tail_head, __rust_mir_138_remaining) <= remainder_len; remainder_len <= bytes.len(); };
+       have __rust_mir_155 == bytes + (bytes.len() - __rust_mir_138_remaining - 1u64) by { rewrite(bytes.len() - __rust_mir_138_remaining - 1u64 == bytes.len() - at(tail_head, __rust_mir_138_remaining)); assumption(); }
+       apply(adler_count_previous_byte_observation(bytes, bytes.len(), __rust_mir_138_remaining)) using { __rust_mir_138_remaining <= bytes.len(); 1u64 <= bytes.len() - __rust_mir_138_remaining; bytes.len() <= 22207u64; 0 <= ((__rust_mir_138_remaining as u32) as i32); ((__rust_mir_138_remaining as u32) as i32) <= ((bytes.len() as u32) as i32); ((bytes.len() as u32) as i32) <= 22207; };
+       have __rust_mir_144 == (__rust_mir_155[0] as u32);
+       apply(adler_helper_byte_observation(__rust_mir_155[0])) using {};
+       have to_integer(__rust_mir_144) == to_integer(((bytes + (bytes.len() - __rust_mir_138_remaining - 1u64))[0] as i32)) by { rewrite(__rust_mir_144 == (__rust_mir_155[0] as u32)); rewrite(to_integer((__rust_mir_155[0] as u32)) == to_integer((__rust_mir_155[0] as i32))); rewrite(__rust_mir_155 == bytes + (bytes.len() - __rust_mir_138_remaining - 1u64)); normalize(); }
+       have to_integer(__rust_mir_144) == to_integer((bytes[((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1)] as i32)) by { rewrite(to_integer(__rust_mir_144) == to_integer(((bytes + (bytes.len() - __rust_mir_138_remaining - 1u64))[0] as i32))); assumption(); }
+       have truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1), old(to_integer((self.a as u32)))) by { rewrite(((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) == (((bytes.len() as u32) as i32) - at(tail_head, ((__rust_mir_138_remaining as u32) as i32)))); simp(); }
+       have truncating_remainder(to_integer(b), 65521) == adler_spec_b(bytes, ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1), old(to_integer((self.a as u32))), old(to_integer((self.b as u32)))) by { rewrite(((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) == (((bytes.len() as u32) as i32) - at(tail_head, ((__rust_mir_138_remaining as u32) as i32)))); simp(); }
+       apply(adler_prefix_a_step_one(bytes, ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1), old(to_integer((self.a as u32))), to_integer(a))) using { 0 <= ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1); ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) <= 2147483646; 0 <= old(to_integer((self.a as u32))); 0 <= to_integer(a); truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1), old(to_integer((self.a as u32)))); };
+       apply(adler_prefix_b_step_one(bytes, ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1), old(to_integer((self.a as u32))), old(to_integer((self.b as u32))), to_integer(a), to_integer(b))) using { 0 <= ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1); ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) <= 2147483646; 0 <= old(to_integer((self.a as u32))); old(to_integer((self.a as u32))) <= 65520; 0 <= old(to_integer((self.b as u32))); 0 <= to_integer(a); 0 <= to_integer(b); truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1), old(to_integer((self.a as u32)))); truncating_remainder(to_integer(b), 65521) == adler_spec_b(bytes, ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1), old(to_integer((self.a as u32))), old(to_integer((self.b as u32)))); };
        have __rust_mir_144 <= 255u32;
        apply(uint32_less_equal_to_integer(__rust_mir_144, 255u32)) using { __rust_mir_144 <= 255u32; }
        have to_integer(__rust_mir_144) <= 255 by simp() using { to_integer(__rust_mir_144) <= to_integer(255u32); };
@@ -1040,6 +1085,23 @@ impl adler2::Adler32 {
        apply(uint32_widened_add_guard_by_integer_bound(a, __rust_mir_144)) using { to_integer(a) + to_integer(__rust_mir_144) <= 4294967295; }
        execute_until(assignment(__rust_mir_146, 0));
        mark tail_add_a;
+       have to_integer(at(tail_add_a, a)) == to_integer(a) by normalize();
+       have to_integer(at(tail_add_a, b)) == to_integer(b) by normalize();
+       have to_integer(at(tail_add_a, __rust_mir_144)) == to_integer((bytes[((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1)] as i32)) by normalize() using { to_integer(__rust_mir_144) == to_integer((bytes[((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1)] as i32)); };
+       have truncating_remainder(to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)), 65521) == adler_spec_a(bytes, (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)), old(to_integer((self.a as u32)))) by {
+        rewrite((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) == ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) + 1);
+        rewrite(to_integer(at(tail_add_a, a)) == to_integer(a));
+        rewrite(to_integer(at(tail_add_a, __rust_mir_144)) == to_integer((bytes[((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1)] as i32)));
+        assumption();
+       }
+       have truncating_remainder(to_integer(at(tail_add_a, b)) + to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)), 65521) == adler_spec_b(bytes, (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)), old(to_integer((self.a as u32))), old(to_integer((self.b as u32)))) by {
+        rewrite((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) == ((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1) + 1);
+        rewrite(to_integer(at(tail_add_a, b)) == to_integer(b));
+        rewrite(to_integer(at(tail_add_a, a)) == to_integer(a));
+        rewrite(to_integer(at(tail_add_a, __rust_mir_144)) == to_integer((bytes[((((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)) - 1)] as i32)));
+        assumption();
+       }
+
        have to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)) <= 4294967295;
        step();
        have __rust_mir_146 == at(tail_add_a, a) + at(tail_add_a, __rust_mir_144);
@@ -1050,6 +1112,9 @@ impl adler2::Adler32 {
        have to_integer(b) + to_integer(__rust_mir_146) <= adler_tail_b_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), at(tail_head, ((__rust_mir_138_remaining as u32) as i32))) + 1) by simp() using { to_integer(b) + to_integer(a) + to_integer(__rust_mir_144) <= adler_tail_b_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), at(tail_head, ((__rust_mir_138_remaining as u32) as i32))) + 1); to_integer(__rust_mir_146) == to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)); };
        execute_until(assignment(a, 2)); step();
        have to_integer(a) <= adler_tail_a_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), at(tail_head, ((__rust_mir_138_remaining as u32) as i32))) + 1);
+       have a == __rust_mir_146;
+       have to_integer(a) == to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)) by { rewrite(a == __rust_mir_146); assumption(); }
+       have truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)), old(to_integer((self.a as u32)))) by { rewrite(to_integer(a) == to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144))); assumption(); }
        execute_until(assignment(__rust_mir_147, 0)); step();
        have __rust_mir_147 == a;
        have a == __rust_mir_146;
@@ -1058,6 +1123,9 @@ impl adler2::Adler32 {
        apply(uint32_widened_add_guard_by_integer_bound(b, __rust_mir_147)) using { to_integer(b) + to_integer(__rust_mir_147) <= 4294967295; }
        execute_until(assignment(__rust_mir_148, 0));
        mark tail_add_b;
+       have to_integer(at(tail_add_b, b)) == to_integer(at(tail_add_a, b));
+       have to_integer(at(tail_add_b, __rust_mir_147)) == to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144));
+
        have to_integer(at(tail_add_b, b)) + to_integer(at(tail_add_b, __rust_mir_147)) <= adler_tail_b_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), at(tail_head, ((__rust_mir_138_remaining as u32) as i32))) + 1) by simp() using { to_integer(b) + to_integer(__rust_mir_147) <= adler_tail_b_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), at(tail_head, ((__rust_mir_138_remaining as u32) as i32))) + 1); };
        have to_integer(at(tail_add_b, b)) + to_integer(at(tail_add_b, __rust_mir_147)) <= 4294967295;
        step();
@@ -1068,6 +1136,8 @@ impl adler2::Adler32 {
        have to_integer(__rust_mir_148) <= adler_tail_b_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), at(tail_head, ((__rust_mir_138_remaining as u32) as i32))) + 1) by { rewrite(to_integer(__rust_mir_148) == to_integer(at(tail_add_b, b)) + to_integer(at(tail_add_b, __rust_mir_147))); assumption(); }
        execute_until(assignment(b, 6)); step();
        have to_integer(b) <= adler_tail_b_ceiling(adler_tail_consumed(((remainder_len as u32) as i32), at(tail_head, ((__rust_mir_138_remaining as u32) as i32))) + 1);
+       have to_integer(b) == to_integer(at(tail_add_a, b)) + to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)) by simp() using { to_integer(__rust_mir_148) == to_integer(at(tail_add_b, b)) + to_integer(at(tail_add_b, __rust_mir_147)); to_integer(at(tail_add_b, b)) == to_integer(at(tail_add_a, b)); to_integer(at(tail_add_b, __rust_mir_147)) == to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)); };
+       have truncating_remainder(to_integer(b), 65521) == adler_spec_b(bytes, (((bytes.len() as u32) as i32) - ((__rust_mir_138_remaining as u32) as i32)), old(to_integer((self.a as u32))), old(to_integer((self.b as u32)))) by { rewrite(to_integer(b) == to_integer(at(tail_add_a, b)) + to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144))); assumption(); }
        execute_until(back_edge());
         have __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64;
         have ((__rust_mir_138_remaining as u32) as i32) == at(tail_head, ((__rust_mir_138_remaining as u32) as i32)) - 1 by { rewrite(__rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64); simp(); }
@@ -1084,6 +1154,7 @@ impl adler2::Adler32 {
         have bytes.len() - __rust_mir_138_remaining == (bytes.len() - at(tail_head, __rust_mir_138_remaining)) + 1u64 by arithmetic() using { __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64; 1u64 <= at(tail_head, __rust_mir_138_remaining); at(tail_head, __rust_mir_138_remaining) <= remainder_len; remainder_len <= bytes.len(); };
         have __rust_mir_138_cursor == bytes + (bytes.len() - __rust_mir_138_remaining) by { rewrite(bytes.len() - __rust_mir_138_remaining == (bytes.len() - at(tail_head, __rust_mir_138_remaining)) + 1u64); simp(); }
         have __rust_mir_138_remaining < at(tail_head, __rust_mir_138_remaining) by arithmetic() using { __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64; 1u64 <= at(tail_head, __rust_mir_138_remaining); };
+       apply(int32_nonnegative_subtract_within_value_is_defined(((bytes.len() as u32) as i32), ((__rust_mir_138_remaining as u32) as i32))) using { 0 <= ((__rust_mir_138_remaining as u32) as i32); ((__rust_mir_138_remaining as u32) as i32) <= ((bytes.len() as u32) as i32); };
        close_invariants by simp();
       }
      }

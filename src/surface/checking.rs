@@ -336,8 +336,7 @@ pub(super) fn evaluate_witness_tactic_value(
     post_state: &CState,
     result: Option<&CValue>,
     assumptions: &PureFactContext,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     recorded_snapshots: &RecordedSnapshots,
 ) -> Result<CValue, ClickError> {
     let mut active_functions = BTreeSet::new();
@@ -349,8 +348,7 @@ pub(super) fn evaluate_witness_tactic_value(
         result,
         assumptions,
         witness.value(),
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         recorded_snapshots,
         &mut active_functions,
     )
@@ -455,8 +453,7 @@ pub(super) fn lower_ensure_proposition_goal(
     arguments: &[CExpression],
     pre_state: &CState,
     outcome: &CFunctionOutcome,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     recorded_snapshots: &RecordedSnapshots,
     unfolded_predicates: &[String],
 ) -> Result<Proposition, String> {
@@ -471,8 +468,7 @@ pub(super) fn lower_ensure_proposition_goal(
         value,
         available_pure_facts,
         proposition,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         recorded_snapshots,
     );
     if crate::instrumentation::deadline_exceeded() {
@@ -484,8 +480,7 @@ pub(super) fn lower_ensure_proposition_goal(
     let proposition = proposition?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
     unfold_predicates_in_proposition(
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         unfolded_predicates,
         &proposition,
         &assumptions,

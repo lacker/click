@@ -24,8 +24,7 @@ fn struct_pointer_arithmetic_through_uint64_cast_uses_layout_width() {
         BTreeMap::new(),
         None,
         &snapshots,
-        &predicates,
-        &functions,
+        SpecDefinitions::new(&predicates, &functions),
         BTreeSet::new(),
         parameter_pointer_element_widths(function.parameters()),
     );
@@ -192,8 +191,7 @@ fn nested_snapshot_propositions_lower_with_small_frames_and_linear_visits() {
                     BTreeMap::from([("x".into(), int32(9))]),
                     None,
                     &snapshots,
-                    &predicates,
-                    &functions,
+                    SpecDefinitions::new(&predicates, &functions),
                     BTreeSet::new(),
                     BTreeMap::new(),
                 );

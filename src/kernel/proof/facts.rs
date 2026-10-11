@@ -3714,6 +3714,121 @@ mod held_separation_tests {
         );
     }
 
+    fn range(index: u64, start: u32, end: u32, width: u32) -> CResource {
+        let CResource::Memory(cell) = cell(index) else {
+            unreachable!()
+        };
+        CResource::Memory(CMemoryRange::new_with_element_width(
+            cell.base().clone(),
+            Bitvector32Term::Constant(start),
+            Bitvector32Term::Constant(end),
+            width,
+        ))
+    }
+
+    #[test]
+    fn held_separation_covers_wide_fields_and_explicit_aliases() {
+        let state =
+            CState::new().with_resource_context(ResourceContext::new().unchecked_with_facts([
+                CResourceFact::own(range(0, 0, 6, 4)),
+                CResourceFact::own(range(1, 0, 3, 8)),
+            ]));
+        let (CResource::Memory(alias), CResource::Memory(owner)) = (cell(2), cell(0)) else {
+            unreachable!()
+        };
+        let facts = ProofFacts::from_ordered(&[Proposition::ConditionIs(
+            ConditionTerm::PointerEqual(
+                Box::new(alias.base().clone()),
+                Box::new(owner.base().clone()),
+            ),
+            true,
+        )]);
+        for left in [range(0, 0, 1, 8), range(0, 1, 3, 8), range(2, 0, 1, 8)] {
+            let goal = separation(left, range(1, 1, 2, 8));
+            assert!(
+                facts
+                    .with_selected_held_resource_separation(&goal, &state)
+                    .contains(&goal)
+            );
+        }
+    }
+
+    #[test]
+    fn held_field_separation_requires_complete_distinct_owners() {
+        let state =
+            CState::new().with_resource_context(ResourceContext::new().unchecked_with_facts([
+                CResourceFact::own(range(0, 0, 6, 4)),
+                CResourceFact::own(range(1, 0, 1, 4)),
+                CResourceFact::View(range(2, 0, 6, 4)),
+            ]));
+        for goal in [
+            separation(range(0, 0, 1, 8), range(0, 1, 2, 8)),
+            separation(range(0, 0, 1, 8), range(0, 0, 2, 8)),
+            separation(range(0, 0, 1, 8), range(1, 0, 1, 8)),
+            separation(range(0, 0, 1, 8), range(2, 0, 1, 8)),
+            separation(range(0, 2, 4, 8), cell(1)),
+            separation(range(0, u32::MAX, 1, 8), cell(1)),
+        ] {
+            assert!(
+                !ProofFacts::default()
+                    .with_selected_held_resource_separation(&goal, &state)
+                    .contains(&goal)
+            );
+        }
+    }
+
+    #[test]
+    fn held_field_separation_rejects_aliased_owners() {
+        let (CResource::Memory(left), CResource::Memory(right)) = (cell(0), cell(1)) else {
+            unreachable!()
+        };
+        let facts = ProofFacts::from_ordered(&[Proposition::ConditionIs(
+            ConditionTerm::PointerEqual(
+                Box::new(left.base().clone()),
+                Box::new(right.base().clone()),
+            ),
+            true,
+        )]);
+        let state =
+            CState::new().with_resource_context(ResourceContext::new().unchecked_with_facts([
+                CResourceFact::own(range(0, 0, 6, 4)),
+                CResourceFact::own(range(1, 0, 6, 4)),
+            ]));
+        // Even disjoint selected fields must not turn aliased, overlapping
+        // owners into a valid partition.
+        let goal = separation(range(0, 0, 1, 8), range(1, 1, 2, 8));
+        assert!(
+            !facts
+                .with_selected_held_resource_separation(&goal, &state)
+                .contains(&goal)
+        );
+    }
+
+    #[test]
+    fn held_field_separation_does_not_visit_unrelated_owners() {
+        let mut samples = Vec::new();
+        for size in [16u64, 64, 256, 1024] {
+            let state =
+                CState::new().with_resource_context(ResourceContext::new().unchecked_with_facts(
+                    (0..size).map(|index| CResourceFact::own(range(index, 0, 6, 4))),
+                ));
+            let goal = separation(range(size - 2, 1, 2, 8), range(size - 1, 0, 1, 8));
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assert!(
+                    ProofFacts::default()
+                        .with_selected_held_resource_separation(&goal, &state)
+                        .contains(&goal)
+                );
+            });
+            samples.push(work);
+        }
+        assert!(samples.iter().all(|work| *work > 0));
+        assert!(
+            samples.windows(2).all(|pair| pair[0] == pair[1]),
+            "selected fields visited unrelated owners: {samples:?}"
+        );
+    }
+
     /// Views, repeated selection of one owner, and stale/unheld members
     /// cannot manufacture separation from the live ownership partition.
     #[test]

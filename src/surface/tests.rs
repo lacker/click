@@ -1790,8 +1790,10 @@ fn resource_fields_preserve_checked_types_in_their_lowered_schema() {
     assert!(file.resource_definitions()[1].is_fieldless());
     let lowered = composite_resource_definitions(
         &ResourceEnvironment::new(file.resource_definitions()),
-        &PredicateEnvironment::new(&[]),
-        &ClickFunctionEnvironment::new(&[]),
+        SpecDefinitions::new(
+            &PredicateEnvironment::new(&[]),
+            &ClickFunctionEnvironment::new(&[]),
+        ),
     )
     .unwrap();
     assert_eq!(lowered.len(), 1);
@@ -2421,8 +2423,7 @@ fn fold_read_summaries_are_checked_from_the_lowered_declarations() {
     let environment = ClickFunctionEnvironment::new(file.click_function_definitions());
     let _session = crate::kernel::VerificationSession::enter();
     register_kernel_fold_read_definitions(
-        &PredicateEnvironment::new(&[]),
-        &environment,
+        SpecDefinitions::new(&PredicateEnvironment::new(&[]), &environment),
         &BTreeMap::new(),
     );
     let summarized = crate::kernel::registered_fold_read_summary;

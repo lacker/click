@@ -1111,7 +1111,7 @@ impl<'a> Proof<'a> {
                     .any(|inherited| inherited == name)
         };
         let body_surface = unfold_selected_predicates_in_proposition(
-            context.predicate_environment,
+            context.spec_definitions.predicates,
             &selected,
             &proposition,
             &mut BTreeSet::new(),
@@ -1175,9 +1175,9 @@ impl<'a> Proof<'a> {
             && self.focused_branch_unfolds().contains(name)
         {
             let predicate_environment = match self.context.as_ref() {
-                ProofContext::Pure(context) => context.predicate_environment,
-                ProofContext::FixedState(context) => context.predicate_environment,
-                ProofContext::Execution(context) => context.predicate_environment,
+                ProofContext::Pure(context) => context.spec_definitions.predicates,
+                ProofContext::FixedState(context) => context.spec_definitions.predicates,
+                ProofContext::Execution(context) => context.spec_definitions.predicates,
             };
             let active_unfolds = self.focused_branch_unfolds().to_vec();
             unfold_structural_invariant_proposition(
@@ -1418,8 +1418,7 @@ impl<'a> Proof<'a> {
             (*execution.core.state).clone(),
             self.facts().clone(),
             &mut execution.presentation.surface_propositions,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             context.claim_label,
             context.tactic_index,
         )?;

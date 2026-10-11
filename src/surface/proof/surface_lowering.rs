@@ -257,8 +257,7 @@ impl<'a> Proof<'a> {
                     &algebraic_values,
                     &integer_values,
                     &context.theorem_context.memory,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                 )
                 .map(|(proposition, _)| proposition)
                 .map_err(|message| {
@@ -290,8 +289,7 @@ impl<'a> Proof<'a> {
                     &algebraic_values,
                     self.local_integer_values(),
                     context.recorded_snapshots,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                 )
                 .map_err(|message| {
                     self.step_error(format!("could not lower {description}: {message}"))
@@ -346,8 +344,7 @@ impl<'a> Proof<'a> {
                     &algebraic_values,
                     self.local_integer_values(),
                     view.recorded_snapshots,
-                    view.predicate_environment,
-                    view.click_function_environment,
+                    view.spec_definitions,
                 )
                 .map_err(|message| {
                     self.step_error(format!("could not lower {description}: {message}"))
@@ -376,8 +373,7 @@ impl<'a> Proof<'a> {
                     &algebraic_values,
                     self.local_integer_values(),
                     &execution.presentation.recorded_snapshots,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                 )
                 .map_err(|message| {
                     if let Some(local) = unassigned_local_read_by(&surface, &execution.core.state) {
@@ -444,8 +440,7 @@ impl<'a> Proof<'a> {
                     &algebraic_values,
                     &integer_values,
                     &context.theorem_context.memory,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                 )
                 .map(|(proposition, _)| proposition)
             }
@@ -470,8 +465,7 @@ impl<'a> Proof<'a> {
                     &algebraic_values,
                     self.local_integer_values(),
                     context.recorded_snapshots,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                 )
                 .map_err(|message| {
                     self.step_error(format!("could not lower {description}: {message}"))
@@ -498,8 +492,7 @@ impl<'a> Proof<'a> {
                     &algebraic_values,
                     self.local_integer_values(),
                     view.recorded_snapshots,
-                    view.predicate_environment,
-                    view.click_function_environment,
+                    view.spec_definitions,
                 )
                 .map_err(|message| {
                     self.step_error(format!("could not lower {description}: {message}"))
@@ -528,8 +521,7 @@ impl<'a> Proof<'a> {
                     &algebraic_values,
                     self.local_integer_values(),
                     &execution.presentation.recorded_snapshots,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                 )
                 .map_err(|message| {
                     if let Some(local) = unassigned_local_read_by(&surface, &execution.core.state) {
@@ -631,8 +623,7 @@ impl<'a> Proof<'a> {
                     &algebraic_values,
                     &integer_values,
                     &context.theorem_context.memory,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                 )
                 .map(|(proposition, introductions)| (proposition, Some(introductions)))
                 .map_err(|message| {
@@ -650,8 +641,7 @@ impl<'a> Proof<'a> {
                     context.state,
                     context.result,
                     context.recorded_snapshots,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                 )
                 .map(|(proposition, introductions)| (proposition, Some(introductions)))
                 .map_err(|message| {
@@ -676,8 +666,7 @@ impl<'a> Proof<'a> {
                     view.state,
                     view.result,
                     view.recorded_snapshots,
-                    view.predicate_environment,
-                    view.click_function_environment,
+                    view.spec_definitions,
                 )
                 .map(|(proposition, introductions)| (proposition, Some(introductions)))
                 .map_err(|message| {

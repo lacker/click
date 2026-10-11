@@ -3692,8 +3692,7 @@ pub(super) fn lower_surface_candidate_in_state_with_assumptions(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, ClickError> {
     check_verification_deadline()?;
     let values = parameter_values(parameters, arguments)?;
@@ -3709,8 +3708,7 @@ pub(super) fn lower_surface_candidate_in_state_with_assumptions(
         state,
         None,
         view.recorded_snapshots,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(ClickError::new)
 }

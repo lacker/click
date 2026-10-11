@@ -528,6 +528,21 @@ fn pointer_congruence_rewrite(
     } else {
         crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_exact(left, right)
     };
+    // Integer machine observations retain reads as registered variables.
+    // Rewrite their selected addresses, keeping the exact snapshot and kind,
+    // just as the native-condition path does for the same pointer equality.
+    rewrite.enable_registered_load_resolution();
+    let rewritten = rewrite.proposition(goal);
+    (rewrite.refusal().is_none() && &rewritten != goal).then_some(rewritten)
+}
+
+fn pointer_offset_congruence_rewrite(
+    goal: &Proposition,
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+) -> Option<Proposition> {
+    let mut rewrite = super::term_rewrite::TermRewrite::for_pointer_offset_exact(left, right);
+    rewrite.enable_registered_load_resolution();
     let rewritten = rewrite.proposition(goal);
     (rewrite.refusal().is_none() && &rewritten != goal).then_some(rewritten)
 }
@@ -1075,9 +1090,11 @@ fn rewrite_atomic_proposition_by_exact_equality(
                         )
                     }
                     _ => {
-                        return Err(
-                            "`rewrite` pointer-offset equality does not occur in this goal"
-                                .to_string(),
+                        return pointer_offset_congruence_rewrite(goal, left, right).ok_or_else(
+                            || {
+                                "`rewrite` pointer-offset equality does not occur in this goal"
+                                    .to_string()
+                            },
                         );
                     }
                 };
@@ -1114,19 +1131,15 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 )
             }
             _ => {
-                return Err(
-                    "`rewrite` pointer-offset equality does not occur in this goal".to_string(),
-                );
+                return pointer_offset_congruence_rewrite(goal, left, right).ok_or_else(|| {
+                    "`rewrite` pointer-offset equality does not occur in this goal".to_string()
+                });
             }
         };
         if &rewritten == goal {
-            let mut rewrite =
-                super::term_rewrite::TermRewrite::for_pointer_offset_exact(left, right);
-            let candidate = rewrite.proposition(goal);
-            if rewrite.refusal().is_none() && &candidate != goal {
-                return Ok(candidate);
-            }
-            return Err("`rewrite` equality does not occur in the current goal".to_string());
+            return pointer_offset_congruence_rewrite(goal, left, right).ok_or_else(|| {
+                "`rewrite` equality does not occur in the current goal".to_string()
+            });
         }
         return Ok(rewritten);
     }
@@ -2208,6 +2221,114 @@ mod tests {
 
     fn integer_equality(a: IntegerTerm, b: IntegerTerm) -> Proposition {
         Proposition::ConditionIs(ConditionTerm::IntegerEqual(a.into(), b.into()), true)
+    }
+
+    #[test]
+    fn pointer_rewrite_integer_reads_preserves_snapshot_kind_and_scales() {
+        for same_block in [false, true] {
+            let mut samples = Vec::new();
+            for size in [16u64, 64, 256, 1024] {
+                let _session = VerificationSession::enter();
+                let mut p = Pointer::symbolic(Variable(241_000));
+                let mut q = Pointer::symbolic(Variable(241_001)).offset_by_bytes(3);
+                if same_block {
+                    p.offset = PointerOffsetTerm::scale_int32(
+                        Bitvector32Term::Variable(Variable(241_002)),
+                        1,
+                    );
+                    q.block = p.block.clone();
+                    q.offset = PointerOffsetTerm::scale_int32(
+                        Bitvector32Term::Variable(Variable(241_003)),
+                        1,
+                    );
+                }
+                let cited = Proposition::ConditionIs(
+                    ConditionTerm::pointer_equal(p.clone(), q.clone()),
+                    true,
+                );
+                let mut memory = CMemory::new();
+                let mut facts = ProofFacts::default().with_fact(cited.clone());
+                for index in 0..size {
+                    memory = memory.store(
+                        Pointer::symbolic(Variable(242_000 + index)),
+                        CValue::UInt8(Bitvector32Term::Constant(7)),
+                    );
+                    facts = facts.with_fact(integer_equality(
+                        IntegerTerm::var(Variable(244_000 + index)),
+                        IntegerTerm::constant_i64(index as i64),
+                    ));
+                }
+                let read = |memory: &CMemory, pointer: &Pointer, kind| {
+                    Bitvector32Term::Variable(crate::kernel::eval::load_variable_for_exact_cell(
+                        &crate::kernel::intern_c_memory(memory.clone()),
+                        pointer,
+                        kind,
+                        1,
+                    ))
+                };
+                // The read identity preserves only its original cell. The observed
+                // origin is needed when the equality exposes the alias address.
+                let source =
+                    Bitvector32Term::Variable(crate::kernel::load_variable_for_cell_with_origin(
+                        &crate::kernel::intern_c_memory(CMemory::new()),
+                        &p,
+                        LoadKind::UInt8,
+                        1,
+                        &crate::kernel::intern_c_memory(memory.clone()),
+                    ));
+                let target = read(&memory, &q, LoadKind::UInt8);
+                let later = memory
+                    .clone()
+                    .store(q.clone(), CValue::UInt8(Bitvector32Term::Constant(99)));
+                let other_snapshot = read(&later, &q, LoadKind::UInt8);
+                let other_kind = read(&memory, &q, LoadKind::Int8);
+                let mut work = 0;
+                for ty in [
+                    MachineIntegerType::Int32,
+                    MachineIntegerType::UInt32,
+                    MachineIntegerType::Int64,
+                    MachineIntegerType::UInt64,
+                ] {
+                    let observation =
+                        |value| IntegerTerm::Machine(SharedMachineIntegerTerm::intern(ty, value));
+                    let goal =
+                        integer_equality(observation(source.clone()), IntegerTerm::constant_i64(0));
+                    let expected =
+                        integer_equality(observation(target.clone()), IntegerTerm::constant_i64(0));
+                    let (checked, cost) =
+                        crate::instrumentation::measure_deterministic_work(|| {
+                            facts.check_equality_rewrite(&goal, &cited)
+                        });
+                    let checked = checked.unwrap();
+                    assert_eq!(checked.proposition(), &expected);
+                    assert_ne!(
+                        checked.proposition(),
+                        &integer_equality(
+                            observation(other_snapshot.clone()),
+                            IntegerTerm::constant_i64(0)
+                        )
+                    );
+                    assert_ne!(
+                        checked.proposition(),
+                        &integer_equality(
+                            observation(other_kind.clone()),
+                            IntegerTerm::constant_i64(0)
+                        )
+                    );
+                    assert!(
+                        ProofFacts::default()
+                            .check_equality_rewrite(&goal, &cited)
+                            .is_err()
+                    );
+                    work += cost;
+                }
+                samples.push(work);
+            }
+            assert!(
+                samples.windows(2).all(|pair| pair[0] == pair[1]),
+                "{samples:?}"
+            );
+        }
     }
 
     /// Rewriting a field owner changes a typed read's address, not the

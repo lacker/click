@@ -63,8 +63,7 @@ fn fixed_state_failure_names_kernel_values_held_in_live_locals() {
         &state,
         &snapshots,
         &surfaces,
-        &predicates,
-        &functions,
+        SpecDefinitions::new(&predicates, &functions),
         &theorems,
         &[],
         &[],
@@ -259,8 +258,7 @@ fn atomic_conjunct_extraction_returns_when_an_early_step_completes_the_goal() {
         &facts,
         goal.clone(),
         &context,
-        &predicates,
-        &functions,
+        SpecDefinitions::new(&predicates, &functions),
         &theorems,
     );
     let closed = root
@@ -328,8 +326,7 @@ fn atomic_conjunct_extraction_requires_exact_selected_premise_on_small_stack() {
                     state,
                     None,
                     &snapshots,
-                    &predicates,
-                    &functions,
+                    SpecDefinitions::new(&predicates, &functions),
                 )
                 .expect("the selected load bound should lower")
             };
@@ -358,8 +355,7 @@ fn atomic_conjunct_extraction_requires_exact_selected_premise_on_small_stack() {
                 &current_state,
                 &snapshots,
                 &stale_surfaces,
-                &predicates,
-                &functions,
+                SpecDefinitions::new(&predicates, &functions),
                 &theorems,
                 &[],
                 &[],
@@ -424,8 +420,7 @@ fn atomic_conjunct_extraction_requires_exact_selected_premise_on_small_stack() {
                 &old_state,
                 &snapshots,
                 &exact_surfaces,
-                &predicates,
-                &functions,
+                SpecDefinitions::new(&predicates, &functions),
                 &theorems,
                 &[],
                 &[],
@@ -465,8 +460,7 @@ fn invariant_bundle_closure_descends_surface_free_both_and_intro_and_rechecks() 
         &[loadable, fold_equality],
         goal,
         &context,
-        &predicates,
-        &functions,
+        SpecDefinitions::new(&predicates, &functions),
         &theorems,
     );
     assert!(root.surface_goal().is_none());
@@ -515,8 +509,7 @@ fn invariant_bundle_closure_rejects_surface_free_bundle_without_fold_equality() 
         &[loadable],
         goal,
         &context,
-        &predicates,
-        &functions,
+        SpecDefinitions::new(&predicates, &functions),
         &theorems,
     );
     assert!(
@@ -539,8 +532,7 @@ fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
         &[],
         goal,
         &theorem_context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
 
@@ -659,8 +651,7 @@ fn both_and_scopes_are_isolated_check_provenance_and_scale() {
             &facts,
             goal.clone(),
             &context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let ((joined, split_proof, left_done, marker, split, ids), work) =
@@ -753,8 +744,7 @@ fn both_and_preserves_exact_binders_and_saved_snapshots() {
         &[],
         Proposition::And(Box::new(left.clone()), Box::new(right.clone())),
         &context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let (split, _, ids) = root.split_focused_both().unwrap();
@@ -780,8 +770,7 @@ fn both_surface_conjunction_is_positional_even_for_duplicate_or_reversed_childre
             &context.values,
             &context.array_refs,
             &context.memory,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("constant equality should lower")
     };
@@ -795,8 +784,7 @@ fn both_surface_conjunction_is_positional_even_for_duplicate_or_reversed_childre
         duplicate_kernel,
         duplicate_surface.clone(),
         &context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let (split, _, ids) = duplicate
@@ -818,8 +806,7 @@ fn both_surface_conjunction_is_positional_even_for_duplicate_or_reversed_childre
         Proposition::And(Box::new(lower(&first)), Box::new(lower(&second))),
         reversed_surface,
         &context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let error = match reversed.split_focused_both() {
@@ -857,8 +844,7 @@ fn both_preserves_written_body_across_an_inserted_guard_and_reverifies_cold() {
         &state,
         None,
         &snapshots,
-        &predicates,
-        &functions,
+        SpecDefinitions::new(&predicates, &functions),
     )
     .expect("body should lower");
     let kernel = Proposition::And(Box::new(guard.clone()), Box::new(body));
@@ -874,8 +860,7 @@ fn both_preserves_written_body_across_an_inserted_guard_and_reverifies_cold() {
         &state,
         &snapshots,
         &surfaces,
-        &predicates,
-        &functions,
+        SpecDefinitions::new(&predicates, &functions),
         &theorems,
         &[],
         &[],
@@ -945,8 +930,7 @@ fn both_rejects_an_unsupported_written_child_correspondence_boundedly() {
         Proposition::And(Box::new(guard), Box::new(body)),
         unsupported,
         &context,
-        &predicates,
-        &functions,
+        SpecDefinitions::new(&predicates, &functions),
         &theorems,
     );
     let retained = root.clone();
@@ -988,8 +972,7 @@ fn both_rejects_unlowerable_child_without_exact_parent_metadata() {
             arguments: Vec::new(),
         },
         &context,
-        &predicates,
-        &functions,
+        SpecDefinitions::new(&predicates, &functions),
         &theorems,
     );
     let error = match root.split_focused_both() {
@@ -1020,8 +1003,7 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
         &theorem_context.values,
         &theorem_context.array_refs,
         &theorem_context.memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("constant disjunction should lower");
     let root = Proof::for_pure_goal(
@@ -1029,8 +1011,7 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
         std::slice::from_ref(&kernel_disjunction),
         kernel_disjunction.clone(),
         &theorem_context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
 
@@ -1141,8 +1122,7 @@ fn attempt_reports_deadline_failure_instead_of_a_rejection() {
         &[],
         goal,
         &theorem_context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
 
@@ -1193,8 +1173,7 @@ fn proof_failure_preserves_ancestor_and_selected_provenance() {
         &theorem_context.requires,
         goal,
         &theorem_context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let fork = root.clone();
@@ -1239,8 +1218,7 @@ fn branch_identity_is_stable_across_fork_refinement_and_closure() {
         &[],
         goal,
         &theorem_context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
 
@@ -1304,8 +1282,7 @@ fn certificate_suffix_requires_an_exact_shared_ancestor() {
         &[],
         goal.clone(),
         &theorem_context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let root_checkpoint = root.checkpoint();
@@ -1341,8 +1318,7 @@ fn certificate_suffix_requires_an_exact_shared_ancestor() {
         &[],
         goal,
         &theorem_context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     assert!(
@@ -1377,8 +1353,7 @@ fn have_scope_publishes_only_a_completed_checked_body() {
         &theorem_context.values,
         &theorem_context.array_refs,
         &theorem_context.memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("constant equality should lower");
     let root = Proof::for_pure_goal(
@@ -1386,8 +1361,7 @@ fn have_scope_publishes_only_a_completed_checked_body() {
         &[],
         kernel,
         &theorem_context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let scope = root
@@ -1472,8 +1446,7 @@ fn pure_have_presentation_root(surface: ClickProposition) -> Proof<'static> {
         &theorem_context.values,
         &theorem_context.array_refs,
         &theorem_context.memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("test proposition should lower");
     // The environments and context are intentionally leaked for this small
@@ -1487,8 +1460,7 @@ fn pure_have_presentation_root(surface: ClickProposition) -> Proof<'static> {
         &[],
         kernel,
         theorem_context,
-        predicate_environment,
-        click_function_environment,
+        SpecDefinitions::new(predicate_environment, click_function_environment),
         theorem_environment,
     )
 }
@@ -1808,8 +1780,7 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
         &BTreeMap::new(),
         &BTreeMap::new(),
         &memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("constant equality should lower");
     let smart_body = [ProofTactic::Simp];
@@ -1838,8 +1809,7 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
             &requires,
             kernel.clone(),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let scope = root
@@ -1951,8 +1921,7 @@ fn execution_have_indexes_only_its_delta_and_scales_with_history() {
             &[],
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         )
     };
@@ -2061,8 +2030,7 @@ fn persistent_fact_lookup_scales_logarithmically() {
             &theorem_context.requires,
             goal.clone(),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let shared = proof.clone();
@@ -2321,8 +2289,7 @@ fn proposition_unfold_uses_indexed_facts_and_persistent_local_state() {
             &base_context.values,
             &base_context.array_refs,
             &base_context.memory,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("test proposition should lower")
     };
@@ -2345,8 +2312,7 @@ fn proposition_unfold_uses_indexed_facts_and_persistent_local_state() {
             predicate.clone(),
             predicate_surface.clone(),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -2445,8 +2411,7 @@ fn fixed_state_proposition_unfold_checks_the_same_retained_step() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("fixed-state proposition should lower")
     };
@@ -2464,8 +2429,7 @@ fn fixed_state_proposition_unfold_checks_the_same_retained_step() {
         &state,
         &recorded_snapshots,
         &surface_propositions,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
         &[],
         &[],
@@ -2498,8 +2462,7 @@ fn fixed_state_proposition_unfold_checks_the_same_retained_step() {
             Some(&result),
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -2553,8 +2516,7 @@ fn fixed_state_proof_root_borrows_inherited_unfold_history_without_reindexing_it
         &state,
         &recorded_snapshots,
         &surface_propositions,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
         &inherited,
         &[],
@@ -2597,8 +2559,7 @@ fn result_aware_fixed_state_goal_focus_shares_facts_and_checks_assumption() {
             Some(&result),
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -2688,8 +2649,7 @@ fn loop_entry_simp_keeps_checked_unspellable_assumptions_and_scales() {
             Some(&result),
             &snapshots,
             &surfaces,
-            &predicates,
-            &functions,
+            SpecDefinitions::new(&predicates, &functions),
             &theorems,
             &[],
             &[],
@@ -2730,8 +2690,7 @@ fn loop_entry_simp_keeps_checked_unspellable_assumptions_and_scales() {
             Some(&result),
             &snapshots,
             &surfaces,
-            &predicates,
-            &functions,
+            SpecDefinitions::new(&predicates, &functions),
             &theorems,
             &[],
             &[],
@@ -2775,8 +2734,7 @@ fn fixed_state_context_have_publishes_checked_fact_for_later_scope() {
             Some(&result),
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -2925,8 +2883,7 @@ fn fixed_state_context_have_goal_does_not_reuse_an_older_surface_lowering() {
         Some(&result),
         &recorded_snapshots,
         &surface_propositions,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
         &[],
         &[],
@@ -2974,8 +2931,7 @@ fn proof_if_fork_and_join_work_is_logarithmic_in_unrelated_facts() {
             &theorem_context.values,
             &theorem_context.array_refs,
             &theorem_context.memory,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("excluded-middle goal should lower");
         let root = Proof::for_pure_goal(
@@ -2983,8 +2939,7 @@ fn proof_if_fork_and_join_work_is_logarithmic_in_unrelated_facts() {
             &theorem_context.requires,
             goal,
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let before = fact_node_allocations();
@@ -3040,8 +2995,7 @@ fn execution_frontier_rejects_proposition_closers_transactionally() {
         None,
         &recorded_snapshots,
         &surface_propositions,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
         &[],
         &[],
@@ -3119,8 +3073,7 @@ fn fixed_state_witness_refines_existential_transactionally_with_constant_local_w
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -3215,8 +3168,7 @@ fn universal_intro_binding_is_local_to_its_focused_sibling_branch() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("test proposition should lower")
     };
@@ -3235,8 +3187,7 @@ fn universal_intro_binding_is_local_to_its_focused_sibling_branch() {
         &state,
         &recorded_snapshots,
         &surface_propositions,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
         &[],
         &[],
@@ -3324,8 +3275,7 @@ fn fixed_state_choose_uses_indexed_requirement_and_persistent_local_bindings() {
             None,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -3422,8 +3372,7 @@ fn initial_entry_provenance_keeps_nonzero_requirement_identity_after_derived_ins
         function_block,
         &parsed_function,
         &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         "source identity",
         Some(&owner),
     )
@@ -3526,8 +3475,7 @@ fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
         &base_context.values,
         &base_context.array_refs,
         &base_context.memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("constant equality should lower");
     let mut allocation_baseline = None;
@@ -3547,8 +3495,7 @@ fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
             kernel_equality.clone(),
             equality.clone(),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -3675,8 +3622,7 @@ fn surface_rewrite_retains_structural_successor_and_scales() {
             &base_context.values,
             &base_context.array_refs,
             &base_context.memory,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("test proposition should lower")
     };
@@ -3717,8 +3663,7 @@ fn surface_rewrite_retains_structural_successor_and_scales() {
             kernel_goal.clone(),
             goal_surface.clone(),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -3776,8 +3721,7 @@ fn fixed_state_extract_uses_persistent_proper_conjunct_membership() {
         &state,
         None,
         &recorded_snapshots,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("constant equality should lower");
 
@@ -3792,8 +3736,7 @@ fn fixed_state_extract_uses_persistent_proper_conjunct_membership() {
         &state,
         &recorded_snapshots,
         &surface_propositions,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
         &[],
         &[],
@@ -3825,8 +3768,7 @@ fn fixed_state_extract_uses_persistent_proper_conjunct_membership() {
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -3881,8 +3823,7 @@ fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent()
         &theorem_context.values,
         &theorem_context.array_refs,
         &theorem_context.memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("target should lower");
     let universal = |variable| Proposition::ForAll {
@@ -3919,8 +3860,7 @@ fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent()
             &facts,
             target.clone(),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -3964,8 +3904,7 @@ fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent()
             std::slice::from_ref(&selected_implication),
             target.clone(),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         assert!(
@@ -4030,8 +3969,7 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("test proposition should lower")
     };
@@ -4065,8 +4003,7 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -4213,8 +4150,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
         &state,
         None,
         &RecordedSnapshots::new(),
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact premise should lower");
     let kernel_conclusion = lower_fixed_state_proposition_with_assumptions(
@@ -4226,8 +4162,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
         &state,
         None,
         &RecordedSnapshots::new(),
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the theorem conclusion should lower");
     let application = TheoremApplication {
@@ -4267,8 +4202,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -4398,8 +4332,7 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
         &arguments,
         &function_environment,
         &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let Some((until, _)) = root
@@ -4564,8 +4497,7 @@ fn smart_retry_falls_back_from_mismatching_registry_to_exact_synthesized_existen
         function_block,
         &parsed_function,
         &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         "registry mismatch retry",
     )
     .expect("production-shaped caller context should initialize");
@@ -4588,8 +4520,7 @@ fn smart_retry_falls_back_from_mismatching_registry_to_exact_synthesized_existen
         &state,
         None,
         &RecordedSnapshots::new(),
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the existential requirement should lower");
     assert!(matches!(&requirement, Proposition::Exists { .. }));
@@ -4615,8 +4546,7 @@ fn smart_retry_falls_back_from_mismatching_registry_to_exact_synthesized_existen
         &state,
         None,
         &RecordedSnapshots::new(),
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the named contract requirement should lower");
 
@@ -4653,8 +4583,7 @@ fn smart_retry_falls_back_from_mismatching_registry_to_exact_synthesized_existen
         &arguments,
         &function_environment,
         &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let Some((at_call, _)) = root
@@ -4798,8 +4727,7 @@ fn supported_source_refusal_on_branch_does_not_enter_planning() {
         &arguments,
         &function_environment,
         &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let site = std::sync::Arc::new(crate::kernel::CallRequirementSite::for_requirement(
@@ -4910,8 +4838,7 @@ fn assert_static_array_retry_uses_recorded_qualified_source(block: &str, name: &
             &state,
             None,
             &RecordedSnapshots::new(),
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("qualified static source cell should lower");
         surface_propositions
@@ -4943,8 +4870,7 @@ fn assert_static_array_retry_uses_recorded_qualified_source(block: &str, name: &
                     &state,
                     None,
                     &RecordedSnapshots::new(),
-                    &predicate_environment,
-                    &click_function_environment,
+                    SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 )
                 .expect("qualified static bound should lower"),
             );
@@ -4975,8 +4901,7 @@ fn assert_static_array_retry_uses_recorded_qualified_source(block: &str, name: &
         &arguments,
         &function_environment,
         &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let refusal = ClickError::new("injected static-array requirement")
@@ -5080,8 +5005,7 @@ fn nested_have_accepts_trailing_assumption_after_closure() {
         &state,
         None,
         &RecordedSnapshots::new(),
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact premise should lower");
     let application = TheoremApplication {
@@ -5118,8 +5042,7 @@ fn nested_have_accepts_trailing_assumption_after_closure() {
         &arguments,
         &function_environment,
         &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     // The theorem application's conclusion is the have's goal, so the goal
@@ -5225,8 +5148,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         &state,
         None,
         &RecordedSnapshots::new(),
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact theorem premise should lower");
     let application = TheoremApplication {
@@ -5277,8 +5199,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let (split, record) = root
@@ -5536,8 +5457,7 @@ fn fixed_state_apply_search_uses_indexes_and_retains_its_checked_successor() {
         &state,
         None,
         &recorded_snapshots,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact premise should lower");
     let kernel_conclusion = lower_fixed_state_proposition_with_assumptions(
@@ -5549,8 +5469,7 @@ fn fixed_state_apply_search_uses_indexes_and_retains_its_checked_successor() {
         &state,
         None,
         &recorded_snapshots,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the theorem conclusion should lower");
     let application = TheoremApplication {
@@ -5591,8 +5510,7 @@ fn fixed_state_apply_search_uses_indexes_and_retains_its_checked_successor() {
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -5712,8 +5630,7 @@ fn result_aware_fixed_state_apply_scales_with_unrelated_facts() {
         &state,
         Some(&result),
         &recorded_snapshots,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the result-aware goal should lower");
 
@@ -5732,8 +5649,7 @@ fn result_aware_fixed_state_apply_scales_with_unrelated_facts() {
             None,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -5816,8 +5732,7 @@ fn result_aware_fixed_state_context_apply_is_indexed_and_transactional() {
         &state,
         Some(&result),
         &recorded_snapshots,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the result-aware theorem premise should lower");
     let mut surface_propositions = SurfacePropositionMap::default();
@@ -5840,8 +5755,7 @@ fn result_aware_fixed_state_context_apply_is_indexed_and_transactional() {
             Some(&result),
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -5942,8 +5856,7 @@ fn fixed_state_transport_can_follow_another_checked_step() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("test proposition should lower")
     };
@@ -5969,8 +5882,7 @@ fn fixed_state_transport_can_follow_another_checked_step() {
             Some(&result),
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -6049,8 +5961,7 @@ fn pure_signed_order_simp_builds_its_theorem_path_with_logarithmic_local_updates
             &BTreeMap::new(),
             &BTreeMap::new(),
             &memory,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed signed comparison should lower")
     };
@@ -6082,8 +5993,7 @@ fn pure_signed_order_simp_builds_its_theorem_path_with_logarithmic_local_updates
             &requires,
             goal.clone(),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -6131,8 +6041,7 @@ fn pure_signed_order_simp_builds_its_theorem_path_with_logarithmic_local_updates
             &exact_requires,
             goal.clone(),
             &exact_theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let scope = exact_root
@@ -6191,8 +6100,7 @@ fn pure_equality_refinement_simp_applies_one_rewrite_with_logarithmic_local_upda
             &BTreeMap::new(),
             &BTreeMap::new(),
             &memory,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed int32 proposition should lower")
     };
@@ -6221,8 +6129,7 @@ fn pure_equality_refinement_simp_applies_one_rewrite_with_logarithmic_local_upda
             &requires,
             goal.clone(),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -6329,8 +6236,7 @@ fn goal_term_equality_rewrite_ignores_unrelated_equality_buckets() {
             goal.clone(),
             Some(goal_surface.clone()),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let selected = root.facts().bitvector_equalities_mentioning(&goal);
@@ -6440,8 +6346,7 @@ fn goal_term_equality_rewrite_chain_shrinks_independently_of_unrelated_buckets()
             goal.clone(),
             Some(goal_surface.clone()),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -6518,8 +6423,7 @@ fn fixed_state_predecessor_simp_builds_checked_scope_with_logarithmic_local_upda
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed fixed-state proposition should lower")
     };
@@ -6549,8 +6453,7 @@ fn fixed_state_predecessor_simp_builds_checked_scope_with_logarithmic_local_upda
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -6618,8 +6521,7 @@ fn fixed_state_equality_simp_builds_its_recorded_path_with_logarithmic_local_upd
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed equality should lower")
     };
@@ -6646,8 +6548,7 @@ fn fixed_state_equality_simp_builds_its_recorded_path_with_logarithmic_local_upd
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -6712,8 +6613,7 @@ fn fixed_state_arithmetic_rewrite_paths_ignore_unrelated_facts() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed equality should lower")
     };
@@ -6746,8 +6646,7 @@ fn fixed_state_arithmetic_rewrite_paths_ignore_unrelated_facts() {
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -6820,8 +6719,7 @@ fn fixed_state_order_simp_builds_its_theorem_path_with_logarithmic_local_updates
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed signed comparison should lower")
     };
@@ -6848,8 +6746,7 @@ fn fixed_state_order_simp_builds_its_theorem_path_with_logarithmic_local_updates
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -7019,8 +6916,7 @@ fn fixed_state_single_premise_arithmetic_simps_retain_indexed_theorem_steps() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed increment proposition should lower")
     };
@@ -7160,8 +7056,7 @@ fn fixed_state_single_premise_arithmetic_simps_retain_indexed_theorem_steps() {
                 &state,
                 &recorded_snapshots,
                 &surface_propositions,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
                 &[],
                 &[],
@@ -7245,8 +7140,7 @@ fn fixed_state_single_premise_arithmetic_simps_retain_indexed_theorem_steps() {
                 &facts,
                 goal.clone(),
                 &theorem_context,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
             );
             let retained_pure_root = pure_root.clone();
@@ -7363,8 +7257,7 @@ fn branch_exported_premise_uses_one_selected_anchor_with_logarithmic_work() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the selected fixed-state proposition should lower")
     };
@@ -7391,8 +7284,7 @@ fn branch_exported_premise_uses_one_selected_anchor_with_logarithmic_work() {
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -7507,8 +7399,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed increment-lower-bound proposition should lower")
     };
@@ -7542,8 +7433,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
                 &state,
                 &recorded_snapshots,
                 &surface_propositions,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
                 &[],
                 &[],
@@ -7586,8 +7476,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
                 &facts,
                 goal.clone(),
                 &theorem_context,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
             );
             let retained_pure_root = pure_root.clone();
@@ -7657,8 +7546,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
             &state,
             &recorded_snapshots,
             &strict_surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -7706,8 +7594,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
             &facts,
             strict_goal.clone(),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_pure_root = pure_root.clone();
@@ -7785,8 +7672,7 @@ fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed equality proposition should lower")
     };
@@ -7816,8 +7702,7 @@ fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -7854,8 +7739,7 @@ fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
                     &BTreeMap::new(),
                     &BTreeMap::new(),
                     state.memory(),
-                    &predicate_environment,
-                    &click_function_environment,
+                    SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 )
                 .expect("each restricted equality premise should lower")
             })
@@ -7882,8 +7766,7 @@ fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
             &pure_facts,
             kernel_equality.clone(),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_pure_root = pure_root.clone();
@@ -7987,8 +7870,7 @@ fn ge_and_not_gt_equality_simp_retains_one_indexed_theorem_application() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed equality proposition should lower")
     };
@@ -8021,8 +7903,7 @@ fn ge_and_not_gt_equality_simp_retains_one_indexed_theorem_application() {
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -8096,8 +7977,7 @@ fn le_and_neq_strict_simp_retains_one_indexed_theorem_application() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed strict-order proposition should lower")
     };
@@ -8127,8 +8007,7 @@ fn le_and_neq_strict_simp_retains_one_indexed_theorem_application() {
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -8218,8 +8097,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the symbolic arithmetic proposition should lower")
     };
@@ -8268,8 +8146,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
                 &state,
                 &recorded_snapshots,
                 &surface_propositions,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
                 &[],
                 &[],
@@ -8314,8 +8191,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
                 &facts,
                 kernel_goal.clone(),
                 &theorem_context,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
             );
             let retained_pure_root = pure_root.clone();
@@ -8392,8 +8268,7 @@ fn selected_disjunction_simp_retains_checked_cases_and_scales() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed proposition should lower")
     };
@@ -8418,8 +8293,7 @@ fn selected_disjunction_simp_retains_checked_cases_and_scales() {
             &state,
             &recorded_snapshots,
             &surface_propositions,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
             &[],
             &[],
@@ -8537,8 +8411,7 @@ fn surface_structural_simp_retains_recursive_child_proofs_and_scales() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed structural proposition should lower")
     };
@@ -8587,8 +8460,7 @@ fn surface_structural_simp_retains_recursive_child_proofs_and_scales() {
                 &state,
                 &recorded_snapshots,
                 &surface_propositions,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
                 &[],
                 &[],
@@ -8784,8 +8656,7 @@ fn predecessor_simps_retain_indexed_named_rule_premises() {
             &state,
             None,
             &recorded_snapshots,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed predecessor proposition should lower")
     };
@@ -8827,8 +8698,7 @@ fn predecessor_simps_retain_indexed_named_rule_premises() {
                 &state,
                 &recorded_snapshots,
                 &surface_propositions,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
                 &[],
                 &[],
@@ -8891,8 +8761,7 @@ fn predecessor_simps_retain_indexed_named_rule_premises() {
                 &facts,
                 goal.clone(),
                 &theorem_context,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
             );
             let retained_pure_root = pure_root.clone();
@@ -8975,8 +8844,7 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
         &BTreeMap::new(),
         &BTreeMap::new(),
         &memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact pure premise should lower");
     let kernel_conclusion = lower_pure_theorem_proposition(
@@ -8985,8 +8853,7 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
         &BTreeMap::new(),
         &BTreeMap::new(),
         &memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the pure theorem conclusion should lower");
     let application = TheoremApplication {
@@ -9024,8 +8891,7 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
             &requires,
             goal,
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -9112,8 +8978,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
         &BTreeMap::new(),
         &BTreeMap::new(),
         &memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the theorem requirement should lower");
     let kernel_selected = lower_pure_theorem_proposition(
@@ -9122,8 +8987,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
         &BTreeMap::new(),
         &BTreeMap::new(),
         &memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the conjunction should lower");
     let kernel_disjunction = lower_pure_theorem_proposition(
@@ -9132,8 +8996,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
         &BTreeMap::new(),
         &BTreeMap::new(),
         &memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the disjunction should lower");
     let kernel_wrong_conjunction = lower_pure_theorem_proposition(
@@ -9142,8 +9005,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
         &BTreeMap::new(),
         &BTreeMap::new(),
         &memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the unrelated conjunction should lower");
     let kernel_implication = lower_pure_theorem_proposition(
@@ -9152,8 +9014,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
         &BTreeMap::new(),
         &BTreeMap::new(),
         &memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the implication should lower");
     assert!(exact_fact_is_available(
@@ -9184,8 +9045,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
         &BTreeMap::new(),
         &BTreeMap::new(),
         &memory,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the theorem conclusion should lower");
     let theorem_context = PureTheoremContext {
@@ -9203,8 +9063,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
         &theorem_context.requires,
         kernel_conclusion,
         &theorem_context,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let application = TheoremApplication {
@@ -9284,8 +9143,7 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -9413,8 +9271,7 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
         &arguments,
         &execution_environment,
         &resources,
-        &predicates,
-        &click_functions,
+        SpecDefinitions::new(&predicates, &click_functions),
         &theorems,
     );
     let unfolded = root
@@ -9623,8 +9480,7 @@ fn choose_projection_walk_is_deterministic_across_selected_body_sizes() {
             &arguments,
             &execution_environment,
             &resources,
-            &predicates,
-            &click_functions,
+            SpecDefinitions::new(&predicates, &click_functions),
             &theorems,
         );
         CHOSEN_PROJECTION_WALK_WORK.with(|count| count.set((0, 0)));
@@ -9733,8 +9589,7 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
         .with_composite_resource_definitions(
             crate::surface::verification::composite_resource_definitions(
                 &resource_environment,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
             )
             .expect("the marker resource definition should lower"),
         );
@@ -9770,8 +9625,7 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -9847,8 +9701,7 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
         .with_composite_resource_definitions(
             crate::surface::verification::composite_resource_definitions(
                 &resource_environment,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
             )
             .expect("the marker resource definition should lower"),
         );
@@ -9884,8 +9737,7 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -9959,8 +9811,7 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
         .with_composite_resource_definitions(
             crate::surface::verification::composite_resource_definitions(
                 &resource_environment,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
             )
             .expect("the marker resource definition should lower"),
         );
@@ -9996,8 +9847,7 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let unfolded = root
@@ -10081,8 +9931,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
         .with_composite_resource_definitions(
             crate::surface::verification::composite_resource_definitions(
                 &resource_environment,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
             )
             .expect("the marker resource definition should lower"),
         );
@@ -10131,8 +9980,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -10276,8 +10124,7 @@ fn execution_transport_forks_without_copying_unrelated_state() {
         &state,
         None,
         &RecordedSnapshots::new(),
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("constant equality should lower at the frontier position");
 
@@ -10306,8 +10153,7 @@ fn execution_transport_forks_without_copying_unrelated_state() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -10400,8 +10246,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
         &state,
         None,
         &RecordedSnapshots::new(),
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact transport source should lower");
 
@@ -10434,8 +10279,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let progressed = root
@@ -10537,8 +10381,7 @@ fn statement_assignment_step_ignores_unrelated_proof_facts() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -10608,8 +10451,7 @@ fn contextual_store_step_scales_with_unrelated_named_facts() {
         function_block,
         &parsed_function,
         &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         "contextual store step",
     )
     .expect("the resource-backed claim context should initialize");
@@ -10653,8 +10495,7 @@ fn contextual_store_step_scales_with_unrelated_named_facts() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -10738,8 +10579,7 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let retained_root = root.clone();
@@ -10896,8 +10736,7 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
             &arguments,
             &environment,
             &resources,
-            &predicates,
-            &click_functions,
+            SpecDefinitions::new(&predicates, &click_functions),
             &theorems,
         )
         .apply_step(ProofStep::UnfoldPredicate("selected".into()))
@@ -11014,8 +10853,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
                 &arguments,
                 &function_environment,
                 &resource_environment,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
             )
         };
@@ -11171,8 +11009,7 @@ fn explicit_invariant_body_scales_and_supplies_kernel_validation() {
             &arguments,
             &functions,
             &resources,
-            &predicates,
-            &click_functions,
+            SpecDefinitions::new(&predicates, &click_functions),
             &theorems,
         );
         let (closed, work) = crate::instrumentation::measure_deterministic_work(|| {
@@ -11392,8 +11229,7 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         )
         .apply_step(ProofStep::Step)
@@ -11597,8 +11433,7 @@ fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
         &state,
         None,
         &RecordedSnapshots::new(),
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact cases disjunction should lower");
     let Proposition::Or(expected_left, expected_right) = lowered_disjunction.clone() else {
@@ -11630,8 +11465,7 @@ fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let before = fact_node_allocations();
@@ -11715,8 +11549,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let before = fact_node_allocations();
@@ -11853,8 +11686,7 @@ fn cursor_execution_branch_join_retains_a_real_load_binding() {
         &arguments,
         &function_environment,
         &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let (split, record) = root
@@ -12005,8 +11837,7 @@ fn cursor_execution_branch_join_retains_a_real_load_binding() {
         &arguments,
         &function_environment,
         &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let (selected_split, selected_record) = selected_root
@@ -12101,8 +11932,7 @@ fn cursor_execution_load_binding_work_is_deterministic_and_output_sized() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let (split, record) = root
@@ -12461,8 +12291,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let (split, record) = root
@@ -12714,8 +12543,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         .with_composite_resource_definitions(
             crate::surface::verification::composite_resource_definitions(
                 &resource_environment,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
             )
             .expect("the ready resource definition should lower"),
         );
@@ -12762,8 +12590,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         )
     };
@@ -13318,8 +13145,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         )
     };
@@ -13538,8 +13364,7 @@ fn mixed_call_outcomes_use_the_enclosing_branch_continuation() {
         &arguments,
         &function_environment,
         &resource_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
     );
     let (outer, outer_record) = root
@@ -13586,8 +13411,7 @@ fn mixed_call_outcomes_use_the_enclosing_branch_continuation() {
         &parsed_function,
         "mixed call outcomes",
         &function_environment,
-        &predicate_environment,
-        &click_function_environment,
+        SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &resource_environment,
         &theorem_environment,
         &function,
@@ -13664,8 +13488,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         )
     };
@@ -13938,8 +13761,7 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let (split, record) = root
@@ -14254,8 +14076,7 @@ fn completed_application_retention_does_not_rerun_and_scales() {
             &context.values,
             &context.array_refs,
             &context.memory,
-            &predicates,
-            &functions,
+            SpecDefinitions::new(&predicates, &functions),
         )
         .unwrap();
         let root = Proof::for_pure_surface_goal(
@@ -14264,8 +14085,7 @@ fn completed_application_retention_does_not_rerun_and_scales() {
             goal.clone(),
             surface.clone(),
             &context,
-            &predicates,
-            &functions,
+            SpecDefinitions::new(&predicates, &functions),
             &theorems,
         );
         let fixed = Proof::for_fixed_state_surface_goal(
@@ -14280,8 +14100,7 @@ fn completed_application_retention_does_not_rerun_and_scales() {
             &state,
             &snapshots,
             &surfaces,
-            &predicates,
-            &functions,
+            SpecDefinitions::new(&predicates, &functions),
             &theorems,
             &[],
             &[],
@@ -14314,8 +14133,7 @@ fn completed_application_retention_does_not_rerun_and_scales() {
                 goal.clone(),
                 surface.clone(),
                 &context,
-                &predicates,
-                &functions,
+                SpecDefinitions::new(&predicates, &functions),
                 &theorems,
             )
             .apply_step(ProofStep::Normalize)
@@ -14360,8 +14178,7 @@ fn fixed_state_source_failure_is_only_a_miss_at_an_explicit_search_boundary() {
         &state,
         &snapshots,
         &surfaces,
-        &predicates,
-        &functions,
+        SpecDefinitions::new(&predicates, &functions),
         &theorems,
         &[],
         &[],
@@ -14435,8 +14252,7 @@ fn outcome_haves_and_folds_share_facts_and_keep_sibling_resources_isolated() {
         .with_composite_resource_definitions(
             crate::surface::verification::composite_resource_definitions(
                 &resource_environment,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
             )
             .expect("the marker resource definition should lower"),
         );
@@ -14475,8 +14291,7 @@ fn outcome_haves_and_folds_share_facts_and_keep_sibling_resources_isolated() {
             &arguments,
             &function_environment,
             &resource_environment,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
 
@@ -14572,8 +14387,10 @@ fn execution_entry_retains_prepared_symbolic_write_selection() {
         &click_file.function_blocks()[0],
         &function,
         &ResourceEnvironment::new(click_file.resource_definitions()),
-        &PredicateEnvironment::new(&[]),
-        &ClickFunctionEnvironment::new(click_file.click_function_definitions()),
+        SpecDefinitions::new(
+            &PredicateEnvironment::new(&[]),
+            &ClickFunctionEnvironment::new(click_file.click_function_definitions()),
+        ),
         "symbolic write entry",
     )
     .unwrap();
@@ -14678,8 +14495,7 @@ fn integer_equality_rewrite_builds_names_only_on_refusal_and_scales() {
             &context.requires,
             goal.clone(),
             &context,
-            &predicates,
-            &functions,
+            SpecDefinitions::new(&predicates, &functions),
             &theorems,
         );
         let calls = std::cell::Cell::new(0);
@@ -14711,8 +14527,7 @@ fn integer_equality_rewrite_builds_names_only_on_refusal_and_scales() {
             &[],
             goal.clone(),
             &context,
-            &predicates,
-            &functions,
+            SpecDefinitions::new(&predicates, &functions),
             &theorems,
         );
         let error = empty
@@ -14776,8 +14591,10 @@ fn snapshot_premise_synthesis_seeks_near_anchor_without_scanning_history() {
             &state,
             None,
             &snapshots,
-            &PredicateEnvironment::new(&[]),
-            &ClickFunctionEnvironment::new(&[]),
+            SpecDefinitions::new(
+                &PredicateEnvironment::new(&[]),
+                &ClickFunctionEnvironment::new(&[]),
+            ),
         )
         .expect("the candidate must lower against the selected snapshot");
         assert_eq!(
@@ -15002,8 +14819,7 @@ fn wide_bound_direct_rewrite_ignores_connected_ambient_equalities() {
             goal.clone(),
             Some(goal_surface.clone()),
             &theorem_context,
-            &predicate_environment,
-            &click_function_environment,
+            SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
         );
         let (closed, work) = crate::instrumentation::measure_deterministic_work(|| {

@@ -2701,26 +2701,74 @@ impl PureFactContext {
     }
 
     /// Project one selected separation from the live ownership partition.
-    /// Both operands must name different owned memory members; views and
-    /// two slices of the same member provide no such evidence. Member lookup
-    /// uses the context's resource index, without publishing the whole frame.
+    /// Each operand must be fully contained in a different owned member;
+    /// views and two slices of the same member provide no such evidence.
+    /// Member lookup uses exact resources or the queried bases and aliases,
+    /// without publishing or scanning the whole frame.
     pub(crate) fn proves_held_resources_separate(
         &self,
         resources: &ResourceContext,
         left: &CResource,
         right: &CResource,
     ) -> bool {
-        matches!((left, right), (CResource::Memory(_), CResource::Memory(_)))
-            && left != right
-            && !self.resource_separation_conflicts_with_equalities(left, right)
-            && resources
-                .exact_resource_facts(left)
-                .iter()
-                .any(CResourceFact::is_own)
+        let (CResource::Memory(left_range), CResource::Memory(right_range)) = (left, right) else {
+            return false;
+        };
+        if left == right || self.resource_separation_conflicts_with_equalities(left, right) {
+            return false;
+        }
+        if resources
+            .exact_resource_facts(left)
+            .iter()
+            .any(CResourceFact::is_own)
             && resources
                 .exact_resource_facts(right)
                 .iter()
                 .any(CResourceFact::is_own)
+        {
+            return true;
+        }
+        let (Some((left_entry, left_owner)), Some((right_entry, right_owner))) = (
+            self.held_member_covering_range(resources, left_range),
+            self.held_member_covering_range(resources, right_range),
+        ) else {
+            return false;
+        };
+        left_entry != right_entry
+            && !self.resource_separation_conflicts_with_equalities(
+                &CResource::Memory(left_owner.clone()),
+                &CResource::Memory(right_owner.clone()),
+            )
+    }
+
+    fn held_member_covering_range<'a>(
+        &self,
+        resources: &'a ResourceContext,
+        requested: &CMemoryRange,
+    ) -> Option<(u64, &'a CMemoryRange)> {
+        // Keep symbolic and wide exact ownership on the fast path above.
+        // A fixed-size field/range uses the same complete-access membership
+        // judgment as memory framing, including mixed element widths.
+        let elements = requested
+            .signed_constant_end()?
+            .checked_sub(requested.signed_constant_start()?)?;
+        let bytes = u32::try_from(elements)
+            .ok()?
+            .checked_mul(requested.element_width())?;
+        if bytes == 0 {
+            return None;
+        }
+        let pointer = requested.start_pointer();
+        for base in additive_base_spellings(&pointer) {
+            for alias in std::iter::once(&base).chain(self.exact_pointer_aliases(&base)) {
+                for (entry, range) in resources.owned_memory_members_with_base(alias) {
+                    if self.kept_range_holds_access(range, &pointer, bytes) {
+                        return Some((entry, range));
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn proves_resource_separate_inner(&self, left: &CResource, right: &CResource) -> bool {

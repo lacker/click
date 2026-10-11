@@ -936,7 +936,8 @@ impl<'a> Proof<'a> {
                 return Err(self.step_error(format!("unknown call contract `{name}`")));
             }
             let definition = context
-                .predicate_environment
+                .spec_definitions
+                .predicates
                 .contract_definition(name)
                 .ok_or_else(|| self.step_error(format!("unknown call contract `{name}`")))?;
             let parameters = definition.proof_parameters.as_deref().unwrap_or(&[]);
@@ -1251,8 +1252,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 before,
                 &execution.presentation.recorded_snapshots,
-                context.predicate_environment,
-                context.click_function_environment,
+                context.spec_definitions,
             )
             .map_err(|message| {
                 self.step_error(format!(
@@ -2049,8 +2049,7 @@ impl<'a> Proof<'a> {
                 state,
                 None,
                 &view.execution.presentation.recorded_snapshots,
-                context.predicate_environment,
-                context.click_function_environment,
+                context.spec_definitions,
             )
             .map_err(|message| {
                 ClickError::new(format!(
@@ -2079,8 +2078,7 @@ impl<'a> Proof<'a> {
                 state,
                 None,
                 &view.execution.presentation.recorded_snapshots,
-                context.predicate_environment,
-                context.click_function_environment,
+                context.spec_definitions,
             )
             .map_err(|message| {
                 ClickError::new(format!(
@@ -2101,8 +2099,7 @@ impl<'a> Proof<'a> {
                 context.arguments,
                 view.execution.view(view.context),
                 state,
-                context.predicate_environment,
-                context.click_function_environment,
+                context.spec_definitions,
             )
             .map_err(|error| {
                 ClickError::new(format!(

@@ -402,8 +402,7 @@ impl<'a> Proof<'a> {
             pre_state,
             &self.focused_outcome_snapshot()?,
             self.facts().clone(),
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             context.claim_label,
             goal.path_index,
         )?;
@@ -451,8 +450,7 @@ impl<'a> Proof<'a> {
                     value,
                     &facts,
                     &case.condition,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                     &execution.presentation.recorded_snapshots,
                 )
                 .map_err(|message| self.step_error(message))?;

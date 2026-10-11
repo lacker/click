@@ -26,8 +26,7 @@ fn relower_written_proposition_with_snapshots(
         state,
         None,
         recorded_snapshots,
-        &PredicateEnvironment::new(&[]),
-        &ClickFunctionEnvironment::new(&[]),
+        SpecDefinitions::new(&PredicateEnvironment::new(&[]), &ClickFunctionEnvironment::new(&[])),
         &std::collections::BTreeSet::new(),
     )
 }

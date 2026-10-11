@@ -8,8 +8,7 @@ pub(in crate::surface) fn evaluate_contract_expression_with_environment(
     result: Option<&CValue>,
     assumptions: &PureFactContext,
     expression: &ContractExpression,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     recorded_snapshots: &RecordedSnapshots,
     opaque_click_functions: &mut BTreeSet<String>,
 ) -> Result<CValue, String> {
@@ -22,8 +21,7 @@ pub(in crate::surface) fn evaluate_contract_expression_with_environment(
         post_state,
         result,
         recorded_snapshots,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         opaque_click_functions,
     )
 }

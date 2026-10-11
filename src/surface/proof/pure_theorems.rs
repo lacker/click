@@ -45,8 +45,7 @@ pub(in crate::surface) fn theorem_requirement_propositions(
 pub(in crate::surface) fn verify_theorem_definitions(
     dependencies: TheoremEnvironment,
     theorem_definitions: &[TheoremDefinition],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     function_environment: Option<&CExecutionEnvironment>,
     resource_environment: &ResourceEnvironment,
     function_source_registry: Arc<FunctionSourceRegistry>,
@@ -61,8 +60,7 @@ pub(in crate::surface) fn verify_theorem_definitions(
             verified.push(
                 verify_execution_theorem(
                     theorem,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                     &theorem_environment,
                     function_environment,
                     resource_environment,
@@ -78,8 +76,7 @@ pub(in crate::surface) fn verify_theorem_definitions(
             crate::instrumentation::with_default_tactic_limits(|| {
                 verify_theorem_definition(
                     theorem,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                     &theorem_environment,
                     function_environment,
                 )
@@ -102,16 +99,14 @@ pub(in crate::surface) fn verify_theorem_definitions(
 /// type; that is the form [`verify_concrete_theorem_definition`] takes.
 pub(in crate::surface) fn verify_theorem_definition(
     theorem: &TheoremDefinition,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     theorem_environment: &TheoremEnvironment,
     function_environment: Option<&CExecutionEnvironment>,
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     if theorem.type_parameters().is_empty() {
         return verify_concrete_theorem_definition(
             theorem,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             theorem_environment,
             function_environment,
         );
@@ -135,8 +130,7 @@ pub(in crate::surface) fn verify_theorem_definition(
     symbolic.name = theorem.name().to_string();
     verify_concrete_theorem_definition(
         &symbolic,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         theorem_environment,
         function_environment,
     )
@@ -144,13 +138,12 @@ pub(in crate::surface) fn verify_theorem_definition(
 
 pub(in crate::surface) fn verify_concrete_theorem_definition(
     theorem: &TheoremDefinition,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     theorem_environment: &TheoremEnvironment,
     function_environment: Option<&CExecutionEnvironment>,
 ) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     debug_assert!(theorem.type_parameters().is_empty());
-    let context = pure_theorem_context(theorem, predicate_environment, click_function_environment)?;
+    let context = pure_theorem_context(theorem, spec_definitions)?;
     theorem
         .ensures()
         .iter()
@@ -164,8 +157,7 @@ pub(in crate::surface) fn verify_concrete_theorem_definition(
                 ensure_clause,
                 &claim_label,
                 &context,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 theorem_environment,
                 function_environment,
             );
@@ -201,8 +193,7 @@ impl PureTheoremContext {
     fn with_declaration_bindings(
         &self,
         bindings: &[(String, Option<ClickType>, ContractExpression)],
-        predicate_environment: &PredicateEnvironment,
-        click_function_environment: &ClickFunctionEnvironment,
+        spec_definitions: SpecDefinitions<'_>,
     ) -> Result<Self, ClickError> {
         let mut context = self.clone();
         let names: BTreeSet<_> = bindings
@@ -270,7 +261,7 @@ impl PureTheoremContext {
                                 operator: ComparisonOperator::Equal,
                                 right: ContractExpression::IntegerLiteral("0".into()),
                             }, BTreeMap::new(), BTreeMap::new(), &state, BTreeMap::new(), BTreeMap::new(),
-                            BTreeMap::new(), &integer_values, None, &RecordedSnapshots::new(), predicate_environment, click_function_environment,
+                            BTreeMap::new(), &integer_values, None, &RecordedSnapshots::new(), spec_definitions,
                             BTreeSet::new(), BTreeMap::new(),).map_err(ClickError::new)?;
                         let crate::kernel::SpecProposition::IntegerComparison { left, .. } = spec
                         else {
@@ -468,8 +459,7 @@ fn collect_structural_induction_arguments(
 pub(super) fn pure_induction_hypothesis(
     setup: &PureInductionSetup,
     context: &PureTheoremContext,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, ClickError> {
     let Some(CValue::Int32(Bitvector32Term::Variable(current_variable))) =
         context.values.get(&setup.parameter)
@@ -489,8 +479,7 @@ pub(super) fn pure_induction_hypothesis(
             &context.values,
             &context.array_refs,
             &context.memory,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(ClickError::new)?;
         assumptions = assumptions.assume_proposition(lowered.clone());
@@ -503,8 +492,7 @@ pub(super) fn pure_induction_hypothesis(
         &context.values,
         &context.array_refs,
         &context.memory,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(ClickError::new)?;
     let mut propositions = opaque_requirements.clone();
@@ -845,8 +833,7 @@ fn check_pure_structural_induction(
     claim_label: &str,
     context: &PureTheoremContext,
     surface_goal: &ClickProposition,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     theorem_environment: &TheoremEnvironment,
     tactics: &[ProofTactic],
 ) -> Result<
@@ -907,8 +894,7 @@ fn check_pure_structural_induction(
         &state,
         None,
         &RecordedSnapshots::new(),
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
     let root_value_type = AlgebraicValueType::Algebraic {
@@ -1038,8 +1024,7 @@ fn check_pure_structural_induction(
                         &state,
                         None,
                         &RecordedSnapshots::new(),
-                        predicate_environment,
-                        click_function_environment,
+                        spec_definitions,
                     )
                     .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
                     branch_algebraic_values.insert(binding.clone(), captured);
@@ -1067,8 +1052,7 @@ fn check_pure_structural_induction(
             &branch_context.array_refs,
             &branch_algebraic_values,
             &branch_context.memory,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(ClickError::new)?;
         let mut branch_surface_requires = Vec::new();
@@ -1083,8 +1067,7 @@ fn check_pure_structural_induction(
                 &branch_context.array_refs,
                 &branch_algebraic_values,
                 &branch_context.memory,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )
             .map_err(ClickError::new)?;
             branch_surface_requires.push(surface);
@@ -1134,8 +1117,7 @@ fn check_pure_structural_induction(
                     &branch_context.array_refs,
                     &branch_algebraic_values,
                     &branch_context.memory,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                 )
                 .map_err(ClickError::new)?;
                 surface_premises.push(surface);
@@ -1151,8 +1133,7 @@ fn check_pure_structural_induction(
                 &branch_context.array_refs,
                 &branch_algebraic_values,
                 &branch_context.memory,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )
             .map_err(ClickError::new)?;
             // As in `pure_induction_hypothesis`: the hypothesis is the
@@ -1225,8 +1206,7 @@ fn check_pure_structural_induction(
             branch_goal,
             branch_surface_goal,
             &branch_context,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             theorem_environment,
             branch_setup,
         );
@@ -1287,8 +1267,7 @@ fn check_pure_structural_induction(
 
 pub(super) fn pure_theorem_context(
     theorem: &TheoremDefinition,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<PureTheoremContext, ClickError> {
     let memory = CMemory::new();
     let values = pure_theorem_parameter_values(theorem.parameters());
@@ -1312,8 +1291,7 @@ pub(super) fn pure_theorem_context(
             &BTreeMap::new(),
             &integer_values,
             &memory,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(|message| {
             ClickError::new(format!(
@@ -1387,8 +1365,7 @@ pub(super) fn pure_theorem_context(
 /// certification assumptions. Proof bodies are intentionally ignored.
 pub(in crate::surface) fn assumed_theorem_certification_authorities(
     theorems: &[TheoremDefinition],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Vec<(String, Proposition, CVerifiedPureTheorem)>, ClickError> {
     let mut assumptions = Vec::new();
     for theorem in theorems {
@@ -1400,8 +1377,7 @@ pub(in crate::surface) fn assumed_theorem_certification_authorities(
         {
             continue;
         }
-        let context =
-            pure_theorem_context(theorem, predicate_environment, click_function_environment)?;
+        let context = pure_theorem_context(theorem, spec_definitions)?;
         let variables = theorem
             .parameters()
             .iter()
@@ -1425,8 +1401,7 @@ pub(in crate::surface) fn assumed_theorem_certification_authorities(
                 &BTreeMap::new(),
                 &context.integer_values,
                 &context.memory,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )
             .map_err(|message| {
                 ClickError::new(format!(
@@ -1785,8 +1760,7 @@ fn verify_theorem_ensure(
     ensure_clause: &EnsureClause,
     claim_label: &str,
     context: &PureTheoremContext,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     theorem_environment: &TheoremEnvironment,
     function_environment: Option<&CExecutionEnvironment>,
 ) -> Result<VerifiedPureTheorem, ClickError> {
@@ -1796,11 +1770,8 @@ fn verify_theorem_ensure(
     let context = if ensure_clause.proof_bindings.is_empty() {
         context
     } else {
-        scoped_context = context.with_declaration_bindings(
-            &ensure_clause.proof_bindings,
-            predicate_environment,
-            click_function_environment,
-        )?;
+        scoped_context =
+            context.with_declaration_bindings(&ensure_clause.proof_bindings, spec_definitions)?;
         &scoped_context
     };
     let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
@@ -1815,8 +1786,7 @@ fn verify_theorem_ensure(
         claim_label,
         surface_goal,
         context,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         theorem_environment,
         function_environment,
     )? {
@@ -1832,8 +1802,7 @@ fn verify_theorem_ensure(
         &BTreeMap::new(),
         &context.integer_values,
         &context.memory,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| {
         ClickError::new(format!(
@@ -1861,8 +1830,7 @@ fn verify_theorem_ensure(
                 surface_goal,
                 &goal,
                 &goal_introductions,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 theorem_environment,
             )?;
             let kind = if matches!(
@@ -1891,8 +1859,7 @@ fn verify_theorem_ensure(
                     claim_label,
                     context,
                     surface_goal,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                     theorem_environment,
                     tactics,
                 )?;
@@ -1912,8 +1879,7 @@ fn verify_theorem_ensure(
                     &goal_introductions,
                     &tactics,
                     setup.as_ref(),
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                     theorem_environment,
                 )?;
                 (
@@ -1940,38 +1906,32 @@ fn verify_theorem_ensure(
     // every other shape, and for a rewrite chain the kernel rejects.
     let kernel_authority = match (kernel_variables, &checked_completion) {
         (Some(variables), TheoremProofCompletion::Proposition(completion)) => {
-            certificate_int32_rewrites(
-                &certificate,
-                claim_label,
-                context,
-                predicate_environment,
-                click_function_environment,
-            )
-            .and_then(|rewrites| {
-                prove_universally_quantified_pure_implication_by_int32_rewrites(
-                    context
-                        .requires
-                        .iter()
-                        .map(crate::kernel::clone_proposition_iteratively)
-                        .collect(),
-                    goal.clone(),
-                    variables.clone(),
-                    rewrites,
-                    completion,
-                )
-            })
-            .or_else(|| {
-                prove_universally_quantified_pure_implication(
-                    context
-                        .requires
-                        .iter()
-                        .map(crate::kernel::clone_proposition_iteratively)
-                        .collect(),
-                    goal.clone(),
-                    variables,
-                    completion,
-                )
-            })
+            certificate_int32_rewrites(&certificate, claim_label, context, spec_definitions)
+                .and_then(|rewrites| {
+                    prove_universally_quantified_pure_implication_by_int32_rewrites(
+                        context
+                            .requires
+                            .iter()
+                            .map(crate::kernel::clone_proposition_iteratively)
+                            .collect(),
+                        goal.clone(),
+                        variables.clone(),
+                        rewrites,
+                        completion,
+                    )
+                })
+                .or_else(|| {
+                    prove_universally_quantified_pure_implication(
+                        context
+                            .requires
+                            .iter()
+                            .map(crate::kernel::clone_proposition_iteratively)
+                            .collect(),
+                        goal.clone(),
+                        variables,
+                        completion,
+                    )
+                })
         }
         _ => None,
     };
@@ -2000,15 +1960,14 @@ fn verify_contract_refinement_theorem(
     claim_label: &str,
     surface_goal: &ClickProposition,
     context: &PureTheoremContext,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     theorem_environment: &TheoremEnvironment,
     function_environment: Option<&CExecutionEnvironment>,
 ) -> Result<Option<VerifiedPureTheorem>, ClickError> {
     let ClickProposition::PredicateCall { name, arguments } = surface_goal else {
         return Ok(None);
     };
-    let Some(contract_definition) = predicate_environment.contract_definition(name) else {
+    let Some(contract_definition) = spec_definitions.predicates.contract_definition(name) else {
         return Ok(None);
     };
     let [argument] = arguments.as_slice() else {
@@ -2067,7 +2026,8 @@ fn verify_contract_refinement_theorem(
                 "`{claim_label}`: source and target contracts must describe the same symbolic callback `{binding}`"
             )));
         }
-        let source_definition = predicate_environment
+        let source_definition = spec_definitions
+            .predicates
             .contract_definition(source_name)
             .ok_or_else(|| {
                 ClickError::new(format!(
@@ -2224,8 +2184,7 @@ fn verify_contract_refinement_theorem(
         obligations.post(),
         &snapshots,
         &surfaces,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         theorem_environment,
     );
     let mut search = super::attempt::search_scope("contract refinement");
@@ -2252,8 +2211,7 @@ fn verify_contract_refinement_theorem(
         &context.integer_values,
         &context.array_refs,
         &context.memory,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| {
         ClickError::new(format!(
@@ -2309,8 +2267,7 @@ fn certificate_int32_rewrites(
     certificate: &ProofCertificate,
     claim_label: &str,
     context: &PureTheoremContext,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Option<Vec<Proposition>> {
     let steps = certificate.steps();
     let (rewrite_steps, closer) = steps.split_at(steps.len().saturating_sub(1));
@@ -2326,8 +2283,7 @@ fn certificate_int32_rewrites(
                 &context.values,
                 &context.array_refs,
                 &context.memory,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )
             .ok(),
             _ => None,
@@ -2363,8 +2319,7 @@ fn check_direct_pure_goal_with_proof(
     surface_goal: &ClickProposition,
     goal: &Proposition,
     goal_introductions: &crate::kernel::LoweringIntroductions,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<(ProofCertificate, crate::kernel::proof::CheckedProposition), ClickError> {
     let root = Proof::for_pure_surface_goal(
@@ -2373,8 +2328,7 @@ fn check_direct_pure_goal_with_proof(
         goal.clone(),
         surface_goal.clone(),
         context,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         theorem_environment,
     )
     .with_recorded_goal_introductions(Some(goal_introductions.clone()));
@@ -3087,8 +3041,7 @@ fn check_pure_script_with_proof(
     goal_introductions: &crate::kernel::LoweringIntroductions,
     tactics: &[ProofTactic],
     induction_setup: Option<&PureInductionSetup>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<(ProofCertificate, crate::kernel::proof::CheckedProposition), ClickError> {
     let root = match induction_setup {
@@ -3098,8 +3051,7 @@ fn check_pure_script_with_proof(
             goal.clone(),
             surface_goal.clone(),
             context,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             theorem_environment,
             setup.clone(),
         ),
@@ -3109,8 +3061,7 @@ fn check_pure_script_with_proof(
             goal.clone(),
             surface_goal.clone(),
             context,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             theorem_environment,
         ),
     }
@@ -3352,8 +3303,7 @@ pub(super) fn lower_pure_theorem_proposition(
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     memory: &CMemory,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
     lower_pure_theorem_proposition_with_opaque_calls(
         theorem_name,
@@ -3361,8 +3311,7 @@ pub(super) fn lower_pure_theorem_proposition(
         values,
         array_refs,
         memory,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         &BTreeSet::new(),
     )
 }
@@ -3375,8 +3324,7 @@ pub(super) fn lower_pure_theorem_proposition_with_integer_values(
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     array_refs: &ClickArrayRefs,
     memory: &CMemory,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
     lower_pure_theorem_proposition_with_algebraic_and_integer_values(
         theorem_name,
@@ -3386,8 +3334,7 @@ pub(super) fn lower_pure_theorem_proposition_with_integer_values(
         &BTreeMap::new(),
         integer_values,
         memory,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
 }
 
@@ -3400,8 +3347,7 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_and_integer_values(
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     memory: &CMemory,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
     lower_pure_theorem_proposition_recording_introductions(
         theorem_name,
@@ -3412,8 +3358,7 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_and_integer_values(
         algebraic_values,
         integer_values,
         memory,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map(|(proposition, _)| proposition)
 }
@@ -3431,8 +3376,7 @@ pub(super) fn lower_pure_theorem_proposition_recording_introductions(
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     memory: &CMemory,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<(Proposition, crate::kernel::LoweringIntroductions), String> {
     let state = CState::new().with_memory(memory.clone());
     lower_fixed_state_proposition_through_kernel_recording_introductions(
@@ -3447,8 +3391,7 @@ pub(super) fn lower_pure_theorem_proposition_recording_introductions(
         &state,
         None,
         &RecordedSnapshots::new(),
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         &BTreeSet::new(),
         BTreeMap::new(),
     )
@@ -3463,8 +3406,7 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_values(
     array_refs: &ClickArrayRefs,
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
     memory: &CMemory,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
     lower_pure_theorem_proposition_with_algebraic_and_integer_values(
         theorem_name,
@@ -3474,8 +3416,7 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_values(
         algebraic_values,
         &crate::persistent::PersistentMap::default(),
         memory,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
 }
 
@@ -3489,8 +3430,7 @@ fn lower_pure_theorem_proposition_with_opaque_calls(
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     memory: &CMemory,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     opaque_click_functions: &BTreeSet<String>,
 ) -> Result<Proposition, String> {
     let state = CState::new().with_memory(memory.clone());
@@ -3503,8 +3443,7 @@ fn lower_pure_theorem_proposition_with_opaque_calls(
         &state,
         None,
         &RecordedSnapshots::new(),
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         opaque_click_functions,
     )
     .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
@@ -3518,10 +3457,10 @@ fn lower_pure_theorem_proposition_opaque(
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     memory: &CMemory,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
-    let opaque = click_function_environment
+    let opaque = spec_definitions
+        .functions
         .definitions
         .keys()
         .cloned()
@@ -3536,8 +3475,7 @@ fn lower_pure_theorem_proposition_opaque(
         &state,
         None,
         &RecordedSnapshots::new(),
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         &opaque,
     )
     .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
@@ -3766,8 +3704,7 @@ mod tests {
         let functions = ClickFunctionEnvironment::new(file.click_function_definitions());
         let mut verified = verify_concrete_theorem_definition(
             &file.theorem_definitions()[0],
-            &predicates,
-            &functions,
+            SpecDefinitions::new(&predicates, &functions),
             &TheoremEnvironment::new(&[]),
             None,
         )?;
@@ -3946,8 +3883,9 @@ mod tests {
             let theorem = &file.theorem_definitions()[0];
             let predicates = PredicateEnvironment::new(&[]);
             let functions = ClickFunctionEnvironment::new(&[]);
+            let spec_definitions = SpecDefinitions::new(&predicates, &functions);
             let theorems = TheoremEnvironment::new(&[]);
-            let context = pure_theorem_context(theorem, &predicates, &functions).unwrap();
+            let context = pure_theorem_context(theorem, spec_definitions).unwrap();
             let Ensure::Proposition(surface_goal) = theorem.ensures()[0].ensure() else {
                 unreachable!()
             };
@@ -3957,8 +3895,7 @@ mod tests {
                 &context.values,
                 &context.array_refs,
                 &context.memory,
-                &predicates,
-                &functions,
+                spec_definitions,
             )
             .unwrap();
             let root = Proof::for_pure_surface_goal(
@@ -3967,8 +3904,7 @@ mod tests {
                 goal.clone(),
                 surface_goal.clone(),
                 &context,
-                &predicates,
-                &functions,
+                spec_definitions,
                 &theorems,
             );
             let certificate = ProofCertificate::from_proof_tactics(
@@ -4113,12 +4049,13 @@ mod tests {
             .with_contracts(file.contract_definitions());
         let click_function_environment =
             ClickFunctionEnvironment::new(file.click_function_definitions());
+        let spec_definitions =
+            SpecDefinitions::new(&predicate_environment, &click_function_environment);
         let theorem = file
             .theorem_definitions()
             .first()
             .ok_or_else(|| ClickError::new("test source did not contain a theorem"))?;
-        let context =
-            pure_theorem_context(theorem, &predicate_environment, &click_function_environment)?;
+        let context = pure_theorem_context(theorem, spec_definitions)?;
         let ensure = theorem
             .ensures()
             .first()
@@ -4135,8 +4072,7 @@ mod tests {
             &BTreeMap::new(),
             &context.integer_values,
             &context.memory,
-            &predicate_environment,
-            &click_function_environment,
+            spec_definitions,
         )
         .map_err(ClickError::new)?;
         verify_kernel_standard_theorem_axiom(theorem, 0, ensure, theorem.name(), &context, goal)

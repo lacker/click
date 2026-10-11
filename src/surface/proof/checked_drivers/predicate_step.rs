@@ -18,12 +18,11 @@ pub(in crate::surface::proof) struct CheckedPredicateFactUnfold {
 pub(in crate::surface::proof) fn check_unfold_predicate_in_facts(
     available: &ProofFacts,
     name: &String,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<CheckedPredicateFactUnfold, ClickError> {
-    if predicate_environment.get(name).is_none() {
+    if spec_definitions.predicates.get(name).is_none() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: unknown predicate `{name}`"
         )));
@@ -33,8 +32,7 @@ pub(in crate::surface::proof) fn check_unfold_predicate_in_facts(
     let mut added_facts = Vec::new();
     for proposition in available.mentioning_predicate(name) {
         let unfolded = unfold_predicates_in_proposition(
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             std::slice::from_ref(name),
             proposition,
             assumptions,
@@ -62,8 +60,8 @@ pub(in crate::surface::proof) fn check_unfold_predicate_facts(
     available_pure_facts: &ProofFacts,
     name: &String,
 ) -> Result<CheckedPredicateUnfold, ClickError> {
-    let predicate_environment = proof_context.predicate_environment;
-    let click_function_environment = proof_context.click_function_environment;
+    let predicate_environment = proof_context.spec_definitions.predicates;
+    let click_function_environment = proof_context.spec_definitions.functions;
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
@@ -72,8 +70,7 @@ pub(in crate::surface::proof) fn check_unfold_predicate_facts(
     let checked_facts = check_unfold_predicate_in_facts(
         available_pure_facts,
         name,
-        predicate_environment,
-        click_function_environment,
+        SpecDefinitions::new(predicate_environment, click_function_environment),
         claim_label,
         tactic_index,
     )?;
@@ -110,8 +107,7 @@ pub(in crate::surface::proof) fn check_unfold_predicate_facts(
             let surface =
                 instantiate_click_predicate_definition(definition, surface_arguments).ok()?;
             let unfolded = unfold_predicates_in_proposition(
-                predicate_environment,
-                click_function_environment,
+                SpecDefinitions::new(predicate_environment, click_function_environment),
                 std::slice::from_ref(name),
                 kernel,
                 assumptions,

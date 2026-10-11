@@ -19,8 +19,7 @@ pub(in crate::surface::proof) enum ProofContext<'a> {
 pub(in crate::surface::proof) struct PureProofContext<'a> {
     pub(in crate::surface::proof) claim_label: &'a str,
     pub(in crate::surface::proof) theorem_context: &'a PureTheoremContext,
-    pub(in crate::surface::proof) predicate_environment: &'a PredicateEnvironment,
-    pub(in crate::surface::proof) click_function_environment: &'a ClickFunctionEnvironment,
+    pub(in crate::surface::proof) spec_definitions: SpecDefinitions<'a>,
     pub(in crate::surface::proof) theorem_environment: &'a TheoremEnvironment,
     pub(in crate::surface::proof) induction_setup: Option<PureInductionSetup>,
     pub(in crate::surface::proof) structural_induction_setup:
@@ -39,8 +38,7 @@ pub(in crate::surface::proof) struct FixedStateProofContext<'a> {
     pub(in crate::surface::proof) premise_anchor: Option<ProgramPointRef>,
     pub(in crate::surface::proof) recorded_snapshots: &'a RecordedSnapshots,
     pub(in crate::surface::proof) surface_propositions: &'a SurfacePropositionMap,
-    pub(in crate::surface::proof) predicate_environment: &'a PredicateEnvironment,
-    pub(in crate::surface::proof) click_function_environment: &'a ClickFunctionEnvironment,
+    pub(in crate::surface::proof) spec_definitions: SpecDefinitions<'a>,
     pub(in crate::surface::proof) theorem_environment: &'a TheoremEnvironment,
     pub(in crate::surface::proof) unfolded_predicates: &'a [String],
     pub(in crate::surface::proof) effect_facts: ExecutionFacts,
@@ -215,8 +213,7 @@ pub(in crate::surface::proof) struct ExecutionProofContext<'a> {
     pub(in crate::surface::proof) arguments: &'a [CExpression],
     pub(in crate::surface::proof) function_environment: &'a CExecutionEnvironment,
     pub(in crate::surface::proof) resource_environment: &'a ResourceEnvironment,
-    pub(in crate::surface::proof) predicate_environment: &'a PredicateEnvironment,
-    pub(in crate::surface::proof) click_function_environment: &'a ClickFunctionEnvironment,
+    pub(in crate::surface::proof) spec_definitions: SpecDefinitions<'a>,
     pub(in crate::surface::proof) theorem_environment: &'a TheoremEnvironment,
     /// The source tactic a statement step runs on behalf of, as diagnostics
     /// name it: `step()` for an explicit step, `execute()` while a smart

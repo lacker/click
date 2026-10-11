@@ -1,8 +1,7 @@
 use super::*;
 
 pub(in crate::surface) fn unfold_available_predicate_facts(
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
     available_pure_facts: &[Proposition],
 ) -> Result<Vec<Proposition>, String> {
@@ -29,8 +28,7 @@ pub(in crate::surface) fn unfold_available_predicate_facts(
     let mut propositions = available_pure_facts.to_vec();
     for proposition in to_unfold {
         let unfolded = unfold_predicates_in_proposition(
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             unfolded_predicates,
             proposition,
             &assumptions,
@@ -61,16 +59,14 @@ fn proposition_contains_named_predicate(proposition: &Proposition, names: &[Stri
 }
 
 pub(in crate::surface) fn unfold_predicates_in_proposition(
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
     proposition: &Proposition,
     assumptions: &PureFactContext,
 ) -> Result<Proposition, String> {
     let mut active = BTreeSet::new();
     unfold_predicates_in_proposition_with_active(
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         unfolded_predicates,
         proposition,
         assumptions,
@@ -79,8 +75,7 @@ pub(in crate::surface) fn unfold_predicates_in_proposition(
 }
 
 pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
     proposition: &Proposition,
     assumptions: &PureFactContext,
@@ -99,7 +94,8 @@ pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
                 .iter()
                 .find(|candidate| predicate_instance_name_matches(name, candidate))
                 .expect("the predicate guard selected a source name");
-            let definition = predicate_environment
+            let definition = spec_definitions
+                .predicates
                 .get(source_name)
                 .ok_or_else(|| format!("unknown predicate `{source_name}`"))?;
             let definition = instantiate_lowered_predicate_definition(definition, arguments)?;
@@ -107,12 +103,10 @@ pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
                 &definition,
                 arguments,
                 assumptions,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )?;
             let unfolded = unfold_predicates_in_proposition_with_active(
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 unfolded_predicates,
                 &unfolded,
                 assumptions,
@@ -123,16 +117,14 @@ pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
         }
         Proposition::And(left, right) => Ok(Proposition::And(
             Box::new(unfold_predicates_in_proposition_with_active(
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 unfolded_predicates,
                 left,
                 assumptions,
                 active,
             )?),
             Box::new(unfold_predicates_in_proposition_with_active(
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 unfolded_predicates,
                 right,
                 assumptions,
@@ -141,16 +133,14 @@ pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
         )),
         Proposition::Or(left, right) => Ok(Proposition::Or(
             Box::new(unfold_predicates_in_proposition_with_active(
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 unfolded_predicates,
                 left,
                 assumptions,
                 active,
             )?),
             Box::new(unfold_predicates_in_proposition_with_active(
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 unfolded_predicates,
                 right,
                 assumptions,
@@ -159,8 +149,7 @@ pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
         )),
         Proposition::Not(body) => Ok(Proposition::Not(Box::new(
             unfold_predicates_in_proposition_with_active(
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 unfolded_predicates,
                 body,
                 assumptions,
@@ -169,8 +158,7 @@ pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
         ))),
         Proposition::Implies(left, right) => {
             let left = unfold_predicates_in_proposition_with_active(
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 unfolded_predicates,
                 left,
                 assumptions,
@@ -178,8 +166,7 @@ pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
             )?;
             let right_assumptions = assumptions.clone().assume_proposition(left.clone());
             let right = unfold_predicates_in_proposition_with_active(
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 unfolded_predicates,
                 right,
                 &right_assumptions,
@@ -191,8 +178,7 @@ pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
             var: *var,
             sort: sort.clone(),
             body: Box::new(unfold_predicates_in_proposition_with_active(
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 unfolded_predicates,
                 body,
                 assumptions,
@@ -209,8 +195,7 @@ pub(in crate::surface) fn unfold_predicates_in_proposition_with_active(
             var: *var,
             sort: sort.clone(),
             body: Box::new(unfold_predicates_in_proposition_with_active(
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 unfolded_predicates,
                 body,
                 assumptions,
@@ -275,8 +260,7 @@ pub(in crate::surface) fn instantiate_predicate_definition(
     definition: &PredicateDefinition,
     arguments: &[Term],
     assumptions: &PureFactContext,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
     let (state, values, array_refs) = decode_predicate_arguments(definition, arguments)?;
     // The body takes the route every proof-side proposition takes:
@@ -291,8 +275,7 @@ pub(in crate::surface) fn instantiate_predicate_definition(
         &state,
         None,
         &RecordedSnapshots::new(),
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
 }
 

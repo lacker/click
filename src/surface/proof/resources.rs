@@ -427,16 +427,14 @@ pub(super) fn materialize_folded_composite_resource_cells(
     arguments: &[CExpression],
     state: CState,
     claim_label: &str,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CState, ClickError> {
     let memory = materialize_folded_composite_resource_memory(
         resource_environment,
         parameters,
         arguments,
         &state,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
     Ok(state.with_memory(memory))
@@ -447,8 +445,7 @@ fn materialize_folded_composite_resource_memory(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CMemory, String> {
     let mut memory = state.memory().clone();
     for resource in state.resources().facts() {
@@ -482,8 +479,7 @@ fn materialize_folded_composite_resource_memory(
             state.resources(),
             &PureFactContext::new(),
             resource_environment,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             None,
         )
         .map_err(|message| {
@@ -934,8 +930,7 @@ pub(super) fn project_initial_composite_resource_cores(
     available_pure_facts: &(impl PropositionSource + ?Sized),
     claim_label: &str,
     owned: Option<OwnedCores>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CState, ClickError> {
     let include_owned = owned.is_some();
     let attach_to_owner = owned == Some(OwnedCores::AttachedToOwner);
@@ -949,7 +944,7 @@ pub(super) fn project_initial_composite_resource_cores(
         if let CResource::Instance(instance) = resource.resource() {
             let Some(selected) = selected_resource_instance_arm(
                 resource_environment,
-                click_function_environment,
+                spec_definitions.functions,
                 instance,
                 &assumptions,
             ) else {
@@ -1023,8 +1018,7 @@ pub(super) fn project_initial_composite_resource_cores(
             state.resources(),
             &assumptions,
             resource_environment,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             None,
         )
         .map_err(|message| {
@@ -1041,8 +1035,7 @@ pub(super) fn project_initial_composite_resource_cores(
             &state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
             &assumptions,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(|message| {
             ClickError::new(format!(
@@ -1276,8 +1269,7 @@ pub(super) fn project_initial_resource_facts(
     arguments: &[CExpression],
     state: &CState,
     available_pure_facts: &[Proposition],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     claim_label: &str,
 ) -> Result<Vec<Proposition>, ClickError> {
     let result = CValue::Int32(Bitvector32Term::Constant(0));
@@ -1297,8 +1289,7 @@ pub(super) fn project_initial_resource_facts(
         state,
         &result,
         &mut facts,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
     Ok(facts.facts.to_vec())
@@ -1311,8 +1302,7 @@ pub(super) fn project_outcome_resource_facts(
     pre_state: &CState,
     outcome: &CFunctionOutcome,
     available_pure_facts: ProofFacts,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     claim_label: &str,
     path_index: usize,
 ) -> Result<ProofFacts, ClickError> {
@@ -1335,8 +1325,7 @@ pub(super) fn project_outcome_resource_facts(
         state,
         value,
         &mut facts,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| {
         ClickError::new(format!(
@@ -1376,8 +1365,7 @@ fn project_folded_resource_observable_facts_with_store(
     state: &CState,
     result: &CValue,
     propositions: &mut ProofResourcePureFacts,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<(), String> {
     for resource in state.resources().facts() {
         project_held_resource_observable_facts(
@@ -1389,8 +1377,7 @@ fn project_folded_resource_observable_facts_with_store(
             state,
             result,
             propositions,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )?;
     }
     Ok(())
@@ -1414,8 +1401,7 @@ pub(super) fn observe_composite_resource_for_proof(
     facts: ProofFacts,
     surface_propositions: &mut SurfacePropositionMap,
     count_derivations: &mut PersistentOrderedSet<Theorem>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<CheckedResourceObservation, ClickError> {
@@ -1430,8 +1416,7 @@ pub(super) fn observe_composite_resource_for_proof(
         &mut facts,
         surface_propositions,
         count_derivations,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         claim_label,
         tactic_index,
     )?;
@@ -1454,8 +1439,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
     available_pure_facts: &mut F,
     surface_propositions: &mut SurfacePropositionMap,
     count_derivations: &mut PersistentOrderedSet<Theorem>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<(CState, CResourceFact), ClickError> {
@@ -1557,8 +1541,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 &CValue::Int32(Bitvector32Term::Constant(0)),
                 available_pure_facts.assumptions(),
                 &count_witness,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )
             .map_err(|message| {
                 ClickError::new(format!(
@@ -1597,8 +1580,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             &CValue::Int32(Bitvector32Term::Constant(0)),
             available_pure_facts.assumptions(),
             &nonnegative_witness,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(|message| {
             ClickError::new(format!(
@@ -1639,8 +1621,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             &CValue::Int32(Bitvector32Term::Constant(0)),
             available_pure_facts.assumptions(),
             &count_nonnegative_witness,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         ) {
             surface_propositions
                 .record_lowering(&count_nonnegative_witness, &count_nonnegative_kernel)?;
@@ -1711,8 +1692,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         None,
         available_pure_facts.assumptions(),
         resource_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         Some(function.composite_resource_definitions()),
     )?;
     let observation_pre_state = state.clone();
@@ -1735,8 +1715,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         &state,
         &CValue::Int32(Bitvector32Term::Constant(0)),
         available_pure_facts,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         false,
         Some(function.composite_resource_definitions()),
     )
@@ -1779,8 +1758,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             instantiated,
             available_pure_facts,
             surface_propositions,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(|message| {
             ClickError::new(format!(
@@ -1936,8 +1914,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
     instantiated: &crate::kernel::InstantiatedCompositeResourceFacts,
     available_pure_facts: &F,
     surface_propositions: &mut SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<(), String> {
     let composite_body = definition
         .composite_body()
@@ -1951,8 +1928,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
         fact_state,
         &CValue::Int32(Bitvector32Term::Constant(0)),
         available_pure_facts.assumptions(),
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )?
     else {
         return Ok(());
@@ -2091,8 +2067,7 @@ pub(super) fn record_initial_composite_surface_facts(
     state: &CState,
     available_pure_facts: &PureFactList,
     surface_propositions: &mut SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     active_resources: &mut BTreeSet<String>,
 ) -> Result<(), String> {
     let assumptions = available_pure_facts.context();
@@ -2122,8 +2097,7 @@ pub(super) fn record_initial_composite_surface_facts(
             None,
             &assumptions,
             resource_environment,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             None,
         )
         .map_err(|error| error.raw_summary().to_string())?;
@@ -2136,8 +2110,7 @@ pub(super) fn record_initial_composite_surface_facts(
             state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
             &assumptions,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )?
         else {
             return Ok(());
@@ -2155,8 +2128,7 @@ pub(super) fn record_initial_composite_surface_facts(
                 &CValue::Int32(Bitvector32Term::Constant(0)),
                 available_pure_facts,
                 &surface,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )?;
             if available_pure_facts.contains(&kernel) {
                 surface_propositions
@@ -2179,8 +2151,7 @@ fn project_held_resource_observable_facts(
     state: &CState,
     result: &CValue,
     available_pure_facts: &mut ProofResourcePureFacts,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CMemory, String> {
     let (name, resource_arguments) = match resource.resource() {
         CResource::Composite { name, arguments } => (name, arguments),
@@ -2209,8 +2180,7 @@ fn project_held_resource_observable_facts(
         state,
         result,
         available_pure_facts,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         true,
         None,
     )
@@ -2227,8 +2197,7 @@ fn try_select_composite_resource_body(
     state: &CState,
     result: &CValue,
     assumptions: &PureFactContext,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Option<bool>, String> {
     let Some(condition) = definition
         .composite_body()
@@ -2250,8 +2219,7 @@ fn try_select_composite_resource_body(
         result,
         assumptions,
         &condition,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| {
         format!(
@@ -2315,8 +2283,7 @@ fn composite_resource_body_is_active_with_assumptions(
     state: &CState,
     result: &CValue,
     assumptions: &PureFactContext,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<bool, String> {
     try_select_composite_resource_body(
         definition,
@@ -2327,8 +2294,7 @@ fn composite_resource_body_is_active_with_assumptions(
         state,
         result,
         assumptions,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )?
     .ok_or_else(|| {
         format!(
@@ -2353,8 +2319,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
     state: &CState,
     result: &CValue,
     available_pure_facts: &mut F,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     lower_declared_source_facts: bool,
     compiled_definitions: Option<&[CCompositeResourceDefinition]>,
 ) -> Result<(CMemory, ResourceContext, bool), String> {
@@ -2369,8 +2334,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         state.resources(),
         available_pure_facts.assumptions(),
         resource_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         compiled_definitions,
     )
     .map_err(|message| {
@@ -2388,8 +2352,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         state,
         result,
         available_pure_facts.assumptions(),
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )?
     else {
         return Ok((state.memory().clone(), ResourceContext::new(), false));
@@ -2456,8 +2419,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         &fact_state,
         result,
         available_pure_facts,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         lower_declared_source_facts,
     )?;
     Ok((memory, contained_resources, true))
@@ -2475,8 +2437,7 @@ fn append_composite_definition_observable_facts<F: ResourcePureFacts>(
     fact_state: &CState,
     result: &CValue,
     propositions: &mut F,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     lower_declared_source_facts: bool,
 ) -> Result<(), String> {
     append_resource_context_observable_facts_with_store(contained_resources, propositions);
@@ -2509,8 +2470,7 @@ fn append_composite_definition_observable_facts<F: ResourcePureFacts>(
             fact_state,
             result,
             propositions,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )?;
     }
     Ok(())
@@ -2649,8 +2609,7 @@ fn append_composite_resource_declared_facts<F: ResourcePureFacts>(
     fact_state: &CState,
     result: &CValue,
     propositions: &mut F,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<(), String> {
     for fact in composite_body.facts() {
         let fact = substitute_click_proposition(fact, substitutions).map_err(|message| {
@@ -2667,8 +2626,7 @@ fn append_composite_resource_declared_facts<F: ResourcePureFacts>(
             result,
             propositions.assumptions(),
             &fact,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(|message| {
             format!(
@@ -2837,8 +2795,7 @@ fn resource_value_substitutions_with_witnesses(
     resources: &ResourceContext,
     assumptions: &PureFactContext,
     resource_environment: &ResourceEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     compiled_definitions: Option<&[CCompositeResourceDefinition]>,
 ) -> Result<BTreeMap<String, ContractExpression>, String> {
     let mut substitutions = resource_value_substitutions(definition, arguments)?;
@@ -2854,8 +2811,7 @@ fn resource_value_substitutions_with_witnesses(
     } else {
         owned_definitions = crate::surface::verification::composite_resource_definitions(
             resource_environment,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(|error| error.raw_summary().to_string())?;
         &owned_definitions
@@ -2903,8 +2859,7 @@ pub(super) fn unfold_composite_resource_for_proof(
     state: CState,
     facts: ProofFacts,
     surface_propositions: &mut SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     claim_label: &str,
     tactic_index: usize,
     materialize_memory: bool,
@@ -2917,8 +2872,7 @@ pub(super) fn unfold_composite_resource_for_proof(
         state,
         facts,
         surface_propositions,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         claim_label,
         tactic_index,
         ResourceBodyAccess::Finalize,
@@ -2935,8 +2889,7 @@ pub(super) fn open_composite_resource_for_proof(
     state: CState,
     facts: ProofFacts,
     surface_propositions: &mut SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<CheckedResourceUnfold, ClickError> {
@@ -2948,8 +2901,7 @@ pub(super) fn open_composite_resource_for_proof(
         state,
         facts,
         surface_propositions,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         claim_label,
         tactic_index,
         ResourceBodyAccess::Open,
@@ -2966,8 +2918,7 @@ fn unfold_composite_resource_for_proof_with_access(
     state: CState,
     facts: ProofFacts,
     surface_propositions: &mut SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     claim_label: &str,
     tactic_index: usize,
     access: ResourceBodyAccess,
@@ -2982,8 +2933,7 @@ fn unfold_composite_resource_for_proof_with_access(
         state,
         &mut facts,
         surface_propositions,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         claim_label,
         tactic_index,
         access,
@@ -3007,8 +2957,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     mut state: CState,
     available_pure_facts: &mut F,
     surface_propositions: &mut SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     claim_label: &str,
     tactic_index: usize,
     access: ResourceBodyAccess,
@@ -3036,8 +2985,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         None,
         available_pure_facts.assumptions(),
         resource_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         None,
     )?;
     let body_active = composite_resource_body_is_active_with_assumptions(
@@ -3049,8 +2997,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         &state,
         &CValue::Int32(Bitvector32Term::Constant(0)),
         available_pure_facts.assumptions(),
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| {
         ClickError::new(format!(
@@ -3148,8 +3095,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     let authority_projection = if authority_control_body {
         let definitions = crate::surface::verification::composite_resource_definitions(
             resource_environment,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )?;
         let definition = definitions
             .iter()
@@ -3380,8 +3326,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
             &CValue::Int32(Bitvector32Term::Constant(0)),
             available_pure_facts.assumptions(),
             &fact,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(|message| {
             ClickError::new(format!(
@@ -3398,8 +3343,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
             ))
         })?;
         let lowered_fact = unfold_predicates_in_proposition(
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             &[],
             &lowered_fact,
             available_pure_facts.assumptions(),
@@ -3622,8 +3566,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         let projection_memory = state.memory().clone();
         let definitions = crate::surface::verification::composite_resource_definitions(
             resource_environment,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )?;
         state = project_children_into_ledger(
             state,
@@ -3688,8 +3631,7 @@ fn fold_composite_resources_on_outcome_with_facts(
     arguments: &[CExpression],
     pre_state: &CState,
     mut outcome: CFunctionOutcome,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
     closure: ResourceBodyClosure,
     family_reaches_population: bool,
@@ -3727,8 +3669,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             Some(&guard_result),
             pure_facts.assumptions(),
             resource_environment,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             None,
         )?;
         let mut body_active = composite_resource_body_is_active_with_assumptions(
@@ -3740,8 +3681,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             &guard_state,
             &guard_result,
             pure_facts.assumptions(),
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )
         .map_err(|message| {
             ClickError::new(format!(
@@ -3828,8 +3768,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             if authority_control_body {
                 let definitions = crate::surface::verification::composite_resource_definitions(
                     resource_environment,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                 )?;
                 let definition = definitions
                     .iter()
@@ -3888,8 +3827,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             if authority_control_body {
                 let definitions = crate::surface::verification::composite_resource_definitions(
                     resource_environment,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                 )?;
                 let definition = definitions
                     .iter()
@@ -3991,8 +3929,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                     value,
                     pure_facts.assumptions(),
                     &fact,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
@@ -4001,8 +3938,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                     ))
                 })?;
                 unfold_predicates_in_proposition(
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                     unfolded_predicates,
                     &lowered,
                     pure_facts.assumptions(),
@@ -4472,8 +4408,7 @@ pub(super) fn fold_composite_resource_for_proof(
     arguments: &[CExpression],
     pre_state: &CState,
     state: CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
     family_reaches_population: bool,
 ) -> Result<CheckedResourceFold, ClickError> {
@@ -4488,8 +4423,7 @@ pub(super) fn fold_composite_resource_for_proof(
         arguments,
         pre_state,
         state,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         unfolded_predicates,
         ResourceBodyClosure::Initialize,
         family_reaches_population,
@@ -4512,8 +4446,7 @@ pub(super) fn fold_composite_resource_on_outcome_for_proof(
     arguments: &[CExpression],
     pre_state: &CState,
     outcome: CFunctionOutcome,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
     closure: ResourceBodyClosure,
     family_reaches_population: bool,
@@ -4531,8 +4464,7 @@ pub(super) fn fold_composite_resource_on_outcome_for_proof(
         arguments,
         pre_state,
         outcome,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         unfolded_predicates,
         closure,
         family_reaches_population,
@@ -4566,8 +4498,7 @@ pub(super) fn fold_composite_resource_on_outcome_for_proof(
                 state,
                 value,
                 &mut facts,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )
             .map_err(|message| {
                 ClickError::new(format!(
@@ -4593,8 +4524,7 @@ pub(super) fn close_open_resource_for_proof(
     arguments: &[CExpression],
     pre_state: &CState,
     state: CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
     preserve_exposed_body: bool,
 ) -> Result<CheckedResourceFold, ClickError> {
@@ -4609,8 +4539,7 @@ pub(super) fn close_open_resource_for_proof(
         arguments,
         pre_state,
         state,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         unfolded_predicates,
         ResourceBodyClosure::CloseOpen {
             preserve_exposed_body,
@@ -4631,8 +4560,7 @@ fn fold_composite_resource_for_proof_with_closure(
     arguments: &[CExpression],
     pre_state: &CState,
     state: CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
     closure: ResourceBodyClosure,
     family_reaches_population: bool,
@@ -4654,8 +4582,7 @@ fn fold_composite_resource_for_proof_with_closure(
         arguments,
         pre_state,
         outcome,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         unfolded_predicates,
         closure,
         family_reaches_population,
@@ -4796,8 +4723,7 @@ fn extend_substitutions_with_witnesses(
     result: Option<&CValue>,
     assumptions: &PureFactContext,
     resource_environment: &ResourceEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     compiled_definitions: Option<&[CCompositeResourceDefinition]>,
 ) -> Result<(), ClickError> {
     let Some(body) = definition.composite_body() else {
@@ -4824,8 +4750,7 @@ fn extend_substitutions_with_witnesses(
     } else {
         owned_definitions = crate::surface::verification::composite_resource_definitions(
             resource_environment,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         )?;
         &owned_definitions
     };

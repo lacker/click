@@ -385,8 +385,7 @@ impl<'a> Proof<'a> {
                 &arm_execution.core.state,
                 None,
                 &arm_execution.presentation.recorded_snapshots,
-                context.predicate_environment,
-                context.click_function_environment,
+                context.spec_definitions,
             )
             .map_err(|message| {
                 self.step_error(format!(
@@ -903,8 +902,7 @@ impl<'a> Proof<'a> {
                     &target,
                     &common_snapshots,
                     context.arguments,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                 )),
                 ProofAssertion::Resource(_) => None,
             })
@@ -4403,8 +4401,7 @@ mod progress_tests {
                 &arguments,
                 &function_environment,
                 &resource_environment,
-                &predicate_environment,
-                &click_function_environment,
+                SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
             )
             .apply_step(ProofStep::Step)

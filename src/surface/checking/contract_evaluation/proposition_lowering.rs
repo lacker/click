@@ -9,8 +9,7 @@ pub(in crate::surface) fn lower_outcome_proposition(
     result: &CValue,
     available_pure_facts: &(impl PropositionSource + ?Sized),
     proposition: &ClickProposition,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
     let recorded_snapshots = RecordedSnapshots::new();
     lower_outcome_proposition_with_recorded_snapshots(
@@ -21,8 +20,7 @@ pub(in crate::surface) fn lower_outcome_proposition(
         result,
         available_pure_facts,
         proposition,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         &recorded_snapshots,
     )
 }
@@ -37,8 +35,7 @@ pub(in crate::surface) fn lower_outcome_proposition_with_auxiliary_facts(
     result: &CValue,
     assumptions: &PureFactContext,
     proposition: &ClickProposition,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<(Proposition, Vec<Proposition>), String> {
     let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
@@ -55,8 +52,7 @@ pub(in crate::surface) fn lower_outcome_proposition_with_auxiliary_facts(
         post_state,
         Some(result),
         &RecordedSnapshots::new(),
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         &std::collections::BTreeSet::new(),
         BTreeMap::new(),
     )
@@ -81,8 +77,7 @@ pub(in crate::surface) fn lower_outcome_proposition_with_assumptions(
     result: &CValue,
     assumptions: &PureFactContext,
     proposition: &ClickProposition,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
     let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
@@ -95,8 +90,7 @@ pub(in crate::surface) fn lower_outcome_proposition_with_assumptions(
         post_state,
         Some(result),
         &RecordedSnapshots::new(),
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
 }
 
@@ -109,8 +103,7 @@ pub(in crate::surface) fn lower_outcome_proposition_with_recorded_snapshots(
     result: &CValue,
     available_pure_facts: &(impl PropositionSource + ?Sized),
     proposition: &ClickProposition,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     recorded_snapshots: &RecordedSnapshots,
 ) -> Result<Proposition, String> {
     let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
@@ -125,7 +118,6 @@ pub(in crate::surface) fn lower_outcome_proposition_with_recorded_snapshots(
         post_state,
         Some(result),
         recorded_snapshots,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
 }

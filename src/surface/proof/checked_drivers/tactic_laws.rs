@@ -14,8 +14,8 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     let function_block = proof_context.function_block;
     let parsed_function = proof_context.parsed_function;
     let function_environment = proof_context.function_environment;
-    let predicate_environment = proof_context.predicate_environment;
-    let click_function_environment = proof_context.click_function_environment;
+    let predicate_environment = proof_context.spec_definitions.predicates;
+    let click_function_environment = proof_context.spec_definitions.functions;
     let resource_environment = proof_context.resource_environment;
     let theorem_environment = proof_context.theorem_environment;
     let arguments = proof_context.arguments;
@@ -98,8 +98,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         parsed_function,
         &initial_state,
         arguments,
-        predicate_environment,
-        click_function_environment,
+        SpecDefinitions::new(predicate_environment, click_function_environment),
         resource_environment,
         Some(ResourceFrameEntry {
             assumptions: &entry_assumptions,
@@ -155,8 +154,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         function_block: &bound_function_block,
         parsed_function,
         function_environment,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions: SpecDefinitions::new(predicate_environment, click_function_environment),
         resource_environment,
         theorem_environment,
         function: &annotated,
@@ -339,8 +337,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
             state,
             None,
             &execution.presentation.recorded_snapshots,
-            predicate_environment,
-            click_function_environment,
+            SpecDefinitions::new(predicate_environment, click_function_environment),
         )
         .map_err(|message| {
             ClickError::new(format!(

@@ -2361,8 +2361,7 @@ fn records_checked_surface_forms_for_lowered_propositions() {
         &state,
         None,
         &RecordedSnapshots::new(),
-        &predicates,
-        &functions,
+        SpecDefinitions::new(&predicates, &functions),
     )
     .expect("surface proposition should lower");
     let Proposition::And(kernel_left, kernel_right) = &kernel else {

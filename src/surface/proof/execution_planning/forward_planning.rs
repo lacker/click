@@ -659,7 +659,7 @@ fn advance_execution_proof_statement(
                 &context.pure_facts,
                 statement,
                 environment.function_environment,
-                Some(environment.predicate_environment),
+                Some(environment.spec_definitions.predicates),
                 CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
                 &label,
                 &mut context.next_opaque_call,
@@ -673,7 +673,7 @@ fn advance_execution_proof_statement(
                 &context.pure_facts,
                 statement,
                 environment.function_environment,
-                Some(environment.predicate_environment),
+                Some(environment.spec_definitions.predicates),
                 &label,
                 initialization_proven,
                 preservation_proven,
@@ -797,8 +797,7 @@ fn advance_execution_proof_statement(
                             exit_state,
                             None,
                             &recorded_snapshots,
-                            environment.predicate_environment,
-                            environment.click_function_environment,
+                            environment.spec_definitions,
                         )
                         .map_err(|message| {
                             ClickError::new(format!(

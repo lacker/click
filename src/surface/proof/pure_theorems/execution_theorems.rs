@@ -24,8 +24,7 @@ fn substitute_requirement(
 
 pub(super) fn verify_execution_theorem(
     theorem: &TheoremDefinition,
-    predicates: &PredicateEnvironment,
-    functions: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     theorems: &TheoremEnvironment,
     environment: Option<&CExecutionEnvironment>,
     resources: &ResourceEnvironment,
@@ -105,7 +104,8 @@ pub(super) fn verify_execution_theorem(
     if concrete_callee.is_none() && !is_callback(arguments) {
         return Err(error("the conclusion must describe the executed callback"));
     }
-    let target = predicates
+    let target = spec_definitions
+        .predicates
         .contract_definition(target_name)
         .ok_or_else(|| error("the conclusion must name a function contract"))?;
     let mut source_names = Vec::new();
@@ -128,7 +128,8 @@ pub(super) fn verify_execution_theorem(
                     "requires a source-contract assumption for the executed callback",
                 ));
             };
-            let source = predicates
+            let source = spec_definitions
+                .predicates
                 .contract_definition(name)
                 .ok_or_else(|| error("the source assumption must name a function contract"))?;
             if !is_callback(arguments) {
@@ -313,8 +314,7 @@ pub(super) fn verify_execution_theorem(
         &parsed,
         &claims,
         environment,
-        predicates,
-        functions,
+        spec_definitions,
         resources,
         theorems,
         function_source_registry,
@@ -335,8 +335,7 @@ pub(super) fn verify_execution_theorem(
                 &block,
                 &parsed,
                 resources,
-                predicates,
-                functions,
+                spec_definitions,
                 theorem.name(),
             )?;
             (state, arguments, facts)
@@ -359,8 +358,7 @@ pub(super) fn verify_execution_theorem(
         &parsed,
         &state,
         &arguments,
-        predicates,
-        functions,
+        spec_definitions,
         resources,
         Some(ResourceFrameEntry {
             assumptions: &assumptions_from_propositions(&facts),
@@ -394,15 +392,14 @@ pub(super) fn verify_execution_theorem(
     .ok_or_else(|| error("the one-call proof did not certify every target obligation"))?;
     let rule = c_verified_function_rule(function, &claims)
         .ok_or_else(|| error("the one-call proof did not establish a checked contract"))?;
-    let context = pure_theorem_context(theorem, predicates, functions)?;
+    let context = pure_theorem_context(theorem, spec_definitions)?;
     let conclusion = lower_pure_theorem_proposition(
         theorem.name(),
         goal,
         &context.values,
         &context.array_refs,
         &context.memory,
-        predicates,
-        functions,
+        spec_definitions,
     )
     .map_err(ClickError::new)?;
     let authority = match concrete_callee {

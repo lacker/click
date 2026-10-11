@@ -114,8 +114,7 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
     surface_propositions: &SurfacePropositionMap,
     unfolded_predicates: &[String],
     effect_facts: &(impl ExecutionFactSource + ?Sized),
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CheckedFixedStateTheoremApplication, ClickError> {
     let resource_facts = state
         .resources()
@@ -137,8 +136,7 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
             result,
             integer_values,
             recorded_snapshots,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         );
         // Prefer the current-state lowering when it is checkable. A retained
         // surface form can also name an older raw load whose value the
@@ -231,8 +229,7 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
         &evidence_assumptions,
         &lowering_assumptions,
         &application_context,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         unfolded_predicates,
     )?;
 
@@ -261,8 +258,7 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
     application: &TheoremApplication,
     context: &TheoremApplicationContext<'_>,
     assumptions: &PureFactContext,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, String> {
     let theorem = theorem_environment
@@ -273,16 +269,14 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
         application,
         assumptions,
         context,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )?;
     let (values, array_refs, algebraic_values, integer_values) = theorem_application_bindings(
         &theorem,
         application,
         context,
         assumptions,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )?;
     // The theorem's parameters shadow any C local of the same name: the
     // application binds them, not the state.
@@ -315,8 +309,7 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
                 &post_state,
                 None,
                 context.recorded_snapshots,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 &BTreeSet::new(),
                 super::super::theorem_application::theorem_application_pointer_element_widths(
                     &theorem,
@@ -325,8 +318,7 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
                 ),
             )?;
             unfold_predicates_in_proposition(
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 unfolded_predicates,
                 &lowered,
                 assumptions,
@@ -347,8 +339,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
     pre_state: &CState,
     post_state: &CState,
     result: &CValue,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<ClickProposition, ClickError> {
     check_verification_deadline()?;
     let lowering_facts = facts_for_smart_have_lowering(available);
@@ -361,8 +352,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
             result,
             &lowering_facts,
             surface,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             view.recorded_snapshots,
         )
         .map_err(ClickError::new)
@@ -517,7 +507,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
             for candidate in variants {
                 check_verification_deadline()?;
                 let Ok(unfolded) = unfold_structural_invariant_proposition(
-                    predicate_environment,
+                    spec_definitions.predicates,
                     &candidate,
                     unfolded_predicates,
                 ) else {
@@ -569,7 +559,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
                 for candidate in variants {
                     check_verification_deadline()?;
                     let Ok(unfolded) = unfold_structural_invariant_proposition(
-                        predicate_environment,
+                        spec_definitions.predicates,
                         &candidate,
                         unfolded_predicates,
                     ) else {

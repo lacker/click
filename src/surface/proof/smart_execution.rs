@@ -238,8 +238,7 @@ impl<'a> Proof<'a> {
             context.arguments,
             view,
             &execution.core.state,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
         ) {
             Ok(premises) => premises,
             Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
@@ -390,8 +389,7 @@ impl<'a> Proof<'a> {
             context.result,
             context.recorded_snapshots,
             context.surface_propositions,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             context.theorem_environment,
         )
     }
@@ -423,8 +421,7 @@ impl<'a> Proof<'a> {
             None,
             &execution.presentation.recorded_snapshots,
             &execution.presentation.surface_propositions,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             context.theorem_environment,
         )
     }
@@ -616,8 +613,7 @@ impl<'a> Proof<'a> {
                     view.result,
                     view.recorded_snapshots,
                     view.surface_propositions,
-                    view.predicate_environment,
-                    view.click_function_environment,
+                    view.spec_definitions,
                     view.theorem_environment,
                 )
             }
@@ -655,8 +651,7 @@ impl<'a> Proof<'a> {
         result: Option<&CValue>,
         recorded_snapshots: &RecordedSnapshots,
         surface_propositions: &SurfacePropositionMap,
-        predicate_environment: &PredicateEnvironment,
-        click_function_environment: &ClickFunctionEnvironment,
+        spec_definitions: SpecDefinitions<'_>,
         theorem_environment: &TheoremEnvironment,
     ) -> Result<ProofStep, ClickError> {
         // Resolve names for semantic checking, but retain the written arguments
@@ -710,8 +705,7 @@ impl<'a> Proof<'a> {
             application,
             &application_context,
             &lowering_assumptions,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             &unfolded_predicates,
         )
         .map_err(|message| {
@@ -730,8 +724,7 @@ impl<'a> Proof<'a> {
                 application,
                 &lowering_assumptions,
                 &application_context,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )
             .map_err(|message| self.step_error(message))?;
             &instantiated
@@ -813,8 +806,7 @@ impl<'a> Proof<'a> {
                     parameters,
                     arguments,
                     state,
-                    predicate_environment,
-                    click_function_environment,
+                    spec_definitions,
                 ) {
                     Ok(surface) => {
                         if !premises.contains(&surface) {
@@ -874,8 +866,7 @@ impl<'a> Proof<'a> {
                         state,
                         result,
                         recorded_snapshots,
-                        predicate_environment,
-                        click_function_environment,
+                        spec_definitions,
                     );
                     direct.as_ref().is_ok_and(matches_requirement)
                 })
@@ -960,8 +951,7 @@ impl<'a> Proof<'a> {
             application,
             &application_context,
             self.facts().assumptions(),
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             &unfolded_predicates,
         )
         .map_err(|message| {
@@ -976,8 +966,7 @@ impl<'a> Proof<'a> {
             application,
             self.facts().assumptions(),
             &application_context,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
         )
         .map_err(|message| self.step_error(message))?;
         let substitutions = theorem
@@ -1094,19 +1083,10 @@ impl<'a> Proof<'a> {
         if arguments.is_empty() {
             return Ok(premises);
         }
-        let (predicates, functions) = match self.context.as_ref() {
-            ProofContext::Pure(context) => (
-                context.predicate_environment,
-                context.click_function_environment,
-            ),
-            ProofContext::FixedState(context) => (
-                context.predicate_environment,
-                context.click_function_environment,
-            ),
-            ProofContext::Execution(context) => (
-                context.predicate_environment,
-                context.click_function_environment,
-            ),
+        let spec_definitions = match self.context.as_ref() {
+            ProofContext::Pure(context) => context.spec_definitions,
+            ProofContext::FixedState(context) => context.spec_definitions,
+            ProofContext::Execution(context) => context.spec_definitions,
         };
         let mut explicit = PureFactContext::new();
         for surface in formal_premises {
@@ -1175,8 +1155,7 @@ impl<'a> Proof<'a> {
                 context.post_state,
                 context.result,
                 context.recorded_snapshots,
-                predicates,
-                functions,
+                spec_definitions,
             )
             .map_err(|message| self.step_error(message))?;
             for guard in guards {
@@ -1207,8 +1186,7 @@ impl<'a> Proof<'a> {
                 context.post_state,
                 context.result,
                 context.recorded_snapshots,
-                predicates,
-                functions,
+                spec_definitions,
             )
             .map_err(|message| {
                 self.step_error(format!(
@@ -1289,8 +1267,7 @@ impl<'a> Proof<'a> {
                 &application,
                 self.facts().assumptions(),
                 &application_context,
-                context.predicate_environment,
-                context.click_function_environment,
+                context.spec_definitions,
             ) else {
                 return Vec::new();
             };

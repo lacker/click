@@ -467,8 +467,7 @@ impl<'a> Proof<'a> {
             None,
             explicit_premises,
             &application_context,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             &unfolded_predicates,
         )?;
 
@@ -530,8 +529,7 @@ impl<'a> Proof<'a> {
             view.surface_propositions,
             &unfolded_predicates,
             view.effect_facts,
-            view.predicate_environment,
-            view.click_function_environment,
+            view.spec_definitions,
         )?;
         let complete = self
             .goal()
@@ -589,8 +587,7 @@ impl<'a> Proof<'a> {
             &execution.presentation.surface_propositions,
             &execution.core.unfolded_predicates,
             &execution.core.effect_facts,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
         )?;
         let complete = self
             .goal()
@@ -741,8 +738,7 @@ impl<'a> Proof<'a> {
         let unfolded_predicates = self.active_unfolded_predicates();
         if !matches!(source, Proposition::Exists { .. }) && !unfolded_predicates.is_empty() {
             source = unfold_predicates_in_proposition(
-                view.predicate_environment,
-                view.click_function_environment,
+                view.spec_definitions,
                 &unfolded_predicates,
                 &source,
                 self.facts().assumptions(),
@@ -1045,8 +1041,7 @@ impl<'a> Proof<'a> {
                         view.pre_state,
                         None,
                         view.recorded_snapshots,
-                        view.predicate_environment,
-                        view.click_function_environment,
+                        view.spec_definitions,
                     )
                     .map_err(|message| self.step_error(message))?;
                     // A quantified leaf re-lowers with fresh binders, so it
@@ -1271,8 +1266,7 @@ impl<'a> Proof<'a> {
                         view.pre_state,
                         None,
                         view.recorded_snapshots,
-                        view.predicate_environment,
-                        view.click_function_environment,
+                        view.spec_definitions,
                     )
                     .map_err(|message| {
                         self.step_error(format!(
@@ -1509,8 +1503,7 @@ impl<'a> Proof<'a> {
             .clone();
         let unfolded_predicates = self.active_unfolded_predicates();
         let goal = unfold_predicates_in_proposition(
-            view.predicate_environment,
-            view.click_function_environment,
+            view.spec_definitions,
             &unfolded_predicates,
             &goal,
             self.facts().assumptions(),
@@ -1556,8 +1549,7 @@ impl<'a> Proof<'a> {
                 view.pre_state,
                 view.state,
                 view.recorded_snapshots,
-                view.predicate_environment,
-                view.click_function_environment,
+                view.spec_definitions,
             )
             .map_err(|message| {
                 self.step_error(format!("could not capture algebraic witness: {message}"))
@@ -1606,8 +1598,7 @@ impl<'a> Proof<'a> {
             view.state,
             view.result,
             self.facts().assumptions(),
-            view.predicate_environment,
-            view.click_function_environment,
+            view.spec_definitions,
             view.recorded_snapshots,
         )?;
         let goal = apply_witness_tactic(
@@ -1791,8 +1782,7 @@ impl<'a> Proof<'a> {
             &state,
             None,
             &RecordedSnapshots::new(),
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             &BTreeSet::new(),
         )
         .map_err(|message| {
@@ -2009,8 +1999,7 @@ impl<'a> Proof<'a> {
             &state,
             &state,
             &RecordedSnapshots::new(),
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
         )
         .map_err(|message| {
             self.step_error(format!("could not capture algebraic witness: {message}"))
@@ -2083,7 +2072,7 @@ impl<'a> Proof<'a> {
             &ClickProposition::Comparison { left: promoted, operator: ComparisonOperator::Equal, right: ContractExpression::IntegerLiteral("0".into()) },
             states.element_types, BTreeMap::new(), &states.entry_state, states.entry_values, states.current_values,
             algebraic, &integers, None, &RecordedSnapshots::new(),
-            context.predicate_environment, context.click_function_environment, BTreeSet::new(),
+            context.spec_definitions, BTreeSet::new(),
             BTreeMap::new(),).map_err(|message| self.step_error(format!("could not lower Integer witness: {message}")))?;
         let crate::kernel::SpecProposition::IntegerComparison { left, .. } = spec else {
             return Err(self.step_error("witness must be an Integer expression"));
@@ -2168,8 +2157,7 @@ impl<'a> Proof<'a> {
                 &state,
                 None,
                 &RecordedSnapshots::new(),
-                context.predicate_environment,
-                context.click_function_environment,
+                context.spec_definitions,
                 &BTreeSet::new(),
             )
         } else {
@@ -2223,8 +2211,7 @@ impl<'a> Proof<'a> {
                 view.state,
                 view.result,
                 view.recorded_snapshots,
-                view.predicate_environment,
-                view.click_function_environment,
+                view.spec_definitions,
                 &BTreeSet::new(),
             )
         }
@@ -2415,8 +2402,7 @@ impl<'a> Proof<'a> {
         let unfolded_predicates = self.active_unfolded_predicates();
         let goal = Box::new(
             unfold_predicates_in_proposition(
-                view.predicate_environment,
-                view.click_function_environment,
+                view.spec_definitions,
                 &unfolded_predicates,
                 self.proposition_goal("`rewrite` requires a proposition goal")?,
                 self.facts().assumptions(),
@@ -2453,8 +2439,7 @@ impl<'a> Proof<'a> {
                     view.state,
                     view.result,
                     view.recorded_snapshots,
-                    view.predicate_environment,
-                    view.click_function_environment,
+                    view.spec_definitions,
                 )
                 .map_err(|message| {
                     let source =
@@ -2468,8 +2453,7 @@ impl<'a> Proof<'a> {
         };
         let equality = Box::new(
             unfold_predicates_in_proposition(
-                view.predicate_environment,
-                view.click_function_environment,
+                view.spec_definitions,
                 &unfolded_predicates,
                 &equality,
                 self.facts().assumptions(),
@@ -2635,8 +2619,7 @@ impl<'a> Proof<'a> {
         if !matches!(checked_source, Proposition::Exists { .. }) && !unfolded_predicates.is_empty()
         {
             checked_source = unfold_predicates_in_proposition(
-                view.predicate_environment,
-                view.click_function_environment,
+                view.spec_definitions,
                 &unfolded_predicates,
                 &checked_source,
                 self.facts().assumptions(),
@@ -2775,8 +2758,10 @@ impl<'a> Proof<'a> {
             result: None,
             recorded_snapshots: &execution.presentation.recorded_snapshots,
             surface_propositions: &execution.presentation.surface_propositions,
-            predicate_environment: context.predicate_environment,
-            click_function_environment: context.click_function_environment,
+            spec_definitions: SpecDefinitions::new(
+                context.spec_definitions.predicates,
+                context.spec_definitions.functions,
+            ),
             theorem_environment: context.theorem_environment,
             original_requirements: context.function_block.requires(),
             requirement_facts: &context.constants.execution_start_facts,
@@ -3012,8 +2997,7 @@ impl<'a> Proof<'a> {
                             value,
                             &retained_query,
                             condition,
-                            context.predicate_environment,
-                            context.click_function_environment,
+                            context.spec_definitions,
                             &snapshots,
                         )
                     } else {
@@ -3025,8 +3009,7 @@ impl<'a> Proof<'a> {
                             value,
                             facts,
                             condition,
-                            context.predicate_environment,
-                            context.click_function_environment,
+                            context.spec_definitions,
                             &snapshots,
                         )
                     };
@@ -3153,8 +3136,10 @@ impl<'a> Proof<'a> {
             result: Some(data.core.result.as_ref()),
             recorded_snapshots: &data.recorded_snapshots,
             surface_propositions: &data.surface_propositions,
-            predicate_environment: context.predicate_environment,
-            click_function_environment: context.click_function_environment,
+            spec_definitions: SpecDefinitions::new(
+                context.spec_definitions.predicates,
+                context.spec_definitions.functions,
+            ),
             theorem_environment: context.theorem_environment,
             original_requirements: context.function_block.requires(),
             requirement_facts: context.constants.execution_start_facts.as_slice(),
@@ -3767,8 +3752,7 @@ impl<'a> Proof<'a> {
             view.result,
             view.recorded_snapshots,
             view.surface_propositions,
-            view.predicate_environment,
-            view.click_function_environment,
+            view.spec_definitions,
         )?;
         let mut facts = self.facts().clone();
         let added_facts = if facts.contains(&checked.target) {
@@ -3850,8 +3834,7 @@ impl<'a> Proof<'a> {
             None,
             &execution.presentation.recorded_snapshots,
             &execution.presentation.surface_propositions,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
         )?;
         execution
             .presentation

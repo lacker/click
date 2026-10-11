@@ -2491,8 +2491,7 @@ impl<'a> Proof<'a> {
                     &algebraic,
                     &integer_values,
                     &context.theorem_context.memory,
-                    context.predicate_environment,
-                    context.click_function_environment,
+                    context.spec_definitions,
                 )
                 .map(|(proposition, _)| proposition)
                 .map_err(|message| {
@@ -2888,8 +2887,7 @@ impl<'a> Proof<'a> {
         let quantified = super::super::pure_theorems::pure_induction_hypothesis(
             setup,
             context.theorem_context,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
         )?;
         if self.facts().contains(&quantified) {
             return Err(self.step_error("induction hypothesis was already introduced"));
@@ -2965,8 +2963,7 @@ impl<'a> Proof<'a> {
             None,
             self.facts().assumptions(),
             argument,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
             &RecordedSnapshots::new(),
             &mut active_functions,
         )
@@ -2979,8 +2976,7 @@ impl<'a> Proof<'a> {
         let quantified = super::super::pure_theorems::pure_induction_hypothesis(
             setup,
             context.theorem_context,
-            context.predicate_environment,
-            context.click_function_environment,
+            context.spec_definitions,
         )?;
         self.state
             .apply_instantiate(quantified, argument, Some(&explicit_premises))

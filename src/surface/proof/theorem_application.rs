@@ -113,8 +113,7 @@ pub(super) fn apply_theorem_applications_to_available(
     path_index: Option<usize>,
     available: Vec<Proposition>,
     context: &TheoremApplicationContext<'_>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, ClickError> {
     apply_theorem_applications_to_available_with_lowering_context(
@@ -125,8 +124,7 @@ pub(super) fn apply_theorem_applications_to_available(
         available,
         None,
         context,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         unfolded_predicates,
     )
 }
@@ -140,20 +138,15 @@ pub(super) fn apply_theorem_applications_to_available_with_lowering_context(
     mut available: Vec<Proposition>,
     lowering_context: Option<&[Proposition]>,
     context: &TheoremApplicationContext<'_>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, ClickError> {
     for (tactic_index, application) in theorem_applications {
-        available = unfold_available_predicate_facts(
-            predicate_environment,
-            click_function_environment,
-            unfolded_predicates,
-            &available,
-        )
-        .map_err(|message| {
-            theorem_application_error(claim_label, path_index, *tactic_index, message)
-        })?;
+        available =
+            unfold_available_predicate_facts(spec_definitions, unfolded_predicates, &available)
+                .map_err(|message| {
+                    theorem_application_error(claim_label, path_index, *tactic_index, message)
+                })?;
         let mut lowering_available = lowering_context.unwrap_or(&available).to_vec();
         for fact in &available {
             if !lowering_available.contains(fact) {
@@ -169,8 +162,7 @@ pub(super) fn apply_theorem_applications_to_available_with_lowering_context(
             &available,
             &lowering_available,
             context,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             unfolded_predicates,
         )?;
         for conclusion in conclusions {
@@ -179,13 +171,8 @@ pub(super) fn apply_theorem_applications_to_available_with_lowering_context(
             }
         }
     }
-    unfold_available_predicate_facts(
-        predicate_environment,
-        click_function_environment,
-        unfolded_predicates,
-        &available,
-    )
-    .map_err(|message| theorem_application_error(claim_label, path_index, 0, message))
+    unfold_available_predicate_facts(spec_definitions, unfolded_predicates, &available)
+        .map_err(|message| theorem_application_error(claim_label, path_index, 0, message))
 }
 
 fn instantiate_theorem_application(
@@ -197,8 +184,7 @@ fn instantiate_theorem_application(
     available: &[Proposition],
     lowering_available: &[Proposition],
     context: &TheoremApplicationContext<'_>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, ClickError> {
     let assumptions = assumptions_from_propositions(available);
@@ -213,8 +199,7 @@ fn instantiate_theorem_application(
         &assumptions,
         &lowering_assumptions,
         context,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         unfolded_predicates,
     )
 }
@@ -236,8 +221,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
     assumptions: &PureFactContext,
     lowering_assumptions: &PureFactContext,
     context: &TheoremApplicationContext<'_>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, ClickError> {
     if is_integer_range_fold_theorem_name(&application.name) {
@@ -249,8 +233,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
             available,
             assumptions,
             context,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
         );
     }
     let theorem = theorem_environment.get(&application.name).ok_or_else(|| {
@@ -267,8 +250,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         theorem_environment,
         lowering_assumptions,
         context,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| theorem_application_error(claim_label, path_index, tactic_index, message))?;
     if application.arguments.len() != theorem.parameters().len() {
@@ -290,8 +272,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         application,
         context,
         lowering_assumptions,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| theorem_application_error(claim_label, path_index, tactic_index, message))?;
     // A theorem's clauses are lowered at the application's state exactly as
@@ -323,8 +304,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
             &post_state,
             None,
             context.recorded_snapshots,
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             &BTreeSet::new(),
             pointer_element_widths.clone(),
         )
@@ -347,8 +327,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
             )
         })?;
         lowered = unfold_predicates_in_proposition(
-            predicate_environment,
-            click_function_environment,
+            spec_definitions,
             unfolded_predicates,
             &lowered,
             assumptions,
@@ -559,8 +538,7 @@ fn instantiate_integer_range_fold_theorem_application(
     available: &[Proposition],
     assumptions: &PureFactContext,
     context: &TheoremApplicationContext<'_>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Vec<Proposition>, ClickError> {
     let error =
         |message: String| theorem_application_error(claim_label, path_index, tactic_index, message);
@@ -581,8 +559,7 @@ fn instantiate_integer_range_fold_theorem_application(
         context.post_state,
         context.result,
         context.recorded_snapshots,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )
     .map_err(|message| {
         // The capture refusal already names which written subterm of the fold
@@ -670,16 +647,14 @@ fn resolve_generic_theorem_application(
     theorem_environment: &TheoremEnvironment,
     assumptions: &PureFactContext,
     context: &TheoremApplicationContext<'_>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<TheoremDefinition, String> {
     let concrete = instantiate_generic_theorem_application_definition(
         definition,
         application,
         assumptions,
         context,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     )?;
     if definition.type_parameters().is_empty() {
         return Ok(concrete);
@@ -693,21 +668,16 @@ fn resolve_generic_theorem_application(
             concrete.name()
         ));
     }
-    let result = verify_concrete_theorem_definition(
-        &concrete,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-        None,
-    )
-    .map(|_| ())
-    .map_err(|error| {
-        format!(
-            "generic theorem instance `{}` failed verification: {}",
-            concrete.name(),
-            error.raw_summary()
-        )
-    });
+    let result =
+        verify_concrete_theorem_definition(&concrete, spec_definitions, theorem_environment, None)
+            .map(|_| ())
+            .map_err(|error| {
+                format!(
+                    "generic theorem instance `{}` failed verification: {}",
+                    concrete.name(),
+                    error.raw_summary()
+                )
+            });
     theorem_environment.finish_generic_instance_verification(concrete.name(), result.is_ok());
     result?;
     Ok(concrete)
@@ -719,8 +689,7 @@ pub(in crate::surface::proof) fn instantiate_generic_theorem_application_definit
     application: &TheoremApplication,
     assumptions: &PureFactContext,
     context: &TheoremApplicationContext<'_>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<TheoremDefinition, String> {
     if definition.type_parameters().is_empty() {
         return Ok(definition.clone());
@@ -732,13 +701,7 @@ pub(in crate::surface::proof) fn instantiate_generic_theorem_application_definit
         .arguments
         .iter()
         .map(|argument| {
-            theorem_application_argument_type(
-                argument,
-                assumptions,
-                context,
-                predicate_environment,
-                click_function_environment,
-            )
+            theorem_application_argument_type(argument, assumptions, context, spec_definitions)
         })
         .collect::<Result<Vec<_>, _>>()?;
     let substitution = generics::infer_type_substitution(
@@ -759,8 +722,7 @@ fn theorem_application_argument_type(
     argument: &ContractExpression,
     assumptions: &PureFactContext,
     context: &TheoremApplicationContext<'_>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Option<ClickType>, String> {
     match argument {
         ContractExpression::AlgebraicVariable { algebraic_type, .. }
@@ -791,8 +753,7 @@ fn theorem_application_argument_type(
         context.post_state,
         context.result,
         context.recorded_snapshots,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
     ) {
         return Ok(Some(generics::click_type_from_algebraic_value_type(
             &value.algebraic_type.value_type(),
@@ -808,8 +769,7 @@ fn theorem_application_argument_type(
         context.result,
         assumptions,
         argument,
-        predicate_environment,
-        click_function_environment,
+        spec_definitions,
         context.recorded_snapshots,
         &mut active_functions,
     )
@@ -821,8 +781,7 @@ pub(super) fn theorem_application_bindings(
     application: &TheoremApplication,
     context: &TheoremApplicationContext<'_>,
     assumptions: &PureFactContext,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
 ) -> Result<
     (
         BTreeMap<String, CValue>,
@@ -859,8 +818,7 @@ pub(super) fn theorem_application_bindings(
                         context.post_state,
                         context.result,
                         context.recorded_snapshots,
-                        predicate_environment,
-                        click_function_environment,
+                        spec_definitions,
                     )?,
                 ),
             };
@@ -895,8 +853,7 @@ pub(super) fn theorem_application_bindings(
                 context.post_state,
                 context.result,
                 context.recorded_snapshots,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )?;
             fn click_type_matches_algebraic_value_type(
                 expected: &ClickType,
@@ -982,8 +939,7 @@ pub(super) fn theorem_application_bindings(
                 context.post_state,
                 context.result,
                 context.recorded_snapshots,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
             )?;
             let expected_element_type =
                 click_array_element_type(parameter_type).ok_or_else(|| {
@@ -1019,8 +975,7 @@ pub(super) fn theorem_application_bindings(
                 context.result,
                 assumptions,
                 argument,
-                predicate_environment,
-                click_function_environment,
+                spec_definitions,
                 context.recorded_snapshots,
                 &mut active_functions,
             )?;
@@ -1341,8 +1296,10 @@ mod observed_integer_argument_tests {
                 &application,
                 &context,
                 &PureFactContext::new(),
-                &PredicateEnvironment::new(&[]),
-                &ClickFunctionEnvironment::new(&[]),
+                SpecDefinitions::new(
+                    &PredicateEnvironment::new(&[]),
+                    &ClickFunctionEnvironment::new(&[]),
+                ),
             )
             .unwrap();
             assert_eq!(
@@ -1394,14 +1351,14 @@ mod observed_integer_argument_tests {
             let assumptions = PureFactContext::new();
             let predicates = PredicateEnvironment::new(&[]);
             let functions = ClickFunctionEnvironment::new(&[]);
+            let spec_definitions = SpecDefinitions::new(&predicates, &functions);
             let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
                 theorem_application_bindings(
                     theorem,
                     &application,
                     &context,
                     &assumptions,
-                    &predicates,
-                    &functions,
+                    spec_definitions,
                 )
             });
             let (_, _, _, bound) = result.unwrap();
@@ -1420,8 +1377,7 @@ mod observed_integer_argument_tests {
                             &application,
                             &context,
                             &assumptions,
-                            &predicates,
-                            &functions,
+                            spec_definitions,
                         )?;
                     }
                     Ok::<_, String>(())
