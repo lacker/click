@@ -573,6 +573,12 @@ byte weight, an omitted B seed contribution, a duplicated A lane during scalar
 recombination, changed recombined-prefix seeds, and an incorrect native B lane
 correction weight.
 
+The source-proved one-byte A and B recurrences advance both residues at the
+scalar-tail index. The B recurrence includes the updated A contribution. A
+native read bridge identifies the byte returned by `Next` using
+`length - remaining - 1`, checks its signed-index observation, and rejects
+a shifted byte. These lemmas prepare the scalar-tail induction.
+
 The fixture is assembled with the existing helper bodies, recombination
 lemmas, iterator bounds, the common specification and lane-state lemmas,
 [partition lemmas](partition.click), and [scalar-tail bounds](tail-bounds.click)

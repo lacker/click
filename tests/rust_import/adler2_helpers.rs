@@ -2101,6 +2101,7 @@ fn adler_lane_state_expands_and_rejects_false_relations() {
         "adler_prefix_a_step_four.ensures_0",
         "adler_prefix_a_step_one.ensures_0",
         "adler_prefix_b_step_four.ensures_0",
+        "adler_prefix_b_step_one.ensures_0",
     ] {
         let expanded = click::surface::expand_c0_claim_source_by_label(&source, &[], claim)
             .unwrap_or_else(|error| panic!("{claim}: {}", error.message()));
@@ -2122,6 +2123,10 @@ fn adler_lane_state_expands_and_rejects_false_relations() {
         (
             "adler_spec_b(bytes, n + 4, a_seed, b_seed) by",
             "adler_spec_b(bytes, n + 4, a_seed, b_seed + 1) by",
+        ),
+        (
+            "adler_spec_b(bytes, n + 1, a_seed, b_seed) by",
+            "adler_spec_b(bytes, n + 1, a_seed, b_seed + 1) by",
         ),
         ("requires 0 <= b_rep;", ""),
         ("requires n <= 2147483643;", "requires n <= 2147483644;"),
@@ -2759,6 +2764,10 @@ fn adler_count_byte_observations_reject_wrong_positions_and_missing_guards() {
         (
             "== to_integer((int32)bytes[(int32)(uint32)count + lane]) by",
             "== to_integer((int32)bytes[(int32)(uint32)count + lane + 1]) by",
+        ),
+        (
+            "bytes[((int32)(uint32)total - (int32)(uint32)remaining) - 1]) by",
+            "bytes[((int32)(uint32)total - (int32)(uint32)remaining)]) by",
         ),
         ("requires count <= 22204u64;", ""),
         ("requires lane <= 3;", ""),

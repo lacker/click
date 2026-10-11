@@ -993,6 +993,18 @@ void __rust_q_I6_adler2_I4_algo_T29___rust_q_I6_adler2_I7_Adler32_I7_compute(str
  apply(uint32_to_integer_bounds(b));
  have to_integer(a) <= adler_tail_a_ceiling(adler_tail_consumed((int32)(uint32)remainder_len, (int32)(uint32)__rust_mir_138_remaining)) by { rewrite(adler_tail_consumed((int32)(uint32)remainder_len, (int32)(uint32)__rust_mir_138_remaining) == 0); rewrite(adler_tail_a_ceiling(0) == 327600); assumption(); }
  have to_integer(b) <= adler_tail_b_ceiling(adler_tail_consumed((int32)(uint32)remainder_len, (int32)(uint32)__rust_mir_138_remaining)) by { rewrite(adler_tail_consumed((int32)(uint32)remainder_len, (int32)(uint32)__rust_mir_138_remaining) == 0); rewrite(adler_tail_b_ceiling(0) == 1506966); assumption(); }
+ have old(to_integer((uint32)self->a)) == to_integer(at(vector_prefix, a)) by { simp(); }
+ have old(to_integer((uint32)self->b)) == to_integer(at(vector_prefix, b)) by { simp(); }
+ apply(uint32_to_integer_bounds(old((uint32)self->a))) using {};
+ apply(uint32_less_equal_to_integer(old((uint32)self->a), 65520u32)) using { old((uint32)self->a) <= 65520u32; };
+ have (int32)(uint32)__rust_mir_138_remaining <= (int32)(uint32)bytes_len by { arithmetic() using { (int32)(uint32)__rust_mir_138_remaining == (int32)(uint32)remainder_len; (int32)(uint32)remainder_len <= (int32)(uint32)bytes_len; } }
+ apply(int32_nonnegative_subtract_within_value_is_defined((int32)(uint32)bytes_len, (int32)(uint32)__rust_mir_138_remaining)) using { 0 <= (int32)(uint32)__rust_mir_138_remaining; (int32)(uint32)__rust_mir_138_remaining <= (int32)(uint32)bytes_len; };
+ have ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) == (int32)(uint32)(bytes_len - bytes_len % 4u64) by { rewrite((int32)(uint32)__rust_mir_138_remaining == (int32)(uint32)remainder_len); assumption(); }
+ have 0 <= old(to_integer((uint32)self->a)) by { assumption(); }
+ have old(to_integer((uint32)self->a)) <= 65520 by { assumption(); }
+ apply(uint32_to_integer_bounds(at(vector_prefix, b))) using {};
+ have truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining), old(to_integer((uint32)self->a))) by { rewrite(((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) == (int32)(uint32)(bytes_len - bytes_len % 4u64)); rewrite(old(to_integer((uint32)self->a)) == to_integer(at(vector_prefix, a))); assumption(); }
+ have truncating_remainder(to_integer(b), 65521) == adler_spec_b(bytes, ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining), old(to_integer((uint32)self->a)), old(to_integer((uint32)self->b))) by { rewrite(((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) == (int32)(uint32)(bytes_len - bytes_len % 4u64)); rewrite(old(to_integer((uint32)self->a)) == to_integer(at(vector_prefix, a))); rewrite(old(to_integer((uint32)self->b)) == to_integer(at(vector_prefix, b))); assumption(); }
  loop {
   decreases __rust_mir_138_remaining;
   views bytes[0..bytes_len];
@@ -1007,6 +1019,11 @@ void __rust_q_I6_adler2_I4_algo_T29___rust_q_I6_adler2_I7_Adler32_I7_compute(str
    invariant remainder_len <= bytes_len;
    invariant __rust_mir_138_remaining <= remainder_len;
    invariant __rust_mir_138_cursor == bytes + (bytes_len - __rust_mir_138_remaining);
+  invariant defined(((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining));
+  invariant 0 <= old(to_integer((uint32)self->a)) and old(to_integer((uint32)self->a)) <= 65520;
+  invariant 0 <= old(to_integer((uint32)self->b));
+  invariant truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining), old(to_integer((uint32)self->a)));
+  invariant truncating_remainder(to_integer(b), 65521) == adler_spec_b(bytes, ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining), old(to_integer((uint32)self->a)), old(to_integer((uint32)self->b)));
   invariant 0 <= to_integer(a) and to_integer(a) <= adler_tail_a_ceiling(adler_tail_consumed((int32)(uint32)remainder_len, (int32)(uint32)__rust_mir_138_remaining));
   invariant 0 <= to_integer(b) and to_integer(b) <= adler_tail_b_ceiling(adler_tail_consumed((int32)(uint32)remainder_len, (int32)(uint32)__rust_mir_138_remaining));
   preserve by {
@@ -1027,11 +1044,37 @@ void __rust_q_I6_adler2_I4_algo_T29___rust_q_I6_adler2_I7_Adler32_I7_compute(str
     have at(tail_head, __rust_mir_138_remaining) <= remainder_len by { simp(); }
     have at(tail_head, __rust_mir_138_cursor) == bytes + (bytes_len - at(tail_head, __rust_mir_138_remaining)) by { simp(); }
     have bytes_len - at(tail_head, __rust_mir_138_remaining) < bytes_len by { arithmetic() using { 1u64 <= at(tail_head, __rust_mir_138_remaining); at(tail_head, __rust_mir_138_remaining) <= remainder_len; remainder_len <= bytes_len; } }
+   have truncating_remainder(to_integer(at(tail_head, a)), 65521) == adler_spec_a(bytes, ((int32)(uint32)bytes_len - at(tail_head, (int32)(uint32)__rust_mir_138_remaining)), old(to_integer((uint32)self->a))) by { simp(); }
+   have truncating_remainder(to_integer(at(tail_head, b)), 65521) == adler_spec_b(bytes, ((int32)(uint32)bytes_len - at(tail_head, (int32)(uint32)__rust_mir_138_remaining)), old(to_integer((uint32)self->a)), old(to_integer((uint32)self->b))) by { simp(); }
    execute_until(assignment(byte, 0));
    have __rust_mir_155 == at(tail_head, __rust_mir_138_cursor) by { simp(); }
     have __rust_mir_155 == bytes + (bytes_len - at(tail_head, __rust_mir_138_remaining)) by { rewrite(__rust_mir_155 == at(tail_head, __rust_mir_138_cursor)); assumption(); }
    step();
    execute_until(assignment(__rust_mir_144, 0)); step();
+   have __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64 by { simp(); }
+   have (int32)(uint32)__rust_mir_138_remaining == at(tail_head, (int32)(uint32)__rust_mir_138_remaining) - 1 by { rewrite(__rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64); simp(); }
+   have __rust_mir_138_remaining <= bytes_len by { arithmetic() using { __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64; 1u64 <= at(tail_head, __rust_mir_138_remaining); at(tail_head, __rust_mir_138_remaining) <= remainder_len; remainder_len <= bytes_len; } }
+   have 1u64 <= bytes_len - __rust_mir_138_remaining by { arithmetic() using { __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64; 1u64 <= at(tail_head, __rust_mir_138_remaining); at(tail_head, __rust_mir_138_remaining) <= remainder_len; remainder_len <= bytes_len; } }
+   have 0 <= (int32)(uint32)__rust_mir_138_remaining by { arithmetic() using { (int32)(uint32)__rust_mir_138_remaining == at(tail_head, (int32)(uint32)__rust_mir_138_remaining) - 1; 1 <= at(tail_head, (int32)(uint32)__rust_mir_138_remaining); at(tail_head, (int32)(uint32)__rust_mir_138_remaining) <= (int32)(uint32)remainder_len; (int32)(uint32)remainder_len <= (int32)(uint32)bytes_len; } }
+   have (int32)(uint32)__rust_mir_138_remaining <= (int32)(uint32)bytes_len by { arithmetic() using { (int32)(uint32)__rust_mir_138_remaining == at(tail_head, (int32)(uint32)__rust_mir_138_remaining) - 1; 1 <= at(tail_head, (int32)(uint32)__rust_mir_138_remaining); at(tail_head, (int32)(uint32)__rust_mir_138_remaining) <= (int32)(uint32)remainder_len; (int32)(uint32)remainder_len <= (int32)(uint32)bytes_len; (int32)(uint32)bytes_len <= 22207; } }
+   apply(int32_nonnegative_subtract_within_value_is_defined((int32)(uint32)bytes_len, (int32)(uint32)__rust_mir_138_remaining)) using { 0 <= (int32)(uint32)__rust_mir_138_remaining; (int32)(uint32)__rust_mir_138_remaining <= (int32)(uint32)bytes_len; };
+   have 1 <= ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) by { arithmetic() using { (int32)(uint32)__rust_mir_138_remaining == at(tail_head, (int32)(uint32)__rust_mir_138_remaining) - 1; 1 <= at(tail_head, (int32)(uint32)__rust_mir_138_remaining); at(tail_head, (int32)(uint32)__rust_mir_138_remaining) <= (int32)(uint32)remainder_len; (int32)(uint32)remainder_len <= (int32)(uint32)bytes_len; (int32)(uint32)bytes_len <= 22207; } }
+   apply(int32_nonnegative_subtract_within_value_is_defined(((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining), 1)) using { 0 <= 1; 1 <= ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining); };
+   have (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) == ((int32)(uint32)bytes_len - at(tail_head, (int32)(uint32)__rust_mir_138_remaining)) by { arithmetic() using { (int32)(uint32)__rust_mir_138_remaining == at(tail_head, (int32)(uint32)__rust_mir_138_remaining) - 1; 1 <= at(tail_head, (int32)(uint32)__rust_mir_138_remaining); at(tail_head, (int32)(uint32)__rust_mir_138_remaining) <= (int32)(uint32)remainder_len; (int32)(uint32)remainder_len <= (int32)(uint32)bytes_len; (int32)(uint32)bytes_len <= 22207; } }
+   have 0 <= (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) by { arithmetic() using { (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) == ((int32)(uint32)bytes_len - at(tail_head, (int32)(uint32)__rust_mir_138_remaining)); 1 <= at(tail_head, (int32)(uint32)__rust_mir_138_remaining); at(tail_head, (int32)(uint32)__rust_mir_138_remaining) <= (int32)(uint32)remainder_len; (int32)(uint32)remainder_len <= (int32)(uint32)bytes_len; (int32)(uint32)bytes_len <= 22207; } }
+   have (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) <= 2147483646 by { arithmetic() using { (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) == ((int32)(uint32)bytes_len - at(tail_head, (int32)(uint32)__rust_mir_138_remaining)); 1 <= at(tail_head, (int32)(uint32)__rust_mir_138_remaining); at(tail_head, (int32)(uint32)__rust_mir_138_remaining) <= (int32)(uint32)remainder_len; (int32)(uint32)remainder_len <= (int32)(uint32)bytes_len; (int32)(uint32)bytes_len <= 22207; } }
+   have ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) == (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) + 1 by { arithmetic() using { 0 <= (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1); (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) <= 2147483646; (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) == ((int32)(uint32)bytes_len - at(tail_head, (int32)(uint32)__rust_mir_138_remaining)); (int32)(uint32)__rust_mir_138_remaining == at(tail_head, (int32)(uint32)__rust_mir_138_remaining) - 1; 1 <= at(tail_head, (int32)(uint32)__rust_mir_138_remaining); at(tail_head, (int32)(uint32)__rust_mir_138_remaining) <= (int32)(uint32)remainder_len; (int32)(uint32)remainder_len <= (int32)(uint32)bytes_len; (int32)(uint32)bytes_len <= 22207; } }
+   have bytes_len - __rust_mir_138_remaining - 1u64 == bytes_len - at(tail_head, __rust_mir_138_remaining) by { arithmetic() using { __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64; 1u64 <= at(tail_head, __rust_mir_138_remaining); at(tail_head, __rust_mir_138_remaining) <= remainder_len; remainder_len <= bytes_len; } }
+   have __rust_mir_155 == bytes + (bytes_len - __rust_mir_138_remaining - 1u64) by { rewrite(bytes_len - __rust_mir_138_remaining - 1u64 == bytes_len - at(tail_head, __rust_mir_138_remaining)); assumption(); }
+   apply(adler_count_previous_byte_observation(bytes, bytes_len, __rust_mir_138_remaining)) using { __rust_mir_138_remaining <= bytes_len; 1u64 <= bytes_len - __rust_mir_138_remaining; bytes_len <= 22207u64; 0 <= (int32)(uint32)__rust_mir_138_remaining; (int32)(uint32)__rust_mir_138_remaining <= (int32)(uint32)bytes_len; (int32)(uint32)bytes_len <= 22207; };
+   have __rust_mir_144 == (uint32)__rust_mir_155[0] by { simp(); }
+   apply(adler_helper_byte_observation(__rust_mir_155[0])) using {};
+   have to_integer(__rust_mir_144) == to_integer((int32)(bytes + (bytes_len - __rust_mir_138_remaining - 1u64))[0]) by { rewrite(__rust_mir_144 == (uint32)__rust_mir_155[0]); rewrite(to_integer((uint32)__rust_mir_155[0]) == to_integer((int32)__rust_mir_155[0])); rewrite(__rust_mir_155 == bytes + (bytes_len - __rust_mir_138_remaining - 1u64)); normalize(); }
+   have to_integer(__rust_mir_144) == to_integer((int32)bytes[(((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1)]) by { rewrite(to_integer(__rust_mir_144) == to_integer((int32)(bytes + (bytes_len - __rust_mir_138_remaining - 1u64))[0])); assumption(); }
+   have truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1), old(to_integer((uint32)self->a))) by { rewrite((((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) == ((int32)(uint32)bytes_len - at(tail_head, (int32)(uint32)__rust_mir_138_remaining))); simp(); }
+   have truncating_remainder(to_integer(b), 65521) == adler_spec_b(bytes, (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1), old(to_integer((uint32)self->a)), old(to_integer((uint32)self->b))) by { rewrite((((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) == ((int32)(uint32)bytes_len - at(tail_head, (int32)(uint32)__rust_mir_138_remaining))); simp(); }
+   apply(adler_prefix_a_step_one(bytes, (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1), old(to_integer((uint32)self->a)), to_integer(a))) using { 0 <= (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1); (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) <= 2147483646; 0 <= old(to_integer((uint32)self->a)); 0 <= to_integer(a); truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1), old(to_integer((uint32)self->a))); };
+   apply(adler_prefix_b_step_one(bytes, (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1), old(to_integer((uint32)self->a)), old(to_integer((uint32)self->b)), to_integer(a), to_integer(b))) using { 0 <= (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1); (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) <= 2147483646; 0 <= old(to_integer((uint32)self->a)); old(to_integer((uint32)self->a)) <= 65520; 0 <= old(to_integer((uint32)self->b)); 0 <= to_integer(a); 0 <= to_integer(b); truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1), old(to_integer((uint32)self->a))); truncating_remainder(to_integer(b), 65521) == adler_spec_b(bytes, (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1), old(to_integer((uint32)self->a)), old(to_integer((uint32)self->b))); };
    have __rust_mir_144 <= 255u32 by { simp(); }
    apply(uint32_less_equal_to_integer(__rust_mir_144, 255u32)) using { __rust_mir_144 <= 255u32; }
    have to_integer(__rust_mir_144) <= 255 by { simp() using { to_integer(__rust_mir_144) <= to_integer(255u32); } }
@@ -1039,6 +1082,9 @@ void __rust_q_I6_adler2_I4_algo_T29___rust_q_I6_adler2_I7_Adler32_I7_compute(str
    apply(uint32_widened_add_guard_by_integer_bound(a, __rust_mir_144)) using { to_integer(a) + to_integer(__rust_mir_144) <= 4294967295; }
    execute_until(assignment(__rust_mir_146, 0));
    mark tail_add_a;
+   have truncating_remainder(to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)), 65521) == adler_spec_a(bytes, ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining), old(to_integer((uint32)self->a))) by { rewrite(((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) == (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) + 1); simp() using { truncating_remainder(to_integer(a) + to_integer((int32)bytes[(((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1)]), 65521) == adler_spec_a(bytes, (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) + 1, old(to_integer((uint32)self->a))); to_integer(__rust_mir_144) == to_integer((int32)bytes[(((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1)]); } }
+   have truncating_remainder(to_integer(at(tail_add_a, b)) + to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)), 65521) == adler_spec_b(bytes, ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining), old(to_integer((uint32)self->a)), old(to_integer((uint32)self->b))) by { rewrite(((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) == (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) + 1); simp() using { truncating_remainder(to_integer(b) + to_integer(a) + to_integer((int32)bytes[(((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1)]), 65521) == adler_spec_b(bytes, (((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1) + 1, old(to_integer((uint32)self->a)), old(to_integer((uint32)self->b))); to_integer(__rust_mir_144) == to_integer((int32)bytes[(((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining) - 1)]); } }
+
    have to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)) <= 4294967295 by { simp(); }
    step();
    have __rust_mir_146 == at(tail_add_a, a) + at(tail_add_a, __rust_mir_144) by { simp(); }
@@ -1049,6 +1095,7 @@ void __rust_q_I6_adler2_I4_algo_T29___rust_q_I6_adler2_I7_Adler32_I7_compute(str
    have to_integer(b) + to_integer(__rust_mir_146) <= adler_tail_b_ceiling(adler_tail_consumed((int32)(uint32)remainder_len, at(tail_head, (int32)(uint32)__rust_mir_138_remaining)) + 1) by { simp() using { to_integer(b) + to_integer(a) + to_integer(__rust_mir_144) <= adler_tail_b_ceiling(adler_tail_consumed((int32)(uint32)remainder_len, at(tail_head, (int32)(uint32)__rust_mir_138_remaining)) + 1); to_integer(__rust_mir_146) == to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)); } }
    execute_until(assignment(a, 2)); step();
    have to_integer(a) <= adler_tail_a_ceiling(adler_tail_consumed((int32)(uint32)remainder_len, at(tail_head, (int32)(uint32)__rust_mir_138_remaining)) + 1) by { simp(); }
+   have truncating_remainder(to_integer(a), 65521) == adler_spec_a(bytes, ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining), old(to_integer((uint32)self->a))) by { simp(); }
    execute_until(assignment(__rust_mir_147, 0)); step();
    have __rust_mir_147 == a by { simp(); }
    have a == __rust_mir_146 by { simp(); }
@@ -1057,6 +1104,9 @@ void __rust_q_I6_adler2_I4_algo_T29___rust_q_I6_adler2_I7_Adler32_I7_compute(str
    apply(uint32_widened_add_guard_by_integer_bound(b, __rust_mir_147)) using { to_integer(b) + to_integer(__rust_mir_147) <= 4294967295; }
    execute_until(assignment(__rust_mir_148, 0));
    mark tail_add_b;
+   have to_integer(at(tail_add_b, b)) == to_integer(at(tail_add_a, b)) by { simp(); }
+   have to_integer(at(tail_add_b, __rust_mir_147)) == to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)) by { simp(); }
+
    have to_integer(at(tail_add_b, b)) + to_integer(at(tail_add_b, __rust_mir_147)) <= adler_tail_b_ceiling(adler_tail_consumed((int32)(uint32)remainder_len, at(tail_head, (int32)(uint32)__rust_mir_138_remaining)) + 1) by { simp() using { to_integer(b) + to_integer(__rust_mir_147) <= adler_tail_b_ceiling(adler_tail_consumed((int32)(uint32)remainder_len, at(tail_head, (int32)(uint32)__rust_mir_138_remaining)) + 1); } }
    have to_integer(at(tail_add_b, b)) + to_integer(at(tail_add_b, __rust_mir_147)) <= 4294967295 by { simp(); }
    step();
@@ -1067,6 +1117,8 @@ void __rust_q_I6_adler2_I4_algo_T29___rust_q_I6_adler2_I7_Adler32_I7_compute(str
    have to_integer(__rust_mir_148) <= adler_tail_b_ceiling(adler_tail_consumed((int32)(uint32)remainder_len, at(tail_head, (int32)(uint32)__rust_mir_138_remaining)) + 1) by { rewrite(to_integer(__rust_mir_148) == to_integer(at(tail_add_b, b)) + to_integer(at(tail_add_b, __rust_mir_147))); assumption(); }
    execute_until(assignment(b, 6)); step();
    have to_integer(b) <= adler_tail_b_ceiling(adler_tail_consumed((int32)(uint32)remainder_len, at(tail_head, (int32)(uint32)__rust_mir_138_remaining)) + 1) by { simp(); }
+   have to_integer(b) == to_integer(at(tail_add_a, b)) + to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)) by { simp() using { to_integer(__rust_mir_148) == to_integer(at(tail_add_b, b)) + to_integer(at(tail_add_b, __rust_mir_147)); to_integer(at(tail_add_b, b)) == to_integer(at(tail_add_a, b)); to_integer(at(tail_add_b, __rust_mir_147)) == to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144)); } }
+   have truncating_remainder(to_integer(b), 65521) == adler_spec_b(bytes, ((int32)(uint32)bytes_len - (int32)(uint32)__rust_mir_138_remaining), old(to_integer((uint32)self->a)), old(to_integer((uint32)self->b))) by { rewrite(to_integer(b) == to_integer(at(tail_add_a, b)) + to_integer(at(tail_add_a, a)) + to_integer(at(tail_add_a, __rust_mir_144))); assumption(); }
    execute_until(back_edge());
     have __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64 by { simp(); }
     have (int32)(uint32)__rust_mir_138_remaining == at(tail_head, (int32)(uint32)__rust_mir_138_remaining) - 1 by { rewrite(__rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64); simp(); }
@@ -1083,6 +1135,7 @@ void __rust_q_I6_adler2_I4_algo_T29___rust_q_I6_adler2_I7_Adler32_I7_compute(str
     have bytes_len - __rust_mir_138_remaining == (bytes_len - at(tail_head, __rust_mir_138_remaining)) + 1u64 by { arithmetic() using { __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64; 1u64 <= at(tail_head, __rust_mir_138_remaining); at(tail_head, __rust_mir_138_remaining) <= remainder_len; remainder_len <= bytes_len; } }
     have __rust_mir_138_cursor == bytes + (bytes_len - __rust_mir_138_remaining) by { rewrite(bytes_len - __rust_mir_138_remaining == (bytes_len - at(tail_head, __rust_mir_138_remaining)) + 1u64); simp(); }
     have __rust_mir_138_remaining < at(tail_head, __rust_mir_138_remaining) by { arithmetic() using { __rust_mir_138_remaining == at(tail_head, __rust_mir_138_remaining) - 1u64; 1u64 <= at(tail_head, __rust_mir_138_remaining); } }
+   apply(int32_nonnegative_subtract_within_value_is_defined((int32)(uint32)bytes_len, (int32)(uint32)__rust_mir_138_remaining)) using { 0 <= (int32)(uint32)__rust_mir_138_remaining; (int32)(uint32)__rust_mir_138_remaining <= (int32)(uint32)bytes_len; };
    close_invariants by { simp(); }
   }
  }

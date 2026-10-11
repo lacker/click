@@ -71,10 +71,11 @@ guards. The original small-batch vector loop checks each constructor lane’s
 native and Integer value against its shared subslice and its position in the
 original input. That position is derived from the actual remaining count after
 `Next`, with checked native and signed subtraction bounds. One- and four-byte prefix
-lemmas preserve
-the A residue against the common specification; a four-byte B prefix lemma
-checks the ordered weighted update under explicit index and nonnegative
-representative bounds. A joint native vector-prefix bridge now connects the
+lemmas preserve both A and B residues against the common specification,
+including the ordered weighted update under explicit index and nonnegative
+representative bounds. A scalar read bridge derives the last returned byte
+from the actual post-`Next` remaining count and checks its exact signed-index
+observation. A joint native vector-prefix bridge now connects the
 checked word additions and exact constructor byte observations to both common
 prefix residues. Its iterator adapter derives the prefix from stored remaining
 state and checks the four-byte advance and remaining-length bounds. The original
@@ -91,8 +92,9 @@ addition prove the exact deferred prefix-length times seed contribution,
 including the exact length-cast observation. B also passes through the scalar
 and lane reductions, ordered weighted corrections and four scalar additions,
 with checked native subtraction, multiplication, addition and store bridges.
-Both prefix residues hold before the tail. Finishing the scalar tail
-remain pending, as do the arbitrary-length computation’s nested loops. Full original-computation smart audits
+Both prefix residues hold before the tail. The scalar-tail induction and
+final checksum postconditions remain pending, as do the arbitrary-length
+computation’s nested loops. Full original-computation smart audits
 currently exhaust the standard ten-minute run bound before completing a site,
 while ordinary verification succeeds. This is an audit-tool limitation, not a
 reported proof failure; continue checksum proof work with ordinary verification
