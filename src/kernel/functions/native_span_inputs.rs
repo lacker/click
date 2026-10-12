@@ -13,7 +13,31 @@ pub(crate) fn project_interface_native_spans(
     assumptions: &PureFactContext,
 ) -> Result<CState, String> {
     check_native_span_specs(arm, specs, assumptions)?;
-    assume_native_span_specs(successor, specs, assumptions)
+    let successor_specs = specs
+        .iter()
+        .map(|spec| {
+            let requirements = spec
+                .native_span_requirements()
+                .iter()
+                .map(|requirement| {
+                    let mut requirement = requirement.clone();
+                    if let CExpression::Variable(name) = &requirement.carrier
+                        && successor.global_object_type(name).is_none()
+                        && successor.local_object_type(name).is_some()
+                        && let Some(value @ CValue::Pointer(_)) = successor.locals().get(name)
+                    {
+                        // The independently reconstructed abstract local binding is
+                        // the complete phi carrier. Reading its private stack slot
+                        // would incorrectly require byte authority the join dropped.
+                        requirement.carrier = CExpression::Value(value.clone());
+                    }
+                    requirement
+                })
+                .collect();
+            spec.clone().with_native_span_requirements(requirements)
+        })
+        .collect::<Vec<_>>();
+    assume_native_span_specs(successor, &successor_specs, assumptions)
 }
 
 fn component(
@@ -248,7 +272,9 @@ mod tests {
         let identity = Variable(989_699);
         let phi = CPointerValue::new(Pointer::symbolic(identity), CType::Int32Pointer)
             .with_designation(PointerDesignation::Unresolved(identity));
-        let successor = CState::new().with_local("p", CValue::Pointer(phi.clone()));
+        let successor = CState::new()
+            .with_local("p", CValue::Pointer(phi.clone()))
+            .with_resource_context(ResourceContext::new());
         let context = PureFactContext::new();
         let specs = [span(c_variable("p"), 1)];
         let joined_left =
