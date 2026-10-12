@@ -423,7 +423,7 @@ pub(crate) fn logical_pointer_read_term(value: &Pointer) -> Option<Bitvector32Te
     Some(Bitvector32Term::MemoryLoad(
         load.defining_memory,
         Box::new(load.defining_address),
-        LoadKind::Bits32,
+        LoadKind::Pointer,
     ))
 }
 
@@ -1620,8 +1620,9 @@ impl EqualityGraphState {
             }
             let definition = match &block {
                 PointerBlock::LoadedPointer(identity) => {
-                    crate::kernel::eval::registered_pointer_load(*identity)
-                        .map(|(memory, address)| (memory, address, crate::kernel::LoadKind::Bits32))
+                    crate::kernel::eval::registered_pointer_load(*identity).map(
+                        |(memory, address)| (memory, address, crate::kernel::LoadKind::Pointer),
+                    )
                 }
                 PointerBlock::Symbolic(variable)
                     if crate::kernel::is_load_variable(variable)

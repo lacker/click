@@ -239,7 +239,7 @@ pub(in crate::kernel) fn evaluate_logical_memory_load_paths(
             memory.known_value(&pointer).and_then(|stored| {
                 let complete_pointer = matches!(&stored, CValue::Pointer(_))
                     || matches!(&stored, CValue::Int32(Bitvector32Term::Variable(variable))
-                        if registered_load_kind_for_variable(variable) == Some(LoadKind::Bits32)
+                        if registered_load_kind_for_variable(variable) == Some(LoadKind::Pointer)
                             && registered_load_bytes_for_variable(variable)
                                 == Some(crate::kernel::C_POINTER_BYTE_WIDTH));
                 canonicalized_pointer_value_from_int_cell(
@@ -1427,7 +1427,7 @@ pub(crate) fn transport_pointer_load_pair(
     }
     let registered_here = |variable: Variable| {
         matches!(registered_load_term_for_variable(&variable),
-            Some(Bitvector32Term::MemoryLoad(memory, address, LoadKind::Bits32))
+            Some(Bitvector32Term::MemoryLoad(memory, address, LoadKind::Pointer))
                 if memory.arena_id() == old.memory().arena_id() && address.as_ref() == old.address())
     };
     enum Spelling {
@@ -1476,7 +1476,7 @@ pub(crate) fn transport_pointer_load_pair(
     let load = Bitvector32Term::MemoryLoad(
         new.memory().clone(),
         Box::new(new.address().clone()),
-        LoadKind::Bits32,
+        LoadKind::Pointer,
     );
     let (variable, _) = load_variable_for_term(&load).expect("a paired read remains a memory load");
     let definition = registered_load_term_for_variable(&variable)
@@ -1550,10 +1550,9 @@ fn canonicalized_pointer_value_from_int_cell(
         }
         _ => return None,
     };
-    // Bits32 is also the model's proxy for a complete pointer read. Its
-    // scalar container alone does not establish that the defining read
-    // covered all pointer bytes.
-    if registered_load_kind_for_variable(&fresh) != Some(LoadKind::Bits32)
+    // Only a Pointer-kind producer supplies a complete pointer proxy.
+    // A scalar container or another eight-byte read does not establish it.
+    if registered_load_kind_for_variable(&fresh) != Some(LoadKind::Pointer)
         || registered_load_bytes_for_variable(&fresh) != Some(crate::kernel::C_POINTER_BYTE_WIDTH)
     {
         return None;
@@ -1761,23 +1760,23 @@ fn canonicalized_symbolic_load_value_with_identity(
     // offset, and range built from the value is canonical.
     match &value {
         CValue::Int8(bits @ Bitvector32Term::MemoryLoad(_, _, _)) => {
-            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            let fresh = mint_typed_load_variable(bits, value_type.byte_width(), facts, source)?;
             return Some(CValue::Int8(Bitvector32Term::Variable(fresh)));
         }
         CValue::Int16(bits @ Bitvector32Term::MemoryLoad(_, _, _)) => {
-            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            let fresh = mint_typed_load_variable(bits, value_type.byte_width(), facts, source)?;
             return Some(CValue::Int16(Bitvector32Term::Variable(fresh)));
         }
         CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _, _)) => {
-            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            let fresh = mint_typed_load_variable(bits, value_type.byte_width(), facts, source)?;
             return Some(CValue::Int32(Bitvector32Term::Variable(fresh)));
         }
         CValue::UInt8(bits @ Bitvector32Term::MemoryLoad(_, _, _)) => {
-            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            let fresh = mint_typed_load_variable(bits, value_type.byte_width(), facts, source)?;
             return Some(CValue::UInt8(Bitvector32Term::Variable(fresh)));
         }
         CValue::UInt16(bits @ Bitvector32Term::MemoryLoad(_, _, _)) => {
-            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            let fresh = mint_typed_load_variable(bits, value_type.byte_width(), facts, source)?;
             return Some(CValue::UInt16(Bitvector32Term::Variable(fresh)));
         }
         // The wider integer scalars name their loads for the same reason.
@@ -1791,23 +1790,23 @@ fn canonicalized_symbolic_load_value_with_identity(
         // sibling cell of the same node, which the fold after that write
         // needs.
         CValue::UInt32(bits @ Bitvector32Term::MemoryLoad(_, _, _)) => {
-            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            let fresh = mint_typed_load_variable(bits, value_type.byte_width(), facts, source)?;
             return Some(CValue::UInt32(Bitvector32Term::Variable(fresh)));
         }
         CValue::Int64(bits @ Bitvector32Term::MemoryLoad(_, _, _)) => {
-            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            let fresh = mint_typed_load_variable(bits, value_type.byte_width(), facts, source)?;
             return Some(CValue::Int64(Bitvector32Term::Variable(fresh)));
         }
         CValue::UInt64(bits @ Bitvector32Term::MemoryLoad(_, _, _)) => {
-            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            let fresh = mint_typed_load_variable(bits, value_type.byte_width(), facts, source)?;
             return Some(CValue::UInt64(Bitvector32Term::Variable(fresh)));
         }
         CValue::Int128(bits @ Bitvector32Term::MemoryLoad(_, _, _)) => {
-            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            let fresh = mint_typed_load_variable(bits, value_type.byte_width(), facts, source)?;
             return Some(CValue::Int128(Bitvector32Term::Variable(fresh)));
         }
         CValue::UInt128(bits @ Bitvector32Term::MemoryLoad(_, _, _)) => {
-            let fresh = mint_load_variable(bits, facts, assumptions, source)?;
+            let fresh = mint_typed_load_variable(bits, value_type.byte_width(), facts, source)?;
             return Some(CValue::UInt128(Bitvector32Term::Variable(fresh)));
         }
         _ => {}
@@ -1821,7 +1820,7 @@ fn canonicalized_symbolic_load_value_with_identity(
     if !matches!(bits, Bitvector32Term::MemoryLoad(_, _, _)) {
         return Some(value);
     }
-    let (fresh, load) = load_variable_for_term(bits)?;
+    let (fresh, load) = load_variable_for_term_with_width(bits, value_type.byte_width())?;
     let pointer = if use_symbolic_identity {
         Pointer::symbolic(fresh)
     } else {
@@ -1976,7 +1975,7 @@ struct RegisteredLoad {
     /// The first-seen live origin, and the origin epoch it was recorded in.
     origin: SharedCMemory,
     epoch: u64,
-    /// The widest access width any mint of this name asked for.
+    /// The immutable producer access width, part of the load identity.
     bytes: u32,
 }
 
@@ -1992,7 +1991,7 @@ thread_local! {
     > = std::cell::RefCell::new(imbl::HashMap::new());
     /// Separate pointer-valued load names. The defining key is one canonical
     /// snapshot and address at the fixed eight-byte pointer interpretation;
-    /// neither a scalar load variable nor its mutable maximum access width
+    /// neither a scalar load variable nor its access width
     /// decides membership in this registry.
     static POINTER_LOAD_REGISTRY: std::cell::RefCell<
         std::collections::HashMap<PointerLoadId, (SharedCMemory, Pointer)>,
@@ -2001,14 +2000,8 @@ thread_local! {
     /// its first-seen live origin and the origin epoch that origin was
     /// recorded in, and an access width in bytes.
     ///
-    /// The kind is part of the name: two reads of one address in one snapshot
-    /// that differ in kind are two entries. The width is the framing width a
-    /// later caller holding only the name walks with, which covers every
-    /// access recorded at the address and so may exceed the kind's own. Mints
-    /// that cannot name a width record
-    /// [`resource_tracker::widest_scalar_access_bytes`], and a mint that can
-    /// widens any narrower width already recorded: one entry stands for every
-    /// access that resolved to this name, so it has to cover all of them.
+    /// Kind and producer width are part of the name. A later wider access
+    /// gets another entry instead of changing an earlier scalar producer.
     static LOAD_VARIABLE_REGISTRY: std::cell::RefCell<
         std::collections::HashMap<Variable, RegisteredLoad>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -2020,7 +2013,7 @@ thread_local! {
     /// current function's effect snapshots never connect to.
     static LOAD_ORIGIN_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static LOAD_VARIABLE_CACHE: std::cell::RefCell<
-        std::collections::HashMap<Bitvector32Term, (Variable, Bitvector32Term)>,
+        std::collections::HashMap<(Bitvector32Term, u32), (Variable, Bitvector32Term)>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
     static TERM_CACHE: std::cell::RefCell<
         std::collections::HashMap<Bitvector32Term, Bitvector32Term>,
@@ -2423,9 +2416,8 @@ fn record_load_access_width(memory: &CMemory, pointer: &Pointer, bytes: u32) {
     // A recorded width can only ever widen, and a name computed under the
     // narrower one is stale: the epoch walk a narrow access takes crosses
     // stores the wider one stops at, so it names the load at an older
-    // snapshot. `LOAD_VARIABLE_CACHE` is keyed by the term alone — a term
-    // carries its own kind, not the widest access recorded at its address —
-    // so widening has to drop the names that were derived before it.
+    // snapshot. Name-cache keys retain kind and producer width; observations
+    // also invalidate older structural forms that consulted their widths.
     // Widening is rare; a name being the answer to a question this
     // table has since changed is not something a later reader can detect.
     let mut widened = false;
@@ -2572,10 +2564,8 @@ pub(crate) fn load_term_access_width(
     pointer: &Pointer,
     kind: LoadKind,
 ) -> u32 {
-    let observed = recorded_load_access_width(memory, pointer);
-    observed
-        .unwrap_or_else(|| kind.unrecorded_access_byte_width())
-        .max(kind.byte_width())
+    let _ = (memory, pointer);
+    kind.byte_width()
 }
 
 /// The widest C load recorded at this address in any snapshot, or the widest
@@ -2594,9 +2584,8 @@ pub(crate) fn load_access_width_at_address_or_widest(pointer: &Pointer) -> u32 {
 
 /// How many bytes the access this variable names reads.
 ///
-/// This is the widest access any mint of the name asked for, which can exceed
-/// the name's own kind ([`registered_load_kind_for_variable`]) when the
-/// address is also read wider. `None` means the variable is not a registered
+/// This is the immutable producer width retained by its read kind. A wider
+/// read has another identity. `None` means the variable is not a registered
 /// load; a caller that needs a width anyway uses
 /// [`resource_tracker::widest_scalar_access_bytes`].
 pub(crate) fn registered_load_bytes_for_variable(variable: &Variable) -> Option<u32> {
@@ -2803,8 +2792,8 @@ pub(crate) fn canonical_form_of_load(
 }
 
 /// Name a typed cell's own source read at its complete storage width.
-/// In particular, a pointer cell's Bits32 proxy is an eight-byte read;
-/// recording that fact precedes minting its immutable defining name.
+/// A pointer producer retains the intrinsic eight-byte Pointer kind before
+/// its immutable defining name is minted.
 pub(crate) fn canonical_form_of_typed_load(
     memory: SharedCMemory,
     pointer: Pointer,
@@ -2812,22 +2801,28 @@ pub(crate) fn canonical_form_of_typed_load(
 ) -> Option<Bitvector32Term> {
     let kind = LoadKind::of_type(value_type)?;
     record_load_access_width(&memory, &pointer, value_type.byte_width());
-    Some(canonical_form_of_load(memory, pointer, kind))
+    let load = Bitvector32Term::MemoryLoad(memory, Box::new(pointer), kind);
+    Some(
+        match load_variable_for_term_with_width(&load, value_type.byte_width()) {
+            Some((variable, _)) => Bitvector32Term::Variable(variable),
+            None => load,
+        },
+    )
 }
 
 /// Name the four-byte word selected by checked uint32 representation metadata.
 /// The caller validates that declaration before this helper records its width;
-/// a bare Bits32 load retains its conservative pointer-compatible footprint.
+/// an ordinary Bits32 scalar read remains intrinsically four bytes.
 pub(in crate::kernel) fn canonical_declared_uint32_word(
     memory: &CMemory,
     object: &Pointer,
 ) -> Bitvector32Term {
-    record_load_access_width(memory, object, 4);
-    canonical_form_of_load(
+    canonical_form_of_typed_load(
         crate::kernel::intern_c_memory_ref(memory),
         object.clone(),
-        LoadKind::Bits32,
+        CType::UInt32,
     )
+    .expect("a declared uint32 has a typed read")
 }
 
 /// The test-only audit of the creation-time invariant (see
@@ -3976,10 +3971,8 @@ pub(crate) fn load_variable_for_exact_cell(
     kind: LoadKind,
     bytes: u32,
 ) -> Variable {
-    let bytes =
-        rewritten_address_access_width(memory, pointer).map_or(bytes, |known| bytes.max(known));
     record_load_access_width(memory, pointer, bytes);
-    mint_load_variable_identity(memory, pointer, kind, memory, bytes)
+    mint_load_variable_identity(memory, pointer, kind, memory, kind.byte_width())
 }
 
 /// The variable naming a `kind` load of `pointer` in `memory`.
@@ -4005,11 +3998,11 @@ pub(crate) fn load_variable_for_cell_with_origin(
     )
     .map(|point| point.snapshot().clone());
     let memory = epoch.as_ref().unwrap_or(memory);
-    mint_load_variable_identity(memory, pointer, kind, origin, bytes)
+    mint_load_variable_identity(memory, pointer, kind, origin, kind.byte_width())
 }
 
-/// The kind is part of the identity: two reads of one address in one
-/// snapshot that differ in kind are two values. The hash leaves it out, so a
+/// Kind and width are part of the identity: two reads of one address in one
+/// snapshot that differ in either are two values. The hash leaves them out, so a
 /// load keeps the slot it had when every load of its address agreed on one
 /// kind, and a second kind probes past it like any other collision.
 fn mint_load_variable_identity(
@@ -4049,12 +4042,11 @@ fn mint_load_variable_identity(
                     origin: known_origin,
                     epoch: known_epoch,
                     bytes: known_bytes,
-                }) if known_memory == memory && known_pointer == pointer && *known_kind == kind => {
-                    // One entry stands for every access that resolved to this
-                    // name, so its width has to cover all of them: a caller
-                    // that reads the width back is asking how many bytes this
-                    // name could depend on.
-                    *known_bytes = (*known_bytes).max(bytes);
+                }) if known_memory == memory
+                    && known_pointer == pointer
+                    && *known_kind == kind
+                    && *known_bytes == bytes =>
+                {
                     // An origin from an earlier epoch was minted by another
                     // function; this function's first mint is its origin.
                     if *known_epoch != current_epoch {
@@ -4101,16 +4093,21 @@ pub(in crate::kernel) fn known_pointer_read_variable_for_term(
     bits: &Bitvector32Term,
 ) -> Option<Variable> {
     crate::instrumentation::record_deterministic_work(1);
-    let Bitvector32Term::MemoryLoad(memory, address, LoadKind::Bits32) = bits else {
+    let Bitvector32Term::MemoryLoad(memory, address, LoadKind::Pointer) = bits else {
         return None;
     };
     let variable = LOAD_VARIABLE_CACHE
-        .with(|cache| cache.borrow().get(bits).map(|(variable, _)| *variable))
+        .with(|cache| {
+            cache
+                .borrow()
+                .get(&(bits.clone(), crate::kernel::C_POINTER_BYTE_WIDTH))
+                .map(|(variable, _)| *variable)
+        })
         .or_else(|| match memory.known_value(address) {
             Some(CValue::Int32(Bitvector32Term::Variable(variable))) => Some(variable),
             _ => materialized_pointer_cell_load_variable(memory, address),
         })?;
-    (registered_load_kind_for_variable(&variable) == Some(LoadKind::Bits32)
+    (registered_load_kind_for_variable(&variable) == Some(LoadKind::Pointer)
         && registered_load_bytes_for_variable(&variable)
             == Some(crate::kernel::C_POINTER_BYTE_WIDTH))
     .then_some(variable)
@@ -4198,43 +4195,54 @@ pub(crate) fn latest_wide_load_observation(variable: &Variable) -> Option<Bitvec
 pub(crate) fn load_variable_for_term(
     bits: &Bitvector32Term,
 ) -> Option<(Variable, Bitvector32Term)> {
-    let Bitvector32Term::MemoryLoad(_, _, _) = bits else {
+    let Bitvector32Term::MemoryLoad(memory, pointer, kind) = bits else {
         return None;
     };
-    // Naming is deterministic per term, and callers ask per fact atom per
-    // comparison; the epoch walk and canonicalization behind a cold call
-    // are not free, so cache by term. Term hashing is cheap: embedded
-    // snapshots hash by interned identity.
-    if let Some(hit) = LOAD_VARIABLE_CACHE.with(|cache| cache.borrow().get(bits).cloned()) {
-        if load_variable_covers_observed_access(bits, hit.0) {
+    load_variable_for_term_with_width(bits, load_term_access_width(memory, pointer, *kind))
+}
+
+fn load_variable_for_term_with_width(
+    bits: &Bitvector32Term,
+    _requested_bytes: u32,
+) -> Option<(Variable, Bitvector32Term)> {
+    let Bitvector32Term::MemoryLoad(_, _, kind) = bits else {
+        return None;
+    };
+    let bytes = kind.byte_width();
+    let key = (bits.clone(), bytes);
+    // Kind and access width must both agree with the cached immutable producer.
+    // Embedded snapshots hash by interned identity, so this is a selected lookup.
+    if let Some(hit) = LOAD_VARIABLE_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+        if load_variable_has_exact_access(bits, hit.0, bytes) {
             record_wide_load_observation(bits, hit.0);
             return Some(hit);
         }
     }
     crate::instrumentation::record_deterministic_work(1);
-    let computed = load_variable_for_term_uncached(bits)?;
+    let computed = load_variable_for_term_uncached(bits, bytes)?;
     record_wide_load_observation(bits, computed.0);
     LOAD_VARIABLE_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.len() >= 100_000 {
             cache.clear();
         }
-        cache.insert(bits.clone(), computed.clone());
+        cache.insert(key, computed.clone());
     });
     Some(computed)
 }
 
-fn load_variable_covers_observed_access(bits: &Bitvector32Term, variable: Variable) -> bool {
-    let Bitvector32Term::MemoryLoad(memory, pointer, kind) = bits else {
+fn load_variable_has_exact_access(bits: &Bitvector32Term, variable: Variable, bytes: u32) -> bool {
+    let Bitvector32Term::MemoryLoad(_, _, kind) = bits else {
         return false;
     };
     registered_load_kind_for_variable(&variable) == Some(*kind)
-        && registered_load_bytes_for_variable(&variable).is_some_and(|bytes| {
-            bytes >= recorded_load_access_width(memory, pointer).unwrap_or(kind.byte_width())
-        })
+        && registered_load_bytes_for_variable(&variable) == Some(bytes)
 }
 
-fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, Bitvector32Term)> {
+fn load_variable_for_term_uncached(
+    bits: &Bitvector32Term,
+    bytes: u32,
+) -> Option<(Variable, Bitvector32Term)> {
     // A pointer cell this snapshot holds materialized, whose value is the
     // pointer an earlier load of this same cell produced, already names this
     // load: the materialized value is `cell.block + v * width` and `v` is
@@ -4245,14 +4253,15 @@ fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, 
     // even where the head copied the cell back as provably unwritten, and a
     // field such as `arena->occupied` read again inside the loop would get a
     // second name for the value its pointer already carries.
-    if let Bitvector32Term::MemoryLoad(memory, pointer, LoadKind::Bits32) = bits
+    if let Bitvector32Term::MemoryLoad(memory, pointer, LoadKind::Pointer) = bits
         && let Some(variable) = materialized_pointer_cell_load_variable(memory, pointer)
+        && registered_load_bytes_for_variable(&variable) == Some(bytes)
     {
         return Some((variable, bits.clone()));
     }
     let mut canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads(bits);
     if let Bitvector32Term::Variable(variable) = &canonical
-        && !load_variable_covers_observed_access(bits, *variable)
+        && !load_variable_has_exact_access(bits, *variable, bytes)
     {
         // An earlier narrower observation may have cached this scalar cell's
         // value. Recheck only the selected term at the actual wider width;
@@ -4265,19 +4274,7 @@ fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, 
             unreachable!("the pattern above matched a memory load");
         };
         return Some((
-            load_variable_for_cell_with_origin(
-                memory,
-                pointer,
-                *kind,
-                // Either snapshot's recorded entry is this same load's own
-                // width, so the first one found is the answer. Taking the
-                // larger would let a miss on one side widen a width the
-                // other side knows exactly.
-                recorded_load_access_width(origin, pointer)
-                    .or_else(|| recorded_load_access_width(memory, pointer))
-                    .unwrap_or_else(|| kind.unrecorded_access_byte_width()),
-                origin,
-            ),
+            load_variable_for_cell_with_origin(memory, pointer, *kind, bytes, origin),
             canonical.clone(),
         ));
     }
@@ -4294,14 +4291,17 @@ fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, 
     if let Bitvector32Term::Variable(variable) = &canonical
         && let Bitvector32Term::MemoryLoad(_, _, kind) = bits
         && registered_load_kind_for_variable(variable) == Some(*kind)
-        && load_variable_covers_observed_access(bits, *variable)
+        && load_variable_has_exact_access(bits, *variable, bytes)
     {
         return Some((*variable, bits.clone()));
     }
     let Bitvector32Term::MemoryLoad(memory, pointer, kind) = bits else {
         unreachable!("the pattern above matched a memory load");
     };
-    Some((load_variable_for_cell(memory, pointer, *kind), bits.clone()))
+    Some((
+        load_variable_for_cell_with_origin(memory, pointer, *kind, bytes, memory),
+        bits.clone(),
+    ))
 }
 
 /// The registered load variable a materialized pointer cell's value carries,
@@ -4330,7 +4330,7 @@ fn materialized_pointer_cell_load_variable(
     };
     let (_, registered) = registered_load_for_variable(variable)?;
     (registered == *pointer
-        && registered_load_kind_for_variable(variable) == Some(LoadKind::Bits32)
+        && registered_load_kind_for_variable(variable) == Some(LoadKind::Pointer)
         && registered_load_bytes_for_variable(variable)
             == Some(crate::kernel::C_POINTER_BYTE_WIDTH))
     .then_some(*variable)
@@ -4348,6 +4348,17 @@ fn mint_load_variable(
     source: Option<&LoadSourceId>,
 ) -> Option<Variable> {
     let (fresh, load) = load_variable_for_term(bits)?;
+    record_load_variable_defining_fact_with_source(fresh, load, facts, source);
+    Some(fresh)
+}
+
+fn mint_typed_load_variable(
+    bits: &Bitvector32Term,
+    bytes: u32,
+    facts: &mut ExecutionFacts,
+    source: Option<&LoadSourceId>,
+) -> Option<Variable> {
+    let (fresh, load) = load_variable_for_term_with_width(bits, bytes)?;
     record_load_variable_defining_fact_with_source(fresh, load, facts, source);
     Some(fresh)
 }
@@ -4515,9 +4526,9 @@ pub(in crate::kernel) fn symbolic_load_value_unrecorded(
             let load = Bitvector32Term::MemoryLoad(
                 crate::kernel::intern_c_memory(memory.clone()),
                 Box::new(pointer.clone()),
-                LoadKind::Bits32,
+                LoadKind::Pointer,
             );
-            let (variable, _) = load_variable_for_term(&load)?;
+            let (variable, _) = load_variable_for_term_with_width(&load, value_type.byte_width())?;
             Some(CValue::typed_pointer(
                 Pointer::symbolic_function(variable),
                 value_type,
@@ -4570,10 +4581,10 @@ pub(in crate::kernel) fn cached_symbolic_storage_cell_value(
             let load = Bitvector32Term::MemoryLoad(
                 crate::kernel::intern_c_memory(memory.clone()),
                 Box::new(pointer.clone()),
-                LoadKind::Bits32,
+                LoadKind::Pointer,
             );
             return LOAD_VARIABLE_CACHE.with(|cache| {
-                let variable = cache.borrow().get(&load)?.0;
+                let variable = cache.borrow().get(&(load, c_type.byte_width()))?.0;
                 Some(CValue::typed_pointer(Pointer::symbolic(variable), c_type))
             });
         }
@@ -4587,11 +4598,14 @@ pub(in crate::kernel) fn cached_symbolic_storage_cell_value(
     crate::instrumentation::record_deterministic_work(1);
     TERM_CACHE
         .with(|cache| cache.borrow().get(&load).cloned())
+        .filter(|value| !matches!(value, Bitvector32Term::Variable(variable)
+            if is_load_variable(variable) && (registered_load_kind_for_variable(variable) != Some(kind)
+                || registered_load_bytes_for_variable(variable) != Some(c_type.byte_width()))))
         .or_else(|| {
             LOAD_VARIABLE_CACHE.with(|cache| {
                 cache
                     .borrow()
-                    .get(&load)
+                    .get(&(load.clone(), c_type.byte_width()))
                     .map(|(variable, _)| Bitvector32Term::Variable(*variable))
             })
         })
@@ -4611,9 +4625,9 @@ pub(in crate::kernel) fn symbolic_storage_cell_value(
         let load = Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(memory.clone()),
             Box::new(pointer.clone()),
-            LoadKind::Bits32,
+            LoadKind::Pointer,
         );
-        let (variable, _) = load_variable_for_term(&load)
+        let (variable, _) = load_variable_for_term_with_width(&load, c_type.byte_width())
             .expect("symbolic pointer cells must be backed by memory loads");
         let definition = registered_load_term_for_variable(&variable)
             .expect("a symbolic pointer cell retains its immutable defining term");
@@ -6602,11 +6616,17 @@ mod tests {
         record_load_access_width(&memory, &wide, crate::kernel::C_POINTER_BYTE_WIDTH);
         record_load_access_width(&memory, &narrow, 4);
         let term = |address: &Pointer| {
-            Bitvector32Term::MemoryLoad(source.clone(), Box::new(address.clone()), LoadKind::Bits32)
+            Bitvector32Term::MemoryLoad(
+                source.clone(),
+                Box::new(address.clone()),
+                LoadKind::Pointer,
+            )
         };
         assert!(known_pointer_read_variable_for_term(&term(&wide)).is_none());
         let (wide_name, _) = load_variable_for_term(&term(&wide)).unwrap();
-        let (narrow_name, _) = load_variable_for_term(&term(&narrow)).unwrap();
+        let scalar =
+            Bitvector32Term::MemoryLoad(source.clone(), Box::new(narrow.clone()), LoadKind::Bits32);
+        let (narrow_name, _) = load_variable_for_term(&scalar).unwrap();
         assert_eq!(
             known_pointer_read_variable_for_term(&term(&wide)),
             Some(wide_name)
@@ -7003,6 +7023,11 @@ mod tests {
             registered_load_bytes_for_variable(&full_name),
             Some(C_POINTER_BYTE_WIDTH)
         );
+        assert_ne!(scalar_name, full_name);
+        assert_eq!(registered_load_bytes_for_variable(&scalar_name), Some(4));
+        let original = registered_load_origin_term_for_variable(&scalar_name).unwrap();
+        assert_eq!(load_variable_for_term(&original).unwrap().0, scalar_name);
+        assert_eq!(registered_load_bytes_for_variable(&scalar_name), Some(4));
         assert_eq!(registered_load_bytes_for_variable(&other_name), Some(4));
         let CValue::Pointer(value) = canonicalized_pointer_value_from_int_cell(
             &address,
@@ -7150,7 +7175,7 @@ mod tests {
         let load = Bitvector32Term::MemoryLoad(
             snapshot.clone(),
             Box::new(address.clone()),
-            crate::kernel::LoadKind::Bits32,
+            crate::kernel::LoadKind::Pointer,
         );
         let (variable, _) = load_variable_for_term(&load).expect("load identity");
         let mut facts = crate::kernel::ExecutionFacts::new();
@@ -7214,7 +7239,7 @@ mod tests {
         let load = Bitvector32Term::MemoryLoad(
             snapshot.clone(),
             Box::new(address.clone()),
-            crate::kernel::LoadKind::Bits32,
+            crate::kernel::LoadKind::Pointer,
         );
         let (variable, _) = load_variable_for_term(&load).expect("load identity");
         let mut facts = crate::kernel::ExecutionFacts::new();

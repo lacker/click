@@ -12,7 +12,12 @@ fn load(memory: &SharedCMemory, pointer: &Pointer, bytes: u32) -> Bitvector32Ter
     Bitvector32Term::Variable(crate::kernel::eval::load_variable_for_exact_cell(
         memory,
         pointer,
-        crate::kernel::LoadKind::Bits32,
+        match bytes {
+            2 => crate::kernel::LoadKind::UInt16,
+            4 => crate::kernel::LoadKind::Bits32,
+            8 => crate::kernel::LoadKind::Pointer,
+            _ => panic!("fixture read width"),
+        },
         bytes,
     ))
 }
@@ -190,8 +195,10 @@ fn int32_load_registration_can_follow_a_later_width_declaration() {
     let mut graph = EqualityGraph::default();
     graph.add_int32_equality(&var(1), &var(2));
     assert!(!graph.are_int32_equal(&left, &right));
-    assert_eq!(left, load(&memory, &address(1), 4));
-    assert!(graph.are_int32_equal(&left, &right));
+    let widened = load(&memory, &address(1), 4);
+    assert_ne!(left, widened);
+    assert!(!graph.are_int32_equal(&left, &right));
+    assert!(graph.are_int32_equal(&widened, &right));
 }
 
 #[test]
@@ -213,7 +220,7 @@ fn exact_load_registration_preserves_storage_width_and_widens_at_destination() {
             before.clone()
         };
         let renamed = load(&destination, &address(2), 2);
-        for (term, bytes) in [(&source, 2), (&integer, 4), (&wide, 8), (&renamed, 8)] {
+        for (term, bytes) in [(&source, 2), (&integer, 4), (&wide, 8), (&renamed, 2)] {
             let Bitvector32Term::Variable(variable) = term else {
                 panic!("registered load")
             };
@@ -223,7 +230,7 @@ fn exact_load_registration_preserves_storage_width_and_widens_at_destination() {
             );
         }
         if !changed_snapshot {
-            assert_eq!(renamed, wide);
+            assert_ne!(renamed, wide);
         }
         let mut graph = EqualityGraph::default();
         graph.add_int32_equality(&var(1), &var(3));

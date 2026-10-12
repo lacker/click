@@ -8819,7 +8819,7 @@ impl CMemory {
                 Bitvector32Term::MemoryLoad(
                     snapshot.clone(),
                     Box::new(pointer.clone()),
-                    LoadKind::Bits32,
+                    LoadKind::Pointer,
                 ),
                 i64::from(pointee_byte_width),
             ),

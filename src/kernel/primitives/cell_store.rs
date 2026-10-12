@@ -872,7 +872,7 @@ pub(crate) fn cell_run_value(
                         .byte_width(),
                 ),
             );
-            if let Some(Bitvector32Term::MemoryLoad(snapshot, address, LoadKind::Bits32)) =
+            if let Some(Bitvector32Term::MemoryLoad(snapshot, address, LoadKind::Pointer)) =
                 definition
             {
                 crate::kernel::equality_graph::EqualityGraph::default()

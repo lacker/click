@@ -2555,6 +2555,7 @@ fn describe_load_kind(kind: crate::kernel::LoadKind) -> &'static str {
         LoadKind::UInt128 => "an unsigned sixteen-byte integer",
         LoadKind::Float32 => "a `float32`",
         LoadKind::Float64 => "a `float64`",
+        LoadKind::Pointer => "a pointer",
     }
 }
 

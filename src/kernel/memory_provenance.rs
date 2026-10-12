@@ -2751,14 +2751,14 @@ fn resolve_loaded_pointer_designation(
         ) else {
             break;
         };
-        let stored = match cell.resolved_value(origin.address(), LoadKind::Bits32) {
+        let stored = match cell.resolved_value(origin.address(), LoadKind::Pointer) {
             Some(CValue::Pointer(value)) => Some(value),
             // Integer/partial cells cannot supply an object designation.
             Some(_) => None,
             None => pointer_value_at_stopping_store(
                 &cell,
                 origin.address(),
-                LoadKind::Bits32,
+                LoadKind::Pointer,
                 C_POINTER_BYTE_WIDTH,
                 assumptions,
             ),
@@ -2812,7 +2812,7 @@ pub(in crate::kernel) fn paired_pointer_load_displacement(
         crate::kernel::registered_load_bytes_for_variable(variable) == Some(C_POINTER_BYTE_WIDTH)
             && matches!(
                 crate::kernel::registered_load_term_for_variable(variable),
-                Some(Bitvector32Term::MemoryLoad(memory, address, LoadKind::Bits32))
+                Some(Bitvector32Term::MemoryLoad(memory, address, LoadKind::Pointer))
                     if memory.arena_id() == origin.memory().arena_id()
                         && address.as_ref() == origin.address()
             )
@@ -2916,7 +2916,7 @@ pub(in crate::kernel) fn legacy_stored_pointer_read(
             return None;
         }
         match crate::kernel::registered_load_term_for_variable(variable)? {
-            Bitvector32Term::MemoryLoad(memory, address, LoadKind::Bits32) => {
+            Bitvector32Term::MemoryLoad(memory, address, LoadKind::Pointer) => {
                 Some(PointerLoadIdentity::new(memory, *address))
             }
             _ => None,
@@ -2987,13 +2987,13 @@ fn resolve_pointer_read_carrier(
             assumptions,
             true,
         )?;
-        let stored = match cell.resolved_value(origin.address(), LoadKind::Bits32) {
+        let stored = match cell.resolved_value(origin.address(), LoadKind::Pointer) {
             Some(CValue::Pointer(stored)) => Some(stored),
             Some(_) => return None,
             None => pointer_value_at_stopping_store(
                 &cell,
                 origin.address(),
-                LoadKind::Bits32,
+                LoadKind::Pointer,
                 C_POINTER_BYTE_WIDTH,
                 assumptions,
             ),

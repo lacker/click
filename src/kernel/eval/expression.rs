@@ -2516,14 +2516,14 @@ pub(in crate::kernel) fn retain_full_pointer_read_carrier(
     let candidate = match super::canonical_form_of_load(
         origin.memory().clone(),
         origin.address().clone(),
-        LoadKind::Bits32,
+        LoadKind::Pointer,
     ) {
         Bitvector32Term::Variable(variable)
             if crate::kernel::registered_load_bytes_for_variable(&variable)
                 == Some(C_POINTER_BYTE_WIDTH) =>
         {
             match crate::kernel::registered_load_term_for_variable(&variable) {
-                Some(Bitvector32Term::MemoryLoad(memory, address, LoadKind::Bits32)) => {
+                Some(Bitvector32Term::MemoryLoad(memory, address, LoadKind::Pointer)) => {
                     Some(PointerLoadIdentity::new(memory, *address))
                 }
                 _ => None,

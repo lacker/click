@@ -255,11 +255,8 @@ impl Sort {
 /// supports exact typed cells, not signed/unsigned memory reinterpretation.
 /// Floating-point reads are kinds of their own.
 ///
-/// A pointer read is a `Bits32` read: Click names a pointer value by the
-/// four-byte word at its address (`Pointer::loaded` scales that word), which
-/// is also how a materialized pointer field's cells hold it. The access is
-/// still eight bytes wide; framing takes the width recorded at the address,
-/// which a pointer read records, and never less than the kind's own.
+/// Pointer reads retain their complete eight-byte interpretation independently
+/// of the bitvector proxy used to name their address.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum LoadKind {
     Int8,
@@ -273,6 +270,7 @@ pub enum LoadKind {
     UInt128,
     Float32,
     Float64,
+    Pointer,
 }
 
 impl LoadKind {
@@ -304,7 +302,7 @@ impl LoadKind {
             | CType::Float32Array(_)
             | CType::Float64Array(_)
             | CType::PointerArray(_, _) => return None,
-            _ if value_type.is_pointer() => Self::Bits32,
+            _ if value_type.is_pointer() => Self::Pointer,
             _ => return None,
         })
     }
@@ -324,7 +322,7 @@ impl LoadKind {
             CValue::UInt128(_) => Self::UInt128,
             CValue::Float32(_) => Self::Float32,
             CValue::Float64(_) => Self::Float64,
-            CValue::Pointer(_) => Self::Bits32,
+            CValue::Pointer(_) => Self::Pointer,
         })
     }
 
@@ -336,14 +334,9 @@ impl LoadKind {
     }
 
     /// Width when the kind is known but no typed producer recorded an access.
-    /// Bits32 can also name an LP64 pointer word, so keep its eight-byte ABI
-    /// footprint. A fully unknown access uses MAX_SCALAR_ACCESS_BYTES instead.
+    /// The read kind preserves its intrinsic storage width.
     pub(crate) fn unrecorded_access_byte_width(self) -> u32 {
-        if self == Self::Bits32 {
-            crate::kernel::C_POINTER_BYTE_WIDTH
-        } else {
-            self.byte_width()
-        }
+        self.byte_width()
     }
 
     /// How many bytes a read of this kind returns.
@@ -352,7 +345,7 @@ impl LoadKind {
             Self::Int8 | Self::UInt8 => 1,
             Self::Int16 | Self::UInt16 => 2,
             Self::Bits32 | Self::Float32 => 4,
-            Self::Bits64 | Self::Float64 => 8,
+            Self::Bits64 | Self::Float64 | Self::Pointer => 8,
             Self::Int128 | Self::UInt128 => 16,
         }
     }
