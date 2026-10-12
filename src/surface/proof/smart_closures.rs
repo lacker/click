@@ -4545,20 +4545,9 @@ impl<'a> Proof<'a> {
                     };
                     let endpoint = |term: &Bitvector32Term| match load(term) {
                         Some(Bitvector32Term::MemoryLoad(memory, pointer, kind)) => {
-                            let source =
-                                crate::kernel::reasoning::canonical_load_projection_source(
-                                    &memory, &pointer,
-                                )
-                                .map(|memory| memory.arena_id());
                             let bytes =
                                 crate::kernel::load_term_access_width(&memory, &pointer, kind);
-                            Some((
-                                memory.arena_id(),
-                                pointer.block.clone(),
-                                kind,
-                                bytes,
-                                source,
-                            ))
+                            Some((memory.arena_id(), pointer.block.clone(), kind, bytes))
                         }
                         _ => None,
                     };

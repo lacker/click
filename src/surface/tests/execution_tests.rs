@@ -2202,16 +2202,22 @@ int32 choose(int32 a, int32 b) {
 #[test]
 fn numeric_address_equation_cannot_recover_a_sibling_object_designation() {
     let c = "struct Pair { int first; int second; }; \
-             int read_word(unsigned long word, struct Pair* p) { return *((int*)word); }";
+             int read_word(unsigned long word, struct Pair* p, int* q) { return *((int*)word); }";
     let source = r#"
         verifying "word.c";
-        int32 read_word(uint64 word, struct Pair* p) {
+        int32 read_word(uint64 word, struct Pair* p, int32* q) {
             views p->second;
-            requires word == address(&p->first + 1);
+            requires q == &p->second;
+            requires word == address(q);
             ensures result == p->second;
         } by { execute(); simp(); }
     "#;
-    let error = verify_c0_sources(source, &[("word.c", c)])
-        .expect_err("numeric equality must not recover a dereferenceable sibling designation");
-    assert!(error.message().contains("invalid memory access"), "{error:?}");
+    let error = match verify_c0_sources(source, &[("word.c", c)]) {
+        Err(error) => error,
+        Ok(_) => panic!("numeric equality recovered a dereferenceable sibling designation"),
+    };
+    assert!(
+        error.message().contains("invalid memory access"),
+        "{error:?}"
+    );
 }

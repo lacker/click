@@ -40,10 +40,26 @@ collection now retain compact run dependencies separately. Focused checks also
 pass the original retained constructor proof, final-release helper, hidden-record
 expansion, mixed-snapshot call proof and adjacent-range C allocation proof.
 
+A subsequent focused check passes the original Rust split-slice and chunk
+metadata proofs, including their bounded-work controls. Native slice signatures
+now retain backing geometry separately from ownership and initialization; empty
+slices permit identity formation but no element access. This is a focused result,
+not a new full-gate verdict. The indirect callback assignment path now retains
+its callee's checked loan evidence; the original callback expansion proof and
+address-only/active-loan rejection controls pass. A subsequent focused run of
+49 library and C++ integration tests passed 23 and failed 26. The original C++
+self-pointer constructor, embedded self-pointer and scalar unwind cases still
+fail; the checkpoint remains unready to publish.
+
+The audit also reproduced
+[numeric equality recovering pointer access](../bugs/numeric-integer-equality-recovers-pointer-access.md)
+through integer and address-only pointer parameters. The explicit choice between
+checked integer-origin transport and restricting executable pointer–integer
+round trips is pending. Numeric equality must not grant object designation.
+
 Remaining reproduced integration failures include complete-width pointer naming,
-resource close/contract certification, native Rust slice extent transport,
-branch pointer transport, and loaded-pointer contracts that still rely only on
-address equality. The confirmed C multidimensional-row defect also needs declared
+resource close/contract certification, branch pointer transport, and loaded-pointer
+contracts that still rely only on address equality. The confirmed C multidimensional-row defect also needs declared
 row identity preserved before scalar decay. Temporary test-only diagnostics are
 not part of the release implementation and must be removed. Validate original
 source proofs after repairs, not just reduced unit tests, and complete the full

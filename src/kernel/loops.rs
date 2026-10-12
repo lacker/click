@@ -2185,7 +2185,10 @@ fn execute_c_indirect_call_assign_paths(
                 }
                 CFunctionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
             };
-            CStatementExecutionPath::new(outcome, path.facts, path.obligations)
+            let mut statement_path =
+                CStatementExecutionPath::new(outcome, path.facts, path.obligations);
+            statement_path.loan_evidence = path.loan_evidence;
+            statement_path
         })
         .collect())
 }

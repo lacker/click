@@ -2433,15 +2433,6 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
     checked_propositions: &[CCheckedFunctionProposition],
 ) -> Option<Vec<CVerifiedFunctionContractClaim>> {
     if !contract_execution.is_complete() {
-        #[cfg(test)]
-        if std::env::var_os("CLICK_CALLBACK_CLAIM_PROBE").is_some() {
-            eprintln!(
-                "callback-claim-probe function={} incomplete execution paths={} refusal={:?}",
-                function.name(),
-                contract_execution.path_count(),
-                contract_execution.reuse_diagnostic()
-            );
-        }
         return None;
     }
     let timings = crate::instrumentation::enabled();
@@ -2480,23 +2471,6 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
                     )
                 },
             );
-            #[cfg(test)]
-            if !holds && std::env::var_os("CLICK_CALLBACK_CLAIM_PROBE").is_some() {
-                static REPORTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-                if REPORTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
-                    eprintln!("callback-claim-probe function={} claim={:?} target={:?}", function.name(), claim.key(), claim.target());
-                    for view in cases.iter().flatten().take(2) {
-                        match view.prepared(function) {
-                            Ok(paths) => for path in paths.iter().take(2) {
-                                eprintln!("callback-claim-probe prepared normal={} native_outputs={:?}",
-                                    matches!(path.outcome, CFunctionOutcome::Return { .. }),
-                                    path.post_state.as_ref().map(|state| check_native_output_places(state, function.contract_interface(), &path.assumptions)));
-                            },
-                            Err(_) => eprintln!("callback-claim-probe path preparation refused"),
-                        }
-                    }
-                }
-            }
             if timings {
                 crate::instrumentation::emit(
                     crate::instrumentation::VerificationEvent::ClaimFinished {

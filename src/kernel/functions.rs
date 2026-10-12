@@ -15216,6 +15216,51 @@ fn add_verified_function_ensure_facts_selected_with_interface<'a>(
             budget,
         )?;
         for ensure_path in ensure_paths {
+            #[cfg(test)]
+            if std::env::var_os("CLICK_BITS64_BRIDGE_PROBE").is_some() {
+                let mut leaf = &ensure_path.proposition;
+                let mut implications = 0;
+                while let Proposition::Implies(_, body) = leaf {
+                    implications += 1;
+                    leaf = body;
+                }
+                let condition = match leaf {
+                    Proposition::ConditionIs(condition, _) => {
+                        Some(std::mem::discriminant(condition))
+                    }
+                    _ => None,
+                };
+                let endpoint = |term: &Bitvector32Term| {
+                    let load = match term {
+                        Bitvector32Term::Variable(variable) => {
+                            crate::kernel::eval::registered_load_origin_term_for_variable(variable)
+                        }
+                        Bitvector32Term::MemoryLoad(..) => Some(term.clone()),
+                        _ => None,
+                    };
+                    match load {
+                        Some(Bitvector32Term::MemoryLoad(memory, pointer, kind)) => {
+                            Some((memory.arena_id(), pointer.block.clone(), kind))
+                        }
+                        _ => None,
+                    }
+                };
+                let wide = match leaf {
+                    Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(a, b), _) => Some((
+                        endpoint(a),
+                        endpoint(b),
+                        std::mem::discriminant(a.as_ref()),
+                        std::mem::discriminant(b.as_ref()),
+                    )),
+                    _ => None,
+                };
+                eprintln!(
+                    "BITS64-ENSURE-PROBE leaf={:?} condition={condition:?} implications={implications} wide={wide:?} path-facts={} obligations={}",
+                    std::mem::discriminant(leaf),
+                    ensure_path.facts.len(),
+                    ensure_path.obligations.len()
+                );
+            }
             // Certified lowering facts are consequences of the selected
             // path, such as a checked count's entry-owned lower bound. Keep
             // their branch guards, but do not turn those consequences into

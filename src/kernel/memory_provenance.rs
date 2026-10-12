@@ -4604,7 +4604,9 @@ fn cell_integer_for_read(
     // A complete pointer may use a Bits32 proxy, but a genuine four-byte
     // value at the same address cannot supply that eight-byte value.
     let cell_bytes = match &cell {
-        CValue::Int32(Bitvector32Term::Variable(variable)) => {
+        CValue::Int32(Bitvector32Term::Variable(variable))
+            if crate::kernel::registered_load_kind_for_variable(variable) == Some(kind) =>
+        {
             crate::kernel::registered_load_bytes_for_variable(variable)
                 .unwrap_or_else(|| cell.byte_width())
         }

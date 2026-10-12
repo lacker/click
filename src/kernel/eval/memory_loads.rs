@@ -4206,8 +4206,10 @@ pub(crate) fn load_variable_for_term(
     // are not free, so cache by term. Term hashing is cheap: embedded
     // snapshots hash by interned identity.
     if let Some(hit) = LOAD_VARIABLE_CACHE.with(|cache| cache.borrow().get(bits).cloned()) {
-        record_wide_load_observation(bits, hit.0);
-        return Some(hit);
+        if load_variable_covers_observed_access(bits, hit.0) {
+            record_wide_load_observation(bits, hit.0);
+            return Some(hit);
+        }
     }
     crate::instrumentation::record_deterministic_work(1);
     let computed = load_variable_for_term_uncached(bits)?;
@@ -4220,6 +4222,16 @@ pub(crate) fn load_variable_for_term(
         cache.insert(bits.clone(), computed.clone());
     });
     Some(computed)
+}
+
+fn load_variable_covers_observed_access(bits: &Bitvector32Term, variable: Variable) -> bool {
+    let Bitvector32Term::MemoryLoad(memory, pointer, kind) = bits else {
+        return false;
+    };
+    registered_load_kind_for_variable(&variable) == Some(*kind)
+        && registered_load_bytes_for_variable(&variable).is_some_and(|bytes| {
+            bytes >= recorded_load_access_width(memory, pointer).unwrap_or(kind.byte_width())
+        })
 }
 
 fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, Bitvector32Term)> {
@@ -4238,7 +4250,16 @@ fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, 
     {
         return Some((variable, bits.clone()));
     }
-    let canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads(bits);
+    let mut canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads(bits);
+    if let Bitvector32Term::Variable(variable) = &canonical
+        && !load_variable_covers_observed_access(bits, *variable)
+    {
+        // An earlier narrower observation may have cached this scalar cell's
+        // value. Recheck only the selected term at the actual wider width;
+        // neither the old cache entry nor an address equation proves the
+        // additional bytes unchanged.
+        canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads_deep(bits);
+    }
     if let Bitvector32Term::MemoryLoad(memory, pointer, kind) = &canonical {
         let Bitvector32Term::MemoryLoad(origin, _, _) = bits else {
             unreachable!("the pattern above matched a memory load");
@@ -4273,6 +4294,7 @@ fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, 
     if let Bitvector32Term::Variable(variable) = &canonical
         && let Bitvector32Term::MemoryLoad(_, _, kind) = bits
         && registered_load_kind_for_variable(variable) == Some(*kind)
+        && load_variable_covers_observed_access(bits, *variable)
     {
         return Some((*variable, bits.clone()));
     }
@@ -4308,7 +4330,9 @@ fn materialized_pointer_cell_load_variable(
     };
     let (_, registered) = registered_load_for_variable(variable)?;
     (registered == *pointer
-        && registered_load_kind_for_variable(variable) == Some(LoadKind::Bits32))
+        && registered_load_kind_for_variable(variable) == Some(LoadKind::Bits32)
+        && registered_load_bytes_for_variable(variable)
+            == Some(crate::kernel::C_POINTER_BYTE_WIDTH))
     .then_some(*variable)
 }
 
@@ -6945,6 +6969,57 @@ mod tests {
     }
 
     #[test]
+    fn wider_pointer_naming_rechecks_a_cached_narrow_scalar_source() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let source = CMemory::new();
+        let address = Pointer::symbolic(Variable(92_314));
+        let snapshot = intern_c_memory_ref(&source);
+        let scalar =
+            canonical_form_of_typed_load(snapshot.clone(), address.clone(), CType::Int32).unwrap();
+        let Bitvector32Term::Variable(scalar_name) = scalar else {
+            panic!("scalar name");
+        };
+        let seeded = source
+            .with_named_cell_run(address.clone(), 4, CType::Int32, 0, 2, snapshot)
+            .unwrap();
+        let selected = intern_c_memory_ref(&seeded);
+        let narrow = canonical_form_of_load(selected.clone(), address.clone(), LoadKind::Bits32);
+        assert_eq!(narrow, scalar);
+        assert_eq!(registered_load_bytes_for_variable(&scalar_name), Some(4));
+
+        // Keep a different four-byte producer narrow. Only this selected
+        // read has gained an actual full-width typed observation.
+        let other = Pointer::symbolic(Variable(92_315));
+        let other = canonical_form_of_typed_load(selected.clone(), other, CType::Int32).unwrap();
+        let Bitvector32Term::Variable(other_name) = other else {
+            panic!("other scalar name");
+        };
+        let full =
+            canonical_form_of_typed_load(selected, address.clone(), CType::Int32Pointer).unwrap();
+        let Bitvector32Term::Variable(full_name) = full else {
+            panic!("complete pointer name");
+        };
+        assert_eq!(
+            registered_load_bytes_for_variable(&full_name),
+            Some(C_POINTER_BYTE_WIDTH)
+        );
+        assert_eq!(registered_load_bytes_for_variable(&other_name), Some(4));
+        let CValue::Pointer(value) = canonicalized_pointer_value_from_int_cell(
+            &address,
+            &CValue::Int32(full),
+            CType::Int32Pointer,
+            &mut ExecutionFacts::new(),
+            &PureFactContext::new(),
+            None,
+            LoadPurpose::Logical,
+        )
+        .unwrap() else {
+            panic!("pointer value");
+        };
+        assert!(crate::kernel::memory_provenance::legacy_stored_pointer_read(&value).is_some());
+    }
+
+    #[test]
     fn cached_scalar_reads_require_a_complete_pointer_producer() {
         let _session = crate::kernel::VerificationSession::enter();
         let source = CMemory::new();
@@ -6991,6 +7066,45 @@ mod tests {
             CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch { .. })
         ));
         assert_eq!(registered_load_bytes_for_variable(&scalar_name), Some(4));
+
+        let foreign_address = Pointer::symbolic(Variable(92_313));
+        let foreign =
+            canonical_form_of_typed_load(snapshot.clone(), foreign_address.clone(), CType::Int64)
+                .unwrap();
+        let Bitvector32Term::Variable(foreign_name) = foreign else {
+            panic!("wide scalar read name");
+        };
+        assert_eq!(registered_load_bytes_for_variable(&foreign_name), Some(8));
+        assert_eq!(
+            registered_load_kind_for_variable(&foreign_name),
+            Some(LoadKind::Bits64)
+        );
+        assert!(
+            canonicalized_pointer_value_from_int_cell(
+                &foreign_address,
+                &CValue::Int32(foreign.clone()),
+                CType::Int32Pointer,
+                &mut ExecutionFacts::new(),
+                &context,
+                None,
+                LoadPurpose::Logical,
+            )
+            .is_none()
+        );
+        let foreign_cache = source
+            .clone()
+            .materialize_named_cell(foreign_address.clone(), CValue::Int32(foreign.clone()));
+        let foreign_snapshot = intern_c_memory_ref(&foreign_cache);
+        record_load_access_width(&foreign_snapshot, &foreign_address, C_POINTER_BYTE_WIDTH);
+        let pointer_read = Bitvector32Term::MemoryLoad(
+            foreign_snapshot,
+            Box::new(foreign_address),
+            LoadKind::Bits32,
+        );
+        assert_ne!(
+            crate::kernel::memory_provenance::canonicalize_atomic_loads(&pointer_read),
+            foreign
+        );
 
         // Naming two unchanged four-byte words does not write their bytes.
         // With authority for a complete pointer read, the existing no-write

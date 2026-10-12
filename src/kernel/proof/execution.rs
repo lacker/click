@@ -1279,18 +1279,59 @@ pub(crate) fn selected_condition_probe(
             ),
         }
     }
+    fn proposition(
+        value: &Proposition,
+        depth: u32,
+        variables: &mut Vec<Variable>,
+        loads: &mut Vec<Pointer>,
+    ) -> String {
+        if depth == 0 {
+            return format!("prop#{:x}", fingerprint(value));
+        }
+        match value {
+            Proposition::ConditionIs(value, truth) => {
+                format!("{}={truth}", condition(value, variables, loads))
+            }
+            Proposition::And(left, right) => format!(
+                "AND({}, {})",
+                proposition(left, depth - 1, variables, loads),
+                proposition(right, depth - 1, variables, loads)
+            ),
+            Proposition::Or(left, right) => format!(
+                "OR({}, {})",
+                proposition(left, depth - 1, variables, loads),
+                proposition(right, depth - 1, variables, loads)
+            ),
+            Proposition::CMemoryLoadable {
+                memory,
+                base,
+                bytes,
+                wide,
+            } => format!(
+                "loadable mem#{:x}/ptr#{:x}/{} wide={wide}",
+                fingerprint(memory),
+                fingerprint(base),
+                term(bytes, 4, variables, loads)
+            ),
+            Proposition::CMemoryReadDefined {
+                memory,
+                pointer,
+                value_type,
+            } => format!(
+                "read-defined mem#{:x}/ptr#{:x}/{value_type:?}",
+                fingerprint(memory),
+                fingerprint(pointer)
+            ),
+            _ => format!(
+                "proposition {:?}#{:x}",
+                std::mem::discriminant(value),
+                fingerprint(value)
+            ),
+        }
+    }
     let mut variables = Vec::new();
     let mut loads = Vec::new();
-    let mut shown = match goal {
-        Proposition::ConditionIs(value, truth) => {
-            format!("{}={truth}", condition(value, &mut variables, &mut loads))
-        }
-        _ => format!(
-            "proposition {:?}#{:x}",
-            std::mem::discriminant(goal),
-            fingerprint(goal)
-        ),
-    };
+    let mut shown = proposition(goal, 6, &mut variables, &mut loads);
     if let Some(assumptions) = assumptions {
         shown.push_str(&format!(
             "\n canonical {}",
@@ -1298,6 +1339,16 @@ pub(crate) fn selected_condition_probe(
         ));
         let mut related = Vec::new();
         for variable in variables.into_iter().take(8) {
+            let key = crate::kernel::primitives::AtomicConnectionKey::Variable(variable);
+            let (connected, _) = assumptions.atomic_facts_connected_to(&key, true);
+            for fact in connected.take(16) {
+                if let crate::kernel::primitives::AtomicConnectedFact::Proposition(fact) = fact {
+                    shown.push_str(&format!(
+                        "\n related-prop {}",
+                        proposition(fact, 4, &mut Vec::new(), &mut Vec::new())
+                    ));
+                }
+            }
             if let Some(facts) = assumptions.condition_facts_by_variable.get(&variable) {
                 related.extend(
                     facts
@@ -2517,6 +2568,17 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
             )
             || !crate::kernel::api::population_observations_equal(before_state, &population_after)
         {
+            #[cfg(test)]
+            if std::env::var_os("CLICK_RESOURCE_REWRITE_PROBE").is_some() {
+                eprintln!(
+                    "resource-rewrite-probe name={name} concrete={} memory={} population={}",
+                    concrete_after == *before_state,
+                    crate::kernel::api::contract_certification::c_memories_definitionally_equal(
+                        native_baseline.memory(), after_state.memory(), assumptions,
+                    ),
+                    crate::kernel::api::population_observations_equal(before_state, &population_after),
+                );
+            }
             return Err(
                 "resource rewrite changed more than a definitional representation".to_string(),
             );

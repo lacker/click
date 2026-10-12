@@ -5057,7 +5057,12 @@ fn a_struct_pointer_range_counts_structs() {
     verify_c0_sources(&contract("views p[0..2];"), &[("cells.c", c_source)]).unwrap();
     let error = verify_c0_sources(&contract("views p[0..1];"), &[("cells.c", c_source)])
         .expect_err("one struct does not cover the second");
-    assert!(error.message.contains("undefined behavior: invalid memory access"), "{error:?}");
+    assert!(
+        error
+            .message
+            .contains("undefined behavior: invalid memory access"),
+        "{error:?}"
+    );
     assert!(error.message.contains("return p[1].other;"), "{error:?}");
 
     let link = "verifying \"cells.c\"; struct cell* first(struct cell** link) { views *link; }";

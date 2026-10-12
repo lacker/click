@@ -5314,7 +5314,7 @@ fn native_record_input_variables(row: &CNativeRecordInput) -> BTreeSet<Variable>
     let mut variables = BTreeSet::new();
     collect_c_value_bitvector_variables(&CValue::Pointer(row.origin.clone()), &mut variables);
     if let CNativeInputKind::TypedSlice { count, .. }
-        | CNativeInputKind::TypedPrefix { count, .. }
+    | CNativeInputKind::TypedPrefix { count, .. }
     | CNativeInputKind::RecordPrefix { count, .. }
     | CNativeInputKind::AllocatedScalar { bytes: count, .. } = &row.kind
     {

@@ -3253,7 +3253,10 @@ enum ContractSegmentSurface {
         element_type: CType,
     },
     Object(String),
-    ObjectAt { name: String, base: Box<ContractExpression> },
+    ObjectAt {
+        name: String,
+        base: Box<ContractExpression>,
+    },
 }
 
 /// The imported ABI retained by one range of whole struct objects. Hash the
@@ -3290,7 +3293,10 @@ impl ContractSegment {
             | ContractSegmentSurface::StructRange {
                 base, start, end, ..
             } => Some((base, start, end)),
-            ContractSegmentSurface::Field { .. } | ContractSegmentSurface::IndexedField { .. } | ContractSegmentSurface::Object(_) | ContractSegmentSurface::ObjectAt { .. } => None,
+            ContractSegmentSurface::Field { .. }
+            | ContractSegmentSurface::IndexedField { .. }
+            | ContractSegmentSurface::Object(_)
+            | ContractSegmentSurface::ObjectAt { .. } => None,
         }
     }
 
@@ -3299,7 +3305,9 @@ impl ContractSegment {
             ContractSegmentSurface::Field { element_width, .. } => *element_width,
             ContractSegmentSurface::IndexedField { element_width, .. } => Some(*element_width),
             ContractSegmentSurface::StructRange { layout, .. } => Some(layout.layout.size_bytes()),
-            ContractSegmentSurface::Range { .. } | ContractSegmentSurface::Object(_) | ContractSegmentSurface::ObjectAt { .. } => None,
+            ContractSegmentSurface::Range { .. }
+            | ContractSegmentSurface::Object(_)
+            | ContractSegmentSurface::ObjectAt { .. } => None,
         }
     }
 
@@ -3309,7 +3317,8 @@ impl ContractSegment {
             ContractSegmentSurface::IndexedField { element_type, .. } => Some(*element_type),
             ContractSegmentSurface::Range { .. }
             | ContractSegmentSurface::StructRange { .. }
-            | ContractSegmentSurface::Object(_) | ContractSegmentSurface::ObjectAt { .. } => None,
+            | ContractSegmentSurface::Object(_)
+            | ContractSegmentSurface::ObjectAt { .. } => None,
         }
     }
 }

@@ -6307,15 +6307,6 @@ fn checked_loan_evidence_is_valid(
             outcome,
             CFunctionOutcome::Return { .. } | CFunctionOutcome::Throw { .. }
         );
-        #[cfg(test)]
-        if function.name() == "lift" && std::env::var_os("CLICK_CALLBACK_CLAIM_PROBE").is_some() {
-            static REPORTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            if REPORTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
-                eprintln!("callback-loan-entry empty={} valid={} pristine={} entry-consistent={}",
-                    path.loan_evidence.is_empty(), path.loan_evidence.is_valid(), pristine_start,
-                    checked.state.loan_bindings_are_consistent());
-            }
-        }
         if path.loan_evidence.is_empty() {
             return match outcome {
                 CFunctionOutcome::Return {
@@ -6362,18 +6353,6 @@ fn checked_loan_evidence_is_valid(
             CFunctionOutcome::Return { state, .. } | CFunctionOutcome::Throw { state, .. } => state,
             _ => return true,
         };
-        #[cfg(test)]
-        if function.name() == "lift" && std::env::var_os("CLICK_CALLBACK_CLAIM_PROBE").is_some() {
-            static REPORTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            if REPORTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
-                eprintln!("callback-loans sequence-valid={} pristine={} recovered-ledger={} thread-recovery={} participant={} return-consistent={} entry-consistent={} return-authorized={}",
-                    path.loan_evidence.is_valid(), pristine_start,
-                    return_state.loan_ledger() == outer_recovered_ledger.as_ref(), thread_recovered(return_state),
-                    return_state.loan_participant() == outer_recovered_participant,
-                    return_state.loan_bindings_are_consistent(), checked.state.loan_bindings_are_consistent(),
-                    state_loan_bindings_are_authorized(return_state, &checked.assumptions));
-            }
-        }
         (return_state.loan_ledger() == outer_recovered_ledger.as_ref()
             || thread_recovered(return_state))
             && return_state.loan_participant() == outer_recovered_participant
@@ -6622,28 +6601,6 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
             entry_state = entry_state.with_resource_context(entry_resources);
         }
         let matches_execution_metadata_except_state = |checked: &CCheckedFunctionExecution| {
-            #[cfg(test)]
-            if function.name() == "lift" && std::env::var_os("CLICK_CALLBACK_CLAIM_PROBE").is_some()
-            {
-                static REPORTS: std::sync::atomic::AtomicUsize =
-                    std::sync::atomic::AtomicUsize::new(0);
-                if REPORTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
-                    eprintln!(
-                        "callback-metadata function={} body={} interface={} arguments={} environment={} semantics={} mode={} policy={} no-limit={} nonempty={} loans={}",
-                        checked.function == function,
-                        checked.function.body == function.body,
-                        checked.function.contract_interface == function.contract_interface,
-                        checked.arguments == arguments,
-                        checked.environment == environment,
-                        checked.execution_semantics == execution_semantics,
-                        checked.mode == mode,
-                        checked.assumptions.has_same_reasoning_policy(&assumptions),
-                        checked.execution.limit().is_none(),
-                        !checked.execution.paths().is_empty(),
-                        checked_loan_evidence_is_valid(checked, &function)
-                    );
-                }
-            }
             checked.function == function
                 && checked.arguments == arguments
                 && checked.environment == environment

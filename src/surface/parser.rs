@@ -501,7 +501,8 @@ struct Parser {
     matching_parentheses: Vec<Option<usize>>,
     position: usize,
     struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
-    kernel_member_layouts: std::cell::RefCell<BTreeMap<String, std::sync::Arc<crate::kernel::CAggregateLayout>>>,
+    kernel_member_layouts:
+        std::cell::RefCell<BTreeMap<String, std::sync::Arc<crate::kernel::CAggregateLayout>>>,
     union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     current_struct_params: BTreeMap<String, String>,
     /// The `void *` parameters of the function block being parsed, which a
@@ -9595,17 +9596,25 @@ impl Parser {
             .filter(|offset| *offset > field.offset_bytes())
             .min()
             .unwrap_or_else(|| layout.size_bytes());
-        let kernel_layout = self.kernel_member_layouts.borrow_mut()
+        let kernel_layout = self
+            .kernel_member_layouts
+            .borrow_mut()
             .entry(struct_name.to_string())
             .or_insert_with(|| std::sync::Arc::new(layout.to_kernel_aggregate_layout()))
             .clone();
         let path = vec![field_name.to_string()];
-        let member_selection = kernel_layout.member_at_path(&path)
-            .filter(|(offset, ty)| *offset == field.offset_bytes()
-                && *ty == field.c_type().to_kernel_type())
-            .map(|(_, value_type)| std::sync::Arc::new(crate::kernel::CAggregateMemberSelection {
-                layout: kernel_layout.clone(), path: path.into(), value_type,
-            }));
+        let member_selection = kernel_layout
+            .member_at_path(&path)
+            .filter(|(offset, ty)| {
+                *offset == field.offset_bytes() && *ty == field.c_type().to_kernel_type()
+            })
+            .map(|(_, value_type)| {
+                std::sync::Arc::new(crate::kernel::CAggregateMemberSelection {
+                    layout: kernel_layout.clone(),
+                    path: path.into(),
+                    value_type,
+                })
+            });
         Ok(ResolvedField {
             member_selection,
             c_type: field.c_type(),
@@ -9731,7 +9740,8 @@ impl Parser {
     fn offset_field_pointer(&self, base: CExpression, field: &ResolvedField) -> CExpression {
         if let Some(selection) = &field.member_selection {
             CExpression::MemberAddress {
-                object: Box::new(base), selection: selection.clone(),
+                object: Box::new(base),
+                selection: selection.clone(),
             }
         } else {
             crate::kernel::c_pointer_offset_bytes(base, field.offset_bytes)
@@ -12112,7 +12122,9 @@ fn object_alignment_fact(
         return None;
     };
     let struct_name = match &segment.surface {
-        ContractSegmentSurface::Object(name) | ContractSegmentSurface::ObjectAt { name, .. } => name,
+        ContractSegmentSurface::Object(name) | ContractSegmentSurface::ObjectAt { name, .. } => {
+            name
+        }
         _ => return None,
     };
     let alignment = u64::from(struct_layouts.get(struct_name)?.alignment_bytes());

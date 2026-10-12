@@ -434,7 +434,7 @@ fn authenticated_domain(
             // A native input's selected child does not implicitly admit
             // representation traversal through a differently typed cast.
             prefix: true,
-                source_slice: false,
+            source_slice: false,
             authentication_guards: guards,
             paired_base: None,
         }));
@@ -775,8 +775,9 @@ fn position_guards(
         append_guard(
             guards,
             match query {
-                DomainQuery::Formation if domain.source_slice =>
-                    domain_less_equal(IntegerTerm::constant_i64(0), count.clone()),
+                DomainQuery::Formation if domain.source_slice => {
+                    domain_less_equal(IntegerTerm::constant_i64(0), count.clone())
+                }
                 DomainQuery::Executable | DomainQuery::Formation => {
                     domain_less_than(IntegerTerm::constant_i64(0), count.clone())
                 }
@@ -788,13 +789,13 @@ fn position_guards(
         // The source slice signature itself certifies its bounded extent.
         // Resource prefixes retain their separate numeric proof obligation.
         if !domain.source_slice {
-        append_guard(
-            guards,
-            domain_less_equal(
-                domain.count.as_ref().clone(),
-                IntegerTerm::constant_i64(native_prefix_element_limit(domain.stride)),
-            ),
-        );
+            append_guard(
+                guards,
+                domain_less_equal(
+                    domain.count.as_ref().clone(),
+                    IntegerTerm::constant_i64(native_prefix_element_limit(domain.stride)),
+                ),
+            );
         }
     }
     // An opaque read may have either the original scaled-load spelling or

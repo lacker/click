@@ -3645,8 +3645,13 @@ impl CMemory {
         element_type: CType,
         count: SharedIntegerTerm,
     ) -> Result<Self, String> {
-        self.admit_typed_input_span(pointer, element_type, count,
-            CTypedAccessPolicy::NativeObjectOnly, true)
+        self.admit_typed_input_span(
+            pointer,
+            element_type,
+            count,
+            CTypedAccessPolicy::NativeObjectOnly,
+            true,
+        )
     }
 
     pub(in crate::kernel) fn with_typed_input_span(
@@ -3705,9 +3710,16 @@ impl CMemory {
         let row = CNativeRecordInput {
             origin: pointer,
             kind: if source_slice {
-                CNativeInputKind::TypedSlice { element_type, count }
+                CNativeInputKind::TypedSlice {
+                    element_type,
+                    count,
+                }
             } else {
-                CNativeInputKind::TypedPrefix { element_type, count, policy }
+                CNativeInputKind::TypedPrefix {
+                    element_type,
+                    count,
+                    policy,
+                }
             },
         };
         if let Some(held) = self.heap.native_record_inputs.get(&identity) {
@@ -3843,8 +3855,15 @@ impl CMemory {
         pointer: &CPointerValue,
     ) -> Option<(CPointerValue, CType, SharedIntegerTerm)> {
         let row = self.native_input_witness(pointer)?;
-        let (CNativeInputKind::TypedPrefix { element_type, count, .. }
-            | CNativeInputKind::TypedSlice { element_type, count }) = &row.kind
+        let (CNativeInputKind::TypedPrefix {
+            element_type,
+            count,
+            ..
+        }
+        | CNativeInputKind::TypedSlice {
+            element_type,
+            count,
+        }) = &row.kind
         else {
             return None;
         };
@@ -3852,8 +3871,8 @@ impl CMemory {
     }
 
     pub(in crate::kernel) fn native_input_is_slice(&self, pointer: &CPointerValue) -> bool {
-        self.native_input_witness(pointer).is_some_and(|row|
-            matches!(row.kind, CNativeInputKind::TypedSlice { .. }))
+        self.native_input_witness(pointer)
+            .is_some_and(|row| matches!(row.kind, CNativeInputKind::TypedSlice { .. }))
     }
 
     pub(in crate::kernel) fn with_native_record_prefix(
@@ -4334,7 +4353,10 @@ impl CMemory {
                         element_type: *element_type,
                         bytes: rewrite_count(bytes),
                     },
-                    CNativeInputKind::TypedSlice { element_type, count } => CNativeInputKind::TypedSlice {
+                    CNativeInputKind::TypedSlice {
+                        element_type,
+                        count,
+                    } => CNativeInputKind::TypedSlice {
                         element_type: *element_type,
                         count: rewrite_count(count),
                     },
@@ -4820,7 +4842,10 @@ impl CMemory {
                             .as_const()
                             .and_then(|bytes| u32::try_from(bytes).ok())
                             .filter(|bytes| *bytes > 0),
-                        CNativeInputKind::TypedSlice { element_type, count }
+                        CNativeInputKind::TypedSlice {
+                            element_type,
+                            count,
+                        }
                         | CNativeInputKind::TypedPrefix {
                             element_type,
                             count,
