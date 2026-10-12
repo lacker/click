@@ -60,6 +60,28 @@ but the original branch fixture and all three C++ constructor/unwind cases still
 fail; the constructor-entry alignment control also exposes a remaining mismatch.
 This run excludes the in-progress pointer-read-kind and C array-row repairs.
 
+The integrated follow-up ran 139 selected tests: 113 passed and 26 failed
+(exit 100, 10.557 seconds of test execution). Original branch-interface and
+hidden-record diagnostic proofs now pass, as do the original multidimensional
+struct-copy expansions and row-crossing rejection/control. Constructor entry
+alignment and logical numeric-address observations pass their direct controls.
+The three original C++ self-pointer/unwind cases still fail. The integrated
+copy guard also exposes an
+[aggregate-return completion regression](../bugs/aggregate-return-completion-rejects-declared-record-input.md).
+New row forwarding, unsigned finite-case and forgotten-wide-value controls
+remain failing. This larger selection is not directly comparable to the earlier
+53-test selection and is not a full gate.
+
+A separate five-test pointer check passed four tests and failed the new
+full-width-origin control. Follow-up review found two remaining pointer-read
+sites still using the old scalar kind and stale producer fixtures; their narrow
+repair is being checked separately. Remaining read-kind cleanup includes
+removing ignored width arguments and redundant width keys. The selected
+resource-rewrite trace now identifies lost native-prefix metadata in the
+post-unfold state (heap differs, blocks/cells do not); exact reconstruction must
+be repaired without relaxing memory equality. Temporary probes remain, and
+nothing from this integration has been published or merged.
+
 The audit also reproduced
 [numeric equality recovering pointer access](../bugs/numeric-integer-equality-recovers-pointer-access.md)
 through integer and address-only pointer parameters. The explicit choice between
