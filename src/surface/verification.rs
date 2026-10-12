@@ -8415,7 +8415,7 @@ pub(in crate::surface) fn branch_interface_resource_spec(
         {
             continue;
         }
-        if segment.start != c_int32_literal(0) {
+        if segment.start != crate::kernel::c_int32_literal(0) {
             continue;
         }
         let count = match &segment.end {
@@ -8445,7 +8445,7 @@ pub(in crate::surface) fn branch_interface_resource_spec(
             _ => continue,
         };
         spans.push(crate::kernel::CNativeSpanRequirement {
-            carrier: c_variable(name),
+            carrier: crate::kernel::c_variable(name),
             count: segment.end.clone(),
             element_type,
             access_policy: state.typed_access_policy(),
