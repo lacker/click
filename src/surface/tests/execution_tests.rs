@@ -2221,3 +2221,31 @@ fn numeric_address_equation_cannot_recover_a_sibling_object_designation() {
         "{error:?}"
     );
 }
+
+#[test]
+fn designated_pointer_address_postcondition_is_a_numeric_observation() {
+    let c = "int32* keep(int32* p) { return p; }";
+    let source = r#"
+        verifying "address.c";
+        int32* keep(int32* p) {
+            views p[0..1];
+            ensures address(result) == address(p);
+        } by { execute(); simp(); }
+    "#;
+    verify_c0_sources(source, &[("address.c", c)]).unwrap();
+    let executable = "unsigned long read_address(int32* p) { return (unsigned long)p; }";
+    let source = r#"
+        verifying "address.c";
+        uint64 read_address(int32* p) {
+            views p[0..1];
+            ensures result == address(p);
+        } by { execute(); simp(); }
+    "#;
+    let error = verify_c0_sources(source, &[("address.c", executable)]).unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("cannot yet preserve the object designation"),
+        "{error:?}"
+    );
+}

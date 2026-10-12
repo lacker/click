@@ -1144,12 +1144,18 @@ pub(in crate::kernel) fn cast_c_value_to_type(
         // Until its checked representation carries the complete designation,
         // refusing this crossing prevents an integer round trip from erasing
         // a scalar/member bound and returning an unrestricted legacy pointer.
-        if pointer.designation().is_some() && !pointer.is_null() {
+        if pointer.designation().is_some()
+            && !pointer.is_null()
+            && !assumptions.should_observe_pointer_addresses()
+        {
             return Err(CRuntimeError::PointerConversion(
                 "pointer-to-integer conversion cannot yet preserve the object designation"
                     .to_string(),
             ));
         }
+        // Logical address observation keeps only the numeric projection.
+        // Statement/function execution clears this observation mode before
+        // evaluating executable casts; it supplies no retained designation.
         let address = Bitvector32Term::pointer_address(pointer.pointer().clone());
         return Ok(match target_type {
             CType::UInt64 => CValue::UInt64(address),

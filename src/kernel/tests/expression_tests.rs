@@ -30,6 +30,10 @@ fn native_statement_execution_clears_specification_pointer_observation() {
             CExpression::Value(CValue::Pointer(pointer.clone())),
             CType::Int32,
         ),
+        c_cast(
+            CExpression::Value(CValue::Pointer(pointer.clone())),
+            CType::UInt64,
+        ),
         c_pointer_offset_bytes(CExpression::Value(CValue::Pointer(pointer)), 4),
     ];
     let executable = PureFactContext::new();
@@ -79,9 +83,39 @@ fn native_statement_execution_clears_specification_pointer_observation() {
             assert!(
                 paths
                     .iter()
-                    .all(|path| matches!(path.outcome, CStatementOutcome::UndefinedBehavior(_))),
+                    .all(|path| if matches!(expression, CExpression::Cast { .. }) {
+                        matches!(
+                            path.outcome,
+                            CStatementOutcome::RuntimeError(CRuntimeError::PointerConversion(_))
+                        )
+                    } else {
+                        matches!(path.outcome, CStatementOutcome::UndefinedBehavior(_))
+                    }),
                 "observation must not authorize native access or formation: {paths:?}"
             );
+            if matches!(expression, CExpression::Cast { .. }) {
+                let function = c_function(
+                    CType::UInt64,
+                    "observer_cast",
+                    vec![],
+                    c_return(expression.clone()),
+                );
+                let paths = crate::kernel::functions::execute_c_function_call_paths(
+                    &state,
+                    &function,
+                    &[],
+                    &observations,
+                    &CExecutionEnvironment::new(),
+                    CExecutionSemantics::EXECUTE_BODIES,
+                    &mut ExecutionBudget::for_new_execution(),
+                )
+                .unwrap();
+                assert!(!paths.is_empty());
+                assert!(paths.iter().all(|path| matches!(
+                    path.outcome,
+                    CFunctionOutcome::RuntimeError(CRuntimeError::PointerConversion(_))
+                )));
+            }
         }
     }
 }
@@ -4376,11 +4410,15 @@ fn pointer_alignment_observes_only_a_boolean_and_preserves_cast_refusal() {
             &mut ExecutionBudget::for_c_expression(&cast),
         )
         .unwrap();
-        assert!(
-            cast_paths
-                .iter()
-                .all(|path| !matches!(path.outcome, CExpressionOutcome::Value(_)))
-        );
+        if assumptions.should_observe_pointer_addresses() {
+            assert!(matches!(cast_paths.as_slice(), [path] if path.outcome ==
+                CExpressionOutcome::Value(CValue::UInt64(Bitvector32Term::pointer_address(address.clone())))));
+        } else {
+            assert!(cast_paths.iter().all(|path| matches!(
+                path.outcome,
+                CExpressionOutcome::RuntimeError(CRuntimeError::PointerConversion(_))
+            )));
+        }
     }
     for alignment in [0, 3] {
         let expression = CExpression::PointerAligned {
