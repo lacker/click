@@ -51,6 +51,15 @@ address-only/active-loan rejection controls pass. A subsequent focused run of
 self-pointer constructor, embedded self-pointer and scalar unwind cases still
 fail; the checkpoint remains unready to publish.
 
+The next focused entry/branch run passed 28 of 53 tests and failed 25 (exit
+100). The original grouped resource closer and return-inside-an-open-scope
+proofs now pass, including expansion and rechecking: scalar preconditions use
+selected checked equalities, and defined-read obligations are independently
+checked against the selected state. The new branch-prefix kernel control passes,
+but the original branch fixture and all three C++ constructor/unwind cases still
+fail; the constructor-entry alignment control also exposes a remaining mismatch.
+This run excludes the in-progress pointer-read-kind and C array-row repairs.
+
 The audit also reproduced
 [numeric equality recovering pointer access](../bugs/numeric-integer-equality-recovers-pointer-access.md)
 through integer and address-only pointer parameters. The explicit choice between
