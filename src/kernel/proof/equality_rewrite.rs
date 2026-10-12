@@ -455,7 +455,7 @@ fn rewrite_through_registered_pointer_read(
         &source,
         &address,
         rewritten_address.clone(),
-        crate::kernel::LoadKind::Bits32,
+        crate::kernel::LoadKind::Pointer,
     );
     // An already named read can use its canonical identity. A cold rewrite
     // keeps the exact snapshot application instead of searching its history.

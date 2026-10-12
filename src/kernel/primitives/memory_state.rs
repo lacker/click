@@ -2998,6 +2998,7 @@ impl CMemory {
     /// Array decay selects the actual declared member array while keeping its
     /// enclosing root/path. It cannot flatten an array of records or recover a
     /// member merely from a raw numeric address.
+    #[cfg(test)]
     pub(in crate::kernel) fn checked_member_array_pointer(
         &self,
         object: &CPointerValue,

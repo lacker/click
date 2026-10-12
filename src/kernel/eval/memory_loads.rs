@@ -3938,6 +3938,7 @@ fn offset_mentions_a_memory_load(offset: &PointerOffsetTerm) -> bool {
 /// The variable naming a `kind` load of `pointer` in `memory`. The epoch
 /// walk that picks the snapshot it is named at is as wide as the widest
 /// access recorded at the address, and never narrower than the read.
+#[cfg(test)]
 pub(crate) fn load_variable_for_cell(
     memory: &SharedCMemory,
     pointer: &Pointer,
@@ -7041,7 +7042,16 @@ mod tests {
         .unwrap() else {
             panic!("pointer value");
         };
-        assert!(crate::kernel::memory_provenance::legacy_stored_pointer_read(&value).is_some());
+        let Some(PointerDesignation::Loaded(origin)) = value.designation() else {
+            panic!("complete pointer retains its defining read");
+        };
+        let Bitvector32Term::MemoryLoad(memory, cell, LoadKind::Pointer) =
+            registered_load_term_for_variable(&full_name).unwrap()
+        else {
+            panic!("complete pointer definition");
+        };
+        assert_eq!(origin.memory(), &memory);
+        assert_eq!(origin.address(), cell.as_ref());
     }
 
     #[test]
@@ -7124,7 +7134,7 @@ mod tests {
         let pointer_read = Bitvector32Term::MemoryLoad(
             foreign_snapshot,
             Box::new(foreign_address),
-            LoadKind::Bits32,
+            LoadKind::Pointer,
         );
         assert_ne!(
             crate::kernel::memory_provenance::canonicalize_atomic_loads(&pointer_read),

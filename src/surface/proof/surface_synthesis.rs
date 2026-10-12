@@ -3825,7 +3825,7 @@ fn synthesize_owned_pointer_field(pointer: &Pointer, state: &CState) -> Option<C
     if crate::kernel::canonical_form_of_load(
         memory,
         address.clone(),
-        crate::kernel::LoadKind::Bits32,
+        crate::kernel::LoadKind::Pointer,
     ) != Bitvector32Term::Variable(*variable)
     {
         return None;

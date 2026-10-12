@@ -336,6 +336,7 @@ impl LoadKind {
 
     /// Width when the kind is known but no typed producer recorded an access.
     /// The read kind preserves its intrinsic storage width.
+    #[cfg(test)]
     pub(crate) fn unrecorded_access_byte_width(self) -> u32 {
         self.byte_width()
     }
