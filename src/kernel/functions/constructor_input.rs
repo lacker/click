@@ -224,7 +224,8 @@ fn validate_span_input(
 ) -> Option<()> {
     let pointer = interface.parameters().get(input.parameter_index)?;
     let length = interface.parameters().get(input.length_parameter_index)?;
-    (input.parameter_index != input.length_parameter_index
+    (interface.typed_access_policy() == CTypedAccessPolicy::NativeObjectOnly
+        && input.parameter_index != input.length_parameter_index
         && pointer.is_native_pointer_input()
         && pointer.c_type().pointee_type() == Some(input.element_type)
         && matches!(

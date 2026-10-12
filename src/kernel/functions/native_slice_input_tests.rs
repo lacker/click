@@ -170,3 +170,23 @@ fn source_slice_rejects_unbounded_actual_c_only_span_and_invalid_metadata() {
     }]);
     assert!(bind_c_function_arguments(&prefix, &malformed, &values).is_none());
 }
+
+#[test]
+fn source_slice_metadata_requires_native_interface_policy_at_entry_and_calls() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let (state, values) = entry(Bitvector32Term::UInt64Constant(8));
+    let c_only = function().with_typed_access_policy(CTypedAccessPolicy::CAllocatedAccessAllowed);
+    let mut arguments = values
+        .iter()
+        .cloned()
+        .map(CExpression::Value)
+        .collect::<Vec<_>>();
+    assert!(
+        assume_scalar_object_inputs(CState::new(), c_only.contract_interface(), &mut arguments)
+            .is_err()
+    );
+    assert!(bind_c_function_arguments(&state, &c_only, &values).is_none());
+    assert!(
+        bind_c_contract_arguments(&state, c_only.contract_interface(), &values, None).is_none()
+    );
+}
