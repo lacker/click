@@ -14686,15 +14686,8 @@ fn smart_closer_after_a_return_inside_an_open_scope_expands_and_reverifies() {
     // after the return inside the scope has to reach that outcome the same
     // way the scope's other post-exit operations do.
     let sources = [("span.c", OPEN_SCOPE_RETURN_C)];
-    crate::surface::proof_trace::with_proof_trace("span_length", || {
-        verify_c0_sources(OPEN_SCOPE_RETURN_CLICK, &sources).map_err(|error| {
-            if std::env::var_os("CLICK_SCOPE_CONDITION_PROBE").is_some() {
-                eprintln!("{}", error.trace_context_report().unwrap_or_default());
-            }
-            error
-        })
-    })
-    .expect("the open-scope return proof should verify");
+    verify_c0_sources(OPEN_SCOPE_RETURN_CLICK, &sources)
+        .expect("the open-scope return proof should verify");
 
     let closer = OPEN_SCOPE_RETURN_CLICK
         .rfind("simp();")

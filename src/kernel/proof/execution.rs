@@ -1190,194 +1190,6 @@ fn cell_value_is_exactly_load(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn selected_condition_probe(
-    assumptions: Option<&PureFactContext>,
-    goal: &Proposition,
-) -> String {
-    use std::hash::{Hash, Hasher};
-    fn fingerprint(value: &impl Hash) -> u64 {
-        let mut state = std::collections::hash_map::DefaultHasher::new();
-        value.hash(&mut state);
-        state.finish()
-    }
-    fn term(
-        value: &Bitvector32Term,
-        depth: u32,
-        variables: &mut Vec<Variable>,
-        loads: &mut Vec<Pointer>,
-    ) -> String {
-        if depth == 0 {
-            return format!("term#{:x}", fingerprint(value));
-        }
-        match value {
-            Bitvector32Term::Variable(variable) => {
-                if !variables.contains(variable) {
-                    variables.push(*variable);
-                }
-                let origin = crate::kernel::registered_load_term_for_variable(variable);
-                let defining = origin
-                    .as_ref()
-                    .map(|origin| term(origin, depth - 1, variables, loads));
-                format!(
-                    "v{}[bytes={:?},origin={defining:?}]",
-                    variable.0,
-                    crate::kernel::registered_load_bytes_for_variable(variable)
-                )
-            }
-            Bitvector32Term::MemoryLoad(memory, pointer, kind) => {
-                if !loads.contains(pointer) {
-                    loads.push(pointer.as_ref().clone());
-                }
-                format!(
-                    "read{:?}/{kind:?}@{:x}",
-                    memory.arena_id(),
-                    fingerprint(pointer.as_ref())
-                )
-            }
-            Bitvector32Term::Constant(value) => format!("{value}"),
-            Bitvector32Term::Add(left, right) => format!(
-                "add({}, {})",
-                term(left, depth - 1, variables, loads),
-                term(right, depth - 1, variables, loads)
-            ),
-            Bitvector32Term::Subtract(left, right) => format!(
-                "sub({}, {})",
-                term(left, depth - 1, variables, loads),
-                term(right, depth - 1, variables, loads)
-            ),
-            _ => format!(
-                "{:?}#{:x}",
-                std::mem::discriminant(value),
-                fingerprint(value)
-            ),
-        }
-    }
-    fn condition(
-        value: &ConditionTerm,
-        variables: &mut Vec<Variable>,
-        loads: &mut Vec<Pointer>,
-    ) -> String {
-        match value {
-            ConditionTerm::Constant(value) => format!("constant {value}"),
-            ConditionTerm::Bitvector32SignedAddOverflows(left, right)
-            | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
-            | ConditionTerm::Bitvector32SignedLessThan(left, right)
-            | ConditionTerm::Bitvector32SignedLessEqual(left, right)
-            | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
-            | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
-            | ConditionTerm::Bitvector32Equal(left, right) => format!(
-                "{:?}({}, {})",
-                std::mem::discriminant(value),
-                term(left, 5, variables, loads),
-                term(right, 5, variables, loads)
-            ),
-            _ => format!(
-                "{:?}#{:x}",
-                std::mem::discriminant(value),
-                fingerprint(value)
-            ),
-        }
-    }
-    fn proposition(
-        value: &Proposition,
-        depth: u32,
-        variables: &mut Vec<Variable>,
-        loads: &mut Vec<Pointer>,
-    ) -> String {
-        if depth == 0 {
-            return format!("prop#{:x}", fingerprint(value));
-        }
-        match value {
-            Proposition::ConditionIs(value, truth) => {
-                format!("{}={truth}", condition(value, variables, loads))
-            }
-            Proposition::And(left, right) => format!(
-                "AND({}, {})",
-                proposition(left, depth - 1, variables, loads),
-                proposition(right, depth - 1, variables, loads)
-            ),
-            Proposition::Or(left, right) => format!(
-                "OR({}, {})",
-                proposition(left, depth - 1, variables, loads),
-                proposition(right, depth - 1, variables, loads)
-            ),
-            Proposition::CMemoryLoadable {
-                memory,
-                base,
-                bytes,
-                wide,
-            } => format!(
-                "loadable mem#{:x}/ptr#{:x}/{} wide={wide}",
-                fingerprint(memory),
-                fingerprint(base),
-                term(bytes, 4, variables, loads)
-            ),
-            Proposition::CMemoryReadDefined {
-                memory,
-                pointer,
-                value_type,
-            } => format!(
-                "read-defined mem#{:x}/ptr#{:x}/{value_type:?}",
-                fingerprint(memory),
-                fingerprint(pointer)
-            ),
-            _ => format!(
-                "proposition {:?}#{:x}",
-                std::mem::discriminant(value),
-                fingerprint(value)
-            ),
-        }
-    }
-    let mut variables = Vec::new();
-    let mut loads = Vec::new();
-    let mut shown = proposition(goal, 6, &mut variables, &mut loads);
-    if let Some(assumptions) = assumptions {
-        shown.push_str(&format!(
-            "\n canonical {}",
-            selected_condition_probe(None, &crate::kernel::canonical_condition_fact(goal))
-        ));
-        let mut related = Vec::new();
-        for variable in variables.into_iter().take(8) {
-            let key = crate::kernel::primitives::AtomicConnectionKey::Variable(variable);
-            let (connected, _) = assumptions.atomic_facts_connected_to(&key, true);
-            for fact in connected.take(16) {
-                if let crate::kernel::primitives::AtomicConnectedFact::Proposition(fact) = fact {
-                    shown.push_str(&format!(
-                        "\n related-prop {}",
-                        proposition(fact, 4, &mut Vec::new(), &mut Vec::new())
-                    ));
-                }
-            }
-            if let Some(facts) = assumptions.condition_facts_by_variable.get(&variable) {
-                related.extend(
-                    facts
-                        .iter()
-                        .take(12)
-                        .map(|(condition, truth)| (condition.as_ref().clone(), *truth)),
-                );
-            }
-        }
-        for pointer in loads.into_iter().take(8) {
-            related.extend(
-                assumptions
-                    .exact_memory_load_condition_candidates(&pointer)
-                    .take(12)
-                    .map(|(condition, truth)| (condition.clone(), truth)),
-            );
-        }
-        related.sort();
-        related.dedup();
-        for (value, truth) in related.into_iter().take(24) {
-            shown.push_str(&format!(
-                "\n related {}={truth}",
-                condition(&value, &mut Vec::new(), &mut Vec::new())
-            ));
-        }
-    }
-    shown
-}
-
 /// A unit checkout preserves the mathematical sum only when neither child
 /// update wraps. Check the three original domains through named/indexed facts;
 /// modular equality of the two sums alone is insufficient.
@@ -1472,13 +1284,6 @@ fn authority_control_evaluation_condition_proven(
     };
     if stated(goal) {
         return true;
-    }
-    #[cfg(test)]
-    if std::env::var_os("CLICK_AUTHORITY_CONDITION_PROBE").is_some() {
-        eprintln!(
-            "authority-condition-probe {}",
-            selected_condition_probe(Some(assumptions), goal)
-        );
     }
     let Proposition::ConditionIs(ConditionTerm::Bitvector32SignedAddOverflows(left, right), false) =
         goal
@@ -2663,6 +2468,36 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
                         &population_after
                     ),
                 );
+                if name == "MaybeRaw" {
+                    let left = native_baseline.memory();
+                    let right = after_state.memory();
+                    eprintln!(
+                        "resource-rewrite-memory-probe heap={} blocks={} forgotten={} cells={}/{} union={}/{}",
+                        left.heap == right.heap,
+                        left.blocks == right.blocks,
+                        left.forgotten == right.forgotten,
+                        left.cells.len(),
+                        right.cells.len(),
+                        left.union_cells.len(),
+                        right.union_cells.len()
+                    );
+                    for (label, memory) in [("baseline", left), ("after", right)] {
+                        for (identity, row) in memory.heap.native_record_inputs.iter().take(4) {
+                            eprintln!("resource-rewrite-native-probe {label} {identity:?} {row:?}");
+                        }
+                        for (pointer, value) in memory.cells.iter().take(4) {
+                            eprintln!("resource-rewrite-cell-probe {label} {pointer:?} {value:?}");
+                            if let CValue::Int32(Bitvector32Term::Variable(variable)) = value {
+                                eprintln!(
+                                    "resource-rewrite-cell-origin-probe {label} {:?}",
+                                    crate::kernel::eval::registered_load_term_for_variable(
+                                        variable
+                                    )
+                                );
+                            }
+                        }
+                    }
+                }
             }
             return Err(
                 "resource rewrite changed more than a definitional representation".to_string(),

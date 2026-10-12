@@ -449,15 +449,6 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
                 ),
             )
         })?;
-        #[cfg(test)]
-        if std::env::var_os("CLICK_SCOPE_CONDITION_PROBE").is_some()
-            && application.name == "int32_nonnegative_subtract_within_value_is_defined"
-        {
-            eprintln!(
-                "applied-theorem-condition-probe {}",
-                crate::kernel::proof::selected_condition_probe(None, &conclusion)
-            );
-        }
         conclusions.push(conclusion.clone());
     }
     Ok(conclusions)
