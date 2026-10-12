@@ -12,6 +12,7 @@ mod shared_arrays;
 use crate::kernel::*;
 use crate::languages::c::syntax::{C0Function, C0Parameter, C0StructLayout, C0Type};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 pub(crate) type LoweredRust = (Vec<C0Function>, BTreeMap<String, C0StructLayout>);
 fn scalar_type(t: &Type) -> Result<C0Type, String> {
@@ -211,7 +212,8 @@ fn lower_function(
             }
             let layout = layouts.get(name).ok_or("missing parameter record layout")?;
             let parameter = C0Parameter::new(C0Type::UInt8Pointer, p.name.clone(), None)
-                .with_struct_value(name.clone(), layout.clone());
+                .with_struct_value(name.clone(), layout.clone())
+                .with_native_pointer_input(true);
             kernel_parameters.push(parameter.to_kernel_parameter());
             parameters.push(parameter);
             continue;
@@ -226,11 +228,15 @@ fn lower_function(
             slices.insert(p.name.clone(), (length.clone(), !mutable));
             parameters.push(
                 C0Parameter::new(C0Type::UInt8Pointer, p.name.clone(), None)
-                    .with_pointee_constant(!mutable),
+                    .with_pointee_constant(!mutable)
+                    .with_native_pointer_input(true),
             );
             parameters.push(C0Parameter::new(C0Type::UInt64, length.clone(), None));
-            kernel_parameters
-                .push(c_parameter(&p.name, CType::UInt8Pointer).with_pointee_constant(!mutable));
+            kernel_parameters.push(
+                c_parameter(&p.name, CType::UInt8Pointer)
+                    .with_pointee_constant(!mutable)
+                    .with_native_pointer_input(true),
+            );
             kernel_parameters.push(c_parameter(length, CType::UInt64));
             continue;
         }
@@ -252,11 +258,17 @@ fn lower_function(
                 p.name.clone(),
                 (length.clone(), scalar_type(element)?.to_kernel_type()),
             );
-            parameters
-                .push(C0Parameter::new(pointer, p.name.clone(), None).with_pointee_constant(true));
+            parameters.push(
+                C0Parameter::new(pointer, p.name.clone(), None)
+                    .with_pointee_constant(true)
+                    .with_native_pointer_input(true),
+            );
             parameters.push(C0Parameter::new(C0Type::UInt64, length.clone(), None));
-            kernel_parameters
-                .push(c_parameter(&p.name, pointer.to_kernel_type()).with_pointee_constant(true));
+            kernel_parameters.push(
+                c_parameter(&p.name, pointer.to_kernel_type())
+                    .with_pointee_constant(true)
+                    .with_native_pointer_input(true),
+            );
             kernel_parameters.push(c_parameter(length, CType::UInt64));
             continue;
         }
@@ -286,11 +298,48 @@ fn lower_function(
             ),
             _ => (None, false),
         };
-        parameters
-            .push(C0Parameter::new(c_type, p.name.clone(), tag).with_pointee_constant(constant));
-        kernel_parameters
-            .push(c_parameter(&p.name, c_type.to_kernel_type()).with_pointee_constant(constant));
+        parameters.push(
+            C0Parameter::new(c_type, p.name.clone(), tag)
+                .with_pointee_constant(constant)
+                .with_native_pointer_input(c_type.to_kernel_type().is_object_pointer()),
+        );
+        kernel_parameters.push(
+            c_parameter(&p.name, c_type.to_kernel_type())
+                .with_pointee_constant(constant)
+                .with_native_pointer_input(c_type.to_kernel_type().is_object_pointer()),
+        );
     }
+    // A native Rust record reference guarantees a live selected record,
+    // independently of the permissions its contract separately requires.
+    let kernel_parameter_indices = kernel_parameters
+        .iter()
+        .enumerate()
+        .map(|(index, parameter)| (parameter.name(), index))
+        .collect::<BTreeMap<_, _>>();
+    let native_record_inputs = f
+        .parameters
+        .iter()
+        .filter_map(|parameter| match &parameter.value_type {
+            Type::Reference { pointee, .. } => match pointee.as_ref() {
+                Type::Record { name } => Some((parameter.name.as_str(), name.as_str())),
+                _ => None,
+            },
+            _ => None,
+        })
+        .map(|(parameter, record)| {
+            Ok(CAggregateObjectInput {
+                parameter_index: *kernel_parameter_indices
+                    .get(parameter)
+                    .ok_or("native Rust record reference parameter is missing")?,
+                layout: Arc::new(
+                    layouts
+                        .get(record)
+                        .ok_or("native Rust record reference layout is missing")?
+                        .to_kernel_aggregate_layout(),
+                ),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let mut cx = Context {
         shared_array_iterators: BTreeMap::new(),
         shared_array_options: BTreeMap::new(),
@@ -311,6 +360,7 @@ fn lower_function(
         locals,
         return_type,
         layouts,
+        selected_layouts: BTreeMap::new(),
         records,
         functions,
     };
@@ -324,7 +374,9 @@ fn lower_function(
         &f.name,
         kernel_parameters,
         body,
-    );
+    )
+    .with_typed_access_policy(crate::kernel::CTypedAccessPolicy::NativeObjectOnly)
+    .with_aggregate_object_inputs(native_record_inputs);
     if let Some((_, layout)) = return_layout {
         kernel = kernel.with_return_aggregate_layout(layout.to_kernel_aggregate_layout());
     }
@@ -369,10 +421,47 @@ struct Context<'a> {
     locals: BTreeSet<String>,
     return_type: C0Type,
     layouts: &'a BTreeMap<String, C0StructLayout>,
+    // Convert each imported declaration once, then share its checked selector
+    // metadata across all field accesses in this function.
+    selected_layouts: BTreeMap<String, Arc<CAggregateLayout>>,
     records: &'a BTreeMap<&'a str, &'a Record>,
     functions: &'a BTreeMap<&'a str, &'a Function>,
 }
 impl Context<'_> {
+    fn record_field_address(
+        &mut self,
+        object: CExpression,
+        record: &str,
+        field: &str,
+    ) -> Result<CExpression, String> {
+        let (_, value_type) = *self
+            .fields
+            .get(&(record, field))
+            .ok_or("unknown Rust field")?;
+        let layout = match self.selected_layouts.get(record) {
+            Some(layout) => layout.clone(),
+            None => {
+                let layout = Arc::new(
+                    self.layouts
+                        .get(record)
+                        .ok_or("unknown Rust record layout")?
+                        .to_kernel_aggregate_layout(),
+                );
+                self.selected_layouts
+                    .insert(record.to_owned(), layout.clone());
+                layout
+            }
+        };
+        Ok(CExpression::MemberAddress {
+            object: Box::new(object),
+            selection: Arc::new(CAggregateMemberSelection {
+                layout,
+                path: vec![field.to_owned()].into(),
+                value_type,
+            }),
+        })
+    }
+
     fn body(&mut self, body: &[S]) -> Result<CStatement, String> {
         let mut result = c_skip();
         for s in body {
@@ -513,6 +602,12 @@ impl Context<'_> {
                             value,
                         )?,
                     ));
+                }
+                if matches!(target, E::Field { .. })
+                    && let Some((element, length)) = array_field_parts(self.place_type(target)?)
+                {
+                    let (pointer, _, _) = self.indexed_parts(target)?;
+                    return self.assign_array(pointer, element, u64::from(length), value);
                 }
                 let (mut checks, mut value) = self.prepared_expr(value)?;
                 if matches!(target, E::Index { .. }) {
@@ -1303,7 +1398,9 @@ impl Context<'_> {
                     CType::UInt32 => CType::UInt32Pointer,
                     _ => unreachable!(),
                 };
-                let pointer = self.address(e)?;
+                // Loading the declared array place performs array decay and
+                // retains the enclosing record/path in the element domain.
+                let pointer = c_typed_load(self.address(e)?, ty);
                 Ok((
                     c_cast_with_pointee_qualifiers(pointer, pointer_type, false, constant),
                     c_uint64_literal(u64::from(length)),
@@ -1369,16 +1466,12 @@ impl Context<'_> {
                 record,
                 field,
             } => {
-                let (offset, _) = *self
-                    .fields
-                    .get(&(record.as_str(), field.as_str()))
-                    .ok_or("unknown Rust field")?;
                 // Field bases are either record references or local stack objects.
                 let pointer = match base.as_ref() {
                     E::Deref { reference, .. } => self.expr(reference)?,
                     _ => self.expr(base)?,
                 };
-                Ok(c_pointer_offset_bytes(pointer, offset))
+                self.record_field_address(pointer, record, field)
             }
             E::Local { name } if self.owned_locals.contains(name) => {
                 Ok(c_cast(c_variable(name), CType::Int32Pointer))
@@ -1468,6 +1561,14 @@ impl Context<'_> {
                     return Err(
                         "mutable array field borrow requires a mutable record reference".into(),
                     );
+                }
+                if matches!(value_type,
+                    Type::Reference { pointee, .. } if matches!(pointee.as_ref(), Type::Array { .. }))
+                {
+                    return Ok(c_cast(
+                        self.indexed_parts(place)?.0,
+                        scalar_type(value_type)?.to_kernel_type(),
+                    ));
                 }
                 Ok(c_cast(
                     self.address(place)?,

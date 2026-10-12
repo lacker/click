@@ -14,6 +14,24 @@ fn node_layout() -> CAggregateLayout {
     )
 }
 
+// Manual kernel IR names the same fields as native member lowering. Raw byte
+// offsets deliberately retain the original domain and cannot select a field.
+fn checked_field(
+    object: CExpression,
+    layout: &CAggregateLayout,
+    name: &str,
+    value_type: CType,
+) -> CExpression {
+    CExpression::MemberAddress {
+        object: Box::new(object),
+        selection: Arc::new(CAggregateMemberSelection {
+            layout: Arc::new(layout.clone()),
+            path: vec![name.to_string()].into(),
+            value_type,
+        }),
+    }
+}
+
 fn copy_function() -> CFunction {
     c_function(
         CType::VoidPointer,
@@ -836,12 +854,18 @@ fn construction_function(name: &str, body: CStatement) -> CFunction {
 
 fn node_construction_body() -> CStatement {
     let destination = c_variable(C_CONTRACT_RESULT_NAME);
-    let field = c_cast(
-        c_pointer_offset_bytes(destination.clone(), 8),
-        CType::Int32Pointer,
-    );
+    let field = checked_field(destination.clone(), &node_layout(), "value", CType::Int32);
     c_seq(
-        c_typed_store(destination.clone(), field.clone(), CType::Int32Pointer),
+        c_typed_store(
+            checked_field(
+                destination.clone(),
+                &node_layout(),
+                "self",
+                CType::Int32Pointer,
+            ),
+            field.clone(),
+            CType::Int32Pointer,
+        ),
         c_seq(
             c_typed_store(field, c_variable("input"), CType::Int32),
             c_return(destination),
@@ -887,12 +911,25 @@ fn construction_return_preserves_exact_destination_through_two_factories() {
     };
     assert!(path.obligations.is_empty(), "{:?}", path.obligations);
     assert_eq!(pointer(value), destination);
+    let object = state
+        .memory
+        .declared_aggregate_pointer(&destination, &node_layout())
+        .unwrap();
+    let field = state
+        .memory
+        .checked_member_pointer(
+            &object,
+            &CAggregateMemberSelection {
+                layout: Arc::new(node_layout()),
+                path: vec!["value".into()].into(),
+                value_type: CType::Int32,
+            },
+        )
+        .unwrap();
+    assert_eq!(field.pointer(), &destination.offset_by_bytes(8));
     assert_eq!(
         state.memory.known_value(&destination),
-        Some(CValue::typed_pointer(
-            destination.offset_by_bytes(8),
-            CType::Int32Pointer
-        ))
+        Some(CValue::Pointer(field))
     );
     assert_eq!(
         state.memory.known_value(&destination.offset_by_bytes(8)),
@@ -944,10 +981,17 @@ fn construction_return_rejects_missing_binding_authority_and_partial_values() {
         "partial_node",
         c_seq(
             c_typed_store(
-                c_variable(C_CONTRACT_RESULT_NAME),
-                c_cast(
-                    c_pointer_offset_bytes(c_variable(C_CONTRACT_RESULT_NAME), 8),
+                checked_field(
+                    c_variable(C_CONTRACT_RESULT_NAME),
+                    &node_layout(),
+                    "self",
                     CType::Int32Pointer,
+                ),
+                checked_field(
+                    c_variable(C_CONTRACT_RESULT_NAME),
+                    &node_layout(),
+                    "value",
+                    CType::Int32,
                 ),
                 CType::Int32Pointer,
             ),
@@ -974,10 +1018,7 @@ fn construction_return_rejects_missing_binding_authority_and_partial_values() {
 fn construction_destination_can_alias_an_argument_without_becoming_fresh() {
     let _session = crate::kernel::VerificationSession::enter();
     let result = c_variable(C_CONTRACT_RESULT_NAME);
-    let field = c_cast(
-        c_pointer_offset_bytes(result.clone(), 8),
-        CType::Int32Pointer,
-    );
+    let field = checked_field(result.clone(), &node_layout(), "value", CType::Int32);
     let storage = CResourceSpec::owned_memory(CMemorySegment::new(
         result.clone(),
         c_int32_literal(0),
@@ -1000,7 +1041,11 @@ fn construction_destination_can_alias_an_argument_without_becoming_fresh() {
             c_seq(
                 write,
                 c_seq(
-                    c_typed_store(result.clone(), field.clone(), CType::Int32Pointer),
+                    c_typed_store(
+                        checked_field(result.clone(), &node_layout(), "self", CType::Int32Pointer),
+                        field.clone(),
+                        CType::Int32Pointer,
+                    ),
                     c_return(result.clone()),
                 ),
             ),
@@ -1087,10 +1132,7 @@ fn construction_temporary_retirement_preserves_copies_and_external_backing() {
     for points_to_self in [false, true] {
         let _session = crate::kernel::VerificationSession::enter();
         let result = c_variable(C_CONTRACT_RESULT_NAME);
-        let field = c_cast(
-            c_pointer_offset_bytes(result.clone(), 8),
-            CType::Int32Pointer,
-        );
+        let field = checked_field(result.clone(), &node_layout(), "value", CType::Int32);
         let owner = CResourceSpec::owned_memory(CMemorySegment::new(
             result.clone(),
             c_int32_literal(0),
@@ -1102,7 +1144,7 @@ fn construction_temporary_retirement_preserves_copies_and_external_backing() {
             vec![c_parameter("backing", CType::Int32Pointer)],
             c_seq(
                 c_typed_store(
-                    result.clone(),
+                    checked_field(result.clone(), &node_layout(), "self", CType::Int32Pointer),
                     if points_to_self {
                         field.clone()
                     } else {
@@ -2107,13 +2149,13 @@ fn value_only_constructor_preserves_descriptor_across_result_copy_chains() {
         ],
         c_seq(
             c_typed_store(
-                destination.clone(),
+                checked_field(destination.clone(), &layout, "data", CType::Int32Pointer),
                 c_variable("backing"),
                 CType::Int32Pointer,
             ),
             c_seq(
                 c_typed_store(
-                    c_pointer_offset_bytes(destination, 8),
+                    checked_field(destination, &layout, "extent", CType::UInt64),
                     c_variable("extent"),
                     CType::UInt64,
                 ),

@@ -2911,25 +2911,9 @@ theorem pure_arithmetic_producer(n: int32) {
     let verified = verify_click_theorems(pure).expect("pure arithmetic should verify");
     assert_no_legacy_pure_arithmetic_leaves(&verified);
 
-    for (fixture_name, claim, replacement) in [
-        (
-            "mdtests/c_grouped_contract_arithmetic_closer.md",
-            "bump",
-            None,
-        ),
-        (
-            "mdtests/c_pointer_local_loop_invariant.md",
-            "last_element",
-            None,
-        ),
-        (
-            "mdtests/aligned_symbolic_displacement.md",
-            "element_is_aligned",
-            Some((
-                "    simp();\n}",
-                "    have aligned(p + i, 8) by { simp(); }\n    simp();\n}",
-            )),
-        ),
+    for (fixture_name, claim) in [
+        ("mdtests/c_grouped_contract_arithmetic_closer.md", "bump"),
+        ("mdtests/c_pointer_local_loop_invariant.md", "last_element"),
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture_name);
         let source = std::fs::read_to_string(&path).unwrap();
@@ -2940,14 +2924,10 @@ theorem pure_arithmetic_producer(n: int32) {
             .map(|(name, source)| (name.as_str(), source.as_str()))
             .collect::<Vec<_>>();
         let click_source = fixture.click_source.as_deref().unwrap();
-        let click_source = replacement.map_or_else(
-            || click_source.to_string(),
-            |(from, to)| click_source.replace(from, to),
-        );
-        let verified = verify_c0_sources(&click_source, &sources)
+        let verified = verify_c0_sources(click_source, &sources)
             .unwrap_or_else(|error| panic!("{fixture_name}: {}", error.message()));
         assert_no_legacy_c_arithmetic_leaves(&verified);
-        let expanded = expand_c0_claim_source(&click_source, &sources, claim, CProofClaim::Grouped)
+        let expanded = expand_c0_claim_source(click_source, &sources, claim, CProofClaim::Grouped)
             .unwrap_or_else(|error| panic!("{fixture_name}: {}", error.message()));
         assert!(
             !expanded.contains("arithmetic()"),
@@ -2970,6 +2950,24 @@ fn branch_interface_model_pointer_snapshot_rewrite_expands_and_rechecks() {
     let expanded = expand_c0_claim_source(&source, &c, "put", CProofClaim::Grouped)
         .unwrap_or_else(|error| panic!("{}", error.message()));
     verify_c0_sources(&expanded, &c).unwrap_or_else(|error| panic!("{}", error.message()));
+}
+
+#[test]
+fn branch_interface_address_alias_does_not_authenticate_the_loaded_child() {
+    let (source, c) =
+        mdtest_sources("mdtests/branch_model_pointer_address_alias_is_not_a_typed_place.md");
+    let c = c
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let error = verify_c0_sources(&source, &c)
+        .expect_err("the original address-only child contract must remain insufficient");
+    assert!(
+        error
+            .message()
+            .contains("native record place has no authenticated input or declaration"),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -11094,6 +11092,30 @@ fn const_callback_contract_expands_at_every_smart_site() {
 }
 
 #[test]
+fn const_callback_address_equality_does_not_authenticate_the_returned_place() {
+    let markdown =
+        include_str!("../../../mdtests/const_callback_address_equality_is_not_a_typed_result.md");
+    let mdtest = crate::cli::parse_mdtest(
+        std::path::Path::new("const_callback_address_only.md"),
+        markdown,
+    )
+    .unwrap();
+    let sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let error = verify_c0_sources(mdtest.click_source.as_deref().unwrap(), &sources)
+        .expect_err("the original const callback contract does not promise a typed result");
+    assert!(
+        error
+            .message()
+            .contains("pointer arithmetic left the pointed-to object"),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn transformed_resource_branch_interface_retains_its_common_descendant() {
     let markdown = include_str!("../../../mdtests/proof_branch_composite_resource_transform.md");
     let mdtest = crate::cli::parse_mdtest(
@@ -14664,8 +14686,15 @@ fn smart_closer_after_a_return_inside_an_open_scope_expands_and_reverifies() {
     // after the return inside the scope has to reach that outcome the same
     // way the scope's other post-exit operations do.
     let sources = [("span.c", OPEN_SCOPE_RETURN_C)];
-    verify_c0_sources(OPEN_SCOPE_RETURN_CLICK, &sources)
-        .expect("the open-scope return proof should verify");
+    crate::surface::proof_trace::with_proof_trace("span_length", || {
+        verify_c0_sources(OPEN_SCOPE_RETURN_CLICK, &sources).map_err(|error| {
+            if std::env::var_os("CLICK_SCOPE_CONDITION_PROBE").is_some() {
+                eprintln!("{}", error.trace_context_report().unwrap_or_default());
+            }
+            error
+        })
+    })
+    .expect("the open-scope return proof should verify");
 
     let closer = OPEN_SCOPE_RETURN_CLICK
         .rfind("simp();")

@@ -219,6 +219,743 @@ pub(in crate::surface) fn input_pointer_parameter(
     })
 }
 
+/// Source member access implies a valid enclosing declared record independently
+/// of the byte authority granted by its clause. A signature or numeric address
+/// alone cannot supply this requirement. Entry assumes exactly the interface
+/// requirement that native calls discharge.
+pub(in crate::surface) fn aggregate_object_inputs_for_contract(
+    requires: &[Requirement],
+    parameters: &[syntax::C0Parameter],
+    function: &CFunction,
+) -> Result<Vec<crate::kernel::CAggregateObjectInput>, ClickError> {
+    let parameter_indices = parameters
+        .iter()
+        .enumerate()
+        .map(|(index, parameter)| (parameter.name(), index))
+        .collect::<BTreeMap<_, _>>();
+    let mut inputs = function
+        .contract_interface()
+        .aggregate_object_inputs()
+        .iter()
+        .map(|input| (input.parameter_index, input.layout.clone()))
+        .collect::<BTreeMap<_, _>>();
+    fn member_path<'a>(
+        expression: &'a ContractExpression,
+        path: &mut Vec<String>,
+    ) -> Option<&'a str> {
+        match expression {
+            ContractExpression::Field { base, field, .. } => {
+                let root = member_path(base, path)?;
+                path.push(field.clone());
+                Some(root)
+            }
+            ContractExpression::Binding(name)
+            | ContractExpression::CBinding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => Some(name),
+            _ => None,
+        }
+    }
+    fn visit(
+        resource: &ResourceClause,
+        parameters: &[syntax::C0Parameter],
+        parameter_indices: &BTreeMap<&str, usize>,
+        inputs: &mut BTreeMap<usize, std::sync::Arc<crate::kernel::CAggregateLayout>>,
+    ) -> Result<(), ClickError> {
+        let segments: &[ContractSegment] = match resource {
+            ResourceClause::OwnMemory(segment) | ResourceClause::ViewMemory(segment) => {
+                std::slice::from_ref(segment)
+            }
+            ResourceClause::MemoryAggregate { segments, .. } => segments,
+            ResourceClause::Named { resource, .. } => {
+                return visit(resource, parameters, parameter_indices, inputs);
+            }
+            // Guarded, quantified and instantiated resource obligations do not
+            // supply an unconditional direct native parameter requirement.
+            _ => return Ok(()),
+        };
+        for segment in segments {
+            let mut path = Vec::new();
+            let (root, member_type, object_name) = match &segment.surface {
+                ContractSegmentSurface::Range {
+                    base:
+                        ContractExpression::CUnary {
+                            operand,
+                            lowered: CExpression::AddressOf(_),
+                        },
+                    ..
+                } => {
+                    let ContractExpression::Field {
+                        lowered: CExpression::TypedLoad { value_type, .. },
+                        ..
+                    } = operand.as_ref()
+                    else {
+                        continue;
+                    };
+                    let Some(root) = member_path(operand, &mut path) else {
+                        continue;
+                    };
+                    (root, Some(*value_type), None)
+                }
+                ContractSegmentSurface::Range {
+                    base:
+                        expression @ ContractExpression::Field {
+                            lowered: CExpression::TypedLoad { value_type, .. },
+                            ..
+                        },
+                    ..
+                } if value_type.array_element_and_count().is_some() => {
+                    let Some(root) = member_path(expression, &mut path) else {
+                        continue;
+                    };
+                    (root, Some(*value_type), None)
+                }
+                ContractSegmentSurface::Field {
+                    base: Some(base),
+                    name,
+                    element_type: Some(value_type),
+                    ..
+                } => {
+                    let Some(root) = member_path(base, &mut path) else {
+                        continue;
+                    };
+                    path.push(name.clone());
+                    (root, Some(*value_type), None)
+                }
+                ContractSegmentSurface::Field {
+                    base: None,
+                    name,
+                    element_type: Some(value_type),
+                    ..
+                } => {
+                    // The aggregate-place producer retains declared dotted
+                    // leaf names beside its exact root variable. Indexed
+                    // backing leaves do not describe a bounded record path.
+                    let CExpression::Variable(root) = &segment.base else {
+                        continue;
+                    };
+                    if name.contains('[') {
+                        continue;
+                    }
+                    path.extend(name.split('.').map(str::to_string));
+                    (root.as_str(), Some(*value_type), None)
+                }
+                ContractSegmentSurface::Object(name) => {
+                    let CExpression::Variable(root) = &segment.base else {
+                        continue;
+                    };
+                    (root.as_str(), None, Some(name.as_str()))
+                }
+                _ => continue,
+            };
+            let Some(&parameter_index) = parameter_indices.get(root) else {
+                continue;
+            };
+            let parameter = &parameters[parameter_index];
+            if parameter.is_struct_value() || parameter.array_element_width().is_some() {
+                continue;
+            }
+            let Some(source_layout) = parameter.pointee_struct_layout() else {
+                continue;
+            };
+            if object_name.is_some_and(|name| parameter.struct_name() != Some(name)) {
+                continue;
+            }
+            let layout = if let Some(layout) = inputs.get(&parameter_index) {
+                layout.clone()
+            } else {
+                std::sync::Arc::new(source_layout.to_kernel_aggregate_layout())
+            };
+            if !layout.unions().is_empty() {
+                // Overlapping member lifetimes are outside the bounded record profile.
+                continue;
+            }
+            if let Some(member_type) = member_type {
+                if layout
+                    .member_at_path(&path)
+                    .is_none_or(|(_, declared)| declared != member_type)
+                {
+                    continue;
+                }
+            }
+            inputs.insert(parameter_index, layout);
+        }
+        Ok(())
+    }
+    for requirement in requires {
+        if let Requirement::Resource(resource) = requirement {
+            visit(resource, parameters, &parameter_indices, &mut inputs)?;
+        }
+    }
+    Ok(inputs
+        .into_iter()
+        .map(
+            |(parameter_index, layout)| crate::kernel::CAggregateObjectInput {
+                parameter_index,
+                layout,
+            },
+        )
+        .collect())
+}
+
+/// Native validity comes from an explicit typed source place, independently
+/// of its normalized byte permission. Numeric offsets and equality are never
+/// used to discover a declaration or a loaded carrier.
+pub(in crate::surface) fn native_record_places_for_resource(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    layouts: &BTreeMap<String, syntax::C0StructLayout>,
+) -> Result<Vec<crate::kernel::CNativeRecordPlaceRequirement>, ClickError> {
+    fn carrier(
+        expression: &ContractExpression,
+        parameters: &[syntax::C0Parameter],
+        layouts: &BTreeMap<String, syntax::C0StructLayout>,
+        places: &mut Vec<crate::kernel::CNativeRecordPlaceRequirement>,
+    ) -> Option<(CExpression, String)> {
+        let (value, name) = match expression {
+            ContractExpression::Binding(name)
+            | ContractExpression::CBinding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => {
+                let parameter = parameters
+                    .iter()
+                    .find(|parameter| parameter.name() == name)?;
+                if !parameter.c_type().is_pointer()
+                    || parameter.is_struct_value()
+                    || parameter.array_element_width().is_some()
+                {
+                    return None;
+                }
+                (c_variable(name), parameter.struct_name()?.to_string())
+            }
+            ContractExpression::Field {
+                base,
+                field,
+                lowered,
+                offset_bytes,
+            } => {
+                let (parent, name) = carrier(base, parameters, layouts, places)?;
+                let layout = layouts.get(&name)?;
+                let declared = layout.field(field)?;
+                if declared.offset_bytes() != *offset_bytes {
+                    return None;
+                }
+                let CExpression::TypedLoad { value_type, .. } = lowered else {
+                    return None;
+                };
+                if *value_type != declared.c_type().to_kernel_type() {
+                    return None;
+                }
+                let name = declared.struct_name()?.to_string();
+                if declared.c_type().is_pointer() {
+                    (lowered.clone(), name)
+                } else {
+                    // Embedded storage is selected by the enclosing record's
+                    // declaration; it does not become a new abstract root.
+                    return Some((
+                        crate::kernel::c_pointer_offset_bytes(parent, *offset_bytes),
+                        name,
+                    ));
+                }
+            }
+            _ => return None,
+        };
+        let layout = std::sync::Arc::new(layouts.get(&name)?.to_kernel_aggregate_layout());
+        if !layout.unions().is_empty() {
+            return None;
+        }
+        if !places
+            .iter()
+            .any(|place| place.carrier == value && place.layout == layout)
+        {
+            places.push(crate::kernel::CNativeRecordPlaceRequirement {
+                carrier: value.clone(),
+                layout,
+                prefix_count: None,
+            });
+        }
+        Some((value, name))
+    }
+    fn native_count(
+        source: &ContractExpression,
+        lowered: &CExpression,
+        parameters: &[syntax::C0Parameter],
+        layouts: &BTreeMap<String, syntax::C0StructLayout>,
+    ) -> bool {
+        match (source, lowered) {
+            (_, CExpression::Value(CValue::Int32(Bitvector32Term::Constant(value)))) => {
+                i32::try_from(*value).is_ok_and(|value| value > 0)
+            }
+            (_, CExpression::Value(CValue::Int64(Bitvector32Term::Int64Constant(value)))) => {
+                *value > 0
+            }
+            (
+                ContractExpression::Binding(name)
+                | ContractExpression::CBinding(name)
+                | ContractExpression::CFragment(CExpression::Variable(name)),
+                CExpression::Variable(lowered),
+            ) => {
+                name == lowered
+                    && parameters.iter().any(|parameter| {
+                        parameter.name() == name
+                            && matches!(
+                                parameter.c_type(),
+                                syntax::C0Type::Int32 | syntax::C0Type::Int64
+                            )
+                    })
+            }
+            (
+                ContractExpression::Field {
+                    base,
+                    field,
+                    lowered: source_lowered,
+                    offset_bytes,
+                },
+                _,
+            ) => {
+                let mut ignored = Vec::new();
+                let Some((_, name)) = carrier(base, parameters, layouts, &mut ignored) else {
+                    return false;
+                };
+                let Some(declared) = layouts.get(&name).and_then(|layout| layout.field(field))
+                else {
+                    return false;
+                };
+                source_lowered == lowered
+                    && declared.offset_bytes() == *offset_bytes
+                    && matches!(
+                        declared.c_type(),
+                        syntax::C0Type::Int32 | syntax::C0Type::Int64
+                    )
+                    && matches!(lowered, CExpression::TypedLoad { value_type, .. } if *value_type == declared.c_type().to_kernel_type())
+            }
+            _ => false,
+        }
+    }
+    fn segment(
+        segment: &ContractSegment,
+        parameters: &[syntax::C0Parameter],
+        layouts: &BTreeMap<String, syntax::C0StructLayout>,
+        places: &mut Vec<crate::kernel::CNativeRecordPlaceRequirement>,
+    ) {
+        let mut candidate = Vec::new();
+        if let ContractSegmentSurface::StructRange {
+            base, end, layout, ..
+        } = &segment.surface
+        {
+            if !matches!(
+                &segment.start,
+                CExpression::Value(CValue::Int32(Bitvector32Term::Constant(0)))
+            ) || !native_count(end, &segment.end, parameters, layouts)
+            {
+                return;
+            }
+            let Some((value, name)) = carrier(base, parameters, layouts, &mut candidate) else {
+                return;
+            };
+            if name != layout.name || layouts.get(&name) != Some(&layout.layout) {
+                return;
+            }
+            let Some(place) = candidate.iter_mut().find(|place| place.carrier == value) else {
+                return;
+            };
+            place.prefix_count = Some(segment.end.clone());
+            for place in candidate {
+                if !places.iter().any(|existing| existing == &place) {
+                    places.push(place);
+                }
+            }
+            return;
+        }
+
+        let (base, path, expected) = match &segment.surface {
+            ContractSegmentSurface::Field {
+                base,
+                name,
+                element_type: Some(ty),
+                ..
+            } => {
+                if name.contains('[') {
+                    return;
+                }
+                let base = base
+                    .as_deref()
+                    .cloned()
+                    .unwrap_or_else(|| ContractExpression::CFragment(segment.base.clone()));
+                (
+                    base,
+                    name.split('.').map(str::to_string).collect::<Vec<_>>(),
+                    Some(*ty),
+                )
+            }
+            ContractSegmentSurface::IndexedField {
+                place,
+                element_type,
+                element_width,
+            } => {
+                let mut selected = place.as_ref();
+                let mut dimensions = 0;
+                while let ContractExpression::Index(base, _) = selected {
+                    dimensions += 1;
+                    selected = base.as_ref();
+                }
+                let ContractExpression::Field {
+                    base,
+                    field,
+                    lowered: CExpression::TypedLoad { value_type, .. },
+                    offset_bytes,
+                } = selected
+                else {
+                    return;
+                };
+                let Some((element, _)) = value_type.array_element_and_count() else {
+                    return;
+                };
+                if element != *element_type || element.byte_width() != *element_width {
+                    return;
+                }
+                let Some((_, name)) = carrier(base, parameters, layouts, &mut candidate) else {
+                    return;
+                };
+                let Some(declared) = layouts.get(&name).and_then(|layout| layout.field(field))
+                else {
+                    return;
+                };
+                if declared.c_type().to_kernel_type() != *value_type
+                    || declared.offset_bytes() != *offset_bytes
+                    || declared.array_shape().map_or(1, <[u32]>::len) != dimensions
+                    || declared.struct_name().is_some()
+                {
+                    return;
+                }
+                ((**base).clone(), vec![field.clone()], Some(*value_type))
+            }
+            ContractSegmentSurface::ObjectAt { name, base } => {
+                let Some((_, actual)) = carrier(base, parameters, layouts, &mut candidate) else {
+                    return;
+                };
+                if &actual != name {
+                    return;
+                }
+                for place in candidate {
+                    if !places.iter().any(|existing| existing == &place) {
+                        places.push(place);
+                    }
+                }
+                return;
+            }
+            ContractSegmentSurface::Object(name) => {
+                let expression = ContractExpression::CFragment(segment.base.clone());
+                let Some((_, actual)) = carrier(&expression, parameters, layouts, &mut candidate)
+                else {
+                    return;
+                };
+                if &actual != name {
+                    return;
+                }
+                places.extend(candidate);
+                return;
+            }
+            ContractSegmentSurface::Range { base, .. } => {
+                let field = match base {
+                    ContractExpression::CUnary {
+                        operand,
+                        lowered: CExpression::AddressOf(_),
+                    } => operand.as_ref(),
+                    ContractExpression::Field {
+                        lowered: CExpression::TypedLoad { value_type, .. },
+                        ..
+                    } if value_type.array_element_and_count().is_some() => base,
+                    _ => return,
+                };
+                let ContractExpression::Field {
+                    base,
+                    field,
+                    lowered: CExpression::TypedLoad { value_type, .. },
+                    ..
+                } = field
+                else {
+                    return;
+                };
+                ((**base).clone(), vec![field.clone()], Some(*value_type))
+            }
+            _ => return,
+        };
+        let Some((_, name)) = carrier(&base, parameters, layouts, &mut candidate) else {
+            return;
+        };
+        let Some(layout) = layouts.get(&name) else {
+            return;
+        };
+        let layout = layout.to_kernel_aggregate_layout();
+        if layout
+            .member_at_path(&path)
+            .is_none_or(|(_, ty)| Some(ty) != expected)
+        {
+            return;
+        }
+        for place in candidate {
+            if !places.iter().any(|existing| existing == &place) {
+                places.push(place);
+            }
+        }
+    }
+    let mut places = Vec::new();
+    match resource {
+        ResourceClause::OwnMemory(value) | ResourceClause::ViewMemory(value) => {
+            segment(value, parameters, layouts, &mut places)
+        }
+        ResourceClause::MemoryAggregate { segments, .. } => {
+            for value in segments {
+                segment(value, parameters, layouts, &mut places);
+            }
+        }
+        ResourceClause::Named { resource, .. } => {
+            return native_record_places_for_resource(resource, parameters, layouts);
+        }
+        // Instantiated/guarded resources expose their checked body requirements
+        // through kernel occurrence exchange, never an eager source scan.
+        _ => {}
+    }
+    Ok(places)
+}
+
+/// Preserve a bounded typed prefix from its source pointer declaration, not
+/// from an ownership interval, a cast, or aggregate byte storage.
+pub(in crate::surface) fn native_span_requirements_for_resource(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    layouts: &BTreeMap<String, syntax::C0StructLayout>,
+) -> Result<Vec<crate::kernel::CNativeSpanRequirement>, ClickError> {
+    fn declared_type(
+        expression: &ContractExpression,
+        parameters: &[syntax::C0Parameter],
+        layouts: &BTreeMap<String, syntax::C0StructLayout>,
+    ) -> Option<(syntax::C0Type, Option<String>, CExpression)> {
+        match expression {
+            ContractExpression::Binding(name)
+            | ContractExpression::CBinding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => {
+                let parameter = parameters
+                    .iter()
+                    .find(|parameter| parameter.name() == name)?;
+                Some((
+                    parameter.c_type(),
+                    parameter.struct_name().map(str::to_string),
+                    c_variable(name),
+                ))
+            }
+            ContractExpression::Field {
+                base,
+                field,
+                lowered,
+                offset_bytes,
+            } => {
+                let (_, name, parent) = declared_type(base, parameters, layouts)?;
+                let layout = layouts.get(name.as_ref()?)?;
+                let declared = layout.field(field)?;
+                let CExpression::TypedLoad { value_type, .. } = lowered else {
+                    return None;
+                };
+                if declared.offset_bytes() != *offset_bytes
+                    || declared.c_type().to_kernel_type() != *value_type
+                {
+                    return None;
+                }
+                let native_layout = std::sync::Arc::new(layout.to_kernel_aggregate_layout());
+                let path = std::sync::Arc::from([field.clone()]);
+                if native_layout
+                    .member_at_path(&path)
+                    .is_none_or(|(offset, ty)| offset != *offset_bytes || ty != *value_type)
+                {
+                    return None;
+                }
+                let mut native_load = lowered.clone();
+                let CExpression::TypedLoad { pointer, .. } = &mut native_load else {
+                    unreachable!()
+                };
+                *pointer = Box::new(CExpression::MemberAddress {
+                    object: Box::new(parent),
+                    selection: std::sync::Arc::new(crate::kernel::CAggregateMemberSelection {
+                        layout: native_layout,
+                        path,
+                        value_type: *value_type,
+                    }),
+                });
+                Some((
+                    declared.c_type(),
+                    declared.struct_name().map(str::to_string),
+                    native_load,
+                ))
+            }
+            _ => None,
+        }
+    }
+    fn nonnegative_bound(expression: &CExpression) -> Option<u64> {
+        match expression {
+            CExpression::Value(CValue::Int32(Bitvector32Term::Constant(value))) => {
+                i32::try_from(*value).ok().map(|value| value as u64)
+            }
+            CExpression::Value(CValue::Int64(Bitvector32Term::Int64Constant(value))) => {
+                u64::try_from(*value).ok()
+            }
+            CExpression::Value(CValue::UInt32(Bitvector32Term::Constant(value))) => {
+                Some(u64::from(*value))
+            }
+            CExpression::Value(CValue::UInt64(Bitvector32Term::UInt64Constant(value))) => {
+                Some(*value)
+            }
+            _ => None,
+        }
+    }
+    fn positive_bound(expression: &CExpression) -> Option<u64> {
+        nonnegative_bound(expression).filter(|value| *value > 0)
+    }
+    fn native_object_pointer_source(
+        expression: &ContractExpression,
+        parameters: &[syntax::C0Parameter],
+        layouts: &BTreeMap<String, syntax::C0StructLayout>,
+    ) -> bool {
+        match expression {
+            ContractExpression::Binding(name)
+            | ContractExpression::CBinding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => parameters
+                .iter()
+                .find(|parameter| parameter.name() == name)
+                .is_some_and(syntax::C0Parameter::has_explicit_native_pointer_input),
+            ContractExpression::Field { base, .. } => {
+                native_object_pointer_source(base, parameters, layouts)
+                    || declared_type(base, parameters, layouts)
+                        .and_then(|(_, name, _)| name)
+                        .and_then(|name| layouts.get(&name))
+                        .is_some_and(syntax::C0StructLayout::has_cpp_declaration_identity)
+            }
+            _ => false,
+        }
+    }
+    let mut spans = Vec::new();
+    let segments = match resource {
+        ResourceClause::OwnMemory(segment) | ResourceClause::ViewMemory(segment) => {
+            std::slice::from_ref(segment)
+        }
+        ResourceClause::MemoryAggregate { segments, .. } => segments,
+        ResourceClause::Named { resource, .. } => {
+            return native_span_requirements_for_resource(resource, parameters, layouts);
+        }
+        _ => return Ok(spans),
+    };
+    for segment in segments {
+        let ContractSegmentSurface::Range { base, end, .. } = &segment.surface else {
+            continue;
+        };
+        let Some(start) = nonnegative_bound(&segment.start) else {
+            continue;
+        };
+        if let Some(end) = nonnegative_bound(&segment.end) {
+            // An empty interval promises no formation/access. Invalid ranges
+            // are refused by ordinary range lowering, never made into witnesses.
+            if start >= end {
+                continue;
+            }
+        } else if start != 0 {
+            // Nonliteral displaced windows need a separately checked ordering
+            // recipe. Preserve the existing symbolic zero-prefix boundary.
+            continue;
+        }
+        let (source_pointer, mut count_expression) = match base {
+            ContractExpression::CUnary {
+                operand,
+                lowered: CExpression::AddressOf(_),
+            } if matches!(
+                &segment.end,
+                CExpression::Value(CValue::Int32(Bitvector32Term::Constant(1)))
+            ) =>
+            {
+                let ContractExpression::Index(pointer, index) = operand.as_ref() else {
+                    continue;
+                };
+                let ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                    Bitvector32Term::Constant(index),
+                ))) = index.as_ref()
+                else {
+                    continue;
+                };
+                let Some(count) = index
+                    .checked_add(1)
+                    .filter(|count| i32::try_from(*count).is_ok())
+                else {
+                    continue;
+                };
+                (pointer.as_ref(), c_int32_literal(count))
+            }
+            _ => (base, segment.end.clone()),
+        };
+        let constant_count = positive_bound(&count_expression);
+        if constant_count.is_none() {
+            // Retain only an explicit native integer count from this exact
+            // source range. Its value, positivity, and byte extent are checked
+            // by the selected typed-prefix query; it is not an array bound.
+            let Some((declared, nominal_record, lowered)) = declared_type(end, parameters, layouts)
+            else {
+                continue;
+            };
+            if nominal_record.is_some()
+                || !matches!(
+                    declared,
+                    syntax::C0Type::Int32
+                        | syntax::C0Type::UInt32
+                        | syntax::C0Type::Int64
+                        | syntax::C0Type::UInt64
+                )
+                || resource_argument_to_c_expression(end).ok().as_ref() != Some(&count_expression)
+            {
+                continue;
+            }
+            count_expression = lowered;
+        }
+        let Some((declared, nominal_record, carrier)) =
+            declared_type(source_pointer, parameters, layouts)
+        else {
+            continue;
+        };
+        if nominal_record.is_some() {
+            continue;
+        }
+        let element_type = match declared {
+            syntax::C0Type::Int32Pointer => CType::Int32,
+            syntax::C0Type::UInt32Pointer => CType::UInt32,
+            syntax::C0Type::Int64Pointer => CType::Int64,
+            syntax::C0Type::UInt8Pointer => CType::UInt8,
+            _ => continue,
+        };
+        // C character pointers may designate another object's representation;
+        // its byte permission does not promise a native UInt8 element array.
+        // Enroll this typed obligation only at authenticated native declarations.
+        // This source boundary itself grants no representation access authority.
+        if element_type == CType::UInt8
+            && !native_object_pointer_source(source_pointer, parameters, layouts)
+        {
+            continue;
+        }
+        // A literal native prefix follows the same signed pointer-displacement
+        // extent as a symbolic wide range, without narrowing its count to u32.
+        if constant_count
+            .is_some_and(|count| count > i64::MAX as u64 / u64::from(element_type.byte_width()))
+        {
+            continue;
+        }
+        spans.push(crate::kernel::CNativeSpanRequirement {
+            access_policy: if native_object_pointer_source(source_pointer, parameters, layouts) {
+                crate::kernel::CTypedAccessPolicy::NativeObjectOnly
+            } else {
+                crate::kernel::CTypedAccessPolicy::CAllocatedAccessAllowed
+            },
+            carrier,
+            element_type,
+            count: count_expression,
+        });
+    }
+    Ok(spans)
+}
+
 fn input_pointer_identity(pointer: &crate::kernel::CPointerValue) -> Option<Variable> {
     if pointer.pointer().block != PointerBlock::ExternalArgument {
         return None;
@@ -232,18 +969,153 @@ fn input_pointer_identity(pointer: &crate::kernel::CPointerValue) -> Option<Vari
     }
 }
 
+/// Select only formals named by retained typed-prefix metadata. The marker
+/// gives an input a stable carrier identity; admission below still checks the
+/// exact requirement and adds no storage, initialization, or byte authority.
+fn native_span_input_parameters(
+    parameters: &[syntax::C0Parameter],
+    specs: &[CResourceSpec],
+    definitions: &[CCompositeResourceDefinition],
+) -> BTreeSet<usize> {
+    let kernel_parameters = parameters
+        .iter()
+        .map(syntax::C0Parameter::to_kernel_parameter)
+        .collect::<Vec<_>>();
+    crate::kernel::CFunctionContractInterface::declared_span_identity_parameters(
+        &kernel_parameters,
+        specs,
+        definitions,
+    )
+    .into_iter()
+    .filter(|index| parameters[*index].struct_name().is_none())
+    .collect()
+}
+
+/// Constructor fields preserve the opaque identity of actual C formals.
+/// A held model equation supplies no object extent or native validity row.
+fn native_model_input_parameters(
+    parameters: &[syntax::C0Parameter],
+    specs: &[CResourceSpec],
+    requirements: &[SpecProposition],
+) -> BTreeSet<usize> {
+    use crate::kernel::{
+        AlgebraicValueType, ResourceFieldType, SpecAlgebraicExpression,
+        SpecAlgebraicExpressionNode, SpecAlgebraicValue,
+    };
+    let heads = specs
+        .iter()
+        .filter_map(|spec| {
+            let CResourceTerm::Instance {
+                identity, schema, ..
+            } = spec.term()
+            else {
+                return None;
+            };
+            Some((*identity, schema))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let formals = parameters
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.c_type().is_pointer())
+        .map(|(i, p)| (p.name(), (i, p.c_type().to_kernel_type())))
+        .collect::<BTreeMap<_, _>>();
+    fn constructor(
+        expression: &SpecAlgebraicExpression,
+        formals: &BTreeMap<&str, (usize, CType)>,
+        selected: &mut BTreeSet<usize>,
+    ) {
+        let SpecAlgebraicExpressionNode::Constructor { variant, fields } = &expression.node else {
+            return;
+        };
+        let Some(declaration) = expression
+            .algebraic_type
+            .variants
+            .iter()
+            .find(|v| &v.name == variant)
+        else {
+            return;
+        };
+        if declaration.fields.len() != fields.len() {
+            return;
+        }
+        for (field, expected) in fields.iter().zip(&declaration.fields) {
+            match (field, expected) {
+                (
+                    SpecAlgebraicValue::C(SpecExpression::CExpression(CExpression::Variable(name))),
+                    AlgebraicValueType::C(ty),
+                ) if ty.is_object_pointer() => {
+                    if let Some(&(index, actual)) = formals.get(name.as_str())
+                        && actual == *ty
+                    {
+                        selected.insert(index);
+                    }
+                }
+                (
+                    SpecAlgebraicValue::Algebraic(nested),
+                    AlgebraicValueType::Algebraic { name, arguments },
+                ) if nested.algebraic_type.name == *name
+                    && nested.algebraic_type.arguments == *arguments =>
+                {
+                    constructor(nested, formals, selected);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut selected = BTreeSet::new();
+    let mut pending = requirements.iter().collect::<Vec<_>>();
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            SpecProposition::And(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            SpecProposition::AlgebraicComparison {
+                left,
+                equal: true,
+                right,
+            } => {
+                for (head, value) in [(left, right), (right, left)] {
+                    let SpecAlgebraicExpressionNode::ResourceField(projection) = &head.node else {
+                        continue;
+                    };
+                    if !projection.children.is_empty() {
+                        continue;
+                    }
+                    let Some(schema) = heads.get(&projection.identity) else {
+                        continue;
+                    };
+                    let Some((_, ResourceFieldType::Algebraic(ty))) =
+                        schema.fields().get(projection.field_index)
+                    else {
+                        continue;
+                    };
+                    if ty == &head.algebraic_type && ty == &value.algebraic_type {
+                        constructor(value, &formals, &mut selected);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    selected
+}
+
 pub(in crate::surface) fn initial_call_state(
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
     function: &CFunction,
     composite_definitions: &[CCompositeResourceDefinition],
 ) -> Result<(CState, Vec<CExpression>), ClickError> {
-    let input_function =
-        function
-            .clone()
-            .with_scalar_object_inputs(scalar_object_inputs_for_contract(
-                requires, parameters, function,
-            )?);
+    let input_function = function
+        .clone()
+        .with_scalar_object_inputs(scalar_object_inputs_for_contract(
+            requires, parameters, function,
+        )?)
+        .with_aggregate_object_inputs(aggregate_object_inputs_for_contract(
+            requires, parameters, function,
+        )?);
     let function = &input_function;
     if parameters.len() as u64 >= POINTER_ARGUMENT_VARIABLE_BASE {
         return Err(ClickError::new(
@@ -481,10 +1353,48 @@ pub(in crate::surface) fn initial_call_state(
         }
     }
 
+    let native_span_inputs = native_span_input_parameters(
+        parameters,
+        function.resource_requires(),
+        composite_definitions,
+    );
+    let native_model_inputs = native_model_input_parameters(
+        parameters,
+        function.resource_requires(),
+        function.contract_requires(),
+    );
+    // Native symbolic record pointers and explicitly selected scalar-prefix
+    // inputs have an unresolved semantic domain. Known union-containing C
+    // records retain their legacy path: overlapping storage is outside this
+    // bounded profile, including opaque modeled pthread mutex fields.
+    // Their type establishes no object. Exact interface requirements below
+    // may authenticate them; unsupported crossings must not enter the legacy
+    // address-only evaluator path used by raw kernel states.
+    for (index, parameter) in parameters.iter().enumerate() {
+        if (parameter.is_native_pointer_input()
+            || function
+                .parameters()
+                .get(index)
+                .is_some_and(|parameter| parameter.is_native_pointer_input())
+            || native_span_inputs.contains(&index)
+            || native_model_inputs.contains(&index))
+            && let CExpression::Value(CValue::Pointer(pointer)) = &mut arguments[index]
+        {
+            *pointer =
+                pointer
+                    .clone()
+                    .with_designation(crate::kernel::PointerDesignation::Unresolved(
+                        input_pointer_variable(scope, index)?,
+                    ));
+        }
+    }
+
     // Install ordinary function storage before adding symbolic loadable
     // cells. Otherwise a loadable clause can create a block first and leave
     // entry initialization unable to install its stable typed cells.
-    let initial = CState::new().with_population_creation_tracking();
+    let initial = CState::new()
+        .with_typed_access_policy(function.contract_interface().typed_access_policy())
+        .with_population_creation_tracking();
     let mut state = crate::kernel::initialize_c_function_globals(&initial, function);
     for (index, bytes) in function.contract_interface().initialization_outputs()
         .ok_or_else(|| ClickError::new("initialization postconditions require fixed entry-bound mutable byte-parameter ranges"))? {
@@ -715,6 +1625,17 @@ pub(in crate::surface) fn initial_call_state(
             }
         }
     });
+    let state = crate::kernel::c_state_with_assumed_native_record_inputs(
+        &state,
+        function,
+        &arguments,
+        composite_definitions,
+        &PureFactContext::new(),
+    )
+    .map_err(ClickError::new)?;
+    let (state, arguments) =
+        crate::kernel::c_independent_function_input_state(&state, function, &arguments)
+            .unwrap_or((state, arguments));
     Ok((state, arguments))
 }
 
@@ -1250,11 +2171,12 @@ fn materialize_access_segment_cells(
                     if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
                         return memory;
                     }
-                    let load = crate::kernel::canonical_form_of_load(
+                    let load = crate::kernel::canonical_form_of_typed_load(
                         crate::kernel::intern_c_memory(base_memory.clone()),
                         pointer.clone(),
-                        load_kind_of_element(element_type),
-                    );
+                        element_type,
+                    )
+                    .expect("a struct field has a scalar load type");
                     let value = symbolic_value_from_load(&pointer, element_type, load);
                     memory.materialize_named_cell_under(pointer, value, assumptions)
                 },
@@ -1279,11 +2201,12 @@ fn materialize_access_segment_cells(
                         if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
                             return memory;
                         }
-                        let load = crate::kernel::canonical_form_of_load(
+                        let load = crate::kernel::canonical_form_of_typed_load(
                             crate::kernel::intern_c_memory(base_memory.clone()),
                             pointer.clone(),
-                            load_kind_of_element(element_type),
-                        );
+                            element_type,
+                        )
+                        .expect("a struct field has a scalar load type");
                         let value = symbolic_value_from_load(&pointer, element_type, load);
                         memory.materialize_named_cell_under(pointer, value, assumptions)
                     },
@@ -1640,6 +2563,7 @@ pub(in crate::surface) fn resource_context_from_requirements(
     Ok(context)
 }
 
+#[cfg(test)]
 pub(in crate::surface) fn lower_resource_clause(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -1662,6 +2586,7 @@ pub(in crate::surface) fn lower_resource_clause(
     lower_resource_clause_with_values(resource, parameters, &values, &state, None)
 }
 
+#[cfg(test)]
 pub(in crate::surface) fn lower_resource_clause_facts(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -3281,8 +4206,11 @@ pub(in crate::surface) fn object_segment_layout<'a>(
     parameters: &'a [syntax::C0Parameter],
     segment: &'a ContractSegment,
 ) -> Option<&'a syntax::C0StructLayout> {
-    let ContractSegmentSurface::Object(struct_name) = &segment.surface else {
-        return None;
+    let struct_name = match &segment.surface {
+        ContractSegmentSurface::Object(name) | ContractSegmentSurface::ObjectAt { name, .. } => {
+            name
+        }
+        _ => return None,
     };
     // The base is the named parameter while the clause is written against
     // it, and a pointer value once a body has been instantiated for a held
@@ -3534,19 +4462,13 @@ pub(in crate::surface) fn contract_expression_element_width(
 }
 
 fn symbolic_value_for_element(memory: &CMemory, pointer: &Pointer, element_type: CType) -> CValue {
-    let load = crate::kernel::canonical_form_of_load(
+    let load = crate::kernel::canonical_form_of_typed_load(
         crate::kernel::intern_c_memory(memory.clone()),
         pointer.clone(),
-        load_kind_of_element(element_type),
-    );
+        element_type,
+    )
+    .expect("a resource element has a scalar load type");
     symbolic_value_from_load(pointer, element_type, load)
-}
-
-/// The kind of read a resource element of `element_type` is: the element's
-/// own C read, which is what a C load of the element names.
-pub(in crate::surface) fn load_kind_of_element(element_type: CType) -> crate::kernel::LoadKind {
-    crate::kernel::LoadKind::of_type(element_type)
-        .expect("memory ranges cannot contain aggregate elements")
 }
 
 pub(in crate::surface) fn symbolic_value_from_load(
@@ -3733,6 +4655,67 @@ mod input_identity_tests {
     use super::*;
 
     #[test]
+    fn unprofiled_union_record_inputs_keep_legacy_enrollment_without_authority() {
+        let ordinary = syntax::parse_function(
+            "struct holder { int payload; int other; }; int probe(struct holder *p) { return p->other; }",
+        ).unwrap();
+        let overlapping = syntax::parse_function(
+            "union bits { int value; long wide; }; struct holder { union bits payload; int other; }; int probe(struct holder *p) { return p->other; }",
+        ).unwrap();
+        for (parsed, unresolved) in [(&ordinary, true), (&overlapping, false)] {
+            let (state, arguments) =
+                initial_call_state(&[], parsed.parameters(), &parsed.to_kernel_function(), &[])
+                    .unwrap();
+            let CExpression::Value(CValue::Pointer(pointer)) = &arguments[0] else {
+                panic!("record input");
+            };
+            assert_eq!(pointer.designation().is_some(), unresolved);
+            if unresolved {
+                assert!(matches!(
+                    pointer.designation(),
+                    Some(crate::kernel::PointerDesignation::Unresolved(_))
+                ));
+            }
+            assert_eq!(state.memory(), &crate::kernel::CMemory::new());
+            assert!(state.resources().facts().is_empty());
+        }
+        // An explicit authenticated native input remains strict even when a
+        // declaration's overlapping geometry cannot be admitted by this profile.
+        let parameters = vec![
+            overlapping.parameters()[0]
+                .clone()
+                .with_native_pointer_input(true),
+        ];
+        let (_, arguments) =
+            initial_call_state(&[], &parameters, &overlapping.to_kernel_function(), &[]).unwrap();
+        let CExpression::Value(CValue::Pointer(pointer)) = &arguments[0] else {
+            panic!("native input");
+        };
+        assert!(matches!(
+            pointer.designation(),
+            Some(crate::kernel::PointerDesignation::Unresolved(_))
+        ));
+        let mut layouts = overlapping.structs().clone();
+        let holder = layouts
+            .get("holder")
+            .unwrap()
+            .clone()
+            .with_cpp_declaration_identity("authenticated-import", "c:@S@holder");
+        layouts.insert("holder".to_string(), holder);
+        let native = overlapping.clone().with_parameter_pointee_layouts(&layouts);
+        let (_, arguments) =
+            initial_call_state(&[], native.parameters(), &native.to_kernel_function(), &[])
+                .unwrap();
+        let CExpression::Value(CValue::Pointer(pointer)) = &arguments[0] else {
+            panic!("authenticated record input");
+        };
+        assert!(matches!(
+            pointer.designation(),
+            Some(crate::kernel::PointerDesignation::Unresolved(_))
+        ));
+    }
+
+    #[test]
     fn constructor_scalar_requirements_come_from_exact_typed_clauses() {
         let parsed =
             syntax::parse_function("void ctor(int* destination, int* slot) { return; }").unwrap();
@@ -3790,6 +4773,754 @@ mod input_identity_tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn ordinary_record_inputs_require_unconditional_declared_member_paths() {
+        let parsed = syntax::parse_function("struct Pair { int first; int second; }; int probe(struct Pair* pair) { return pair->second; }").unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+            "int32 probe(struct Pair* pair) { views pair->second; } by { execute(); }",
+            parsed.structs().clone(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        let places = native_record_places_for_resource(
+            match &file.function_blocks()[0].requires()[0] {
+                Requirement::Resource(resource) => resource,
+                _ => panic!("typed member resource"),
+            },
+            parsed.parameters(),
+            parsed.structs(),
+        )
+        .unwrap();
+        assert_eq!(places.len(), 1);
+        assert_eq!(places[0].carrier, c_variable("pair"));
+        let raw = parsed.to_kernel_function();
+        let requires = file.function_blocks()[0].requires();
+        let direct =
+            aggregate_object_inputs_for_contract(requires, parsed.parameters(), &raw).unwrap();
+        assert_eq!(direct.len(), 1);
+        assert_eq!(direct[0].parameter_index, 0);
+        assert!(
+            aggregate_object_inputs_for_contract(&[], parsed.parameters(), &raw)
+                .unwrap()
+                .is_empty()
+        );
+        let Requirement::Resource(resource) = &requires[0] else {
+            panic!("member clause is a resource");
+        };
+        let guarded = Requirement::Resource(ResourceClause::Conditional {
+            condition: ClickProposition::Comparison {
+                left: ContractExpression::CFragment(c_int32_literal(1)),
+                operator: ComparisonOperator::Equal,
+                right: ContractExpression::CFragment(c_int32_literal(1)),
+            },
+            resource: Box::new(resource.clone()),
+        });
+        assert!(
+            aggregate_object_inputs_for_contract(
+                std::slice::from_ref(&guarded),
+                parsed.parameters(),
+                &raw
+            )
+            .unwrap()
+            .is_empty()
+        );
+        let error = initial_call_state(
+            std::slice::from_ref(&guarded),
+            parsed.parameters(),
+            &raw,
+            &[],
+        )
+        .expect_err("conditional function-entry resources remain unsupported");
+        assert!(
+            error
+                .message()
+                .contains("conditional resource assertions are supported only in loop contracts")
+        );
+        let (_, arguments) = initial_call_state(&[], parsed.parameters(), &raw, &[]).unwrap();
+        let CExpression::Value(CValue::Pointer(pointer)) = &arguments[0] else {
+            panic!("record entry argument");
+        };
+        assert!(matches!(
+            pointer.designation(),
+            Some(crate::kernel::PointerDesignation::Unresolved(_))
+        ));
+        let mut indexed = resource.clone();
+        let ResourceClause::ViewMemory(segment) = &mut indexed else {
+            panic!("direct view segment");
+        };
+        let base = match &mut segment.surface {
+            ContractSegmentSurface::Range {
+                base: ContractExpression::CUnary { operand, .. },
+                ..
+            } => {
+                let ContractExpression::Field { base, .. } = operand.as_mut() else {
+                    panic!("source field operand");
+                };
+                base
+            }
+            ContractSegmentSurface::Field {
+                base: Some(base), ..
+            } => base,
+            _ => panic!("source member path is retained"),
+        };
+        *base = Box::new(ContractExpression::Index(
+            base.clone(),
+            Box::new(ContractExpression::CFragment(c_int32_literal(0))),
+        ));
+        assert!(
+            aggregate_object_inputs_for_contract(
+                &[Requirement::Resource(indexed)],
+                parsed.parameters(),
+                &raw
+            )
+            .unwrap()
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn record_sequence_requirements_preserve_a_prefix_without_an_exact_array_extent() {
+        let parsed = syntax::parse_function("struct cell { int value; int other; }; int read(struct cell *p, int count) { return p[1].other; }").unwrap();
+        for (clause, admitted) in [
+            ("views p[0..2];", true),
+            ("views p[0..count];", true),
+            ("views p[1..2];", false),
+        ] {
+            let source = format!(
+                "int32 read(struct cell* p, int32 count) {{ {clause} }} by {{ execute(); }}"
+            );
+            let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+                &source,
+                parsed.structs().clone(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+            )
+            .unwrap();
+            let Requirement::Resource(resource) = &file.function_blocks()[0].requires()[0] else {
+                panic!("record range");
+            };
+            let places =
+                native_record_places_for_resource(resource, parsed.parameters(), parsed.structs())
+                    .unwrap();
+            assert_eq!(places.len(), usize::from(admitted), "{clause}");
+            if admitted {
+                assert_eq!(places[0].carrier, c_variable("p"));
+                assert!(places[0].prefix_count.is_some());
+                assert_eq!(places[0].layout.size_bytes(), 8);
+            }
+        }
+    }
+
+    #[test]
+    fn declared_array_element_places_retain_their_source_member_path() {
+        let parsed = syntax::parse_function("struct packet { int values[2][3]; }; int update(struct packet *p) { p->values[1][2] = 7; return p->values[1][2]; }").unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+            "int32 update(struct packet* p) { owns p->values[1][2]; } by { execute(); }",
+            parsed.structs().clone(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        let Requirement::Resource(resource) = &file.function_blocks()[0].requires()[0] else {
+            panic!("typed array element");
+        };
+        let ResourceClause::OwnMemory(segment) = resource else {
+            panic!("owned element");
+        };
+        assert!(
+            matches!(&segment.surface, ContractSegmentSurface::IndexedField { place, .. } if matches!(place.as_ref(), ContractExpression::Index(_, _)))
+        );
+        let places =
+            native_record_places_for_resource(resource, parsed.parameters(), parsed.structs())
+                .unwrap();
+        assert_eq!(places.len(), 1);
+        assert_eq!(places[0].carrier, c_variable("p"));
+    }
+
+    #[test]
+    fn loaded_record_place_requirements_retain_the_exact_carrier() {
+        let parsed = syntax::parse_function("struct node { int second; struct node *next; }; int probe(struct node *p) { return p->next->second; }").unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+            "int32 probe(struct node* p) { views p->next; views p->next->second; } by { execute(); }",
+            parsed.structs().clone(), Default::default(), Default::default(),
+            Default::default(), Default::default(), Default::default(),
+            Default::default(),
+        ).unwrap();
+        let requirements = file.function_blocks()[0].requires();
+        let places = |index: usize| {
+            let Requirement::Resource(resource) = &requirements[index] else {
+                panic!("typed resource");
+            };
+            native_record_places_for_resource(resource, parsed.parameters(), parsed.structs())
+                .unwrap()
+        };
+        let slot = places(0);
+        assert_eq!(
+            slot.len(),
+            1,
+            "owning the pointer slot grants no referent validity"
+        );
+        assert_eq!(slot[0].carrier, c_variable("p"));
+        let referent = places(1);
+        assert_eq!(referent.len(), 2);
+        assert_eq!(referent[0].carrier, c_variable("p"));
+        assert!(
+            matches!(referent[1].carrier, CExpression::TypedLoad { .. }),
+            "the field read remains the semantic carrier"
+        );
+        assert_eq!(referent[0].layout, referent[1].layout);
+        let object_file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+            "int32 probe(struct node* p) { views p->next; owns *p->next; } by { execute(); }",
+            parsed.structs().clone(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        let Requirement::Resource(resource) = &object_file.function_blocks()[0].requires()[1]
+        else {
+            panic!("whole loaded object");
+        };
+        let object_places =
+            native_record_places_for_resource(resource, parsed.parameters(), parsed.structs())
+                .unwrap();
+        assert_eq!(object_places, referent);
+    }
+
+    #[test]
+    fn callback_field_record_requirement_uses_the_declared_signature() {
+        let parsed = syntax::parse_function(
+            "struct callbacks { void (*propagate)(int *node, int *stop); }; int probe(const struct callbacks *p) { return 0; }",
+        ).unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+            "resource suite(p: const struct callbacks*) { owns p->propagate; } int32 probe(const struct callbacks* p) { views suite(p); } by { execute(); }",
+            parsed.structs().clone(), Default::default(), Default::default(),
+            Default::default(), Default::default(), Default::default(), Default::default(),
+        ).unwrap();
+        let clause = &file.resource_definitions()[0]
+            .composite_body()
+            .unwrap()
+            .contains()[0];
+        let places =
+            native_record_places_for_resource(clause, parsed.parameters(), parsed.structs())
+                .unwrap();
+        let layout = parsed.structs()["callbacks"].to_kernel_aggregate_layout();
+        assert_eq!(places.len(), 1, "source={clause:?}, declared={layout:?}");
+        assert_eq!(places[0].layout.as_ref(), &layout);
+        assert!(matches!(
+            layout.member_at_path(&["propagate".into()]),
+            Some((0, CType::FunctionPointer(_)))
+        ));
+    }
+
+    #[test]
+    fn potential_matched_prefix_enrolls_identity_without_an_active_object() {
+        use crate::kernel::{CResourceMatchArm, CResourceMatchBody};
+        let parsed = syntax::parse_function("int probe(int *p) { return 0; }").unwrap();
+        let span = CResourceSpec::owned_memory(crate::kernel::CMemorySegment::new(
+            c_variable("input"),
+            c_int32_literal(0),
+            c_int32_literal(0),
+        ))
+        .with_native_span_requirements(vec![crate::kernel::CNativeSpanRequirement {
+            access_policy: crate::kernel::CTypedAccessPolicy::NativeObjectOnly,
+            carrier: c_variable("input"),
+            element_type: CType::Int32,
+            count: c_int32_literal(0),
+        }]);
+        let definition = CCompositeResourceDefinition::new(
+            "ConditionalPrefix",
+            vec![crate::kernel::c_parameter("input", CType::Int32Pointer)],
+            None,
+            false,
+            vec![],
+            vec![],
+        )
+        .with_resource_match_body(Some(CResourceMatchBody {
+            field_index: 0,
+            algebraic_type: crate::kernel::AlgebraicType::parameter("Inactive".into()),
+            arms: vec![CResourceMatchArm {
+                variant: "Inactive".into(),
+                bindings: vec![],
+                binding_types: vec![],
+                binding_variables: vec![],
+                contains: vec![span],
+                facts: vec![],
+                children: vec![],
+            }],
+        }));
+        let head = CResourceSpec::declared(
+            crate::kernel::ResourceFamily::Composite,
+            crate::kernel::CResourceAccessMode::Own,
+            "ConditionalPrefix".into(),
+            vec![c_variable("p")],
+            vec![CType::Int32Pointer],
+            crate::kernel::CResourceTransferRole::Consume,
+            crate::kernel::CResourceSnapshot::Entry,
+        )
+        .unwrap();
+        assert_eq!(
+            native_span_input_parameters(
+                parsed.parameters(),
+                &[head.clone()],
+                &[definition.clone()]
+            ),
+            BTreeSet::from([0])
+        );
+        let function = parsed
+            .to_kernel_function()
+            .with_resource_summary(vec![head], vec![]);
+        let (state, arguments) =
+            initial_call_state(&[], parsed.parameters(), &function, &[definition]).unwrap();
+        assert_eq!(state.memory(), &CMemory::new());
+        let CExpression::Value(CValue::Pointer(pointer)) = &arguments[0] else {
+            panic!("pointer");
+        };
+        assert!(matches!(
+            pointer.designation(),
+            Some(crate::kernel::PointerDesignation::Unresolved(_))
+        ));
+    }
+
+    #[test]
+    fn scalar_prefix_entry_marks_only_exact_declared_formals_before_capture() {
+        let parsed =
+            syntax::parse_function("int probe(int *p, int *raw, long long *wide) { return p[1]; }")
+                .unwrap();
+        let file = crate::surface::parser::parse(
+            "int32 probe(int32* p, int32* raw, int64* wide) { views p[0..2]; } by { execute(); }",
+        )
+        .unwrap();
+        let span = crate::kernel::CNativeSpanRequirement {
+            access_policy: crate::kernel::CTypedAccessPolicy::NativeObjectOnly,
+            carrier: c_variable("p"),
+            element_type: CType::Int32,
+            count: c_int32_literal(2),
+        };
+        let spec = CResourceSpec::viewed_memory(
+            crate::kernel::CMemorySegment::new(
+                c_variable("p"),
+                c_int32_literal(0),
+                c_int32_literal(2),
+            )
+            .with_element_width(4),
+        )
+        .with_native_span_requirements(vec![span.clone()]);
+        let function = parsed
+            .to_kernel_function()
+            .with_resource_summary(vec![spec.clone()], vec![]);
+        let (state, arguments) = initial_call_state(
+            file.function_blocks()[0].requires(),
+            parsed.parameters(),
+            &function,
+            &[],
+        )
+        .unwrap();
+        let values = parameter_values(parsed.parameters(), &arguments).unwrap();
+        for (index, parameter) in parsed.parameters().iter().enumerate() {
+            let CExpression::Value(CValue::Pointer(pointer)) = &arguments[index] else {
+                panic!("pointer input");
+            };
+            assert_eq!(values[parameter.name()], CValue::Pointer(pointer.clone()));
+            if index == 0 {
+                assert!(matches!(
+                    pointer.designation(),
+                    Some(crate::kernel::PointerDesignation::Unresolved(_))
+                ));
+                let offset =
+                    CExpression::Add(Box::new(c_variable("p")), Box::new(c_int32_literal(1)));
+                let evaluation = state
+                    .clone()
+                    .with_local("p", CValue::Pointer(pointer.clone()));
+                let theorem = crate::kernel::prove_c_expression_evaluation(evaluation, offset)
+                    .expect("admitted scalar prefix permits the selected native element step");
+                assert!(
+                    matches!(
+                        theorem.proposition(),
+                        crate::kernel::Proposition::CExpressionEvaluates {
+                            outcome: crate::kernel::CExpressionOutcome::Value(CValue::Pointer(_)),
+                            ..
+                        }
+                    ),
+                    "{:?}",
+                    theorem.proposition()
+                );
+            } else {
+                assert!(pointer.designation().is_none());
+            }
+        }
+        assert_eq!(state.resources().facts().len(), 1);
+        assert_eq!(
+            native_span_input_parameters(parsed.parameters(), &[spec], &[]),
+            BTreeSet::from([0])
+        );
+        for carrier in [
+            c_variable("wide"),
+            CExpression::PointerOffsetBytes {
+                pointer: Box::new(c_variable("raw")),
+                bytes: 0,
+            },
+        ] {
+            let wrong = CResourceSpec::viewed_memory(crate::kernel::CMemorySegment::new(
+                c_variable("raw"),
+                c_int32_literal(0),
+                c_int32_literal(2),
+            ))
+            .with_native_span_requirements(vec![
+                crate::kernel::CNativeSpanRequirement {
+                    access_policy: crate::kernel::CTypedAccessPolicy::NativeObjectOnly,
+                    carrier,
+                    ..span.clone()
+                },
+            ]);
+            assert!(native_span_input_parameters(parsed.parameters(), &[wrong], &[]).is_empty());
+        }
+        assert!(native_span_input_parameters(parsed.parameters(), &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn scalar_constant_start_ranges_preserve_the_required_end_prefix() {
+        let parsed = syntax::parse_function("int32 probe(int32* p) { return 0; }").unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+            "int32 probe(int32* p) { owns p[0..1]; owns p[1..2]; views p[4..5]; views p[2..2]; } by { execute(); }",
+            Default::default(), Default::default(), Default::default(), Default::default(),
+            Default::default(), Default::default(), Default::default(),
+        ).unwrap();
+        let mut spans = Vec::new();
+        for requirement in file.function_blocks()[0].requires() {
+            let Requirement::Resource(resource) = requirement else {
+                continue;
+            };
+            spans.extend(
+                native_span_requirements_for_resource(
+                    resource,
+                    parsed.parameters(),
+                    parsed.structs(),
+                )
+                .unwrap(),
+            );
+        }
+        assert_eq!(
+            spans
+                .iter()
+                .map(|span| span.count.clone())
+                .collect::<Vec<_>>(),
+            vec![c_int32_literal(1), c_int32_literal(2), c_int32_literal(5)]
+        );
+        for span in spans {
+            assert_eq!(span.carrier, c_variable("p"));
+            assert_eq!(span.element_type, CType::Int32);
+            assert_eq!(
+                span.access_policy,
+                crate::kernel::CTypedAccessPolicy::CAllocatedAccessAllowed
+            );
+        }
+    }
+
+    #[test]
+    fn loaded_scalar_prefix_entry_selects_the_declared_pointer_field() {
+        let parsed = syntax::parse_function(
+            "struct holder { int *pointer; }; int probe(struct holder *h) { return *h->pointer; }",
+        )
+        .unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+            "int32 probe(struct holder* h) { views h->pointer; views h->pointer[0..1]; } by { execute(); }",
+            parsed.structs().clone(), Default::default(), Default::default(),
+            Default::default(), Default::default(), Default::default(), Default::default(),
+        ).unwrap();
+        let Requirement::Resource(resource) = &file.function_blocks()[0].requires()[1] else {
+            panic!("referent resource");
+        };
+        let spans =
+            native_span_requirements_for_resource(resource, parsed.parameters(), parsed.structs())
+                .unwrap();
+        let CExpression::TypedLoad {
+            pointer,
+            value_type,
+            ..
+        } = &spans[0].carrier
+        else {
+            panic!("pointer field read");
+        };
+        assert_eq!(*value_type, CType::Int32Pointer);
+        let CExpression::MemberAddress { object, selection } = pointer.as_ref() else {
+            panic!("checked declaration path");
+        };
+        assert_eq!(object.as_ref(), &c_variable("h"));
+        assert_eq!(selection.path(), &["pointer".to_string()]);
+        let spec = CResourceSpec::viewed_memory(
+            crate::kernel::CMemorySegment::new(
+                spans[0].carrier.clone(),
+                c_int32_literal(0),
+                c_int32_literal(1),
+            )
+            .with_element_width(4),
+        )
+        .with_native_span_requirements(spans);
+        let function = parsed
+            .to_kernel_function()
+            .with_resource_summary(vec![spec], vec![]);
+        let (state, _) = initial_call_state(
+            file.function_blocks()[0].requires(),
+            parsed.parameters(),
+            &function,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(state.resources().facts().len(), 2);
+    }
+
+    #[test]
+    fn source_typed_prefix_policy_distinguishes_c_and_native_parameters() {
+        let parsed = syntax::parse_function("void probe(int *p) { return; }").unwrap();
+        let file = crate::surface::parser::parse(
+            "void probe(int32* p) { views p[0..1]; } by { execute(); }",
+        )
+        .unwrap();
+        let Requirement::Resource(resource) = &file.function_blocks()[0].requires()[0] else {
+            panic!("typed prefix");
+        };
+        let c =
+            native_span_requirements_for_resource(resource, parsed.parameters(), parsed.structs())
+                .unwrap();
+        let native_parameters: Vec<_> = parsed
+            .parameters()
+            .iter()
+            .cloned()
+            .map(|parameter| parameter.with_native_pointer_input(true))
+            .collect();
+        let native =
+            native_span_requirements_for_resource(resource, &native_parameters, parsed.structs())
+                .unwrap();
+        assert_eq!(
+            c[0].access_policy,
+            crate::kernel::CTypedAccessPolicy::CAllocatedAccessAllowed
+        );
+        assert_eq!(
+            native[0].access_policy,
+            crate::kernel::CTypedAccessPolicy::NativeObjectOnly
+        );
+        assert_ne!(c, native);
+    }
+
+    #[test]
+    fn scalar_prefix_literal_counts_keep_wide_native_extent_without_allocating_cells() {
+        let parsed = syntax::parse_function("void probe(int *p) { return; }").unwrap();
+        let limit = i64::MAX as u64 / 4;
+        for (count, admitted) in [
+            (u64::from(u32::MAX), true),
+            (limit, true),
+            (limit + 1, false),
+            (u64::MAX, false),
+        ] {
+            // Exercise only source parsing and metadata production. Prefixes
+            // describe a validity premise, not per-element storage allocation.
+            let source =
+                format!("void probe(int32* p) {{ views p[0..{count}u64]; }} by {{ execute(); }}");
+            let file = crate::surface::parser::parse(&source).unwrap();
+            let Requirement::Resource(resource) = &file.function_blocks()[0].requires()[0] else {
+                panic!("native prefix resource");
+            };
+            let spans = native_span_requirements_for_resource(
+                resource,
+                parsed.parameters(),
+                parsed.structs(),
+            )
+            .unwrap();
+            assert_eq!(spans.len(), usize::from(admitted), "{count}");
+            if admitted {
+                assert_eq!(spans[0].carrier, c_variable("p"));
+                assert_eq!(spans[0].element_type, CType::Int32);
+                assert_eq!(
+                    spans[0].count,
+                    CExpression::Value(CValue::UInt64(Bitvector32Term::UInt64Constant(count))),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scalar_prefix_requirements_retain_exact_native_symbolic_counts() {
+        let parsed = syntax::parse_function(
+            "struct holder { int *pointer; int capacity; }; int probe(struct holder *h, int *p, int count) { return count; }",
+        ).unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+            "int32 probe(struct holder* h, int32* p, int32 count) { views p[0..count]; views h->pointer[0..h->capacity]; views p[1..count]; } by { execute(); }",
+            parsed.structs().clone(), Default::default(), Default::default(),
+            Default::default(), Default::default(), Default::default(), Default::default(),
+        ).unwrap();
+        let spans = file.function_blocks()[0]
+            .requires()
+            .iter()
+            .map(|requirement| {
+                let Requirement::Resource(resource) = requirement else {
+                    panic!("resource range");
+                };
+                native_span_requirements_for_resource(
+                    resource,
+                    parsed.parameters(),
+                    parsed.structs(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(spans[0].len(), 1);
+        assert_eq!(spans[0][0].carrier, c_variable("p"));
+        assert_eq!(spans[0][0].count, c_variable("count"));
+        assert_eq!(spans[1].len(), 1);
+        assert!(matches!(
+            spans[1][0].carrier,
+            CExpression::TypedLoad {
+                value_type: CType::Int32Pointer,
+                ..
+            }
+        ));
+        assert!(matches!(
+            spans[1][0].count,
+            CExpression::TypedLoad {
+                value_type: CType::Int32,
+                ..
+            }
+        ));
+        assert!(spans[2].is_empty());
+    }
+
+    #[test]
+    fn scalar_prefix_requirements_use_declared_pointer_types_and_positive_literals() {
+        let parsed = syntax::parse_function("struct holder { int *pointer; }; int probe(struct holder *h, int *p, char *bytes) { return h->pointer[0]; }").unwrap();
+        for (clause, count, loaded) in [
+            ("views h->pointer[0..1];", 1, true),
+            ("owns p[0..2];", 1, false),
+            ("views p[1];", 1, false),
+            ("views *p;", 1, false),
+            ("views bytes[0..2];", 0, false),
+            ("views p[0..0];", 0, false),
+            ("views p[1..2];", 1, false),
+        ] {
+            let source = format!(
+                "int32 probe(struct holder* h, int32* p, uint8* bytes) {{ {clause} }} by {{ execute(); }}"
+            );
+            let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+                &source,
+                parsed.structs().clone(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+            )
+            .unwrap();
+            let Requirement::Resource(resource) = &file.function_blocks()[0].requires()[0] else {
+                panic!("resource clause");
+            };
+            let spans = native_span_requirements_for_resource(
+                resource,
+                parsed.parameters(),
+                parsed.structs(),
+            )
+            .unwrap();
+            assert_eq!(spans.len(), count, "{clause}");
+            if count != 0 {
+                assert_eq!(
+                    spans[0].element_type,
+                    if clause.contains("bytes") {
+                        CType::UInt8
+                    } else {
+                        CType::Int32
+                    }
+                );
+                assert_eq!(
+                    matches!(spans[0].carrier, CExpression::TypedLoad { .. }),
+                    loaded
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn byte_prefix_enrollment_requires_an_authenticated_cpp_declaration() {
+        let parsed = syntax::parse_function(
+            "struct holder { unsigned char *pointer; }; int probe(struct holder *h, unsigned char *bytes) { return 0; }",
+        ).unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+            "int32 probe(struct holder* h, uint8* bytes) { views bytes[0..2]; views h->pointer[0..2]; } by { execute(); }",
+            parsed.structs().clone(), Default::default(), Default::default(),
+            Default::default(), Default::default(), Default::default(), Default::default(),
+        ).unwrap();
+        let resources = file.function_blocks()[0]
+            .requires()
+            .iter()
+            .map(|requirement| {
+                let Requirement::Resource(resource) = requirement else {
+                    panic!("resource clause");
+                };
+                resource
+            })
+            .collect::<Vec<_>>();
+        for resource in &resources {
+            assert!(
+                native_span_requirements_for_resource(
+                    resource,
+                    parsed.parameters(),
+                    parsed.structs(),
+                )
+                .unwrap()
+                .is_empty(),
+                "C character storage is not a typed byte array promise"
+            );
+        }
+        let mut parameters = parsed.parameters().to_vec();
+        parameters[1] = parameters[1].clone().with_native_pointer_input(true);
+        let direct =
+            native_span_requirements_for_resource(resources[0], &parameters, parsed.structs())
+                .unwrap();
+        assert_eq!(direct.len(), 1);
+        assert_eq!(direct[0].element_type, CType::UInt8);
+        assert_eq!(direct[0].carrier, c_variable("bytes"));
+        assert!(
+            native_span_requirements_for_resource(resources[1], &parameters, parsed.structs(),)
+                .unwrap()
+                .is_empty(),
+            "a native formal does not authenticate a C record field"
+        );
+        let mut layouts = parsed.structs().clone();
+        let holder = layouts
+            .get("holder")
+            .unwrap()
+            .clone()
+            .with_cpp_declaration_identity("authenticated-import", "c:@S@holder");
+        layouts.insert("holder".to_string(), holder);
+        let field =
+            native_span_requirements_for_resource(resources[1], parsed.parameters(), &layouts)
+                .unwrap();
+        assert_eq!(field.len(), 1);
+        assert_eq!(field[0].element_type, CType::UInt8);
+        assert!(matches!(
+            field[0].carrier,
+            CExpression::TypedLoad {
+                value_type: CType::UInt8Pointer,
+                ..
+            }
+        ));
     }
 
     #[test]

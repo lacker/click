@@ -142,6 +142,7 @@ pub(super) fn summarize(function: &CFunction, summary: &mut AddressTakenSummary)
                 expression: value, ..
             }
             | CExpression::PointerOffsetBytes { pointer: value, .. }
+            | CExpression::PointerAligned { pointer: value, .. }
             | CExpression::Not(value)
             | CExpression::BitwiseNot(value)
             | CExpression::Load(value)

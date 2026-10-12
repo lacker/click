@@ -3023,6 +3023,29 @@ impl CType {
                 && (self == Self::VoidPointer || other == Self::VoidPointer))
     }
 
+    pub(crate) fn array_element_type(self) -> Option<Self> {
+        self.array_element_and_count().map(|(element, _)| element)
+    }
+
+    pub(crate) fn array_element_and_count(self) -> Option<(Self, u32)> {
+        Some(match self {
+            Self::Int8Array(count) => (Self::Int8, count),
+            Self::Int16Array(count) => (Self::Int16, count),
+            Self::Int32Array(count) => (Self::Int32, count),
+            Self::UInt8Array(count) => (Self::UInt8, count),
+            Self::UInt16Array(count) => (Self::UInt16, count),
+            Self::UInt32Array(count) => (Self::UInt32, count),
+            Self::Int64Array(count) => (Self::Int64, count),
+            Self::UInt64Array(count) => (Self::UInt64, count),
+            Self::Int128Array(count) => (Self::Int128, count),
+            Self::UInt128Array(count) => (Self::UInt128, count),
+            Self::Float32Array(count) => (Self::Float32, count),
+            Self::Float64Array(count) => (Self::Float64, count),
+            Self::PointerArray(element, count) => (element.pointer_type(), count),
+            _ => return None,
+        })
+    }
+
     pub(crate) fn pointer_to(self) -> Option<Self> {
         match self {
             Self::Bool => None,

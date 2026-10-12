@@ -2473,6 +2473,14 @@ pub(crate) fn algebraic_constructor_field_equalities(
         .iter()
         .zip(right_fields)
         .map(|(left, right)| match (left, right) {
+            (
+                AlgebraicValue::C(CValue::Pointer(left)),
+                AlgebraicValue::C(CValue::Pointer(right)),
+            ) if !left.same_designation(right) => {
+                // Constructor fields retain complete pointer values. Native
+                // address comparison cannot replace their designation.
+                None
+            }
             (AlgebraicValue::C(left), AlgebraicValue::C(right)) => {
                 c_value_comparison_proposition(left, CComparisonOperator::Equal, right)
             }
@@ -2486,6 +2494,9 @@ pub(crate) fn algebraic_constructor_field_equalities(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod pointer_value_identity_tests;
 
 fn is_algebraic_constructor_conflict(proposition: &Proposition) -> bool {
     let Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) = proposition else {
@@ -5029,11 +5040,32 @@ impl PureFactContext {
             .contains(ReasoningPolicy::ALLOW_SYMBOLIC_CONTRACT_LOADS)
     }
 
-    pub(crate) fn require_owned_expression_loads(mut self) -> Self {
-        if self.should_allow_symbolic_contract_loads() {
-            self.toggle_reasoning_policy(ReasoningPolicy::ALLOW_SYMBOLIC_CONTRACT_LOADS);
+    /// Specification addresses are observations; this grants no memory authority.
+    pub(crate) fn observe_pointer_addresses(self) -> Self {
+        self.with_reasoning_policy(ReasoningPolicy::OBSERVE_POINTER_ADDRESSES)
+    }
+
+    pub(crate) fn should_observe_pointer_addresses(&self) -> bool {
+        self.reasoning_policy
+            .contains(ReasoningPolicy::OBSERVE_POINTER_ADDRESSES)
+            || self.should_allow_symbolic_contract_loads()
+    }
+
+    pub(crate) fn without_pointer_address_observation(mut self) -> Self {
+        for choice in [
+            ReasoningPolicy::OBSERVE_POINTER_ADDRESSES,
+            ReasoningPolicy::ALLOW_SYMBOLIC_CONTRACT_LOADS,
+        ] {
+            if self.reasoning_policy.contains(choice) {
+                self.toggle_reasoning_policy(choice);
+            }
         }
-        self.with_reasoning_policy(ReasoningPolicy::REQUIRE_OWNED_EXPRESSION_LOADS)
+        self
+    }
+
+    pub(crate) fn require_owned_expression_loads(self) -> Self {
+        self.without_pointer_address_observation()
+            .with_reasoning_policy(ReasoningPolicy::REQUIRE_OWNED_EXPRESSION_LOADS)
     }
 
     fn with_reasoning_policy(mut self, choice: ReasoningPolicy) -> Self {

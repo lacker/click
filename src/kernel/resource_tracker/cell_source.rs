@@ -913,6 +913,11 @@ impl RangeDisjointFromPointerEvidence {
                                 access_member,
                             )
                     }
+                    StoreSeparatedRangesAuthority::BorrowPartition(resources) => {
+                        assumptions.resource_compositions.contains(resources)
+                            && resources
+                                .proves_borrow_partition_separate(range_member, access_member)
+                    }
                 };
                 authority_checks
                     && !assumptions

@@ -5366,6 +5366,11 @@ fn c0_syntax_retains_struct_pointee_types_across_chained_fields() {
     else {
         panic!("the terminal scalar field should retain its resolved type")
     };
+    let syntax::C0Expression::MemberAddress { pointer, selection } = pointer.as_ref() else {
+        panic!("terminal field retains its declared member selection");
+    };
+    assert_eq!(selection.path(), ["value"]);
+    assert_eq!(selection.value_type(), crate::kernel::CType::Int32);
     assert!(matches!(
         pointer.as_ref(),
         syntax::C0Expression::Field {
@@ -6535,22 +6540,23 @@ fn c0_syntax_parses_chained_field_store_targets() {
     )
     .expect("a chained field should remain a typed assignment target");
 
-    assert!(matches!(
-        function.body(),
-        syntax::C0Statement::Seq(first, _)
-            if matches!(
-                first.as_ref(),
-                syntax::C0Statement::Store {
-                    pointer: syntax::C0Expression::Field {
-                        field_type: syntax::C0Type::Int32Pointer,
-                        field_struct_name: Some(name),
-                        ..
-                    },
-                    value_type: Some(syntax::C0Type::Int32),
-                    ..
-                } if name == "leaf"
-            )
-    ));
+    let syntax::C0Statement::Seq(first, _) = function.body() else {
+        panic!("store precedes return");
+    };
+    let syntax::C0Statement::Store {
+        pointer: syntax::C0Expression::MemberAddress { pointer, selection },
+        value_type: Some(syntax::C0Type::Int32),
+        ..
+    } = first.as_ref()
+    else {
+        panic!("chained store retains leaf selection and type");
+    };
+    assert_eq!(selection.path(), ["value"]);
+    assert_eq!(selection.value_type(), crate::kernel::CType::Int32);
+    assert!(matches!(pointer.as_ref(), syntax::C0Expression::Field {
+        field_type: syntax::C0Type::Int32Pointer,
+        field_struct_name: Some(name), ..
+    } if name == "leaf"));
 }
 
 #[test]
@@ -8088,6 +8094,47 @@ fn c0_local_struct_array_designators_require_constant_in_range_indices() {
         let error = syntax::parse_functions(source)
             .expect_err("invalid local struct array designators must be rejected");
         assert!(error.message().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn c0_record_pointer_offsets_retain_layout_and_unmodified_index() {
+    for (operator, subtract) in [("+", false), ("-", true)] {
+        let source = format!(
+            "struct item {{ int value; int other; }}; struct item *offset(struct item *p, int i) {{ return p {operator} i; }}"
+        );
+        let function = syntax::parse_function(&source).unwrap();
+        let syntax::C0Statement::Return(
+            syntax::C0Expression::RecordPointerOffset {
+                pointer,
+                index,
+                layout,
+                subtract: actual,
+                ..
+            },
+            _,
+        ) = function.body()
+        else {
+            panic!("native record pointer result");
+        };
+        assert_eq!(*actual, subtract);
+        assert_eq!(
+            pointer.as_ref(),
+            &syntax::C0Expression::Variable("p".into())
+        );
+        assert_eq!(index.as_ref(), &syntax::C0Expression::Variable("i".into()));
+        assert_eq!(layout.size_bytes(), 8);
+        let function = function.to_kernel_function();
+        let crate::kernel::CStatement::Return(crate::kernel::CExpression::RecordPointerOffset {
+            subtract: actual,
+            index,
+            ..
+        }) = function.body()
+        else {
+            panic!("kernel native record step");
+        };
+        assert_eq!(*actual, subtract);
+        assert_eq!(index.as_ref(), &crate::kernel::c_variable("i"));
     }
 }
 
@@ -9806,7 +9853,8 @@ fn c0_struct_field_lowering_uses_explicit_byte_offsets() {
     };
     assert!(matches!(
         pointer.as_ref(),
-        syntax::C0Expression::PointerOffsetBytes { bytes: 8, .. }
+        syntax::C0Expression::MemberAddress { selection, .. }
+            if selection.path() == ["data"] && selection.layout().member_at_path(selection.path()).map(|(offset, _)| offset) == Some(8)
     ));
     let crate::kernel::CStatement::Return(crate::kernel::CExpression::TypedLoad {
         pointer,
@@ -9818,7 +9866,8 @@ fn c0_struct_field_lowering_uses_explicit_byte_offsets() {
     };
     assert!(matches!(
         pointer.as_ref(),
-        crate::kernel::CExpression::PointerOffsetBytes { bytes: 8, .. }
+        crate::kernel::CExpression::MemberAddress { selection, .. }
+            if selection.path() == ["data"] && selection.layout().member_at_path(selection.path()).map(|(offset, _)| offset) == Some(8)
     ));
 }
 
@@ -10002,18 +10051,25 @@ fn c0_struct_field_address_lowering_preserves_nested_byte_offset() {
         panic!("nested field address should target the scalar field")
     };
     assert_eq!(*field_type, syntax::C0Type::Int32);
-    let syntax::C0Expression::PointerOffsetBytes {
+    let syntax::C0Expression::MemberAddress {
         pointer: inner_pointer,
-        bytes: inner_offset,
+        selection: inner_selection,
     } = pointer.as_ref()
     else {
         panic!("nested field address should include the inner field offset")
     };
-    assert_eq!(*inner_offset, std::mem::offset_of!(HostInner, value) as u32);
+    assert_eq!(inner_selection.path(), ["value"]);
+    assert_eq!(
+        inner_selection
+            .layout()
+            .member_at_path(inner_selection.path())
+            .map(|(offset, _)| offset),
+        Some(std::mem::offset_of!(HostInner, value) as u32)
+    );
     assert!(matches!(
         inner_pointer.as_ref(),
-        syntax::C0Expression::PointerOffsetBytes { bytes, .. }
-            if *bytes == std::mem::offset_of!(HostOuter, inner) as u32
+        syntax::C0Expression::MemberAddress { selection, .. }
+            if selection.path() == ["inner"] && selection.layout().member_at_path(selection.path()).map(|(offset, _)| offset) == Some(std::mem::offset_of!(HostOuter, inner) as u32)
     ));
 
     let crate::kernel::CStatement::Return(crate::kernel::CExpression::AddressOf(target)) =
@@ -10029,18 +10085,25 @@ fn c0_struct_field_address_lowering_preserves_nested_byte_offset() {
     else {
         panic!("nested field address should preserve the leaf load type")
     };
-    let crate::kernel::CExpression::PointerOffsetBytes {
-        pointer: inner_pointer,
-        bytes: inner_offset,
+    let crate::kernel::CExpression::MemberAddress {
+        object: inner_pointer,
+        selection: inner_selection,
     } = pointer.as_ref()
     else {
         panic!("nested field address should include the inner field offset")
     };
-    assert_eq!(*inner_offset, std::mem::offset_of!(HostInner, value) as u32);
+    assert_eq!(inner_selection.path(), ["value"]);
+    assert_eq!(
+        inner_selection
+            .layout()
+            .member_at_path(inner_selection.path())
+            .map(|(offset, _)| offset),
+        Some(std::mem::offset_of!(HostInner, value) as u32)
+    );
     assert!(matches!(
         inner_pointer.as_ref(),
-        crate::kernel::CExpression::PointerOffsetBytes { bytes, .. }
-            if *bytes == std::mem::offset_of!(HostOuter, inner) as u32
+        crate::kernel::CExpression::MemberAddress { selection, .. }
+            if selection.path() == ["inner"] && selection.layout().member_at_path(selection.path()).map(|(offset, _)| offset) == Some(std::mem::offset_of!(HostOuter, inner) as u32)
     ));
 }
 
@@ -12279,7 +12342,7 @@ fn c0_struct_pointer_indirection_updates_one_pointer_cell() {
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let left = root.offset_by_bytes(8);
-    let resources = own_memory_context(root.clone(), 2, 3).unchecked_with_fact(
+    let resources = own_memory_context(root.clone(), 2, 4).unchecked_with_fact(
         crate::kernel::CResourceFact::own_memory(memory_range(replacement.clone(), 0, 1)),
     );
     let state = crate::kernel::CState::new()
@@ -13247,17 +13310,19 @@ fn c0_union_pointer_member_preserves_pointee_constness() {
 }
 
 #[test]
-fn c0_const_pointer_fields_alias_proof_expands_and_reverifies() {
+fn c0_const_pointer_field_address_equality_does_not_authenticate_loaded_domain() {
     let c = "struct holder { const int *value; }; int update(struct holder *h, int *p) { *p = 7; return h->value[0]; }";
     let proof = "verifying \"fields.c\"; int update(struct holder *h, int *p) { views h->value; owns p[0..1]; requires h->value == p; ensures result == 7 by auto; }";
-    crate::surface::verify_c0_sources(proof, &[("fields.c", c)]).unwrap();
-    let expanded = crate::surface::expand_c0_claim_source_by_label(
-        proof,
-        &[("fields.c", c)],
-        "update.ensures_0",
-    )
-    .unwrap();
-    crate::surface::verify_c0_sources(&expanded, &[("fields.c", c)]).unwrap();
+    // The original contract equates addresses, not object designations. The
+    // field may hold a scalar one-past pointer at a valid sibling's address.
+    let error = crate::surface::verify_c0_sources(proof, &[("fields.c", c)])
+        .expect_err("address equality cannot authenticate a loaded pointer's referent");
+    let message = error.message();
+    assert!(
+        message.contains("pointer arithmetic left the pointed-to object"),
+        "{message}"
+    );
+    assert!(message.contains("return h->value[0];"), "{message}");
 }
 
 #[test]
@@ -14074,4 +14139,94 @@ fn c0_scalar_updates_preserve_signed_overflow_undefined_behavior() {
             theorem.proposition()
         );
     }
+}
+
+#[test]
+fn c0_member_addresses_preserve_declared_scalar_and_nested_paths() {
+    for (expression, expected_path) in [
+        ("&pair->first", "first"),
+        ("&pair->second", "second"),
+        ("&pair->inner.value", "value"),
+        ("&pair->values[1]", "values"),
+    ] {
+        let source = format!(
+            "struct Inner {{ int value; }}; struct Pair {{ int first; int second; struct Inner inner; int values[2]; }}; int *probe(struct Pair *pair) {{ return {expression}; }}"
+        );
+        let function = syntax::parse_function(&source).expect("declared member address parses");
+        fn selected_path(expression: &syntax::C0Expression) -> Option<&str> {
+            match expression {
+                syntax::C0Expression::MemberAddress { selection, .. } => {
+                    selection.path().last().map(String::as_str)
+                }
+                syntax::C0Expression::AddressOf(value)
+                | syntax::C0Expression::Index(value, _)
+                | syntax::C0Expression::Cast {
+                    expression: value, ..
+                }
+                | syntax::C0Expression::Field { pointer: value, .. }
+                | syntax::C0Expression::AggregateAddress { pointer: value, .. } => {
+                    selected_path(value)
+                }
+                _ => None,
+            }
+        }
+        let syntax::C0Statement::Return(expression, _) = function.body() else {
+            panic!("probe must have one return")
+        };
+        assert_eq!(selected_path(expression), Some(expected_path));
+    }
+}
+
+#[test]
+fn c0_local_record_array_backing_is_distinct_from_native_byte_array() {
+    let parsed = syntax::parse_function("struct Pair { int first; int second; }; int probe(void) { struct Pair records[2]; uint8 bytes[16]; return 0; }").unwrap();
+    fn collect(statement: &syntax::C0Statement, declarations: &mut Vec<(String, bool)>) {
+        match statement {
+            syntax::C0Statement::Declare {
+                name,
+                c_type: syntax::C0Type::UInt8Array(16),
+                aggregate_array_backing,
+                ..
+            } => {
+                declarations.push((name.clone(), *aggregate_array_backing));
+            }
+            syntax::C0Statement::Seq(first, second) => {
+                collect(first, declarations);
+                collect(second, declarations);
+            }
+            _ => {}
+        }
+    }
+    let mut declarations = Vec::new();
+    collect(parsed.body(), &mut declarations);
+    assert_eq!(
+        declarations,
+        [("records".to_owned(), true), ("bytes".to_owned(), false)]
+    );
+}
+
+#[test]
+fn c_allocator_scalar_profile_uses_the_actual_source_declaration() {
+    use crate::kernel::{CStatement, CType};
+    fn allocation(statement: &CStatement) -> Option<Option<CType>> {
+        match statement {
+            CStatement::HeapAllocate {
+                allocated_scalar_type,
+                ..
+            } => Some(*allocated_scalar_type),
+            CStatement::Seq(first, second) => allocation(first).or_else(|| allocation(second)),
+            _ => None,
+        }
+    }
+    let scalar = syntax::parse_function("int32 allocate(int32* p) { p = malloc(8); return 0; }")
+        .unwrap()
+        .to_kernel_function();
+    assert_eq!(allocation(scalar.body()), Some(Some(CType::Int32)));
+    let record = syntax::parse_function("struct pair { int32 first; int32 second; }; int32 allocate(struct pair* p) { p = malloc(8); return 0; }")
+        .unwrap().to_kernel_function();
+    assert_eq!(allocation(record.body()), Some(None));
+    assert_eq!(
+        allocation(&crate::kernel::c_heap_allocate("p", 8)),
+        Some(None)
+    );
 }

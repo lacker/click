@@ -18,7 +18,8 @@ fn array_layout(element: CType, length: u64) -> Result<CAggregateLayout, String>
     let fields = (0..length)
         .map(|i| CAggregateField::new(i.to_string(), i * width, element))
         .collect();
-    Ok(CAggregateLayout::new(length * width, width, fields))
+    CAggregateLayout::new_scalar_array_with_fields(element, length, fields)
+        .ok_or_else(|| "invalid declared scalar array layout".into())
 }
 
 impl Context<'_> {

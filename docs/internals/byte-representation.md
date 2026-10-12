@@ -9,10 +9,9 @@ the verified demonstration is
 
 The [consolidated object-model design](https://github.com/clicklang/click/blob/master/design/cpp-object-model.md)
 specifies the target relationship between these rules, object lifetime and
-modular contracts. In particular, it proposes common guarded typed/byte
-observations for execution and specifications. That bridge is not yet
-implemented; the execution/specification distinction below describes current
-behavior.
+modular contracts. The bounded declared-uint32 profile now uses common guarded
+typed/byte observations for execution and specifications. Other integer-cell
+byte views retain the separate execution behavior described below.
 
 ## Selected profile
 
@@ -122,8 +121,10 @@ qualification (`mdtests/byte_representation_const_destination_rejected.md`).
 A one-byte C access at a constant offset inside a wider integer cell of the
 same block reads or writes the cell's little-endian representation. Byte
 `k` of integer value `v` is `(v >> 8k) & 0xFF` (`src/kernel/eval/byte_view.rs`).
-The byte order is a kernel value (`ByteOrder`) installed from the selected
-target. With any other order, or none, there is no view.
+The legacy cell view uses the selected target's installed `ByteOrder`. The
+shared declared-uint32 view instead retains that target profile in its immutable
+declaration snapshot. An absent profile or unsupported byte order supplies no
+shared representation relation.
 
 - A one-byte load reads that byte: an `unsigned char` load reads it as is
   (`mdtests/byte_representation_buffer_byte_read.md`), and a `signed char`
@@ -147,8 +148,8 @@ What stays opaque:
 - **Assembling bytes outside declared uint32 storage.** Untyped allocations,
   arrays, wider integers and other scalar kinds do not acquire a wider typed
   value from separate byte cells.
-- **Specification loads** read a snapshot's cells without the byte view; the
-  view applies to C execution only.
+- **Other specification loads** retain their ordinary cell meanings. Only the
+  guarded declared-uint32 profile below shares byte projections with execution.
 
 ## Initializing a declared uint32 through bytes
 
@@ -161,7 +162,9 @@ character pointer. Signed character values contribute their low eight bits.
 
 The resulting uint32 cell replaces the byte cells through the ordinary
 checked store transition. Existing typed and byte observations then read
-the same representation; there is no additional specification byte view.
+the same representation through the shared observation law. Specification byte
+reads of that declared object use the same projections; separate legacy views
+of other integer kinds remain outside this rule.
 This normalization grants no permission, lifetime or allocation identity.
 Its declaration lookup and four exact cell queries touch no unrelated memory.
 
@@ -199,10 +202,24 @@ initialization at the bound input address after its ordinary value havoc.
 It does not supply storage, ownership or byte values. External assumptions,
 callback contracts, conditional guarantees and exceptional outputs are refused.
 
-This effect makes an initially unwritten caller object readable. It does not
-reconstruct a typed word from specification byte-value equalities; the concrete
-store rule above and modular value reasoning remain separate. See
-[`modular_byte_output_initialization.md`](https://github.com/clicklang/click/blob/master/mdtests/modular_byte_output_initialization.md).
+This effect makes an initially unwritten caller object readable. Initialization
+alone supplies no word value. For a declared four-byte uint32 scalar with its
+pinned little-endian profile, four exact byte equalities at the selected snapshot
+can now establish the same word as concrete byte stores. The checked
+`declared_uint32_from_bytes` application retains all four premises and the
+observation's declaration, target, width, snapshot, and complete initialization.
+Smart simplification emits that explicit application; ordinary, expanded and
+retained checking use the same rule. Missing or mutated bytes, a different root
+or snapshot, incomplete initialization, and absent or unsupported profiles refuse
+it. Selection makes four exact premise queries without an ambient scan.
+
+See
+[`modular_byte_output_initialization.md`](https://github.com/clicklang/click/blob/master/mdtests/modular_byte_output_initialization.md),
+the unchanged exact-value program in
+[`modular_byte_output_word_value_requires_representation.md`](https://github.com/clicklang/click/blob/master/mdtests/modular_byte_output_word_value_requires_representation.md),
+and the [checked application](../reference/tactics/index.md#declared-uint32-byte-reconstruction).
+The focused shared-rule and Surface tests check the scope, profile, certificate
+mutations, and deterministic work beside unrelated facts and cells.
 
 ## Typed and byte views never contradict
 

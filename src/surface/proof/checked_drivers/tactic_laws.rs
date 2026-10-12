@@ -106,12 +106,17 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         }),
     )?;
     if execution.core.frontier.is_at_function_entry() {
-        let entry_state = c_function_entry_state(&initial_state, &annotated, arguments)
-            .ok_or_else(|| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `loop` could not bind function arguments"
-                ))
-            })?;
+        let entry_state = c_function_entry_state_with_assumptions(
+            &initial_state,
+            &annotated,
+            arguments,
+            &entry_assumptions,
+        )
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `loop` could not bind function arguments"
+            ))
+        })?;
         execution.core.frontier.execution_start_state = Some(initial_state.clone());
         execution.core.frontier.position = FrontierPosition::StatementEntry {
             remaining: annotated.body().clone().into(),

@@ -2519,6 +2519,14 @@ impl PureFactContext {
                         std::cmp::Ordering::Equal => Some(strict_so_far),
                         std::cmp::Ordering::Greater => None,
                     })
+                    .or_else(|| {
+                        // Every uint64 value is >= 0. The selected downward
+                        // chain can end here without a stated 0<=term edge.
+                        // Unknown values supply no strictness: it still comes
+                        // only from a held edge. Known constants above retain
+                        // their stronger intrinsic strict comparison.
+                        (unsigned && !upward && goal_constant == Some(0)).then_some(strict_so_far)
+                    })
             };
             match joined {
                 Some(true) => return Some(true),
@@ -2726,6 +2734,91 @@ impl PureFactContext {
 #[cfg(test)]
 mod slice_index_tests {
     use super::*;
+
+    #[test]
+    fn unsigned_zero_endpoint_joins_only_selected_strict_order_paths() {
+        let value = |id| Bitvector32Term::Variable(Variable(id));
+        let zero = Bitvector32Term::UInt64Constant(0);
+        let index = value(997_910);
+        let count = value(997_911);
+        let limit = Bitvector32Term::UInt64Constant(i64::MAX as u64 / 4);
+        let mut work = Vec::new();
+        for unrelated in [16, 128, 1024] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let mut context = PureFactContext::new();
+            for id in 0..unrelated {
+                context = context.assume_condition(
+                    ConditionTerm::uint64_less_than(value(998_100 + id), value(999_200 + id)),
+                    true,
+                );
+            }
+            context = context
+                .assume_condition(
+                    ConditionTerm::uint64_less_than(index.clone(), count.clone()),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::uint64_less_equal(count.clone(), limit.clone()),
+                    true,
+                );
+            let (answers, measured) = crate::instrumentation::measure_deterministic_work(|| {
+                [
+                    context.decide(&ConditionTerm::uint64_less_than(
+                        zero.clone(),
+                        count.clone(),
+                    )),
+                    context.decide(&ConditionTerm::uint64_less_equal(
+                        index.clone(),
+                        count.clone(),
+                    )),
+                    context.decide(&ConditionTerm::uint64_less_equal(
+                        count.clone(),
+                        limit.clone(),
+                    )),
+                ]
+            });
+            assert_eq!(answers, [Some(true); 3]);
+            work.push(measured);
+        }
+        assert!(work.windows(2).all(|pair| pair[0] == pair[1]), "{work:?}");
+        let possible_zero = PureFactContext::new().assume_condition(
+            ConditionTerm::uint64_less_equal(index.clone(), count.clone()),
+            true,
+        );
+        assert_eq!(
+            possible_zero.decide(&ConditionTerm::uint64_less_than(
+                zero.clone(),
+                count.clone()
+            )),
+            None
+        );
+        let positive_constant = PureFactContext::new().assume_condition(
+            ConditionTerm::uint64_less_equal(Bitvector32Term::UInt64Constant(1), count.clone()),
+            true,
+        );
+        assert_eq!(
+            positive_constant.decide(&ConditionTerm::uint64_less_than(
+                zero.clone(),
+                count.clone()
+            )),
+            Some(true)
+        );
+        assert_eq!(
+            PureFactContext::new().decide(&ConditionTerm::uint64_less_equal(zero, count.clone())),
+            Some(true)
+        );
+        let signed = PureFactContext::new().assume_condition(
+            ConditionTerm::int64_signed_less_than(index.clone(), count.clone()),
+            true,
+        );
+        assert_eq!(
+            signed.decide(&ConditionTerm::int64_signed_less_than(
+                Bitvector32Term::Int64Constant(0),
+                count
+            )),
+            None
+        );
+    }
 
     #[test]
     fn wide_order_chains_decide_by_kind_and_refute_by_the_reversed_chain() {

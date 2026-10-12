@@ -14,6 +14,152 @@ pub(super) fn same_interface(contract: &CFunctionContract, function: &CFunction)
     normalized_contract.exactly_matches(&normalized_function)
 }
 
+/// Native place requirements are a separate refinement obligation. Byte
+/// resource containment and access-mode variance cannot erase them.
+pub(super) fn same_native_record_obligations(
+    left: &CFunctionContractInterface,
+    right: &CFunctionContractInterface,
+) -> bool {
+    if !crate::kernel::functions::typed_access_policy_refinement_compatible(left, right)
+        || left.parameters().len() != right.parameters().len()
+        || left
+            .parameters()
+            .iter()
+            .zip(right.parameters())
+            .any(|(left, right)| left.is_native_pointer_input() != right.is_native_pointer_input())
+    {
+        return false;
+    }
+    #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+    enum NativeRequirement {
+        Record(CNativeRecordPlaceRequirement),
+        Span(CNativeSpanRequirement),
+    }
+    type Key = (
+        String,
+        CResourceSnapshot,
+        Option<SpecProposition>,
+        NativeRequirement,
+    );
+    fn add(
+        keys: &mut BTreeSet<Key>,
+        scope: &str,
+        specs: &[CResourceSpec],
+        names: &mut Names,
+        outer_guard: Option<&SpecProposition>,
+    ) {
+        for spec in specs {
+            if spec.native_record_places().is_empty() && spec.native_span_requirements().is_empty()
+            {
+                continue;
+            }
+            let mut guard = match (outer_guard, spec.guard()) {
+                (Some(outer), Some(inner)) => Some(SpecProposition::And(
+                    Box::new(outer.clone()),
+                    Box::new(inner.clone()),
+                )),
+                (Some(guard), None) | (None, Some(guard)) => Some(guard.clone()),
+                (None, None) => None,
+            };
+            if let Some(guard) = &mut guard {
+                names.proposition(guard);
+            }
+            for place in spec.native_record_places() {
+                let mut place = place.clone();
+                names.c(&mut place.carrier);
+                if let Some(count) = &mut place.prefix_count {
+                    names.c(count);
+                }
+                keys.insert((
+                    scope.to_string(),
+                    spec.snapshot(),
+                    guard.clone(),
+                    NativeRequirement::Record(place),
+                ));
+            }
+            for span in spec.native_span_requirements() {
+                let mut span = span.clone();
+                names.c(&mut span.carrier);
+                names.c(&mut span.count);
+                keys.insert((
+                    scope.to_string(),
+                    spec.snapshot(),
+                    guard.clone(),
+                    NativeRequirement::Span(span),
+                ));
+            }
+        }
+    }
+    fn keys(interface: &CFunctionContractInterface) -> BTreeSet<Key> {
+        let mut keys = BTreeSet::new();
+        let mut names = Names::default();
+        for parameter in interface.parameters() {
+            let mut name = parameter.name().to_string();
+            names.bind(&mut name);
+        }
+        add(
+            &mut keys,
+            "requires",
+            interface.resource_requires(),
+            &mut names,
+            None,
+        );
+        add(
+            &mut keys,
+            "ensures",
+            interface.resource_ensures(),
+            &mut names,
+            None,
+        );
+        let declared = interface
+            .resource_requires()
+            .iter()
+            .chain(interface.resource_ensures())
+            .filter_map(CResourceSpec::declared_name)
+            .collect::<BTreeSet<_>>();
+        for name in declared {
+            let definitions = interface.composite_resource_definitions();
+            let Ok(index) = definitions.binary_search_by(|definition| {
+                crate::instrumentation::record_deterministic_work(1);
+                definition.name().cmp(name)
+            }) else {
+                continue;
+            };
+            let definition = &definitions[index];
+            let mut names = Names::default();
+            for parameter in definition.parameters().iter().chain(definition.witnesses()) {
+                let mut name = parameter.name().to_string();
+                names.bind(&mut name);
+            }
+            add(
+                &mut keys,
+                name,
+                definition.contains(),
+                &mut names,
+                definition.condition(),
+            );
+            if let Some(body) = &definition.matched {
+                for arm in &body.arms {
+                    let mut arm_names = names.clone();
+                    for binding in &arm.bindings {
+                        let mut name = binding.clone();
+                        arm_names.bind(&mut name);
+                    }
+                    add(
+                        &mut keys,
+                        &format!("{name}:field{}:{}", body.field_index, arm.variant),
+                        &arm.contains,
+                        &mut arm_names,
+                        definition.condition(),
+                    );
+                }
+            }
+        }
+        keys
+    }
+    keys(left) == keys(right)
+}
+
 fn normalize(interface: &CFunctionContractInterface) -> CFunctionContractInterface {
     let mut interface = interface.clone();
     let mut names = Names::default();
@@ -65,6 +211,72 @@ fn normalize(interface: &CFunctionContractInterface) -> CFunctionContractInterfa
 mod tests {
     use super::*;
 
+    #[test]
+    fn typed_source_policy_survives_lexical_interface_normalization() {
+        let function = |name: &str, policy| {
+            c_function(
+                CType::Void,
+                "policy",
+                vec![c_parameter(name, CType::Int32Pointer)],
+                CStatement::Skip,
+            )
+            .with_typed_access_policy(policy)
+        };
+        let native = function("p", CTypedAccessPolicy::NativeObjectOnly);
+        let contract = CFunctionContract::new("Native", native.clone()).unwrap();
+        assert!(same_interface(
+            &contract,
+            &function("renamed", CTypedAccessPolicy::NativeObjectOnly)
+        ));
+        let c = function("renamed", CTypedAccessPolicy::CAllocatedAccessAllowed);
+        assert!(!same_interface(&contract, &c));
+        assert!(!same_native_record_obligations(
+            native.contract_interface(),
+            c.contract_interface()
+        ));
+    }
+
+    #[test]
+    fn native_pointer_enrollment_is_retained_by_interface_identity_and_refinement() {
+        use std::hash::{Hash, Hasher};
+        let function = |name: &str, enrolled| {
+            c_function(
+                CType::Void,
+                "native_input",
+                vec![c_parameter(name, CType::Int32Pointer).with_native_pointer_input(enrolled)],
+                CStatement::Skip,
+            )
+        };
+        let legacy = function("p", false);
+        let enrolled = function("q", true);
+        assert!(!legacy.parameters()[0].is_native_pointer_input());
+        assert!(enrolled.parameters()[0].is_native_pointer_input());
+        let target = CFunctionContract::new("Native", enrolled.clone()).unwrap();
+        assert!(same_interface(&target, &function("renamed", true)));
+        assert!(!same_interface(&target, &legacy));
+        assert!(!same_native_record_obligations(
+            legacy.contract_interface(),
+            enrolled.contract_interface()
+        ));
+        assert!(
+            !legacy
+                .contract_interface()
+                .has_compatible_signature_and_composite_vocabulary(enrolled.contract_interface())
+        );
+        let parameter = &legacy.parameters()[0];
+        let mut actual = std::collections::hash_map::DefaultHasher::new();
+        parameter.hash(&mut actual);
+        let mut original = std::collections::hash_map::DefaultHasher::new();
+        parameter.name.hash(&mut original);
+        parameter.c_type.hash(&mut original);
+        parameter.aggregate_layout.hash(&mut original);
+        parameter.volatile.hash(&mut original);
+        parameter.pointee_volatile.hash(&mut original);
+        parameter.constant.hash(&mut original);
+        parameter.pointee_constant.hash(&mut original);
+        assert_eq!(actual.finish(), original.finish());
+    }
+
     fn interface(parameter: &str, local: &str, body: &str) -> CFunction {
         c_function(
             CType::Void,
@@ -87,6 +299,32 @@ mod tests {
             vec![],
             true,
         )
+    }
+
+    #[test]
+    fn lexical_identity_retains_resource_guards_across_parameter_renaming() {
+        let interface = |parameter: &str, guard_value| {
+            let spec = CResourceSpec::owned_memory(CMemorySegment::new(
+                c_variable(parameter),
+                c_int32_literal(0),
+                c_int32_literal(1),
+            ))
+            .with_guard(SpecProposition::Comparison {
+                left: SpecExpression::Value(int32(guard_value)),
+                operator: CComparisonOperator::Equal,
+                right: SpecExpression::Value(int32(1)),
+            });
+            c_function(
+                CType::Void,
+                "guarded",
+                vec![c_parameter(parameter, CType::Int32Pointer)],
+                CStatement::Skip,
+            )
+            .with_resource_summary(vec![spec.clone()], vec![spec])
+        };
+        let target = CFunctionContract::new("Guarded", interface("p", 1)).unwrap();
+        assert!(same_interface(&target, &interface("q", 1)));
+        assert!(!same_interface(&target, &interface("q", 0)));
     }
 
     #[test]
@@ -187,7 +425,7 @@ mod tests {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Names {
     bindings: BTreeMap<String, Vec<String>>,
     next: usize,
@@ -239,6 +477,10 @@ impl Names {
                 pointer: expression,
                 ..
             }
+            | PointerAligned {
+                pointer: expression,
+                ..
+            }
             | TypedLoad {
                 pointer: expression,
                 ..
@@ -261,7 +503,12 @@ impl Names {
                 self.c(then_branch);
                 self.c(else_branch);
             }
-            LessThan(a, b)
+            RecordPointerOffset {
+                pointer: a,
+                index: b,
+                ..
+            }
+            | LessThan(a, b)
             | LessEqual(a, b)
             | GreaterThan(a, b)
             | GreaterEqual(a, b)
@@ -575,6 +822,33 @@ impl Names {
                 CResourceQuantity::Count(quantity)
             }
         };
+        let native_record_places = resource
+            .native_record_places()
+            .iter()
+            .map(|place| {
+                let mut place = place.clone();
+                self.c(&mut place.carrier);
+                if let Some(count) = &mut place.prefix_count {
+                    self.c(count);
+                }
+                place
+            })
+            .collect();
+        let native_span_requirements = resource
+            .native_span_requirements()
+            .iter()
+            .map(|span| {
+                let mut span = span.clone();
+                self.c(&mut span.carrier);
+                self.c(&mut span.count);
+                span
+            })
+            .collect();
+        let mut guard = resource.guard().cloned();
+        if let Some(guard) = &mut guard {
+            self.proposition(guard);
+        }
+        let quantity_snapshot = resource.quantity_snapshot();
         *resource = CResourceSpec::new(
             term,
             resource.access(),
@@ -582,7 +856,13 @@ impl Names {
             resource.role(),
             resource.snapshot(),
         )
-        .expect("interface identity normalization preserves resource validity");
+        .expect("interface identity normalization preserves resource validity")
+        .with_native_record_places(native_record_places)
+        .with_native_span_requirements(native_span_requirements)
+        .with_quantity_snapshot(quantity_snapshot);
+        if let Some(guard) = guard {
+            *resource = resource.clone().with_guard(guard);
+        }
     }
 
     fn resource_term(&mut self, resource: &mut CResourceTerm) {

@@ -141,6 +141,7 @@ pub struct C0Function {
     /// directly while reusing this declaration interface for Surface Click
     /// contract checking. C parsing always leaves this absent.
     prelowered_kernel_function: Option<crate::kernel::CFunction>,
+    typed_access_policy: crate::kernel::CTypedAccessPolicy,
     return_type: C0Type,
     return_pointee_constant: bool,
     return_reference: bool,
@@ -1629,6 +1630,27 @@ fn typed_store_at<'a>(
                 offset = offset.checked_add(*bytes)?;
                 pointer = inner;
             }
+            C0Expression::MemberAddress {
+                pointer: inner,
+                selection,
+            } => {
+                let (bytes, _) = selection.layout().member_at_path(selection.path())?;
+                offset = offset.checked_add(bytes)?;
+                pointer = inner;
+            }
+            C0Expression::Field {
+                pointer: inner,
+                field_type,
+                ..
+            } if field_type
+                .to_kernel_type()
+                .array_element_and_count()
+                .is_some() =>
+            {
+                // Synthesized typed array decay forms its element address;
+                // it reads no element and contributes no additional offset.
+                pointer = inner;
+            }
             // Only the element store `base + index` of a scalar array, whose
             // index scales by the stored element type.
             C0Expression::Add(inner, index) if matches!(inner.as_ref(), C0Expression::Variable(name) if name == base) =>
@@ -1844,6 +1866,9 @@ pub struct C0Parameter {
     /// Whether the source declares a reference, as C++ `int&` does. The
     /// parameter's type is the pointer that carries it.
     reference: bool,
+    /// The authenticated native frontend requires an unresolved input carrier
+    /// even when its contract states no object/range validity promise.
+    native_pointer_input: bool,
     struct_name: Option<String>,
     union_name: Option<String>,
     struct_layout: Option<C0StructLayout>,
@@ -2090,6 +2115,7 @@ pub struct C0UnionField {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0StructField {
+    name: String,
     c_type: C0Type,
     long_double: bool,
     pointee_constant: bool,
@@ -2555,6 +2581,8 @@ pub enum C0Statement {
         direct_function_body: bool,
     },
     Declare {
+        /// Explicit native record-array backing, distinct from a genuine byte array.
+        aggregate_array_backing: bool,
         initializer: Option<C0Expression>,
         c_type: C0Type,
         name: String,
@@ -2608,6 +2636,7 @@ pub enum C0Statement {
         target: String,
         bytes: C0Expression,
         zeroed: bool,
+        allocated_scalar_type: Option<C0Type>,
         /// Where the source statement was written; see [`C0Site`].
         site: C0Site,
     },
@@ -2835,6 +2864,18 @@ pub enum C0Expression {
         pointer: Box<C0Expression>,
         bytes: u32,
     },
+    /// Declared member selection; layout describes a path, never issues an object witness.
+    MemberAddress {
+        pointer: Box<C0Expression>,
+        selection: std::sync::Arc<crate::kernel::CAggregateMemberSelection>,
+    },
+    RecordPointerOffset {
+        pointer: Box<C0Expression>,
+        index: Box<C0Expression>,
+        layout: std::sync::Arc<crate::kernel::CAggregateLayout>,
+        subtract: bool,
+        struct_name: String,
+    },
     Int32Literal(u32),
     UInt8Literal(u8),
     UInt32Literal(u32),
@@ -2967,6 +3008,11 @@ macro_rules! binary_c0_expression {
     ($left:pat, $right:pat) => {
         $crate::languages::c::syntax::binary_c0_operation!($left, $right)
             | $crate::languages::c::syntax::C0Expression::Index($left, $right)
+            | $crate::languages::c::syntax::C0Expression::RecordPointerOffset {
+                pointer: $left,
+                index: $right,
+                ..
+            }
     };
 }
 pub(crate) use binary_c0_expression;
@@ -3041,6 +3087,7 @@ impl C0Function {
             requires_read_only_contract: false,
             program_entry_state: None,
             prelowered_kernel_function: None,
+            typed_access_policy: crate::kernel::CTypedAccessPolicy::default(),
             parameters,
             body: C0Statement::Skip,
             callback_statement_sources: std::sync::Arc::default(),
@@ -3097,10 +3144,22 @@ impl C0Function {
         &self.body
     }
 
+    pub(crate) fn with_typed_access_policy(
+        mut self,
+        policy: crate::kernel::CTypedAccessPolicy,
+    ) -> Self {
+        self.typed_access_policy = policy;
+        if let Some(function) = self.prelowered_kernel_function.take() {
+            self.prelowered_kernel_function = Some(function.with_typed_access_policy(policy));
+        }
+        self
+    }
+
     pub(crate) fn with_prelowered_kernel_function(
         mut self,
         function: crate::kernel::CFunction,
     ) -> Self {
+        self.typed_access_policy = function.contract_interface().typed_access_policy();
         self.prelowered_kernel_function = Some(function);
         self
     }
@@ -3145,6 +3204,22 @@ impl C0Function {
     /// C spelling.
     pub fn local_struct_pointers(&self) -> &BTreeMap<String, String> {
         &self.local_struct_pointers
+    }
+
+    /// Attach imported declaration metadata without requiring a live pointee.
+    pub(crate) fn with_parameter_pointee_layouts(
+        mut self,
+        layouts: &BTreeMap<String, C0StructLayout>,
+    ) -> Self {
+        for parameter in &mut self.parameters {
+            if parameter.c_type.is_pointer()
+                && let Some(name) = &parameter.struct_name
+                && let Some(layout) = layouts.get(name)
+            {
+                parameter.pointee_struct_layout = Some(layout.clone());
+            }
+        }
+        self
     }
 
     pub(crate) fn with_local_struct_values(mut self, values: BTreeMap<String, String>) -> Self {
@@ -3457,6 +3532,36 @@ impl C0Function {
                 address.c_type = element_type;
                 Some(address)
             }
+            C0Expression::RecordPointerOffset {
+                pointer,
+                index,
+                layout,
+                subtract,
+                ..
+            } => {
+                let mut address = self.static_address_expression(pointer)?;
+                let index = match evaluate_static_integer_expression(index).ok()? {
+                    StaticIntegerValue::Signed { value, .. } => i64::try_from(value).ok()?,
+                    StaticIntegerValue::Unsigned { value, .. } => i64::try_from(value).ok()?,
+                };
+                let bytes = index.checked_mul(i64::from(layout.size_bytes()))?;
+                let bytes = if *subtract {
+                    bytes.checked_neg()?
+                } else {
+                    bytes
+                };
+                address.pointer.offset = crate::kernel::PointerOffsetTerm::add(
+                    address.pointer.offset.clone(),
+                    crate::kernel::PointerOffsetTerm::Constant(bytes),
+                );
+                Some(address)
+            }
+            C0Expression::MemberAddress { pointer, selection } => {
+                let mut address = self.static_address_expression(pointer)?;
+                let (offset, _) = selection.layout().member_at_path(selection.path())?;
+                address.pointer = address.pointer.offset_by_bytes(offset);
+                Some(address)
+            }
             C0Expression::PointerOffsetBytes { pointer, bytes } => {
                 let mut address = self.static_address_expression(pointer)?;
                 address.pointer = address.pointer.offset_by_bytes(*bytes);
@@ -3694,6 +3799,7 @@ impl C0Function {
                 .collect(),
             kernel_body,
         )
+        .with_typed_access_policy(self.typed_access_policy)
         .with_control_targets(control_targets);
         function = function.with_return_pointee_constant(self.return_pointee_constant);
         if self.program_entry_state.is_some() {
@@ -3993,6 +4099,7 @@ impl C0StructLayout {
                 .insert(
                     name.clone(),
                     C0StructField {
+                        name: name.clone(),
                         c_type,
                         long_double: false,
                         pointee_constant: false,
@@ -4140,6 +4247,14 @@ impl C0StructLayout {
             crate::kernel::CppRecordDeclarationIdentity::new(import, declaration),
         ));
         self
+    }
+
+    pub(crate) fn has_cpp_declaration_identity(&self) -> bool {
+        self.declaration_identity.is_some()
+    }
+
+    pub(crate) fn has_union_storage(&self) -> bool {
+        !self.aggregate_unions.is_empty()
     }
 
     fn aggregate_fields(&self) -> &[C0AggregateField] {
@@ -4325,6 +4440,7 @@ impl C0Parameter {
             constant: false,
             pointee_constant: false,
             reference: false,
+            native_pointer_input: false,
             struct_name,
             union_name: None,
             struct_layout: None,
@@ -4377,6 +4493,27 @@ impl C0Parameter {
         self
     }
 
+    pub(crate) fn is_native_pointer_input(&self) -> bool {
+        self.native_pointer_input
+            || (self.struct_name.is_some()
+                && self.c_type.is_pointer()
+                && !self.is_struct_value()
+                && !self.pointee_struct_layout.as_ref().is_some_and(|layout| {
+                    layout.has_union_storage() && !layout.has_cpp_declaration_identity()
+                }))
+    }
+
+    /// Source-native pointer semantics are distinct from automatic enrollment
+    /// of ordinary C record pointers for checked member selection.
+    pub(crate) fn has_explicit_native_pointer_input(&self) -> bool {
+        self.native_pointer_input
+    }
+
+    pub(crate) fn with_native_pointer_input(mut self, native: bool) -> Self {
+        self.native_pointer_input = native;
+        self
+    }
+
     pub fn struct_name(&self) -> Option<&str> {
         self.struct_name.as_deref()
     }
@@ -4420,7 +4557,8 @@ impl C0Parameter {
             .with_volatile(self.is_volatile())
             .with_pointee_volatile(self.pointee_is_volatile())
             .with_constant(self.is_constant())
-            .with_pointee_constant(self.pointee_is_constant());
+            .with_pointee_constant(self.pointee_is_constant())
+            .with_native_pointer_input(self.is_native_pointer_input());
         }
         let c_type = self
             .array_element_width
@@ -4431,6 +4569,7 @@ impl C0Parameter {
             .with_pointee_volatile(self.pointee_is_volatile())
             .with_constant(self.is_constant())
             .with_pointee_constant(self.pointee_is_constant())
+            .with_native_pointer_input(self.is_native_pointer_input())
     }
 }
 
@@ -4783,6 +4922,7 @@ impl C0Statement {
                 statement.to_kernel_statement_with_control_targets(targets)
             }
             Self::Declare {
+                aggregate_array_backing,
                 c_type,
                 name,
                 volatile,
@@ -4793,15 +4933,30 @@ impl C0Statement {
                 initializer,
                 ..
             } => {
-                let mut statement = crate::kernel::c_declare_with_zero_fill(
-                    name.clone(),
-                    c_type.to_kernel_type(),
-                    *volatile,
-                    *pointee_volatile,
-                    *constant,
-                    *pointee_constant,
-                    zero_fill.as_ref().map(C0ZeroFill::to_kernel),
-                );
+                let mut statement = if *aggregate_array_backing {
+                    let C0Type::UInt8Array(bytes) = c_type else {
+                        unreachable!("record array backing is byte encoded");
+                    };
+                    crate::kernel::c_declare_aggregate_array_with_zero_fill(
+                        name.clone(),
+                        *bytes,
+                        *volatile,
+                        *pointee_volatile,
+                        *constant,
+                        *pointee_constant,
+                        zero_fill.as_ref().map(C0ZeroFill::to_kernel),
+                    )
+                } else {
+                    crate::kernel::c_declare_with_zero_fill(
+                        name.clone(),
+                        c_type.to_kernel_type(),
+                        *volatile,
+                        *pointee_volatile,
+                        *constant,
+                        *pointee_constant,
+                        zero_fill.as_ref().map(C0ZeroFill::to_kernel),
+                    )
+                };
                 if let crate::kernel::CStatement::Declare {
                     initializer: value, ..
                 } = &mut statement
@@ -4848,12 +5003,14 @@ impl C0Statement {
                 target,
                 bytes,
                 zeroed,
+                allocated_scalar_type,
                 ..
-            } => crate::kernel::c_heap_allocate_sized_with_zeroed(
-                target.clone(),
-                bytes.to_kernel_expression(),
-                *zeroed,
-            ),
+            } => crate::kernel::CStatement::HeapAllocate {
+                target: target.clone(),
+                bytes: bytes.to_kernel_expression(),
+                zeroed: *zeroed,
+                allocated_scalar_type: allocated_scalar_type.map(C0Type::to_kernel_type),
+            },
             Self::HeapFree { pointer, .. } => {
                 crate::kernel::c_heap_free(pointer.to_kernel_expression())
             }
@@ -5067,6 +5224,24 @@ impl C0Expression {
             },
             Self::AggregateAddress { pointer, .. } => pointer.to_kernel_expression(),
             Self::UnionAddress { pointer, .. } => pointer.to_kernel_expression(),
+            Self::MemberAddress { pointer, selection } => {
+                crate::kernel::CExpression::MemberAddress {
+                    object: Box::new(pointer.to_kernel_expression()),
+                    selection: selection.clone(),
+                }
+            }
+            Self::RecordPointerOffset {
+                pointer,
+                index,
+                layout,
+                subtract,
+                ..
+            } => crate::kernel::CExpression::RecordPointerOffset {
+                pointer: Box::new(pointer.to_kernel_expression()),
+                index: Box::new(index.to_kernel_expression()),
+                layout: layout.clone(),
+                subtract: *subtract,
+            },
             Self::PointerOffsetBytes { pointer, bytes } => {
                 crate::kernel::c_pointer_offset_bytes(pointer.to_kernel_expression(), *bytes)
             }
@@ -6411,6 +6586,8 @@ fn evaluate_static_integer_expression(
         | C0Expression::FloatClassification { .. }
         | C0Expression::AddressOf(_)
         | C0Expression::PointerOffsetBytes { .. }
+        | C0Expression::MemberAddress { .. }
+        | C0Expression::RecordPointerOffset { .. }
         | C0Expression::Float32Literal(_)
         | C0Expression::Float64Literal(_)
         | C0Expression::Load(_)
@@ -6673,6 +6850,18 @@ fn align_up(offset: u32, alignment: u32) -> Option<u32> {
     offset
         .checked_add(alignment - 1)
         .map(|value| value & !(alignment - 1))
+}
+
+fn decay_declared_array_member(pointer: C0Expression, field_type: C0Type) -> C0Expression {
+    C0Expression::Field {
+        pointer: Box::new(pointer),
+        field_type,
+        pointee_constant: false,
+        field_struct_name: None,
+        function_pointer_signature: None,
+        array_shape: None,
+        source: None,
+    }
 }
 
 fn offset_field_pointer(base: C0Expression, offset_bytes: u32) -> C0Expression {
@@ -7006,6 +7195,10 @@ fn contains_aggregate_value(expression: &C0Expression) -> bool {
             pointer: expression,
             ..
         }
+        | C0Expression::MemberAddress {
+            pointer: expression,
+            ..
+        }
         | C0Expression::Not(expression)
         | C0Expression::BitwiseNot(expression)
         | C0Expression::Load(expression)
@@ -7311,6 +7504,8 @@ struct Parser {
     written_lines: std::sync::Arc<BTreeMap<usize, std::sync::Arc<str>>>,
     position: usize,
     structs: BTreeMap<String, C0StructLayout>,
+    member_layouts:
+        std::cell::RefCell<BTreeMap<String, std::sync::Arc<crate::kernel::CAggregateLayout>>>,
     enums: BTreeMap<String, C0EnumDefinition>,
     enum_constants: BTreeMap<String, i32>,
     typedefs: BTreeMap<String, ParsedType>,
@@ -7597,6 +7792,7 @@ impl Parser {
             written_lines: std::sync::Arc::default(),
             position: 0,
             structs: BTreeMap::new(),
+            member_layouts: std::cell::RefCell::new(BTreeMap::new()),
             enums: BTreeMap::new(),
             enum_constants: BTreeMap::new(),
             typedefs: BTreeMap::new(),
@@ -7967,6 +8163,8 @@ impl Parser {
             }
             C0Expression::AddressOf(target) => self.expression_is_constant_lvalue(target),
             C0Expression::PointerOffsetBytes { pointer, .. }
+            | C0Expression::MemberAddress { pointer, .. }
+            | C0Expression::RecordPointerOffset { pointer, .. }
             | C0Expression::Subtract(pointer, _) => self.expression_pointee_is_constant(pointer),
             C0Expression::Add(left, right) => {
                 self.expression_pointee_is_constant(left)
@@ -8114,7 +8312,9 @@ impl Parser {
                 static_integer_value(index)?;
                 Some((base_type.pointee_type()?, constant))
             }
-            C0Expression::PointerOffsetBytes { pointer, .. } => {
+            C0Expression::PointerOffsetBytes { pointer, .. }
+            | C0Expression::MemberAddress { pointer, .. }
+            | C0Expression::RecordPointerOffset { pointer, .. } => {
                 self.static_address_expression(pointer)
             }
             C0Expression::Add(pointer, offset) => {
@@ -8964,6 +9164,7 @@ impl Parser {
             requires_read_only_contract: false,
             program_entry_state: None,
             prelowered_kernel_function: None,
+            typed_access_policy: crate::kernel::CTypedAccessPolicy::default(),
             parameters: header.parameters,
             body,
             callback_statement_sources: std::sync::Arc::new(
@@ -10969,6 +11170,7 @@ impl Parser {
                     .insert(
                         field_name.clone(),
                         C0StructField {
+                            name: field_name.clone(),
                             c_type,
                             long_double: false,
                             pointee_constant: false,
@@ -11014,6 +11216,7 @@ impl Parser {
                     .insert(
                         field_name.clone(),
                         C0StructField {
+                            name: field_name.clone(),
                             c_type,
                             long_double: field_type.long_double,
                             pointee_constant: field_type.pointee_constant,
@@ -11420,6 +11623,7 @@ impl Parser {
                     constant: false,
                     pointee_constant: false,
                     reference: false,
+                    native_pointer_input: false,
                     struct_layout: None,
                     pointee_struct_layout: None,
                     function_pointer_signature: Some(signature),
@@ -11523,6 +11727,7 @@ impl Parser {
                         constant: object_constant,
                         pointee_constant,
                         reference: false,
+                        native_pointer_input: false,
                         struct_layout: struct_value_layout,
                         pointee_struct_layout: (c_type.is_pointer() && !array_parameter)
                             .then(|| {
@@ -11566,6 +11771,7 @@ impl Parser {
                         constant: object_constant,
                         pointee_constant,
                         reference: false,
+                        native_pointer_input: false,
                         struct_layout: self.structs.get(&struct_name_value).cloned(),
                         pointee_struct_layout: None,
                         function_pointer_signature: None,
@@ -11588,11 +11794,18 @@ impl Parser {
                 constant: object_constant,
                 pointee_constant,
                 reference: false,
+                native_pointer_input: false,
                 struct_layout: struct_name
                     .as_ref()
                     .and_then(|name| self.structs.get(name))
                     .cloned(),
-                pointee_struct_layout: None,
+                pointee_struct_layout: (c_type.is_pointer() && !array_parameter)
+                    .then(|| {
+                        struct_name
+                            .as_ref()
+                            .and_then(|name| self.structs.get(name).cloned())
+                    })
+                    .flatten(),
                 function_pointer_signature: parsed_type.function_pointer_signature,
                 struct_name,
                 union_name: parsed_type.union_name,
@@ -13825,13 +14038,17 @@ impl Parser {
             loop {
                 if self.peek() == Some(&Token::Dot) {
                     has_designated_initializer = true;
-                    let (designated_index, parent_pointer, field) = self
+                    let (designated_index, parent_pointer, parent_struct, field) = self
                         .parse_struct_field_designator(
                             target_pointer.clone(),
                             struct_name,
                             &fields,
                         )?;
-                    stores.extend(self.parse_struct_initializer_field(parent_pointer, &field)?);
+                    stores.extend(self.parse_struct_initializer_field(
+                        parent_pointer,
+                        &parent_struct,
+                        &field,
+                    )?);
                     // C continues positional initialization after the
                     // top-level field selected by a designator. Nested field
                     // designators therefore advance past their outer field.
@@ -13847,9 +14064,11 @@ impl Parser {
                             "too many initializers for `struct {struct_name}`"
                         )));
                     };
-                    stores.extend(
-                        self.parse_struct_initializer_field(target_pointer.clone(), field)?,
-                    );
+                    stores.extend(self.parse_struct_initializer_field(
+                        target_pointer.clone(),
+                        struct_name,
+                        field,
+                    )?);
                     field_index += 1;
                 }
                 match self.peek() {
@@ -13887,7 +14106,11 @@ impl Parser {
             stores = zero_stores;
         } else {
             for field in fields.iter().skip(field_index) {
-                stores.extend(self.zero_struct_initializer_field(target_pointer.clone(), field));
+                stores.extend(self.zero_struct_initializer_field(
+                    target_pointer.clone(),
+                    struct_name,
+                    field,
+                ));
             }
         }
         Ok(stores)
@@ -13902,7 +14125,7 @@ impl Parser {
         target_pointer: C0Expression,
         struct_name: &str,
         root_fields: &[C0StructField],
-    ) -> Result<(usize, C0Expression, C0StructField), C0SyntaxError> {
+    ) -> Result<(usize, C0Expression, String, C0StructField), C0SyntaxError> {
         let mut current_struct_name = struct_name.to_string();
         let mut parent_pointer = target_pointer;
         let mut root_index = None;
@@ -13940,7 +14163,11 @@ impl Parser {
                     return Err(self
                         .error_here("nested field designators require an embedded struct field"));
                 }
-                parent_pointer = offset_field_pointer(parent_pointer, field.offset_bytes);
+                parent_pointer = self.declared_member_pointer(
+                    parent_pointer,
+                    &current_struct_name,
+                    vec![field_name.clone()],
+                );
                 current_struct_name = field
                     .struct_name
                     .expect("embedded struct designator has a struct name");
@@ -13949,16 +14176,18 @@ impl Parser {
 
             self.expect(Token::Equal)?;
             let root_index = root_index.expect("root field designator belongs to the root layout");
-            return Ok((root_index, parent_pointer, field));
+            return Ok((root_index, parent_pointer, current_struct_name, field));
         }
     }
 
     fn parse_struct_initializer_field(
         &mut self,
         target_pointer: C0Expression,
+        struct_name: &str,
         field: &C0StructField,
     ) -> Result<Vec<C0Statement>, C0SyntaxError> {
-        let field_pointer = offset_field_pointer(target_pointer, field.offset_bytes);
+        let field_pointer =
+            self.declared_member_pointer(target_pointer, struct_name, vec![field.name.clone()]);
         if let Some(element_width) = field.array_element_width {
             let struct_name = field
                 .struct_name
@@ -13995,6 +14224,7 @@ impl Parser {
         }
 
         if let Some((element_type, dimensions)) = struct_scalar_array_shape(field) {
+            let field_pointer = decay_declared_array_member(field_pointer, field.c_type);
             if self.peek() != Some(&Token::LBrace) {
                 return Err(self.error_here(
                     "inline scalar array initializers require a nested `{...}` group",
@@ -14232,16 +14462,20 @@ impl Parser {
         fields.sort_by_key(|field| field.offset_bytes);
         fields
             .iter()
-            .flat_map(|field| self.zero_struct_initializer_field(target_pointer.clone(), field))
+            .flat_map(|field| {
+                self.zero_struct_initializer_field(target_pointer.clone(), struct_name, field)
+            })
             .collect()
     }
 
     fn zero_struct_initializer_field(
         &self,
         target_pointer: C0Expression,
+        struct_name: &str,
         field: &C0StructField,
     ) -> Vec<C0Statement> {
-        let field_pointer = offset_field_pointer(target_pointer, field.offset_bytes);
+        let field_pointer =
+            self.declared_member_pointer(target_pointer, struct_name, vec![field.name.clone()]);
         if let Some(element_width) = field.array_element_width {
             let struct_name = field
                 .struct_name
@@ -14267,6 +14501,7 @@ impl Parser {
         }
 
         if let Some((element_type, dimensions)) = struct_scalar_array_shape(field) {
+            let field_pointer = decay_declared_array_member(field_pointer, field.c_type);
             let element_count = dimensions.iter().product::<u32>();
             return (0..element_count)
                 .map(|index| C0Statement::Store {
@@ -14372,6 +14607,7 @@ impl Parser {
             self.variable_function_pointers
                 .insert(kernel_name.clone(), signature.clone());
             let declaration = C0Statement::Declare {
+                aggregate_array_backing: false,
                 c_type,
                 name: kernel_name.clone(),
                 volatile: false,
@@ -14601,6 +14837,8 @@ impl Parser {
                 }
             }
             let declaration = C0Statement::Declare {
+                aggregate_array_backing: is_plain_struct_type(&parsed_type)
+                    && array_shape.is_some(),
                 c_type,
                 name: name.clone(),
                 volatile: object_volatile,
@@ -14648,6 +14886,7 @@ impl Parser {
                     };
                     let declaration = match declaration {
                         C0Statement::Declare {
+                            aggregate_array_backing,
                             c_type,
                             name,
                             volatile,
@@ -14657,6 +14896,7 @@ impl Parser {
                             zero_fill: None,
                             ..
                         } => C0Statement::Declare {
+                            aggregate_array_backing,
                             c_type,
                             name,
                             volatile,
@@ -15163,16 +15403,37 @@ impl Parser {
                 .flatten();
             let element_width = element_type.abi_size_bytes();
             for index in 0..element_count {
-                let element_offset = field
-                    .offset_bytes
-                    .checked_add(
-                        index
-                            .checked_mul(element_width)
-                            .expect("validated struct value field offset"),
+                let (target_pointer, source_pointer) = if field.name.contains('[') {
+                    // Complete arrays of records have no authenticated geometry in the
+                    // bounded profile. Preserve the legacy byte path without issuing it.
+                    (
+                        offset_field_pointer(target_pointer.clone(), field.offset_bytes),
+                        offset_field_pointer(source_pointer.clone(), field.offset_bytes),
                     )
-                    .expect("validated struct value field offset");
-                let target_pointer = offset_field_pointer(target_pointer.clone(), element_offset);
-                let source_pointer = offset_field_pointer(source_pointer.clone(), element_offset);
+                } else {
+                    let path = field.name.split('.').map(str::to_owned).collect::<Vec<_>>();
+                    (
+                        self.declared_member_pointer(
+                            target_pointer.clone(),
+                            target_struct,
+                            path.clone(),
+                        ),
+                        self.declared_member_pointer(source_pointer.clone(), target_struct, path),
+                    )
+                };
+                let (target_pointer, source_pointer) = if field.c_type != element_type {
+                    (
+                        decay_declared_array_member(target_pointer, field.c_type),
+                        decay_declared_array_member(source_pointer, field.c_type),
+                    )
+                } else {
+                    (target_pointer, source_pointer)
+                };
+                let element_offset = index
+                    .checked_mul(element_width)
+                    .expect("validated struct value element offset");
+                let target_pointer = offset_field_pointer(target_pointer, element_offset);
+                let source_pointer = offset_field_pointer(source_pointer, element_offset);
                 stores.push(C0Statement::Store {
                     pointer: target_pointer,
                     value: C0Expression::Field {
@@ -15263,6 +15524,7 @@ impl Parser {
             self.reject_discarded_const_pointer(parsed_type.c_type, pointee_constant, &expression)?;
             initializers.push(C0Statement::Seq(
                 Box::new(C0Statement::Declare {
+                    aggregate_array_backing: false,
                     c_type: parsed_type.c_type,
                     name: name.clone(),
                     volatile: object_volatile,
@@ -15473,12 +15735,12 @@ impl Parser {
             C0Expression::Add(left, right)
                 if operator == Token::PlusPlus || operator == Token::PlusEqual =>
             {
-                self.scale_struct_pointer_arithmetic(*left, *right, C0Expression::Add)?
+                self.scale_struct_pointer_arithmetic(*left, *right, C0Expression::Add, false)?
             }
             C0Expression::Subtract(left, right)
                 if operator == Token::MinusMinus || operator == Token::MinusEqual =>
             {
-                self.scale_struct_pointer_arithmetic(*left, *right, C0Expression::Subtract)?
+                self.scale_struct_pointer_arithmetic(*left, *right, C0Expression::Subtract, true)?
             }
             expression => expression,
         };
@@ -15870,10 +16132,22 @@ impl Parser {
             };
             bytes.clone()
         };
+        let allocated_scalar_type = if self.variable_structs.contains_key(&target) {
+            None
+        } else {
+            match self.variable_types.get(&target) {
+                Some(C0Type::Int32Pointer) => Some(C0Type::Int32),
+                Some(C0Type::Int64Pointer) => Some(C0Type::Int64),
+                Some(C0Type::UInt32Pointer) => Some(C0Type::UInt32),
+                Some(C0Type::UInt8Pointer) => Some(C0Type::UInt8),
+                _ => None,
+            }
+        };
         Ok(C0Statement::HeapAllocate {
             target,
             bytes,
             zeroed,
+            allocated_scalar_type,
             site: C0Site::NONE,
         })
     }
@@ -16015,6 +16289,8 @@ impl Parser {
             | C0Expression::FloatClassification { .. }
             | C0Expression::AddressOf(_)
             | C0Expression::PointerOffsetBytes { .. }
+            | C0Expression::MemberAddress { .. }
+            | C0Expression::RecordPointerOffset { .. }
             | crate::languages::c::syntax::c0_comparison!(_, _)
             | C0Expression::Not(_)
             | C0Expression::And(_, _)
@@ -16076,6 +16352,10 @@ impl Parser {
             | C0Expression::FloatNegate(expression)
             | C0Expression::FloatClassification { expression, .. }
             | C0Expression::PointerOffsetBytes {
+                pointer: expression,
+                ..
+            }
+            | C0Expression::MemberAddress {
                 pointer: expression,
                 ..
             }
@@ -16352,6 +16632,10 @@ impl Parser {
                     pointer: expression,
                     ..
                 }
+                | C0Expression::MemberAddress {
+                    pointer: expression,
+                    ..
+                }
                 | C0Expression::Not(expression)
                 | C0Expression::BitwiseNot(expression)
                 | C0Expression::Load(expression) => expressions.push(expression),
@@ -16407,6 +16691,10 @@ impl Parser {
                 | C0Expression::FloatClassification { expression, .. }
                 | C0Expression::AddressOf(expression)
                 | C0Expression::PointerOffsetBytes {
+                    pointer: expression,
+                    ..
+                }
+                | C0Expression::MemberAddress {
                     pointer: expression,
                     ..
                 }
@@ -16529,6 +16817,10 @@ impl Parser {
                 pointer: expression,
                 ..
             }
+            | C0Expression::MemberAddress {
+                pointer: expression,
+                ..
+            }
             | C0Expression::Not(expression)
             | C0Expression::BitwiseNot(expression)
             | C0Expression::CheckedArrayIndex {
@@ -16543,7 +16835,12 @@ impl Parser {
                     || self.expression_reads_potentially_changed_value(then_branch)
                     || self.expression_reads_potentially_changed_value(else_branch)
             }
-            crate::languages::c::syntax::binary_c0_operation!(left, right) => {
+            C0Expression::RecordPointerOffset {
+                pointer: left,
+                index: right,
+                ..
+            }
+            | crate::languages::c::syntax::binary_c0_operation!(left, right) => {
                 self.expression_reads_potentially_changed_value(left)
                     || self.expression_reads_potentially_changed_value(right)
             }
@@ -16622,6 +16919,7 @@ impl Parser {
             }
             | C0Statement::DeclareStructValue { .. } => Ok(statement),
             C0Statement::Declare {
+                aggregate_array_backing,
                 initializer: Some(expression),
                 c_type,
                 name,
@@ -16636,6 +16934,7 @@ impl Parser {
                 Ok(prepend_statements(
                     prefix,
                     C0Statement::Declare {
+                        aggregate_array_backing,
                         initializer: Some(expression),
                         c_type,
                         name,
@@ -16744,6 +17043,7 @@ impl Parser {
                 self.callback_statement_sources
                     .insert(callback_name.clone(), function.clone());
                 prefix.push(C0Statement::Declare {
+                    aggregate_array_backing: false,
                     c_type: callback_type,
                     name: callback_name.clone(),
                     volatile: false,
@@ -16771,6 +17071,7 @@ impl Parser {
                 target,
                 bytes,
                 zeroed,
+                allocated_scalar_type,
                 site,
             } => {
                 let (prefix, bytes) = self.lower_expression_calls(bytes)?;
@@ -16780,6 +17081,7 @@ impl Parser {
                         target,
                         bytes,
                         zeroed,
+                        allocated_scalar_type,
                         site,
                     },
                 ))
@@ -17145,6 +17447,10 @@ impl Parser {
             | C0Expression::PointerOffsetBytes {
                 pointer: expression,
                 ..
+            }
+            | C0Expression::MemberAddress {
+                pointer: expression,
+                ..
             } => self.reads_only_locals_other_than(expression, assigned),
             _ => false,
         }
@@ -17275,6 +17581,7 @@ impl Parser {
                     } else {
                         C0Expression::Subtract
                     },
+                    !increment,
                 )?;
                 let (capture, assignment) = if result_is_updated {
                     (update, C0Expression::Variable(temporary.clone()))
@@ -17284,6 +17591,7 @@ impl Parser {
                 Ok((
                     vec![
                         C0Statement::Declare {
+                            aggregate_array_backing: false,
                             c_type,
                             name: temporary.clone(),
                             volatile: false,
@@ -17328,6 +17636,7 @@ impl Parser {
                     self.variable_pointee_constants.insert(temporary.clone());
                 }
                 prefix.push(C0Statement::Declare {
+                    aggregate_array_backing: false,
                     c_type,
                     name: temporary.clone(),
                     volatile: false,
@@ -17539,6 +17848,7 @@ impl Parser {
                 // real stack binding before either arm assigns it, typed so
                 // neither branch's value is silently truncated.
                 prefix.push(C0Statement::Declare {
+                    aggregate_array_backing: false,
                     c_type,
                     name: target.clone(),
                     volatile: false,
@@ -17581,6 +17891,7 @@ impl Parser {
                     self.variable_pointee_constants.insert(target.clone());
                 }
                 let mut prefix = vec![C0Statement::Declare {
+                    aggregate_array_backing: false,
                     c_type,
                     name: target.clone(),
                     volatile: false,
@@ -17620,6 +17931,35 @@ impl Parser {
             C0Expression::AddressOf(expression) => {
                 let (prefix, expression) = self.lower_expression_calls(*expression)?;
                 Ok((prefix, C0Expression::AddressOf(Box::new(expression))))
+            }
+            C0Expression::RecordPointerOffset {
+                pointer,
+                index,
+                layout,
+                subtract,
+                struct_name,
+            } => {
+                let (prefix, pointer, index) = self.lower_expression_pair(*pointer, *index)?;
+                Ok((
+                    prefix,
+                    C0Expression::RecordPointerOffset {
+                        pointer: Box::new(pointer),
+                        index: Box::new(index),
+                        layout,
+                        subtract,
+                        struct_name,
+                    },
+                ))
+            }
+            C0Expression::MemberAddress { pointer, selection } => {
+                let (prefix, pointer) = self.lower_expression_calls(*pointer)?;
+                Ok((
+                    prefix,
+                    C0Expression::MemberAddress {
+                        pointer: Box::new(pointer),
+                        selection,
+                    },
+                ))
             }
             C0Expression::PointerOffsetBytes { pointer, bytes } => {
                 let (prefix, pointer) = self.lower_expression_calls(*pointer)?;
@@ -17685,6 +18025,7 @@ impl Parser {
                         .insert(temporary.clone(), struct_name.clone());
                 }
                 prefix.push(C0Statement::Declare {
+                    aggregate_array_backing: false,
                     c_type,
                     name: temporary.clone(),
                     volatile: false,
@@ -17862,6 +18203,7 @@ impl Parser {
 
         let (callback_name, callback_type) = self.declare_synthesized_function_pointer(&signature);
         prefix.push(C0Statement::Declare {
+            aggregate_array_backing: false,
             c_type: callback_type,
             name: callback_name.clone(),
             volatile: false,
@@ -17969,6 +18311,7 @@ impl Parser {
         };
         let mut prefix = left_prefix;
         prefix.push(C0Statement::Declare {
+            aggregate_array_backing: false,
             c_type: C0Type::Int32,
             name: target.clone(),
             volatile: false,
@@ -18490,7 +18833,12 @@ impl Parser {
                 Some(Token::Plus) => {
                     self.position += 1;
                     let right = self.parse_multiply()?;
-                    self.scale_struct_pointer_arithmetic(expression, right, C0Expression::Add)?
+                    self.scale_struct_pointer_arithmetic(
+                        expression,
+                        right,
+                        C0Expression::Add,
+                        false,
+                    )?
                 }
                 Some(Token::Minus) => {
                     self.position += 1;
@@ -18498,7 +18846,12 @@ impl Parser {
                     if let Some(right_type) = self.source_expression_type(&right) {
                         self.validate_char_pointer_assignment(right_type, &expression)?;
                     }
-                    self.scale_struct_pointer_arithmetic(expression, right, C0Expression::Subtract)?
+                    self.scale_struct_pointer_arithmetic(
+                        expression,
+                        right,
+                        C0Expression::Subtract,
+                        true,
+                    )?
                 }
                 _ => return Ok(expression),
             };
@@ -18510,41 +18863,12 @@ impl Parser {
         pointer: C0Expression,
         offset: C0Expression,
         constructor: fn(Box<C0Expression>, Box<C0Expression>) -> C0Expression,
+        subtract: bool,
     ) -> Result<C0Expression, C0SyntaxError> {
         let Some(struct_name) = self.struct_pointer_name(&pointer) else {
             return Ok(constructor(Box::new(pointer), Box::new(offset)));
         };
-        let result_type = self
-            .source_expression_type(&pointer)
-            .filter(|ty| ty.is_pointer());
-        let pointee_constant = self.expression_pointee_is_constant(&pointer);
-        let element_width = self
-            .structs
-            .get(&struct_name)
-            .ok_or_else(|| self.error_here("pointer arithmetic requires a complete struct layout"))?
-            .size_bytes;
-        let byte_pointer = C0Expression::Cast {
-            expression: Box::new(pointer),
-            c_type: C0Type::UInt8Pointer,
-            struct_name: None,
-            pointee_volatile: false,
-            pointee_constant,
-            explicit_qualification: false,
-        };
-        let byte_offset = struct_byte_stride(offset, element_width);
-        let expression = constructor(Box::new(byte_pointer), Box::new(byte_offset));
-        Ok(if let Some(c_type) = result_type {
-            C0Expression::Cast {
-                expression: Box::new(expression),
-                c_type,
-                struct_name: Some(struct_name),
-                pointee_volatile: false,
-                pointee_constant,
-                explicit_qualification: false,
-            }
-        } else {
-            expression
-        })
+        self.declared_record_pointer_offset(pointer, offset, &struct_name, subtract)
     }
 
     fn parse_multiply(&mut self) -> Result<C0Expression, C0SyntaxError> {
@@ -19282,26 +19606,15 @@ impl Parser {
                     } else {
                         let heap_struct = self.struct_pointer_name(&expression);
                         if let Some(struct_name) = heap_struct {
-                            let element_width = self
-                                .structs
-                                .get(&struct_name)
-                                .ok_or_else(|| {
-                                    self.error_here(format!(
-                                        "cannot index incomplete struct `{struct_name}`"
-                                    ))
-                                })?
-                                .size_bytes;
-                            let byte_pointer = C0Expression::Cast {
-                                expression: Box::new(expression),
-                                c_type: C0Type::UInt8Pointer,
-                                struct_name: None,
-                                pointee_volatile: false,
-                                pointee_constant: false,
-                                explicit_qualification: false,
+                            expression = C0Expression::AggregateAddress {
+                                pointer: Box::new(self.declared_record_pointer_offset(
+                                    expression,
+                                    first_index,
+                                    &struct_name,
+                                    false,
+                                )?),
+                                struct_name,
                             };
-                            let offset = struct_byte_stride(first_index, element_width);
-                            expression =
-                                C0Expression::Index(Box::new(byte_pointer), Box::new(offset));
                             if self.peek() != Some(&Token::Dot) {
                                 return Err(self.error_here(
                                     "array of struct values are only supported through field access",
@@ -19472,6 +19785,8 @@ impl Parser {
             | C0Expression::FloatClassification { .. }
             | C0Expression::AddressOf(_)
             | C0Expression::PointerOffsetBytes { .. }
+            | C0Expression::MemberAddress { .. }
+            | C0Expression::RecordPointerOffset { .. }
             | C0Expression::Int32Literal(_)
             | C0Expression::UInt8Literal(_)
             | C0Expression::UInt32Literal(_)
@@ -19526,6 +19841,7 @@ impl Parser {
 
     fn struct_pointer_name(&self, expression: &C0Expression) -> Option<String> {
         match expression {
+            C0Expression::RecordPointerOffset { struct_name, .. } => Some(struct_name.clone()),
             C0Expression::Variable(name)
                 if matches!(
                     self.variable_types.get(name),
@@ -19800,7 +20116,9 @@ impl Parser {
             }
             C0Expression::CheckedArrayIndex { index, .. } => self.source_expression_type(index),
             C0Expression::AddressOf(value) => self.source_expression_type(value)?.pointer_type(),
-            C0Expression::PointerOffsetBytes { pointer, .. } => {
+            C0Expression::PointerOffsetBytes { pointer, .. }
+            | C0Expression::MemberAddress { pointer, .. }
+            | C0Expression::RecordPointerOffset { pointer, .. } => {
                 self.source_expression_type(pointer)
             }
             C0Expression::FloatNegate(value) => self.source_expression_type(value),
@@ -20042,6 +20360,70 @@ impl Parser {
         }
     }
 
+    fn declared_record_pointer_offset(
+        &self,
+        pointer: C0Expression,
+        index: C0Expression,
+        struct_name: &str,
+        subtract: bool,
+    ) -> Result<C0Expression, C0SyntaxError> {
+        let declared = self.structs.get(struct_name).ok_or_else(|| {
+            self.error_here(format!("pointer arithmetic through incomplete struct `{struct_name}` requires a complete declaration"))
+        })?;
+        let layout = self
+            .member_layouts
+            .borrow_mut()
+            .entry(struct_name.to_string())
+            .or_insert_with(|| std::sync::Arc::new(declared.to_kernel_aggregate_layout()))
+            .clone();
+        Ok(C0Expression::RecordPointerOffset {
+            pointer: Box::new(pointer),
+            index: Box::new(index),
+            layout,
+            subtract,
+            struct_name: struct_name.to_owned(),
+        })
+    }
+
+    fn declared_member_pointer(
+        &self,
+        base: C0Expression,
+        struct_name: &str,
+        path: Vec<String>,
+    ) -> C0Expression {
+        let layout = self
+            .member_layouts
+            .borrow_mut()
+            .entry(struct_name.to_owned())
+            .or_insert_with(|| {
+                std::sync::Arc::new(
+                    self.structs
+                        .get(struct_name)
+                        .expect("validated member has a layout")
+                        .to_kernel_aggregate_layout(),
+                )
+            })
+            .clone();
+        let path: std::sync::Arc<[String]> = path.into();
+        let Some((_, value_type)) = layout.member_at_path(&path) else {
+            // Unions and complete arrays of records retain the existing path
+            // until their overlapping/indexed object geometry is modeled.
+            let field = (path.len() == 1)
+                .then(|| self.structs.get(struct_name)?.fields.get(&path[0]))
+                .flatten()
+                .expect("parsed unsupported member belongs to its declaration");
+            return offset_field_pointer(base, field.offset_bytes);
+        };
+        C0Expression::MemberAddress {
+            pointer: Box::new(base),
+            selection: std::sync::Arc::new(crate::kernel::CAggregateMemberSelection {
+                layout,
+                path,
+                value_type,
+            }),
+        }
+    }
+
     fn resolve_field_access(
         &self,
         base: &C0Expression,
@@ -20059,6 +20441,9 @@ impl Parser {
         C0SyntaxError,
     > {
         let (struct_name, union_name) = match base {
+            C0Expression::RecordPointerOffset { struct_name, .. } => {
+                (Some(struct_name.clone()), None)
+            }
             C0Expression::Variable(base_name) => {
                 (self.variable_structs.get(base_name).cloned(), None)
             }
@@ -20110,7 +20495,11 @@ impl Parser {
                 ));
             }
             return Ok((
-                offset_field_pointer(base.clone(), field.offset_bytes),
+                self.declared_member_pointer(
+                    base.clone(),
+                    &struct_name,
+                    vec![field_name.to_owned()],
+                ),
                 field.c_type,
                 field.struct_name.clone(),
                 field.union_name.clone(),
@@ -20232,7 +20621,11 @@ impl Parser {
             ));
         }
         Ok((
-            offset_field_pointer(element_pointer, field.offset_bytes),
+            self.declared_member_pointer(
+                element_pointer,
+                &struct_name,
+                vec![field_name.to_owned()],
+            ),
             field.c_type,
             field.struct_name.clone(),
             field.union_name.clone(),
@@ -21514,6 +21907,10 @@ fn first_embedded_call_position(expression: &C0Expression) -> Option<SourcePosit
             pointer: expression,
             ..
         }
+        | C0Expression::MemberAddress {
+            pointer: expression,
+            ..
+        }
         | C0Expression::Not(expression)
         | C0Expression::BitwiseNot(expression)
         | C0Expression::Load(expression) => first_embedded_call_position(expression),
@@ -21564,7 +21961,8 @@ fn assignment_chain_targets(expression: &C0Expression) -> Option<Vec<String>> {
             expression: pointer,
             ..
         }
-        | C0Expression::PointerOffsetBytes { pointer, .. } => {
+        | C0Expression::PointerOffsetBytes { pointer, .. }
+        | C0Expression::MemberAddress { pointer, .. } => {
             return assignment_chain_targets(pointer);
         }
         _ => {}
@@ -21605,6 +22003,7 @@ fn first_assignment_position(expression: &C0Expression) -> Option<SourcePosition
         }
         | C0Expression::AddressOf(value)
         | C0Expression::PointerOffsetBytes { pointer: value, .. }
+        | C0Expression::MemberAddress { pointer: value, .. }
         | C0Expression::Not(value)
         | C0Expression::BitwiseNot(value)
         | C0Expression::Load(value)
@@ -21685,6 +22084,7 @@ fn expression_reads_runtime_value(expression: &C0Expression) -> bool {
             expression: value, ..
         }
         | C0Expression::PointerOffsetBytes { pointer: value, .. }
+        | C0Expression::MemberAddress { pointer: value, .. }
         | C0Expression::Not(value)
         | C0Expression::BitwiseNot(value)
         | C0Expression::CheckedArrayIndex { index: value, .. } => {
@@ -21699,7 +22099,12 @@ fn expression_reads_runtime_value(expression: &C0Expression) -> bool {
                 || expression_reads_runtime_value(then_branch)
                 || expression_reads_runtime_value(else_branch)
         }
-        crate::languages::c::syntax::binary_c0_operation!(left, right) => {
+        C0Expression::RecordPointerOffset {
+            pointer: left,
+            index: right,
+            ..
+        }
+        | crate::languages::c::syntax::binary_c0_operation!(left, right) => {
             expression_reads_runtime_value(left) || expression_reads_runtime_value(right)
         }
     }

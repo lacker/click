@@ -1256,13 +1256,34 @@ fn stored_child_arguments_require_owned_memory() {
     concrete_definition.matched.as_mut().unwrap().arms[1]
         .contains
         .push(CResourceSpec::owned_memory(CMemorySegment {
-            base: c_pointer_value(concrete),
+            base: c_pointer_value(concrete.clone()),
             start: c_int32_literal(0),
             end: c_int32_literal(2),
             element_width: 4,
             guard: None,
         }));
     rewrite(&concrete_state, &concrete_definition, &assumptions, true).unwrap();
+    let mut short = concrete_definition.clone();
+    short.matched.as_mut().unwrap().arms[1]
+        .contains
+        .last_mut()
+        .unwrap()
+        .memory_segment_mut()
+        .unwrap()
+        .end = c_int32_literal(1);
+    assert!(
+        rewrite(&concrete_state, &short, &assumptions, true).is_err(),
+        "logical child address observation still needs all eight pointer bytes"
+    );
+    let uninitialized = concrete_state.clone().with_memory(
+        CMemory::new()
+            .with_block(concrete.block.clone(), 8)
+            .with_uninitialized_object(concrete, 8),
+    );
+    assert!(
+        rewrite(&uninitialized, &concrete_definition, &assumptions, true).is_err(),
+        "logical child address observation cannot initialize its pointer cell"
+    );
     // The parent's concrete memory may not also be owned by the surrounding
     // frame: unfolding must reject overlapping ownership.
     let mut overlap = state.clone();
@@ -5981,7 +6002,7 @@ fn dependent_resource_clause_work_scales_with_dependency_nodes() {
         // dependency walk rather than the unrelated same-block range
         // normalization cost of the resource algebra.
         block: PointerBlock::Concrete(format!("dependency-{index}")),
-        offset: PointerOffsetTerm::Constant((index as i64) * 4),
+        offset: PointerOffsetTerm::Constant((index as i64) * 8),
     };
     let load = |pointer: Pointer| CExpression::TypedLoad {
         pointer: Box::new(c_pointer_value(pointer)),
@@ -6015,7 +6036,8 @@ fn dependent_resource_clause_work_scales_with_dependency_nodes() {
                         base,
                         start: c_int32_literal(0),
                         end: c_int32_literal(1),
-                        element_width: 4,
+                        // Every provider supplies a complete pointer cell.
+                        element_width: 8,
                         guard: None,
                     })
                 })
@@ -6085,7 +6107,7 @@ fn symbolic_supplied_range_wakes_concrete_pending_dependency() {
             base,
             start: c_int32_literal(0),
             end,
-            element_width: 4,
+            element_width: 8,
             guard: None,
         })
     };
@@ -6101,14 +6123,14 @@ fn symbolic_supplied_range_wakes_concrete_pending_dependency() {
         owned(c_pointer_value(seed.clone()), c_int32_literal(1)),
     ];
     let memory = CMemory::new()
-        .store(seed, CValue::pointer(intermediate.clone()))
+        .store(seed.clone(), CValue::pointer(intermediate.clone()))
         .store(intermediate, CValue::pointer(target));
     let assumptions = PureFactContext::new().assume_condition(
         ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), length),
         true,
     );
     let result = crate::kernel::functions::evaluate_function_resource_context(
-        &CState::new().with_memory(memory),
+        &CState::new().with_memory(memory.clone()),
         &clauses,
         &[],
         &assumptions,
@@ -6117,6 +6139,26 @@ fn symbolic_supplied_range_wakes_concrete_pending_dependency() {
     .expect("clause evaluation stays inside its budget")
     .expect("the symbolic provider should wake the concrete pending clause");
     assert_eq!(result.facts().len(), 3);
+    let mut partial = clauses;
+    partial[2] = CResourceSpec::owned_memory(CMemorySegment {
+        base: c_pointer_value(seed),
+        start: c_int32_literal(0),
+        end: c_int32_literal(1),
+        element_width: 4,
+        guard: None,
+    });
+    assert!(
+        crate::kernel::functions::evaluate_function_resource_context(
+            &CState::new().with_memory(memory),
+            &partial,
+            &[],
+            &assumptions,
+            &mut ExecutionBudget::default(),
+        )
+        .expect("partial provider check stays inside its budget")
+        .is_err(),
+        "a four-byte provider cannot wake a full eight-byte pointer dependency"
+    );
 }
 
 #[test]

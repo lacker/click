@@ -265,6 +265,10 @@ fn collect_c_expression_reads(expression: &CExpression, bound: &[String], reads:
             pointer: expression,
             ..
         }
+        | PointerAligned {
+            pointer: expression,
+            ..
+        }
         | Not(expression)
         | BitwiseNot(expression) => collect_c_expression_reads(expression, bound, reads),
         Conditional {
@@ -276,7 +280,12 @@ fn collect_c_expression_reads(expression: &CExpression, bound: &[String], reads:
             collect_c_expression_reads(then_branch, bound, reads);
             collect_c_expression_reads(else_branch, bound, reads);
         }
-        LessThan(left, right)
+        RecordPointerOffset {
+            pointer: left,
+            index: right,
+            ..
+        }
+        | LessThan(left, right)
         | LessEqual(left, right)
         | GreaterThan(left, right)
         | GreaterEqual(left, right)

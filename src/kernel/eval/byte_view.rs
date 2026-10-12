@@ -4,7 +4,8 @@
 //! a wider integer cell, rather than on a cell of its own, still has a defined
 //! meaning once the target's byte order is known: under little-endian order,
 //! byte `k` of an integer object holds bits `8k .. 8k + 8` of its value. This
-//! module is the only place that meaning is written down.
+//! module implements those cell operations. Declared uint32 observations share
+//! their projection and packing law with `uint32_representation`.
 //!
 //! The view is deliberately narrow:
 //!
@@ -56,10 +57,7 @@ pub(in crate::kernel) fn assemble_declared_uint32_after_byte_store(
         return None;
     }
     let as_byte = |value: &CValue| match value {
-        CValue::UInt8(bits) | CValue::Int8(bits) => Some(Bitvector32Term::bitwise_and(
-            bits.clone(),
-            Bitvector32Term::Constant(0xFF),
-        )),
+        CValue::UInt8(bits) | CValue::Int8(bits) => Some(bits.clone()),
         _ => None,
     };
     let incoming = as_byte(stored)?;
@@ -67,7 +65,7 @@ pub(in crate::kernel) fn assemble_declared_uint32_after_byte_store(
         block: pointer.block.clone(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let mut assembled = Bitvector32Term::Constant(0);
+    let mut bytes = Vec::with_capacity(4);
     for byte in 0..4 {
         crate::instrumentation::record_deterministic_work(1);
         let bits = if byte == offset {
@@ -75,11 +73,9 @@ pub(in crate::kernel) fn assemble_declared_uint32_after_byte_store(
         } else {
             as_byte(&memory.cells.get(&start.offset_by_bytes(byte as u32))?)?
         };
-        assembled = Bitvector32Term::bitwise_or(
-            assembled,
-            Bitvector32Term::unsigned_shift_left(bits, Bitvector32Term::Constant(8 * byte as u32)),
-        );
+        bytes.push(bits);
     }
+    let assembled = super::uint32_representation::pack_bytes(bytes.try_into().ok()?);
     Some((start, CValue::UInt32(assembled)))
 }
 
@@ -184,7 +180,10 @@ pub(in crate::kernel) fn integer_cell_byte(value: &CValue, byte: u32) -> Option<
     }
     let shift = 8 * byte;
     Some(match value {
-        CValue::Int16(term) | CValue::UInt16(term) | CValue::Int32(term) | CValue::UInt32(term) => {
+        CValue::Int32(term) | CValue::UInt32(term) => {
+            super::uint32_representation::project_byte(term.clone(), byte)
+        }
+        CValue::Int16(term) | CValue::UInt16(term) => {
             // A 16-bit value's 32-bit term is its sign or zero extension, so
             // its low sixteen bits are its representation either way.
             Bitvector32Term::bitwise_and(

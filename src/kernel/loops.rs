@@ -8,6 +8,277 @@ use super::prelude::*;
 mod empty_loop_rule_tests {
     use super::*;
 
+    fn pointer_carrier_state() -> (CState, CPointerValue, CPointerValue) {
+        let first = CMemory::local_pointer("carrier_first");
+        let second = CMemory::local_pointer("carrier_second");
+        let memory = CMemory::new()
+            .with_declared_scalar_block(first.block.clone(), 4, CType::Int32)
+            .with_declared_scalar_block(second.block.clone(), 4, CType::Int32);
+        let p = memory
+            .declared_scalar_pointer(&first, CType::Int32)
+            .unwrap();
+        let q = memory
+            .declared_scalar_pointer(&second, CType::Int32)
+            .unwrap();
+        let slot = CMemory::local_pointer("p");
+        let memory = memory
+            .with_declared_scalar_block(slot.block.clone(), 8, CType::Int32Pointer)
+            .store(slot.clone(), CValue::Pointer(p.clone()));
+        (
+            CState::new()
+                .with_memory(memory)
+                .with_local("p", CValue::Pointer(p.clone()))
+                .with_resource_context(ResourceContext::new().unchecked_with_fact(
+                    CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+                        slot,
+                        0u32.into(),
+                        1u32.into(),
+                        8,
+                    )),
+                )),
+            p,
+            q,
+        )
+    }
+
+    #[test]
+    fn checked_loop_pointer_carriers_preserve_identity_and_selected_work() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (state, p, q) = pointer_carrier_state();
+        let body = c_assign("p", c_add(c_variable("p"), c_int32_literal(1)));
+        let (head, carriers) = havoc_loop_modified_locals_with_carriers(
+            &state,
+            &body,
+            &mut KernelVariableGenerator::fresh_for_execution(BTreeSet::new()),
+            &mut ExecutionBudget::default(),
+            None,
+            true,
+        )
+        .unwrap();
+        let CValue::Pointer(abstract_p) = head.locals.get("p").unwrap() else {
+            panic!("pointer")
+        };
+        assert_ne!(abstract_p.pointer(), p.pointer());
+        assert!(same_pointer_carrier(abstract_p, &p));
+        let advanced = p.clone().with_pointer(p.pointer().offset_by_bytes(4));
+        check_loop_pointer_carriers(
+            &carriers,
+            &head
+                .clone()
+                .with_local("p", CValue::Pointer(advanced.clone())),
+        )
+        .unwrap();
+        for changed in [
+            q.clone(),
+            q.clone().with_pointer(p.pointer().clone()),
+            CPointerValue::new(p.pointer().clone(), p.c_type()),
+        ] {
+            assert!(
+                check_loop_pointer_carriers(
+                    &carriers,
+                    &head.clone().with_local("p", CValue::Pointer(changed))
+                )
+                .is_err()
+            );
+        }
+        let fresh = CValue::Pointer(
+            CPointerValue::new(Pointer::symbolic(Variable(998_551)), p.c_type())
+                .with_designation(PointerDesignation::Unresolved(Variable(998_551))),
+        );
+        let common = retain_common_pointer_carrier(
+            fresh.clone(),
+            &[CValue::Pointer(p.clone()), CValue::Pointer(advanced)],
+        );
+        assert!(matches!(common, CValue::Pointer(pointer) if pointer.same_designation(&p)));
+        let different =
+            retain_common_pointer_carrier(fresh.clone(), &[CValue::Pointer(p), CValue::Pointer(q)]);
+        assert_eq!(different, fresh);
+        let mut work = Vec::new();
+        for size in [16u32, 128, 1024] {
+            let mut ambient = head.clone();
+            for index in 0..size {
+                ambient = ambient.with_local(format!("unrelated_{index}"), int32(index));
+            }
+            let (_, units) = crate::instrumentation::measure_deterministic_work(|| {
+                for _ in 0..32 {
+                    check_loop_pointer_carriers(&carriers, &ambient).unwrap();
+                }
+            });
+            work.push(units);
+        }
+        assert_eq!(work[0], work[1], "{work:?}");
+        assert_eq!(work[1], work[2], "{work:?}");
+    }
+
+    #[test]
+    fn checked_loop_pointer_carrier_changes_refuse_all_body_exits_and_escaped_stores() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (state, _, q) = pointer_carrier_state();
+        let target = CControlTargetId(41);
+        let assign = c_assign("p", CExpression::Value(CValue::Pointer(q.clone())));
+        let indirect = c_store(
+            CExpression::AddressOf(Box::new(c_variable("p"))),
+            CExpression::Value(CValue::Pointer(q)),
+        );
+        for body in [
+            assign.clone(),
+            c_seq(assign.clone(), c_continue()),
+            c_seq(assign.clone(), c_break()),
+            c_seq(assign.clone(), c_return(c_int32_literal(0))),
+            c_seq(assign, c_goto(target)),
+            indirect,
+        ] {
+            let mut budget = ExecutionBudget::default();
+            let mut variables = KernelVariableGenerator::fresh_for_execution(BTreeSet::new());
+            let head = prepare_loop_top_state(
+                &state,
+                &[],
+                &[],
+                &[],
+                &[],
+                &body,
+                &PureFactContext::new(),
+                &mut budget,
+                &mut variables,
+            )
+            .unwrap();
+            assert_eq!(head.pointer_carriers.len(), 1);
+            let summary = collect_loop_preservation_summary(
+                &state,
+                &head,
+                &c_int32_literal(1),
+                &[],
+                &[],
+                &[],
+                &[],
+                None,
+                &[],
+                &[],
+                &body,
+                &PureFactContext::new(),
+                &CExecutionEnvironment::new(),
+                CExecutionSemantics::EXECUTE_BODIES,
+                false,
+                Some(target),
+                None,
+                &mut budget,
+                &mut variables,
+            )
+            .unwrap();
+            assert!(
+                summary.obligations.iter().any(|obligation| obligation
+                    .context()
+                    .is_some_and(|context| context.contains("retained pointer carrier"))),
+                "each checked body exit, including the indirect store, must reject: {body:?}; {:?}",
+                summary.obligations
+            );
+        }
+    }
+
+    #[test]
+    fn checked_loop_pointer_carriers_allow_same_carrier_break_and_return() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (state, pointer, _) = pointer_carrier_state();
+        let advanced = pointer
+            .clone()
+            .with_pointer(pointer.pointer().offset_by_bytes(4));
+        for end in [c_break(), c_return(c_int32_literal(0))] {
+            let body = c_seq(
+                c_assign("p", CExpression::Value(CValue::Pointer(advanced.clone()))),
+                end,
+            );
+            let mut budget = ExecutionBudget::default();
+            let mut variables = KernelVariableGenerator::fresh_for_execution(BTreeSet::new());
+            let head = prepare_loop_top_state(
+                &state,
+                &[],
+                &[],
+                &[],
+                &[],
+                &body,
+                &PureFactContext::new(),
+                &mut budget,
+                &mut variables,
+            )
+            .unwrap();
+            let summary = collect_loop_preservation_summary(
+                &state,
+                &head,
+                &c_int32_literal(1),
+                &[],
+                &[],
+                &[],
+                &[],
+                None,
+                &[],
+                &[],
+                &body,
+                &PureFactContext::new(),
+                &CExecutionEnvironment::new(),
+                CExecutionSemantics::EXECUTE_BODIES,
+                false,
+                Some(CControlTargetId(42)),
+                None,
+                &mut budget,
+                &mut variables,
+            )
+            .unwrap();
+            assert!(
+                summary.obligations.is_empty(),
+                "{body:?}: {:?}",
+                summary.obligations
+            );
+        }
+    }
+
+    #[test]
+    fn loop_and_branch_havoc_keep_designated_pointer_profiles_unresolved() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let root = CMemory::local_pointer("object");
+        let memory = CMemory::new().with_declared_scalar_block(root.block.clone(), 4, CType::Int32);
+        let designated = memory.declared_scalar_pointer(&root, CType::Int32).unwrap();
+        let state = CState::new()
+            .with_memory(memory)
+            .with_local("p", CValue::Pointer(designated.clone()));
+        let body = c_assign("p", c_add(c_variable("p"), c_int32_literal(1)));
+        let mut variables = KernelVariableGenerator::fresh_for_execution(BTreeSet::new());
+        let havoced = havoc_loop_modified_locals(
+            &state,
+            &body,
+            &mut variables,
+            &mut ExecutionBudget::default(),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(havoced.locals.get("p"),
+            Some(CValue::Pointer(pointer)) if matches!(pointer.designation(),
+                Some(PointerDesignation::Unresolved(_)))));
+        let legacy = state
+            .clone()
+            .with_local("p", CValue::typed_pointer(root, CType::Int32Pointer));
+        let mut variables = KernelVariableGenerator::fresh_for_execution(BTreeSet::new());
+        let legacy_havoc = havoc_loop_modified_locals(
+            &legacy,
+            &body,
+            &mut variables,
+            &mut ExecutionBudget::default(),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(legacy_havoc.locals.get("p"),
+            Some(CValue::Pointer(pointer)) if pointer.designation().is_none()));
+        let arms = [&state, &legacy];
+        let joined = abstract_c_state_for_join_across(&state, &arms, &BTreeMap::new(), 0).unwrap();
+        let other = abstract_c_state_for_join_across(&legacy, &arms, &BTreeMap::new(), 0).unwrap();
+        assert_eq!(joined, other);
+        assert!(matches!(joined.state.locals.get("p"),
+            Some(CValue::Pointer(pointer)) if matches!(pointer.designation(),
+                Some(PointerDesignation::Unresolved(_)))));
+        let stable = BTreeMap::from([("p".into(), CValue::Pointer(designated))]);
+        let kept = abstract_c_state_for_join(&state, &stable, 0).unwrap();
+        assert_eq!(kept.state.locals.get("p"), state.locals.get("p"));
+    }
+
     /// A genuinely unannotated loop without a checked rule must retain the
     /// evaluator's unrolling bound, even though rule dispatch checks all loops.
     #[test]
@@ -4894,11 +5165,17 @@ fn abstract_loop_exit_locals(
         let Some(c_type) = successor.local_object_type(&name) else {
             return Err(format!("local `{name}` has no scalar type here"));
         };
-        let Some(fresh) =
-            fresh_loop_local_value(c_type, variables, budget).map_err(exhausted_identities)?
+        let Some(fresh) = fresh_loop_local_value(
+            c_type,
+            held.iter().any(value_has_pointer_designation),
+            variables,
+            budget,
+        )
+        .map_err(exhausted_identities)?
         else {
             return Err(format!("local `{name}` has no abstract value of its type"));
         };
+        let fresh = retain_common_pointer_carrier(fresh, &held);
         for (restatement, held) in restatements.iter_mut().zip(held) {
             restatement.pin(&fresh, &held);
         }
@@ -4970,14 +5247,20 @@ fn abstract_loop_exit_memory(
                 pointer.block
             ));
         }
-        let Some(fresh) = fresh_loop_local_value(held[0].c_type(), variables, budget)
-            .map_err(exhausted_identities)?
+        let Some(fresh) = fresh_loop_local_value(
+            held[0].c_type(),
+            held.iter().any(value_has_pointer_designation),
+            variables,
+            budget,
+        )
+        .map_err(exhausted_identities)?
         else {
             return Err(format!(
                 "the cell in `{}` has no abstract value of its type",
                 pointer.block
             ));
         };
+        let fresh = retain_common_pointer_carrier(fresh, &held);
         for (restatement, held) in restatements.iter_mut().zip(held) {
             restatement.pin(&fresh, &held);
         }
@@ -5069,6 +5352,7 @@ fn loop_declared_memory_ranges(body_state: &CState) -> Vec<CMemoryRange> {
 /// The abstract value a loop havoc gives a local of this type, if it has one.
 fn fresh_loop_local_value(
     c_type: CType,
+    retain_pointer_profile: bool,
     variables: &mut KernelVariableGenerator,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Option<CValue>> {
@@ -5110,8 +5394,16 @@ fn fresh_loop_local_value(
         // A pointer local reassigned in the body (`p = p + 1`) must not keep
         // its entry value across the abstract iteration, exactly as the join
         // abstraction treats it; an invariant must relate it.
+        _ if retain_pointer_profile && c_type.is_object_pointer() => CValue::Pointer(
+            CPointerValue::new(Pointer::symbolic(variable), c_type)
+                .with_designation(PointerDesignation::Unresolved(variable)),
+        ),
         _ => CValue::typed_pointer(Pointer::symbolic(variable), c_type),
     }))
+}
+
+fn value_has_pointer_designation(value: &CValue) -> bool {
+    matches!(value, CValue::Pointer(pointer) if pointer.designation().is_some())
 }
 
 /// What an abstracted successor and one exit still disagree about once the
@@ -5451,6 +5743,21 @@ fn execute_c_while_exit_paths(
             ProofObligation::verification_condition(false_equals_true_proposition())
                 .with_context(failure.context()),
         );
+    }
+    // Explicit preservation uses the existing checked all-leaf coverage
+    // boundary. Independently recheck every state it exports to this rule.
+    for successor in final_exit_candidates
+        .iter()
+        .map(CLoopFinalExitCandidate::state)
+        .chain(break_exits.iter().map(CLoopBreakExit::state))
+        .chain(return_exits.iter().map(CLoopReturnExit::state))
+    {
+        if let Err(message) = check_loop_pointer_carriers(&head.pointer_carriers, successor) {
+            loop_check_obligations.push(
+                ProofObligation::verification_condition(false_equals_true_proposition())
+                    .with_context(message),
+            );
+        }
     }
     append_required_proof_obligations(&mut loop_check_obligations, assumptions, &entry_obligations);
     append_required_proof_obligations(
@@ -6340,6 +6647,28 @@ pub(super) fn collect_loop_preservation_summary(
                 )?,
                 &body_declared,
             ) {
+                let successor = match &body_path.outcome {
+                    CStatementOutcome::Normal(state)
+                    | CStatementOutcome::Break(state)
+                    | CStatementOutcome::Continue(state)
+                    | CStatementOutcome::Jump { state, .. }
+                    | CStatementOutcome::Return { state, .. }
+                    | CStatementOutcome::Throw { state, .. } => Some(state.as_ref()),
+                    _ => None,
+                };
+                if let Some(successor) = successor
+                    && let Err(message) =
+                        check_loop_pointer_carriers(&head.pointer_carriers, successor)
+                {
+                    append_required_proof_obligations_under_path_context(
+                        &mut obligations,
+                        assumptions,
+                        &[ProofObligation::verification_condition(false_equals_true_proposition())
+                            .with_context(message)],
+                        &body_path.facts,
+                        &body_path.obligations,
+                    );
+                }
                 let outcome = body_path.outcome;
                 let natural_backedge = matches!(
                     &outcome,
@@ -6817,6 +7146,9 @@ pub(super) struct CLoopHead {
     /// from the checked evaluation of the loop's own resource specs at entry.
     /// Every later check of this loop reads these, never the originals.
     pub(super) effect_checks: Vec<CLoopEffectCheck>,
+    /// An implicit induction hypothesis for selected modified pointer locals.
+    /// Every checked body successor must retain this exact carrier identity.
+    pub(super) pointer_carriers: BTreeMap<String, CPointerValue>,
 }
 
 /// Why a declared loop resource could not be taken from the enclosing
@@ -7022,12 +7354,13 @@ pub(super) fn prepare_loop_top_state(
             validate_loop_havoc_stable_loans(ledger, validated.as_deref(), assumptions).err()
         });
     let mut resource_failures: Vec<CLoopResourceFailure> = Vec::new();
-    let mut top_state = havoc_loop_modified_locals(
+    let (mut top_state, pointer_carriers) = havoc_loop_modified_locals_with_carriers(
         entry_state,
         body,
         variables,
         budget,
         loop_havoc_ranges.as_deref(),
+        true,
     )?;
     let mut summaries =
         collect_whole_loop_effect_summaries(entry_state, &top_state, &effect_ranges);
@@ -7418,6 +7751,7 @@ pub(super) fn prepare_loop_top_state(
         summaries,
         resource_failures,
         effect_checks,
+        pointer_carriers,
     })
 }
 
@@ -8815,6 +9149,8 @@ fn evaluate_loop_effect_segment_value_capturing(
     budget: &mut ExecutionBudget,
     diagnostic: Option<&mut Option<CRuntimeError>>,
 ) -> ExecutionResult<Result<(CValue, ExecutionFacts), String>> {
+    let observer_assumptions = assumptions.clone().observe_pointer_addresses();
+    let assumptions = &observer_assumptions;
     let paths = evaluate_c_expression_paths(state, expression, assumptions, budget)?;
     // An endpoint the facts do not keep defined splits into its defined value
     // and the undefined behavior beside it: name that behavior, which a
@@ -9389,6 +9725,7 @@ pub(super) fn undecided_loop_guard_context(outcome: &CStatementOutcome) -> Strin
     format!("the loop condition could not be evaluated on this path: {reason}")
 }
 
+#[cfg(test)]
 pub(super) fn havoc_loop_modified_locals(
     state: &CState,
     body: &CStatement,
@@ -9396,7 +9733,20 @@ pub(super) fn havoc_loop_modified_locals(
     budget: &mut ExecutionBudget,
     mutable_ranges: Option<&[CMemoryRange]>,
 ) -> ExecutionResult<CState> {
+    havoc_loop_modified_locals_with_carriers(state, body, variables, budget, mutable_ranges, false)
+        .map(|(state, _)| state)
+}
+
+fn havoc_loop_modified_locals_with_carriers(
+    state: &CState,
+    body: &CStatement,
+    variables: &mut KernelVariableGenerator,
+    budget: &mut ExecutionBudget,
+    mutable_ranges: Option<&[CMemoryRange]>,
+    checked_carrier_hypotheses: bool,
+) -> ExecutionResult<(CState, BTreeMap<String, CPointerValue>)> {
     let mut state = state.clone();
+    let mut pointer_carriers = BTreeMap::new();
     let mut names = BTreeSet::new();
     collect_loop_modified_locals(body, &mut names);
     let may_write_memory = statement_may_write_memory(&state, body);
@@ -9423,9 +9773,23 @@ pub(super) fn havoc_loop_modified_locals(
             | CLocalBinding::ArrayObject { .. }
             | CLocalBinding::AggregateObject { .. } => continue,
         };
-        let Some(value) = fresh_loop_local_value(c_type, variables, budget)? else {
+        let retain_pointer_profile = state
+            .locals
+            .get(&name)
+            .is_some_and(value_has_pointer_designation);
+        let Some(mut value) =
+            fresh_loop_local_value(c_type, retain_pointer_profile, variables, budget)?
+        else {
             continue;
         };
+        if checked_carrier_hypotheses
+            && let Some(CValue::Pointer(entry)) = state.locals.get(&name)
+            && entry.designation().is_some()
+            && let CValue::Pointer(fresh) = &value
+        {
+            pointer_carriers.insert(name.clone(), entry.clone());
+            value = CValue::Pointer(entry.clone().with_pointer(fresh.pointer().clone()));
+        }
         sync_stack_local(&mut state, &name, &value);
         state.locals.set_typed(name, value, c_type);
     }
@@ -9456,7 +9820,51 @@ pub(super) fn havoc_loop_modified_locals(
             );
         state.set_memory(havoced_memory);
     }
-    Ok(state)
+    Ok((state, pointer_carriers))
+}
+
+fn same_pointer_carrier(left: &CPointerValue, right: &CPointerValue) -> bool {
+    left.c_type() == right.c_type()
+        && left.pointee_constant() == right.pointee_constant()
+        && left.pointee_volatile() == right.pointee_volatile()
+        && left.same_designation(right)
+}
+
+fn retain_common_pointer_carrier(fresh: CValue, held: &[CValue]) -> CValue {
+    let (CValue::Pointer(fresh_pointer), Some(CValue::Pointer(first))) = (&fresh, held.first())
+    else {
+        return fresh;
+    };
+    if first.designation().is_some()
+        && held.iter().all(|value| {
+            matches!(value, CValue::Pointer(pointer)
+            if same_pointer_carrier(first, pointer))
+        })
+    {
+        CValue::Pointer(first.clone().with_pointer(fresh_pointer.pointer().clone()))
+    } else {
+        fresh
+    }
+}
+
+/// Check only the selected induction hypotheses, never address equalities or
+/// unrelated locals. Surface's existing checked all-leaf preservation boundary
+/// invokes this kernel check for every completed explicit preservation leaf.
+pub(crate) fn check_loop_pointer_carriers(
+    carriers: &BTreeMap<String, CPointerValue>,
+    state: &CState,
+) -> Result<(), String> {
+    for (name, expected) in carriers {
+        crate::instrumentation::record_deterministic_work(1);
+        if !matches!(state.locals.get(name), Some(CValue::Pointer(actual))
+            if same_pointer_carrier(expected, actual))
+        {
+            return Err(format!(
+                "loop changes the retained pointer carrier of `{name}`"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The memory the enclosing function owns where the loop is entered.
@@ -10012,7 +10420,8 @@ pub(super) fn collect_address_taken_in_expression(
         | CExpression::FloatClassification { expression, .. } => {
             collect_address_taken_in_expression(expression, names)
         }
-        CExpression::PointerOffsetBytes { pointer, .. } => {
+        CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::PointerAligned { pointer, .. } => {
             collect_address_taken_in_expression(pointer, names)
         }
         CExpression::Not(inner) | CExpression::Load(inner) => {
@@ -10051,7 +10460,8 @@ pub(super) fn collect_variable_names(expression: &CExpression, names: &mut BTree
         | CExpression::FloatClassification { expression, .. } => {
             collect_variable_names(expression, names)
         }
-        CExpression::PointerOffsetBytes { pointer, .. } => collect_variable_names(pointer, names),
+        CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::PointerAligned { pointer, .. } => collect_variable_names(pointer, names),
         CExpression::MemberAddress { object: inner, .. }
         | CExpression::AddressOf(inner)
         | CExpression::CheckedObjectAddress(inner)

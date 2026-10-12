@@ -6,6 +6,26 @@ use crate::kernel::LoanRefusalCategory;
 use crate::surface::planning::proposition_search::PropositionSearch;
 use std::sync::Arc;
 
+fn checked_record_field(
+    object: CExpression,
+    layout: &CAggregateLayout,
+    path: &[&str],
+    value_type: CType,
+) -> CExpression {
+    CExpression::MemberAddress {
+        object: Box::new(object),
+        selection: Arc::new(CAggregateMemberSelection {
+            layout: Arc::new(layout.clone()),
+            path: path
+                .iter()
+                .map(|part| (*part).to_owned())
+                .collect::<Vec<_>>()
+                .into(),
+            value_type,
+        }),
+    }
+}
+
 /// A completed frontier fork must share all sibling data, independently of
 /// the number of paths or facts stored on each path.
 #[test]
@@ -1507,6 +1527,10 @@ fn verified_function_rule_applies_contract_without_executing_body() {
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
         .with_verified_function_rule(CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
             checked_callees: None,
@@ -1608,6 +1632,10 @@ fn verified_function_rule_coerces_null_constants_in_contract_views() {
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
         .with_verified_function_rule(CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
             checked_callees: None,
@@ -1681,6 +1709,10 @@ fn verified_function_rule_does_not_publish_one_spec_alias_path() {
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
         .with_verified_function_rule(CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
             checked_callees: None,
@@ -1740,6 +1772,10 @@ fn opaque_pointer_result_can_alias_its_argument() {
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
         .with_verified_function_rule(CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
             checked_callees: None,
@@ -1810,6 +1846,10 @@ fn verified_immutable_calls_allocate_distinct_results() {
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
         .with_verified_function_rule(CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
             checked_callees: None,
@@ -1870,6 +1910,10 @@ fn separate_statement_verification_calls_preserve_fresh_identity_progress() {
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
         .with_verified_function_rule(CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
             checked_callees: None,
@@ -5114,6 +5158,10 @@ fn call_requirement_obligations_carry_their_lowering_record() {
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
         .with_verified_function_rule(CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
             checked_callees: None,
@@ -5197,6 +5245,10 @@ fn opaque_rule_environment(function: CFunction) -> CExecutionEnvironment {
     CExecutionEnvironment::new()
         .with_function(function.clone())
         .with_verified_function_rule(CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function,
             loop_semantics: CLoopSemantics::Verify,
             checked_callees: None,
@@ -5316,6 +5368,10 @@ fn an_anchor_ranks_only_calls_to_the_function_it_names() {
         opaque_rule_environment(drain.clone())
             .with_function(other.clone())
             .with_verified_function_rule(CVerifiedFunctionRule {
+                source_declaration: None,
+                pointer_result_effects: Default::default(),
+                pointer_store_effects: Default::default(),
+                native_output_places_certified: false,
                 function: other,
                 loop_semantics: CLoopSemantics::Verify,
                 checked_callees: None,
@@ -6120,10 +6176,7 @@ fn construction_return_contract_certifies_and_applies_to_caller_storage() {
         ],
     );
     let result = c_variable(C_CONTRACT_RESULT_NAME);
-    let field = c_cast(
-        c_pointer_offset_bytes(result.clone(), 8),
-        CType::Int32Pointer,
-    );
+    let field = checked_record_field(result.clone(), &layout, &["value"], CType::Int32);
     let storage = CMemorySegment::new(result.clone(), c_int32_literal(0), c_int32_literal(4));
     let owner = CResourceSpec::owned_memory(storage.clone());
     let equality = |left, right| SpecProposition::Comparison {
@@ -6136,7 +6189,11 @@ fn construction_return_contract_certifies_and_applies_to_caller_storage() {
         "constructed_node",
         vec![c_parameter("input", CType::Int32)],
         c_seq(
-            c_typed_store(result.clone(), field.clone(), CType::Int32Pointer),
+            c_typed_store(
+                checked_record_field(result.clone(), &layout, &["self"], CType::Int32Pointer),
+                field.clone(),
+                CType::Int32Pointer,
+            ),
             c_seq(
                 c_typed_store(field.clone(), c_variable("input"), CType::Int32),
                 c_return(result.clone()),
@@ -6148,7 +6205,13 @@ fn construction_return_contract_certifies_and_applies_to_caller_storage() {
     .with_contract(
         vec![],
         vec![
-            equality(c_typed_load(result, CType::Int32Pointer), field.clone()),
+            equality(
+                c_typed_load(
+                    checked_record_field(result, &layout, &["self"], CType::Int32Pointer),
+                    CType::Int32Pointer,
+                ),
+                field.clone(),
+            ),
             equality(c_typed_load(field, CType::Int32), c_variable("input")),
         ],
         vec![storage],
@@ -6350,11 +6413,11 @@ fn construction_return_contract_certifies_and_applies_to_caller_storage() {
     let paths = prove_symbolic_c_execution_paths_with_environment(
         CState::new().with_population_creation_tracking(),
         c_seq(
-            c_allocate_aggregate_destination("node", layout),
+            c_allocate_aggregate_destination("node", layout.clone()),
             c_seq(
                 c_call_assign("node", "outer_constructed_node", vec![c_int32_literal(37)]),
                 c_return(c_typed_load(
-                    c_pointer_offset_bytes(c_variable("node"), 8),
+                    checked_record_field(c_variable("node"), &layout, &["value"], CType::Int32),
                     CType::Int32,
                 )),
             ),
@@ -6401,7 +6464,10 @@ fn construction_return_contract_certifies_and_applies_to_caller_storage() {
     )));
     let loads = evaluate_c_expression_paths(
         state,
-        &c_typed_load(c_variable("node"), CType::Int32Pointer),
+        &c_typed_load(
+            checked_record_field(c_variable("node"), &layout, &["self"], CType::Int32Pointer),
+            CType::Int32Pointer,
+        ),
         &assumptions,
         &mut ExecutionBudget::default(),
     )
@@ -6435,10 +6501,7 @@ fn construction_parameter_summary_initializes_only_checked_fields() {
         ],
     );
     let destination = c_variable("destination");
-    let field = c_cast(
-        c_pointer_offset_bytes(destination.clone(), 8),
-        CType::Int32Pointer,
-    );
+    let field = checked_record_field(destination.clone(), &layout, &["value"], CType::Int32);
     let storage = CMemorySegment::new(destination.clone(), c_int32_literal(0), c_int32_literal(4));
     let owner = CResourceSpec::owned_memory(storage.clone());
     let function = c_function(
@@ -6449,7 +6512,11 @@ fn construction_parameter_summary_initializes_only_checked_fields() {
             c_parameter("input", CType::Int32),
         ],
         c_seq(
-            c_typed_store(destination, field.clone(), CType::Int32Pointer),
+            c_typed_store(
+                checked_record_field(destination, &layout, &["self"], CType::Int32Pointer),
+                field.clone(),
+                CType::Int32Pointer,
+            ),
             c_seq(
                 c_typed_store(field, c_variable("input"), CType::Int32),
                 c_return(c_void_value()),
@@ -6486,7 +6553,11 @@ fn construction_parameter_summary_initializes_only_checked_fields() {
         entry.clone(),
         function.clone(),
         vec![
-            c_pointer_value(at.clone()),
+            CExpression::Value(CValue::Pointer(CMemory::aggregate_input_pointer(
+                at.clone(),
+                &layout,
+                CType::Int32Pointer,
+            ))),
             CExpression::Value(int32(Bitvector32Term::Variable(Variable(873_012)))),
         ],
         vec![],
@@ -6564,11 +6635,11 @@ fn construction_parameter_summary_initializes_only_checked_fields() {
     let paths = prove_symbolic_c_execution_paths_with_environment(
         CState::new().with_population_creation_tracking(),
         c_seq(
-            c_allocate_aggregate_destination("node", layout),
+            c_allocate_aggregate_destination("node", layout.clone()),
             c_seq(
                 c_call_assign("node", "parameter_factory", vec![c_int32_literal(37)]),
                 c_return(c_typed_load(
-                    c_pointer_offset_bytes(c_variable("node"), 8),
+                    checked_record_field(c_variable("node"), &layout, &["value"], CType::Int32),
                     CType::Int32,
                 )),
             ),
@@ -6639,7 +6710,7 @@ fn subobject_constructor_summary_preserves_parent_extent_and_siblings() {
         ],
         c_seq(
             c_typed_store(
-                c_variable("destination"),
+                checked_record_field(c_variable("destination"), &child, &["size"], CType::UInt64),
                 c_variable("input"),
                 CType::UInt64,
             ),
@@ -6682,7 +6753,11 @@ fn subobject_constructor_summary_preserves_parent_extent_and_siblings() {
         entry,
         function.clone(),
         vec![
-            c_pointer_value(at),
+            CExpression::Value(CValue::Pointer(CMemory::aggregate_input_pointer(
+                at,
+                &child,
+                CType::Int32Pointer,
+            ))),
             CExpression::Value(uint64(Bitvector32Term::Variable(Variable(873_022)))),
         ],
         vec![live],
@@ -6707,14 +6782,28 @@ fn subobject_constructor_summary_preserves_parent_extent_and_siblings() {
                         "construct_extent",
                         vec![
                             c_cast(
-                                c_pointer_offset_bytes(c_variable("parent"), offset),
+                                if offset == 8 {
+                                    checked_record_field(
+                                        c_variable("parent"),
+                                        &parent,
+                                        &["extent"],
+                                        CType::UInt8Array(8),
+                                    )
+                                } else {
+                                    c_pointer_offset_bytes(c_variable("parent"), offset)
+                                },
                                 CType::Int32Pointer,
                             ),
                             c_uint64_literal(37),
                         ],
                     ),
                     c_return(c_typed_load(
-                        c_pointer_offset_bytes(c_variable("parent"), 8),
+                        checked_record_field(
+                            c_variable("parent"),
+                            &parent,
+                            &["extent", "size"],
+                            CType::UInt64,
+                        ),
                         CType::UInt64,
                     )),
                 ),

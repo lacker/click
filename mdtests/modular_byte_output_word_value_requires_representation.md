@@ -1,9 +1,10 @@
-# Byte output values still need a typed representation relation
+# Modular byte output determines the declared uint32 word
 
 Initialization establishes readable storage independently of byte values.
-The current modular profile does not yet connect specification byte reads to
-the uint32 representation. Keep the exact word-value claim as a refusal
-regression until that shared representation rule is selected.
+The shared representation rule projects the four byte postconditions from one
+initialized declared uint32 observation under the selected little-endian target.
+Those exact bytes determine the unchanged word-value claim. Smart simplification
+expands to an explicit application retaining all four snapshot-relative premises.
 
 ```c filename=output.c
 void fill(unsigned char* p) {
@@ -41,5 +42,5 @@ uint32 word() { ensures result == 305419896u32; } by { execute(); simp(); }
 ```
 
 ```expect
-fail: unclosed goal
+pass
 ```

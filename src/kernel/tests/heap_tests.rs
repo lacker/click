@@ -860,6 +860,10 @@ fn scoped_call_borrows_end_before_free() {
     let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
         .with_verified_function_rule(CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
             checked_callees: None,
@@ -1591,6 +1595,10 @@ fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
     let environment = CExecutionEnvironment::new()
         .with_function(function.clone())
         .with_verified_function_rule(CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: function.clone(),
             loop_semantics: CLoopSemantics::Verify,
             checked_callees: None,

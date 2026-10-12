@@ -15,8 +15,26 @@ use std::sync::Arc;
 mod aggregate_return_tests;
 mod construction_return;
 mod constructor_input;
+pub(crate) mod independent_entry;
+pub(crate) use independent_entry::c_independent_function_input_state;
+mod native_record_inputs;
+mod native_span_inputs;
+pub(crate) mod pointer_store_effects;
+pub(crate) use native_record_inputs::c_state_with_assumed_native_record_inputs;
+pub(crate) use native_record_inputs::{
+    assume_checked_native_composite_places, assume_checked_native_output_places,
+    assume_native_record_specs, check_native_composite_formation, check_native_output_places,
+    check_native_record_specs, check_native_required_formations,
+    interface_has_native_output_places,
+};
+#[cfg(test)]
+mod declared_output_identity_tests;
+#[cfg(test)]
+mod pointer_result_effect_tests;
 #[cfg(test)]
 mod scalar_object_tests;
+#[cfg(test)]
+mod typed_access_policy_tests;
 
 pub(crate) use constructor_input::assume_scalar_object_inputs;
 
@@ -483,7 +501,8 @@ pub(crate) fn capture_checked_boundary_resource_transfer(
     else {
         return Ok(Err(CRuntimeError::TypeMismatch));
     };
-    let Some(callee) = bind_contract_proof_arguments(caller, &function, &values) else {
+    let Some(callee) = bind_contract_proof_arguments(caller, &function, &values, assumptions)
+    else {
         return Ok(Err(CRuntimeError::TypeMismatch));
     };
     let transfer = match prepare_function_resource_transfer(
@@ -1560,7 +1579,9 @@ pub(super) fn construct_c_function_resource(
             "generic resource construction cannot create members".to_string(),
         )));
     }
-    let Some(mut evaluation_state) = c_function_entry_state(state, function, arguments) else {
+    let Some(mut evaluation_state) =
+        c_function_entry_state_with_assumptions(state, function, arguments, assumptions)
+    else {
         return Ok(Err(CRuntimeError::FunctionContract(
             "could not bind function arguments for resource construction".to_string(),
         )));
@@ -1730,8 +1751,12 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             ));
             continue;
         };
-        let Some(callee_state) = bind_c_function_arguments(state, function, &argument_values)
-        else {
+        let Some(callee_state) = bind_c_function_arguments_with_assumptions(
+            state,
+            function,
+            &argument_values,
+            &path_assumptions,
+        ) else {
             paths.push(CFunctionPath::new(
                 CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
                     argument_binding_error(function, &argument_values).to_string(),
@@ -1988,8 +2013,12 @@ pub(super) fn execute_c_function_verification_paths(
             ));
             continue;
         };
-        let Some(callee_state) = bind_c_function_arguments(state, function, &argument_values)
-        else {
+        let Some(callee_state) = bind_c_function_arguments_with_assumptions(
+            state,
+            function,
+            &argument_values,
+            &path_assumptions,
+        ) else {
             paths.push(CFunctionPath::new(
                 CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
                     argument_binding_error(function, &argument_values).to_string(),
@@ -4555,6 +4584,13 @@ pub(super) fn execute_c_function_call_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    let executable_assumptions;
+    let assumptions = if assumptions.should_observe_pointer_addresses() {
+        executable_assumptions = assumptions.clone().without_pointer_address_observation();
+        &executable_assumptions
+    } else {
+        assumptions
+    };
     if contract_reaches_population(function.contract_interface())
         && environment
             .get_verified_function_rule(function.name())
@@ -4607,6 +4643,9 @@ pub(super) fn execute_c_function_call_paths(
                 interface: rule.function.contract_interface(),
                 storage: Some(&rule.function),
                 evidence: None,
+                pointer_result_effects: &[],
+                pointer_store_effects: &[],
+                native_output_places_certified: false,
                 representation_copy: rule.representation_copy(),
             }],
             None,
@@ -4747,9 +4786,12 @@ pub(super) fn execute_c_function_call_paths(
             ));
             continue;
         }
-        let Some(callee_state) =
-            bind_c_function_arguments(caller_state, function, &argument_values)
-        else {
+        let Some(callee_state) = bind_c_function_arguments_with_assumptions(
+            caller_state,
+            function,
+            &argument_values,
+            &path_assumptions,
+        ) else {
             paths.push(CFunctionPath::new(
                 CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
                     argument_binding_error(function, &argument_values).to_string(),
@@ -4765,6 +4807,18 @@ pub(super) fn execute_c_function_call_paths(
             &arguments_path.facts,
             &argument_obligations,
         );
+        if let Err(message) = check_native_record_specs(
+            &callee_state,
+            function.resource_requires(),
+            &body_assumptions,
+        ) {
+            paths.push(CFunctionPath::new(
+                CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+                arguments_path.facts,
+                argument_obligations,
+            ));
+            continue;
+        }
         if function.has_inline_body() {
             // An inline body is call-site code: it runs on the caller's own
             // resources and leaves the caller whatever it did not consume.
@@ -5048,6 +5102,9 @@ fn execute_verified_function_rule(
             interface: rule.function.contract_interface(),
             storage: Some(&rule.function),
             evidence: Some(&rule.function),
+            pointer_result_effects: &rule.pointer_result_effects,
+            pointer_store_effects: &rule.pointer_store_effects,
+            native_output_places_certified: rule.native_output_places_certified,
             representation_copy: None,
         }],
         None,
@@ -5090,6 +5147,9 @@ pub(super) fn suspend_verified_worker(
             interface: rule.function.contract_interface(),
             storage: Some(&rule.function),
             evidence: Some(&rule.function),
+            pointer_result_effects: &rule.pointer_result_effects,
+            pointer_store_effects: &rule.pointer_store_effects,
+            native_output_places_certified: rule.native_output_places_certified,
             representation_copy: None,
         }],
         None,
@@ -5227,6 +5287,9 @@ struct CFunctionContractApplication<'a> {
     /// requirement metadata.
     interface_name: &'a str,
     interface: &'a CFunctionContractInterface,
+    pointer_result_effects: &'a [CPointerResultEffect],
+    pointer_store_effects: &'a [CPointerStoreEffect],
+    native_output_places_certified: bool,
     storage: Option<&'a CFunction>,
     evidence: Option<&'a CFunction>,
     /// The checked representation-copy effect of a recognized byte-copy
@@ -5661,6 +5724,18 @@ fn execute_verified_function_applications_with_suspension(
             bindings: selected_bindings,
         } = primary;
         let additional_calls = applicable.into_iter();
+        if !pointer_store_effects::writes_authorized(
+            &entry_state,
+            interface,
+            &argument_values,
+            application.pointer_store_effects,
+            &effective_assumptions,
+        ) {
+            paths.push(resource_call_failure(
+                "certified pointer cell effect requires caller write authority",
+            ));
+            continue;
+        }
         // The planner has checked these effects against the views this call
         // lends; the caller's other active loans (its own contract inputs,
         // an enclosing call's loans) are checked here, so a summary can
@@ -5821,7 +5896,8 @@ fn execute_verified_function_applications_with_suspension(
         };
         let mut worker_effects = transfer.memory_effects.clone();
         worker_effects.extend(mutex_storage_effects);
-        let result = if interface.aggregate_return_mode() == CAggregateReturnMode::Construction {
+        let mut result = if interface.aggregate_return_mode() == CAggregateReturnMode::Construction
+        {
             let Some(result) = construction_return::summary_result(&entry_state, interface) else {
                 paths.push(CFunctionPath::new(
                     CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
@@ -5834,7 +5910,12 @@ fn execute_verified_function_applications_with_suspension(
             };
             result
         } else {
-            symbolic_contract_result(interface, result_identity)
+            instantiate_pointer_result_effect(
+                symbolic_contract_result(interface, result_identity),
+                application.pointer_result_effects,
+                &argument_values,
+                entry_state.memory(),
+            )
         };
         let mut post_state = entry_state.clone().with_memory(memory);
         if interface.aggregate_return_mode() == CAggregateReturnMode::Construction
@@ -6006,6 +6087,36 @@ fn execute_verified_function_applications_with_suspension(
         }
         if interface.return_type() != CType::Void {
             set_contract_result(&mut post_state, interface, result.clone());
+            if interface.aggregate_return_mode() == CAggregateReturnMode::Copy
+                && let (Some(layout), CValue::Pointer(pointer)) =
+                    (interface.return_aggregate_layout(), &result)
+                && layout.unions().is_empty()
+            {
+                // The copied return is caller storage only after this exact
+                // declaration transition. Preserve its value qualifiers while
+                // selecting that declaration for the published result carrier.
+                let Some(declared) = post_state
+                    .memory()
+                    .declared_aggregate_pointer(pointer.pointer(), layout)
+                else {
+                    paths.push(CFunctionPath::new(
+                        CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                            "aggregate summary result has no checked declaration".into(),
+                        )),
+                        facts,
+                        obligations,
+                    ));
+                    continue;
+                };
+                result = CValue::Pointer(
+                    pointer.clone().with_designation(
+                        declared
+                            .designation()
+                            .expect("declared aggregate domain")
+                            .clone(),
+                    ),
+                );
+            }
         }
         // A `produces` binder owns nothing at entry: the call creates the
         // instance under the identity the caller's `let` introduced. It is
@@ -7247,6 +7358,92 @@ fn execute_verified_function_applications_with_suspension(
                 continue;
             }
         };
+        // Restore body-certified full carriers only after output initialization
+        // has been checked, before typed output places observe those cells.
+        if !application.pointer_store_effects.is_empty() {
+            let ensured_assumptions =
+                assumptions_with_path_context(&effective_assumptions, &facts, &obligations);
+            match pointer_store_effects::apply(
+                &return_state,
+                interface,
+                &argument_values,
+                application.pointer_store_effects,
+                &ensured_assumptions,
+            ) {
+                Ok(memory) => {
+                    let Some(writes) = application
+                        .pointer_store_effects
+                        .iter()
+                        .map(|effect| {
+                            pointer_store_effects::selected(
+                                &return_state,
+                                interface,
+                                &argument_values,
+                                &effect.destination,
+                                &effect.destination_path,
+                            )
+                            .map(|destination| {
+                                (
+                                    destination.pointer().clone(),
+                                    effect.value_type.byte_width(),
+                                )
+                            })
+                        })
+                        .collect::<Option<Vec<_>>>()
+                    else {
+                        paths.push(resource_call_failure(
+                            "certified pointer effect lost its checked destination",
+                        ));
+                        continue;
+                    };
+                    // Logical transport of the body's certified final cells,
+                    // after actual-call write permissions and initialized width
+                    // were checked. This is not a newly executed program store.
+                    // The endpoints retain the complete semantic carriers; an
+                    // enclosing summary must independently check its final
+                    // source equation and universal complete body entry.
+                    facts.push(ExecutionPureFact::certified(
+                        Proposition::CMemoryMutatesOnly {
+                            before: return_state.memory().clone(),
+                            after: memory.clone(),
+                            writes,
+                        },
+                    ));
+                    return_state.set_memory(memory);
+                }
+                Err(message) => {
+                    paths.push(resource_call_failure(&message));
+                    continue;
+                }
+            }
+        }
+        if application.native_output_places_certified
+            && interface_has_native_output_places(interface)
+        {
+            let ensured_assumptions =
+                assumptions_with_path_context(&effective_assumptions, &facts, &obligations);
+            let mut output_state =
+                with_contract_interface_argument_views(&return_state, interface, &argument_values);
+            if interface.return_type() != CType::Void {
+                output_state.locals.set_typed(
+                    C_CONTRACT_RESULT_NAME.to_string(),
+                    result.clone(),
+                    interface.return_type(),
+                );
+            }
+            match assume_checked_native_output_places(
+                &output_state,
+                &output_resources,
+                interface,
+                &ensured_assumptions,
+            ) {
+                Ok(assumed) => return_state.set_memory(assumed.memory().clone()),
+                Err(message) => {
+                    paths.push(resource_call_failure(&message));
+                    continue;
+                }
+            }
+        }
         return_state.next_local_frame = post_state.next_local_frame;
         return_state.next_local_lifetime = post_state.next_local_lifetime;
         let outcome = CFunctionOutcome::Return {
@@ -7652,11 +7849,12 @@ fn prepare_verified_function_call<'a>(
             argument_obligations,
         )));
     }
-    let Some(mut entry_state) = bind_c_contract_arguments(
+    let Some(mut entry_state) = bind_c_contract_arguments_with_assumptions(
         caller_state,
         contract_interface,
         &argument_values,
         application.storage,
+        &path_assumptions,
     ) else {
         return Ok(Err(CFunctionPath::new(
             CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
@@ -7672,6 +7870,17 @@ fn prepare_verified_function_call<'a>(
     };
     let path_assumptions =
         assumptions_with_path_context(assumptions, &arguments_path.facts, &argument_obligations);
+    if let Err(message) = check_native_record_specs(
+        &entry_state,
+        contract_interface.resource_requires(),
+        &path_assumptions,
+    ) {
+        return Ok(Err(CFunctionPath::new(
+            CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+            arguments_path.facts,
+            argument_obligations,
+        )));
+    }
     if let Some(application) = resource_application {
         entry_state.resource_bindings = Some(application.bindings.clone());
         // The bound instances are clauses of one contract, so they are
@@ -8709,6 +8918,9 @@ pub(super) fn execute_c_function_contracts_paths(
             interface: contract.interface(),
             storage: None,
             evidence: None,
+            pointer_result_effects: &[],
+            pointer_store_effects: &[],
+            native_output_places_certified: false,
             representation_copy: None,
         })
         .collect::<Vec<_>>();
@@ -9099,6 +9311,40 @@ fn function_refines_named_contract(
     function_refines_named_contract_in_case(&context, &[], &BTreeSet::new(), false, budget)
 }
 
+/// Source execution policy is relevant to pointer and memory promises. A
+/// scalar, state-independent behavior can be checked across policies without
+/// changing either source body's policy or treating the interfaces as equal.
+pub(in crate::kernel) fn typed_access_policy_refinement_compatible(
+    left: &CFunctionContractInterface,
+    right: &CFunctionContractInterface,
+) -> bool {
+    if left.typed_access_policy() == right.typed_access_policy() {
+        return true;
+    }
+    let scalar_only = |interface: &CFunctionContractInterface| {
+        let scalar = |ty: CType| !ty.is_pointer() && ty.array_element_type().is_none();
+        scalar(interface.return_type())
+            && interface.return_aggregate_layout().is_none()
+            && interface.parameters().iter().all(|parameter| {
+                scalar(parameter.c_type()) && parameter.aggregate_layout().is_none()
+            })
+            && interface.scalar_object_inputs().is_empty()
+            && interface.aggregate_object_inputs().is_empty()
+            && interface.proof_parameters().is_empty()
+            && interface.resource_requires().is_empty()
+            && interface.resource_ensures().is_empty()
+            && interface.resource_constructors().is_empty()
+            && interface.contract_mutable().is_empty()
+            && interface
+                .contract_requires()
+                .iter()
+                .chain(interface.contract_ensures())
+                .chain(interface.exceptional_ensures())
+                .all(spec_proposition_is_state_independent)
+    };
+    scalar_only(left) && scalar_only(right)
+}
+
 pub(super) fn prepare_function_contract_refinement_context(
     contract: &CFunctionContract,
     function: &CFunction,
@@ -9185,6 +9431,9 @@ pub(super) fn prepare_contract_refinement_obligations(
 ) -> Option<CFunctionContractRefinementObligations> {
     let target = context.contract.interface();
     let source = &context.function_interface;
+    if !native_record_refinement_obligations_match(target, source) {
+        return None;
+    }
     let mut budget = ExecutionBudget::continuing_from(context.next_kernel_variable);
     let entry = function_contract_refinement_entry_state(context);
     let source_entry = with_contract_interface_argument_views(
@@ -9221,7 +9470,7 @@ pub(super) fn prepare_contract_refinement_obligations(
         &assumptions,
         None,
     );
-    let result = symbolic_call_result(source.return_type(), context.result_variable);
+    let result = symbolic_contract_result(source, context.result_variable);
     let mut post = entry.clone().with_memory(memory.clone());
     let mut source_post = source_entry.clone().with_memory(memory);
     if source.return_type() != CType::Void {
@@ -13474,6 +13723,10 @@ fn c_expression_supports_stateful_memory_refinement(expression: &CExpression) ->
             pointer: expression,
             ..
         }
+        | CExpression::PointerAligned {
+            pointer: expression,
+            ..
+        }
         | CExpression::Not(expression)
         | CExpression::BitwiseNot(expression)
         | CExpression::Load(expression) => {
@@ -13492,7 +13745,8 @@ fn c_expression_supports_stateful_memory_refinement(expression: &CExpression) ->
                 && c_expression_supports_stateful_memory_refinement(else_branch)
         }
         crate::kernel::binary_c_expression!(left, right) => {
-            c_expression_supports_stateful_memory_refinement(left)
+            !matches!(expression, CExpression::RecordPointerOffset { .. })
+                && c_expression_supports_stateful_memory_refinement(left)
                 && c_expression_supports_stateful_memory_refinement(right)
         }
     }
@@ -13671,6 +13925,10 @@ pub(super) fn c_expression_is_state_independent(expression: &CExpression) -> boo
             pointer: expression,
             ..
         }
+        | CExpression::PointerAligned {
+            pointer: expression,
+            ..
+        }
         | CExpression::Not(expression)
         | CExpression::BitwiseNot(expression) => c_expression_is_state_independent(expression),
         CExpression::Conditional {
@@ -13686,6 +13944,7 @@ pub(super) fn c_expression_is_state_independent(expression: &CExpression) -> boo
             c_expression_is_state_independent(left) && c_expression_is_state_independent(right)
         }
         CExpression::MemberAddress { .. }
+        | CExpression::RecordPointerOffset { .. }
         | CExpression::AddressOf(_)
         | CExpression::CheckedObjectAddress(_)
         | CExpression::Load(_)
@@ -14014,6 +14273,10 @@ fn c_expression_mentions_variable(expression: &CExpression, name: &str) -> bool 
             pointer: expression,
             ..
         }
+        | CExpression::PointerAligned {
+            pointer: expression,
+            ..
+        }
         | CExpression::Not(expression)
         | CExpression::Load(expression)
         | CExpression::TypedLoad {
@@ -14051,6 +14314,10 @@ fn c_expression_takes_address_of_variable(expression: &CExpression, name: &str) 
         | CExpression::FloatNegate(expression)
         | CExpression::FloatClassification { expression, .. }
         | CExpression::PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | CExpression::PointerAligned {
             pointer: expression,
             ..
         }
@@ -14186,6 +14453,10 @@ fn c_expression_uses_object_address(expression: &CExpression, name: &str) -> boo
         | CExpression::FloatNegate(expression)
         | CExpression::FloatClassification { expression, .. }
         | CExpression::PointerOffsetBytes {
+            pointer: expression,
+            ..
+        }
+        | CExpression::PointerAligned {
             pointer: expression,
             ..
         }
@@ -15866,7 +16137,9 @@ fn with_contract_interface_argument_views(
     interface: &CFunctionContractInterface,
     values: &[CValue],
 ) -> CState {
-    let mut state = state.clone();
+    let mut state = state
+        .clone()
+        .with_typed_access_policy(interface.typed_access_policy());
     state.resources = state.resources.unpublished_contract_view();
     for (parameter, value) in interface.parameters().iter().zip(values) {
         if parameter.aggregate_layout().is_some() {
@@ -16009,7 +16282,21 @@ fn complete_aggregate_return(
         layout,
     ));
     state.next_local_frame = frame.saturating_add(1);
-    Ok(CValue::typed_pointer(destination, function.return_type()))
+    // Overlapping union storage stays in the existing legacy by-value profile;
+    // it supplies no bounded member designation until that model is defined.
+    if !layout.unions().is_empty() {
+        return Ok(CValue::typed_pointer(destination, function.return_type())
+            .with_pointer_pointee_volatile(pointer.pointee_volatile())
+            .with_pointer_pointee_constant(pointer.pointee_constant()));
+    }
+    let result = state
+        .memory()
+        .declared_aggregate_pointer(&destination, layout)
+        .ok_or(AggregateReturnRefusal::InvalidValue)?
+        .with_type(function.return_type())
+        .with_pointee_volatile(pointer.pointee_volatile())
+        .with_pointee_constant(pointer.pointee_constant());
+    Ok(CValue::Pointer(result))
 }
 
 /// The undefined behavior of the implicit conversion a `return` performs when
@@ -16132,8 +16419,83 @@ fn symbolic_contract_result(interface: &CFunctionContractInterface, variable: Va
         )
         .with_pointer_pointee_constant(interface.return_pointee_is_constant());
     }
-    symbolic_call_result(interface.return_type(), variable)
-        .with_pointer_pointee_constant(interface.return_pointee_is_constant())
+    let result = symbolic_call_result(interface.return_type(), variable)
+        .with_pointer_pointee_constant(interface.return_pointee_is_constant());
+    if let CValue::Pointer(pointer) = &result
+        && CFunctionContractInterface::declared_span_identity_parameters(
+            &[CParameter::new(
+                C_CONTRACT_RESULT_NAME,
+                interface.return_type(),
+            )],
+            interface.resource_ensures(),
+            interface.composite_resource_definitions(),
+        )
+        .contains(&0)
+    {
+        // A declared output head needs a stable opaque carrier to expose its
+        // own guarded native promises later. This records only the exact
+        // result binder, with no relation to any input pointer or address.
+        return CValue::Pointer(
+            pointer
+                .clone()
+                .with_designation(PointerDesignation::Unresolved(variable)),
+        );
+    }
+    result
+}
+
+fn instantiate_pointer_result_effect(
+    result: CValue,
+    effects: &[CPointerResultEffect],
+    arguments: &[CValue],
+    memory: &CMemory,
+) -> CValue {
+    let CValue::Pointer(result_pointer) = &result else {
+        return result;
+    };
+    for effect in effects {
+        let CPointerResultEffect::FromParameter {
+            parameter,
+            child_path,
+        } = effect
+        else {
+            continue;
+        };
+        let Some(CValue::Pointer(input)) = arguments.get(*parameter) else {
+            continue;
+        };
+        let selected = if child_path.is_empty() {
+            input.clone()
+        } else {
+            let Some(selected) = memory.checked_member_pointer_by_path(input, child_path) else {
+                continue;
+            };
+            selected
+        };
+        if let Some(designation) = selected.designation() {
+            // The summary's address and qualifiers remain independently
+            // bound. Only checked semantic designation is transported here.
+            return CValue::Pointer(result_pointer.clone().with_designation(designation.clone()));
+        }
+    }
+    // A checked-domain argument must not escape through a legacy summary
+    // that drops its semantic carrier. An uncertified result has a fresh
+    // unresolved domain; address postconditions cannot resolve that domain.
+    if (effects.contains(&CPointerResultEffect::Opaque)
+        || arguments.iter().any(|argument| {
+            matches!(argument,
+                CValue::Pointer(pointer) if pointer.designation().is_some()
+            )
+        }))
+        && let PointerBlock::Symbolic(variable) = result_pointer.pointer().block
+    {
+        return CValue::Pointer(
+            result_pointer
+                .clone()
+                .with_designation(PointerDesignation::Unresolved(variable)),
+        );
+    }
+    result
 }
 
 pub(crate) fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
@@ -16412,6 +16774,10 @@ fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CEx
                 pointer: expression,
                 ..
             }
+            | CExpression::PointerAligned {
+                pointer: expression,
+                ..
+            }
             | CExpression::Not(expression)
             | CExpression::BitwiseNot(expression) => values(expression, reads),
             CExpression::Conditional {
@@ -16459,7 +16825,12 @@ fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CEx
                 values(base, reads);
                 values(index, reads);
             }
-            crate::kernel::binary_c_operation!(left, right) => {
+            CExpression::RecordPointerOffset {
+                pointer: left,
+                index: right,
+                ..
+            }
+            | crate::kernel::binary_c_operation!(left, right) => {
                 values(left, reads);
                 values(right, reads);
             }
@@ -16573,6 +16944,10 @@ fn c_expression_mentions_pointer_parameter(
             pointer: expression,
             ..
         }
+        | CExpression::PointerAligned {
+            pointer: expression,
+            ..
+        }
         | CExpression::Not(expression)
         | CExpression::BitwiseNot(expression)
         | CExpression::Load(expression) => {
@@ -16654,10 +17029,25 @@ fn verified_call_uninitialized_read(
     Ok(None)
 }
 
+#[cfg(test)]
 pub(in crate::kernel) fn bind_c_function_arguments(
     caller_state: &CState,
     function: &CFunction,
     values: &[CValue],
+) -> Option<CState> {
+    bind_c_function_arguments_with_assumptions(
+        caller_state,
+        function,
+        values,
+        &PureFactContext::new(),
+    )
+}
+
+pub(in crate::kernel) fn bind_c_function_arguments_with_assumptions(
+    caller_state: &CState,
+    function: &CFunction,
+    values: &[CValue],
+    assumptions: &PureFactContext,
 ) -> Option<CState> {
     // Preserve the value-only representation for parameters whose addresses
     // never escape. Besides avoiding unnecessary memory cells, this
@@ -16697,6 +17087,7 @@ pub(in crate::kernel) fn bind_c_function_arguments(
         .iter()
         .any(|parameter| parameter.aggregate_layout().is_some());
     let mut callee_state = CState::new()
+        .with_typed_access_policy(function.contract_interface().typed_access_policy())
         .with_memory(caller_state.memory.clone())
         .with_resource_context(caller_state.resources.clone())
         .with_next_local_frame(
@@ -16820,7 +17211,12 @@ pub(in crate::kernel) fn bind_c_function_arguments(
             );
         }
     }
-    constructor_input::bind(caller_state, function.contract_interface(), &callee_state)?;
+    constructor_input::bind(
+        caller_state,
+        function.contract_interface(),
+        &callee_state,
+        assumptions,
+    )?;
     construction_return::bind(
         caller_state,
         function.contract_interface(),
@@ -16835,11 +17231,28 @@ pub(in crate::kernel) fn bind_c_function_arguments(
 /// concrete declaration identity so global and static names in the interface
 /// resolve to the program's stable storage; that identity is not body-proof
 /// evidence. Named callbacks supply no concrete storage.
+#[cfg(test)]
 fn bind_c_contract_arguments(
     caller_state: &CState,
     interface: &CFunctionContractInterface,
     values: &[CValue],
     storage: Option<&CFunction>,
+) -> Option<CState> {
+    bind_c_contract_arguments_with_assumptions(
+        caller_state,
+        interface,
+        values,
+        storage,
+        &PureFactContext::new(),
+    )
+}
+
+fn bind_c_contract_arguments_with_assumptions(
+    caller_state: &CState,
+    interface: &CFunctionContractInterface,
+    values: &[CValue],
+    storage: Option<&CFunction>,
+    assumptions: &PureFactContext,
 ) -> Option<CState> {
     if values.len() != interface.parameters().len() {
         return None;
@@ -16850,6 +17263,7 @@ fn bind_c_contract_arguments(
         .iter()
         .any(|parameter| parameter.aggregate_layout().is_some());
     let mut callee_state = CState::new()
+        .with_typed_access_policy(interface.typed_access_policy())
         .with_memory(caller_state.memory.clone())
         .with_resource_context(caller_state.resources.clone())
         .with_next_local_frame(if has_aggregate_parameters {
@@ -16929,7 +17343,7 @@ fn bind_c_contract_arguments(
             parameter.pointee_is_constant(),
         );
     }
-    constructor_input::bind(caller_state, interface, &callee_state)?;
+    constructor_input::bind(caller_state, interface, &callee_state, assumptions)?;
     construction_return::bind(caller_state, interface, &mut callee_state)?;
     Some(callee_state)
 }
@@ -17260,6 +17674,18 @@ fn initialize_c_function_globals_owned(
                 ));
             }
         }
+        state.set_memory(
+            state
+                .memory
+                .clone()
+                .with_declared_array_block_or_read_only(
+                    slot.block.clone(),
+                    CType::UInt8,
+                    literal.bytes().len() as u32,
+                    true,
+                )
+                .expect("validated string literal extent"),
+        );
         state.locals.set_array_object_at(
             literal.name().to_string(),
             CType::UInt8,
@@ -17323,6 +17749,17 @@ fn initialize_c_function_globals_owned(
                 global.c_type(),
             ));
         }
+        state.set_memory(
+            state
+                .memory
+                .clone()
+                .with_declared_scalar_block_or_read_only(
+                    slot.block.clone(),
+                    global.c_type().byte_width(),
+                    global.c_type(),
+                    global.is_constant(),
+                ),
+        );
         state.locals.set_global_with_all_qualifiers(
             global.kernel_name().to_string(),
             global.c_type(),
@@ -17373,6 +17810,18 @@ fn initialize_c_function_globals_owned(
                 ));
             }
         }
+        state.set_memory(
+            state
+                .memory
+                .clone()
+                .with_declared_array_block_or_read_only(
+                    slot.block.clone(),
+                    global_array.element_type(),
+                    global_array.length(),
+                    global_array.is_constant(),
+                )
+                .expect("validated native array extent"),
+        );
         state.locals.set_array_object_at_with_constant(
             global_array.kernel_name().to_string(),
             global_array.element_type(),
@@ -17420,6 +17869,16 @@ fn initialize_c_function_globals_owned(
                 ));
             }
         }
+        state.set_memory(
+            state
+                .memory
+                .clone()
+                .with_declared_aggregate_block_or_read_only(
+                    slot.block.clone(),
+                    global_aggregate.layout(),
+                    global_aggregate.is_constant(),
+                ),
+        );
         state.locals.set_aggregate_object_at_with_constant(
             global_aggregate.kernel_name().to_string(),
             global_aggregate.layout().clone(),
@@ -17540,6 +17999,17 @@ fn initialize_c_function_globals_owned(
                 static_local.c_type(),
             ));
         }
+        state.set_memory(
+            state
+                .memory
+                .clone()
+                .with_declared_scalar_block_or_read_only(
+                    slot.block.clone(),
+                    static_local.c_type().byte_width(),
+                    static_local.c_type(),
+                    static_local.is_constant(),
+                ),
+        );
         state.locals.set_global_with_all_qualifiers(
             static_local.kernel_name().to_string(),
             static_local.c_type(),
@@ -17596,6 +18066,18 @@ fn initialize_c_function_globals_owned(
                 ));
             }
         }
+        state.set_memory(
+            state
+                .memory
+                .clone()
+                .with_declared_array_block_or_read_only(
+                    slot.block.clone(),
+                    static_array.element_type(),
+                    static_array.length(),
+                    static_array.is_constant(),
+                )
+                .expect("validated native array extent"),
+        );
         state.locals.set_array_object_at_with_constant(
             static_array.kernel_name().to_string(),
             static_array.element_type(),
@@ -17643,6 +18125,16 @@ fn initialize_c_function_globals_owned(
                 ));
             }
         }
+        state.set_memory(
+            state
+                .memory
+                .clone()
+                .with_declared_aggregate_block_or_read_only(
+                    slot.block.clone(),
+                    static_aggregate.layout(),
+                    static_aggregate.is_constant(),
+                ),
+        );
         state.locals.set_aggregate_object_at_with_constant(
             static_aggregate.kernel_name().to_string(),
             static_aggregate.layout().clone(),
@@ -19280,8 +19772,14 @@ fn bind_contract_proof_arguments(
     caller_state: &CState,
     function: &CFunction,
     argument_values: &[CValue],
+    assumptions: &PureFactContext,
 ) -> Option<CState> {
-    let mut callee_state = bind_c_function_arguments(caller_state, function, argument_values)?;
+    let mut callee_state = bind_c_function_arguments_with_assumptions(
+        caller_state,
+        function,
+        argument_values,
+        assumptions,
+    )?;
     if let Some(events) = caller_state
         .population_effects
         .creation
@@ -22071,7 +22569,8 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CState, CRuntimeError>> {
-    let Some(callee_state) = bind_contract_proof_arguments(caller_state, function, argument_values)
+    let Some(callee_state) =
+        bind_contract_proof_arguments(caller_state, function, argument_values, assumptions)
     else {
         return Ok(Err(CRuntimeError::FunctionContract(format!(
             "could not bind contract-entry arguments for {}",
@@ -23293,6 +23792,13 @@ fn rewrite_resource_instance_selecting_children_unspelled(
         }
     }
     let assumptions = &opening_assumptions;
+    if unfold {
+        evaluation = assume_native_record_specs(&evaluation, &body_specs, assumptions)
+            .map_err(ResourceRewriteRefusal::OwnedMessage)?;
+    } else {
+        check_native_record_specs(&evaluation, &body_specs, assumptions)
+            .map_err(ResourceRewriteRefusal::OwnedMessage)?;
+    }
     // A contained authority is exclusive custody, not a readable footprint.
     // Name it from its declared type; the fold below consumes the caller's
     // actual authority, and an unfold returns the one this instance holds.
@@ -23357,6 +23863,7 @@ fn rewrite_resource_instance_selecting_children_unspelled(
     // the ambient frame or a child that has not been constructed. On fold,
     // check and consume that memory before allowing it in this scratch view.
     let mut next = state.clone();
+    next.set_memory(evaluation.memory().clone());
     if !unfold {
         for fact in body.facts() {
             next.resources = next
@@ -23367,7 +23874,12 @@ fn rewrite_resource_instance_selecting_children_unspelled(
     }
     let mut child_evaluation = evaluation.clone();
     child_evaluation.resources = body.clone();
-    let child_assumptions = assumptions.clone().require_owned_expression_loads();
+    // These are logical resource indices, evaluated with the immediate body's
+    // complete read authority. Address observation cannot issue native validity.
+    let child_assumptions = assumptions
+        .clone()
+        .require_owned_expression_loads()
+        .observe_pointer_addresses();
     let mut resource_bindings = BTreeMap::from([(Variable(u64::MAX), instance.identity)]);
     let mut introduced_children: Vec<ResourceInstance> = Vec::new();
     for child in body_children {
@@ -26285,8 +26797,12 @@ pub(super) fn function_return_resources_definitionally_established(
     else {
         return false;
     };
-    let Some(callee_state) = bind_c_function_arguments(caller_state, function, &argument_values)
-    else {
+    let Some(callee_state) = bind_c_function_arguments_with_assumptions(
+        caller_state,
+        function,
+        &argument_values,
+        assumptions,
+    ) else {
         return false;
     };
     let exit_memory = function_exit_memory(caller_state, return_state, value, function);
@@ -26458,6 +26974,17 @@ pub(super) fn jointly_consume_returned_resource_units(
         // unit the exit state does not hold exactly is consumed through its
         // definition's body.
         interface.composite_resource_definition(name)?;
+        let formation_state = state.clone().with_resource_context(available.clone());
+        if check_native_composite_formation(
+            &formation_state,
+            required,
+            interface.composite_resource_definitions(),
+            assumptions,
+        )
+        .is_err()
+        {
+            return None;
+        }
 
         let unit = quantity_condition_holds(
             assumptions,
@@ -26578,6 +27105,12 @@ pub(super) fn resource_context_satisfies_definitional_fact(
     if available.satisfies_fact(required, assumptions) {
         return true;
     }
+    let formation_state = CState::new()
+        .with_memory(memory.clone())
+        .with_resource_context(available.clone());
+    if !check_native_required_formations(&formation_state, required, definitions, assumptions) {
+        return false;
+    }
     let Some(available) =
         expand_all_composite_resource_facts(available, definitions, memory, assumptions)
     else {
@@ -26676,6 +27209,14 @@ fn consume_resource_fact_definitionally(
             return Some(remaining);
         }
 
+        let formation_state = CState::new()
+            .with_memory(memory.clone())
+            .with_resource_context(available.clone());
+        if check_native_composite_formation(&formation_state, required, definitions, assumptions)
+            .is_err()
+        {
+            return None;
+        }
         let required_context =
             ResourceContext::new_with_equalities(assumptions).unchecked_with_fact(required.clone());
         if let Some(expanded_required) = crate::instrumentation::measure_operation(
@@ -29333,7 +29874,8 @@ fn resolve_retained_aggregate_fields(
         | CExpression::BitwiseNot(inner)
         | CExpression::Load(inner)
         | CExpression::TypedLoad { pointer: inner, .. }
-        | CExpression::PointerOffsetBytes { pointer: inner, .. } => {
+        | CExpression::PointerOffsetBytes { pointer: inner, .. }
+        | CExpression::PointerAligned { pointer: inner, .. } => {
             resolve_retained_aggregate_fields(entry, state, inner, true, assumptions, budget)?
         }
         CExpression::Conditional {
@@ -29392,6 +29934,8 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
+    let observer_assumptions = assumptions.clone().observe_pointer_addresses();
+    let assumptions = &observer_assumptions;
     if !resource.resource_arguments().is_empty()
         && !matches!(resource.term(), CResourceTerm::Instance { .. })
     {
@@ -30811,8 +31355,9 @@ pub(crate) fn unreturned_allocation_with_checked_returned_resources(
             "allocation-delta checking requires concrete symbolic contract arguments".to_string(),
         ));
     };
-    let entry_state = bind_contract_proof_arguments(caller_state, function, &argument_values)
-        .ok_or(CRuntimeError::TypeMismatch)?;
+    let entry_state =
+        bind_contract_proof_arguments(caller_state, function, &argument_values, assumptions)
+            .ok_or(CRuntimeError::TypeMismatch)?;
     let mut output_state = with_contract_argument_views(state, function, &argument_values);
     if function.return_type() != CType::Void {
         set_function_result(&mut output_state, function, value.clone());
@@ -30950,7 +31495,8 @@ pub(crate) fn unreturned_allocation_at_function_exit(
             "allocation-delta checking requires concrete symbolic contract arguments".to_string(),
         )));
     };
-    let Some(entry_state) = bind_contract_proof_arguments(caller_state, function, &argument_values)
+    let Some(entry_state) =
+        bind_contract_proof_arguments(caller_state, function, &argument_values, assumptions)
     else {
         return Ok(Err(CRuntimeError::TypeMismatch));
     };
@@ -31565,8 +32111,13 @@ fn contract_exit_outcome_with_boundary_transfer(
     };
     let outcome = complete_void_fallthrough(function, outcome);
     if let CStatementOutcome::Return { state, .. } = &outcome {
-        let entry = bind_c_function_arguments(caller_state, function, &argument_values)
-            .ok_or(CRuntimeError::TypeMismatch);
+        let entry = bind_c_function_arguments_with_assumptions(
+            caller_state,
+            function,
+            &argument_values,
+            assumptions,
+        )
+        .ok_or(CRuntimeError::TypeMismatch);
         match entry.and_then(|entry| {
             check_mutex_helper_body_return(
                 &entry,
@@ -31609,7 +32160,8 @@ fn contract_exit_outcome_with_boundary_transfer(
     let callee_state = if let Some(receipt) = checked_transfer {
         receipt.callee.clone()
     } else {
-        let Some(callee) = bind_contract_proof_arguments(caller_state, function, &argument_values)
+        let Some(callee) =
+            bind_contract_proof_arguments(caller_state, function, &argument_values, assumptions)
         else {
             return Ok(Err(CRuntimeError::TypeMismatch));
         };
@@ -32041,7 +32593,7 @@ pub(super) fn apply_verified_contract_resource_transition(
         )));
     };
     let Some(callee_state) =
-        bind_contract_proof_arguments(caller_state, function, &argument_values)
+        bind_contract_proof_arguments(caller_state, function, &argument_values, assumptions)
     else {
         return Ok(Err(CRuntimeError::TypeMismatch));
     };
@@ -32712,6 +33264,10 @@ mod verified_call_initialization_tests {
     fn apply(function: CFunction, state: &CState, pointer: &Pointer) -> Vec<CFunctionPath> {
         let environment =
             CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
+                source_declaration: None,
+                pointer_result_effects: Default::default(),
+                pointer_store_effects: Default::default(),
+                native_output_places_certified: false,
                 function: function.clone(),
                 loop_semantics: CLoopSemantics::Verify,
                 checked_callees: None,
@@ -33013,6 +33569,10 @@ mod stable_view_call_tests {
 
     fn environment(function: &CFunction) -> CExecutionEnvironment {
         CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: function.clone(),
             loop_semantics: CLoopSemantics::Verify,
             checked_callees: None,
@@ -33605,6 +34165,10 @@ mod stable_view_call_tests {
         let function = view_and_produce_reader("view_and_produce");
         let environment =
             CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
+                source_declaration: None,
+                pointer_result_effects: Default::default(),
+                pointer_store_effects: Default::default(),
+                native_output_places_certified: false,
                 function: function.clone(),
                 loop_semantics: CLoopSemantics::Verify,
                 checked_callees: None,
@@ -34374,6 +34938,10 @@ mod stable_view_call_tests {
         let environment = CExecutionEnvironment::new()
             .with_function(inner.clone())
             .with_verified_function_rule(CVerifiedFunctionRule {
+                source_declaration: None,
+                pointer_result_effects: Default::default(),
+                pointer_store_effects: Default::default(),
+                native_output_places_certified: false,
                 function: inner,
                 loop_semantics: CLoopSemantics::Verify,
                 checked_callees: None,

@@ -30,10 +30,11 @@ use crate::kernel::{
     c_condition_fact_memories, c_contract_refinement_context, c_declare,
     c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks, c_function,
     c_function_contract_entry_state, c_function_contract_refinement_arguments,
-    c_function_contract_refinement_context, c_function_entry_state, c_function_specification,
-    c_function_termination_plan, c_if, c_loop_invariants_hold_at_entry,
-    c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect,
-    c_resources_directly_match, c_seq, c_termination_height_plan, c_typed_pointer_value,
+    c_function_contract_refinement_context, c_function_entry_state,
+    c_function_entry_state_with_assumptions, c_function_specification, c_function_termination_plan,
+    c_if, c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
+    c_pointer_offsets_proven_equal_for_effect, c_resources_directly_match, c_seq,
+    c_termination_height_plan, c_typed_pointer_value,
     c_unverified_function_contract_claims_diagnostic,
     c_verified_function_contract_claims_with_checked_propositions, c_verified_function_rule,
     c_verified_function_termination_rules, c_while_with_invariant_and_effect_checks,
@@ -2112,6 +2113,7 @@ fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet
         | CExpression::CheckedObjectAddress(inner)
         | CExpression::MemberAddress { object: inner, .. }
         | CExpression::PointerOffsetBytes { pointer: inner, .. }
+        | CExpression::PointerAligned { pointer: inner, .. }
         | CExpression::Not(inner)
         | CExpression::BitwiseNot(inner)
         | CExpression::Load(inner)
@@ -3245,7 +3247,13 @@ enum ContractSegmentSurface {
         element_width: Option<u32>,
         element_type: Option<CType>,
     },
+    IndexedField {
+        place: Box<ContractExpression>,
+        element_width: u32,
+        element_type: CType,
+    },
     Object(String),
+    ObjectAt { name: String, base: Box<ContractExpression> },
 }
 
 /// The imported ABI retained by one range of whole struct objects. Hash the
@@ -3282,24 +3290,26 @@ impl ContractSegment {
             | ContractSegmentSurface::StructRange {
                 base, start, end, ..
             } => Some((base, start, end)),
-            ContractSegmentSurface::Field { .. } | ContractSegmentSurface::Object(_) => None,
+            ContractSegmentSurface::Field { .. } | ContractSegmentSurface::IndexedField { .. } | ContractSegmentSurface::Object(_) | ContractSegmentSurface::ObjectAt { .. } => None,
         }
     }
 
     pub(crate) fn field_element_width(&self) -> Option<u32> {
         match &self.surface {
             ContractSegmentSurface::Field { element_width, .. } => *element_width,
+            ContractSegmentSurface::IndexedField { element_width, .. } => Some(*element_width),
             ContractSegmentSurface::StructRange { layout, .. } => Some(layout.layout.size_bytes()),
-            ContractSegmentSurface::Range { .. } | ContractSegmentSurface::Object(_) => None,
+            ContractSegmentSurface::Range { .. } | ContractSegmentSurface::Object(_) | ContractSegmentSurface::ObjectAt { .. } => None,
         }
     }
 
     pub(crate) fn field_element_type(&self) -> Option<CType> {
         match &self.surface {
             ContractSegmentSurface::Field { element_type, .. } => *element_type,
+            ContractSegmentSurface::IndexedField { element_type, .. } => Some(*element_type),
             ContractSegmentSurface::Range { .. }
             | ContractSegmentSurface::StructRange { .. }
-            | ContractSegmentSurface::Object(_) => None,
+            | ContractSegmentSurface::Object(_) | ContractSegmentSurface::ObjectAt { .. } => None,
         }
     }
 }

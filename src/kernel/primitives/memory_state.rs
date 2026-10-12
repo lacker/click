@@ -1935,6 +1935,8 @@ impl CBlock {
             size: Bitvector32Term::Constant(size),
             read_only: false,
             declared_object: None,
+            explicit_scalar_ownership: false,
+            uint32_representation: None,
         }
     }
 
@@ -1943,6 +1945,8 @@ impl CBlock {
             size: Bitvector32Term::Constant(size),
             read_only: true,
             declared_object: None,
+            explicit_scalar_ownership: false,
+            uint32_representation: None,
         }
     }
 
@@ -1951,6 +1955,8 @@ impl CBlock {
             size,
             read_only: false,
             declared_object: None,
+            explicit_scalar_ownership: false,
+            uint32_representation: None,
         }
     }
 
@@ -2540,39 +2546,162 @@ impl CMemory {
         crate::instrumentation::record_deterministic_work(1);
         self.blocks
             .get(&pointer.block)
-            .is_some_and(|block| matches!(block.declared_object, Some(CDeclaredObject::Scalar(_))))
+            .is_some_and(|block| block.explicit_scalar_ownership)
     }
 
-    /// Declares one complete automatic scalar, retaining its type while its
-    /// cells are unwritten, forgotten, or accessed through character pointers.
-    pub(in crate::kernel) fn with_declared_scalar_block(
+    /// Retains a complete declaration separately from its allocation extent,
+    /// values, initialization and authority. Only actual declaration producers
+    /// call this; a raw block or footprint does not establish an object.
+    fn with_complete_declaration(
         mut self,
+        block: PointerBlock,
+        size: u32,
+        declared_object: CDeclaredObject,
+        read_only: bool,
+        explicit_scalar_ownership: bool,
+        uint32_representation: Option<UInt32RepresentationProfile>,
+    ) -> Self {
+        let mut declaration = CBlock::new(size);
+        declaration.declared_object = Some(declared_object);
+        declaration.read_only = read_only;
+        declaration.explicit_scalar_ownership = explicit_scalar_ownership;
+        declaration.uint32_representation = uint32_representation;
+        if self.blocks.get(&block) == Some(&declaration) {
+            return self;
+        }
+        let base = intern_derivation_base(&mut self);
+        Arc::make_mut(&mut self.blocks).insert(block.clone(), declaration);
+        record_c_memory_derivation(&mut self, CMemoryDerivation::BlockDeclared { base, block });
+        self
+    }
+
+    #[cfg(test)]
+    pub(in crate::kernel) fn with_declared_scalar_block(
+        self,
         block: PointerBlock,
         size: u32,
         c_type: CType,
     ) -> Self {
-        let base = intern_derivation_base(&mut self);
-        let mut declaration = CBlock::new(size);
-        declaration.declared_object = Some(CDeclaredObject::Scalar(c_type));
-        std::sync::Arc::make_mut(&mut self.blocks).insert(block.clone(), declaration);
-        record_c_memory_derivation(&mut self, CMemoryDerivation::BlockDeclared { base, block });
-        self
+        self.with_declared_scalar_block_in_target(block, size, c_type, None)
     }
 
-    /// Declares one complete automatic aggregate without creating field values,
-    /// initialized bytes or ownership. The layout survives value forgetting;
-    /// raw footprints and destination selection do not issue this declaration.
+    pub(in crate::kernel) fn with_declared_scalar_block_in_target(
+        self,
+        block: PointerBlock,
+        size: u32,
+        c_type: CType,
+        byte_order: Option<ByteOrder>,
+    ) -> Self {
+        let profile =
+            (c_type == CType::UInt32 && size == 4 && byte_order == Some(ByteOrder::Little))
+                .then_some(UInt32RepresentationProfile::LittleEndian);
+        self.with_complete_declaration(
+            block,
+            size,
+            CDeclaredObject::Scalar(c_type),
+            false,
+            true,
+            profile,
+        )
+    }
+
+    pub(in crate::kernel) fn declared_uint32_representation(
+        &self,
+        pointer: &Pointer,
+    ) -> Option<UInt32RepresentationProfile> {
+        if pointer.offset.as_const() != Some(0)
+            || pointer.is_in_null_block()
+            || self.is_ended_local_address(pointer)
+            || self.is_deallocated_heap_address(pointer, &PureFactContext::new())
+        {
+            return None;
+        }
+        crate::instrumentation::record_deterministic_work(1);
+        let block = self.blocks.get(&pointer.block)?;
+        if block.size.as_const() != Some(4)
+            || !matches!(
+                block.declared_object,
+                Some(CDeclaredObject::Scalar(CType::UInt32))
+            )
+        {
+            return None;
+        }
+        block.uint32_representation
+    }
+
+    pub(in crate::kernel) fn with_declared_scalar_block_or_read_only(
+        self,
+        block: PointerBlock,
+        size: u32,
+        c_type: CType,
+        read_only: bool,
+    ) -> Self {
+        self.with_complete_declaration(
+            block,
+            size,
+            CDeclaredObject::Scalar(c_type),
+            read_only,
+            false,
+            None,
+        )
+    }
+
     pub(in crate::kernel) fn with_declared_aggregate_block(
-        mut self,
+        self,
         block: PointerBlock,
         layout: &CAggregateLayout,
     ) -> Self {
-        let base = intern_derivation_base(&mut self);
-        let mut declaration = CBlock::new(layout.size_bytes());
-        declaration.declared_object = Some(CDeclaredObject::Aggregate(Arc::new(layout.clone())));
-        Arc::make_mut(&mut self.blocks).insert(block.clone(), declaration);
-        record_c_memory_derivation(&mut self, CMemoryDerivation::BlockDeclared { base, block });
-        self
+        self.with_declared_aggregate_block_or_read_only(block, layout, false)
+    }
+
+    pub(in crate::kernel) fn with_declared_aggregate_block_or_read_only(
+        self,
+        block: PointerBlock,
+        layout: &CAggregateLayout,
+        read_only: bool,
+    ) -> Self {
+        self.with_complete_declaration(
+            block,
+            layout.size_bytes(),
+            CDeclaredObject::Aggregate(Arc::new(layout.clone())),
+            read_only,
+            false,
+            None,
+        )
+    }
+
+    pub(in crate::kernel) fn with_declared_array_block(
+        self,
+        block: PointerBlock,
+        element_type: CType,
+        count: u32,
+    ) -> Option<Self> {
+        self.with_declared_array_block_or_read_only(block, element_type, count, false)
+    }
+
+    pub(in crate::kernel) fn with_declared_array_block_or_read_only(
+        self,
+        block: PointerBlock,
+        element_type: CType,
+        count: u32,
+        read_only: bool,
+    ) -> Option<Self> {
+        let width = element_type.byte_width();
+        if width == 0 {
+            return None;
+        }
+        let size = count.checked_mul(width)?;
+        Some(self.with_complete_declaration(
+            block,
+            size,
+            CDeclaredObject::Array {
+                element_type,
+                count,
+            },
+            read_only,
+            false,
+            None,
+        ))
     }
 
     /// Complete scalar construction without changing its extent, type, cells,
@@ -2714,6 +2843,26 @@ impl CMemory {
     /// cell at the requested numeric address. In particular, a one-past member
     /// pointer cannot acquire a sibling's identity here.
     pub(crate) fn has_scalar_object_domain(&self, pointer: &CPointerValue, c_type: CType) -> bool {
+        if let Some(PointerDesignation::InputSelected {
+            base,
+            element_type,
+            stride,
+            count,
+            ..
+        }) = pointer.designation()
+        {
+            return pointer.pointer() == base
+                && *element_type == c_type
+                && *stride == c_type.byte_width()
+                && *count == SharedIntegerTerm::from(IntegerTerm::constant_i64(1))
+                && self
+                    .authenticated_input_selection(pointer, &PureFactContext::new())
+                    .is_some_and(|guards| {
+                        guards
+                            .iter()
+                            .all(|guard| guard == &ConditionTerm::Constant(true))
+                    });
+        }
         if !Self::is_complete_scalar_designation(pointer, c_type) {
             return self
                 .checked_record_selection(pointer)
@@ -2759,6 +2908,266 @@ impl CMemory {
             .then_some(value)
     }
 
+    /// Authenticate an actual scalar array declaration. Its element count is
+    /// never reconstructed from byte ownership or the allocation's extent.
+    pub(in crate::kernel) fn has_declared_array_domain(&self, pointer: &CPointerValue) -> bool {
+        let Some(PointerDesignation::Object {
+            root,
+            path,
+            base,
+            element_type,
+            stride,
+            count,
+        }) = pointer.designation()
+        else {
+            return false;
+        };
+        if !path.is_empty() {
+            return self.has_declared_member_array_domain(pointer);
+        }
+        if root != base
+            || base != pointer.pointer()
+            || !path.is_empty()
+            || root.offset.as_const() != Some(0)
+            || pointer.is_null()
+            || self.is_ended_local_address(root)
+            || self.is_deallocated_heap_address(root, &PureFactContext::new())
+        {
+            return false;
+        }
+        crate::instrumentation::record_deterministic_work(1);
+        let shape = match self
+            .blocks
+            .get(&root.block)
+            .and_then(|block| block.declared_object.as_ref())
+        {
+            Some(CDeclaredObject::Array {
+                element_type,
+                count,
+            }) => Some((*element_type, *count)),
+            Some(CDeclaredObject::Aggregate(layout)) => layout.scalar_array(),
+            _ => None,
+        };
+        let Some((held, held_count)) = shape else {
+            return false;
+        };
+        held == *element_type
+            && *stride == held.byte_width()
+            && *count == SharedIntegerTerm::from(IntegerTerm::constant_i64(i64::from(held_count)))
+    }
+
+    pub(in crate::kernel) fn declared_array_pointer(
+        &self,
+        address: &Pointer,
+        element_type: CType,
+        count: u32,
+    ) -> Option<CPointerValue> {
+        let value = CPointerValue::new(address.clone(), element_type.pointer_to()?)
+            .with_designation(PointerDesignation::Object {
+                root: address.clone(),
+                path: Arc::from([]),
+                base: address.clone(),
+                element_type,
+                stride: element_type.byte_width(),
+                count: IntegerTerm::constant_i64(i64::from(count)).into(),
+            });
+        self.has_declared_array_domain(&value).then_some(value)
+    }
+
+    /// Array decay selects the actual declared member array while keeping its
+    /// enclosing root/path. It cannot flatten an array of records or recover a
+    /// member merely from a raw numeric address.
+    pub(in crate::kernel) fn checked_member_array_pointer(
+        &self,
+        object: &CPointerValue,
+    ) -> Option<CPointerValue> {
+        if matches!(
+            object.designation(),
+            Some(PointerDesignation::InputSelected { .. })
+        ) {
+            let (pointer, guards) =
+                self.guarded_member_array_pointer(object, &PureFactContext::new())?;
+            return guards
+                .iter()
+                .all(|guard| guard == &ConditionTerm::Constant(true))
+                .then_some(pointer);
+        }
+        let (layout, path, selected) = self.checked_record_selection(object)?;
+        if path.is_empty() {
+            return None;
+        }
+        let (element_type, count) = layout.array_member_at_path(&path)?;
+        let stride = element_type.byte_width();
+        if stride == 0 || stride.checked_mul(count)? != selected.byte_width() {
+            return None;
+        }
+        let PointerDesignation::Object {
+            root, path, base, ..
+        } = object.designation()?
+        else {
+            return None;
+        };
+        Some(
+            object
+                .clone()
+                .with_type(element_type.pointer_to()?)
+                .with_designation(PointerDesignation::Object {
+                    root: root.clone(),
+                    path: path.clone(),
+                    base: base.clone(),
+                    element_type,
+                    stride,
+                    count: IntegerTerm::constant_i64(i64::from(count)).into(),
+                }),
+        )
+    }
+
+    pub(in crate::kernel) fn guarded_member_array_pointer(
+        &self,
+        object: &CPointerValue,
+        assumptions: &PureFactContext,
+    ) -> Option<(CPointerValue, Vec<ConditionTerm>)> {
+        let Some(PointerDesignation::InputSelected {
+            input,
+            origin,
+            path,
+            base,
+            element_type: selected,
+            stride: selected_stride,
+            count: selected_count,
+        }) = object.designation()
+        else {
+            return self
+                .checked_member_array_pointer(object)
+                .map(|pointer| (pointer, vec![]));
+        };
+        let mut guards = self.authenticated_input_selection(object, assumptions)?;
+        guards.push(ConditionTerm::pointer_equal(
+            object.pointer().clone(),
+            base.clone(),
+        ));
+        let (layout, _, _, members) = self.input_selection_parts(input, origin, path)?;
+        let (element_type, count) = layout.array_member_at_path(&members)?;
+        let stride = element_type.byte_width();
+        if stride == 0
+            || stride.checked_mul(count)? != selected.byte_width()
+            || *selected_stride != selected.byte_width()
+            || *selected_count != SharedIntegerTerm::from(IntegerTerm::constant_i64(1))
+        {
+            return None;
+        }
+        let decayed = object
+            .clone()
+            .with_type(element_type.pointer_to()?)
+            .with_designation(PointerDesignation::InputSelected {
+                input: input.clone(),
+                origin: origin.clone(),
+                path: path.clone(),
+                base: base.clone(),
+                element_type,
+                stride,
+                count: IntegerTerm::constant_i64(i64::from(count)).into(),
+            });
+        guards.extend(self.authenticated_input_selection(&decayed, assumptions)?);
+        Some((decayed, guards))
+    }
+
+    fn has_declared_member_array_domain(&self, pointer: &CPointerValue) -> bool {
+        let Some(PointerDesignation::Object {
+            root,
+            path,
+            base,
+            element_type,
+            stride,
+            count,
+        }) = pointer.designation()
+        else {
+            return false;
+        };
+        if path.is_empty() || base != pointer.pointer() {
+            return false;
+        }
+        let layout = match self
+            .blocks
+            .get(&root.block)
+            .and_then(|block| block.declared_object.as_ref())
+        {
+            Some(CDeclaredObject::Aggregate(layout)) => layout,
+            Some(_) => return false,
+            None => match self.heap.object_input_domains.get(root) {
+                Some(layout) => layout,
+                None => return false,
+            },
+        };
+        let Some(member_path) = path
+            .iter()
+            .map(|part| match part {
+                PointerDomainSelection::Member(name) => Some(name.clone()),
+                PointerDomainSelection::Element(_) => None,
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        let Some((_, selected)) = layout.member_at_path(&member_path) else {
+            return false;
+        };
+        let Some((held_element, held_count)) = layout.array_member_at_path(&member_path) else {
+            return false;
+        };
+        if *element_type != held_element
+            || *stride != held_element.byte_width()
+            || *count != SharedIntegerTerm::from(IntegerTerm::constant_i64(i64::from(held_count)))
+        {
+            return false;
+        }
+        // Reauthenticate the complete selected array, including lifetime,
+        // known-declaration precedence, root offset and exact parent path.
+        let complete = pointer
+            .clone()
+            .with_designation(PointerDesignation::Object {
+                root: root.clone(),
+                path: path.clone(),
+                base: base.clone(),
+                element_type: selected,
+                stride: selected.byte_width(),
+                count: IntegerTerm::constant_i64(1).into(),
+            });
+        self.checked_member_array_pointer(&complete)
+            .is_some_and(|held| held.same_designation(pointer))
+    }
+
+    /// Authenticate a retained descriptor at its selected base. The executable
+    /// operation separately checks the current position against this domain;
+    /// changing address spelling here does not issue a different descriptor.
+    pub(in crate::kernel) fn authenticated_pointer_domain_at_base(
+        &self,
+        pointer: &CPointerValue,
+    ) -> bool {
+        if matches!(
+            pointer.designation(),
+            Some(PointerDesignation::InputSelected { .. })
+        ) {
+            return self
+                .authenticated_input_selection(pointer, &PureFactContext::new())
+                .is_some_and(|guards| {
+                    guards
+                        .iter()
+                        .all(|guard| guard == &ConditionTerm::Constant(true))
+                });
+        }
+        let Some(PointerDesignation::Object {
+            base, element_type, ..
+        }) = pointer.designation()
+        else {
+            return false;
+        };
+        let at_base = pointer.clone().with_pointer(base.clone());
+        self.has_declared_array_domain(&at_base)
+            || self.has_scalar_object_domain(&at_base, *element_type)
+            || self.checked_record_selection(&at_base).is_some()
+    }
+
     /// Authenticate a retained record-root/path descriptor against declarations
     /// or admitted native input requirements. Address coincidence is insufficient.
     fn checked_record_selection<'a>(
@@ -2795,8 +3204,12 @@ impl CMemory {
             Some(_) => return None,
             None => self.heap.object_input_domains.get(root)?.as_ref(),
         };
-        // This producer is scoped to the admitted native record hierarchy.
-        layout.declaration_identity()?;
+        if layout.scalar_array().is_some() || !layout.unions().is_empty() {
+            return None;
+        }
+        // Actual C/Rust declarations use structural layouts. Native C++
+        // callers additionally match the authenticated nominal identity in
+        // selects_layout_path; absent identity never substitutes for it.
         let path = path
             .iter()
             .map(|selection| match selection {
@@ -2824,6 +3237,38 @@ impl CMemory {
         pointer: &CPointerValue,
         expected: &CAggregateLayout,
     ) -> bool {
+        if let Some(PointerDesignation::InputSelected {
+            input,
+            origin,
+            path,
+            base,
+            element_type,
+            stride,
+            count,
+        }) = pointer.designation()
+        {
+            return pointer.pointer() == base
+                && *element_type == CType::UInt8Array(expected.size_bytes())
+                && *stride == expected.size_bytes()
+                && *count == SharedIntegerTerm::from(IntegerTerm::constant_i64(1))
+                && self
+                    .authenticated_input_selection(pointer, &PureFactContext::new())
+                    .is_some_and(|guards| {
+                        guards
+                            .iter()
+                            .all(|guard| guard == &ConditionTerm::Constant(true))
+                    })
+                && self.input_selection_parts(input, origin, path).is_some_and(
+                    |(layout, _, _, members)| layout.selects_layout_path(&members, expected),
+                );
+        }
+        if let Some((element, count)) = expected.scalar_array() {
+            return self.has_declared_array_domain(pointer)
+                && matches!(pointer.designation(), Some(PointerDesignation::Object { element_type, count: held_count, .. })
+                    if *element_type == element && *held_count == SharedIntegerTerm::from(IntegerTerm::constant_i64(i64::from(count))))
+                && self.blocks.get(&pointer.block).is_some_and(|block|
+                    matches!(block.declared_object.as_ref(), Some(CDeclaredObject::Aggregate(layout)) if layout.selects_layout_path(&[], expected)));
+        }
         self.checked_record_selection(pointer)
             .is_some_and(|(layout, path, selected)| {
                 selected == CType::UInt8Array(expected.size_bytes())
@@ -2838,6 +3283,15 @@ impl CMemory {
         address: &Pointer,
         layout: &CAggregateLayout,
     ) -> Option<CPointerValue> {
+        if !layout.unions().is_empty() {
+            return None;
+        }
+        if let Some((element, count)) = layout.scalar_array() {
+            let value = self.declared_array_pointer(address, element, count)?;
+            return self
+                .has_aggregate_object_domain(&value, layout)
+                .then_some(value);
+        }
         let value = Self::aggregate_input_pointer(address.clone(), layout, CType::UInt8Pointer);
         self.has_aggregate_object_domain(&value, layout)
             .then_some(value)
@@ -2865,6 +3319,32 @@ impl CMemory {
         object: &CPointerValue,
         selection: &CAggregateMemberSelection,
     ) -> Option<CPointerValue> {
+        if matches!(
+            object.designation(),
+            Some(
+                PointerDesignation::Unresolved(_)
+                    | PointerDesignation::Loaded(_)
+                    | PointerDesignation::InputSelected { .. }
+            )
+        ) {
+            let (pointer, guards) =
+                self.guarded_native_record_selection(object, selection, &PureFactContext::new())?;
+            return guards
+                .iter()
+                .all(|guard| guard == &ConditionTerm::Constant(true))
+                .then_some(pointer);
+        }
+        let resolved_object;
+        let object = if matches!(
+            object.designation(),
+            Some(PointerDesignation::Unresolved(_) | PointerDesignation::Loaded(_))
+        ) {
+            resolved_object = self.checked_native_record_pointer(object)?;
+            &resolved_object
+        } else {
+            object
+        };
+
         if !self.has_aggregate_object_domain(object, &selection.layout) {
             return None;
         }
@@ -2898,6 +3378,968 @@ impl CMemory {
                     count: IntegerTerm::constant_i64(1).into(),
                 }),
         )
+    }
+
+    /// Select a relative child of an authenticated record carrier. The root
+    /// layout comes from its declaration/input witness, never an address
+    /// search; the existing selected path remains part of the result domain.
+    pub(in crate::kernel) fn checked_member_pointer_by_path(
+        &self,
+        object: &CPointerValue,
+        relative_path: &[String],
+    ) -> Option<CPointerValue> {
+        if matches!(
+            object.designation(),
+            Some(
+                PointerDesignation::Unresolved(_)
+                    | PointerDesignation::Loaded(_)
+                    | PointerDesignation::InputSelected { .. }
+            )
+        ) {
+            let (pointer, guards) = self.guarded_member_pointer_by_path(
+                object,
+                relative_path,
+                &PureFactContext::new(),
+            )?;
+            return guards
+                .iter()
+                .all(|guard| guard == &ConditionTerm::Constant(true))
+                .then_some(pointer);
+        }
+        let resolved_object;
+        let object = if matches!(
+            object.designation(),
+            Some(PointerDesignation::Unresolved(_) | PointerDesignation::Loaded(_))
+        ) {
+            resolved_object = self.checked_native_record_pointer(object)?;
+            &resolved_object
+        } else {
+            object
+        };
+
+        let (_, mut selected_path, selected_type) = self.checked_record_selection(object)?;
+        if !matches!(selected_type, CType::UInt8Array(_)) {
+            return None;
+        }
+        if relative_path.is_empty() {
+            return Some(object.clone());
+        }
+        let PointerDesignation::Object { root, .. } = object.designation()? else {
+            return None;
+        };
+        let layout = match self
+            .blocks
+            .get(&root.block)
+            .and_then(|block| block.declared_object.as_ref())
+        {
+            Some(CDeclaredObject::Aggregate(layout)) => layout.clone(),
+            Some(_) => return None,
+            None => self.heap.object_input_domains.get(root)?.clone(),
+        };
+        selected_path.extend_from_slice(relative_path);
+        let (_, value_type) = layout.member_at_path(&selected_path)?;
+        let selection = CAggregateMemberSelection {
+            layout: layout.clone(),
+            path: selected_path.into(),
+            value_type,
+        };
+        let root_object = Self::aggregate_input_pointer(root.clone(), &layout, object.c_type())
+            .with_pointee_volatile(object.pointee_volatile())
+            .with_pointee_constant(object.pointee_constant());
+        self.checked_member_pointer(&root_object, &selection)
+    }
+
+    pub(in crate::kernel) fn guarded_member_pointer_by_path(
+        &self,
+        object: &CPointerValue,
+        relative_path: &[String],
+        assumptions: &PureFactContext,
+    ) -> Option<(CPointerValue, Vec<ConditionTerm>)> {
+        if matches!(
+            object.designation(),
+            Some(PointerDesignation::Object { .. })
+        ) {
+            return self
+                .checked_member_pointer_by_path(object, relative_path)
+                .map(|pointer| (pointer, vec![]));
+        }
+        let mut guards = vec![];
+        let (root_object, layout, mut members) = if let Some(PointerDesignation::InputSelected {
+            input,
+            origin,
+            path,
+            base,
+            element_type,
+            ..
+        }) = object.designation()
+        {
+            if !matches!(element_type, CType::UInt8Array(_)) {
+                return None;
+            }
+            guards.extend(self.authenticated_input_selection(object, assumptions)?);
+            guards.push(ConditionTerm::pointer_equal(
+                object.pointer().clone(),
+                base.clone(),
+            ));
+            let (layout, _, _, members) = self.input_selection_parts(input, origin, path)?;
+            let member_offset = if members.is_empty() {
+                0
+            } else {
+                layout.member_at_path(&members)?.0
+            };
+            let row = self.heap.native_record_inputs.get(input)?;
+            let record_start = Pointer {
+                block: object.block.clone(),
+                offset: match object
+                    .offset
+                    .as_const()
+                    .and_then(|offset| offset.checked_sub(i64::from(member_offset)))
+                {
+                    Some(offset) => PointerOffsetTerm::Constant(offset),
+                    None => PointerOffsetTerm::Add(
+                        Box::new(object.offset.clone()),
+                        Box::new(PointerOffsetTerm::Constant(-i64::from(member_offset))),
+                    ),
+                },
+            };
+            let root_object = row
+                .origin
+                .clone()
+                .with_pointer(record_start)
+                .with_pointee_constant(object.pointee_constant())
+                .with_pointee_volatile(object.pointee_volatile());
+            (root_object, self.input_record_layout(object)?, members)
+        } else {
+            let layout = self.input_record_layout(object)?;
+            (object.clone(), layout, vec![])
+        };
+        members.extend_from_slice(relative_path);
+        let value_type = if members.is_empty() {
+            CType::UInt8Array(layout.size_bytes())
+        } else {
+            layout.member_at_path(&members)?.1
+        };
+        let selection = CAggregateMemberSelection {
+            layout,
+            path: members.into(),
+            value_type,
+        };
+        let (pointer, selection_guards) =
+            self.guarded_native_record_selection(&root_object, &selection, assumptions)?;
+        guards.extend(selection_guards);
+        Some((pointer, guards))
+    }
+
+    /// Admit a source-typed native input promise. Callers must check the exact
+    /// typed resource occurrence or interface obligation before using this
+    /// trusted entry operation. It grants no memory or initialization.
+    pub(in crate::kernel) fn with_native_record_input(
+        mut self,
+        pointer: CPointerValue,
+        layout: Arc<CAggregateLayout>,
+    ) -> Result<Self, String> {
+        if layout.size_bytes() == 0
+            || layout.scalar_array().is_some()
+            || !layout.unions().is_empty()
+        {
+            return Err("native record input requires a supported record layout".into());
+        }
+        if matches!(
+            pointer.designation(),
+            Some(PointerDesignation::Object { .. } | PointerDesignation::InputSelected { .. })
+        ) {
+            return if self.has_aggregate_object_domain(&pointer, &layout) {
+                Ok(self)
+            } else {
+                Err("native record input conflicts with its retained designation".into())
+            };
+        }
+        let identity = Self::native_record_input_identity(&pointer)
+            .ok_or("native record input requires an exact input identity")?;
+        if !pointer.c_type().is_object_pointer()
+            || pointer.is_null()
+            || self.is_ended_local_address(pointer.pointer())
+            || self.is_deallocated_heap_address(pointer.pointer(), &PureFactContext::new())
+        {
+            return Err("native record input requires a live nonnull object address".into());
+        }
+        let record =
+            Self::aggregate_input_pointer(pointer.pointer().clone(), &layout, pointer.c_type());
+        if self
+            .blocks
+            .get(&pointer.block)
+            .is_some_and(|block| block.declared_object.is_some())
+            && !self.has_aggregate_object_domain(&record, &layout)
+        {
+            return Err("native record input conflicts with the declared object".into());
+        }
+        let row = CNativeRecordInput {
+            origin: pointer,
+            kind: CNativeInputKind::Record {
+                layout: layout.clone(),
+            },
+        };
+        if let Some(held) = self.heap.native_record_inputs.get(&identity) {
+            return if held == &row && self.checked_native_record_pointer(&row.origin).is_some() {
+                Ok(self)
+            } else {
+                Err("conflicting native record input identity".into())
+            };
+        }
+        if self
+            .heap
+            .object_input_domains
+            .get(row.origin.pointer())
+            .is_some_and(|held| held != &layout)
+        {
+            return Err("native record input conflicts with the retained object layout".into());
+        }
+        let diagnostic_base = self.clone();
+        let base = intern_derivation_base(&mut self);
+        let origin = row.origin.clone();
+        let heap = Arc::make_mut(&mut self.heap);
+        heap.object_input_domains
+            .insert(origin.pointer().clone(), layout.clone());
+        let mut identities = heap
+            .native_record_input_origins
+            .get(origin.pointer())
+            .cloned()
+            .unwrap_or_default();
+        identities.insert(identity.clone());
+        heap.native_record_input_origins
+            .insert(origin.pointer().clone(), identities);
+        heap.native_record_inputs.insert(identity.clone(), row);
+        // A typed validity premise changes no stored bytes. Keep the exact
+        // existing no-write memory edge for pointer/scalar read identities.
+        record_c_memory_derivation(&mut self, CMemoryDerivation::CellsForgotten { base });
+        self.record_diagnostic_transform(
+            "native record input",
+            vec![diagnostic_base],
+            vec![CValue::Pointer(origin)],
+        );
+        Ok(self)
+    }
+
+    /// Admit only a source-typed guaranteed prefix, never a complete array
+    /// descriptor or an ownership/initialization fact.
+    #[cfg(test)]
+    pub(in crate::kernel) fn with_native_input_span(
+        self,
+        pointer: CPointerValue,
+        element_type: CType,
+        count: SharedIntegerTerm,
+    ) -> Result<Self, String> {
+        self.with_typed_input_span(
+            pointer,
+            element_type,
+            count,
+            CTypedAccessPolicy::NativeObjectOnly,
+        )
+    }
+
+    pub(in crate::kernel) fn with_typed_input_span(
+        mut self,
+        pointer: CPointerValue,
+        element_type: CType,
+        count: SharedIntegerTerm,
+        policy: CTypedAccessPolicy,
+    ) -> Result<Self, String> {
+        let width = element_type.byte_width();
+        if width == 0
+            || element_type.array_element_type().is_some()
+            || element_type.pointer_to().is_none()
+        {
+            return Err("native input span requires a supported scalar element type".into());
+        }
+        if count.as_const().is_some_and(|count| {
+            count < &num_bigint::BigInt::from(0)
+                || count
+                    > &num_bigint::BigInt::from(
+                        crate::kernel::eval::pointer_domains::native_prefix_element_limit(width),
+                    )
+        }) {
+            return Err("native input span requires a nonnegative bounded byte extent".into());
+        }
+        let identity = Self::native_record_input_identity(&pointer)
+            .ok_or("native input span requires an exact unresolved or loaded identity")?;
+        if !pointer.c_type().is_object_pointer()
+            || pointer.is_null()
+            || self.is_ended_local_address(pointer.pointer())
+            || self.is_deallocated_heap_address(pointer.pointer(), &PureFactContext::new())
+        {
+            return Err("native input span requires a live nonnull address".into());
+        }
+        // A known declaration is definitive. Trusted unknown-input admission
+        // cannot reinterpret a known object or change its declared extent.
+        if self
+            .blocks
+            .get(&pointer.block)
+            .is_some_and(|block| block.declared_object.is_some())
+        {
+            return Err("native input span cannot replace a known declaration".into());
+        }
+        let row = CNativeRecordInput {
+            origin: pointer,
+            kind: CNativeInputKind::TypedPrefix {
+                element_type,
+                count,
+                policy,
+            },
+        };
+        if let Some(held) = self.heap.native_record_inputs.get(&identity) {
+            if held == &row {
+                return Ok(self);
+            }
+            let (
+                CNativeInputKind::TypedPrefix {
+                    element_type: held_type,
+                    count: held_count,
+                    policy: held_policy,
+                },
+                CNativeInputKind::TypedPrefix {
+                    element_type: new_type,
+                    count: new_count,
+                    policy: new_policy,
+                },
+            ) = (&held.kind, &row.kind)
+            else {
+                return Err("conflicting native input witness".into());
+            };
+            if held.origin != row.origin || held_type != new_type || held_policy != new_policy {
+                return Err("conflicting native input witness".into());
+            }
+            let (Some(held_count), Some(new_count)) = (held_count.as_const(), new_count.as_const())
+            else {
+                return Err("native input prefix extents have no proven ordering".into());
+            };
+            if held_count >= new_count {
+                return Ok(self);
+            }
+            // Both promises name this exact carrier/type/policy. Retain the
+            // larger literal guarantee; this issues no bytes or initialized cells.
+        }
+        let diagnostic_base = self.clone();
+        let base = intern_derivation_base(&mut self);
+        let origin = row.origin.clone();
+        let heap = Arc::make_mut(&mut self.heap);
+        let mut identities = heap
+            .native_record_input_origins
+            .get(origin.pointer())
+            .cloned()
+            .unwrap_or_default();
+        identities.insert(identity.clone());
+        heap.native_record_input_origins
+            .insert(origin.pointer().clone(), identities);
+        heap.native_record_inputs.insert(identity, row);
+        record_c_memory_derivation(&mut self, CMemoryDerivation::CellsForgotten { base });
+        self.record_diagnostic_transform(
+            "native typed prefix",
+            vec![diagnostic_base],
+            vec![CValue::Pointer(origin)],
+        );
+        Ok(self)
+    }
+
+    pub(in crate::kernel) fn native_input_span_policy(
+        &self,
+        pointer: &CPointerValue,
+    ) -> Option<CTypedAccessPolicy> {
+        let CNativeInputKind::TypedPrefix { policy, .. } =
+            &self.native_input_witness(pointer)?.kind
+        else {
+            return None;
+        };
+        Some(*policy)
+    }
+
+    /// Allocation-backed scalar access is a producer property, not a live-map
+    /// claim or an object declaration. Pending and retired rows do not qualify.
+    /// The allocator's success transition uses its original pending identity
+    /// to retain the exact produced carrier in the allocation token.
+    pub(in crate::kernel) fn resolved_allocated_scalar_pointer(
+        &self,
+        pending_base: &Pointer,
+    ) -> Option<CPointerValue> {
+        let PointerBlock::Symbolic(identity) = pending_base.block else {
+            return None;
+        };
+        if pending_base != &Pointer::symbolic(identity) {
+            return None;
+        }
+        let row = self
+            .heap
+            .native_record_inputs
+            .get(&CNativeInputIdentity::Unresolved(identity))?;
+        if row.origin.pointer()
+            != &(Pointer {
+                block: PointerBlock::Heap(identity.0),
+                offset: PointerOffsetTerm::Constant(0),
+            })
+        {
+            return None;
+        }
+        self.allocated_scalar_extent(&row.origin)
+            .map(|(origin, _, _)| origin)
+    }
+
+    pub(in crate::kernel) fn allocated_scalar_extent(
+        &self,
+        pointer: &CPointerValue,
+    ) -> Option<(CPointerValue, CType, SharedIntegerTerm)> {
+        let row = self.native_input_witness(pointer)?;
+        let CNativeInputKind::AllocatedScalar {
+            element_type,
+            bytes,
+        } = &row.kind
+        else {
+            return None;
+        };
+        if !matches!(row.origin.block, PointerBlock::Heap(_))
+            || row.origin.offset != PointerOffsetTerm::Constant(0)
+        {
+            return None;
+        }
+        let live_bytes = self.live_heap_block_size(row.origin.pointer())?;
+        let observed = Self::allocated_byte_extent(live_bytes)?;
+        if &observed != bytes {
+            return None;
+        }
+        Some((row.origin.clone(), *element_type, bytes.clone()))
+    }
+
+    fn allocated_byte_extent(bytes: &Bitvector32Term) -> Option<SharedIntegerTerm> {
+        crate::kernel::eval::pointer_domains::native_count_observation(
+            MachineIntegerType::UInt32,
+            crate::kernel::spec::c_value_bitvector_term(&CValue::UInt32(bytes.clone()))?,
+        )
+        .map(Into::into)
+    }
+
+    pub(in crate::kernel) fn native_input_span(
+        &self,
+        pointer: &CPointerValue,
+    ) -> Option<(CPointerValue, CType, SharedIntegerTerm)> {
+        let row = self.native_input_witness(pointer)?;
+        let CNativeInputKind::TypedPrefix {
+            element_type,
+            count,
+            ..
+        } = &row.kind
+        else {
+            return None;
+        };
+        Some((row.origin.clone(), *element_type, count.clone()))
+    }
+
+    pub(in crate::kernel) fn with_native_record_prefix(
+        mut self,
+        pointer: CPointerValue,
+        layout: Arc<CAggregateLayout>,
+        count: SharedIntegerTerm,
+    ) -> Result<Self, String> {
+        if layout.size_bytes() == 0
+            || layout.scalar_array().is_some()
+            || !layout.unions().is_empty()
+            || count.as_const().is_some_and(|count| {
+                count < &num_bigint::BigInt::from(0)
+                    || count
+                        > &num_bigint::BigInt::from(
+                            crate::kernel::eval::pointer_domains::native_prefix_element_limit(
+                                layout.size_bytes(),
+                            ),
+                        )
+            })
+        {
+            return Err("native record prefix requires a supported bounded record extent".into());
+        }
+        let identity = Self::native_record_input_identity(&pointer)
+            .ok_or("native record prefix requires an exact input identity")?;
+        if pointer.is_null()
+            || self.is_ended_local_address(pointer.pointer())
+            || self.is_deallocated_heap_address(pointer.pointer(), &PureFactContext::new())
+            || self
+                .blocks
+                .get(&pointer.block)
+                .is_some_and(|block| block.declared_object.is_some())
+        {
+            return Err("native record prefix cannot replace a dead or declared object".into());
+        }
+        let row = CNativeRecordInput {
+            origin: pointer,
+            kind: CNativeInputKind::RecordPrefix { layout, count },
+        };
+        if let Some(held) = self.heap.native_record_inputs.get(&identity) {
+            return if held == &row {
+                Ok(self)
+            } else {
+                Err("conflicting native input witness".into())
+            };
+        }
+        let diagnostic_base = self.clone();
+        let base = intern_derivation_base(&mut self);
+        let origin = row.origin.clone();
+        let heap = Arc::make_mut(&mut self.heap);
+        let mut identities = heap
+            .native_record_input_origins
+            .get(origin.pointer())
+            .cloned()
+            .unwrap_or_default();
+        identities.insert(identity.clone());
+        heap.native_record_input_origins
+            .insert(origin.pointer().clone(), identities);
+        heap.native_record_inputs.insert(identity, row);
+        record_c_memory_derivation(&mut self, CMemoryDerivation::CellsForgotten { base });
+        self.record_diagnostic_transform(
+            "native record prefix",
+            vec![diagnostic_base],
+            vec![CValue::Pointer(origin)],
+        );
+        Ok(self)
+    }
+
+    pub(in crate::kernel) fn native_record_prefix(
+        &self,
+        pointer: &CPointerValue,
+    ) -> Option<(CPointerValue, Arc<CAggregateLayout>, SharedIntegerTerm)> {
+        let row = self.native_input_witness(pointer)?;
+        let CNativeInputKind::RecordPrefix { layout, count } = &row.kind else {
+            return None;
+        };
+        Some((row.origin.clone(), layout.clone(), count.clone()))
+    }
+
+    fn input_selection_parts<'a>(
+        &'a self,
+        input: &CNativeInputIdentity,
+        origin: &Pointer,
+        path: &[PointerDomainSelection],
+    ) -> Option<(
+        &'a CAggregateLayout,
+        SharedIntegerTerm,
+        SharedIntegerTerm,
+        Vec<String>,
+    )> {
+        crate::instrumentation::record_deterministic_work(1);
+        let row = self.heap.native_record_inputs.get(input)?;
+        if row.origin.pointer() != origin || self.native_input_witness(&row.origin).is_none() {
+            return None;
+        }
+        let (layout, count, index, members) = match &row.kind {
+            CNativeInputKind::Record { layout } => (
+                layout.as_ref(),
+                IntegerTerm::constant_i64(1).into(),
+                IntegerTerm::constant_i64(0).into(),
+                path,
+            ),
+            CNativeInputKind::RecordPrefix { layout, count } => {
+                let (PointerDomainSelection::Element(index), members) = path.split_first()? else {
+                    return None;
+                };
+                (layout.as_ref(), count.clone(), index.clone(), members)
+            }
+            _ => return None,
+        };
+        if layout.size_bytes() == 0 || !layout.unions().is_empty() {
+            return None;
+        }
+        let members = members
+            .iter()
+            .map(|part| match part {
+                PointerDomainSelection::Member(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some((layout, count, index, members))
+    }
+
+    /// Structural authentication returns the exact selected bounds as guards.
+    /// The caller must discharge them before using this selected domain.
+    pub(in crate::kernel) fn authenticated_input_selection(
+        &self,
+        pointer: &CPointerValue,
+        assumptions: &PureFactContext,
+    ) -> Option<Vec<ConditionTerm>> {
+        let PointerDesignation::InputSelected {
+            input,
+            origin,
+            path,
+            base,
+            element_type,
+            stride,
+            count,
+        } = pointer.designation()?
+        else {
+            return None;
+        };
+        let (layout, prefix, index, members) = self.input_selection_parts(input, origin, path)?;
+        let (offset, selected) = if members.is_empty() {
+            (0, CType::UInt8Array(layout.size_bytes()))
+        } else {
+            layout.member_at_path(&members)?
+        };
+        let complete = *element_type == selected
+            && *stride == selected.byte_width()
+            && *count == SharedIntegerTerm::from(IntegerTerm::constant_i64(1));
+        let decayed = layout
+            .array_member_at_path(&members)
+            .is_some_and(|(element, length)| {
+                *element_type == element
+                    && *stride == element.byte_width()
+                    && *count
+                        == SharedIntegerTerm::from(IntegerTerm::constant_i64(i64::from(length)))
+            });
+        if !complete && !decayed {
+            return None;
+        }
+        let record_start = Pointer {
+            block: base.block.clone(),
+            offset: PointerOffsetTerm::Add(
+                Box::new(base.offset.clone()),
+                Box::new(PointerOffsetTerm::Constant(-i64::from(offset))),
+            ),
+        };
+        let actual_index = crate::kernel::eval::pointer_domains::domain_displacement(
+            &record_start,
+            origin,
+            layout.size_bytes(),
+            assumptions,
+        )?;
+        Some(vec![
+            crate::kernel::eval::pointer_domains::domain_less_equal(
+                IntegerTerm::constant_i64(0),
+                prefix.as_ref().clone(),
+            ),
+            crate::kernel::eval::pointer_domains::domain_less_equal(
+                prefix.as_ref().clone(),
+                IntegerTerm::constant_i64(
+                    crate::kernel::eval::pointer_domains::native_prefix_element_limit(
+                        layout.size_bytes(),
+                    ),
+                ),
+            ),
+            crate::kernel::eval::pointer_domains::domain_less_equal(
+                IntegerTerm::constant_i64(0),
+                index.as_ref().clone(),
+            ),
+            crate::kernel::eval::pointer_domains::domain_less_than(
+                index.as_ref().clone(),
+                prefix.as_ref().clone(),
+            ),
+            crate::kernel::eval::pointer_domains::domain_equal(
+                actual_index,
+                index.as_ref().clone(),
+            ),
+        ])
+    }
+
+    pub(in crate::kernel) fn guarded_native_record_selection(
+        &self,
+        pointer: &CPointerValue,
+        selection: &CAggregateMemberSelection,
+        assumptions: &PureFactContext,
+    ) -> Option<(CPointerValue, Vec<ConditionTerm>)> {
+        if matches!(
+            pointer.designation(),
+            Some(PointerDesignation::Object { .. })
+        ) {
+            if selection.path.is_empty()
+                && selection.value_type == CType::UInt8Array(selection.layout.size_bytes())
+                && self.has_aggregate_object_domain(pointer, &selection.layout)
+            {
+                return Some((pointer.clone(), vec![]));
+            }
+            return self
+                .checked_member_pointer(pointer, selection)
+                .map(|pointer| (pointer, vec![]));
+        }
+        let mut guards = Vec::new();
+        let (input, origin, mut path, layout, members) =
+            if let Some(PointerDesignation::InputSelected {
+                input,
+                origin,
+                path,
+                base,
+                ..
+            }) = pointer.designation()
+            {
+                guards.extend(self.authenticated_input_selection(pointer, assumptions)?);
+                guards.push(ConditionTerm::pointer_equal(
+                    pointer.pointer().clone(),
+                    base.clone(),
+                ));
+                let (layout, _, _, members) = self.input_selection_parts(input, origin, path)?;
+                (
+                    input.clone(),
+                    origin.clone(),
+                    path.to_vec(),
+                    layout,
+                    members,
+                )
+            } else {
+                let row = self.native_input_witness(pointer)?;
+                let input = Self::native_record_input_identity(&row.origin)?;
+                let (layout, path) = match &row.kind {
+                    CNativeInputKind::Record { layout } => {
+                        guards.push(ConditionTerm::pointer_equal(
+                            pointer.pointer().clone(),
+                            row.origin.pointer().clone(),
+                        ));
+                        (layout.as_ref(), vec![])
+                    }
+                    CNativeInputKind::RecordPrefix { layout, .. } => {
+                        let index = crate::kernel::eval::pointer_domains::domain_displacement(
+                            pointer.pointer(),
+                            row.origin.pointer(),
+                            layout.size_bytes(),
+                            assumptions,
+                        )?;
+                        (
+                            layout.as_ref(),
+                            vec![PointerDomainSelection::Element(index.into())],
+                        )
+                    }
+                    _ => return None,
+                };
+                (input, row.origin.pointer().clone(), path, layout, vec![])
+            };
+        if !layout.selects_layout_path(&members, &selection.layout) {
+            return None;
+        }
+        let (offset, value_type) = if selection.path.is_empty() {
+            (0, CType::UInt8Array(selection.layout.size_bytes()))
+        } else {
+            selection.layout.member_at_path(&selection.path)?
+        };
+        if value_type != selection.value_type {
+            return None;
+        }
+        path.extend(
+            selection
+                .path
+                .iter()
+                .cloned()
+                .map(PointerDomainSelection::Member),
+        );
+        let address = Pointer {
+            block: pointer.block.clone(),
+            offset: match pointer
+                .offset
+                .as_const()
+                .and_then(|base_offset| base_offset.checked_add(i64::from(offset)))
+            {
+                Some(offset) => PointerOffsetTerm::Constant(offset),
+                None => PointerOffsetTerm::Add(
+                    Box::new(pointer.offset.clone()),
+                    Box::new(PointerOffsetTerm::Constant(i64::from(offset))),
+                ),
+            },
+        };
+        let selected = pointer
+            .clone()
+            .with_pointer(address.clone())
+            .with_type(value_type.pointer_to().unwrap_or(CType::Int32Pointer))
+            .with_designation(PointerDesignation::InputSelected {
+                input,
+                origin,
+                path: path.into(),
+                base: address,
+                element_type: value_type,
+                stride: value_type.byte_width(),
+                count: IntegerTerm::constant_i64(1).into(),
+            });
+        guards.extend(self.authenticated_input_selection(&selected, assumptions)?);
+        Some((selected, guards))
+    }
+
+    fn native_input_witness(&self, pointer: &CPointerValue) -> Option<&CNativeRecordInput> {
+        let identity = match pointer.designation()? {
+            PointerDesignation::Unresolved(identity) => CNativeInputIdentity::Unresolved(*identity),
+            PointerDesignation::Loaded(identity) => CNativeInputIdentity::Loaded(identity.clone()),
+            _ => return None,
+        };
+        crate::instrumentation::record_deterministic_work(1);
+        let row = self.heap.native_record_inputs.get(&identity)?;
+        if self.is_ended_local_address(row.origin.pointer())
+            || self
+                .heap
+                .deallocated_allocations
+                .contains_key(row.origin.pointer())
+        {
+            return None;
+        }
+        if self
+            .blocks
+            .get(&row.origin.block)
+            .is_some_and(|block| block.declared_object.is_some())
+        {
+            let CNativeInputKind::Record { layout } = &row.kind else {
+                return None;
+            };
+            let record = Self::aggregate_input_pointer(
+                row.origin.pointer().clone(),
+                layout,
+                row.origin.c_type(),
+            );
+            if !self.has_aggregate_object_domain(&record, layout) {
+                return None;
+            }
+        }
+        if let CNativeInputIdentity::Loaded(origin) = &identity {
+            crate::kernel::memory_provenance::paired_pointer_load_displacement(
+                &pointer.clone().with_type(row.origin.c_type()),
+                origin,
+            )?;
+        }
+        Some(row)
+    }
+
+    /// Resolve only an exact typed-input identity, keeping the selected base
+    /// separate from its current address displacement. Loaded inputs must
+    /// carry the exact immutable full-pointer read named by their witness.
+    pub(in crate::kernel) fn checked_native_record_pointer(
+        &self,
+        pointer: &CPointerValue,
+    ) -> Option<CPointerValue> {
+        if matches!(
+            pointer.designation(),
+            Some(PointerDesignation::InputSelected { .. })
+        ) {
+            return self
+                .authenticated_input_selection(pointer, &PureFactContext::new())?
+                .iter()
+                .all(|guard| guard == &ConditionTerm::Constant(true))
+                .then(|| pointer.clone());
+        }
+        if let Some(PointerDesignation::Object { base, .. }) = pointer.designation() {
+            let at_base = pointer.clone().with_pointer(base.clone());
+            return self
+                .checked_record_selection(&at_base)
+                .map(|_| pointer.clone());
+        }
+        let row = self.native_input_witness(pointer)?;
+        let CNativeInputKind::Record { layout } = &row.kind else {
+            return None;
+        };
+        let record = pointer
+            .clone()
+            .with_designation(PointerDesignation::InputSelected {
+                input: Self::native_record_input_identity(&row.origin)?,
+                origin: row.origin.pointer().clone(),
+                path: Arc::from([]),
+                base: row.origin.pointer().clone(),
+                element_type: CType::UInt8Array(layout.size_bytes()),
+                stride: layout.size_bytes(),
+                count: IntegerTerm::constant_i64(1).into(),
+            });
+        self.authenticated_input_selection(&record, &PureFactContext::new())?
+            .iter()
+            .all(|guard| guard == &ConditionTerm::Constant(true))
+            .then_some(record)
+    }
+
+    pub(in crate::kernel) fn input_record_layout(
+        &self,
+        pointer: &CPointerValue,
+    ) -> Option<Arc<CAggregateLayout>> {
+        let row = match pointer.designation()? {
+            PointerDesignation::InputSelected { input, origin, .. } => {
+                let row = self.heap.native_record_inputs.get(input)?;
+                if row.origin.pointer() != origin {
+                    return None;
+                }
+                self.native_input_witness(&row.origin)?
+            }
+            _ => self.native_input_witness(pointer)?,
+        };
+        match &row.kind {
+            CNativeInputKind::Record { layout } | CNativeInputKind::RecordPrefix { layout, .. } => {
+                Some(layout.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn native_record_input_identity(pointer: &CPointerValue) -> Option<CNativeInputIdentity> {
+        match pointer.designation()? {
+            PointerDesignation::Unresolved(identity) => {
+                Some(CNativeInputIdentity::Unresolved(*identity))
+            }
+            PointerDesignation::Loaded(identity) => {
+                crate::kernel::memory_provenance::paired_pointer_load_displacement(
+                    pointer, identity,
+                )?;
+                Some(CNativeInputIdentity::Loaded(identity.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    pub(in crate::kernel) fn map_native_record_inputs(
+        &self,
+        mut rewrite: impl FnMut(&CPointerValue) -> CPointerValue,
+        mut rewrite_count: impl FnMut(&SharedIntegerTerm) -> SharedIntegerTerm,
+    ) -> (
+        SnapshotMap<CNativeInputIdentity, CNativeRecordInput>,
+        SnapshotMap<Pointer, SnapshotSet<CNativeInputIdentity>>,
+    ) {
+        let mut mapped = SnapshotMap::default();
+        let mut conflicts = BTreeSet::new();
+        for row in self.heap.native_record_inputs.values() {
+            crate::instrumentation::record_deterministic_work(1);
+            let origin = rewrite(&row.origin);
+            let Some(identity) = Self::native_record_input_identity(&origin) else {
+                continue;
+            };
+            let row = CNativeRecordInput {
+                origin,
+                kind: match &row.kind {
+                    CNativeInputKind::Record { layout } => CNativeInputKind::Record {
+                        layout: layout.clone(),
+                    },
+                    CNativeInputKind::RecordPrefix { layout, count } => {
+                        CNativeInputKind::RecordPrefix {
+                            layout: layout.clone(),
+                            count: rewrite_count(count),
+                        }
+                    }
+                    CNativeInputKind::AllocatedScalar {
+                        element_type,
+                        bytes,
+                    } => CNativeInputKind::AllocatedScalar {
+                        element_type: *element_type,
+                        bytes: rewrite_count(bytes),
+                    },
+                    CNativeInputKind::TypedPrefix {
+                        element_type,
+                        count,
+                        policy,
+                    } => CNativeInputKind::TypedPrefix {
+                        element_type: *element_type,
+                        count: rewrite_count(count),
+                        policy: *policy,
+                    },
+                },
+            };
+            if conflicts.contains(&identity) {
+                continue;
+            }
+            if mapped.get(&identity).is_some_and(|held| held != &row) {
+                mapped.remove(&identity);
+                conflicts.insert(identity);
+            } else {
+                mapped.insert(identity, row);
+            }
+        }
+        let mut origins = SnapshotMap::<Pointer, SnapshotSet<CNativeInputIdentity>>::default();
+        for (identity, row) in mapped.iter() {
+            let mut identities = origins
+                .get(row.origin.pointer())
+                .cloned()
+                .unwrap_or_default();
+            identities.insert(identity.clone());
+            origins.insert(row.origin.pointer().clone(), identities);
+        }
+        (mapped, origins)
     }
 
     pub(in crate::kernel) fn map_scalar_input_domains(
@@ -2979,7 +4421,7 @@ impl CMemory {
             .and_then(|block| block.declared_object.as_ref())
         {
             return match declaration {
-                CDeclaredObject::Scalar(_) => false,
+                CDeclaredObject::Scalar(_) | CDeclaredObject::Array { .. } => false,
                 CDeclaredObject::Aggregate(held) => matches(held, offset),
             };
         }
@@ -3200,6 +4642,36 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut memory.forgotten)
             .ended_local_blocks
             .insert(block.clone());
+        {
+            let candidates = AliasCandidates::of_block(block);
+            let heap = Arc::make_mut(&mut memory.heap);
+            let CHeapMemory {
+                native_record_inputs,
+                native_record_input_origins,
+                object_input_domains,
+                scalar_input_domains,
+                ..
+            } = heap;
+            // No facts are available at this lifetime boundary. Possible
+            // aliases lose validity; only structural freshness/separation
+            // preserves input promises, independently of byte permissions.
+            candidates.retain_map(object_input_domains, |root, _| {
+                root.block.proven_distinct(block)
+            });
+            candidates.retain_map(scalar_input_domains, |root, _| {
+                root.block.proven_distinct(block)
+            });
+            candidates.retain_map(native_record_input_origins, |root, identities| {
+                if root.block.proven_distinct(block) {
+                    return true;
+                }
+                for identity in identities.iter() {
+                    crate::instrumentation::record_deterministic_work(1);
+                    native_record_inputs.remove(identity);
+                }
+                false
+            });
+        }
         // A later object is uninitialized until written; the tombstone
         // already refuses every access to this one.
         if own.any_entry(memory.heap.initialized.as_map(), |_, _| true) {
@@ -3299,6 +4771,50 @@ impl CMemory {
         candidates.retain_map(&mut heap.object_input_domains, |root, layout| {
             separate(root, layout.size_bytes())
         });
+        let selected = candidates
+            .entries(&heap.native_record_input_origins)
+            .map(|(root, identities)| (root.clone(), identities.clone()))
+            .collect::<Vec<_>>();
+        for (root, identities) in selected {
+            let mut kept = identities.clone();
+            for identity in identities.iter() {
+                crate::instrumentation::record_deterministic_work(1);
+                let keep = heap.native_record_inputs.get(identity).is_some_and(|row| {
+                    let width = match &row.kind {
+                        CNativeInputKind::Record { layout } => Some(layout.size_bytes()),
+                        CNativeInputKind::RecordPrefix { layout, count } => count
+                            .as_const()
+                            .and_then(|count| u32::try_from(count).ok())
+                            .and_then(|count| count.checked_mul(layout.size_bytes()))
+                            .filter(|bytes| *bytes > 0),
+                        CNativeInputKind::AllocatedScalar { bytes, .. } => bytes
+                            .as_const()
+                            .and_then(|bytes| u32::try_from(bytes).ok())
+                            .filter(|bytes| *bytes > 0),
+                        CNativeInputKind::TypedPrefix {
+                            element_type,
+                            count,
+                            ..
+                        } => count
+                            .as_const()
+                            .and_then(|count| u32::try_from(count).ok())
+                            .and_then(|count| count.checked_mul(element_type.byte_width()))
+                            .filter(|bytes| *bytes > 0),
+                    };
+                    root.block.proven_distinct(&allocation.block)
+                        || width.is_some_and(|width| separate(&root, width))
+                });
+                if !keep {
+                    heap.native_record_inputs.remove(identity);
+                    kept.remove(identity);
+                }
+            }
+            if kept.len() == 0 {
+                heap.native_record_input_origins.remove(&root);
+            } else {
+                heap.native_record_input_origins.insert(root, kept);
+            }
+        }
     }
 
     pub(in crate::kernel) fn free_heap_block(
@@ -3754,6 +5270,58 @@ impl CMemory {
         self
     }
 
+    pub(in crate::kernel) fn with_pending_allocated_scalar(
+        self,
+        base: Pointer,
+        bytes: Bitvector32Term,
+        zeroed: bool,
+        element_type: CType,
+        identity: Variable,
+    ) -> Result<Self, String> {
+        if base != Pointer::symbolic(identity)
+            || !matches!(
+                element_type,
+                CType::Int32 | CType::Int64 | CType::UInt32 | CType::UInt8
+            )
+            || self
+                .heap
+                .native_record_inputs
+                .contains_key(&CNativeInputIdentity::Unresolved(identity))
+        {
+            return Err(
+                "allocated scalar requires an exact fresh scalar allocation producer".into(),
+            );
+        }
+        let extent = Self::allocated_byte_extent(&bytes)
+            .ok_or("allocated scalar byte extent lacks a native observation")?;
+        let mut next = self.with_pending_heap_allocation(base.clone(), bytes, zeroed);
+        let metadata_base = intern_derivation_base(&mut next);
+        let origin = CPointerValue::new(base.clone(), element_type.pointer_to().unwrap())
+            .with_designation(PointerDesignation::Unresolved(identity));
+        let key = CNativeInputIdentity::Unresolved(identity);
+        let heap = Arc::make_mut(&mut next.heap);
+        heap.native_record_inputs.insert(
+            key.clone(),
+            CNativeRecordInput {
+                origin,
+                kind: CNativeInputKind::AllocatedScalar {
+                    element_type,
+                    bytes: extent,
+                },
+            },
+        );
+        let mut identities = SnapshotSet::default();
+        identities.insert(key);
+        heap.native_record_input_origins.insert(base, identities);
+        record_c_memory_derivation(
+            &mut next,
+            CMemoryDerivation::CellsForgotten {
+                base: metadata_base,
+            },
+        );
+        Ok(next)
+    }
+
     pub(in crate::kernel) fn with_pending_heap_allocation(
         mut self,
         base: Pointer,
@@ -3870,6 +5438,25 @@ impl CMemory {
         } else {
             Pointer::null()
         };
+        if let PointerBlock::Symbolic(identity) = base.block {
+            let key = CNativeInputIdentity::Unresolved(identity);
+            if self.heap.native_record_inputs.get(&key).is_some_and(|row| {
+                matches!(row.kind, CNativeInputKind::AllocatedScalar { .. })
+                    && row.origin.pointer() == base
+            }) {
+                let heap = Arc::make_mut(&mut self.heap);
+                let mut row = heap.native_record_inputs.remove(&key).unwrap();
+                heap.native_record_input_origins.remove(base);
+                if succeeds {
+                    row.origin.replace_pointer(resolved_base.clone());
+                    let mut identities = SnapshotSet::default();
+                    identities.insert(key.clone());
+                    heap.native_record_input_origins
+                        .insert(resolved_base.clone(), identities);
+                    heap.native_record_inputs.insert(key, row);
+                }
+            }
+        }
         if succeeds {
             std::sync::Arc::make_mut(&mut self.blocks).insert(
                 resolved_base.block.clone(),
@@ -3921,10 +5508,35 @@ impl CMemory {
             vec![diagnostic_base.clone()],
             vec![CValue::pointer(base.clone())],
         );
+        let pending_scalar_row = if let PointerBlock::Symbolic(identity) = base.block {
+            let key = CNativeInputIdentity::Unresolved(identity);
+            self.heap
+                .native_record_inputs
+                .get(&key)
+                .filter(|row| {
+                    row.origin.pointer() == base
+                        && matches!(row.kind, CNativeInputKind::AllocatedScalar { .. })
+                })
+                .cloned()
+                .map(|row| (key, row))
+        } else {
+            None
+        };
         let (mut memory, bytes, resolved_base) = if succeeds {
             self = self
                 .free_heap_block(&pending.old_pointer, assumptions)
                 .ok()?;
+            // The fresh pending producer remains independent of the old
+            // allocation. Free's conservative alias retirement may drop its
+            // not-yet-resolved symbolic row; restore that exact producer only.
+            if let Some((key, row)) = pending_scalar_row {
+                let heap = Arc::make_mut(&mut self.heap);
+                heap.native_record_inputs.insert(key.clone(), row);
+                let mut identities = SnapshotSet::default();
+                identities.insert(key);
+                heap.native_record_input_origins
+                    .insert(base.clone(), identities);
+            }
             self.resolve_pending_heap_allocation(base, true)?
         } else {
             self.resolve_pending_heap_allocation(base, false)?
@@ -4220,6 +5832,15 @@ impl CMemory {
             return Err("interface arms disagree on object input domains".into());
         }
 
+        let native_record_inputs = first.heap.native_record_inputs.clone();
+        let native_record_input_origins = first.heap.native_record_input_origins.clone();
+        if others.iter().any(|memory| {
+            memory.heap.native_record_inputs != native_record_inputs
+                || memory.heap.native_record_input_origins != native_record_input_origins
+        }) {
+            return Err("interface arms disagree on native record input identities".into());
+        }
+
         let uninitialized_allocations = union_of_arm_sets(
             &first.heap.uninitialized_allocations,
             others
@@ -4433,6 +6054,8 @@ impl CMemory {
             uninitialized_objects,
             object_input_domains,
             scalar_input_domains,
+            native_record_inputs,
+            native_record_input_origins,
             initialized,
             zeroed_allocations,
             zeroed_prefix_allocations,
@@ -5770,6 +7393,33 @@ impl CMemory {
             },
         );
         self
+    }
+
+    /// Retain a body-certified final pointer-cell equation. This does not
+    /// initialize storage or grant allocation/access authority.
+    pub(in crate::kernel) fn with_certified_pointer_cell(
+        mut self,
+        pointer: Pointer,
+        value: CPointerValue,
+        assumptions: &PureFactContext,
+    ) -> Option<Self> {
+        if value.designation().is_none()
+            || !self.has_initialized_bytes_under(&pointer, value.c_type().byte_width(), assumptions)
+        {
+            return None;
+        }
+        let value = CValue::Pointer(value);
+        let base = intern_derivation_base(&mut self);
+        std::sync::Arc::make_mut(&mut self.cells).insert(pointer.clone(), value.clone());
+        record_c_memory_derivation(
+            &mut self,
+            CMemoryDerivation::Store {
+                base,
+                pointer,
+                value,
+            },
+        );
+        Some(self)
     }
 
     /// Writes one cell. The transition's fact context is not recorded on the
@@ -7124,6 +8774,15 @@ impl CMemory {
 }
 
 impl CState {
+    pub(crate) fn typed_access_policy(&self) -> CTypedAccessPolicy {
+        self.typed_access_policy
+    }
+
+    pub(crate) fn with_typed_access_policy(mut self, policy: CTypedAccessPolicy) -> Self {
+        self.typed_access_policy = policy;
+        self
+    }
+
     /// Selects a call destination without allocating, initializing, or granting
     /// authority. Function entry validates it against the construction layout.
     pub fn with_aggregate_return_destination(
@@ -7163,6 +8822,7 @@ impl CState {
                 .population_effects
                 .predicate_count_permissions
                 .is_some()
+            && self.typed_access_policy == other.typed_access_policy
             && same_bindings
             && same_or_empty_map(&self.locals.bindings, &other.locals.bindings)
             && same_or_empty_map(&self.locals.slots, &other.locals.slots)
@@ -9971,5 +11631,632 @@ mod local_variable_spelling_tests {
                 "depth {depth}: only the slot inspection and budget check participate"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod declared_domain_producer_tests {
+    use super::*;
+
+    fn address(name: &str) -> Pointer {
+        Pointer {
+            block: name.into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    #[test]
+    fn native_callback_member_address_keeps_the_declared_typed_access() {
+        use crate::kernel::eval::pointer_domains::{PointerDomainView, checked_pointer_access};
+        let _session = crate::kernel::VerificationSession::enter();
+        let signature = CType::function_pointer_signature(CType::Void, &[CType::Int32Pointer]);
+        let field_type = CType::FunctionPointer(signature);
+        let layout = Arc::new(CAggregateLayout::new(
+            8,
+            8,
+            vec![CAggregateField::new("callback", 0, field_type)],
+        ));
+        let input = Variable(987_340);
+        let owner = CPointerValue::new(Pointer::symbolic(input), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(input));
+        let memory = CMemory::new()
+            .with_native_record_input(owner.clone(), layout.clone())
+            .unwrap();
+        let selection = CAggregateMemberSelection {
+            layout,
+            path: vec!["callback".into()].into(),
+            value_type: field_type,
+        };
+        let facts = PureFactContext::new();
+        let (selected, _) = memory
+            .guarded_native_record_selection(&owner, &selection, &facts)
+            .unwrap();
+        assert_eq!(selected.c_type(), CType::Int32Pointer);
+        let state = CState::new().with_memory(memory);
+        assert!(
+            checked_pointer_access(
+                &state,
+                &selected,
+                field_type,
+                C_POINTER_BYTE_WIDTH,
+                PointerDomainView::Typed,
+                &facts
+            )
+            .is_ok()
+        );
+        let incompatible = CType::FunctionPointer(CType::function_pointer_signature(
+            CType::Int32,
+            &[CType::Int32Pointer],
+        ));
+        assert!(
+            checked_pointer_access(
+                &state,
+                &selected,
+                incompatible,
+                C_POINTER_BYTE_WIDTH,
+                PointerDomainView::Typed,
+                &facts
+            )
+            .is_err()
+        );
+        assert!(
+            checked_pointer_access(
+                &state,
+                &selected,
+                field_type,
+                C_POINTER_BYTE_WIDTH,
+                PointerDomainView::ObjectRepresentationBytes,
+                &facts
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn array_domains_require_the_actual_declaration_and_preserve_the_extent() {
+        let root = address("local:array-domain");
+        let declared = CMemory::new()
+            .with_declared_array_block(root.block.clone(), CType::Int32, 4)
+            .unwrap();
+        let pointer = declared
+            .declared_array_pointer(&root, CType::Int32, 4)
+            .unwrap();
+        assert!(declared.authenticated_pointer_domain_at_base(&pointer));
+        assert!(declared.authenticated_pointer_domain_at_base(
+            &pointer.clone().with_pointer(root.offset_by_bytes(16))
+        ));
+        assert!(
+            declared
+                .declared_array_pointer(&root, CType::Int32, 3)
+                .is_none()
+        );
+        assert!(
+            declared
+                .declared_array_pointer(&root, CType::UInt32, 4)
+                .is_none()
+        );
+        assert!(
+            !CMemory::new()
+                .with_block(root.block.clone(), 16)
+                .authenticated_pointer_domain_at_base(&pointer)
+        );
+        assert!(
+            !declared.authenticated_pointer_domain_at_base(&CPointerValue::new(
+                root.clone(),
+                CType::Int32Pointer
+            ))
+        );
+        assert_eq!(declared.cells.representation_len(), 0);
+        assert!(!declared.has_initialized_bytes_under(&root, 16, &PureFactContext::new()));
+        let written = declared
+            .clone()
+            .store(root.clone(), CValue::Int32(7u32.into()));
+        let havoc = written.clone().with_storage_memory_havoc(
+            Variable(9_901_000),
+            &[CMemoryRange::new_with_element_width(
+                root.clone(),
+                0u32.into(),
+                4u32.into(),
+                4,
+            )],
+            &PureFactContext::new(),
+        );
+        let joined = written
+            .clone()
+            .with_interface_memory_havoc(
+                Variable(9_901_001),
+                &BTreeSet::new(),
+                &[&written, &declared],
+            )
+            .unwrap();
+        for memory in [&written, &havoc, &joined] {
+            assert!(memory.authenticated_pointer_domain_at_base(&pointer));
+        }
+        let conflicting = CMemory::new()
+            .with_declared_array_block(root.block.clone(), CType::UInt32, 4)
+            .unwrap();
+        assert!(
+            written
+                .with_interface_memory_havoc(
+                    Variable(9_901_002),
+                    &BTreeSet::new(),
+                    &[&declared, &conflicting]
+                )
+                .is_err()
+        );
+        assert!(
+            !declared
+                .without_local_block(&root.block)
+                .authenticated_pointer_domain_at_base(&pointer)
+        );
+        assert!(
+            CMemory::new()
+                .with_declared_array_block(root.block.clone(), CType::Int32, u32::MAX)
+                .is_none()
+        );
+        assert!(
+            CMemory::new()
+                .with_declared_array_block(root.block, CType::Void, 1)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn structural_record_declarations_do_not_supply_cpp_nominal_identity_or_padding() {
+        let root = address("local:structural-record");
+        let layout =
+            CAggregateLayout::new(8, 4, vec![CAggregateField::new("first", 0, CType::Int32)]);
+        let declared = CMemory::new().with_declared_aggregate_block(root.block.clone(), &layout);
+        let pointer = declared.declared_aggregate_pointer(&root, &layout).unwrap();
+        assert!(declared.authenticated_pointer_domain_at_base(&pointer));
+        assert!(declared.has_aggregate_object_domain(&pointer, &layout));
+        let native = layout.clone().with_declaration_identity(Some(Arc::new(
+            CppRecordDeclarationIdentity::new("domain-producer-test", "Record"),
+        )));
+        assert!(!declared.has_aggregate_object_domain(&pointer, &native));
+        let native_declared =
+            CMemory::new().with_declared_aggregate_block(root.block.clone(), &native);
+        let native_pointer = native_declared
+            .declared_aggregate_pointer(&root, &native)
+            .unwrap();
+        assert!(native_declared.has_aggregate_object_domain(&native_pointer, &native));
+        assert!(!native_declared.has_aggregate_object_domain(&native_pointer, &layout));
+        assert!(!declared.has_initialized_bytes_under(
+            &root.offset_by_bytes(4),
+            4,
+            &PureFactContext::new()
+        ));
+        assert_eq!(declared.cells.representation_len(), 0);
+    }
+
+    #[test]
+    fn target_representation_and_scalar_authority_policy_are_declaration_metadata() {
+        let root = address("local:uint32-profile");
+        let targeted = CMemory::new().with_declared_scalar_block_in_target(
+            root.block.clone(),
+            4,
+            CType::UInt32,
+            Some(ByteOrder::Little),
+        );
+        assert_eq!(
+            targeted.declared_uint32_representation(&root),
+            Some(UInt32RepresentationProfile::LittleEndian)
+        );
+        assert!(targeted.requires_explicit_scalar_ownership(&root));
+        assert!(!targeted.has_initialized_bytes_under(&root, 4, &PureFactContext::new()));
+        for memory in [
+            CMemory::new().with_declared_scalar_block(root.block.clone(), 4, CType::UInt32),
+            CMemory::new().with_declared_scalar_block_in_target(
+                root.block.clone(),
+                4,
+                CType::UInt32,
+                Some(ByteOrder::Big),
+            ),
+            CMemory::new().with_declared_scalar_block_in_target(
+                root.block.clone(),
+                4,
+                CType::Int32,
+                Some(ByteOrder::Little),
+            ),
+            CMemory::new()
+                .with_block(root.block.clone(), 4)
+                .store(root.clone(), CValue::UInt32(0u32.into())),
+        ] {
+            assert_eq!(memory.declared_uint32_representation(&root), None);
+        }
+        assert_eq!(
+            targeted.declared_uint32_representation(&root.offset_by_bytes(1)),
+            None
+        );
+        assert_eq!(
+            targeted
+                .without_local_block(&root.block)
+                .declared_uint32_representation(&root),
+            None
+        );
+        let global = CMemory::new().with_declared_scalar_block_or_read_only(
+            root.block.clone(),
+            4,
+            CType::UInt32,
+            true,
+        );
+        assert!(!global.requires_explicit_scalar_ownership(&root));
+        assert!(global.blocks.get(&root.block).unwrap().is_read_only());
+    }
+
+    #[test]
+    fn selected_array_domain_authentication_ignores_unrelated_declarations() {
+        let mut samples = Vec::new();
+        for count in [16, 128, 1024] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let root = address("local:selected-array");
+            let mut memory = CMemory::new()
+                .with_declared_array_block(root.block.clone(), CType::Int32, 4)
+                .unwrap();
+            for i in 0..count {
+                memory = memory
+                    .with_declared_array_block(
+                        format!("local:unrelated-array-{i}").into(),
+                        CType::UInt8,
+                        16,
+                    )
+                    .unwrap();
+            }
+            let pointer = memory
+                .declared_array_pointer(&root, CType::Int32, 4)
+                .unwrap();
+            let (checked, work) = crate::instrumentation::measure_deterministic_work(|| {
+                memory.authenticated_pointer_domain_at_base(&pointer)
+            });
+            assert!(checked);
+            samples.push(work);
+        }
+        assert!(
+            samples.windows(2).all(|pair| pair[0] == pair[1]),
+            "array authentication scanned unrelated declarations: {samples:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod scalar_array_layout_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_array_layouts_are_checked_and_distinct_from_empty_records() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let array = CAggregateLayout::new_scalar_array(CType::UInt32, 2).unwrap();
+        let record = CAggregateLayout::new(8, 4, Vec::new());
+        assert_eq!(array.scalar_array(), Some((CType::UInt32, 2)));
+        assert_ne!(array, record);
+        assert!(!array.selects_layout_path(&[], &record));
+        assert!(!record.selects_layout_path(&[], &array));
+        assert!(array.selects_layout_path(&[], &array.clone()));
+        assert!(!array.selects_layout_path(&[], &record));
+        let hash = |layout: &CAggregateLayout| {
+            let mut state = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(layout, &mut state);
+            std::hash::Hasher::finish(&state)
+        };
+        assert_ne!(hash(&array), hash(&record));
+        assert!(CAggregateLayout::new_scalar_array(CType::UInt32, u32::MAX).is_none());
+        assert!(CAggregateLayout::new_scalar_array(CType::Void, 2).is_none());
+        assert!(CAggregateLayout::new_scalar_array(CType::UInt32Array(u32::MAX), 2).is_none());
+        assert!(
+            CAggregateLayout::new_scalar_array(
+                CType::FunctionPointer(CallbackSignature::UNSPECIFIED),
+                2
+            )
+            .is_none()
+        );
+        assert!(
+            CAggregateLayout::new_scalar_array_with_fields(
+                CType::UInt32,
+                2,
+                vec![
+                    CAggregateField::new("0", 0, CType::UInt32),
+                    CAggregateField::new("1", 4, CType::UInt32),
+                ]
+            )
+            .is_some()
+        );
+        assert!(
+            CAggregateLayout::new_scalar_array_with_fields(
+                CType::UInt32,
+                2,
+                vec![
+                    CAggregateField::new("0", 0, CType::UInt32),
+                    CAggregateField::new("1", 4, CType::Int32),
+                ]
+            )
+            .is_none()
+        );
+        assert!(
+            CAggregateLayout::new_scalar_array_with_fields(
+                CType::UInt32,
+                2,
+                vec![
+                    CAggregateField::new("0", 0, CType::UInt32),
+                    CAggregateField::new("1", 0, CType::UInt32),
+                ]
+            )
+            .is_none()
+        );
+        let address = CMemory::frame_local_pointer(949_050, "array");
+        let declared = CMemory::new().with_declared_aggregate_block(address.block.clone(), &array);
+        let legacy = CMemory::new().with_declared_aggregate_block(address.block.clone(), &record);
+        assert!(
+            declared
+                .clone()
+                .with_interface_memory_havoc(
+                    Variable(949_052),
+                    &BTreeSet::new(),
+                    &[&declared, &legacy]
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn explicit_array_aggregate_declarations_issue_only_the_actual_array_domain() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let layout = CAggregateLayout::new_scalar_array(CType::UInt32, 2).unwrap();
+        let address = CMemory::frame_local_pointer(949_051, "array");
+        let memory = CMemory::new().with_declared_aggregate_block(address.block.clone(), &layout);
+        let pointer = memory
+            .declared_aggregate_pointer(&address, &layout)
+            .unwrap();
+        assert!(memory.has_declared_array_domain(&pointer));
+        assert!(memory.has_aggregate_object_domain(&pointer, &layout));
+        assert!(memory.authenticated_pointer_domain_at_base(
+            &pointer.clone().with_pointer(address.offset_by_bytes(4))
+        ));
+        let Some(PointerDesignation::Object {
+            element_type,
+            stride,
+            count,
+            ..
+        }) = pointer.designation()
+        else {
+            panic!()
+        };
+        assert_eq!(*element_type, CType::UInt32);
+        assert_eq!(*stride, 4);
+        assert_eq!(
+            *count,
+            SharedIntegerTerm::from(IntegerTerm::constant_i64(2))
+        );
+        assert!(
+            memory
+                .declared_array_pointer(&address, CType::UInt32, 3)
+                .is_none()
+        );
+        let fake_record =
+            CMemory::aggregate_input_pointer(address.clone(), &layout, CType::UInt8Pointer);
+        assert!(!memory.authenticated_pointer_domain_at_base(&fake_record));
+        let legacy = CAggregateLayout::new(8, 4, Vec::new());
+        assert!(
+            memory
+                .declared_aggregate_pointer(&address, &legacy)
+                .is_none()
+        );
+        assert_eq!(memory.cells.representation_len(), 0);
+        assert!(!memory.has_initialized_bytes_under(&address, 8, &PureFactContext::new()));
+        let updated = memory
+            .clone()
+            .store(address.clone(), CValue::UInt32(9u32.into()));
+        assert!(updated.has_declared_array_domain(&pointer));
+        assert!(
+            !memory
+                .without_local_block(&address.block)
+                .authenticated_pointer_domain_at_base(&pointer)
+        );
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            CAggregateLayout::new_scalar_array(CType::UInt32, 1_000_000).unwrap()
+        });
+        assert!(
+            work <= 1,
+            "compact array metadata expanded elements: {work}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod allocated_scalar_producer_tests {
+    use super::*;
+
+    fn pending(identity: Variable, zeroed: bool) -> (CMemory, CPointerValue) {
+        let pointer = CPointerValue::new(Pointer::symbolic(identity), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(identity));
+        let memory = CMemory::new()
+            .with_pending_allocated_scalar(
+                pointer.pointer().clone(),
+                8u32.into(),
+                zeroed,
+                CType::Int32,
+                identity,
+            )
+            .unwrap();
+        (memory, pointer)
+    }
+
+    #[test]
+    fn matching_literal_prefixes_merge_without_granting_hole_permissions_or_initialization() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let identity = Variable(989_714);
+        let pointer = CPointerValue::new(Pointer::symbolic(identity), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(identity));
+        let policy = CTypedAccessPolicy::CAllocatedAccessAllowed;
+        let memory = CMemory::new()
+            .with_typed_input_span(
+                pointer.clone(),
+                CType::Int32,
+                IntegerTerm::constant_i64(1).into(),
+                policy,
+            )
+            .unwrap()
+            .with_typed_input_span(
+                pointer.clone(),
+                CType::Int32,
+                IntegerTerm::constant_i64(2).into(),
+                policy,
+            )
+            .unwrap()
+            .with_typed_input_span(
+                pointer.clone(),
+                CType::Int32,
+                IntegerTerm::constant_i64(5).into(),
+                policy,
+            )
+            .unwrap()
+            .with_typed_input_span(
+                pointer.clone(),
+                CType::Int32,
+                IntegerTerm::constant_i64(1).into(),
+                policy,
+            )
+            .unwrap();
+        let (_, element, count) = memory.native_input_span(&pointer).unwrap();
+        assert_eq!(element, CType::Int32);
+        assert_eq!(count, IntegerTerm::constant_i64(5).into());
+        assert!(!memory.has_initialized_bytes_under(pointer.pointer(), 4, &PureFactContext::new()));
+        let resources = ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(
+            CMemoryRange::new(pointer.pointer().clone(), 4u32.into(), 5u32.into()),
+        ));
+        assert!(!resources.satisfies_fact(
+            &CResourceFact::own_memory(CMemoryRange::new(
+                pointer.pointer().clone(),
+                0u32.into(),
+                1u32.into()
+            ),),
+            &PureFactContext::new()
+        ));
+        assert!(
+            memory
+                .clone()
+                .with_typed_input_span(
+                    pointer.clone(),
+                    CType::Int32,
+                    IntegerTerm::constant_i64(6).into(),
+                    CTypedAccessPolicy::NativeObjectOnly
+                )
+                .is_err()
+        );
+        assert!(
+            memory
+                .with_typed_input_span(
+                    pointer,
+                    CType::UInt32,
+                    IntegerTerm::constant_i64(6).into(),
+                    policy
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn allocated_scalar_witness_requires_actual_success_and_exact_identity() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (pending, pointer) = pending(Variable(989_710), false);
+        assert!(pending.allocated_scalar_extent(&pointer).is_none());
+        assert!(
+            pending
+                .resolved_allocated_scalar_pointer(pointer.pointer())
+                .is_none()
+        );
+        let pending_base = pointer.pointer().clone();
+        let (failed, _, _) = pending
+            .clone()
+            .resolve_pending_heap_allocation(pointer.pointer(), false)
+            .unwrap();
+        assert!(failed.allocated_scalar_extent(&pointer).is_none());
+        let (memory, _, base) = pending
+            .resolve_pending_heap_allocation(pointer.pointer(), true)
+            .unwrap();
+        let pointer = pointer.with_pointer(base.clone());
+        let (origin, element, bytes) = memory.allocated_scalar_extent(&pointer).unwrap();
+        assert_eq!(origin, pointer);
+        assert_eq!(
+            memory.resolved_allocated_scalar_pointer(&pending_base),
+            Some(pointer.clone())
+        );
+        assert_eq!(element, CType::Int32);
+        assert_eq!(bytes, IntegerTerm::constant_i64(8).into());
+        assert!(!memory.has_initialized_bytes_under(&base, 4, &PureFactContext::new()));
+        assert!(
+            memory
+                .allocated_scalar_extent(&CPointerValue::new(base.clone(), CType::Int32Pointer))
+                .is_none()
+        );
+        assert!(
+            memory
+                .allocated_scalar_extent(
+                    &pointer
+                        .clone()
+                        .with_designation(PointerDesignation::Unresolved(Variable(989_711)))
+                )
+                .is_none()
+        );
+        let claimed = CMemory::new()
+            .with_heap_allocation_claim(base.clone(), 8)
+            .unwrap();
+        assert!(claimed.allocated_scalar_extent(&pointer).is_none());
+        let retired = memory
+            .free_heap_block(&base, &PureFactContext::new())
+            .unwrap();
+        assert!(retired.allocated_scalar_extent(&pointer).is_none());
+    }
+
+    #[test]
+    fn scalar_reallocation_success_transfers_profile_and_failure_preserves_old() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (memory, pointer) = pending(Variable(989_712), false);
+        let (memory, _, base) = memory
+            .resolve_pending_heap_allocation(pointer.pointer(), true)
+            .unwrap();
+        let old = pointer.with_pointer(base.clone());
+        let memory = memory.store(base, int32(42));
+        let new_identity = Variable(989_713);
+        let new_base = Pointer::symbolic(new_identity);
+        let pending = memory
+            .with_pending_allocated_scalar(
+                new_base.clone(),
+                12u32.into(),
+                false,
+                CType::Int32,
+                new_identity,
+            )
+            .unwrap()
+            .with_pending_heap_reallocation(
+                new_base.clone(),
+                old.clone(),
+                8u32.into(),
+                None,
+                vec![(PointerOffsetTerm::Constant(0), int32(42))],
+                vec![(0, 4)],
+            );
+        let new_pointer = CPointerValue::new(new_base.clone(), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(new_identity));
+        let (failure, _, _, _) = pending
+            .clone()
+            .resolve_pending_heap_reallocation(&new_base, false, &PureFactContext::new())
+            .unwrap();
+        assert!(failure.allocated_scalar_extent(&old).is_some());
+        assert!(failure.allocated_scalar_extent(&new_pointer).is_none());
+        let (success, _, resolved, _) = pending
+            .resolve_pending_heap_reallocation(&new_base, true, &PureFactContext::new())
+            .unwrap();
+        assert!(success.allocated_scalar_extent(&old).is_none());
+        let (_, element, bytes) = success
+            .allocated_scalar_extent(&new_pointer.with_pointer(resolved.clone()))
+            .unwrap();
+        assert_eq!(element, CType::Int32);
+        assert_eq!(bytes, IntegerTerm::constant_i64(12).into());
+        assert!(success.has_initialized_bytes_under(&resolved, 4, &PureFactContext::new()));
+        assert!(!success.has_initialized_bytes_under(
+            &resolved.offset_by_bytes(8),
+            4,
+            &PureFactContext::new()
+        ));
     }
 }

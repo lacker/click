@@ -71,6 +71,62 @@ fn loaded_pointer_designation_transports_complete_stores_and_checked_frames() {
 }
 
 #[test]
+fn loaded_pointer_value_equality_recovers_an_exact_stored_legacy_carrier() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let context = PureFactContext::new();
+    let cell = slot();
+    let legacy = CPointerValue::new(
+        Pointer {
+            block: PointerBlock::Heap(986_210),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        CType::Int32Pointer,
+    );
+    let memory = CMemory::new()
+        .with_block(cell.block.clone(), 16)
+        .store(cell.clone(), CValue::Pointer(legacy.clone()));
+    let snapshot = intern_c_memory_ref(&memory);
+    let read = CPointerValue::new(Pointer::loaded_value(&snapshot, &cell), CType::Int32Pointer)
+        .with_designation(PointerDesignation::Loaded(PointerLoadIdentity::new(
+            snapshot,
+            cell.clone(),
+        )));
+    assert!(equal(&read, &legacy, &context));
+    assert!(c_values_proven_equal_for_memory_resolution(
+        &CValue::Pointer(read.clone()),
+        &CValue::Pointer(legacy.clone()),
+        &context
+    ));
+    assert!(
+        resolve_loaded_pointer_carrier(&read, &context).is_none(),
+        "a stored legacy value grants no native domain"
+    );
+    let unknown_memory = CMemory::new().with_block(cell.block.clone(), 16);
+    let snapshot = intern_c_memory_ref(&unknown_memory);
+    let unknown = CPointerValue::new(Pointer::loaded_value(&snapshot, &cell), CType::Int32Pointer)
+        .with_designation(PointerDesignation::Loaded(PointerLoadIdentity::new(
+            snapshot,
+            cell.clone(),
+        )));
+    let alias = context.clone().assume_condition(
+        ConditionTerm::pointer_equal(unknown.pointer().clone(), legacy.pointer().clone()),
+        true,
+    );
+    assert!(!equal(&unknown, &legacy, &alias));
+    let partial = memory.store(cell, int32(7));
+    let snapshot = intern_c_memory_ref(&partial);
+    let read = CPointerValue::new(
+        Pointer::loaded_value(&snapshot, &slot()),
+        CType::Int32Pointer,
+    )
+    .with_designation(PointerDesignation::Loaded(PointerLoadIdentity::new(
+        snapshot,
+        slot(),
+    )));
+    assert!(!equal(&read, &legacy, &context));
+}
+
+#[test]
 fn unknown_pointer_designation_frames_keep_the_pair_instead_of_becoming_legacy() {
     let _session = crate::kernel::VerificationSession::enter();
     let context = PureFactContext::new();
@@ -87,6 +143,79 @@ fn unknown_pointer_designation_frames_keep_the_pair_instead_of_becoming_legacy()
     // when a numeric equation says the resulting addresses coincide.
     let sibling = loaded(&frame, &cell.offset_by_bytes(8));
     assert!(!equal(&read, &sibling, &context));
+}
+
+#[test]
+fn unknown_full_pointer_values_frame_only_through_their_exact_read_pairs() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let context = PureFactContext::new();
+    let cell = slot();
+    let read = |memory: &CMemory, address: &Pointer| {
+        let snapshot = intern_c_memory_ref(memory);
+        CPointerValue::new(
+            Pointer::loaded_value(&snapshot, address),
+            CType::Int32Pointer,
+        )
+        .with_pointee_constant(true)
+        .with_pointee_volatile(true)
+        .with_designation(PointerDesignation::Loaded(PointerLoadIdentity::new(
+            snapshot,
+            address.clone(),
+        )))
+    };
+    let value_equal = |left: &CPointerValue, right: &CPointerValue, facts: &PureFactContext| {
+        c_values_proven_equal_for_memory_resolution(
+            &CValue::Pointer(left.clone()),
+            &CValue::Pointer(right.clone()),
+            facts,
+        )
+    };
+    let before = CMemory::new().with_block(cell.block.clone(), 32);
+    let old = read(&before, &cell);
+    let after = before
+        .clone()
+        .store(cell.offset_by_bytes(8), int32(u32::MAX));
+    let current = read(&after, &cell);
+    assert_ne!(old.pointer(), current.pointer());
+    assert!(value_equal(&old, &current, &context));
+    assert!(value_equal(&current, &old, &context));
+    let canonical = canonical_loaded_pointer_carrier(&current, &context).unwrap();
+    assert_eq!(canonical.c_type(), current.c_type());
+    assert!(canonical.pointee_constant());
+    assert!(canonical.pointee_volatile());
+    assert!(resolve_loaded_pointer_carrier(&current, &context).is_none());
+
+    for address in [cell.clone(), cell.offset_by_bytes(4)] {
+        let partial = before.clone().store(address, int32(7));
+        assert!(!value_equal(&old, &read(&partial, &cell), &context));
+    }
+    let changed = before
+        .clone()
+        .store(cell.clone(), CValue::Pointer(selected("first")));
+    assert!(!value_equal(&old, &read(&changed, &cell), &context));
+    let havoc = before.with_storage_memory_havoc(
+        Variable(986_220),
+        &[CMemoryRange::new(cell.clone(), 0u32.into(), 8u32.into())],
+        &context,
+    );
+    let other_origin = read(&havoc, &cell);
+    let numeric = context.clone().assume_condition(
+        ConditionTerm::pointer_equal(old.pointer().clone(), other_origin.pointer().clone()),
+        true,
+    );
+    assert!(!value_equal(&old, &other_origin, &numeric));
+    let legacy = CPointerValue::new(old.pointer().clone(), old.c_type());
+    let unresolved = legacy
+        .clone()
+        .with_designation(PointerDesignation::Unresolved(Variable(986_221)));
+    assert!(!value_equal(&old, &legacy, &context));
+    assert!(!value_equal(&old, &unresolved, &context));
+    let sibling = read(&after, &cell.offset_by_bytes(16));
+    let numeric = context.assume_condition(
+        ConditionTerm::pointer_equal(old.pointer().clone(), sibling.pointer().clone()),
+        true,
+    );
+    assert!(!value_equal(&old, &sibling, &numeric));
 }
 
 #[test]

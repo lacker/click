@@ -659,7 +659,12 @@ fn whole_cell_write_merges_and_queries_do_not_scan_other_payloads() {
             block: PointerBlock::ExternalArgument,
             offset: PointerOffsetTerm::Variable(Variable(862_000 + id)),
         };
-        let owner = CResourceFact::own_memory(CMemoryRange::new(at(0), 0u32.into(), 1u32.into()));
+        let owner = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+            at(0),
+            0u32.into(),
+            1u32.into(),
+            C_POINTER_BYTE_WIDTH,
+        ));
         let mut resources = ResourceContext::new().unchecked_with_fact(owner.clone());
         for i in 0..size {
             // Large footprint payload at the alias, plus unrelated owners.
@@ -686,17 +691,21 @@ fn whole_cell_write_merges_and_queries_do_not_scan_other_payloads() {
             });
         let (((), work), map_work) = crate::persistent::measure_persistent_work(|| {
             crate::instrumentation::measure_deterministic_work(|| {
-                for bytes in [4, C_POINTER_BYTE_WIDTH] {
-                    let entries = resources
-                        .concrete_write_entries(&at(1), bytes, &facts)
-                        .unwrap();
-                    assert!(entries.exact());
-                    assert_eq!(entries.count(), 1);
-                    assert_eq!(
-                        resources.memory_write_range(&at(1), bytes, &facts),
-                        owner.memory_own_range()
-                    );
-                }
+                let bytes = C_POINTER_BYTE_WIDTH;
+                let entries = resources
+                    .concrete_write_entries(&at(1), bytes, &facts)
+                    .unwrap();
+                assert!(entries.exact());
+                assert_eq!(entries.count(), 1);
+                assert_eq!(
+                    resources.memory_write_range(&at(1), bytes, &facts),
+                    owner.memory_own_range()
+                );
+                assert!(
+                    resources
+                        .concrete_write_entries(&at(1), bytes + 1, &facts)
+                        .is_none()
+                );
             })
         });
         samples.push((size, merge_work, merge_map_work, work, map_work));

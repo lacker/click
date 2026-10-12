@@ -224,6 +224,18 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
     spec_definitions: SpecDefinitions<'_>,
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, ClickError> {
+    if application.name == "declared_uint32_from_bytes" {
+        return super::uint32_representation::instantiate_declared_uint32_from_bytes(
+            application,
+            claim_label,
+            path_index,
+            tactic_index,
+            available,
+            assumptions,
+            context,
+            spec_definitions,
+        );
+    }
     if is_integer_range_fold_theorem_name(&application.name) {
         return instantiate_integer_range_fold_theorem_application(
             application,
@@ -437,6 +449,15 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
                 ),
             )
         })?;
+        #[cfg(test)]
+        if std::env::var_os("CLICK_SCOPE_CONDITION_PROBE").is_some()
+            && application.name == "int32_nonnegative_subtract_within_value_is_defined"
+        {
+            eprintln!(
+                "applied-theorem-condition-probe {}",
+                crate::kernel::proof::selected_condition_probe(None, &conclusion)
+            );
+        }
         conclusions.push(conclusion.clone());
     }
     Ok(conclusions)
@@ -627,7 +648,7 @@ fn instantiate_integer_range_fold_theorem_application(
     Ok(vec![conclusion.as_ref().clone()])
 }
 
-fn collect_conjunctive_guard_facts<'a>(
+pub(super) fn collect_conjunctive_guard_facts<'a>(
     proposition: &'a Proposition,
     facts: &mut Vec<&'a Proposition>,
 ) {
@@ -1095,10 +1116,12 @@ fn pointer_element_width_for_c_expression(
     match expression {
         CExpression::Variable(name) => known.get(name).copied(),
         CExpression::MemberAddress { selection, .. } => Some(selection.value_type.byte_width()),
+        CExpression::RecordPointerOffset { layout, .. } => Some(layout.size_bytes()),
         CExpression::Add(left, right) => pointer_element_width_for_c_expression(left, known)
             .or_else(|| pointer_element_width_for_c_expression(right, known)),
         CExpression::Subtract(left, _)
         | CExpression::PointerOffsetBytes { pointer: left, .. }
+        | CExpression::PointerAligned { pointer: left, .. }
         | CExpression::Cast {
             expression: left, ..
         } => pointer_element_width_for_c_expression(left, known),
@@ -1106,7 +1129,7 @@ fn pointer_element_width_for_c_expression(
     }
 }
 
-fn theorem_application_error(
+pub(super) fn theorem_application_error(
     claim_label: &str,
     path_index: Option<usize>,
     tactic_index: usize,

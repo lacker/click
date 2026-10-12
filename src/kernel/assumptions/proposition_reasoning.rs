@@ -812,6 +812,17 @@ impl PureFactContext {
                 premises_id,
             );
         }
+        if let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+            proposition
+            && let Some(evidence) = UInt32PackingEvidence::for_equality(left, right, self)
+        {
+            return (
+                Some(AtomicPropositionDerivationEvidence::UInt32Representation(
+                    Box::new(evidence),
+                )),
+                premises_id,
+            );
+        }
         let epoch_before = INCOMPLETE_REASONING_EPOCH.with(Cell::get);
         let memory_evidence = match proposition {
             // Both equality widths reach the history. An `int64` load is a
@@ -1454,6 +1465,11 @@ impl PureFactContext {
         premises_id: u64,
         evidence: &AtomicPropositionDerivationEvidence,
     ) -> bool {
+        if let AtomicPropositionDerivationEvidence::UInt32Representation(evidence) = evidence {
+            return matches!(proposition,
+                Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
+                    if evidence.checks_equality(left, right, self));
+        }
         if let AtomicPropositionDerivationEvidence::PointerWord(evidence) = evidence {
             let Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(left, right), value) =
                 proposition

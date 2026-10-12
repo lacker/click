@@ -11,7 +11,7 @@ pub(crate) mod api;
 /// artifacts.  This is deliberately separate from source and compiler
 /// identities: changing the authority interpretation must invalidate an old
 /// certificate even when its inputs are byte-identical.
-pub const RESOURCE_SEMANTICS_VERSION: u32 = 71;
+pub const RESOURCE_SEMANTICS_VERSION: u32 = 73;
 
 pub(crate) mod assumptions;
 mod equality_graph;
@@ -38,6 +38,10 @@ pub(crate) use functions::rewrite_resource_instance_selecting_children;
 pub(crate) use functions::{
     InstantiatedCompositeResourceFacts, instantiate_composite_resource_facts,
     instantiate_private_member_body_facts,
+};
+pub(crate) use functions::{
+    assume_checked_native_composite_places, c_independent_function_input_state,
+    c_state_with_assumed_native_record_inputs,
 };
 pub use resource_description::{ResourceDescription, ResourceReference};
 pub(crate) use thread_confinement::propagate_population_reach;
@@ -110,6 +114,7 @@ pub(crate) use assumptions::{
 pub(crate) use equality_graph::logical_pointer_read_term;
 pub(crate) use eval::canonical_condition_fact;
 pub(crate) use eval::canonical_form_of_load;
+pub(crate) use eval::canonical_form_of_typed_load;
 pub(crate) use eval::canonical_term;
 pub(crate) use eval::canonicalized_offset_index_term;
 #[cfg(test)]

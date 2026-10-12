@@ -5,6 +5,7 @@
 //! validates every selected candidate.
 
 use crate::kernel::LoadKind;
+use crate::kernel::primitives::CNativeInputIdentity;
 use crate::kernel::{
     AlgebraicTerm, AlgebraicTermNode, AlgebraicValue, CType, CValue, IntegerComparisonOperator,
     IntegerTerm, MachineIntegerType, PointerDesignation, PointerDomainSelection,
@@ -882,6 +883,15 @@ enum AlphaPointerDesignationKey {
     Loaded(AlphaSnapshotKey, AlphaPointerKey),
     Object {
         root: AlphaPointerKey,
+        path: Vec<AlphaPointerSelectionKey>,
+        base: AlphaPointerKey,
+        element_type: CType,
+        stride: u32,
+        count: AlphaIntegerKey,
+    },
+    InputSelected {
+        input: Box<AlphaPointerDesignationKey>,
+        origin: AlphaPointerKey,
         path: Vec<AlphaPointerSelectionKey>,
         base: AlphaPointerKey,
         element_type: CType,
@@ -1925,6 +1935,54 @@ fn alpha_pointer_designation_key<const ALLOW_LOADS: bool>(
             }
             AlphaPointerDesignationKey::Object {
                 root,
+                path: selected,
+                base: alpha_pointer_key_with_bindings::<ALLOW_LOADS>(base, bindings, next_binder)?,
+                element_type: *element_type,
+                stride: *stride,
+                count: alpha_integer_key_with_bindings(count, bindings, next_binder)?,
+            }
+        }
+        PointerDesignation::InputSelected {
+            input,
+            origin,
+            path,
+            base,
+            element_type,
+            stride,
+            count,
+        } => {
+            let identity = match input {
+                CNativeInputIdentity::Unresolved(variable) => {
+                    PointerDesignation::Unresolved(*variable)
+                }
+                CNativeInputIdentity::Loaded(identity) => {
+                    PointerDesignation::Loaded(identity.clone())
+                }
+            };
+            let input = Box::new(alpha_pointer_designation_key::<ALLOW_LOADS>(
+                &identity,
+                bindings,
+                next_binder,
+            )?);
+            let mut selected = Vec::with_capacity(path.len());
+            for part in path.iter() {
+                alpha_work_checkpoint(bindings, 1)?;
+                selected.push(match part {
+                    PointerDomainSelection::Member(name) => {
+                        AlphaPointerSelectionKey::Member(name.clone())
+                    }
+                    PointerDomainSelection::Element(index) => AlphaPointerSelectionKey::Element(
+                        alpha_integer_key_with_bindings(index, bindings, next_binder)?,
+                    ),
+                });
+            }
+            AlphaPointerDesignationKey::InputSelected {
+                input,
+                origin: alpha_pointer_key_with_bindings::<ALLOW_LOADS>(
+                    origin,
+                    bindings,
+                    next_binder,
+                )?,
                 path: selected,
                 base: alpha_pointer_key_with_bindings::<ALLOW_LOADS>(base, bindings, next_binder)?,
                 element_type: *element_type,

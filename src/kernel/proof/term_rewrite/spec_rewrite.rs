@@ -396,7 +396,8 @@ fn collect_spec_c_expression_carriers(expression: &CExpression, variables: &mut 
         | CExpression::BitwiseNot(expression) => {
             collect_spec_c_expression_carriers(expression, variables)
         }
-        CExpression::PointerOffsetBytes { pointer, .. } => {
+        CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::PointerAligned { pointer, .. } => {
             collect_spec_c_expression_carriers(pointer, variables)
         }
         CExpression::Conditional {
@@ -1617,6 +1618,17 @@ impl<'a> TermRewrite<'a> {
                 expression: Box::new(self.rewrite_c_expression(expression)?),
                 classification: *classification,
             },
+            CExpression::RecordPointerOffset {
+                pointer,
+                index,
+                layout,
+                subtract,
+            } => CExpression::RecordPointerOffset {
+                pointer: Box::new(self.rewrite_c_expression(pointer)?),
+                index: Box::new(self.rewrite_c_expression(index)?),
+                layout: layout.clone(),
+                subtract: *subtract,
+            },
             CExpression::MemberAddress { object, selection } => CExpression::MemberAddress {
                 object: Box::new(self.rewrite_c_expression(object)?),
                 selection: selection.clone(),
@@ -1630,6 +1642,10 @@ impl<'a> TermRewrite<'a> {
             CExpression::PointerOffsetBytes { pointer, bytes } => CExpression::PointerOffsetBytes {
                 pointer: Box::new(self.rewrite_c_expression(pointer)?),
                 bytes: *bytes,
+            },
+            CExpression::PointerAligned { pointer, alignment } => CExpression::PointerAligned {
+                pointer: Box::new(self.rewrite_c_expression(pointer)?),
+                alignment: *alignment,
             },
             CExpression::LessThan(left, right) => CExpression::LessThan(
                 Box::new(self.rewrite_c_expression(left)?),

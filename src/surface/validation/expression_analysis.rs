@@ -38,6 +38,10 @@ pub(in crate::surface) fn c_expression_uses_variable(
         | CExpression::PointerOffsetBytes {
             pointer: expression,
             ..
+        }
+        | CExpression::PointerAligned {
+            pointer: expression,
+            ..
         } => c_expression_uses_variable(expression, variable),
         crate::kernel::binary_c_expression!(left, right) => {
             c_expression_uses_variable(left, variable)
@@ -1522,6 +1526,8 @@ fn validate_recursive_calls_in_segment(
         | ContractSegmentSurface::StructRange {
             base, start, end, ..
         } => vec![base, start, end],
+        ContractSegmentSurface::ObjectAt { base, .. } => vec![base.as_ref()],
+        ContractSegmentSurface::IndexedField { place, .. } => vec![place.as_ref()],
         ContractSegmentSurface::Field { .. } | ContractSegmentSurface::Object(_) => Vec::new(),
     };
     for expression in expressions {

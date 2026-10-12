@@ -1792,7 +1792,32 @@ fn apply_c_comparison(
             else {
                 return vec![c_type_mismatch_expression_path(facts, obligations)];
             };
-            apply_same_object_pointer_operation(
+            let domain_context = assumptions_with_path_context(assumptions, &facts, &obligations);
+            let check = super::pointer_domains::checked_pointer_ordering(
+                state,
+                &left,
+                &right,
+                byte_width,
+                pointer_domain_view(&left),
+                true,
+                &domain_context,
+            );
+            let Some(mut domain_refusals) = pointer_arithmetic_domain_refusal_paths(
+                check,
+                &facts,
+                &obligations,
+                assumptions,
+                &CUndefinedBehavior::PointerArithmetic,
+            ) else {
+                return vec![CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::PointerArithmetic,
+                    ),
+                    facts,
+                    obligations,
+                }];
+            };
+            domain_refusals.extend(apply_same_object_pointer_operation(
                 state,
                 left.into_pointer(),
                 right.into_pointer(),
@@ -1817,7 +1842,8 @@ fn apply_c_comparison(
                         assumptions,
                     )
                 },
-            )
+            ));
+            domain_refusals
         }
         (
             left @ (crate::kernel::integer32_c_value!(_)),
@@ -1956,7 +1982,30 @@ pub(in crate::kernel) fn apply_c_subtract(
             else {
                 return vec![c_type_mismatch_expression_path(facts, obligations)];
             };
-            apply_same_object_pointer_operation(
+            let check = super::pointer_domains::checked_pointer_difference(
+                state,
+                &left,
+                &right,
+                byte_width,
+                pointer_domain_view(&left),
+                assumptions,
+            );
+            let Some(mut domain_refusals) = pointer_arithmetic_domain_refusal_paths(
+                check,
+                &facts,
+                &obligations,
+                assumptions,
+                &CUndefinedBehavior::PointerArithmetic,
+            ) else {
+                return vec![CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::PointerArithmetic,
+                    ),
+                    facts,
+                    obligations,
+                }];
+            };
+            domain_refusals.extend(apply_same_object_pointer_operation(
                 state,
                 left.into_pointer(),
                 right.into_pointer(),
@@ -1976,7 +2025,8 @@ pub(in crate::kernel) fn apply_c_subtract(
                     };
                     apply_c_int32_subtract(left, right, facts, obligations, assumptions)
                 },
-            )
+            ));
+            domain_refusals
         }
         _ => vec![c_type_mismatch_expression_path(facts, obligations)],
     }
@@ -1988,7 +2038,68 @@ struct PointerFormationGuard {
     value: bool,
 }
 
-fn pointer_index_term(
+/// The shared evaluator's character access mode selects the retained object's
+/// representation extent. It does not issue a new object or widen that extent.
+/// Native frontends remain responsible for admitting this source operation.
+pub(super) fn pointer_domain_view(
+    pointer: &CPointerValue,
+) -> super::pointer_domains::PointerDomainView {
+    if matches!(
+        pointer.c_type().pointee_type(),
+        Some(CType::Int8 | CType::UInt8)
+    ) {
+        super::pointer_domains::PointerDomainView::ObjectRepresentationBytes
+    } else {
+        super::pointer_domains::PointerDomainView::Typed
+    }
+}
+
+/// Keep domain obligations independent of memory permission. Undecided guards
+/// retain their refused paths, so successful verification must discharge them.
+pub(super) fn pointer_domain_refusal_paths(
+    check: Result<
+        super::pointer_domains::PointerDomainCheck,
+        super::pointer_domains::PointerDomainRefusal,
+    >,
+    facts: &(impl ExecutionFactSource + ?Sized),
+    obligations: &[ProofObligation],
+    assumptions: &PureFactContext,
+    refusal: &CUndefinedBehavior,
+) -> Option<Vec<CExpressionPath>> {
+    let guards = match check.ok()? {
+        super::pointer_domains::PointerDomainCheck::Legacy => return Some(Vec::new()),
+        super::pointer_domains::PointerDomainCheck::Checked(conditions) => conditions
+            .into_iter()
+            .map(|condition| PointerFormationGuard {
+                condition,
+                value: true,
+            })
+            .collect(),
+    };
+    owed_guard_paths(guards, facts, obligations, assumptions, refusal)
+}
+
+// Specification lowering observes address expressions without executing
+// native arithmetic. It must retain the carrier, but cannot issue a domain
+// or use address formation as evidence of a valid native access.
+fn pointer_arithmetic_domain_refusal_paths(
+    check: Result<
+        super::pointer_domains::PointerDomainCheck,
+        super::pointer_domains::PointerDomainRefusal,
+    >,
+    facts: &(impl ExecutionFactSource + ?Sized),
+    obligations: &[ProofObligation],
+    assumptions: &PureFactContext,
+    refusal: &CUndefinedBehavior,
+) -> Option<Vec<CExpressionPath>> {
+    if assumptions.should_observe_pointer_addresses() {
+        Some(Vec::new())
+    } else {
+        pointer_domain_refusal_paths(check, facts, obligations, assumptions, refusal)
+    }
+}
+
+pub(super) fn pointer_index_term(
     value: CValue,
     facts: &(impl ExecutionFactSource + ?Sized),
     assumptions: &PureFactContext,
@@ -2065,7 +2176,27 @@ fn pointer_offset_by_elements_paths(
     };
     let displaces = offset != Bitvector32Term::Constant(0);
     let mut guards = Vec::new();
-    let mut owed = Vec::new();
+    let domain_check = super::pointer_domains::checked_pointer_formation(
+        state,
+        &pointer_value,
+        &result,
+        byte_width,
+        pointer_domain_view(&pointer_value),
+        assumptions,
+    );
+    let Some(mut owed) = pointer_arithmetic_domain_refusal_paths(
+        domain_check,
+        &facts,
+        &obligations,
+        assumptions,
+        &CUndefinedBehavior::PointerArithmetic,
+    ) else {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic),
+            facts,
+            obligations,
+        }];
+    };
 
     // Pointer offsets are exact i64 terms, but the source index is a signed
     // int32. Once a pointer has a known element index, the next addition must
@@ -2143,7 +2274,7 @@ fn pointer_offset_by_elements_paths(
                             obligations,
                         }];
                     };
-                    owed = refused;
+                    owed.extend(refused);
                 }
                 HeldRangeMembership::Outside => {
                     return vec![CExpressionPath {
@@ -2233,16 +2364,37 @@ pub(in crate::kernel) fn pointer_offset_by_bytes_paths(
         }];
     }
     let result = pointer.offset_by_bytes(bytes);
+    let domain_context = assumptions_with_path_context(assumptions, &facts, &obligations);
+    let check = super::pointer_domains::checked_pointer_byte_formation(
+        state,
+        &pointer_value,
+        &result,
+        &domain_context,
+    );
+    let Some(mut domain_refusals) = pointer_arithmetic_domain_refusal_paths(
+        check,
+        &facts,
+        &obligations,
+        assumptions,
+        &CUndefinedBehavior::PointerArithmetic,
+    ) else {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic),
+            facts,
+            obligations,
+        }];
+    };
     let Some(guards) = pointer_block_bounds(state, &result, 1) else {
         return Vec::new();
     };
-    apply_pointer_formation_guards(
+    domain_refusals.extend(apply_pointer_formation_guards(
         pointer_value.with_pointer(result),
         guards,
         facts,
         obligations,
         assumptions,
-    )
+    ));
+    domain_refusals
 }
 
 fn pointer_index_from_offset(pointer: &Pointer, byte_width: u32) -> Option<Bitvector32Term> {

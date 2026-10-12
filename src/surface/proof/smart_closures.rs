@@ -3974,6 +3974,8 @@ impl<'a> Proof<'a> {
                 // automatic local that has since left scope. Its recorded
                 // pair remains a valid kernel fact, but the unanchored
                 // spelling cannot be used as a source `rewrite`.
+                // A local at a historical snapshot must retain that explicit
+                // selector; its old presence cannot make a current name live.
                 // Only names in this candidate are queried. An outcome's
                 // recorded pair cannot make an out-of-scope temporary legal
                 // source, even when no call-outcome route was selected.
@@ -3987,9 +3989,6 @@ impl<'a> Proof<'a> {
                         !(name == "result" && view.result.is_some())
                             && !view.state.locals().contains_name(name)
                             && !view.pre_state.locals().contains_name(name)
-                            && !premise_anchor
-                                .and_then(|anchor| view.recorded_snapshots.get(anchor))
-                                .is_some_and(|snapshot| snapshot.locals().contains_name(name))
                             && self.local_binding(name).is_none()
                             && self.local_integer_values().get(name).is_none()
                             && self.local_algebraic_values().get(name).is_none()
@@ -6480,6 +6479,41 @@ impl<'a> Proof<'a> {
         None
     }
 
+    fn uint32_byte_premise_pairs(
+        &self,
+        derivation: &PropositionDerivation,
+    ) -> Option<Vec<(Proposition, ClickProposition)>> {
+        let view = self.premise_fixed_state_view()?;
+        let anchor = match self.context.as_ref() {
+            ProofContext::FixedState(context) => context.premise_anchor.clone(),
+            ProofContext::Execution(_) => self
+                .focused_outcome_data()
+                .and_then(|data| data.premise_anchor.clone())
+                .or_else(|| self.execution().and_then(frontier_premise_anchor)),
+            ProofContext::Pure(_) => None,
+        }?;
+        let state = view.recorded_snapshots.get(&anchor)?;
+        let candidates = super::uint32_representation::byte_premises_at_snapshot(
+            derivation,
+            view.parameters,
+            view.arguments,
+            state,
+            &anchor,
+        )?;
+        candidates
+            .into_iter()
+            .map(|(kernel, surface)| {
+                let lowered =
+                    self.lower_surface_proposition_direct(&surface, "selected uint32 byte premise");
+                lowered
+                    .is_ok_and(|lowered| {
+                        lowered == kernel || condition_polarity_equivalent(&lowered, &kernel)
+                    })
+                    .then_some((kernel, surface))
+            })
+            .collect()
+    }
+
     pub(super) fn check_typed_atomic_simp_candidate(
         &self,
         goal: &Proposition,
@@ -6487,6 +6521,13 @@ impl<'a> Proof<'a> {
         premise_pairs: &[(Proposition, ClickProposition)],
         fixed_state_application_closes_goal: bool,
     ) -> Option<Self> {
+        let representation_pairs;
+        let premise_pairs = if derivation.uint32_representation_premises().is_some() {
+            representation_pairs = self.uint32_byte_premise_pairs(derivation)?;
+            representation_pairs.as_slice()
+        } else {
+            premise_pairs
+        };
         let surface_goal = self.surface_goal();
         let tactics = recorded_signed_order_pairs(derivation, premise_pairs)
             .and_then(|ordered| {
@@ -6505,6 +6546,15 @@ impl<'a> Proof<'a> {
                 )
             })
             .or_else(|| plan_recorded_bitvector_equality_path(goal, derivation, premise_pairs))
+            .or_else(|| {
+                super::uint32_representation::plan_recorded_uint32_representation(
+                    goal,
+                    derivation,
+                    premise_pairs,
+                    surface_goal?,
+                    fixed_state_application_closes_goal,
+                )
+            })
             .or_else(|| {
                 if !derivation.is_int32_pinned_constant_equality() {
                     return None;
@@ -6910,7 +6960,8 @@ impl<'a> Proof<'a> {
         // Apply those through the same recursive Proof driver used by
         // authoritative source scripts; the plan is provenance input, not an
         // independently interpreted semantic certificate.
-        let proof = attempt::candidate_outcome(self.try_generated_linear_script(&tactics))
+        let checked = self.try_generated_linear_script(&tactics);
+        let proof = attempt::candidate_outcome(checked)
             .ok()
             .flatten()
             .flatten()?;

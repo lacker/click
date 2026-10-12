@@ -15,6 +15,9 @@ use crate::instrumentation::ArtifactReuseRejection;
 use crate::kernel::ResourceDescription;
 use std::sync::Arc;
 
+mod uint32_representation;
+pub use uint32_representation::prove_declared_uint32_from_bytes;
+
 #[cfg(test)]
 thread_local! {
     static CHECKED_FUNCTION_BODY_EXECUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -409,6 +412,7 @@ pub struct CLoopPreservationContext {
     /// iteration that continues past the loop, and the body proof that runs
     /// inside it, both continue from here.
     next_kernel_variable: u64,
+    pointer_carriers: std::collections::BTreeMap<String, CPointerValue>,
 }
 
 /// A body state produced by a checked preservation proof that may be the
@@ -660,6 +664,10 @@ mod loop_exit_sharing_tests {
 }
 
 impl CLoopPreservationContext {
+    pub(crate) fn check_pointer_carriers(&self, state: &CState) -> Result<(), String> {
+        super::loops::check_loop_pointer_carriers(&self.pointer_carriers, state)
+    }
+
     pub(crate) fn restored_exit(
         &self,
         state: &CState,
@@ -1017,6 +1025,7 @@ fn c_loop_preservation_contexts_with_mode(
                 // built with, so each reports the same high-water mark rather
                 // than the mark at the moment it happened to be pushed.
                 next_kernel_variable,
+                pointer_carriers: head.pointer_carriers.clone(),
             });
         }
     }
@@ -1623,10 +1632,24 @@ fn abstract_c_state_for_join_across_with_policy(
                 | CType::Float64Array(_) => {
                     unreachable!("array objects use CLocalBinding::ArrayObject")
                 }
-                _ => CValue::typed_pointer(
-                    Pointer::symbolic(join_variable(&mut variables, &mut budget)?),
-                    *c_type,
-                ),
+                _ => {
+                    let variable = join_variable(&mut variables, &mut budget)?;
+                    let pointer = CPointerValue::new(Pointer::symbolic(variable), *c_type);
+                    // An unknown joined address cannot erase an enrolled
+                    // carrier, even when another arm held a legacy pointer
+                    // with the same numeric address.
+                    let designated = std::iter::once(state)
+                        .chain(sibling_states.iter().copied())
+                        .any(|arm| {
+                            matches!(arm.locals.get(name),
+                            Some(CValue::Pointer(value)) if value.designation().is_some())
+                        });
+                    CValue::Pointer(if designated {
+                        pointer.with_designation(PointerDesignation::Unresolved(variable))
+                    } else {
+                        pointer
+                    })
+                }
             }
         };
         preserved_blocks.insert(slot.block.clone());
@@ -2226,6 +2249,7 @@ pub fn c_heap_allocate_sized_with_zeroed(
         target: target.into(),
         bytes,
         zeroed,
+        allocated_scalar_type: None,
     }
 }
 
@@ -2261,6 +2285,7 @@ pub fn c_declare_with_all_qualifiers(
     CStatement::Declare {
         name: name.into(),
         c_type,
+        array_object_kind: CArrayObjectKind::Scalar,
         volatile,
         pointee_volatile,
         constant,
@@ -2285,6 +2310,36 @@ pub fn c_declare_with_zero_fill(
     CStatement::Declare {
         name: name.into(),
         c_type,
+        array_object_kind: CArrayObjectKind::Scalar,
+        volatile,
+        pointee_volatile,
+        constant,
+        pointee_constant,
+        initializer: None,
+        zero_fill,
+    }
+}
+
+/// Declare the lowered byte backing of an array of source aggregate objects.
+/// This storage has no scalar-byte array domain; explicit aggregate-element
+/// metadata is required before checked aggregate-array domains can be issued.
+pub fn c_declare_aggregate_array(name: impl Into<String>, bytes: u32) -> CStatement {
+    c_declare_aggregate_array_with_zero_fill(name, bytes, false, false, false, false, None)
+}
+
+pub fn c_declare_aggregate_array_with_zero_fill(
+    name: impl Into<String>,
+    bytes: u32,
+    volatile: bool,
+    pointee_volatile: bool,
+    constant: bool,
+    pointee_constant: bool,
+    zero_fill: Option<CZeroFill>,
+) -> CStatement {
+    CStatement::Declare {
+        name: name.into(),
+        c_type: CType::UInt8Array(bytes),
+        array_object_kind: CArrayObjectKind::AggregateBacking,
         volatile,
         pointee_volatile,
         constant,
@@ -2308,6 +2363,7 @@ pub fn c_declare_initialized(
     CStatement::Declare {
         name: name.into(),
         c_type,
+        array_object_kind: CArrayObjectKind::Scalar,
         volatile,
         pointee_volatile,
         constant,
@@ -3259,6 +3315,22 @@ pub fn c_function_entry_state(
     function: &CFunction,
     arguments: &[CExpression],
 ) -> Option<CState> {
+    c_function_entry_state_with_assumptions(
+        caller_state,
+        function,
+        arguments,
+        &PureFactContext::new(),
+    )
+}
+
+/// Rebind a checked frontier using its actual caller facts for native object
+/// arguments whose containing-array position is symbolic.
+pub fn c_function_entry_state_with_assumptions(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+) -> Option<CState> {
     let values = arguments
         .iter()
         .map(|argument| match argument {
@@ -3266,7 +3338,8 @@ pub fn c_function_entry_state(
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;
-    let mut entry = bind_c_function_arguments(caller_state, function, &values)?;
+    let mut entry =
+        bind_c_function_arguments_with_assumptions(caller_state, function, &values, assumptions)?;
     if let Some(events) = caller_state
         .population_effects
         .creation
@@ -3396,8 +3469,11 @@ pub(crate) fn c_state_with_borrowed_contract_inputs(
         .iter()
         .any(|spec| spec.mutex_authority_binding().is_some())
     {
-        let entry = c_function_entry_state(&rooted, function, arguments)
-            .ok_or_else(|| LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry))?;
+        let entry =
+            c_function_entry_state_with_assumptions(&rooted, function, arguments, assumptions)
+                .ok_or_else(|| {
+                    LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry)
+                })?;
         let mut budget = ExecutionBudget::beside_live_state();
         for spec in function.resource_requires() {
             let Some((identity, _)) = spec.mutex_authority_binding() else {
@@ -3421,8 +3497,11 @@ pub(crate) fn c_state_with_borrowed_contract_inputs(
         crate::kernel::mutexes::helper_contracts::classify(function.contract_interface())
             .map_err(|_| LoanRefusal::InvalidEvidence.diagnostic(LoanRefusalOperation::Entry))?
     {
-        let entry = c_function_entry_state(&rooted, function, arguments)
-            .ok_or_else(|| LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry))?;
+        let entry =
+            c_function_entry_state_with_assumptions(&rooted, function, arguments, assumptions)
+                .ok_or_else(|| {
+                    LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry)
+                })?;
         let mut budget = ExecutionBudget::beside_live_state();
         let mut evaluate = |spec: &CResourceSpec| {
             super::functions::evaluate_function_resource_spec_with_entry(
@@ -3477,8 +3556,9 @@ fn install_borrowed_contract_inputs(
     arguments: &[CExpression],
     assumptions: &PureFactContext,
 ) -> Result<CState, LoanRefusalDiagnostic> {
-    let entry = c_function_entry_state(&state, function, arguments)
-        .ok_or_else(|| LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry))?;
+    let entry =
+        c_function_entry_state_with_assumptions(&state, function, arguments, assumptions)
+            .ok_or_else(|| LoanRefusal::MissingBacking.diagnostic(LoanRefusalOperation::Entry))?;
     let mut budget = ExecutionBudget::beside_live_state();
     let (_, checked_inputs) = evaluate_function_resource_context_with_metadata(
         &entry,
@@ -6227,6 +6307,15 @@ fn checked_loan_evidence_is_valid(
             outcome,
             CFunctionOutcome::Return { .. } | CFunctionOutcome::Throw { .. }
         );
+        #[cfg(test)]
+        if function.name() == "lift" && std::env::var_os("CLICK_CALLBACK_CLAIM_PROBE").is_some() {
+            static REPORTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if REPORTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                eprintln!("callback-loan-entry empty={} valid={} pristine={} entry-consistent={}",
+                    path.loan_evidence.is_empty(), path.loan_evidence.is_valid(), pristine_start,
+                    checked.state.loan_bindings_are_consistent());
+            }
+        }
         if path.loan_evidence.is_empty() {
             return match outcome {
                 CFunctionOutcome::Return {
@@ -6273,6 +6362,18 @@ fn checked_loan_evidence_is_valid(
             CFunctionOutcome::Return { state, .. } | CFunctionOutcome::Throw { state, .. } => state,
             _ => return true,
         };
+        #[cfg(test)]
+        if function.name() == "lift" && std::env::var_os("CLICK_CALLBACK_CLAIM_PROBE").is_some() {
+            static REPORTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if REPORTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                eprintln!("callback-loans sequence-valid={} pristine={} recovered-ledger={} thread-recovery={} participant={} return-consistent={} entry-consistent={} return-authorized={}",
+                    path.loan_evidence.is_valid(), pristine_start,
+                    return_state.loan_ledger() == outer_recovered_ledger.as_ref(), thread_recovered(return_state),
+                    return_state.loan_participant() == outer_recovered_participant,
+                    return_state.loan_bindings_are_consistent(), checked.state.loan_bindings_are_consistent(),
+                    state_loan_bindings_are_authorized(return_state, &checked.assumptions));
+            }
+        }
         (return_state.loan_ledger() == outer_recovered_ledger.as_ref()
             || thread_recovered(return_state))
             && return_state.loan_participant() == outer_recovered_participant
@@ -6521,6 +6622,28 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
             entry_state = entry_state.with_resource_context(entry_resources);
         }
         let matches_execution_metadata_except_state = |checked: &CCheckedFunctionExecution| {
+            #[cfg(test)]
+            if function.name() == "lift" && std::env::var_os("CLICK_CALLBACK_CLAIM_PROBE").is_some()
+            {
+                static REPORTS: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(0);
+                if REPORTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
+                    eprintln!(
+                        "callback-metadata function={} body={} interface={} arguments={} environment={} semantics={} mode={} policy={} no-limit={} nonempty={} loans={}",
+                        checked.function == function,
+                        checked.function.body == function.body,
+                        checked.function.contract_interface == function.contract_interface,
+                        checked.arguments == arguments,
+                        checked.environment == environment,
+                        checked.execution_semantics == execution_semantics,
+                        checked.mode == mode,
+                        checked.assumptions.has_same_reasoning_policy(&assumptions),
+                        checked.execution.limit().is_none(),
+                        !checked.execution.paths().is_empty(),
+                        checked_loan_evidence_is_valid(checked, &function)
+                    );
+                }
+            }
             checked.function == function
                 && checked.arguments == arguments
                 && checked.environment == environment
@@ -8244,6 +8367,13 @@ pub(crate) fn prove_c_function_contract_refinement(
 }
 
 mod contract_interface_identity;
+
+pub(in crate::kernel) fn native_record_refinement_obligations_match(
+    left: &CFunctionContractInterface,
+    right: &CFunctionContractInterface,
+) -> bool {
+    contract_interface_identity::same_native_record_obligations(left, right)
+}
 
 /// A checked one-call wrapper proves a contract implication. The wrapper's
 /// only extra inputs are source contracts for its last, arbitrary callback

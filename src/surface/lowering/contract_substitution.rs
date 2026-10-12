@@ -1522,10 +1522,13 @@ fn rewrite_contract_expression_exact(
             )
         }
         ContractExpression::CFragment(
-            lowered @ CExpression::Cast {
+            lowered @ (CExpression::Cast {
                 expression: operand,
                 ..
-            },
+            }
+            | CExpression::PointerAligned {
+                pointer: operand, ..
+            }),
         ) => {
             let (operand, changed) = unary(&ContractExpression::CFragment((**operand).clone()));
             if !changed {
@@ -2964,6 +2967,7 @@ pub(in crate::surface) fn c_unary_with_operand(
         }
         | CExpression::Load(expression) => **expression = operand,
         CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::PointerAligned { pointer, .. }
         | CExpression::TypedLoad { pointer, .. } => **pointer = operand,
         _ => unreachable!("CUnary stores a unary C operation"),
     }
@@ -3570,9 +3574,24 @@ pub(in crate::surface) fn substitute_c_fragment_in(
             object: Box::new(substitute_c_fragment_in(object, substitutions)?),
             selection: selection.clone(),
         }),
+        CExpression::RecordPointerOffset {
+            pointer,
+            index,
+            layout,
+            subtract,
+        } => Ok(CExpression::RecordPointerOffset {
+            pointer: Box::new(substitute_c_fragment_in(pointer, substitutions)?),
+            index: Box::new(substitute_c_fragment_in(index, substitutions)?),
+            layout: layout.clone(),
+            subtract: *subtract,
+        }),
         CExpression::PointerOffsetBytes { pointer, bytes } => Ok(CExpression::PointerOffsetBytes {
             pointer: Box::new(substitute_c_fragment_in(pointer, substitutions)?),
             bytes: *bytes,
+        }),
+        CExpression::PointerAligned { pointer, alignment } => Ok(CExpression::PointerAligned {
+            pointer: Box::new(substitute_c_fragment_in(pointer, substitutions)?),
+            alignment: *alignment,
         }),
         CExpression::LessThan(left, right) => Ok(CExpression::LessThan(
             Box::new(substitute_c_fragment_in(left, substitutions)?),
@@ -3917,6 +3936,30 @@ pub(in crate::surface) fn contract_expression_to_c_fragment(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pointer_alignment_rewrite_preserves_its_selected_operand_and_alignment() {
+        let source = ContractExpression::CFragment(CExpression::Variable("next".into()));
+        let target = ContractExpression::Binding("result".into());
+        let expression = ContractExpression::CFragment(CExpression::PointerAligned {
+            pointer: Box::new(CExpression::Variable("next".into())),
+            alignment: 8,
+        });
+        let (rewritten, changed) = rewrite_contract_expression_exact(&expression, &source, &target);
+        assert!(changed);
+        assert_eq!(
+            contract_expression_to_c_fragment(&rewritten),
+            Some(CExpression::PointerAligned {
+                pointer: Box::new(CExpression::Variable("result".into())),
+                alignment: 8,
+            })
+        );
+        let unrelated = ContractExpression::CFragment(CExpression::Variable("other".into()));
+        let (unchanged, changed) =
+            rewrite_contract_expression_exact(&expression, &unrelated, &target);
+        assert!(!changed);
+        assert_eq!(unchanged, expression);
+    }
 
     #[test]
     fn multidimensional_array_rewrite_updates_its_lowered_base() {

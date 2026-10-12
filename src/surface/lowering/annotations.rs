@@ -1,5 +1,5 @@
 use super::*;
-use crate::kernel::{AlgebraicTerm, AlgebraicTermNode, CLoopEffectOrigin};
+use crate::kernel::{AlgebraicTerm, AlgebraicTermNode, CLoopEffectOrigin, c_variable};
 
 // The lowerers share these two finite bands. Refusing at each ceiling keeps
 // quantifiers, algebraic binders, pointer identities, and spec fold binders
@@ -1108,6 +1108,11 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
             .collect(),
         body,
     )
+    .with_typed_access_policy(
+        parsed_kernel_function
+            .contract_interface()
+            .typed_access_policy(),
+    )
     .with_return_pointee_constant(parsed_function.return_pointee_is_constant())
     .with_source_body(source_body)
     .with_control_targets_from(&parsed_kernel_function);
@@ -1145,12 +1150,11 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
     )?;
     let mut function = function
         .with_scalar_object_inputs(scalar_object_inputs)
-        .with_aggregate_object_inputs(
-            parsed_kernel_function
-                .contract_interface()
-                .aggregate_object_inputs()
-                .to_vec(),
-        )
+        .with_aggregate_object_inputs(aggregate_object_inputs_for_contract(
+            function_block.requires(),
+            parsed_function.parameters(),
+            &parsed_kernel_function,
+        )?)
         .with_global_variables(parsed_kernel_function.global_variables().to_vec())
         .with_global_arrays(parsed_kernel_function.global_arrays().to_vec())
         .with_global_aggregates(parsed_kernel_function.global_aggregates().to_vec())
@@ -1202,13 +1206,18 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         {
             let checked_entry = match frame_entry.checked_entry_state {
                 Some(state) => state.clone(),
-                None => crate::kernel::c_function_entry_state(entry_state, &function, arguments)
-                    .ok_or_else(|| {
-                        ClickError::new(format!(
-                            "could not construct the resource-derived loop entry for `{}`",
-                            parsed_function.name()
-                        ))
-                    })?,
+                None => crate::kernel::c_function_entry_state_with_assumptions(
+                    entry_state,
+                    &function,
+                    arguments,
+                    frame_entry.assumptions,
+                )
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "could not construct the resource-derived loop entry for `{}`",
+                        parsed_function.name()
+                    ))
+                })?,
             };
             let mut budget = crate::kernel::ExecutionBudget::for_new_execution();
             match crate::kernel::establish_resource_derived_loop_frames(
@@ -4817,6 +4826,12 @@ impl AnnotationLowerer<'_> {
                             && pointee_struct.is_none()
                             && !self
                                 .contract_pointer_element_type(operand, environment)
+                                .or_else(|| match &value {
+                                    SpecExpression::Value(CValue::Pointer(pointer)) => {
+                                        pointer.c_type().pointee_type()
+                                    }
+                                    _ => None,
+                                })
                                 .is_some_and(|element| {
                                     !element.is_pointer() && element.byte_width() > 0
                                 })
@@ -4835,6 +4850,19 @@ impl AnnotationLowerer<'_> {
                             byte_width: 1,
                         })
                     }
+                    CExpression::PointerAligned { alignment, .. } => {
+                        let name = "@click:pointer-alignment:operand";
+                        Ok(SpecExpression::Let {
+                            name: name.into(),
+                            value: Box::new(value),
+                            body: Box::new(SpecExpression::CExpression(
+                                CExpression::PointerAligned {
+                                    pointer: Box::new(c_variable(name)),
+                                    alignment: *alignment,
+                                },
+                            )),
+                        })
+                    }
                     CExpression::TypedLoad { value_type, .. } => Ok(SpecExpression::MemoryLoad {
                         memory: environment.current_memory.clone(),
                         pointer: Box::new(value),
@@ -4845,7 +4873,10 @@ impl AnnotationLowerer<'_> {
                         pointer: Box::new(value),
                         value_type: self.contract_array_element_type(operand, environment),
                     }),
-                    CExpression::AddressOf(_) | CExpression::CheckedObjectAddress(_) => {
+                    CExpression::AddressOf(_) => {
+                        self.lower_c_fragment_to_spec(lowered, environment)
+                    }
+                    CExpression::CheckedObjectAddress(_) => {
                         Ok(SpecExpression::CExpression(lowered.clone()))
                     }
                     _ => Err("invalid C unary operation".to_string()),
@@ -6446,6 +6477,78 @@ impl AnnotationLowerer<'_> {
                 },
                 environment,
             ),
+            CExpression::AddressOf(operand)
+                if matches!(operand.as_ref(), CExpression::Variable(_)) =>
+            {
+                let snapshot = environment.snapshot_state.as_ref().or_else(|| {
+                    let SpecMemory::Fixed(memory) = &environment.current_memory else {
+                        return None;
+                    };
+                    memory
+                        .same_storage_roots(self.entry_state.memory())
+                        .then_some(self.entry_state)
+                });
+                if let Some(snapshot) = snapshot {
+                    // Resolve the selected storage place in its retained state,
+                    // including its complete declaration-derived pointer carrier.
+                    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
+                        snapshot,
+                        &SpecExpression::CExpression(expression.clone()),
+                        None,
+                        &PureFactContext::new(),
+                    )?;
+                    if !obligations.is_empty() {
+                        return Err(
+                            "snapshot local address requires an established storage place".into(),
+                        );
+                    }
+                    Ok(SpecExpression::Value(value))
+                } else {
+                    Ok(SpecExpression::CExpression(expression.clone()))
+                }
+            }
+            CExpression::RecordPointerOffset {
+                pointer,
+                index,
+                layout,
+                subtract,
+            } => {
+                // These compiler-reserved names cannot be source identifiers.
+                // Lower both operands before binding either, so snapshots and
+                // nested operations retain their lexical values and carriers.
+                let pointer = self.lower_c_fragment_to_spec(pointer, environment)?;
+                let index = self.lower_c_fragment_to_spec(index, environment)?;
+                let pointer_name = "@click:record-step:pointer";
+                let index_name = "@click:record-step:index";
+                Ok(SpecExpression::Let {
+                    name: pointer_name.into(),
+                    value: Box::new(pointer),
+                    body: Box::new(SpecExpression::Let {
+                        name: index_name.into(),
+                        value: Box::new(index),
+                        body: Box::new(SpecExpression::CExpression(
+                            CExpression::RecordPointerOffset {
+                                pointer: Box::new(c_variable(pointer_name)),
+                                index: Box::new(c_variable(index_name)),
+                                layout: layout.clone(),
+                                subtract: *subtract,
+                            },
+                        )),
+                    }),
+                })
+            }
+            CExpression::MemberAddress { object, selection } => {
+                let object = self.lower_c_fragment_to_spec(object, environment)?;
+                let name = "@click:member-address:object";
+                Ok(SpecExpression::Let {
+                    name: name.into(),
+                    value: Box::new(object),
+                    body: Box::new(SpecExpression::CExpression(CExpression::MemberAddress {
+                        object: Box::new(c_variable(name)),
+                        selection: selection.clone(),
+                    })),
+                })
+            }
             CExpression::PointerOffsetBytes { pointer, bytes } => {
                 Ok(SpecExpression::PointerOffset {
                     pointer: Box::new(self.lower_c_fragment_to_spec(pointer, environment)?),
@@ -7019,7 +7122,8 @@ impl AnnotationLowerer<'_> {
                 value_type => value_type.pointee_type(),
             },
             CExpression::MemberAddress { selection, .. } => Some(selection.value_type),
-            CExpression::PointerOffsetBytes { pointer, .. } => {
+            CExpression::RecordPointerOffset { pointer, .. }
+            | CExpression::PointerOffsetBytes { pointer, .. } => {
                 self.c_expression_array_element_type(pointer, environment)
             }
             CExpression::Add(left, right) => self
@@ -7091,6 +7195,7 @@ impl AnnotationLowerer<'_> {
                 value_type => value_type.pointee_type().map(CType::byte_width),
             },
             CExpression::MemberAddress { selection, .. } => Some(selection.value_type.byte_width()),
+            CExpression::RecordPointerOffset { layout, .. } => Some(layout.size_bytes()),
             CExpression::PointerOffsetBytes { pointer, .. } => {
                 self.c_expression_array_element_width(pointer, environment)
             }

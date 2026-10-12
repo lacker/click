@@ -311,7 +311,7 @@ fn function_interface(
                     Scalar::pointer_element(pointee, false).unwrap().kind.pointer_proof_type().unwrap(),
                     carried_name.clone(),
                     None,
-                ))
+                ).with_native_pointer_input(true))
             }
             _ => Err(format!(
                 "C++ declaration `{}` parameter `{}` is outside the supported bool/reference/pointer/record interface",
@@ -322,6 +322,7 @@ fn function_interface(
         .collect::<Result<Vec<_>, _>>()?;
     let mut interface =
         syntax::C0Function::external(return_type, lowered.name().to_owned(), parameters)
+            .with_typed_access_policy(crate::kernel::CTypedAccessPolicy::NativeObjectOnly)
             .with_return_reference(return_reference)
             .with_return_pointee_constant(return_constant);
     // An axiom keeps no body: its calls are checked against a contract.

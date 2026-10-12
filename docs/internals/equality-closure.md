@@ -557,9 +557,12 @@ checks, its certified typed producer metadata is retained before the temporary
 fact stream is discarded. The cached scalar-cell conversion preserves this
 metadata just as the symbolic pointer-read route does. Ordinary propositions
 and volatile reads cannot supply it. `mdtests/egraph_recursive_child_alias.md`
-checks unfold at one parent spelling and fold at an equal model identity,
-without intermediate field-load claims or C writes. This does not transport
-loads across different snapshots.
+checks unfold and refold at the same complete parent carrier while retaining
+an identical model, without intermediate field-load claims or C writes. The
+model's pointer identity can be numerically equal to the parent address without
+sharing its designation; that equality cannot authenticate a refold at the
+model pointer. The original model-pointer refolds remain negative regressions.
+This does not transport loads across different snapshots.
 
 
 The kernel now has a distinct `PointerLoadId`, `PointerBlock::LoadedPointer`,
@@ -738,16 +741,17 @@ footprint. A known equality selects only entries of the requested footprint;
 different or unsupported read shapes at that address or elsewhere in the block
 class do not disable the match. Registration, removal and class merging update
 both the complete fold-candidate set and these read sets. Each occurrence
-contributes at most two footprints (including the logical pointer-slot rule),
+contributes its complete physical footprint,
 and merges move both indexes from the smaller occurrence payload. Input
 registration still belongs to the execution proof boundary. An unbound class
 is unknown: scalar arithmetic or snapshot transport may justify an equality
 outside this closure, but permission lookup cannot search for that evidence.
 Candidate delivery is lazy; equality selects the
 occurrence's own start and the ordinary checker still validates its quantity,
-access mode, and bounds. The logical four-byte pointer-slot convention remains
-unchanged, including interior reads of longer int32 ranges, which cannot use
-the whole-cell path. Unrelated scalar equality no longer disables this cell
+access mode, and bounds. Pointer reads require all eight bytes under the pinned
+ABI, regardless of whether the resource counts bytes or four-byte elements.
+Interior reads of longer ranges use the range checker. Unrelated scalar
+equality no longer disables this cell
 fragment. The same address payload supplies fold candidates, whose coverage
 and consumption checks remain authoritative. Cold lookups cannot trigger full
 input registration; the shared classifier uses retained evidence or refuses
@@ -836,10 +840,10 @@ fragments report unknown when the shared candidate service below cannot select
 a checked supplier. General permission queries refuse these cases without a
 compatibility search. The interval summary is part of the trusted kernel's derived index;
 it creates no proposition or access capability.
-Candidate footprint calculation shares the kernel's existing logical
-pointer-cell rule: a pointer read may use one 4-byte logical element, while
-other element widths still need their own full range check. The index must not
-silently tighten that rule to physical pointer width during this migration.
+Candidate footprint calculation uses the complete physical access width. An
+eight-byte pointer read requires all eight bytes, including when its supplier
+counts four-byte elements. Candidate selection and the checked permission query
+use the same footprint; a narrower logical field cannot authorize the read.
 Deterministic regressions cover late aliases,
 nonzero displacement, branch isolation, insertion/removal and normalization,
 growing alias classes, disjoint spans sharing one base, concrete read hits and
@@ -881,8 +885,8 @@ occurrence payload on a class merge. Exact candidates do not depend on an
 affine coordinate bucket. Unbound footprints and unsupported containment or
 snapshot shapes proceed through the shared candidate classifier below; when
 it cannot select a supplier, permission is refused. Unknown equality is not
-disequality. The existing logical pointer-cell width
-rule is preserved for both access judgments. Input registration remains a
+disequality. Both access judgments require the complete physical width.
+Input registration remains a
 proof-boundary operation, not a scan performed by a cold lookup.
 
 Address-class queries register the same retained logical-pointer definitions

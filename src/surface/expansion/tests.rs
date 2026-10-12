@@ -2877,13 +2877,14 @@ fn specification_pointer_load_equality_expands_to_checked_normalization() {
 }
 
 #[test]
-fn recursive_child_alias_fold_expands_and_rechecks_without_load_claims() {
+fn recursive_child_same_carrier_model_identity_fold_expands_and_rechecks_without_load_claims() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/egraph_recursive_child_alias.md");
     let fixture = crate::cli::read_mdtest(&path).expect("recursive child fixture");
     let source = fixture.click_source.as_deref().expect("Click source");
     let sources = crate::cli::source_refs(&fixture.c_sources);
-    verify_c0_sources(source, &sources).expect("unfold/refold through an equal address");
+    verify_c0_sources(source, &sources)
+        .expect("unfold/refold preserves the carrier and identical model");
     let expanded = expand_c0_claim_source_by_label(source, &sources, "roundtrip.contract")
         .expect("recursive child fold should expand");
     assert!(
@@ -2914,7 +2915,7 @@ fn pointer_read_single_store_normalization_expands_and_rechecks() {
 }
 
 #[test]
-fn recursive_child_sibling_write_fold_expands_and_rechecks() {
+fn recursive_child_same_carrier_sibling_write_fold_expands_and_rechecks() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/egraph_recursive_child_sibling_write.md");
     let fixture = crate::cli::read_mdtest(&path).expect("sibling-write fixture");
@@ -2927,6 +2928,33 @@ fn recursive_child_sibling_write_fold_expands_and_rechecks() {
     let mut changed_sources = fixture.c_sources.clone();
     changed_sources[0].1 = changed_sources[0].1.replace("p->tag = 1", "p->left = 0");
     assert!(verify_c0_sources(&expanded, &crate::cli::source_refs(&changed_sources)).is_err());
+}
+
+#[test]
+fn recursive_child_numeric_model_alias_cannot_replace_the_parent_carrier() {
+    for fixture in [
+        "egraph_recursive_child_alias.md",
+        "egraph_recursive_child_sibling_write.md",
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("mdtests")
+            .join(fixture);
+        let fixture = crate::cli::read_mdtest(&path).unwrap();
+        let source = fixture.click_source.as_deref().unwrap();
+        // Restore the complete original proof, with identical C and model
+        // claims: only the refold's resource argument changes back to id.
+        let original = source.replace("fold(tree(p)", "fold(tree(id)");
+        assert_ne!(original, source);
+        let sources = crate::cli::source_refs(&fixture.c_sources);
+        let error = verify_c0_sources(&original, &sources).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("native record place has no authenticated input or declaration"),
+            "{}",
+            error.message()
+        );
+    }
 }
 
 /// A declaration is a name followed by `(` outside every brace. A use of the

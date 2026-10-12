@@ -939,3 +939,169 @@ fn a_symbolic_aggregate_array_at_function_entry_costs_the_same_whatever_its_leng
          work, cell entries, load identities named): {samples:?}"
     );
 }
+
+#[test]
+fn actual_global_and_static_producers_retain_declared_domains_without_reinitializing() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let layout = CAggregateLayout::new(8, 4, vec![CAggregateField::new("first", 0, CType::Int32)]);
+    let function = storage_function(
+        "declared_storage",
+        vec![CGlobal::new("global", CType::Int32, int32(7))],
+    )
+    .with_global_arrays(vec![CGlobalArray::new_with_kernel_name(
+        "global_items",
+        "global_items",
+        CType::Int32,
+        2,
+        vec![int32(1), int32(2)],
+    )])
+    .with_global_aggregates(vec![CGlobalAggregate::new(
+        "global_record",
+        "global_record",
+        layout.clone(),
+        vec![],
+    )])
+    .with_static_variables(vec![CStaticLocal::new(
+        "local",
+        "local",
+        CType::Int32,
+        int32(8),
+    )])
+    .with_static_arrays(vec![CStaticArray::new(
+        "local_items",
+        "local_items",
+        CType::Int32,
+        2,
+        vec![int32(3), int32(4)],
+    )])
+    .with_static_aggregates(vec![CStaticAggregate::new(
+        "local_record",
+        "local_record",
+        layout.clone(),
+        vec![],
+    )])
+    .with_string_literals(vec![CStringLiteral::new("literal", b"ok\0".to_vec())]);
+    let global = CMemory::global_pointer("global");
+    // Pre-existing storage/values can come from caller resource preparation.
+    let caller = CState::new().with_memory(
+        CMemory::new()
+            .with_block(global.block.clone(), 4)
+            .store(global.clone(), int32(37)),
+    );
+    let initialized = initialize_c_function_globals(&caller, &function);
+    assert_eq!(initialized.memory().known_value(&global), Some(int32(37)));
+    for root in [
+        global.clone(),
+        CMemory::static_pointer("declared_storage", "local"),
+    ] {
+        let pointer = initialized
+            .memory()
+            .declared_scalar_pointer(&root, CType::Int32)
+            .unwrap();
+        assert!(
+            initialized
+                .memory()
+                .authenticated_pointer_domain_at_base(&pointer)
+        );
+        assert!(
+            !initialized
+                .memory()
+                .requires_explicit_scalar_ownership(&root)
+        );
+    }
+    for root in [
+        CMemory::global_pointer("global_items"),
+        CMemory::static_pointer("declared_storage", "local_items"),
+    ] {
+        let pointer = initialized
+            .memory()
+            .declared_array_pointer(&root, CType::Int32, 2)
+            .unwrap();
+        assert!(
+            initialized
+                .memory()
+                .authenticated_pointer_domain_at_base(&pointer)
+        );
+        assert!(
+            initialized
+                .memory()
+                .declared_array_pointer(&root, CType::Int32, 3)
+                .is_none()
+        );
+    }
+    for root in [
+        CMemory::global_pointer("global_record"),
+        CMemory::static_pointer("declared_storage", "local_record"),
+    ] {
+        let pointer = initialized
+            .memory()
+            .declared_aggregate_pointer(&root, &layout)
+            .unwrap();
+        assert!(
+            initialized
+                .memory()
+                .authenticated_pointer_domain_at_base(&pointer)
+        );
+        assert!(!initialized.memory().has_initialized_bytes_under(
+            &root.offset_by_bytes(4),
+            4,
+            &PureFactContext::new()
+        ));
+    }
+    let literal = CMemory::string_literal_pointer("declared_storage", "literal", b"ok\0");
+    let pointer = initialized
+        .memory()
+        .declared_array_pointer(&literal, CType::UInt8, 3)
+        .unwrap();
+    assert!(
+        initialized
+            .memory()
+            .authenticated_pointer_domain_at_base(&pointer)
+    );
+    assert!(
+        initialized
+            .memory()
+            .blocks
+            .get(&literal.block)
+            .unwrap()
+            .is_read_only()
+    );
+    assert_eq!(
+        initialized.resources().facts().len(),
+        1,
+        "only the existing literal authority is installed"
+    );
+    let again = initialize_c_function_globals(&initialized, &function);
+    assert_eq!(
+        again.memory(),
+        initialized.memory(),
+        "repeated declaration setup is a metadata no-op"
+    );
+    assert_eq!(again.memory().known_value(&global), Some(int32(37)));
+}
+
+#[test]
+fn aggregate_array_producers_do_not_invent_scalar_byte_array_domains() {
+    let function = function_with_aggregate_arrays(4, 0, false);
+    let initialized = initialize_c_function_globals(&CState::new(), &function);
+    for root in [
+        CMemory::global_pointer("pool"),
+        CMemory::static_pointer("main", "slots"),
+    ] {
+        assert!(
+            initialized
+                .memory()
+                .blocks
+                .get(&root.block)
+                .unwrap()
+                .declared_object
+                .is_none()
+        );
+        assert!(
+            initialized
+                .memory()
+                .declared_array_pointer(&root, CType::UInt8, 4 * node_layout(0).size_bytes())
+                .is_none()
+        );
+    }
+}

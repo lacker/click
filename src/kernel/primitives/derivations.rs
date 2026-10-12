@@ -13,6 +13,18 @@ impl Theorem {
 }
 
 impl PropositionDerivation {
+    /// The selected word and exact byte premises of a guarded uint32 packing
+    /// certificate. Source transcription must cite every retained premise.
+    pub fn uint32_representation_premises(&self) -> Option<(&Bitvector32Term, &[Proposition; 4])> {
+        match &self.rule {
+            PropositionDerivationRule::ContextualAtomic {
+                evidence: AtomicPropositionDerivationEvidence::UInt32Representation(evidence),
+                ..
+            } => Some((&evidence.word, &evidence.byte_equalities)),
+            _ => None,
+        }
+    }
+
     /// Whether this equality retained exact constants and singleton bounds.
     /// Surface transcription uses only the retained context premises to emit
     /// an independently checked signed arithmetic certificate.
@@ -1728,9 +1740,15 @@ fn c_expression_steps_for_mode(expression: &CExpression, lvalue: bool) -> usize 
                 object: pointer, ..
             }
             | CExpression::PointerOffsetBytes { pointer, .. }
+            | CExpression::PointerAligned { pointer, .. }
             | CExpression::Not(pointer)
             | CExpression::BitwiseNot(pointer) => pending.push((pointer, false)),
-            crate::kernel::binary_c_operation!(left, right) => {
+            CExpression::RecordPointerOffset {
+                pointer: left,
+                index: right,
+                ..
+            }
+            | crate::kernel::binary_c_operation!(left, right) => {
                 pending.push((left, false));
                 pending.push((right, false));
             }

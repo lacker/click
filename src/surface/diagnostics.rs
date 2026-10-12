@@ -270,8 +270,19 @@ fn selected_field_place<'a>(
     scope: &'a PlaceScope,
 ) -> Option<(String, &'a crate::surface::FieldPlace)> {
     if let CExpression::MemberAddress { object, selection } = pointer {
-        let (base, fields) = struct_pointer_place(object, scope)?;
-        let path = selection.path.join(".");
+        // Embedded record selection keeps an address between member edges.
+        // Flatten only those explicit selection edges for source spelling;
+        // a loaded pointer is a distinct carrier and remains a stopping point.
+        let mut root = object.as_ref();
+        let mut path = selection.path.to_vec();
+        while let CExpression::MemberAddress { object, selection } = root {
+            let mut parent = selection.path.to_vec();
+            parent.extend(path);
+            path = parent;
+            root = object.as_ref();
+        }
+        let (base, fields) = struct_pointer_place(root, scope)?;
+        let path = path.join(".");
         let field = fields.iter().find(|field| {
             field.name == path
                 && field.value_type == value_type
@@ -4586,6 +4597,15 @@ pub(super) fn describe_contract_segment(segment: &ContractSegment) -> String {
             start: ContractExpression::CFragment(CExpression::Value(start)),
             end: ContractExpression::CFragment(CExpression::Value(end)),
         } if *start == int32(0) && *end == int32(1) => describe_c_expression(place),
+        ContractSegmentSurface::Range {
+            base:
+                ContractExpression::CUnary {
+                    operand,
+                    lowered: CExpression::AddressOf(_),
+                },
+            start: ContractExpression::CFragment(CExpression::Value(start)),
+            end: ContractExpression::CFragment(CExpression::Value(end)),
+        } if *start == int32(0) && *end == int32(1) => describe_contract_expression(operand),
         ContractSegmentSurface::Range { base, start, end }
         | ContractSegmentSurface::StructRange {
             base, start, end, ..
@@ -4613,6 +4633,10 @@ pub(super) fn describe_contract_segment(segment: &ContractSegment) -> String {
             }
             None => describe_field_place(&base, name),
         },
+        ContractSegmentSurface::IndexedField { place, .. } => describe_contract_expression(place),
+        ContractSegmentSurface::ObjectAt { base, .. } => {
+            format!("*{}", describe_contract_expression(base))
+        }
         // The object at a named object's address is that object.
         ContractSegmentSurface::Object(_)
             if base.strip_prefix('&').is_some_and(is_place_spelling) =>
@@ -4662,7 +4686,8 @@ pub(in crate::surface) fn describe_callback_source(expression: &syntax::C0Expres
             ..
         } => {
             let base = match pointer.as_ref() {
-                syntax::C0Expression::PointerOffsetBytes { pointer, .. } => pointer.as_ref(),
+                syntax::C0Expression::PointerOffsetBytes { pointer, .. }
+                | syntax::C0Expression::MemberAddress { pointer, .. } => pointer.as_ref(),
                 pointer => pointer,
             };
             match base {
@@ -4787,8 +4812,17 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 describe_field_place(&describe_c_expression(object), &selection.path.join("."))
             )
         }
+        CExpression::RecordPointerOffset {
+            pointer,
+            index,
+            subtract,
+            ..
+        } => describe_binary_c_expression(pointer, if *subtract { "-" } else { "+" }, index),
         CExpression::PointerOffsetBytes { pointer, bytes } => {
             format!("byte_offset({}, {bytes})", describe_c_expression(pointer))
+        }
+        CExpression::PointerAligned { pointer, alignment } => {
+            format!("aligned({}, {alignment})", describe_c_expression(pointer))
         }
         CExpression::LessThan(left, right) => describe_binary_c_expression(left, "<", right),
         CExpression::LessEqual(left, right) => describe_binary_c_expression(left, "<=", right),
@@ -5095,6 +5129,7 @@ pub(super) fn describe_c_statement_head(statement: &CStatement) -> String {
             target,
             bytes,
             zeroed,
+            ..
         } => format!(
             "{target} = {}({});",
             if *zeroed { "calloc" } else { "malloc" },
@@ -5626,6 +5661,16 @@ fn aligned_comparison_sugar<'a>(
     left: &'a ContractExpression,
     right: &ContractExpression,
 ) -> Option<(&'a CExpression, u64)> {
+    if let ContractExpression::CFragment(CExpression::PointerAligned { pointer, alignment })
+    | ContractExpression::CUnary {
+        lowered: CExpression::PointerAligned { pointer, alignment },
+        ..
+    } = left
+    {
+        return (right
+            == &ContractExpression::CFragment(CExpression::Value(crate::kernel::bool_value(1))))
+            .then_some((pointer.as_ref(), *alignment));
+    }
     let ContractExpression::BitwiseAnd(address, mask) = left else {
         return None;
     };

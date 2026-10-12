@@ -179,6 +179,7 @@ fn active_stable_loan_rejects_direct_local_assignment_and_alias_store() {
         &CStatement::Declare {
             name: "x".to_string(),
             c_type: CType::Int32,
+            array_object_kind: CArrayObjectKind::Scalar,
             volatile: false,
             pointee_volatile: false,
             constant: false,
@@ -220,6 +221,7 @@ fn active_stable_loan_rejects_direct_local_assignment_and_alias_store() {
         &CStatement::Declare {
             name: "x".to_string(),
             c_type: CType::Int32,
+            array_object_kind: CArrayObjectKind::Scalar,
             volatile: false,
             pointee_volatile: false,
             constant: false,
@@ -303,6 +305,7 @@ fn active_stable_loan_allows_a_disjoint_local_store() {
         &CStatement::Declare {
             name: "a".to_string(),
             c_type: CType::Int32Array(2),
+            array_object_kind: CArrayObjectKind::Scalar,
             volatile: false,
             pointee_volatile: false,
             constant: false,
@@ -3157,9 +3160,9 @@ fn zero_filled_node_array(length: u32, written: &[(u32, CValue, CType)]) -> CSta
         ],
     );
     written.iter().fold(
-        c_declare_with_zero_fill(
+        c_declare_aggregate_array_with_zero_fill(
             "items",
-            CType::UInt8Array(length * 16),
+            length * 16,
             false,
             false,
             false,
@@ -3223,6 +3226,70 @@ fn execute_declaration(state: &CState, statement: &CStatement) -> CState {
     )
 }
 
+#[test]
+fn array_declaration_classifies_source_elements_independently_of_zero_fill() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let aggregate_declaration = zero_filled_node_array(1, &[]);
+    let CStatement::Declare { zero_fill, .. } = &aggregate_declaration else {
+        panic!()
+    };
+    let scalar_declaration = c_declare_with_zero_fill(
+        "items",
+        CType::UInt8Array(16),
+        false,
+        false,
+        false,
+        false,
+        zero_fill.clone(),
+    );
+    let aggregate = execute_declaration(&CState::new(), &aggregate_declaration);
+    let scalar = execute_declaration(&CState::new(), &scalar_declaration);
+    for (state, checked_scalar) in [(&scalar, true), (&aggregate, false)] {
+        let paths = evaluate_c_expression_paths(
+            state,
+            &c_variable("items"),
+            &PureFactContext::new(),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        let [path] = paths.as_slice() else { panic!() };
+        let CExpressionOutcome::Value(CValue::Pointer(pointer)) = &path.outcome else {
+            panic!()
+        };
+        assert_eq!(pointer.designation().is_some(), checked_scalar);
+        if checked_scalar {
+            assert!(matches!(
+                pointer.designation(),
+                Some(PointerDesignation::Object {
+                    element_type: CType::UInt8,
+                    stride: 1,
+                    ..
+                })
+            ));
+        }
+        let write = execute_c_statement_paths(
+            state,
+            &c_typed_store(c_variable("items"), c_int32_literal(9), CType::Int32),
+            &PureFactContext::new(),
+            &CExecutionEnvironment::new(),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        let [write] = write.as_slice() else { panic!() };
+        assert_eq!(
+            matches!(
+                write.outcome,
+                CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory)
+            ),
+            checked_scalar
+        );
+        if !checked_scalar {
+            assert!(matches!(write.outcome, CStatementOutcome::Normal(_)));
+        }
+    }
+}
+
 /// A zero-filled automatic struct array holds exactly the cells of storing
 /// every element's zero fields and then the written fields one by one, and
 /// an array declared without an initializer holds no cell, so reading one
@@ -3253,7 +3320,7 @@ fn a_zero_filled_automatic_array_holds_exactly_the_per_element_stores() {
             })
             .collect::<Vec<_>>();
         let per_element = c_seq(
-            c_declare("items", CType::UInt8Array(length * 16)),
+            c_declare_aggregate_array("items", length * 16),
             balanced_c_seq(&stores),
         );
         let stored = execute_declaration(&CState::new(), &per_element);
@@ -3268,7 +3335,7 @@ fn a_zero_filled_automatic_array_holds_exactly_the_per_element_stores() {
         );
         let declared = execute_declaration(
             &CState::new(),
-            &c_declare("items", CType::UInt8Array(length * 16)),
+            &c_declare_aggregate_array("items", length * 16),
         );
         assert_eq!(
             load_items_field(&declared, 16 * (length - 1), CType::Int32),

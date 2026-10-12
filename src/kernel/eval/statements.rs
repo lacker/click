@@ -399,6 +399,65 @@ fn write_c_lvalue_paths_for_initialization(
     budget: &mut ExecutionBudget,
     initialization: bool,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let mut domain_refusals = Vec::new();
+    if let CLValueStorage::Memory { pointer } = &lvalue.storage {
+        let domain_context = assumptions_with_path_context(assumptions, &facts, &obligations);
+        let check = super::pointer_domains::checked_pointer_access(
+            state,
+            pointer,
+            lvalue.value_type,
+            lvalue.value_type.byte_width(),
+            super::operators::pointer_domain_view(pointer),
+            &domain_context,
+        );
+        let Some(refused) = super::operators::pointer_domain_refusal_paths(
+            check,
+            &facts,
+            &obligations,
+            assumptions,
+            &CUndefinedBehavior::InvalidMemory,
+        ) else {
+            return Ok(vec![CStatementExecutionPath::new(
+                CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+                facts,
+                obligations,
+            )]);
+        };
+        domain_refusals = refused;
+    }
+    let mut paths = write_c_lvalue_paths_after_domain_check(
+        state,
+        lvalue,
+        value,
+        facts,
+        obligations,
+        assumptions,
+        budget,
+        initialization,
+    )?;
+    paths.extend(domain_refusals.into_iter().map(|path| {
+        let CExpressionOutcome::UndefinedBehavior(error) = path.outcome else {
+            unreachable!("a domain refusal is an undefined-behavior path")
+        };
+        CStatementExecutionPath::new(
+            CStatementOutcome::UndefinedBehavior(error),
+            path.facts,
+            path.obligations,
+        )
+    }));
+    Ok(paths)
+}
+
+fn write_c_lvalue_paths_after_domain_check(
+    state: &CState,
+    lvalue: CLValue,
+    value: CValue,
+    facts: ExecutionFacts,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    initialization: bool,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     if lvalue.is_constant() && !initialization {
         return Ok(vec![CStatementExecutionPath::new(
             CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
@@ -1018,6 +1077,7 @@ pub(super) fn execute_c_heap_allocate_paths(
     target: &str,
     bytes_expression: &CExpression,
     zeroed: bool,
+    allocated_scalar_type: Option<CType>,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -1123,19 +1183,53 @@ pub(super) fn execute_c_heap_allocate_paths(
                 break Pointer::symbolic(identity);
             }
         };
-        let mut success_state =
-            state
-                .clone()
-                .with_memory(state.memory.clone().with_pending_heap_allocation(
-                    pointer.clone(),
-                    bytes,
-                    zeroed,
+        let memory = if let Some(element_type) = allocated_scalar_type {
+            if target_type.pointee_type() != Some(element_type) {
+                paths.push(CStatementExecutionPath::new(
+                    CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    facts,
+                    obligations,
                 ));
+                continue;
+            }
+            let PointerBlock::Symbolic(identity) = pointer.block else {
+                unreachable!()
+            };
+            let Ok(memory) = state.memory.clone().with_pending_allocated_scalar(
+                pointer.clone(),
+                bytes,
+                zeroed,
+                element_type,
+                identity,
+            ) else {
+                paths.push(CStatementExecutionPath::new(
+                    CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    facts,
+                    obligations,
+                ));
+                continue;
+            };
+            memory
+        } else {
+            state
+                .memory
+                .clone()
+                .with_pending_heap_allocation(pointer.clone(), bytes, zeroed)
+        };
+        let mut success_state = state.clone().with_memory(memory);
         success_state.record_pending_population_storage_creation(pointer.block.clone());
         let assigned = execute_c_lvalue_assignment_paths(
             &success_state,
             &c_variable(target.to_string()),
-            &CExpression::Value(CValue::typed_pointer(pointer, target_type)),
+            &CExpression::Value(CValue::Pointer(if allocated_scalar_type.is_some() {
+                let PointerBlock::Symbolic(identity) = pointer.block else {
+                    unreachable!()
+                };
+                CPointerValue::new(pointer, target_type)
+                    .with_designation(PointerDesignation::Unresolved(identity))
+            } else {
+                CPointerValue::new(pointer, target_type)
+            })),
             &effective_assumptions,
             budget,
         )?;
@@ -1435,6 +1529,26 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 continue;
             }
         };
+        let allocation_carrier =
+            crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
+                &old_value,
+                &effective_assumptions,
+            )
+            .unwrap_or_else(|| old_value.clone());
+        let allocated_scalar_type = state
+            .memory
+            .allocated_scalar_extent(&allocation_carrier)
+            .map(|(_, element_type, _)| element_type);
+        if allocated_scalar_type
+            .is_some_and(|element_type| target_type.pointee_type() != Some(element_type))
+        {
+            paths.push(CStatementExecutionPath::new(
+                CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            ));
+            continue;
+        }
         let old_pointer = old_value.pointer().clone();
 
         // C specifies realloc(NULL, size) as an allocation. Reuse the
@@ -1446,6 +1560,7 @@ pub(crate) fn execute_c_realloc_assign_paths(
                 target,
                 size_expression,
                 false,
+                None,
                 &effective_assumptions,
                 budget,
             )? {
@@ -1800,32 +1915,56 @@ pub(crate) fn execute_c_realloc_assign_paths(
                     break Pointer::symbolic(identity);
                 }
             };
-            let pending_memory = state
-                .memory
-                .clone()
-                .with_pending_heap_allocation(
+            let pending_memory = if let Some(element_type) = allocated_scalar_type {
+                let PointerBlock::Symbolic(identity) = pending_pointer.block else {
+                    unreachable!()
+                };
+                let Ok(memory) = state.memory.clone().with_pending_allocated_scalar(
+                    pending_pointer.clone(),
+                    new_bytes.term.clone(),
+                    false,
+                    element_type,
+                    identity,
+                ) else {
+                    paths.push(CStatementExecutionPath::new(
+                        CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        all_facts,
+                        all_obligations,
+                    ));
+                    continue;
+                };
+                memory
+            } else {
+                state.memory.clone().with_pending_heap_allocation(
                     pending_pointer.clone(),
                     new_bytes.term.clone(),
                     false,
                 )
-                .with_pending_heap_reallocation(
-                    pending_pointer.clone(),
-                    old_value.clone(),
-                    old_bytes.clone(),
-                    zeroed_prefix,
-                    copied_cells
-                        .into_iter()
-                        .map(|(offset, value)| {
-                            (PointerOffsetTerm::Constant(i64::from(offset)), value)
-                        })
-                        .collect(),
-                    initialized_prefix,
-                );
+            }
+            .with_pending_heap_reallocation(
+                pending_pointer.clone(),
+                old_value.clone(),
+                old_bytes.clone(),
+                zeroed_prefix,
+                copied_cells
+                    .into_iter()
+                    .map(|(offset, value)| (PointerOffsetTerm::Constant(i64::from(offset)), value))
+                    .collect(),
+                initialized_prefix,
+            );
             let pending_state = state.clone().with_memory(pending_memory);
             let assigned = execute_c_lvalue_assignment_paths(
                 &pending_state,
                 &c_variable(target.to_string()),
-                &CExpression::Value(CValue::typed_pointer(pending_pointer, target_type)),
+                &CExpression::Value(CValue::Pointer(if allocated_scalar_type.is_some() {
+                    let PointerBlock::Symbolic(identity) = pending_pointer.block else {
+                        unreachable!()
+                    };
+                    CPointerValue::new(pending_pointer, target_type)
+                        .with_designation(PointerDesignation::Unresolved(identity))
+                } else {
+                    CPointerValue::new(pending_pointer, target_type)
+                })),
                 &effective_assumptions,
                 budget,
             )?;
@@ -2184,8 +2323,13 @@ pub(crate) fn resolve_pending_heap_allocations(
                     .expect("validated realloc allocation resource should remain available")
                     .without_fact(&old_memory, assumptions)
                     .expect("validated realloc memory resource should remain available")
-                    .unchecked_with_fact(CResourceFact::own_allocation(
-                        resolved_base.clone(),
+                    .unchecked_with_fact(CResourceFact::own_allocation_value(
+                        state
+                            .memory
+                            .resolved_allocated_scalar_pointer(&base)
+                            .unwrap_or_else(|| {
+                                CPointerValue::new(resolved_base.clone(), CType::Int32Pointer)
+                            }),
                         bytes.clone(),
                     ))
                     .unchecked_with_fact(CResourceFact::own_memory({
@@ -2225,8 +2369,13 @@ pub(crate) fn resolve_pending_heap_allocations(
             let (element_count, range_width) = heap_range_element_count(&bytes, element_width);
             state.resources = state
                 .resources
-                .unchecked_with_fact(CResourceFact::own_allocation(
-                    resolved_base.clone(),
+                .unchecked_with_fact(CResourceFact::own_allocation_value(
+                    state
+                        .memory
+                        .resolved_allocated_scalar_pointer(&base)
+                        .unwrap_or_else(|| {
+                            CPointerValue::new(resolved_base.clone(), CType::Int32Pointer)
+                        }),
                     bytes.clone(),
                 ))
                 .unchecked_with_fact(CResourceFact::own_memory(
@@ -2615,6 +2764,13 @@ pub(in crate::kernel) fn execute_c_statement_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let executable_assumptions;
+    let assumptions = if assumptions.should_observe_pointer_addresses() {
+        executable_assumptions = assumptions.clone().without_pointer_address_observation();
+        &executable_assumptions
+    } else {
+        assumptions
+    };
     // Keep a source block's sequence spine out of the large leaf-operation
     // frame. Adding a fact index must not multiply stack use per statement.
     if let CStatement::Seq(first, second) = statement {
@@ -2871,6 +3027,7 @@ fn execute_c_statement_leaf_paths(
         CStatement::Declare {
             name,
             c_type,
+            array_object_kind,
             volatile,
             pointee_volatile,
             constant,
@@ -2881,16 +3038,30 @@ fn execute_c_statement_leaf_paths(
             let outcome = if *c_type == CType::Void {
                 CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
             } else {
-                match declare_local(
-                    state,
-                    name,
-                    *c_type,
-                    *volatile,
-                    *pointee_volatile,
-                    *constant,
-                    *pointee_constant,
-                )
-                .and_then(|state| match zero_fill {
+                let declared = match array_object_kind {
+                    CArrayObjectKind::Scalar => declare_local(
+                        state,
+                        name,
+                        *c_type,
+                        *volatile,
+                        *pointee_volatile,
+                        *constant,
+                        *pointee_constant,
+                        budget.c_byte_order(),
+                    ),
+                    CArrayObjectKind::AggregateBacking => declare_local_with_array_kind(
+                        state,
+                        name,
+                        *c_type,
+                        *volatile,
+                        *pointee_volatile,
+                        *constant,
+                        *pointee_constant,
+                        budget.c_byte_order(),
+                        *array_object_kind,
+                    ),
+                };
+                match declared.and_then(|state| match zero_fill {
                     Some(zero_fill) => zero_fill_declared_array(state, name, zero_fill),
                     None => Ok(state),
                 }) {
@@ -3088,7 +3259,16 @@ fn execute_c_statement_leaf_paths(
             target,
             bytes,
             zeroed,
-        } => execute_c_heap_allocate_paths(state, target, bytes, *zeroed, assumptions, budget)?,
+            allocated_scalar_type,
+        } => execute_c_heap_allocate_paths(
+            state,
+            target,
+            bytes,
+            *zeroed,
+            *allocated_scalar_type,
+            assumptions,
+            budget,
+        )?,
         CStatement::HeapFree { pointer } => {
             execute_c_heap_free_paths(state, pointer, assumptions, budget)?
         }
@@ -4112,7 +4292,37 @@ pub(in crate::kernel) fn declare_local(
     pointee_volatile: bool,
     constant: bool,
     pointee_constant: bool,
+    byte_order: Option<ByteOrder>,
 ) -> Result<CState, CRuntimeError> {
+    declare_local_with_array_kind(
+        state,
+        name,
+        c_type,
+        volatile,
+        pointee_volatile,
+        constant,
+        pointee_constant,
+        byte_order,
+        CArrayObjectKind::Scalar,
+    )
+}
+
+fn declare_local_with_array_kind(
+    state: &CState,
+    name: &str,
+    c_type: CType,
+    volatile: bool,
+    pointee_volatile: bool,
+    constant: bool,
+    pointee_constant: bool,
+    byte_order: Option<ByteOrder>,
+    array_object_kind: CArrayObjectKind,
+) -> Result<CState, CRuntimeError> {
+    if array_object_kind == CArrayObjectKind::AggregateBacking
+        && !matches!(c_type, CType::UInt8Array(_))
+    {
+        return Err(CRuntimeError::TypeMismatch);
+    }
     let mut state = state.clone();
     let pointer = local_declaration_pointer(&mut state, name)?;
     // A declared local's block is placed at its type's alignment; record it
@@ -4159,7 +4369,8 @@ pub(in crate::kernel) fn declare_local(
                 state
                     .memory
                     .clone()
-                    .with_block(pointer.block.clone(), length.saturating_mul(4)),
+                    .with_declared_array_block(pointer.block.clone(), CType::Int32, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
             );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -4171,12 +4382,18 @@ pub(in crate::kernel) fn declare_local(
             return Ok(state);
         }
         CType::UInt8Array(length) => {
-            state.set_memory(
-                state
+            let memory = match array_object_kind {
+                CArrayObjectKind::Scalar => state
+                    .memory
+                    .clone()
+                    .with_declared_array_block(pointer.block.clone(), CType::UInt8, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
+                CArrayObjectKind::AggregateBacking => state
                     .memory
                     .clone()
                     .with_block(pointer.block.clone(), length),
-            );
+            };
+            state.set_memory(memory);
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 CType::UInt8,
@@ -4191,7 +4408,8 @@ pub(in crate::kernel) fn declare_local(
                 state
                     .memory
                     .clone()
-                    .with_block(pointer.block.clone(), length),
+                    .with_declared_array_block(pointer.block.clone(), CType::Int8, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
             );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -4207,7 +4425,8 @@ pub(in crate::kernel) fn declare_local(
                 state
                     .memory
                     .clone()
-                    .with_block(pointer.block.clone(), length.saturating_mul(2)),
+                    .with_declared_array_block(pointer.block.clone(), CType::Int16, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
             );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -4223,7 +4442,8 @@ pub(in crate::kernel) fn declare_local(
                 state
                     .memory
                     .clone()
-                    .with_block(pointer.block.clone(), length.saturating_mul(2)),
+                    .with_declared_array_block(pointer.block.clone(), CType::UInt16, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
             );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -4239,7 +4459,8 @@ pub(in crate::kernel) fn declare_local(
                 state
                     .memory
                     .clone()
-                    .with_block(pointer.block.clone(), length.saturating_mul(4)),
+                    .with_declared_array_block(pointer.block.clone(), CType::UInt32, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
             );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -4255,7 +4476,8 @@ pub(in crate::kernel) fn declare_local(
                 state
                     .memory
                     .clone()
-                    .with_block(pointer.block.clone(), length.saturating_mul(8)),
+                    .with_declared_array_block(pointer.block.clone(), CType::Int64, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
             );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -4271,7 +4493,8 @@ pub(in crate::kernel) fn declare_local(
                 state
                     .memory
                     .clone()
-                    .with_block(pointer.block.clone(), length.saturating_mul(16)),
+                    .with_declared_array_block(pointer.block.clone(), CType::Int128, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
             );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -4287,7 +4510,8 @@ pub(in crate::kernel) fn declare_local(
                 state
                     .memory
                     .clone()
-                    .with_block(pointer.block.clone(), length.saturating_mul(8)),
+                    .with_declared_array_block(pointer.block.clone(), CType::UInt64, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
             );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -4303,7 +4527,8 @@ pub(in crate::kernel) fn declare_local(
                 state
                     .memory
                     .clone()
-                    .with_block(pointer.block.clone(), length.saturating_mul(16)),
+                    .with_declared_array_block(pointer.block.clone(), CType::UInt128, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
             );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -4319,7 +4544,8 @@ pub(in crate::kernel) fn declare_local(
                 state
                     .memory
                     .clone()
-                    .with_block(pointer.block.clone(), length.saturating_mul(4)),
+                    .with_declared_array_block(pointer.block.clone(), CType::Float32, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
             );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -4335,7 +4561,8 @@ pub(in crate::kernel) fn declare_local(
                 state
                     .memory
                     .clone()
-                    .with_block(pointer.block.clone(), length.saturating_mul(8)),
+                    .with_declared_array_block(pointer.block.clone(), CType::Float64, length)
+                    .ok_or(CRuntimeError::TypeMismatch)?,
             );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
@@ -4347,10 +4574,17 @@ pub(in crate::kernel) fn declare_local(
             return Ok(state);
         }
         CType::PointerArray(element, length) => {
-            state.set_memory(state.memory.clone().with_block(
-                pointer.block.clone(),
-                length.saturating_mul(C_POINTER_BYTE_WIDTH),
-            ));
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_declared_array_block(
+                        pointer.block.clone(),
+                        element.pointer_type(),
+                        length,
+                    )
+                    .ok_or(CRuntimeError::TypeMismatch)?,
+            );
             state.locals.set_array_object_at_with_constant(
                 name.to_string(),
                 element.pointer_type(),
@@ -4361,10 +4595,11 @@ pub(in crate::kernel) fn declare_local(
             return Ok(state);
         }
     };
-    state.set_memory(state.memory.clone().with_declared_scalar_block(
+    state.set_memory(state.memory.clone().with_declared_scalar_block_in_target(
         pointer.block.clone(),
         byte_width,
         c_type,
+        byte_order,
     ));
     state.resources = state
         .resources
@@ -4555,6 +4790,8 @@ fn refresh_scalar_local_binding(
     c_type: CType,
     assumptions: &PureFactContext,
 ) {
+    let had_pointer_designation = matches!(state.locals.get(&name),
+        Some(CValue::Pointer(pointer)) if pointer.designation().is_some());
     let current = state
         .memory
         .known_value(&slot)
@@ -4569,6 +4806,28 @@ fn refresh_scalar_local_binding(
         // A byte write cannot turn a partially initialized scalar binding
         // into an unconstrained typed value. Allocation is not initialization.
         None
+    } else if c_type.is_object_pointer() && had_pointer_designation {
+        // A modular write can forget the address and carrier together. Do
+        // not turn an enrolled pointer back into the legacy address-only
+        // profile; only its complete defining read can recover a carrier.
+        crate::kernel::eval::symbolic_storage_cell_value(&state.memory, &slot, c_type, true).map(
+            |value| match value {
+                CValue::Pointer(pointer) if pointer.designation().is_none() => {
+                    let PointerBlock::Symbolic(variable) = pointer.pointer().block else {
+                        unreachable!("a canonical unknown pointer cell has a load name")
+                    };
+                    let Some(Bitvector32Term::MemoryLoad(memory, address, _)) =
+                        crate::kernel::eval::registered_load_term_for_variable(&variable)
+                    else {
+                        unreachable!("a canonical pointer load retains its defining read")
+                    };
+                    CValue::Pointer(pointer.with_designation(PointerDesignation::Loaded(
+                        PointerLoadIdentity::new(memory, *address),
+                    )))
+                }
+                value => value,
+            },
+        )
     } else {
         crate::kernel::eval::symbolic_load_value(&state.memory, &slot, c_type)
     };
@@ -4618,5 +4877,151 @@ pub(in crate::kernel) fn sync_stack_local(state: &mut CState, name: &str, value:
     };
     if state.memory.has_block(&pointer.block) {
         state.set_memory(state.memory.clone().store(pointer, value.clone()));
+    }
+}
+
+#[cfg(test)]
+mod automatic_domain_declaration_tests {
+    use super::*;
+
+    #[test]
+    fn refreshed_pointer_local_keeps_complete_carrier_and_refuses_unknown_address_only_value() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let backing = CMemory::local_pointer("backing");
+        let slot = CMemory::local_pointer("selected");
+        let memory = CMemory::new()
+            .with_declared_scalar_block(backing.block.clone(), 4, CType::Int32)
+            .with_block(slot.block.clone(), 8)
+            .store(backing.clone(), int32(7));
+        let designated = memory
+            .declared_scalar_pointer(&backing, CType::Int32)
+            .unwrap();
+        let value = CValue::Pointer(designated.clone().with_pointee_constant(true));
+        let mut known = CState::new()
+            .with_local("selected", value.clone())
+            .with_memory(memory.store(slot.clone(), value.clone()));
+        known.locals.set_typed_with_all_qualifiers(
+            "selected",
+            value.clone(),
+            CType::Int32Pointer,
+            false,
+            false,
+            false,
+            true,
+        );
+        refresh_scalar_local_from_memory(&mut known, &slot, &PureFactContext::new());
+        assert_eq!(known.locals.get("selected"), Some(&value));
+        let after = known.memory.clone().with_call_memory_havoc(
+            Variable(9_990_101),
+            &[CMemoryRange::new_with_element_width(
+                slot.clone(),
+                0.into(),
+                1.into(),
+                8,
+            )],
+            &PureFactContext::new(),
+            None,
+        );
+        assert!(after.known_value(&slot).is_none());
+        assert!(after.has_initialized_bytes_under(&slot, 8, &PureFactContext::new()));
+        let mut unknown = known.clone().with_memory(after);
+        refresh_scalar_local_from_memory(&mut unknown, &slot, &PureFactContext::new());
+        let Some(CValue::Pointer(pointer)) = unknown.locals.get("selected") else {
+            panic!("initialized pointer local must remain a pointer value");
+        };
+        assert!(pointer.pointee_constant());
+        assert!(matches!(
+            pointer.designation(),
+            Some(PointerDesignation::Loaded(_))
+        ));
+        let address_only = PureFactContext::new().assume_condition(
+            ConditionTerm::pointer_equal(pointer.pointer().clone(), backing),
+            true,
+        );
+        assert!(
+            super::super::pointer_domains::checked_pointer_access(
+                &unknown,
+                pointer,
+                CType::Int32,
+                4,
+                super::super::pointer_domains::PointerDomainView::Typed,
+                &address_only,
+            )
+            .is_err()
+        );
+        assert!(
+            crate::kernel::memory_provenance::resolve_loaded_pointer_carrier(
+                pointer,
+                &address_only,
+            )
+            .is_none()
+        );
+
+        // An existing legacy local is not enrolled merely by this repair.
+        let legacy = CValue::typed_pointer(designated.pointer().clone(), CType::Int32Pointer);
+        let mut legacy = unknown.with_local("selected", legacy);
+        refresh_scalar_local_from_memory(&mut legacy, &slot, &PureFactContext::new());
+        assert!(matches!(legacy.locals.get("selected"),
+            Some(CValue::Pointer(pointer)) if pointer.designation().is_none()));
+    }
+
+    #[test]
+    fn actual_array_declaration_issues_only_its_declared_domain() {
+        let declared = declare_local(
+            &CState::new(),
+            "items",
+            CType::Int32Array(4),
+            false,
+            false,
+            false,
+            false,
+            Some(ByteOrder::Little),
+        )
+        .unwrap();
+        let address = declared.locals().slot("items").unwrap();
+        let pointer = declared
+            .memory()
+            .declared_array_pointer(address, CType::Int32, 4)
+            .unwrap();
+        assert!(
+            declared
+                .memory()
+                .authenticated_pointer_domain_at_base(&pointer)
+        );
+        assert!(!declared.memory().has_initialized_bytes_under(
+            address,
+            16,
+            &PureFactContext::new()
+        ));
+        assert!(declared.resources().facts().is_empty());
+        assert!(
+            declare_local(
+                &CState::new(),
+                "oversized",
+                CType::Int32Array(u32::MAX),
+                false,
+                false,
+                false,
+                false,
+                None
+            )
+            .is_err()
+        );
+        let word = declare_local(
+            &CState::new(),
+            "word",
+            CType::UInt32,
+            false,
+            false,
+            false,
+            false,
+            Some(ByteOrder::Little),
+        )
+        .unwrap();
+        assert_eq!(
+            word.memory()
+                .declared_uint32_representation(word.locals().slot("word").unwrap()),
+            Some(UInt32RepresentationProfile::LittleEndian)
+        );
     }
 }

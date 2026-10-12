@@ -1487,6 +1487,9 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             })?
         };
         let checked_execution = checked.execution_view()?.execution.clone();
+        preservation
+            .check_pointer_carriers(&checked_execution.core.state)
+            .map_err(|message| checked.step_error(message))?;
         // An inner loop may return while this iteration continues. Export
         // those checked terminal paths through the outer rule as well.
         for pending in checked_execution.core.pending_loop_returns() {
@@ -1508,6 +1511,9 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             let CFunctionOutcome::Return { value, state } = &pending.outcome else {
                 return Err(ClickError::new("nested loop return has no returned value"));
             };
+            preservation
+                .check_pointer_carriers(state)
+                .map_err(|message| checked.step_error(message))?;
             return_exits.push(
                 CLoopReturnExit::new(
                     value.clone(),
@@ -1542,6 +1548,9 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                         "`{claim_label}` (loop {loop_index} preservation): a path that reached the function exit retained no returned outcome"
                     ))
                 })?;
+            preservation
+                .check_pointer_carriers(&state)
+                .map_err(|message| checked.step_error(message))?;
             let (state, exit_facts) = preservation.restored_return(
                 &state,
                 checked.facts(),

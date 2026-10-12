@@ -256,6 +256,7 @@ fn lower_function(
         parameters,
         body,
     )
+    .with_typed_access_policy(crate::kernel::CTypedAccessPolicy::NativeObjectOnly)
     .with_return_pointee_constant(return_constant)
     .with_scalar_object_inputs(
         source
@@ -395,7 +396,8 @@ fn lower_parameter(
                     .kind
                     .pointer_kernel_type()
                     .unwrap(),
-            ))
+            )
+            .with_native_pointer_input(true))
         }
         _ => Err(format!(
             "C++ parameter `{}` is outside native scalar/reference/pointer and trivial record-value lowering",

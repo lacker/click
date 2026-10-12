@@ -5,6 +5,8 @@
 //! certificate builder, diagnostic cursor, or smart-planning state.
 
 use super::{PersistentOrderedSet, PersistentSequence, ProofFacts, SharedValue, SharedVec};
+#[cfg(test)]
+use crate::kernel::ConditionTerm;
 use crate::kernel::LoadKind;
 use crate::kernel::population_authority::c_creation::{
     CheckedPopulationAuthorityExchange, CheckedPopulationMemberExchange,
@@ -163,6 +165,7 @@ impl CheckedReturnProposition {
         if outcome.is_exceptional
             || outcome.result.as_ref() != value
             || outcome.state.locals() != state.locals()
+            || outcome.state.typed_access_policy() != state.typed_access_policy()
             || outcome.state.aggregate_destination != state.aggregate_destination
             || !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
                 outcome.state.memory(),
@@ -1187,6 +1190,143 @@ fn cell_value_is_exactly_load(
     }
 }
 
+#[cfg(test)]
+pub(crate) fn selected_condition_probe(
+    assumptions: Option<&PureFactContext>,
+    goal: &Proposition,
+) -> String {
+    use std::hash::{Hash, Hasher};
+    fn fingerprint(value: &impl Hash) -> u64 {
+        let mut state = std::collections::hash_map::DefaultHasher::new();
+        value.hash(&mut state);
+        state.finish()
+    }
+    fn term(
+        value: &Bitvector32Term,
+        depth: u32,
+        variables: &mut Vec<Variable>,
+        loads: &mut Vec<Pointer>,
+    ) -> String {
+        if depth == 0 {
+            return format!("term#{:x}", fingerprint(value));
+        }
+        match value {
+            Bitvector32Term::Variable(variable) => {
+                if !variables.contains(variable) {
+                    variables.push(*variable);
+                }
+                let origin = crate::kernel::registered_load_term_for_variable(variable);
+                let defining = origin
+                    .as_ref()
+                    .map(|origin| term(origin, depth - 1, variables, loads));
+                format!(
+                    "v{}[bytes={:?},origin={defining:?}]",
+                    variable.0,
+                    crate::kernel::registered_load_bytes_for_variable(variable)
+                )
+            }
+            Bitvector32Term::MemoryLoad(memory, pointer, kind) => {
+                if !loads.contains(pointer) {
+                    loads.push(pointer.as_ref().clone());
+                }
+                format!(
+                    "read{:?}/{kind:?}@{:x}",
+                    memory.arena_id(),
+                    fingerprint(pointer.as_ref())
+                )
+            }
+            Bitvector32Term::Constant(value) => format!("{value}"),
+            Bitvector32Term::Add(left, right) => format!(
+                "add({}, {})",
+                term(left, depth - 1, variables, loads),
+                term(right, depth - 1, variables, loads)
+            ),
+            Bitvector32Term::Subtract(left, right) => format!(
+                "sub({}, {})",
+                term(left, depth - 1, variables, loads),
+                term(right, depth - 1, variables, loads)
+            ),
+            _ => format!(
+                "{:?}#{:x}",
+                std::mem::discriminant(value),
+                fingerprint(value)
+            ),
+        }
+    }
+    fn condition(
+        value: &ConditionTerm,
+        variables: &mut Vec<Variable>,
+        loads: &mut Vec<Pointer>,
+    ) -> String {
+        match value {
+            ConditionTerm::Constant(value) => format!("constant {value}"),
+            ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedLessThan(left, right)
+            | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector32Equal(left, right) => format!(
+                "{:?}({}, {})",
+                std::mem::discriminant(value),
+                term(left, 5, variables, loads),
+                term(right, 5, variables, loads)
+            ),
+            _ => format!(
+                "{:?}#{:x}",
+                std::mem::discriminant(value),
+                fingerprint(value)
+            ),
+        }
+    }
+    let mut variables = Vec::new();
+    let mut loads = Vec::new();
+    let mut shown = match goal {
+        Proposition::ConditionIs(value, truth) => {
+            format!("{}={truth}", condition(value, &mut variables, &mut loads))
+        }
+        _ => format!(
+            "proposition {:?}#{:x}",
+            std::mem::discriminant(goal),
+            fingerprint(goal)
+        ),
+    };
+    if let Some(assumptions) = assumptions {
+        shown.push_str(&format!(
+            "\n canonical {}",
+            selected_condition_probe(None, &crate::kernel::canonical_condition_fact(goal))
+        ));
+        let mut related = Vec::new();
+        for variable in variables.into_iter().take(8) {
+            if let Some(facts) = assumptions.condition_facts_by_variable.get(&variable) {
+                related.extend(
+                    facts
+                        .iter()
+                        .take(12)
+                        .map(|(condition, truth)| (condition.as_ref().clone(), *truth)),
+                );
+            }
+        }
+        for pointer in loads.into_iter().take(8) {
+            related.extend(
+                assumptions
+                    .exact_memory_load_condition_candidates(&pointer)
+                    .take(12)
+                    .map(|(condition, truth)| (condition.clone(), truth)),
+            );
+        }
+        related.sort();
+        related.dedup();
+        for (value, truth) in related.into_iter().take(24) {
+            shown.push_str(&format!(
+                "\n related {}={truth}",
+                condition(&value, &mut Vec::new(), &mut Vec::new())
+            ));
+        }
+    }
+    shown
+}
+
 /// A unit checkout preserves the mathematical sum only when neither child
 /// update wraps. Check the three original domains through named/indexed facts;
 /// modular equality of the two sums alone is insufficient.
@@ -1201,6 +1341,13 @@ fn authority_control_evaluation_condition_proven(
     };
     if stated(goal) {
         return true;
+    }
+    #[cfg(test)]
+    if std::env::var_os("CLICK_AUTHORITY_CONDITION_PROBE").is_some() {
+        eprintln!(
+            "authority-condition-probe {}",
+            selected_condition_probe(Some(assumptions), goal)
+        );
     }
     let Proposition::ConditionIs(ConditionTerm::Bitvector32SignedAddOverflows(left, right), false) =
         goal
@@ -1423,7 +1570,13 @@ impl CheckedResourceRewrite {
             return Err("authority control has the wrong resource exchange".into());
         }
         if exposing {
-            memory_only_adds_named_cells(before_state.memory(), after_state.memory())?;
+            let native_baseline = crate::kernel::functions::assume_checked_native_composite_places(
+                before_state,
+                selected,
+                std::slice::from_ref(definition),
+                assumptions,
+            )?;
+            memory_only_adds_named_cells(native_baseline.memory(), after_state.memory())?;
         } else if !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
             before_state.memory(),
             after_state.memory(),
@@ -2068,7 +2221,10 @@ impl CheckedResourceRewrite {
                     return Err("member body access has the wrong resource exchange".into());
                 }
                 if now_open {
-                memory_only_adds_named_cells(before_state.memory(), after_state.memory())?;
+                let native_baseline = crate::kernel::functions::assume_checked_native_composite_places(
+                    before_state, selected, function.composite_resource_definitions(), assumptions,
+                )?;
+                memory_only_adds_named_cells(native_baseline.memory(), after_state.memory())?;
             } else if !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
                 before_state.memory(),
                 after_state.memory(),
@@ -2218,7 +2374,8 @@ impl CheckedResourceRewrite {
             unchanged = unchanged.with_resource_context(before_state.resources.clone());
             Arc::make_mut(&mut unchanged.population_effects).creation =
                 before_state.population_effects.creation.clone();
-            if unchanged != *before_state {
+            let metadata_baseline = before_state.clone().with_memory(expected.memory().clone());
+            if unchanged != metadata_baseline {
                 // An unfold names the cells it exposes, which materializes
                 // them in the snapshot so the body's facts and a later C read
                 // of one of those cells are one load variable
@@ -2228,7 +2385,7 @@ impl CheckedResourceRewrite {
                 // pointer at the pre-rewrite snapshot. That is a definitional
                 // identity, checked here per added cell with no search.
                 if let Err(detail) =
-                    memory_only_adds_named_cells(&before_state.memory, &after_state.memory)
+                    memory_only_adds_named_cells(expected.memory(), after_state.memory())
                 {
                     return Err(if unfold {
                         format!(
@@ -2242,8 +2399,8 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
                 if !unfold {
                     return Err("a fold may not change the memory snapshot".to_string());
                 }
-                unchanged.memory = before_state.memory.clone();
-                if unchanged != *before_state {
+                unchanged.memory = expected.memory.clone();
+                if unchanged != metadata_baseline {
                     return Err(format!(
                         "instance rewrite changed {} outside its own resources",
                         describe_changed_state_field(&unchanged, before_state)
@@ -2316,6 +2473,21 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
                 "the rewritten composite is absent from both resource representations".to_string(),
             );
         }
+        if before_state
+            .resources()
+            .directly_supporting_fact(selected, assumptions)
+            .is_none()
+            && !crate::kernel::functions::check_native_required_formations(
+                before_state,
+                selected,
+                function.composite_resource_definitions(),
+                assumptions,
+            )
+        {
+            return Err(
+                "composite fold requires its native place carriers to be authenticated".into(),
+            );
+        }
         let access_key = (name.clone(), arguments.clone());
         if !before_state
             .population_access
@@ -2323,6 +2495,12 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
         {
             return Err("resource rewrite changed another population's access authority".into());
         }
+        let native_baseline = crate::kernel::functions::assume_checked_native_composite_places(
+            before_state,
+            selected,
+            function.composite_resource_definitions(),
+            assumptions,
+        )?;
         let mut population_after = after_state.clone();
         population_after.population_access = before_state.population_access.clone();
         let mut concrete_after = after_state.clone();
@@ -2333,7 +2511,7 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
         concrete_after.population_access = before_state.population_access.clone();
         if concrete_after != *before_state
             || !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
-                before_state.memory(),
+                native_baseline.memory(),
                 after_state.memory(),
                 assumptions,
             )
@@ -2968,13 +3146,21 @@ impl CheckedResourceObservation {
             .cloned()
             .ok_or("the observed composite definition is not registered on the function")?;
 
+        let native_baseline = crate::kernel::functions::assume_checked_native_composite_places(
+            before_state,
+            observed,
+            function.composite_resource_definitions(),
+            assumptions,
+        )
+        .map_err(|_| "resource observation could not reconstruct native metadata")?;
         let mut concrete_after = after_state.clone();
         concrete_after.set_memory(before_state.memory.clone());
         concrete_after = concrete_after.with_resource_context(before_state.resources.clone());
         if concrete_after != *before_state
-            || (memory_only_adds_named_cells(before_state.memory(), after_state.memory()).is_err()
+            || (memory_only_adds_named_cells(native_baseline.memory(), after_state.memory())
+                .is_err()
                 && !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
-                    before_state.memory(),
+                    native_baseline.memory(),
                     after_state.memory(),
                     assumptions,
                 ))

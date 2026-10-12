@@ -2407,9 +2407,9 @@ fn owned_segment_rejects_write_outside_owned_memory() {
         .expect_err("write outside owned memory should fail");
 
     assert!(
-        error
-            .message()
-            .contains("missing resource fact `owns p[1]`"),
+        error.message().contains("missing resource fact `owns p[1]`")
+            || (error.message().contains("invalid memory access")
+                && error.message().contains("p[1] = 9;")),
         "{}",
         error.message()
     );

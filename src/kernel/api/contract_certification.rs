@@ -17,7 +17,8 @@ pub(crate) fn contract_resource_condition_cases(
     arguments: &[CExpression],
     assumptions: &PureFactContext,
 ) -> Option<Vec<Vec<Proposition>>> {
-    let entry_state = c_function_entry_state(caller_state, function, arguments)?;
+    let entry_state =
+        c_function_entry_state_with_assumptions(caller_state, function, arguments, assumptions)?;
     let mut budget = ExecutionBudget::beside_live_state();
     let required_resources = evaluate_function_resource_context(
         &entry_state,
@@ -1051,7 +1052,7 @@ impl CContractEntry {
     }
 
     /// The entry facts as one context.
-    pub(super) fn into_assumptions(self) -> PureFactContext {
+    pub(crate) fn into_assumptions(self) -> PureFactContext {
         self.assumptions
     }
 
@@ -1115,7 +1116,9 @@ pub fn c_function_contract_entry(
     // identity whose instantiated body and side obligations the entry proves
     // holds with it, and is the form a proof names.
     let mut identities = Vec::new();
-    if let Some(entry_state) = c_function_entry_state(caller_state, function, arguments) {
+    if let Some(entry_state) =
+        c_function_entry_state_with_assumptions(caller_state, function, arguments, &assumptions)
+    {
         let mut budget = ExecutionBudget::for_new_execution();
         for unfolding in function.predicate_unfoldings() {
             let Some((predicate, body)) = instantiate_contract_predicate_unfolding(

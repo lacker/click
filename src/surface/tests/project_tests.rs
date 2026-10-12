@@ -1577,7 +1577,7 @@ fn unfolding_composite_rejects_concretely_overlapping_owned_children() {
 }
 
 #[test]
-fn unfolding_composite_accepts_propositionally_equal_arguments() {
+fn unfolding_composite_preserves_its_carrier_despite_equal_addresses() {
     let c_source = r#"
         int32 preserve(int32* left, int32* right) {
             return 0;
@@ -1602,8 +1602,17 @@ fn unfolding_composite_accepts_propositionally_equal_arguments() {
         }
     "#;
 
-    verify_c0_sources(click_source, &[("preserve.c", c_source)])
-        .expect("unfold should retain its equality-aware resource-consumption fallback");
+    let error = verify_c0_sources(click_source, &[("preserve.c", c_source)])
+        .expect_err("address equality cannot replace a native resource's complete carrier");
+    assert!(
+        error
+            .message()
+            .contains("missing resource fact `owns cell(right)`"),
+        "{error:?}"
+    );
+    let same_carrier = click_source.replace("unfold(cell(right))", "unfold(cell(left))");
+    verify_c0_sources(&same_carrier, &[("preserve.c", c_source)])
+        .expect("opening the held carrier preserves the original C and contract");
 }
 
 #[test]

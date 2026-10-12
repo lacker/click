@@ -151,7 +151,15 @@ fn wide_address_arrays_use_sixteen_byte_stride_and_preserve_endpoint_values() {
                 .any(|path| matches!(path.outcome, CExpressionOutcome::Value(_))
                     && path.obligations.is_empty())
         );
-        assert!(prove_c_expression_evaluation(state, read_past).is_none());
+        let theorem = prove_c_expression_evaluation(state, read_past)
+            .expect("the invalid one-past read has a concrete checked outcome");
+        assert!(matches!(
+            theorem.proposition(),
+            Proposition::CExpressionEvaluates {
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+                ..
+            }
+        ));
     }
 }
 

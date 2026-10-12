@@ -264,10 +264,11 @@ impl<'a> Proof<'a> {
                             // Function exits restore caller locals. Rebind the
                             // callee parameters before lowering a guard, whose
                             // old-memory pointer still uses those names.
-                            c_function_entry_state(
+                            c_function_entry_state_with_assumptions(
                                 &state,
                                 checked_execution.function(),
                                 context.arguments,
+                                &guard_assumptions,
                             )
                             .ok_or_else(|| {
                                 self.step_error(

@@ -2108,7 +2108,7 @@ void f(struct node* p) {
             mark before_store;
             have p->right == link by { assumption(); }
             step();
-            let t = fold(tree(id), { model: Tree::Node(id, link, lm, rm) }, { left: l, right: r });
+            let t = fold(tree(p), { model: Tree::Node(id, link, lm, rm) }, { left: l, right: r });
             execute(); simp();
         },
     }

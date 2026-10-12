@@ -1324,6 +1324,12 @@ path = "reference/tactics/index.md#proposition-reasoning"
 id = "tactic.apply"
 path = "reference/tactics/index.md#proposition-reasoning"
 
+# Coverage: src/surface/proof/uint32_representation.rs::tests::
+# declared_uint32_from_bytes_modular_word_expands_and_checks_retained_premises
+[[item]]
+id = "proof-rule.declared-uint32-from-bytes"
+path = "reference/tactics/index.md#declared-uint32-byte-reconstruction"
+
 [[item]]
 id = "tactic.induct"
 path = "reference/tactics/index.md#proposition-reasoning"

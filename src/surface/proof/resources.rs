@@ -1705,6 +1705,19 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 "`{claim_label}` tactic {tactic_index}: `observe` refused ambiguous loan dependency: {message}"
             ))
         })?;
+    // Reconstruct validity only from this exact held head and its decided body
+    // arm. Keep the original state above for checked observation replay.
+    let state = crate::kernel::assume_checked_native_composite_places(
+        &state,
+        &abstract_resource,
+        function.composite_resource_definitions(),
+        &assumptions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: could not observe native places: {message}"
+        ))
+    })?;
     let (memory, contained_resources, body_projected) = apply_composite_observation_law_with_facts(
         resource_environment,
         definition,
@@ -2733,15 +2746,25 @@ pub(in crate::surface) fn instantiate_composite_resource_body_resources(
             instantiate_resource_clause(contained, substitutions).map_err(|message| {
                 format!("could not instantiate composite resource `{name}` body: {message}")
             })?;
+        let lowering_state = CState::new()
+            .with_memory(memory.clone())
+            .with_resource_context(resources.clone());
         let lowered =
-            lower_resource_clause(&contained, parameters, arguments, &memory).map_err(|error| {
-                format!(
-                    "could not lower resource `{name}` contained `{}`: {}\n  {}",
-                    describe_resource_clause(&contained),
-                    error.raw_summary(),
-                    describe_available_facts(&[], resources.facts(), parameters, arguments, &[])
-                )
-            })?;
+            lower_resource_clause_at_state(&contained, parameters, arguments, &lowering_state)
+                .map_err(|error| {
+                    format!(
+                        "could not lower resource `{name}` contained `{}`: {}\n  {}",
+                        describe_resource_clause(&contained),
+                        error.raw_summary(),
+                        describe_available_facts(
+                            &[],
+                            resources.facts(),
+                            parameters,
+                            arguments,
+                            &[]
+                        )
+                    )
+                })?;
         memory = materialize_composite_resource_cells_from_snapshot(
             memory,
             &naming_memory,
@@ -2852,6 +2875,7 @@ pub(super) struct CheckedResourceUnfold {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn unfold_composite_resource_for_proof(
+    compiled_definitions: &[CCompositeResourceDefinition],
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -2865,6 +2889,7 @@ pub(super) fn unfold_composite_resource_for_proof(
     materialize_memory: bool,
 ) -> Result<CheckedResourceUnfold, ClickError> {
     unfold_composite_resource_for_proof_with_access(
+        compiled_definitions,
         resource_environment,
         resource,
         parameters,
@@ -2882,6 +2907,7 @@ pub(super) fn unfold_composite_resource_for_proof(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn open_composite_resource_for_proof(
+    compiled_definitions: &[CCompositeResourceDefinition],
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -2894,6 +2920,7 @@ pub(super) fn open_composite_resource_for_proof(
     tactic_index: usize,
 ) -> Result<CheckedResourceUnfold, ClickError> {
     unfold_composite_resource_for_proof_with_access(
+        compiled_definitions,
         resource_environment,
         resource,
         parameters,
@@ -2911,6 +2938,7 @@ pub(super) fn open_composite_resource_for_proof(
 
 #[allow(clippy::too_many_arguments)]
 fn unfold_composite_resource_for_proof_with_access(
+    compiled_definitions: &[CCompositeResourceDefinition],
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -2926,6 +2954,7 @@ fn unfold_composite_resource_for_proof_with_access(
 ) -> Result<CheckedResourceUnfold, ClickError> {
     let mut facts = ProofResourcePureFacts::new(facts);
     let unfolded = unfold_composite_resource_with_facts(
+        compiled_definitions,
         resource_environment,
         resource,
         parameters,
@@ -2950,6 +2979,7 @@ fn unfold_composite_resource_for_proof_with_access(
 
 #[allow(clippy::too_many_arguments)]
 fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
+    compiled_definitions: &[CCompositeResourceDefinition],
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
@@ -3038,6 +3068,17 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     {
         abstract_resource = authority.clone();
     }
+    state = crate::kernel::assume_checked_native_composite_places(
+        &state,
+        &abstract_resource,
+        compiled_definitions,
+        &assumptions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: could not unfold native places: {message}"
+        ))
+    })?;
     let opening_view = abstract_resource.is_view();
     let borrowed_parent_binding = if opening_view {
         unique_borrowed_resource_dependency(&state, &abstract_resource).map_err(|message| {
@@ -3240,6 +3281,9 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     }
 
     let mut unfolded_facts = Vec::new();
+    // Only previously lowered clauses of this exact body supply scratch
+    // read authority. The real ledger still undergoes the checked exchange.
+    let mut lowering_resources = state.resources().clone();
     for contained in contained_clauses {
         let contained = instantiate_resource_clause(contained, &substitutions).map_err(|message| {
             ClickError::new(format!(
@@ -3247,12 +3291,16 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 describe_resource_clause(resource)
             ))
         })?;
+        let lowering_state = state
+            .clone()
+            .with_resource_context(lowering_resources.clone());
         let mut lowered =
-            lower_resource_clause_at_state(&contained, parameters, arguments, &state)?;
+            lower_resource_clause_at_state(&contained, parameters, arguments, &lowering_state)?;
         if opening_view {
             lowered = CResourceFact::View(lowered.resource().clone());
         }
         unfolded_facts.push(lowered.clone());
+        lowering_resources = lowering_resources.unchecked_with_fact(lowered.clone());
         // A completed outcome has no more C loads to execute. Its proof
         // receives loadability and symbolic loads without modifying the
         // certified program memory by installing cached cells into it.
@@ -4974,11 +5022,8 @@ fn materialize_composite_resource_cells_from_snapshot(
         return memory;
     }
 
-    // `*p` is one complete struct: its cells take the layout's field
-    // types, so a wide integer field reads back as itself. Pointer fields
-    // keep the int32 words this projection uses everywhere: a pointer cell
-    // must carry its load variable, which the load itself mints, whereas a
-    // raw load term embedded in a pointer offset is not canonical.
+    // Complete-object fields retain their actual scalar type. A pointer
+    // field is one full pointer read, rather than two unrelated word reads.
     if let Some(layout) = crate::surface::lowering::object_segment_layout(parameters, segment)
         && *start == 0
     {
@@ -4987,42 +5032,22 @@ fn materialize_composite_resource_cells_from_snapshot(
                 field,
                 range.base(),
                 memory,
-                |mut memory, pointer, element_type| {
-                    let word_cells = if element_type.is_pointer() {
-                        (0..element_type.byte_width())
-                            .step_by(4)
-                            .collect::<Vec<_>>()
-                    } else {
-                        vec![0]
-                    };
-                    for word in word_cells {
-                        let pointer = pointer.offset_by_bytes(word);
-                        if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
-                            continue;
-                        }
-                        // A pointer field is held as its four-byte words.
-                        let kind = if element_type.is_pointer() {
-                            crate::kernel::LoadKind::Bits32
-                        } else {
-                            crate::surface::lowering::load_kind_of_element(element_type)
-                        };
-                        let load = crate::kernel::canonical_form_of_load(
-                            crate::kernel::intern_c_memory(naming_memory.clone()),
-                            pointer.clone(),
-                            kind,
-                        );
-                        let value = if element_type.is_pointer() {
-                            CValue::Int32(load)
-                        } else {
-                            crate::surface::lowering::symbolic_value_from_load(
-                                &pointer,
-                                element_type,
-                                load,
-                            )
-                        };
-                        memory = memory.materialize_named_cell(pointer, value);
+                |memory, pointer, element_type| {
+                    if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
+                        return memory;
                     }
-                    memory
+                    let load = crate::kernel::canonical_form_of_typed_load(
+                        crate::kernel::intern_c_memory(naming_memory.clone()),
+                        pointer.clone(),
+                        element_type,
+                    )
+                    .expect("a struct field has a scalar load type");
+                    let value = crate::surface::lowering::symbolic_value_from_load(
+                        &pointer,
+                        element_type,
+                        load,
+                    );
+                    memory.materialize_named_cell(pointer, value)
                 },
             );
         }
@@ -5030,30 +5055,21 @@ fn materialize_composite_resource_cells_from_snapshot(
     }
     let element_width = contract_segment_element_width(parameters, segment);
     let segment_type = contract_segment_element_type(parameters, segment);
-    // The cells below as one run. Every element's value is its load in the
-    // naming memory, typed as the element for a scalar and kept as the word
-    // the load names for a pointer, so the run's element type is that word's
-    // type. A value wider than the stride would overlap the next element,
-    // which a run does not stand for.
-    let run_type = if !segment_type.is_pointer() {
-        segment_type
-    } else if element_width == 1 {
-        CType::UInt8
-    } else {
-        CType::Int32
-    };
-    if run_type.byte_width() <= element_width {
-        match memory.with_named_cell_run(
-            range.base().clone(),
-            element_width,
-            run_type,
-            *start,
-            *end,
-            crate::kernel::intern_c_memory(naming_memory.clone()),
-        ) {
-            Ok(seeded) => return seeded,
-            Err(unchanged) => memory = unchanged,
-        }
+    // Each named cell denotes the complete typed element's own source read.
+    // A value wider than the stride cannot be represented by disjoint cells.
+    if segment_type.byte_width() > element_width {
+        return memory;
+    }
+    match memory.with_named_cell_run(
+        range.base().clone(),
+        element_width,
+        segment_type,
+        *start,
+        *end,
+        crate::kernel::intern_c_memory(naming_memory.clone()),
+    ) {
+        Ok(seeded) => return seeded,
+        Err(unchanged) => memory = unchanged,
     }
     for index in *start..*end {
         let pointer = offset_pointer_by_elements(
@@ -5064,31 +5080,14 @@ fn materialize_composite_resource_cells_from_snapshot(
         if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
             continue;
         }
-        // Preserve scalar pointee types, including substituted pointer values.
-        // Pointer cells retain the word representation used for load origins,
-        // and each cell is named as the read of its own kind.
-        let element_type = contract_segment_element_type(parameters, segment);
-        let kind = if !element_type.is_pointer() {
-            crate::surface::lowering::load_kind_of_element(element_type)
-        } else if element_width == 1 {
-            crate::kernel::LoadKind::UInt8
-        } else {
-            crate::kernel::LoadKind::Bits32
-        };
-        let load = crate::kernel::canonical_form_of_load(
+        let load = crate::kernel::canonical_form_of_typed_load(
             crate::kernel::intern_c_memory(naming_memory.clone()),
             pointer.clone(),
-            kind,
-        );
-        let value = match element_type {
-            element_type if !element_type.is_pointer() => {
-                crate::surface::lowering::symbolic_value_from_load(&pointer, element_type, load)
-            }
-            _ => match element_width {
-                1 => CValue::UInt8(load),
-                _ => CValue::Int32(load),
-            },
-        };
+            segment_type,
+        )
+        .expect("a resource element has a scalar load type");
+        let value =
+            crate::surface::lowering::symbolic_value_from_load(&pointer, segment_type, load);
         memory = memory.materialize_named_cell(pointer, value);
     }
     memory

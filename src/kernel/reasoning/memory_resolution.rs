@@ -2170,6 +2170,60 @@ pub(in crate::kernel) fn c_values_proven_equal_for_memory_resolution(
         (CValue::Pointer(left), CValue::Pointer(right)) => {
             // Equal addresses can still designate different subobjects. This
             // query reconciles stored values, not merely byte-cell addresses.
+            if pointer_designations_proven_equal(left, right, assumptions)
+                && pointers_proven_equal_for_memory_resolution(
+                    left.pointer(),
+                    right.pointer(),
+                    assumptions,
+                )
+            {
+                return true;
+            }
+            // A checked complete-cell frame preserves an unknown pointer
+            // value too. Normalize its raw read spelling and immutable
+            // identity together; an address equation cannot supply this
+            // association, nor turn an unknown read into a legacy value.
+            if matches!(left.designation(), Some(PointerDesignation::Loaded(_)))
+                && matches!(right.designation(), Some(PointerDesignation::Loaded(_)))
+                && let (Some(left), Some(right)) = (
+                    crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
+                        left,
+                        assumptions,
+                    ),
+                    crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
+                        right,
+                        assumptions,
+                    ),
+                )
+                && pointer_designations_proven_equal(&left, &right, assumptions)
+                && pointers_proven_equal_for_memory_resolution(
+                    left.pointer(),
+                    right.pointer(),
+                    assumptions,
+                )
+            {
+                return true;
+            }
+            // An exact full-pointer store certifies the complete value its
+            // paired read returns, even when that stored carrier is legacy.
+            // An unknown read or an address equation supplies no such value.
+            let resolve = |pointer: &CPointerValue| {
+                matches!(pointer.designation(), Some(PointerDesignation::Loaded(_)))
+                    .then(|| {
+                        crate::kernel::memory_provenance::resolve_loaded_pointer_value(
+                            pointer,
+                            assumptions,
+                        )
+                    })
+                    .flatten()
+            };
+            let resolved_left = resolve(left);
+            let resolved_right = resolve(right);
+            if resolved_left.is_none() && resolved_right.is_none() {
+                return false;
+            }
+            let left = resolved_left.as_ref().unwrap_or(left);
+            let right = resolved_right.as_ref().unwrap_or(right);
             pointer_designations_proven_equal(left, right, assumptions)
                 && pointers_proven_equal_for_memory_resolution(
                     left.pointer(),

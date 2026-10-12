@@ -76,3 +76,42 @@ The subsequent load can find the sibling's typed cell at the resulting address.
 The [object-model design](../design/cpp-object-model.md#pointer-designation-a-confirmed-shared-gap)
 records the required semantic boundary. Byte/word representation work must not
 conceal this independent gap.
+
+
+## Pointer-field address equality countermodel
+
+The former positive regression `c0_const_pointer_fields_alias_proof_expands_and_reverifies`
+used this unchanged source and contract:
+
+```c
+struct holder { const int *value; };
+int update(struct holder *h, int *p) {
+    *p = 7;
+    return h->value[0];
+}
+```
+
+```click
+verifying "fields.c";
+int update(struct holder *h, int *p) {
+    views h->value;
+    owns p[0..1];
+    requires h->value == p;
+    ensures result == 7 by auto;
+}
+```
+
+This positive expectation was invalid. For a live `struct Pair { int first;
+int second; } pair`, let `h->value = &pair.first + 1` and `p = &pair.second`.
+The pointer-field slot is readable and the second member can be owned. The
+addresses compare equal, but the loaded field retains the first member's
+one-past designation. Writing through `p` is valid; dereferencing `h->value`
+is undefined. The contract supplies no separate validity requirement for that
+loaded referent, and equality must not manufacture one.
+
+The original source and contract are now retained as a negative regression,
+`c0_const_pointer_field_address_equality_does_not_authenticate_loaded_domain`.
+The current verifier refuses the native `return h->value[0];` with
+`pointer arithmetic left the pointed-to object`. The separate unchanged
+`c0_const_pointer_fields_store_proof_expands_and_reverifies` regression retains
+positive coverage for storing and reloading the actual pointer carrier.

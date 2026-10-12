@@ -275,6 +275,42 @@ pub(crate) fn normalize_using_conditions(
             crate::instrumentation::record_deterministic_work(1);
             selected = selected.assume_condition(condition.clone(), *value);
         }
+        #[cfg(test)]
+        if std::env::var_os("CLICK_BITS64_BRIDGE_PROBE").is_some() {
+            let endpoint = |term: &Bitvector32Term| {
+                let load = match term {
+                    Bitvector32Term::Variable(variable) =>
+                        crate::kernel::registered_load_origin_term_for_variable(variable),
+                    Bitvector32Term::MemoryLoad(..) => Some(term.clone()),
+                    _ => None,
+                };
+                match load {
+                    Some(Bitvector32Term::MemoryLoad(memory, pointer, kind)) => {
+                        let projection = crate::kernel::reasoning::canonical_load_projection_source(
+                            &memory, &pointer,
+                        ).map(|source| source.arena_id());
+                        Some((memory.arena_id(), pointer.block.clone(), kind, projection))
+                    }
+                    _ => None,
+                }
+            };
+            for (condition, value) in &conditions {
+                if !*value { continue; }
+                let ConditionTerm::Bitvector64Equal(a, b) = condition else { continue };
+                for (known_load, known_value) in [(a, b), (b, a)] {
+                    for (goal_load, goal_value) in [(&left, &right), (&right, &left)] {
+                        if known_value != goal_value || endpoint(known_load).is_none() {
+                            continue;
+                        }
+                        let equal = crate::kernel::memory_provenance::checked_origin_load_equality(
+                            known_load, goal_load, &selected,
+                        );
+                        eprintln!("BITS64-BRIDGE-PROBE known={:?} goal={:?} same-term={} checked-origin={equal}",
+                            endpoint(known_load), endpoint(goal_load), known_load == goal_load);
+                    }
+                }
+            }
+        }
         if crate::kernel::memory_provenance::wide_read_has_recorded_value(&left, &right, &selected)
         {
             return Ok(());

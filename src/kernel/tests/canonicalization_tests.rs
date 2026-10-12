@@ -309,11 +309,11 @@ fn pointer_loaded_from_an_opaque_cell_takes_a_canonical_offset() {
         block: "pp".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let memory = CMemory::new().with_block("pp", 4);
+    let memory = CMemory::new().with_block("pp", C_POINTER_BYTE_WIDTH);
     let state = CState::new()
         .with_local("pp", CValue::pointer(cell.clone()))
         .with_memory(memory)
-        .with_resource_context(view_memory_context(cell, 0, 1));
+        .with_resource_context(view_memory_context(cell, 0, C_POINTER_BYTE_WIDTH / 4));
     let statement = c_return(c_typed_load(c_variable("pp"), CType::Int32Pointer));
     let execution = prove_symbolic_c_execution_paths(state, statement, PureFactContext::new());
 

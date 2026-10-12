@@ -20,6 +20,7 @@ pub(crate) const MUTEX_HELD_PREDICATE_NAME: &str = "__click_mutex_held";
 mod contracts;
 #[cfg(test)]
 mod memory_construction_tests;
+mod native_input_identity;
 #[cfg(test)]
 pub(crate) use contracts::memory_range_byte_count_guards;
 pub(crate) use contracts::{
@@ -754,6 +755,11 @@ macro_rules! binary_c_expression {
     ($left:pat, $right:pat) => {
         $crate::kernel::binary_c_operation!($left, $right)
             | $crate::kernel::CExpression::Index($left, $right)
+            | $crate::kernel::CExpression::RecordPointerOffset {
+                pointer: $left,
+                index: $right,
+                ..
+            }
     };
 }
 pub(crate) use binary_c_expression;
@@ -1015,16 +1021,20 @@ pub(crate) enum PointerDesignation {
         stride: u32,
         count: SharedIntegerTerm,
     },
+    /// An actual subobject selected through one exact native input promise.
+    /// The input key supplies no complete-array extent or access authority.
+    InputSelected {
+        input: CNativeInputIdentity,
+        origin: Pointer,
+        path: Arc<[PointerDomainSelection]>,
+        base: Pointer,
+        element_type: CType,
+        stride: u32,
+        count: SharedIntegerTerm,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "checked native domain producers are the next implementation stage"
-    )
-)]
 pub(crate) enum PointerDomainSelection {
     Member(String),
     Element(SharedIntegerTerm),
@@ -1033,9 +1043,22 @@ pub(crate) enum PointerDomainSelection {
 impl PointerDesignation {
     pub(crate) fn pointer_terms(&self) -> impl Iterator<Item = &Pointer> {
         match self {
-            Self::Unresolved(_) => [None, None],
-            Self::Loaded(identity) => [Some(identity.address()), None],
-            Self::Object { root, base, .. } => [Some(root), Some(base)],
+            Self::Unresolved(_) => [None, None, None],
+            Self::Loaded(identity) => [Some(identity.address()), None, None],
+            Self::Object { root, base, .. } => [Some(root), Some(base), None],
+            Self::InputSelected {
+                input,
+                origin,
+                base,
+                ..
+            } => [
+                Some(origin),
+                Some(base),
+                match input {
+                    CNativeInputIdentity::Loaded(identity) => Some(identity.address()),
+                    _ => None,
+                },
+            ],
         }
         .into_iter()
         .flatten()
@@ -1044,7 +1067,9 @@ impl PointerDesignation {
     pub(crate) fn integer_terms(&self) -> impl Iterator<Item = &SharedIntegerTerm> {
         let (path, count) = match self {
             Self::Unresolved(_) | Self::Loaded(_) => (&[][..], None),
-            Self::Object { path, count, .. } => (path.as_ref(), Some(count)),
+            Self::Object { path, count, .. } | Self::InputSelected { path, count, .. } => {
+                (path.as_ref(), Some(count))
+            }
         };
         path.iter()
             .filter_map(|selection| match selection {
@@ -1057,7 +1082,23 @@ impl PointerDesignation {
     pub(crate) fn unresolved_variable(&self) -> Option<Variable> {
         match self {
             Self::Unresolved(variable) => Some(*variable),
+            Self::InputSelected {
+                input: CNativeInputIdentity::Unresolved(variable),
+                ..
+            } => Some(*variable),
+            Self::InputSelected { .. } => None,
             Self::Object { .. } | Self::Loaded(_) => None,
+        }
+    }
+
+    pub(crate) fn loaded_identity(&self) -> Option<&PointerLoadIdentity> {
+        match self {
+            Self::Loaded(identity)
+            | Self::InputSelected {
+                input: CNativeInputIdentity::Loaded(identity),
+                ..
+            } => Some(identity),
+            _ => None,
         }
     }
 }
@@ -1143,6 +1184,33 @@ impl CPointerValue {
                 count,
             } => PointerDesignation::Object {
                 root: map(root),
+                path: path.clone(),
+                base: map(base),
+                element_type: *element_type,
+                stride: *stride,
+                count: count.clone(),
+            },
+            PointerDesignation::InputSelected {
+                input,
+                origin,
+                path,
+                base,
+                element_type,
+                stride,
+                count,
+            } => PointerDesignation::InputSelected {
+                input: match input {
+                    CNativeInputIdentity::Unresolved(variable) => {
+                        CNativeInputIdentity::Unresolved(*variable)
+                    }
+                    CNativeInputIdentity::Loaded(identity) => {
+                        CNativeInputIdentity::Loaded(PointerLoadIdentity::new(
+                            identity.memory().clone(),
+                            map(identity.address()),
+                        ))
+                    }
+                },
+                origin: map(origin),
                 path: path.clone(),
                 base: map(base),
                 element_type: *element_type,
@@ -1835,6 +1903,12 @@ pub enum CExpression {
         pointer: Box<CExpression>,
         bytes: u32,
     },
+    /// Observe address alignment as a Boolean without exposing a reversible
+    /// integer representation or changing the pointer's semantic carrier.
+    PointerAligned {
+        pointer: Box<CExpression>,
+        alignment: u64,
+    },
     LessThan(Box<CExpression>, Box<CExpression>),
     LessEqual(Box<CExpression>, Box<CExpression>),
     GreaterThan(Box<CExpression>, Box<CExpression>),
@@ -1874,6 +1948,14 @@ pub enum CExpression {
     MemberAddress {
         object: Box<CExpression>,
         selection: Arc<CAggregateMemberSelection>,
+    },
+    /// A native record element step, with scaling outside the observed
+    /// machine index. This is distinct from byte representation arithmetic.
+    RecordPointerOffset {
+        pointer: Box<CExpression>,
+        index: Box<CExpression>,
+        layout: Arc<CAggregateLayout>,
+        subtract: bool,
     },
 }
 
@@ -3240,6 +3322,15 @@ pub enum CAggregateDeclarationKind {
     ConstructionDestination,
 }
 
+/// The source array's element classification, independent of its lowered
+/// storage type. Aggregate arrays currently use a byte-array backing without
+/// claiming that their source elements are byte scalars.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CArrayObjectKind {
+    Scalar,
+    AggregateBacking,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CStatement {
     Skip,
@@ -3264,6 +3355,7 @@ pub enum CStatement {
         initializer: Option<CExpression>,
         name: String,
         c_type: CType,
+        array_object_kind: CArrayObjectKind,
         volatile: bool,
         pointee_volatile: bool,
         constant: bool,
@@ -3319,6 +3411,7 @@ pub enum CStatement {
         target: String,
         bytes: CExpression,
         zeroed: bool,
+        allocated_scalar_type: Option<CType>,
     },
     /// End the heap allocation named by `pointer`. Null is a no-op.
     HeapFree {
@@ -3502,7 +3595,7 @@ pub enum RangeIndexKind {
     UInt64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CParameter {
     pub(super) name: String,
     pub(super) c_type: CType,
@@ -3511,6 +3604,26 @@ pub struct CParameter {
     pub(super) pointee_volatile: bool,
     pub(super) constant: bool,
     pub(super) pointee_constant: bool,
+    /// Source enrollment in the checked native pointer model. This promises
+    /// no referent type, extent, lifetime, initialization, or permission.
+    pub(super) native_pointer_input: bool,
+}
+
+impl std::hash::Hash for CParameter {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.c_type.hash(state);
+        self.aggregate_layout.hash(state);
+        self.volatile.hash(state);
+        self.pointee_volatile.hash(state);
+        self.constant.hash(state);
+        self.pointee_constant.hash(state);
+        // Keep the hash of existing unenrolled interfaces unchanged.
+        if self.native_pointer_input {
+            "native_pointer_input".hash(state);
+            true.hash(state);
+        }
+    }
 }
 
 /// A linked file-scope scalar. Globals use one stable memory block across all
@@ -4049,6 +4162,9 @@ pub struct CAggregateLayout {
     unions: Vec<CAggregateUnion>,
     records: Vec<CAggregateRecord>,
     declaration_identity: Option<Arc<CppRecordDeclarationIdentity>>,
+    /// An explicit scalar-array declaration, never inferred from empty fields
+    /// or a byte-sized record storage type. This grants no memory authority.
+    scalar_array: Option<(CType, u32)>,
     index: CAggregateLayoutCache,
 }
 
@@ -4065,6 +4181,10 @@ impl std::hash::Hash for CAggregateLayout {
         if let Some(identity) = &self.declaration_identity {
             "cpp_record_declaration".hash(state);
             identity.hash(state);
+        }
+        if let Some(shape) = &self.scalar_array {
+            "scalar_array_declaration".hash(state);
+            shape.hash(state);
         }
     }
 }
@@ -4181,6 +4301,56 @@ pub(super) fn clear_aggregate_selection_matches() {
 }
 
 impl CAggregateLayout {
+    pub fn new_scalar_array(element_type: CType, count: u32) -> Option<Self> {
+        Self::new_scalar_array_with_fields(element_type, count, Vec::new())
+    }
+
+    pub fn new_scalar_array_with_fields(
+        element_type: CType,
+        count: u32,
+        fields: Vec<CAggregateField>,
+    ) -> Option<Self> {
+        if element_type.pointer_to().is_none() {
+            return None;
+        }
+        let size = element_type.byte_width().checked_mul(count)?;
+        Self::new(size, element_type.abi_alignment(), fields).with_scalar_array(element_type, count)
+    }
+
+    /// Retain either compact array storage or its explicitly enumerated copy
+    /// fields. Array kind comes from this checked declaration producer.
+    fn with_scalar_array(mut self, element_type: CType, count: u32) -> Option<Self> {
+        let width = element_type.byte_width();
+        if width == 0
+            || element_type.pointer_to().is_none()
+            || self.size_bytes != width.checked_mul(count)?
+            || self.alignment_bytes != element_type.abi_alignment()
+            || !self.unions.is_empty()
+            || !self.records.is_empty()
+            || self.declaration_identity.is_some()
+            || (!self.fields.is_empty() && self.fields.len() != usize::try_from(count).ok()?)
+        {
+            return None;
+        }
+        for (index, field) in self.fields.iter().enumerate() {
+            crate::instrumentation::record_deterministic_work(1);
+            if field.c_type != element_type
+                || field.offset_bytes != u32::try_from(index).ok()?.checked_mul(width)?
+            {
+                return None;
+            }
+        }
+        self.scalar_array = Some((element_type, count));
+        let mut index = (*self.index.0).clone();
+        index.definition_hash = OnceLock::new();
+        self.index = CAggregateLayoutCache(Arc::new(index));
+        Some(self)
+    }
+
+    pub fn scalar_array(&self) -> Option<(CType, u32)> {
+        self.scalar_array
+    }
+
     pub fn new(size_bytes: u32, alignment_bytes: u32, fields: Vec<CAggregateField>) -> Self {
         Self::with_unions(size_bytes, alignment_bytes, fields, Vec::new())
     }
@@ -4200,6 +4370,7 @@ impl CAggregateLayout {
             unions,
             records: Vec::new(),
             declaration_identity: None,
+            scalar_array: None,
             index,
         }
     }
@@ -4208,6 +4379,7 @@ impl CAggregateLayout {
         mut self,
         identity: Option<Arc<CppRecordDeclarationIdentity>>,
     ) -> Self {
+        assert!(identity.is_none() || self.scalar_array.is_none());
         // Nominal metadata is part of the definition identity used by checked
         // selection memoization, although the derived indexes stay unchanged.
         let mut index = (*self.index.0).clone();
@@ -4263,6 +4435,7 @@ impl CAggregateLayout {
 
     /// Retains explicitly supplied boundaries; leaf names never create them.
     pub fn with_records(mut self, records: Vec<CAggregateRecord>) -> Self {
+        assert!(records.is_empty() || self.scalar_array.is_none());
         let mut ancestors = Vec::new();
         for (index, record) in records.iter().enumerate() {
             crate::instrumentation::record_deterministic_work(1);
@@ -4311,7 +4484,7 @@ impl CAggregateLayout {
 
     /// Follow explicitly supplied declaration selections, never infer a member
     /// path from an address or from a dotted scalar leaf alone.
-    pub(in crate::kernel) fn member_at_path(&self, path: &[String]) -> Option<(u32, CType)> {
+    pub(crate) fn member_at_path(&self, path: &[String]) -> Option<(u32, CType)> {
         if !self.index.0.unique_paths {
             return None;
         }
@@ -4337,15 +4510,25 @@ impl CAggregateLayout {
                 parent = Some(*index as u32);
             } else if position + 1 == path.len() {
                 let field = &self.fields[*self.index.0.fields.get(&prefix)?];
-                return field
-                    .c_type
-                    .pointer_to()
-                    .map(|_| (field.offset_bytes, field.c_type));
+                return Some((field.offset_bytes, field.c_type));
             } else {
                 return None;
             }
         }
         None
+    }
+
+    pub(in crate::kernel) fn array_member_at_path(&self, path: &[String]) -> Option<(CType, u32)> {
+        self.member_at_path(path)?;
+        let name = path.join(".");
+        // Record boundaries use UInt8Array as their aggregate storage type;
+        // they are not scalar byte-array declarations.
+        if self.index.0.records.contains_key(&name) {
+            return None;
+        }
+        self.fields[*self.index.0.fields.get(&name)?]
+            .c_type
+            .array_element_and_count()
     }
 
     pub(in crate::kernel) fn selects_layout_path(&self, path: &[String], expected: &Self) -> bool {
@@ -4413,6 +4596,9 @@ impl CAggregateLayout {
     }
 
     fn record_matches_layout(&self, selected: usize, expected: &Self) -> bool {
+        if expected.scalar_array.is_some() {
+            return false;
+        }
         let record = &self.records[selected];
         if record.size_bytes != expected.size_bytes
             || record.alignment_bytes != expected.alignment_bytes
@@ -4522,6 +4708,7 @@ pub struct CAggregateObjectInput {
 /// execute (or even inspect) the concrete body.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CFunctionContractInterface {
+    pub(crate) typed_access_policy: CTypedAccessPolicy,
     pub(crate) return_type: CType,
     pub(crate) return_pointee_constant: bool,
     pub(crate) return_aggregate_layout: Option<CAggregateLayout>,
@@ -4968,6 +5155,12 @@ impl CExecutionSemantics {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CVerifiedFunctionRule {
     pub(super) function: CFunction,
+    /// Original source declaration paired with successful certification. The
+    /// certified interface may include proof-entry loop/frame annotations.
+    pub(super) source_declaration: Option<std::sync::Arc<CFunction>>,
+    pub(super) pointer_result_effects: std::sync::Arc<[CPointerResultEffect]>,
+    pub(super) pointer_store_effects: std::sync::Arc<[CPointerStoreEffect]>,
+    pub(super) native_output_places_certified: bool,
     /// The loop semantics every claim of this rule was certified under, or
     /// `Verify` when any was, or when the rule is a recursion hypothesis
     /// that certified nothing. Written by the kernel from its own
@@ -4984,6 +5177,35 @@ pub struct CVerifiedFunctionRule {
     /// None retains source-call analysis; a present empty set proves no calls.
     /// Shared across claims and certificate reuse, never copied per step.
     pub(super) checked_callees: Option<Arc<BTreeSet<String>>>,
+}
+
+/// A designation relationship certified from every normal body outcome.
+/// This is deliberately separate from address-only source postconditions.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(super) enum CPointerResultEffect {
+    FromParameter {
+        parameter: usize,
+        child_path: std::sync::Arc<[String]>,
+    },
+    /// The body returns a semantic carrier, but no transport relationship
+    /// is expressible in this bounded interface. Its result stays unresolved.
+    Opaque,
+}
+
+/// Full pointer cells retained only from complete authenticated body execution.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(super) enum CPointerEffectRoot {
+    Parameter(usize),
+    ConstructionDestination,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(super) struct CPointerStoreEffect {
+    pub(super) destination: CPointerEffectRoot,
+    pub(super) destination_path: std::sync::Arc<[String]>,
+    pub(super) value_type: CType,
+    pub(super) source: CPointerEffectRoot,
+    pub(super) source_path: std::sync::Arc<[String]>,
 }
 
 impl CVerifiedFunctionRule {
@@ -5352,6 +5574,9 @@ impl CVerifiedFunctionTerminationRule {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CVerifiedFunctionContractClaim {
     pub(super) function: CFunction,
+    pub(super) pointer_result_effects: std::sync::Arc<[CPointerResultEffect]>,
+    pub(super) pointer_store_effects: std::sync::Arc<[CPointerStoreEffect]>,
+    pub(super) native_output_places_certified: bool,
     pub(super) key: CFunctionContractClaimKey,
     /// Exact load equalities consumed while checking this claim. Keeping the
     /// witnesses on the proof object makes contract finalization the owner of
@@ -6404,6 +6629,43 @@ pub(super) struct CPendingReallocation {
     pub(super) initialized_prefix: Vec<(i64, u32)>,
 }
 
+/// A source-typed native record promise for one complete input carrier.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) enum CNativeInputIdentity {
+    Unresolved(Variable),
+    Loaded(PointerLoadIdentity),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(in crate::kernel) enum CNativeInputKind {
+    Record {
+        layout: Arc<CAggregateLayout>,
+    },
+    RecordPrefix {
+        layout: Arc<CAggregateLayout>,
+        count: SharedIntegerTerm,
+    },
+    AllocatedScalar {
+        element_type: CType,
+        bytes: SharedIntegerTerm,
+    },
+    TypedPrefix {
+        element_type: CType,
+        count: SharedIntegerTerm,
+        policy: CTypedAccessPolicy,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(in crate::kernel) struct CNativeRecordInput {
+    pub(in crate::kernel) origin: CPointerValue,
+    pub(in crate::kernel) kind: CNativeInputKind,
+}
+
+#[cfg(test)]
+#[path = "primitives/native_record_input_tests.rs"]
+mod native_record_input_tests;
+
 /// Every field is a snapshot collection, so hashing is O(1).
 #[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) struct CHeapMemory {
@@ -6427,6 +6689,10 @@ pub(super) struct CHeapMemory {
     /// Interface-entry structural object requirements, independent of raw
     /// footprints, allocation extent, initialization and access authority.
     pub(super) object_input_domains: SnapshotMap<Pointer, Arc<CAggregateLayout>>,
+    /// Exact native typed-input identities. Address equality cannot select a
+    /// row; the separate origin index supports bounded lifetime retirement.
+    pub(super) native_record_inputs: SnapshotMap<CNativeInputIdentity, CNativeRecordInput>,
+    pub(super) native_record_input_origins: SnapshotMap<Pointer, SnapshotSet<CNativeInputIdentity>>,
     /// Scalar native-interface requirements. Lookup is usable only with the
     /// matching complete pointer designation, never an address alone.
     pub(super) scalar_input_domains: SnapshotMap<Pointer, CType>,
@@ -6482,6 +6748,11 @@ impl std::hash::Hash for CHeapMemory {
             "object_input_domains".hash(state);
             self.object_input_domains.hash(state);
         }
+        if !self.native_record_inputs.is_empty() {
+            "native_record_inputs".hash(state);
+            self.native_record_inputs.hash(state);
+            self.native_record_input_origins.hash(state);
+        }
     }
 }
 
@@ -6511,6 +6782,13 @@ impl CHeapMemory {
             && self
                 .scalar_input_domains
                 .eq_relative_to(&other.scalar_input_domains, &base.scalar_input_domains)
+            && self
+                .native_record_inputs
+                .eq_relative_to(&other.native_record_inputs, &base.native_record_inputs)
+            && self.native_record_input_origins.eq_relative_to(
+                &other.native_record_input_origins,
+                &base.native_record_input_origins,
+            )
             && self
                 .initialized
                 .eq_relative_to(&other.initialized, &base.initialized)
@@ -6545,6 +6823,8 @@ impl CHeapMemory {
             && self.uninitialized_objects == other.uninitialized_objects
             && self.object_input_domains == other.object_input_domains
             && self.scalar_input_domains == other.scalar_input_domains
+            && self.native_record_inputs == other.native_record_inputs
+            && self.native_record_input_origins == other.native_record_input_origins
             && self.zeroed_allocations == other.zeroed_allocations
             && self.zeroed_prefix_allocations == other.zeroed_prefix_allocations
             && self.zeroed_pending_allocations == other.zeroed_pending_allocations
@@ -6556,15 +6836,43 @@ impl CHeapMemory {
 pub(super) enum CDeclaredObject {
     Scalar(CType),
     Aggregate(Arc<CAggregateLayout>),
+    Array { element_type: CType, count: u32 },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+/// The byte representation policy pinned by an actual native declaration.
+/// It does not establish initialized bytes or access authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) enum UInt32RepresentationProfile {
+    LittleEndian,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CBlock {
     pub(super) size: Bitvector32Term,
     pub(super) read_only: bool,
-    /// A complete automatic object's declaration, independent of its values,
-    /// initialization and ownership. Untyped blocks and arrays carry none.
+    /// A complete object's actual declaration, independent of its values,
+    /// initialization and ownership. Generic storage blocks carry none.
     pub(super) declared_object: Option<CDeclaredObject>,
+    /// Automatic scalar declarations require their allocated permission;
+    /// native global/static declarations retain their existing access policy.
+    pub(super) explicit_scalar_ownership: bool,
+    pub(super) uint32_representation: Option<UInt32RepresentationProfile>,
+}
+
+impl std::hash::Hash for CBlock {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.size.hash(state);
+        self.read_only.hash(state);
+        self.declared_object.hash(state);
+        // Optional bookkeeping leaves legacy undeclared-block hashes stable.
+        if self.explicit_scalar_ownership {
+            "automatic scalar ownership".hash(state);
+        }
+        if let Some(profile) = self.uint32_representation {
+            "uint32 representation".hash(state);
+            profile.hash(state);
+        }
+    }
 }
 
 /// An interned, immutable memory snapshot for embedding inside terms.
@@ -7454,6 +7762,7 @@ pub(super) struct CAggregateDestination {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CState {
+    pub(super) typed_access_policy: CTypedAccessPolicy,
     pub(super) aggregate_destination: Option<Arc<CAggregateDestination>>,
     /// Lexical field values for scratch resource-body evaluation only.
     /// This is not ownership and is never populated by unfolding a resource.
@@ -8801,8 +9110,40 @@ pub enum CResourceSnapshot {
     Post,
 }
 
+/// A typed native record place required by an explicit source clause.
+/// Retaining this metadata grants no object validity or memory permission.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) struct CNativeRecordPlaceRequirement {
+    pub(crate) carrier: CExpression,
+    pub(crate) layout: Arc<CAggregateLayout>,
+    /// An explicit typed record sequence prefix, not an exact array extent.
+    /// None retains the ordinary single-record place requirement.
+    pub(crate) prefix_count: Option<CExpression>,
+}
+
+/// Which language access rules may discharge a typed-place obligation.
+/// This policy grants neither permission nor initialization.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) enum CTypedAccessPolicy {
+    NativeObjectOnly,
+    #[default]
+    CAllocatedAccessAllowed,
+}
+
+/// A source-typed scalar prefix, separate from exact array extent, byte
+/// authority and initialized storage.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(crate) struct CNativeSpanRequirement {
+    pub(crate) carrier: CExpression,
+    pub(crate) element_type: CType,
+    pub(crate) count: CExpression,
+    pub(crate) access_policy: CTypedAccessPolicy,
+}
+
 #[derive(Clone, Debug)]
 pub struct CResourceSpec {
+    native_record_places: Arc<[CNativeRecordPlaceRequirement]>,
+    native_span_requirements: Arc<[CNativeSpanRequirement]>,
     /// Actual resource-reference binders, separate from C-valued arguments.
     /// Naming a binder here grants no ownership of its occurrence.
     resource_arguments: Arc<[Variable]>,
@@ -8954,6 +9295,30 @@ impl CResourceTerm {
 }
 
 impl CResourceSpec {
+    pub(crate) fn with_native_record_places(
+        mut self,
+        places: Vec<CNativeRecordPlaceRequirement>,
+    ) -> Self {
+        self.native_record_places = places.into();
+        self
+    }
+
+    pub(crate) fn native_record_places(&self) -> &[CNativeRecordPlaceRequirement] {
+        &self.native_record_places
+    }
+
+    pub(crate) fn with_native_span_requirements(
+        mut self,
+        requirements: Vec<CNativeSpanRequirement>,
+    ) -> Self {
+        self.native_span_requirements = requirements.into();
+        self
+    }
+
+    pub(crate) fn native_span_requirements(&self) -> &[CNativeSpanRequirement] {
+        &self.native_span_requirements
+    }
+
     pub fn new(
         term: CResourceTerm,
         access: CResourceAccessMode,
@@ -8962,6 +9327,8 @@ impl CResourceSpec {
         snapshot: CResourceSnapshot,
     ) -> Result<Self, CResourceSpecError> {
         let spec = Self {
+            native_record_places: Arc::from([]),
+            native_span_requirements: Arc::from([]),
             term,
             mutex_authority_binding: None,
             resource_arguments: Arc::from([]),
@@ -9237,6 +9604,11 @@ impl CResourceSpec {
         self.quantity_snapshot
     }
 
+    pub(crate) fn with_quantity_snapshot(mut self, snapshot: CResourceSnapshot) -> Self {
+        self.quantity_snapshot = snapshot;
+        self
+    }
+
     pub fn role(&self) -> CResourceTransferRole {
         self.role
     }
@@ -9323,7 +9695,9 @@ impl CResourceSpec {
                 self.snapshot,
             )
             .expect("validated instance terms have valid owned unit bodies")
-            .with_resource_arguments(self.resource_arguments().to_vec()),
+            .with_resource_arguments(self.resource_arguments().to_vec())
+            .with_native_record_places(self.native_record_places().to_vec())
+            .with_native_span_requirements(self.native_span_requirements().to_vec()),
         )
     }
 
@@ -9421,6 +9795,8 @@ impl CResourceSpec {
 impl PartialEq for CResourceSpec {
     fn eq(&self, other: &Self) -> bool {
         self.term == other.term
+            && self.native_record_places == other.native_record_places
+            && self.native_span_requirements == other.native_span_requirements
             && self.resource_arguments == other.resource_arguments
             && self.mutex_authority_binding == other.mutex_authority_binding
             && self.access == other.access
@@ -9436,6 +9812,7 @@ impl Eq for CResourceSpec {}
 
 impl Hash for CResourceSpec {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        self.native_record_places.hash(state);
         self.term.hash(state);
         self.resource_arguments.hash(state);
         self.mutex_authority_binding.hash(state);
@@ -9445,6 +9822,10 @@ impl Hash for CResourceSpec {
         self.role.hash(state);
         self.snapshot.hash(state);
         self.guard.hash(state);
+        if !self.native_span_requirements.is_empty() {
+            "native_span_requirements".hash(state);
+            self.native_span_requirements.hash(state);
+        }
     }
 }
 
@@ -9452,6 +9833,8 @@ impl Ord for CResourceSpec {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (
             &self.term,
+            &self.native_record_places,
+            &self.native_span_requirements,
             &self.resource_arguments,
             &self.mutex_authority_binding,
             self.access,
@@ -9463,6 +9846,8 @@ impl Ord for CResourceSpec {
         )
             .cmp(&(
                 &other.term,
+                &other.native_record_places,
+                &other.native_span_requirements,
                 &other.resource_arguments,
                 &other.mutex_authority_binding,
                 other.access,
@@ -10654,8 +11039,19 @@ pub(crate) struct ForallInt32InstantiationEvidence {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UInt32PackingEvidence {
+    pub(super) memory: SharedCMemory,
+    pub(super) object: Pointer,
+    pub(super) profile: UInt32RepresentationProfile,
+    pub(super) word: Bitvector32Term,
+    pub(super) bytes: [u8; 4],
+    pub(super) byte_equalities: [Proposition; 4],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AtomicPropositionDerivationEvidence {
     WidenedUnsignedSumBound,
+    UInt32Representation(Box<UInt32PackingEvidence>),
     MemoryDag(Box<AtomicMemoryLoadEqualityEvidence>),
     LoadAddressCongruence(Box<LoadAddressCongruenceEvidence>),
     PointerOffsetMemoryDag(Box<PointerOffsetEqualityEvidence>),
@@ -10812,9 +11208,9 @@ pub(super) struct AtomicConnectionFacts {
 }
 
 /// The representation and deferral choices a context reasons under, one bit
-/// each. The bits occupy the top byte of the context's content fingerprint.
+/// each. The bits occupy the top nine bits of the content fingerprint.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub(super) struct ReasoningPolicy(u8);
+pub(super) struct ReasoningPolicy(u16);
 
 impl ReasoningPolicy {
     pub(super) const DEFER_NON_EXACT_LOADABILITY_OBLIGATIONS: Self = Self(1 << 0);
@@ -10828,12 +11224,14 @@ impl ReasoningPolicy {
     pub(super) const KEEP_SPEC_LOADS_SYMBOLIC: Self = Self(1 << 6);
     pub(super) const REQUIRE_OWNED_EXPRESSION_LOADS: Self = Self(1 << 7);
 
+    pub(super) const OBSERVE_POINTER_ADDRESSES: Self = Self(1 << 8);
+
     pub(super) fn contains(self, choice: Self) -> bool {
         self.0 & choice.0 != 0
     }
 
     pub(super) fn fingerprint(self) -> u64 {
-        u64::from(self.0) << 56
+        (u64::from(self.0 & 0xff) << 56) | (u64::from(self.0 >> 8) << 55)
     }
 
     pub(super) fn toggle(&mut self, choice: Self) {

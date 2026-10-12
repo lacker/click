@@ -800,6 +800,7 @@ fn walk_c_state<S: VariableSubstitution + ?Sized>(state: &CState, s: &S) -> CSta
             .collect(),
     );
     CState {
+        typed_access_policy: state.typed_access_policy,
         locals: CLocalEnvironment { bindings, slots },
         aggregate_destination: state.aggregate_destination.as_ref().map(|destination| {
             std::sync::Arc::new(CAggregateDestination {
@@ -904,10 +905,12 @@ fn walk_c_statement<S: VariableSubstitution + ?Sized>(statement: &CStatement, s:
             target,
             bytes,
             zeroed,
+            allocated_scalar_type,
         } => CStatement::HeapAllocate {
             target: target.clone(),
             bytes: s.c_expression(bytes),
             zeroed: *zeroed,
+            allocated_scalar_type: *allocated_scalar_type,
         },
         CStatement::HeapFree { pointer } => CStatement::HeapFree {
             pointer: s.c_expression(pointer),
@@ -1424,7 +1427,33 @@ fn walk_resource_spec<S: VariableSubstitution + ?Sized>(
         resource.snapshot(),
     )
     .expect("pointer substitution preserves resource validity")
-    .with_resource_arguments(resource.resource_arguments().to_vec());
+    .with_resource_arguments(resource.resource_arguments().to_vec())
+    .with_native_record_places(
+        resource
+            .native_record_places()
+            .iter()
+            .map(|place| CNativeRecordPlaceRequirement {
+                carrier: s.c_expression(&place.carrier),
+                layout: place.layout.clone(),
+                prefix_count: place
+                    .prefix_count
+                    .as_ref()
+                    .map(|count| s.c_expression(count)),
+            })
+            .collect(),
+    )
+    .with_native_span_requirements(
+        resource
+            .native_span_requirements()
+            .iter()
+            .map(|span| CNativeSpanRequirement {
+                access_policy: span.access_policy,
+                carrier: s.c_expression(&span.carrier),
+                element_type: span.element_type,
+                count: s.c_expression(&span.count),
+            })
+            .collect(),
+    );
     match resource.mutex_authority_binding() {
         Some((identity, binder)) => substituted
             .with_mutex_authority_binding(identity, binder.to_string())
@@ -2424,7 +2453,7 @@ fn collect_c_value_bound_variables(value: &CValue, variables: &mut BTreeSet<Vari
         CValue::Pointer(pointer) => {
             collect_pointer_bound_variables(pointer.pointer(), variables);
             if let Some(designation) = pointer.designation() {
-                if let PointerDesignation::Loaded(identity) = designation {
+                if let Some(identity) = designation.loaded_identity() {
                     collect_memory_bitvector_variables(identity.memory(), variables);
                 }
                 if let Some(variable) = designation.unresolved_variable() {
@@ -2487,6 +2516,7 @@ fn collect_c_expression_bound_variables(
         | CExpression::Load(body)
         | CExpression::BitwiseNot(body) => collect_c_expression_bound_variables(body, variables),
         CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::PointerAligned { pointer, .. }
         | CExpression::TypedLoad { pointer, .. } => {
             collect_c_expression_bound_variables(pointer, variables)
         }
@@ -2702,6 +2732,16 @@ fn collect_c_resource_spec_bound_variables(
     resource: &CResourceSpec,
     variables: &mut BTreeSet<Variable>,
 ) {
+    for place in resource.native_record_places() {
+        collect_c_expression_bound_variables(&place.carrier, variables);
+        if let Some(count) = &place.prefix_count {
+            collect_c_expression_bound_variables(count, variables);
+        }
+    }
+    for span in resource.native_span_requirements() {
+        collect_c_expression_bound_variables(&span.carrier, variables);
+        collect_c_expression_bound_variables(&span.count, variables);
+    }
     match resource.term() {
         CResourceTerm::Instance { resource, .. } => {
             collect_c_resource_term_bound_variables(resource, variables)
@@ -2875,7 +2915,45 @@ fn collect_pointer_bound_variables(pointer: &Pointer, variables: &mut BTreeSet<V
     collect_pointer_offset_bound_variables(&pointer.offset, variables);
 }
 
+thread_local! {
+    static SHARED_MEMORY_BOUND_VARIABLES: std::cell::RefCell<std::collections::HashMap<SharedCMemory, std::sync::Arc<BTreeSet<Variable>>>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+pub(in crate::kernel) fn clear_shared_memory_bound_variables() {
+    SHARED_MEMORY_BOUND_VARIABLES.with(|cache| cache.borrow_mut().clear());
+}
+
+fn collect_shared_memory_bound_variables(
+    memory: &SharedCMemory,
+    variables: &mut BTreeSet<Variable>,
+) {
+    if let Some(known) =
+        SHARED_MEMORY_BOUND_VARIABLES.with(|cache| cache.borrow().get(memory).cloned())
+    {
+        variables.extend(known.iter().copied());
+        return;
+    }
+    let mut dependencies = BTreeSet::new();
+    collect_memory_bound_variables(memory.memory(), &mut dependencies);
+    variables.extend(dependencies.iter().copied());
+    SHARED_MEMORY_BOUND_VARIABLES.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert(memory.clone(), std::sync::Arc::new(dependencies));
+    });
+}
+
 fn collect_memory_bound_variables(memory: &CMemory, variables: &mut BTreeSet<Variable>) {
+    for row in memory.heap.native_record_inputs.values() {
+        collect_c_value_bound_variables(&CValue::Pointer(row.origin.clone()), variables);
+        if let CNativeInputKind::TypedPrefix { count, .. }
+        | CNativeInputKind::RecordPrefix { count, .. }
+        | CNativeInputKind::AllocatedScalar { bytes: count, .. } = &row.kind
+        {
+            collect_integer_bound_variables(count.as_ref(), variables);
+            collect_integer_capture_bitvector_variables(count.as_ref(), variables);
+        }
+    }
     for (base, pending) in memory.heap.pending_reallocations.iter() {
         crate::instrumentation::record_deterministic_work(pending.copied_cells.len());
         collect_pointer_bound_variables(base, variables);
@@ -2906,17 +2984,73 @@ fn collect_memory_bound_variables(memory: &CMemory, variables: &mut BTreeSet<Var
         collect_pointer_bound_variables(pointer, variables);
         collect_c_value_bound_variables(value, variables);
     }
-    // A run's slots are named uniformly per spelling shape wherever
-    // `run_shape_representatives` says so, and then mention the same bound
-    // variables as their shape's representative (a slot's own load variable
-    // is never a binder); otherwise every slot is visited.
+    // Bound identities come from the represented value/source and address,
+    // never from a slot's reserved load ID. Keep the bound collector separate
+    // from free-variable collection and inspect each retained source once.
     for run in memory.cells.runs() {
-        let slots = crate::kernel::reasoning::memory_resolution::run_shape_representatives(run)
-            .unwrap_or_else(|| run.live_indexes().collect());
-        for index in slots {
-            collect_pointer_bound_variables(&run.slot_pointer(index), variables);
-            collect_c_value_bound_variables(&run.value(index), variables);
+        crate::instrumentation::record_deterministic_work(1);
+        collect_pointer_bound_variables(run.base(), variables);
+        match run.value_mode() {
+            crate::kernel::primitives::RunValueMode::Constant(value) => {
+                collect_c_value_bound_variables(value, variables)
+            }
+            crate::kernel::primitives::RunValueMode::Copy { source_base } => {
+                collect_pointer_bound_variables(source_base, variables);
+                collect_shared_memory_bound_variables(run.source(), variables);
+            }
+            crate::kernel::primitives::RunValueMode::Load
+            | crate::kernel::primitives::RunValueMode::SymbolicStorage => {
+                collect_shared_memory_bound_variables(run.source(), variables);
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod compressed_bound_run_tests {
+    use super::*;
+
+    #[test]
+    fn compressed_load_run_keeps_fold_binders_separate_from_free_value_variables() {
+        let mut samples = Vec::new();
+        for count in [8, 1024, 1_000_000] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let free = Variable(9_381_021);
+            let accumulator = Variable(9_381_022);
+            let item = Variable(9_381_023);
+            let source = CMemory::new().store(
+                Pointer::symbolic(Variable(9_381_024)),
+                CValue::UInt32(Bitvector32Term::RangeFold {
+                    start: Box::new(Bitvector32Term::Constant(0)),
+                    end: Box::new(Bitvector32Term::Constant(3)),
+                    initial: Box::new(Bitvector32Term::Variable(free)),
+                    accumulator,
+                    item,
+                    body: Box::new(Bitvector32Term::Variable(accumulator)),
+                }),
+            );
+            let memory = CMemory::new().with_proof_entry_cells(
+                Pointer::symbolic(Variable(9_381_025)),
+                4,
+                CType::UInt32,
+                0,
+                count,
+                crate::kernel::intern_c_memory(source),
+            );
+            let (bound, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let mut variables = BTreeSet::new();
+                collect_memory_bound_variables(&memory, &mut variables);
+                variables
+            });
+            assert!(bound.contains(&accumulator));
+            assert!(bound.contains(&item));
+            assert!(!bound.contains(&free));
+            samples.push(work);
+        }
+        assert!(
+            samples.iter().all(|work| *work == samples[0]),
+            "{samples:?}"
+        );
     }
 }
 
@@ -4287,6 +4421,21 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
         CExpression::FloatNegate(expression) => CExpression::FloatNegate(Box::new(
             substitute_bitvector_variable_in_c_expression(expression, from, to),
         )),
+        CExpression::RecordPointerOffset {
+            pointer,
+            index,
+            layout,
+            subtract,
+        } => CExpression::RecordPointerOffset {
+            pointer: Box::new(substitute_bitvector_variable_in_c_expression(
+                pointer, from, to,
+            )),
+            index: Box::new(substitute_bitvector_variable_in_c_expression(
+                index, from, to,
+            )),
+            layout: layout.clone(),
+            subtract: *subtract,
+        },
         CExpression::MemberAddress { object, selection } => CExpression::MemberAddress {
             object: Box::new(substitute_bitvector_variable_in_c_expression(
                 object, from, to,
@@ -4304,6 +4453,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
                 pointer, from, to,
             )),
             bytes: *bytes,
+        },
+        CExpression::PointerAligned { pointer, alignment } => CExpression::PointerAligned {
+            pointer: Box::new(substitute_bitvector_variable_in_c_expression(
+                pointer, from, to,
+            )),
+            alignment: *alignment,
         },
         CExpression::Not(body) => CExpression::Not(Box::new(
             substitute_bitvector_variable_in_c_expression(body, from, to),
@@ -5740,6 +5895,19 @@ fn substitute_bitvector_variable_in_memory_contents(
         },
         |run| run_slot_named_by_load_variable(run, from),
     ));
+    let (native_record_inputs, native_record_input_origins) = memory.map_native_record_inputs(
+        |pointer| {
+            let CValue::Pointer(pointer) = substitute_bitvector_variable_in_c_value(
+                &CValue::Pointer(pointer.clone()),
+                from,
+                to,
+            ) else {
+                unreachable!("pointer substitution preserves the carrier")
+            };
+            pointer
+        },
+        |count| substitute_bitvector_variable_in_integer(count.as_ref(), from, to).into(),
+    );
     let mut result = CMemory {
         construction: None,
         blocks: std::sync::Arc::new(
@@ -5777,6 +5945,8 @@ fn substitute_bitvector_variable_in_memory_contents(
         // re-intern as a state that forgot nothing.
         forgotten: memory.forgotten.clone(),
         heap: std::sync::Arc::new(CHeapMemory {
+            native_record_inputs,
+            native_record_input_origins,
             live_allocations: memory
                 .heap
                 .live_allocations
@@ -6004,6 +6174,75 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_value(
                             )
                             .into(),
                         },
+                        PointerDesignation::InputSelected {
+                            input,
+                            origin,
+                            path,
+                            base,
+                            element_type,
+                            stride,
+                            count,
+                        } => {
+                            let input = match input {
+                                CNativeInputIdentity::Unresolved(variable) => {
+                                    CNativeInputIdentity::Unresolved(*variable)
+                                }
+                                CNativeInputIdentity::Loaded(identity) => {
+                                    let address = substitute_bitvector_variable_in_pointer(
+                                        identity.address(),
+                                        from,
+                                        to,
+                                    );
+                                    let memory = if address == *identity.address() {
+                                        identity.memory().clone()
+                                    } else {
+                                        super::memory_resolution::canonical_load_projection_source(
+                                            identity.memory(),
+                                            identity.address(),
+                                        )
+                                        .unwrap_or_else(|| identity.memory().clone())
+                                    };
+                                    CNativeInputIdentity::Loaded(PointerLoadIdentity::new(
+                                        substitute_bitvector_variable_in_shared_memory(
+                                            &memory, from, to,
+                                        ),
+                                        address,
+                                    ))
+                                }
+                            };
+                            PointerDesignation::InputSelected {
+                                input,
+                                origin: substitute_bitvector_variable_in_pointer(origin, from, to),
+                                path: path
+                                    .iter()
+                                    .map(|part| match part {
+                                        PointerDomainSelection::Member(name) => {
+                                            PointerDomainSelection::Member(name.clone())
+                                        }
+                                        PointerDomainSelection::Element(index) => {
+                                            PointerDomainSelection::Element(
+                                                substitute_bitvector_variable_in_integer(
+                                                    index.as_ref(),
+                                                    from,
+                                                    to,
+                                                )
+                                                .into(),
+                                            )
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into(),
+                                base: substitute_bitvector_variable_in_pointer(base, from, to),
+                                element_type: *element_type,
+                                stride: *stride,
+                                count: substitute_bitvector_variable_in_integer(
+                                    count.as_ref(),
+                                    from,
+                                    to,
+                                )
+                                .into(),
+                            }
+                        }
                     }),
             ))
         }
@@ -6273,6 +6512,19 @@ fn substitute_pointer_variable_in_c_expression(
         CExpression::FloatNegate(expression) => CExpression::FloatNegate(Box::new(
             substitute_pointer_variable_in_c_expression(expression, from, to),
         )),
+        CExpression::RecordPointerOffset {
+            pointer,
+            index,
+            layout,
+            subtract,
+        } => CExpression::RecordPointerOffset {
+            pointer: Box::new(substitute_pointer_variable_in_c_expression(
+                pointer, from, to,
+            )),
+            index: Box::new(substitute_pointer_variable_in_c_expression(index, from, to)),
+            layout: layout.clone(),
+            subtract: *subtract,
+        },
         CExpression::MemberAddress { object, selection } => CExpression::MemberAddress {
             object: Box::new(substitute_pointer_variable_in_c_expression(
                 object, from, to,
@@ -6290,6 +6542,12 @@ fn substitute_pointer_variable_in_c_expression(
                 pointer, from, to,
             )),
             bytes: *bytes,
+        },
+        CExpression::PointerAligned { pointer, alignment } => CExpression::PointerAligned {
+            pointer: Box::new(substitute_pointer_variable_in_c_expression(
+                pointer, from, to,
+            )),
+            alignment: *alignment,
         },
         CExpression::Load(body) => CExpression::Load(Box::new(
             substitute_pointer_variable_in_c_expression(body, from, to),
@@ -6317,7 +6575,7 @@ fn substitute_pointer_variable_in_c_expression(
                 _ => unreachable!("the combined unary expression arm is exhaustive"),
             }
         }
-        crate::kernel::binary_c_expression!(left, right) => {
+        crate::kernel::binary_c_operation!(left, right) | CExpression::Index(left, right) => {
             let left = Box::new(substitute_pointer_variable_in_c_expression(left, from, to));
             let right = Box::new(substitute_pointer_variable_in_c_expression(right, from, to));
             match expression {
@@ -6351,6 +6609,25 @@ pub(crate) fn substitute_pointer_variable_in_memory(
     from: Variable,
     to: &Pointer,
 ) -> CMemory {
+    let (native_record_inputs, native_record_input_origins) = memory.map_native_record_inputs(
+        |pointer| {
+            let CValue::Pointer(pointer) =
+                substitute_pointer_variable_in_c_value(&CValue::Pointer(pointer.clone()), from, to)
+            else {
+                unreachable!("pointer substitution preserves the carrier")
+            };
+            pointer
+        },
+        |count| {
+            let Term::Integer(count) =
+                crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_variable(from, to)
+                    .term(&Term::Integer(count.as_ref().clone()))
+            else {
+                unreachable!("integer rewriting preserves its carrier")
+            };
+            count.into()
+        },
+    );
     let mut result = CMemory {
         construction: None,
         blocks: std::sync::Arc::new(
@@ -6410,6 +6687,8 @@ pub(crate) fn substitute_pointer_variable_in_memory(
             join_inputs: memory.forgotten.join_inputs.clone(),
         }),
         heap: std::sync::Arc::new(CHeapMemory {
+            native_record_inputs,
+            native_record_input_origins,
             live_allocations: memory
                 .heap
                 .live_allocations

@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::c_variable;
 
 #[test]
 fn struct_pointer_arithmetic_through_uint64_cast_uses_layout_width() {
@@ -299,4 +300,277 @@ fn captured_fold_identity_does_not_exhaust_the_surface_quantifier_stream() {
         )),
     );
     assert_eq!(max_spec_integer_expression_variable(&captured), Some(low));
+}
+
+#[test]
+fn old_record_steps_replay_both_operands_and_preserve_int_min_subtraction() {
+    let declaration = crate::languages::c::syntax::parse_function(
+        "struct item { int value; int other; }; struct item *offset(struct item *p, int i) { return p + i; }",
+    ).unwrap();
+    let layout = std::sync::Arc::new(declaration.structs()["item"].to_kernel_aggregate_layout());
+    let old_pointer = crate::kernel::CPointerValue::new(
+        crate::kernel::Pointer {
+            block: "old-pointer".into(),
+            offset: crate::kernel::PointerOffsetTerm::Constant(0),
+        },
+        CType::UInt8Pointer,
+    )
+    .with_designation(crate::kernel::PointerDesignation::Unresolved(
+        crate::kernel::Variable(98_701),
+    ));
+    let current_pointer = crate::kernel::CPointerValue::new(
+        crate::kernel::Pointer {
+            block: "current-pointer".into(),
+            offset: crate::kernel::PointerOffsetTerm::Constant(0),
+        },
+        CType::UInt8Pointer,
+    )
+    .with_designation(crate::kernel::PointerDesignation::Unresolved(
+        crate::kernel::Variable(98_702),
+    ));
+    let snapshots = RecordedSnapshots::new();
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    for (old_index, subtract, expected_bytes) in [
+        (2u32, false, 16i64),
+        (i32::MIN as u32, true, 17_179_869_184i64),
+    ] {
+        let entry = CState::new()
+            .with_local("p", CValue::Pointer(old_pointer.clone()))
+            .with_local("i", int32(old_index));
+        let current = entry
+            .clone()
+            .with_local("p", CValue::Pointer(current_pointer.clone()))
+            .with_local("i", int32(7));
+        let (mut lowerer, context) = fixed_state_elaboration(
+            BTreeMap::new(),
+            BTreeMap::new(),
+            &entry,
+            BTreeMap::from([
+                ("p".into(), CValue::Pointer(old_pointer.clone())),
+                ("i".into(), int32(old_index)),
+            ]),
+            BTreeMap::from([
+                ("p".into(), CValue::Pointer(current_pointer.clone())),
+                ("i".into(), int32(7)),
+            ]),
+            None,
+            &snapshots,
+            SpecDefinitions::new(&predicates, &functions),
+            BTreeSet::new(),
+            parameter_pointer_element_widths(declaration.parameters()),
+        );
+        let native = CExpression::RecordPointerOffset {
+            pointer: Box::new(c_variable("p")),
+            index: Box::new(c_variable("i")),
+            layout: layout.clone(),
+            subtract,
+        };
+        let expression = ContractExpression::Old(Box::new(ContractExpression::CFragment(native)));
+        let lowered = lowerer
+            .lower_contract_expression_to_spec(&expression, &context)
+            .unwrap();
+        assert!(
+            matches!(lowered, SpecExpression::Let { .. }),
+            "the checked native operation remains scoped"
+        );
+        let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
+            &current,
+            &lowered,
+            Some(&entry),
+            &PureFactContext::new(),
+        )
+        .unwrap();
+        let CValue::Pointer(pointer) = value else {
+            panic!("record step pointer");
+        };
+        assert_eq!(pointer.pointer().block, old_pointer.pointer().block);
+        assert_eq!(
+            pointer.pointer().offset,
+            crate::kernel::PointerOffsetTerm::Constant(expected_bytes)
+        );
+        assert!(pointer.same_designation(&old_pointer));
+        assert!(obligations.is_empty());
+    }
+}
+
+#[test]
+fn old_member_address_replays_the_original_record_carrier() {
+    let declaration = crate::languages::c::syntax::parse_function(
+        "struct item { int value; int other; }; int read(struct item *p) { return p->other; }",
+    )
+    .unwrap();
+    let entry_pointer = crate::kernel::CPointerValue::new(
+        crate::kernel::Pointer {
+            block: "old-record".into(),
+            offset: crate::kernel::PointerOffsetTerm::Constant(0),
+        },
+        CType::UInt8Pointer,
+    )
+    .with_designation(crate::kernel::PointerDesignation::Unresolved(
+        crate::kernel::Variable(98_711),
+    ));
+    let current_pointer = crate::kernel::CPointerValue::new(
+        crate::kernel::Pointer {
+            block: "current-record".into(),
+            offset: crate::kernel::PointerOffsetTerm::Constant(0),
+        },
+        CType::UInt8Pointer,
+    );
+    let entry = CState::new().with_local("p", CValue::Pointer(entry_pointer.clone()));
+    let current = entry
+        .clone()
+        .with_local("p", CValue::Pointer(current_pointer.clone()));
+    let snapshots = RecordedSnapshots::new();
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let (mut lowerer, context) = fixed_state_elaboration(
+        BTreeMap::new(),
+        BTreeMap::new(),
+        &entry,
+        BTreeMap::from([("p".into(), CValue::Pointer(entry_pointer.clone()))]),
+        BTreeMap::from([("p".into(), CValue::Pointer(current_pointer))]),
+        None,
+        &snapshots,
+        SpecDefinitions::new(&predicates, &functions),
+        BTreeSet::new(),
+        parameter_pointer_element_widths(declaration.parameters()),
+    );
+    let address = CExpression::MemberAddress {
+        object: Box::new(c_variable("p")),
+        selection: std::sync::Arc::new(crate::kernel::CAggregateMemberSelection {
+            layout: std::sync::Arc::new(declaration.structs()["item"].to_kernel_aggregate_layout()),
+            path: vec!["other".to_string()].into(),
+            value_type: CType::Int32,
+        }),
+    };
+    let expression = ContractExpression::Old(Box::new(ContractExpression::CFragment(address)));
+    let lowered = lowerer
+        .lower_contract_expression_to_spec(&expression, &context)
+        .unwrap();
+    let (value, _) = crate::kernel::c_evaluate_spec_expression_at_state(
+        &current,
+        &lowered,
+        Some(&entry),
+        &PureFactContext::new(),
+    )
+    .unwrap();
+    let CValue::Pointer(pointer) = value else {
+        panic!("member address");
+    };
+    assert_eq!(pointer.pointer().block, entry_pointer.pointer().block);
+    assert_eq!(
+        pointer.pointer().offset,
+        crate::kernel::PointerOffsetTerm::Constant(4)
+    );
+    assert!(pointer.same_designation(&entry_pointer));
+}
+
+#[test]
+fn snapshot_scalar_local_address_keeps_its_full_carrier_after_current_scope_ends() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let declaration = crate::kernel::c_declare_initialized(
+        "obj",
+        CType::UInt32,
+        CExpression::Value(crate::kernel::uint32(7)),
+        false,
+        false,
+        false,
+        false,
+    );
+    let theorem = crate::kernel::prove_symbolic_c_execution_with_environment(
+        CState::new(),
+        declaration,
+        PureFactContext::new(),
+        crate::kernel::CExecutionEnvironment::new()
+            .with_byte_order(crate::kernel::ByteOrder::Little),
+        crate::kernel::CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .unwrap();
+    let mut conclusion = theorem.proposition();
+    while let Proposition::Implies(_, body) = conclusion {
+        conclusion = body;
+    }
+    let Proposition::CStatementExecutes {
+        outcome: crate::kernel::CStatementOutcome::Normal(declared),
+        ..
+    } = conclusion
+    else {
+        panic!("checked declaration completes normally");
+    };
+    let declared = declared.as_ref().clone();
+    let address = CExpression::AddressOf(Box::new(c_variable("obj")));
+    let (expected, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
+        &declared,
+        &SpecExpression::CExpression(address.clone()),
+        None,
+        &PureFactContext::new(),
+    )
+    .unwrap();
+    assert!(obligations.is_empty());
+    let CValue::Pointer(pointer) = &expected else {
+        panic!("declared pointer");
+    };
+    assert!(matches!(
+        pointer.designation(),
+        Some(crate::kernel::PointerDesignation::Object { .. })
+    ));
+    let current = CState::new().with_memory(
+        declared
+            .memory()
+            .without_local_block(&pointer.pointer().block),
+    );
+    let mut snapshots = RecordedSnapshots::new();
+    snapshots.insert(SnapshotSelector::Mark("before".into()), declared.clone());
+    snapshots.insert(SnapshotSelector::Mark("after".into()), current.clone());
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let (mut lowerer, context) = fixed_state_elaboration(
+        BTreeMap::new(),
+        BTreeMap::new(),
+        &declared,
+        BTreeMap::from([("obj".into(), crate::kernel::uint32(7))]),
+        BTreeMap::new(),
+        None,
+        &snapshots,
+        SpecDefinitions::new(&predicates, &functions),
+        BTreeSet::new(),
+        BTreeMap::new(),
+    );
+    let fragment = ContractExpression::CFragment(address.clone());
+    let unary = ContractExpression::CUnary {
+        operand: Box::new(ContractExpression::CFragment(c_variable("obj"))),
+        lowered: address,
+    };
+    for source in [fragment, unary] {
+        for selected in [
+            ContractExpression::Old(Box::new(source.clone())),
+            ContractExpression::At {
+                selector: SnapshotSelector::Mark("before".into()),
+                expression: Box::new(source.clone()),
+            },
+        ] {
+            let lowered = lowerer
+                .lower_contract_expression_to_spec(&selected, &context)
+                .unwrap();
+            let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
+                &current,
+                &lowered,
+                Some(&declared),
+                &PureFactContext::new(),
+            )
+            .unwrap();
+            assert_eq!(value, expected);
+            assert!(obligations.is_empty());
+        }
+        let wrong = ContractExpression::At {
+            selector: SnapshotSelector::Mark("after".into()),
+            expression: Box::new(source),
+        };
+        assert!(
+            lowerer
+                .lower_contract_expression_to_spec(&wrong, &context)
+                .is_err()
+        );
+    }
 }

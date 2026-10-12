@@ -178,8 +178,19 @@ mod tests {
         let slot = ResourceContext::new_with_equalities(&empty).unchecked_with_fact(
             CResourceFact::own_memory(CMemoryRange::new(base.clone(), 0u32.into(), 1u32.into())),
         );
-        assert!(slot.permits_memory_read(&base, 8, &empty));
+        assert!(slot.permits_memory_read(&base, 4, &empty));
+        assert!(!slot.permits_memory_read(&base, 8, &empty));
         assert!(!slot.permits_memory_read(&base, 9, &empty));
+        let pointer_slot = ResourceContext::new_with_equalities(&empty).unchecked_with_fact(
+            CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+                base.clone(),
+                0u32.into(),
+                1u32.into(),
+                C_POINTER_BYTE_WIDTH,
+            )),
+        );
+        assert!(pointer_slot.permits_memory_read(&base, C_POINTER_BYTE_WIDTH, &empty));
+        assert!(!pointer_slot.permits_memory_read(&base, C_POINTER_BYTE_WIDTH + 1, &empty));
         let alias = Pointer::symbolic(Variable(873_001));
         let equal = empty.assume_condition(ConditionTerm::pointer_equal(base, alias.clone()), true);
         assert!(equal.pointers_known_equal(&alias, &Pointer::symbolic(Variable(873_000)),));

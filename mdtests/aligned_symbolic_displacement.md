@@ -1,8 +1,10 @@
-# a symbolic element step keeps alignment
+# Alignment does not justify stepping beyond one viewed record
 
-Stepping a struct pointer by a symbolic index displaces it by a multiple of
-the struct size. When the alignment divides that size the residue is
-unchanged, so `aligned(p, 8)` carries to `p + i`.
+The unchanged contract views one struct record but permits indices two and
+three. Those steps leave the pointed-to object. A mathematical alignment
+identity cannot establish that C pointer formation is defined, so verification
+refuses the original claim. The kernel's symbolic alignment certificate remains
+covered independently of this invalid C precondition.
 
 ```c filename=aligned_symbolic_displacement.c
 struct pair {
@@ -30,5 +32,5 @@ int32 element_is_aligned(struct pair* p, int32 i) {
 ```
 
 ```expect
-pass
+fail: pointer arithmetic left the pointed-to object
 ```

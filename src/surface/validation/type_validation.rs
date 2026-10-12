@@ -2852,7 +2852,8 @@ fn validate_pointer_cast_operands(
         | CExpression::Load(inner)
         | CExpression::TypedLoad { pointer: inner, .. }
         | CExpression::MemberAddress { object: inner, .. }
-        | CExpression::PointerOffsetBytes { pointer: inner, .. } => {
+        | CExpression::PointerOffsetBytes { pointer: inner, .. }
+        | CExpression::PointerAligned { pointer: inner, .. } => {
             validate_pointer_cast_operands(inner, variables, context)
         }
         CExpression::Conditional {
@@ -2977,10 +2978,12 @@ fn infer_c_expression_type(
         | CExpression::CheckedObjectAddress(_)
         | CExpression::FunctionAddress(_)
         | CExpression::MemberAddress { .. } => None,
-        CExpression::PointerOffsetBytes { pointer, .. } => {
+        CExpression::RecordPointerOffset { pointer, .. }
+        | CExpression::PointerOffsetBytes { pointer, .. } => {
             infer_c_expression_type(pointer, variables)
         }
-        CExpression::LessThan(_, _)
+        CExpression::PointerAligned { .. }
+        | CExpression::LessThan(_, _)
         | CExpression::LessEqual(_, _)
         | CExpression::GreaterThan(_, _)
         | CExpression::GreaterEqual(_, _)

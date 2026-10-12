@@ -369,10 +369,13 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         parsed_function.parameters(),
         claim_label,
     )?;
-    let function_entry_state =
-        c_function_entry_state(&state, &function, &arguments).ok_or_else(|| {
-            ClickError::new(format!("`{claim_label}` could not bind function arguments"))
-        })?;
+    let function_entry_state = c_function_entry_state_with_assumptions(
+        &state,
+        &function,
+        &arguments,
+        &assumptions_from_propositions(&pure_facts),
+    )
+    .ok_or_else(|| ClickError::new(format!("`{claim_label}` could not bind function arguments")))?;
     let (pure_facts, entry_fact_origins) = contract_entry_view(
         pure_facts,
         entry_fact_origins,
@@ -645,10 +648,13 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         parsed_function.parameters(),
         &proof_label,
     )?;
-    let function_entry_state =
-        c_function_entry_state(&state, &function, &arguments).ok_or_else(|| {
-            ClickError::new(format!("`{proof_label}` could not bind function arguments"))
-        })?;
+    let function_entry_state = c_function_entry_state_with_assumptions(
+        &state,
+        &function,
+        &arguments,
+        &assumptions_from_propositions(&pure_facts),
+    )
+    .ok_or_else(|| ClickError::new(format!("`{proof_label}` could not bind function arguments")))?;
     let (pure_facts, entry_fact_origins) = contract_entry_view(
         pure_facts,
         entry_fact_origins,

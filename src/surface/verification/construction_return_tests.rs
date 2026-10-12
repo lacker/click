@@ -5,22 +5,37 @@ use crate::kernel::*;
 // The source supplies nominal declarations only; the executable functions
 // explicitly select the shared construction-return mode.
 fn context(initialize_value: bool) -> CSourceContext<'static> {
+    context_with_callee(initialize_value, "forward")
+}
+
+fn context_with_callee(initialize_value: bool, callee: &str) -> CSourceContext<'static> {
     const DECLARATIONS: &str = "struct Node { int32* self; int32 value; };";
     let sources = CSourceContext::bundle(&[("construction.c", DECLARATIONS)]);
     let mut unit = parse_c_source_unit("construction.c", &sources, CTarget::SUPPORTED).unwrap();
     let nominal = unit.structs["Node"].clone();
     let layout = nominal.to_kernel_aggregate_layout();
     let destination = c_variable(C_CONTRACT_RESULT_NAME);
-    let field = c_cast(
-        c_pointer_offset_bytes(destination.clone(), 8),
-        CType::Int32Pointer,
-    );
+    // Model the native frontend's declared field selection, including its
+    // subobject identity. An offset into raw storage cannot create that identity.
+    let member = |object: CExpression, name: &str, value_type| CExpression::MemberAddress {
+        object: Box::new(object),
+        selection: Arc::new(CAggregateMemberSelection {
+            layout: Arc::new(layout.clone()),
+            path: vec![name.to_string()].into(),
+            value_type,
+        }),
+    };
+    let field = member(destination.clone(), "value", CType::Int32);
     let factory = c_function(
         CType::Int32Pointer,
         "factory",
         vec![c_parameter("input", CType::Int32)],
         c_seq(
-            c_typed_store(destination.clone(), field.clone(), CType::Int32Pointer),
+            c_typed_store(
+                member(destination.clone(), "self", CType::Int32Pointer),
+                field.clone(),
+                CType::Int32Pointer,
+            ),
             c_seq(
                 if initialize_value {
                     c_typed_store(field, c_variable("input"), CType::Int32)
@@ -47,11 +62,11 @@ fn context(initialize_value: bool) -> CSourceContext<'static> {
         "probe",
         vec![c_parameter("input", CType::Int32)],
         c_seq(
-            c_allocate_aggregate_destination("node", layout),
+            c_allocate_aggregate_destination("node", layout.clone()),
             c_seq(
-                c_call_assign("node", "forward", vec![c_variable("input")]),
+                c_call_assign("node", callee, vec![c_variable("input")]),
                 c_return(c_load(c_typed_load(
-                    c_variable("node"),
+                    member(c_variable("node"), "self", CType::Int32Pointer),
                     CType::Int32Pointer,
                 ))),
             ),
@@ -95,6 +110,54 @@ int32 probe(int32 input) {
  ensures result == input;
 } by { execute(); simp(); }
 "#;
+
+#[test]
+fn changed_unselected_interface_does_not_reuse_stored_carrier_effects() {
+    let sources = context(true);
+    let (_, environment) =
+        verify_c0_sources_with_context(PROOF, &sources, None, None, None, None).unwrap();
+    let changed = PROOF.replace(
+        "struct Node forward(int32 input) {\n ensures result.self == &result.value;",
+        "struct Node forward(int32 input) {\n ensures result.self == result.self;",
+    );
+    assert_ne!(changed, PROOF);
+    let result = verify_c0_sources_with_context(
+        &changed,
+        &sources,
+        Some(VerificationTarget::Function("probe".into())),
+        Some(environment.without_verified_function_rule("probe")),
+        None,
+        None,
+    );
+    assert!(
+        result.is_err(),
+        "changed unselected contract cannot retain its old carrier certificate"
+    );
+}
+
+#[test]
+fn changed_unselected_body_invalidates_direct_and_transitive_carrier_effects() {
+    let sources = context(true);
+    let (_, environment) =
+        verify_c0_sources_with_context(PROOF, &sources, None, None, None, None).unwrap();
+    // The factory's body no longer completes its declared storage. Both its
+    // own retained summary and forward's dependent summary are stale.
+    for callee in ["factory", "forward"] {
+        let changed_sources = context_with_callee(false, callee);
+        let result = verify_c0_sources_with_context(
+            PROOF,
+            &changed_sources,
+            Some(VerificationTarget::Function("probe".into())),
+            Some(environment.clone().without_verified_function_rule("probe")),
+            None,
+            None,
+        );
+        assert!(
+            result.is_err(),
+            "stale {callee} carrier certificate cannot validate a dereference"
+        );
+    }
+}
 
 #[test]
 fn native_construction_return_contracts_forward_hidden_storage() {

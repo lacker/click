@@ -472,7 +472,8 @@ pub(in crate::kernel) fn collect_c_expression_bitvector_variables(
         | CExpression::Load(body) => {
             collect_c_expression_bitvector_variables(body, variables);
         }
-        CExpression::PointerOffsetBytes { pointer, .. } => {
+        CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::PointerAligned { pointer, .. } => {
             collect_c_expression_bitvector_variables(pointer, variables);
         }
         CExpression::TypedLoad { pointer, .. } => {
@@ -1313,7 +1314,8 @@ fn collect_c_expression_bound_identities(
             collect_c_expression_bound_identities(then_branch, variables, integer_seen);
             collect_c_expression_bound_identities(else_branch, variables, integer_seen);
         }
-        CExpression::PointerOffsetBytes { pointer, .. } => {
+        CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::PointerAligned { pointer, .. } => {
             collect_c_expression_bound_identities(pointer, variables, integer_seen);
         }
         crate::kernel::binary_c_expression!(left, right) => {
@@ -1813,6 +1815,16 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
     resource: &CResourceSpec,
     variables: &mut BTreeSet<Variable>,
 ) {
+    for place in resource.native_record_places() {
+        collect_c_expression_bitvector_variables(&place.carrier, variables);
+        if let Some(count) = &place.prefix_count {
+            collect_c_expression_bitvector_variables(count, variables);
+        }
+    }
+    for span in resource.native_span_requirements() {
+        collect_c_expression_bitvector_variables(&span.carrier, variables);
+        collect_c_expression_bitvector_variables(&span.count, variables);
+    }
     match resource.term() {
         CResourceTerm::Instance { resource, .. } => {
             collect_resource_term_bitvector_variables(resource, variables)
@@ -1965,6 +1977,10 @@ fn collect_execution_environment_variables_uncached(
     for rule in environment.verified_function_rules.values() {
         collect_c_function_bitvector_variables(&rule.function, variables);
         collect_c_function_bound_variables(&rule.function, variables);
+        if let Some(declaration) = &rule.source_declaration {
+            collect_c_function_bitvector_variables(declaration, variables);
+            collect_c_function_bound_variables(declaration, variables);
+        }
     }
     for rule in environment.verified_loop_rules.iter() {
         collect_c_state_bitvector_variables(&rule.symbolic_entry_state, variables);
@@ -4954,21 +4970,14 @@ pub(crate) fn count_cells_collected<R>(operation: impl FnOnce() -> R) -> (R, usi
 ///
 /// Each slot mentions its pointer's variables and its value's: the value is
 /// the slot's load variable, which also mentions the memory and pointer it
-/// names. Where [`run_shape_representatives`] finds every slot named at one
-/// memory, the slots of one spelling shape mention the same variables except
-/// their own load variables, and a representative slot per shape stands for
-/// the rest. The load variables of the other slots are left out: they are in
-/// the reserved load range no fresh-variable source allocates from, so no
-/// caller that avoids what a memory mentions can collide with one, and every
-/// term that mentions one of them also mentions the memory and pointer it
-/// names, so a caller relating two terms by shared variables still meets
-/// them through the variables every slot has. Where the slots have no such
-/// shared variable — a run over a block no variable names — or are named at
-/// different memories, every slot is visited, except in a symbolic
-/// static-storage run, whose slots are never visited to collect its
-/// variables ([`symbolic_storage_run_shared_variables`]).
-///
-/// [`run_shape_representatives`]: crate::kernel::reasoning::memory_resolution::run_shape_representatives
+/// names. A load run retains its source snapshot and base address, which
+/// contain every ordinary variable a slot's resolved value can depend on.
+/// Collect that dependency closure rather than minting a name for every
+/// slot. The slots' own load IDs are in the reserved range no fresh binder
+/// source allocates from, so excluding unobserved IDs cannot introduce a
+/// binder collision. An actual read still collects its addressed value and
+/// load origin normally. Including unrelated represented source variables
+/// is conservative for freshness and premise connection.
 fn collect_cell_run_bitvector_variables(
     run: &crate::kernel::primitives::CellRun,
     variables: &mut BTreeSet<Variable>,
@@ -5013,18 +5022,10 @@ fn run_representative_variables(
             collect_pointer_bitvector_variables(source_base, &mut shared);
             return Some(shared);
         }
-        crate::kernel::primitives::RunValueMode::Load => {}
+        crate::kernel::primitives::RunValueMode::Load => {
+            return Some(symbolic_storage_run_shared_variables(run));
+        }
     }
-    let representatives =
-        crate::kernel::reasoning::memory_resolution::run_shape_representatives(run)?;
-    let mut shared = BTreeSet::new();
-    for index in &representatives {
-        collect_run_slot_bitvector_variables(run, *index, &mut shared);
-    }
-    shared
-        .iter()
-        .any(|variable| !crate::kernel::is_load_variable(variable))
-        .then_some(shared)
 }
 
 /// The variables every slot of a symbolic static-storage run mentions
@@ -5112,6 +5113,7 @@ thread_local! {
 /// Forgets every snapshot's remembered variables; see
 /// [`SHARED_MEMORY_VARIABLES`].
 pub(in crate::kernel) fn clear_shared_memory_variables() {
+    super::substitution::clear_shared_memory_bound_variables();
     SHARED_MEMORY_VARIABLES.with(|table| table.borrow_mut().clear());
     HEAP_VARIABLES.with(|table| *table.borrow_mut() = None);
 }
@@ -5235,6 +5237,7 @@ fn memory_entry_count(memory: &CMemory) -> usize {
         + memory.heap.uninitialized_objects.len()
         + memory.heap.object_input_domains.len()
         + memory.heap.scalar_input_domains.len()
+        + memory.heap.native_record_inputs.len()
         + memory.heap.initialized.as_map().len()
         + memory.heap.pending_reallocations.len()
 }
@@ -5307,6 +5310,18 @@ fn object_address_variables(pointer: &Pointer) -> BTreeSet<Variable> {
     variables
 }
 
+fn native_record_input_variables(row: &CNativeRecordInput) -> BTreeSet<Variable> {
+    let mut variables = BTreeSet::new();
+    collect_c_value_bitvector_variables(&CValue::Pointer(row.origin.clone()), &mut variables);
+    if let CNativeInputKind::TypedPrefix { count, .. }
+    | CNativeInputKind::RecordPrefix { count, .. }
+    | CNativeInputKind::AllocatedScalar { bytes: count, .. } = &row.kind
+    {
+        collect_integer_variables(count.as_ref(), &mut variables);
+    }
+    variables
+}
+
 fn cell_variables(pointer: &Pointer, value: &CValue) -> BTreeSet<Variable> {
     #[cfg(test)]
     CELLS_COLLECTED.with(|visited| visited.set(visited.get() + 1));
@@ -5370,6 +5385,54 @@ fn run_slot_variables(run: &crate::kernel::primitives::CellRun, index: u32) -> B
     variables
 }
 
+#[cfg(test)]
+mod compressed_run_dependency_tests {
+    use super::*;
+
+    #[test]
+    fn load_run_dependency_closure_keeps_source_values_without_naming_slots() {
+        let mut samples = Vec::new();
+        for count in [8, 1024, 1_000_000] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let base_variable = Variable(9_381_010);
+            let source_variable = Variable(9_381_011);
+            let value_variable = Variable(9_381_012);
+            let source = CMemory::new().store(
+                Pointer::symbolic(source_variable),
+                CValue::UInt32(Bitvector32Term::Variable(value_variable)),
+            );
+            let run = crate::kernel::primitives::CellRun::new(
+                Pointer::symbolic(base_variable),
+                4,
+                CType::UInt32,
+                count,
+                crate::kernel::intern_c_memory(source),
+                crate::kernel::primitives::IndexIntervals::default(),
+            );
+            let ((variables, visits), work) =
+                crate::instrumentation::measure_deterministic_work(|| {
+                    count_cells_collected(|| {
+                        let mut variables = BTreeSet::new();
+                        collect_cell_run_bitvector_variables(&run, &mut variables);
+                        variables
+                    })
+                });
+            for variable in [base_variable, source_variable, value_variable] {
+                assert!(variables.contains(&variable));
+            }
+            assert!(
+                visits <= 1,
+                "collection must visit only the represented source cell: {visits}"
+            );
+            samples.push(work);
+        }
+        assert!(
+            samples.iter().all(|work| *work == samples[0]),
+            "{samples:?}"
+        );
+    }
+}
+
 /// A run held on both sides of a diff with other holes, counted per slot on
 /// both: only the slots whose liveness differs change the counts. `false`
 /// when either side is counted as one entry, and the caller counts the two
@@ -5397,8 +5460,75 @@ fn adjust_run_counts_by_changed_slots(
     true
 }
 
-/// A snapshot's counts from all of its entries; one unit per entry unless
-/// `whole` is [`WholeCount::Uncharged`].
+/// Apply each changed heap entry exactly once, both to a retained heap cache
+/// and to a memory derivation's full counts. Persistent diffs skip shared maps.
+fn adjust_heap_variable_counts(
+    counts: &mut VariableCounts,
+    base: &crate::kernel::primitives::CHeapMemory,
+    heap: &crate::kernel::primitives::CHeapMemory,
+) {
+    if std::ptr::eq(base, heap) {
+        return;
+    }
+    for (before, after) in [
+        (&base.uninitialized_objects, &heap.uninitialized_objects),
+        (base.initialized.as_map(), heap.initialized.as_map()),
+    ] {
+        for change in before.diff(after) {
+            crate::instrumentation::record_deterministic_work(1);
+            let pointer = change.key();
+            if before.contains_key(pointer) {
+                add_counts(counts, object_address_variables(pointer), -1);
+            }
+            if after.contains_key(pointer) {
+                add_counts(counts, object_address_variables(pointer), 1);
+            }
+        }
+    }
+    for change in base.object_input_domains.diff(&heap.object_input_domains) {
+        crate::instrumentation::record_deterministic_work(1);
+        let pointer = change.key();
+        if base.object_input_domains.contains_key(pointer) {
+            add_counts(counts, object_address_variables(pointer), -1);
+        }
+        if heap.object_input_domains.contains_key(pointer) {
+            add_counts(counts, object_address_variables(pointer), 1);
+        }
+    }
+    for change in base.scalar_input_domains.diff(&heap.scalar_input_domains) {
+        crate::instrumentation::record_deterministic_work(1);
+        let pointer = change.key();
+        if base.scalar_input_domains.contains_key(pointer) {
+            add_counts(counts, object_address_variables(pointer), -1);
+        }
+        if heap.scalar_input_domains.contains_key(pointer) {
+            add_counts(counts, object_address_variables(pointer), 1);
+        }
+    }
+    for change in base.native_record_inputs.diff(&heap.native_record_inputs) {
+        crate::instrumentation::record_deterministic_work(1);
+        let identity = change.key();
+        if let Some(row) = base.native_record_inputs.get(identity) {
+            add_counts(counts, native_record_input_variables(row), -1);
+        }
+        if let Some(row) = heap.native_record_inputs.get(identity) {
+            add_counts(counts, native_record_input_variables(row), 1);
+        }
+    }
+    for change in base.pending_reallocations.diff(&heap.pending_reallocations) {
+        crate::instrumentation::record_deterministic_work(1);
+        let pointer = change.key();
+        if let Some(pending) = base.pending_reallocations.get(pointer) {
+            add_counts(counts, pending_reallocation_variables(pointer, pending), -1);
+        }
+        if let Some(pending) = heap.pending_reallocations.get(pointer) {
+            add_counts(counts, pending_reallocation_variables(pointer, pending), 1);
+        }
+    }
+}
+
+/// A heap's counts from all semantic variable-bearing entries, retained by
+/// Arc identity independently of a read projection's selected cells.
 fn heap_variable_counts(
     heap: &std::sync::Arc<crate::kernel::primitives::CHeapMemory>,
     whole: WholeCount,
@@ -5408,26 +5538,17 @@ fn heap_variable_counts(
         if std::sync::Arc::ptr_eq(&base, heap) {
             return counts;
         }
-        for (before, after) in [
-            (&base.uninitialized_objects, &heap.uninitialized_objects),
-            (base.initialized.as_map(), heap.initialized.as_map()),
-        ] {
-            for change in before.diff(after) {
-                crate::instrumentation::record_deterministic_work(1);
-                let pointer = change.key();
-                if before.contains_key(pointer) {
-                    add_counts(&mut counts, object_address_variables(pointer), -1);
-                }
-                if after.contains_key(pointer) {
-                    add_counts(&mut counts, object_address_variables(pointer), 1);
-                }
-            }
-        }
+        adjust_heap_variable_counts(&mut counts, &base, heap);
         counts
     } else {
         if whole == WholeCount::Charged {
             crate::instrumentation::record_deterministic_work(
-                heap.uninitialized_objects.len() + heap.initialized.as_map().len(),
+                heap.uninitialized_objects.len()
+                    + heap.initialized.as_map().len()
+                    + heap.object_input_domains.len()
+                    + heap.scalar_input_domains.len()
+                    + heap.native_record_inputs.len()
+                    + heap.pending_reallocations.len(),
             );
         }
         let mut counts = VariableCounts::default();
@@ -5435,8 +5556,20 @@ fn heap_variable_counts(
             .uninitialized_objects
             .keys()
             .chain(heap.initialized.as_map().keys())
+            .chain(heap.object_input_domains.keys())
+            .chain(heap.scalar_input_domains.keys())
         {
             add_counts(&mut counts, object_address_variables(pointer), 1);
+        }
+        for row in heap.native_record_inputs.values() {
+            add_counts(&mut counts, native_record_input_variables(row), 1);
+        }
+        for (base, pending) in heap.pending_reallocations.iter() {
+            add_counts(
+                &mut counts,
+                pending_reallocation_variables(base, pending),
+                1,
+            );
         }
         counts
     };
@@ -5456,11 +5589,6 @@ fn counts_whole(memory: &CMemory, whole: WholeCount) -> VariableCounts {
     for (block, contents) in memory.blocks.iter() {
         add_counts(&mut counts, block_variables(block, contents), 1);
     }
-    for pointer in memory.heap.object_input_domains.keys()
-        .chain(memory.heap.scalar_input_domains.keys())
-    {
-        add_counts(&mut counts, object_address_variables(pointer), 1);
-    }
     for (pointer, value) in memory.cells.concrete().iter() {
         add_counts(&mut counts, cell_variables(pointer, value), 1);
     }
@@ -5469,13 +5597,6 @@ fn counts_whole(memory: &CMemory, whole: WholeCount) -> VariableCounts {
     }
     for ((pointer, _), value) in memory.union_cells.iter() {
         add_counts(&mut counts, cell_variables(pointer, value), 1);
-    }
-    for (base, pending) in memory.heap.pending_reallocations.iter() {
-        add_counts(
-            &mut counts,
-            pending_reallocation_variables(base, pending),
-            1,
-        );
     }
     counts
 }
@@ -5497,52 +5618,7 @@ fn counts_from_base(
             add_counts(&mut counts, block_variables(block, contents), 1);
         }
     }
-    for (before, after) in [
-        (
-            &base.heap.uninitialized_objects,
-            &memory.heap.uninitialized_objects,
-        ),
-        (
-            base.heap.initialized.as_map(),
-            memory.heap.initialized.as_map(),
-        ),
-    ] {
-        for change in before.diff(after) {
-            let pointer = change.key();
-            if before.contains_key(pointer) {
-                add_counts(&mut counts, object_address_variables(pointer), -1);
-            }
-            if after.contains_key(pointer) {
-                add_counts(&mut counts, object_address_variables(pointer), 1);
-            }
-        }
-    }
-    for change in base
-        .heap
-        .object_input_domains
-        .diff(&memory.heap.object_input_domains)
-    {
-        let pointer = change.key();
-        if base.heap.object_input_domains.contains_key(pointer) {
-            add_counts(&mut counts, object_address_variables(pointer), -1);
-        }
-        if memory.heap.object_input_domains.contains_key(pointer) {
-            add_counts(&mut counts, object_address_variables(pointer), 1);
-        }
-    }
-    for change in base
-        .heap
-        .scalar_input_domains
-        .diff(&memory.heap.scalar_input_domains)
-    {
-        let pointer = change.key();
-        if base.heap.scalar_input_domains.contains_key(pointer) {
-            add_counts(&mut counts, object_address_variables(pointer), -1);
-        }
-        if memory.heap.scalar_input_domains.contains_key(pointer) {
-            add_counts(&mut counts, object_address_variables(pointer), 1);
-        }
-    }
+    adjust_heap_variable_counts(&mut counts, &base.heap, &memory.heap);
     for change in base.cells.concrete().diff(memory.cells.concrete()) {
         let pointer = change.key();
         if let Some(value) = base.cells.concrete().get(pointer) {
@@ -5572,27 +5648,6 @@ fn counts_from_base(
         }
         if let Some(value) = memory.union_cells.get(key) {
             add_counts(&mut counts, cell_variables(&key.0, value), 1);
-        }
-    }
-    for change in base
-        .heap
-        .pending_reallocations
-        .diff(&memory.heap.pending_reallocations)
-    {
-        let pointer = change.key();
-        if let Some(pending) = base.heap.pending_reallocations.get(pointer) {
-            add_counts(
-                &mut counts,
-                pending_reallocation_variables(pointer, pending),
-                -1,
-            );
-        }
-        if let Some(pending) = memory.heap.pending_reallocations.get(pointer) {
-            add_counts(
-                &mut counts,
-                pending_reallocation_variables(pointer, pending),
-                1,
-            );
         }
     }
     counts
@@ -5696,6 +5751,15 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables_whole(
     {
         collect_pointer_bitvector_variables(pointer, variables);
     }
+    for row in memory.heap.native_record_inputs.values() {
+        collect_c_value_bitvector_variables(&CValue::Pointer(row.origin.clone()), variables);
+        if let CNativeInputKind::TypedPrefix { count, .. }
+        | CNativeInputKind::RecordPrefix { count, .. }
+        | CNativeInputKind::AllocatedScalar { bytes: count, .. } = &row.kind
+        {
+            collect_integer_variables(count.as_ref(), variables);
+        }
+    }
     for (pointer, value) in memory.cells.concrete().iter() {
         #[cfg(test)]
         CELLS_COLLECTED.with(|visited| visited.set(visited.get() + 1));
@@ -5739,7 +5803,7 @@ pub(crate) fn collect_c_value_bitvector_variables(
                 // Match scalar MemoryLoad collection: its retained snapshot
                 // participates in whole-memory variable/connection queries,
                 // while the lexical collectors above inspect only addresses.
-                if let PointerDesignation::Loaded(identity) = designation {
+                if let Some(identity) = designation.loaded_identity() {
                     collect_shared_memory_bitvector_variables(identity.memory(), variables);
                     collect_stored_load_connection_variables(
                         identity.memory(),
@@ -5827,6 +5891,177 @@ mod integer_expression_tests {
 #[cfg(test)]
 mod heap_variable_projection_tests {
     use super::*;
+
+    #[test]
+    fn heap_native_metadata_counts_share_projections_and_follow_exact_deltas() {
+        let mut edits = Vec::new();
+        for size in [16u64, 64, 256, 1024] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let pointer = |id| Pointer::symbolic(Variable(id));
+            let layout = std::sync::Arc::new(CAggregateLayout::new(
+                4,
+                4,
+                vec![CAggregateField::new("value", 0, CType::Int32)],
+            ));
+            let row = |id| CNativeRecordInput {
+                origin: CPointerValue::new(pointer(10_000 + id), CType::Int32Pointer)
+                    .with_designation(PointerDesignation::Unresolved(Variable(id))),
+                kind: match id % 3 {
+                    0 => CNativeInputKind::Record {
+                        layout: layout.clone(),
+                    },
+                    1 => CNativeInputKind::RecordPrefix {
+                        layout: layout.clone(),
+                        count: IntegerTerm::Variable(Variable(20_000 + id)).into(),
+                    },
+                    _ => CNativeInputKind::TypedPrefix {
+                        element_type: CType::Int32,
+                        count: IntegerTerm::Variable(Variable(20_000 + id)).into(),
+                        policy: CTypedAccessPolicy::NativeObjectOnly,
+                    },
+                },
+            };
+            let mut heap = crate::kernel::primitives::CHeapMemory::default();
+            for id in 1..=size {
+                heap.object_input_domains
+                    .insert(pointer(30_000 + id), layout.clone());
+                heap.scalar_input_domains
+                    .insert(pointer(40_000 + id), CType::Int32);
+                heap.native_record_inputs
+                    .insert(CNativeInputIdentity::Unresolved(Variable(id)), row(id));
+            }
+            let cell = pointer(500_001);
+            let read_memory = CMemory::new().with_block(cell.block.clone(), 8).store(
+                cell.clone(),
+                CValue::typed_pointer(pointer(500_002), CType::Int32Pointer),
+            );
+            let snapshot = intern_c_memory(read_memory);
+            let read = PointerLoadIdentity::new(snapshot.clone(), cell.clone());
+            heap.native_record_inputs.insert(
+                CNativeInputIdentity::Loaded(read.clone()),
+                CNativeRecordInput {
+                    origin: CPointerValue::new(
+                        Pointer::loaded_value(&snapshot, &cell),
+                        CType::Int32Pointer,
+                    )
+                    .with_designation(PointerDesignation::Loaded(read)),
+                    kind: CNativeInputKind::Record {
+                        layout: layout.clone(),
+                    },
+                },
+            );
+            heap.pending_reallocations.insert(
+                pointer(600_000),
+                CPendingReallocation {
+                    old_pointer: CPointerValue::new(pointer(70_001), CType::Int32Pointer)
+                        .with_designation(PointerDesignation::Object {
+                            root: pointer(80_001),
+                            path: vec![PointerDomainSelection::Element(
+                                IntegerTerm::Variable(Variable(90_001)).into(),
+                            )]
+                            .into(),
+                            base: pointer(100_001),
+                            element_type: CType::Int32,
+                            stride: 4,
+                            count: IntegerTerm::Variable(Variable(20_002)).into(),
+                        }),
+                    old_bytes: Bitvector32Term::Variable(Variable(110_000)),
+                    zeroed_prefix: Some(Bitvector32Term::Variable(Variable(120_000))),
+                    copied_cells: vec![(
+                        PointerOffsetTerm::scale_int32(
+                            Bitvector32Term::Variable(Variable(130_000)),
+                            4,
+                        ),
+                        CValue::typed_pointer(pointer(140_000), CType::Int32Pointer),
+                    )],
+                    initialized_prefix: vec![(0, 4)],
+                },
+            );
+            let heap = std::sync::Arc::new(heap);
+            let original = heap_variable_counts(&heap, WholeCount::Charged);
+            for id in [
+                20_002, 70_001, 80_001, 90_001, 100_001, 110_000, 120_000, 130_000, 140_000,
+                500_001, 500_002, 600_000,
+            ] {
+                assert!(
+                    original.contains_key(&Variable(id)),
+                    "complete carrier variable {id}"
+                );
+            }
+            let selected = CMemory {
+                heap: heap.clone(),
+                ..CMemory::new().with_block("selected:native-read", 4)
+            };
+            let (projected, work) = crate::instrumentation::measure_deterministic_work(|| {
+                counts_whole(&selected, WholeCount::Charged)
+            });
+            assert_eq!(projected, original);
+            assert_eq!(work, 1, "projection scanned {size} native rows");
+            let mut changed = (*heap).clone();
+            changed.object_input_domains.remove(&pointer(30_001));
+            changed
+                .scalar_input_domains
+                .insert(pointer(40_001), CType::UInt32);
+            changed
+                .native_record_inputs
+                .remove(&CNativeInputIdentity::Unresolved(Variable(1)));
+            let mut replacement = row(2);
+            replacement.kind = CNativeInputKind::TypedPrefix {
+                element_type: CType::Int32,
+                count: IntegerTerm::Variable(Variable(900_000)).into(),
+                policy: CTypedAccessPolicy::NativeObjectOnly,
+            };
+            changed
+                .native_record_inputs
+                .insert(CNativeInputIdentity::Unresolved(Variable(2)), replacement);
+            let changed = std::sync::Arc::new(changed);
+            let (counts, work) = crate::instrumentation::measure_deterministic_work(|| {
+                heap_variable_counts(&changed, WholeCount::Charged)
+            });
+            edits.push(work);
+            assert!(!counts.contains_key(&Variable(1)));
+            assert!(!counts.contains_key(&Variable(10_001)));
+            assert!(!counts.contains_key(&Variable(20_001)));
+            assert!(!counts.contains_key(&Variable(30_001)));
+            assert!(counts.contains_key(&Variable(900_000)));
+            assert!(
+                counts.contains_key(&Variable(20_002)),
+                "pending full carrier still mentions the old count"
+            );
+            let changed_memory = CMemory {
+                heap: changed.clone(),
+                ..selected.clone()
+            };
+            assert_eq!(
+                counts_from_base(original.clone(), &selected, &changed_memory),
+                counts
+            );
+            let mut reference = BTreeSet::new();
+            collect_memory_bitvector_variables_whole(&changed_memory, &mut reference);
+            assert_eq!(reference, counts.keys().copied().collect());
+            let mut retired = (*changed).clone();
+            retired.pending_reallocations.clear();
+            let retired = std::sync::Arc::new(retired);
+            let retired_counts = heap_variable_counts(&retired, WholeCount::Charged);
+            assert!(
+                !retired_counts.contains_key(&Variable(20_002)),
+                "all mentions must retire exactly once"
+            );
+            assert_eq!(heap_variable_counts(&heap, WholeCount::Charged), original);
+            assert_eq!(heap_variable_counts(&changed, WholeCount::Charged), counts);
+            assert!(
+                heap_variable_counts(
+                    &std::sync::Arc::new(crate::kernel::primitives::CHeapMemory::default()),
+                    WholeCount::Charged
+                )
+                .is_empty()
+            );
+        }
+        assert!(
+            edits.iter().all(|work| *work == edits[0]),
+            "selected heap edits scanned ambient metadata: {edits:?}"
+        );
+    }
 
     #[test]
     fn heap_variable_counts_follow_local_edits_and_keep_siblings_isolated() {

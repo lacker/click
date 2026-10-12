@@ -42,6 +42,7 @@ mod surface_lowering;
 mod surface_synthesis;
 mod theorem_application;
 mod timing;
+mod uint32_representation;
 mod wide_arithmetic;
 use crate::kernel::fresh_int32_variable_for_propositions;
 use crate::kernel::proof::{
@@ -1518,7 +1519,16 @@ pub(super) fn initial_claim_context_with_caller_owner(
         }
         (
             crate::kernel::initialize_c_function_globals(
-                &startup.as_ref().clone().with_population_creation_tracking(),
+                &startup
+                    .as_ref()
+                    .clone()
+                    .with_population_creation_tracking()
+                    .with_typed_access_policy(
+                        parsed_function
+                            .to_kernel_function()
+                            .contract_interface()
+                            .typed_access_policy(),
+                    ),
                 &parsed_function.to_kernel_function(),
             ),
             vec![],
@@ -1537,10 +1547,18 @@ pub(super) fn initial_claim_context_with_caller_owner(
                 spec_definitions,
                 resource_environment,
             )?;
+        let (resource_requires, resource_ensures) =
+            crate::surface::verification::function_resource_summary(
+                function_block,
+                parsed_function,
+                spec_definitions,
+                resource_environment,
+            )?;
         let entry_function = parsed_function
             .to_kernel_function()
             .with_contract(requires, ensures, mutable, claims, opaque)
-            .with_exceptional_ensures(exceptional_ensures);
+            .with_exceptional_ensures(exceptional_ensures)
+            .with_resource_summary(resource_requires, resource_ensures);
         initial_call_state(
             function_block.requires(),
             parsed_function.parameters(),

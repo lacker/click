@@ -6417,6 +6417,64 @@ mod aggregate_value_tests {
     }
 
     #[test]
+    fn logical_pointer_cell_read_retains_native_full_carrier() {
+        use crate::kernel::PointerDesignation;
+        let root = Pointer {
+            block: "local:logical-pointer-carrier".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let cell = root.clone().offset_by_bytes(8);
+        let memory = CMemory::new()
+            .with_block(root.block.clone(), 16)
+            .with_initialized_object(&cell, 8);
+        let state = CState::new().with_memory(memory);
+        let root_value = CValue::Pointer(
+            CPointerValue::new(root, CType::UInt8Pointer)
+                .with_designation(PointerDesignation::Unresolved(Variable(81_607))),
+        );
+        let address = SpecExpression::PointerOffset {
+            pointer: Box::new(SpecExpression::Value(root_value.clone())),
+            elements: Box::new(SpecExpression::Value(int32(8))),
+            byte_width: 1,
+        };
+        let logical = SpecExpression::MemoryLoad {
+            memory: SpecMemory::Current,
+            pointer: Box::new(address.clone()),
+            value_type: CType::Int32Pointer,
+        };
+        let native = SpecExpression::CExpression(CExpression::TypedLoad {
+            pointer: Box::new(CExpression::PointerOffsetBytes {
+                pointer: Box::new(CExpression::Value(root_value)),
+                bytes: 8,
+            }),
+            value_type: CType::Int32Pointer,
+            volatile: false,
+            pointee_constant: false,
+            source: Default::default(),
+        });
+        let evaluate = |expression: &SpecExpression| {
+            evaluate_spec_expression_paths_with_loop_entry_in(
+                &state,
+                expression,
+                None,
+                &PureFactContext::new(),
+                &mut SpecEvaluation::logical(&mut ExecutionBudget::beside_live_state()),
+            )
+            .unwrap()
+        };
+        let address_paths = evaluate(&address);
+        assert!(matches!(&address_paths[0].value,
+            CValue::Pointer(pointer) if matches!(pointer.designation(), Some(PointerDesignation::Unresolved(_)))));
+        let logical_paths = evaluate(&logical);
+        let native_paths = evaluate(&native);
+        assert_eq!(logical_paths.len(), 1);
+        assert_eq!(native_paths.len(), 1);
+        assert_eq!(logical_paths[0].value, native_paths[0].value);
+        assert!(matches!(&logical_paths[0].value,
+            CValue::Pointer(pointer) if matches!(pointer.designation(), Some(PointerDesignation::Loaded(_)))));
+    }
+
+    #[test]
     fn logical_pointer_field_uses_current_pointee_memory() {
         use crate::kernel::{CAggregateField, CAggregateLayout};
         let slot = Pointer {
@@ -7126,8 +7184,9 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one_in(
         }
         SpecExpression::CExpression(expression) => {
             let _specification = crate::kernel::eval::SpecificationReadScope::enter();
+            let observations = assumptions.clone().observe_pointer_addresses();
             spec_value_paths_in(
-                evaluate_c_expression_paths(state, expression, assumptions, budget)?,
+                evaluate_c_expression_paths(state, expression, &observations, budget)?,
                 budget,
             )
         }
@@ -7422,7 +7481,8 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one_in(
                 let CValue::Pointer(pointer) = pointer_path.value else {
                     continue;
                 };
-                let pointer = pointer.into_pointer();
+                let pointer_carrier = pointer;
+                let pointer = pointer_carrier.pointer().clone();
                 let memory = match memory {
                     SpecMemory::Current => state.memory(),
                     SpecMemory::FunctionEntry => match loop_entry_state {
@@ -7449,17 +7509,24 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one_in(
                         value_type: *value_type,
                     }));
                 }
-                paths.extend(spec_value_paths_in(
-                    crate::kernel::eval::evaluate_logical_memory_load_paths(
-                        memory,
-                        pointer,
-                        *value_type,
-                        pointer_path.facts,
-                        obligations,
-                        assumptions,
-                    ),
-                    budget,
-                ));
+                let mut reads = crate::kernel::eval::evaluate_logical_memory_load_paths(
+                    memory,
+                    pointer,
+                    *value_type,
+                    pointer_path.facts,
+                    obligations,
+                    assumptions,
+                );
+                for read in &mut reads {
+                    if let CExpressionOutcome::Value(CValue::Pointer(value)) = &mut read.outcome {
+                        crate::kernel::eval::retain_full_pointer_read_carrier(
+                            memory,
+                            &pointer_carrier,
+                            value,
+                        );
+                    }
+                }
+                paths.extend(spec_value_paths_in(reads, budget));
             }
             paths
         }
@@ -7722,8 +7789,7 @@ fn evaluate_spec_pointer_offset_paths_in(
         let CValue::Pointer(pointer) = pointer_path.value else {
             continue;
         };
-        let pointer_type = pointer.c_type();
-        let pointer = pointer.into_pointer();
+        let address = pointer.pointer().clone();
         let element_assumptions = assumptions_with_path_context(
             assumptions,
             &pointer_path.facts,
@@ -7757,10 +7823,9 @@ fn evaluate_spec_pointer_offset_paths_in(
                 canonicalized_offset_index_term(elements, &mut facts)
             };
             paths.push(SpecExpressionPath {
-                value: CValue::typed_pointer(
-                    pointer.offset_by_typed_elements(elements, byte_width, unsigned, wide),
-                    pointer_type,
-                ),
+                value: CValue::Pointer(pointer.clone().with_pointer(
+                    address.offset_by_typed_elements(elements, byte_width, unsigned, wide),
+                )),
                 facts,
                 obligations,
             });
@@ -8407,6 +8472,35 @@ pub(super) fn c_value_comparison_proposition(
     operator: CComparisonOperator,
     right: &CValue,
 ) -> Option<Proposition> {
+    // Boolean address observations retain the canonical condition so native
+    // alignment witnesses see the same proposition as the source predicate.
+    if matches!(
+        operator,
+        CComparisonOperator::Equal | CComparisonOperator::NotEqual
+    ) {
+        let observed = match (left, right) {
+            (CValue::Bool(observed), CValue::Bool(expected))
+            | (CValue::Bool(expected), CValue::Bool(observed))
+                if expected.as_const() == Some(1) =>
+            {
+                Some(observed)
+            }
+            _ => None,
+        };
+        if let Some(Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        }) = observed
+            && then_term.as_const() == Some(1)
+            && else_term.as_const() == Some(0)
+        {
+            return Some(Proposition::ConditionIs(
+                (**condition).clone(),
+                operator == CComparisonOperator::Equal,
+            ));
+        }
+    }
     if matches!(left, CValue::Int128(_) | CValue::UInt128(_))
         || matches!(right, CValue::Int128(_) | CValue::UInt128(_))
     {

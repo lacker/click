@@ -146,6 +146,7 @@ fn expression_reads(expression: &CExpression) -> bool {
             | CExpression::Not(expression)
             | CExpression::BitwiseNot(expression) => pending.push((expression, true)),
             CExpression::PointerOffsetBytes { pointer, .. }
+            | CExpression::PointerAligned { pointer, .. }
             | CExpression::MemberAddress {
                 object: pointer, ..
             } => pending.push((pointer, true)),
@@ -966,7 +967,8 @@ pub(in crate::surface) fn collect_c_expression_referenced_names(
         CExpression::MemberAddress {
             object: pointer, ..
         }
-        | CExpression::PointerOffsetBytes { pointer, .. } => {
+        | CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::PointerAligned { pointer, .. } => {
             collect_c_expression_referenced_names(pointer, names);
         }
         CExpression::TypedLoad { pointer, .. } => {

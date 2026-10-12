@@ -1,3 +1,7 @@
+// Audit workers send the library's recursive proof values across a channel.
+// Match the library's trait-solver depth when checking their Send/Sync bounds.
+#![recursion_limit = "256"]
+
 use std::env;
 
 #[path = "click/git.rs"]

@@ -933,6 +933,10 @@ fn check_executed_refinement_shape(return_type: CType, alter_result: bool) {
                 "Target",
                 conclusion.clone(),
                 &CVerifiedFunctionRule {
+                    source_declaration: None,
+                    pointer_result_effects: Default::default(),
+                    pointer_store_effects: Default::default(),
+                    native_output_places_certified: false,
                     function,
                     loop_semantics: CLoopSemantics::Verify,
                     checked_callees: None,

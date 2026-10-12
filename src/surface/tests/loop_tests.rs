@@ -595,7 +595,7 @@ fn grouped_arithmetic_using_expands_to_checked_certificate() {
 }
 
 #[test]
-fn symbolic_alignment_expands_to_special_certificate_and_rechecks_without_planning() {
+fn symbolic_alignment_refuses_steps_beyond_the_single_viewed_record() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/aligned_symbolic_displacement.md");
     let source = std::fs::read_to_string(&path).unwrap();
@@ -605,23 +605,22 @@ fn symbolic_alignment_expands_to_special_certificate_and_rechecks_without_planni
         .iter()
         .map(|(name, source)| (name.as_str(), source.as_str()))
         .collect::<Vec<_>>();
-    let click = fixture.click_source.unwrap().replace(
-        "    simp();\n}",
-        "    have aligned(p + i, 8) by { simp(); }\n    simp();\n}",
-    );
-    verify_c0_sources(&click, &sources).unwrap();
-    let expanded =
-        expand_c0_claim_source(&click, &sources, "element_is_aligned", CProofClaim::Grouped)
-            .unwrap();
+    let click = fixture.click_source.unwrap();
+    // A single record supports only its own position and onepast formation;
+    // alignment alone cannot justify the contract's indices two and three.
+    let error = verify_c0_sources(&click, &sources).unwrap_err();
     assert!(
-        expanded.contains("arithmetic_certificate rules"),
-        "{expanded}"
+        error
+            .message()
+            .contains("pointer arithmetic left the pointed-to object"),
+        "{}",
+        error.message()
     );
-    let (result, planning) = crate::surface::proof::count_planning_statement_transitions(|| {
-        verify_c0_sources(&expanded, &sources)
-    });
-    result.unwrap();
-    assert_eq!(planning, 0, "explicit Special recheck must not plan");
+    assert!(
+        error
+            .message()
+            .contains("return ((unsigned long)(p + i) & 7) == 0;")
+    );
 }
 
 #[test]

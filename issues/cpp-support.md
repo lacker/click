@@ -18,7 +18,38 @@ profile, close demonstrated lifecycle/call-path inconsistencies, and validate
 the acceptance matrix before resuming the unchanged decoder proof. This is
 remaining work, not a claim that the consolidated model is implemented.
 
-The returned composed-observer regression is repaired: proof-entry input names
+Two compatibility boundaries have been approved. C allocated storage needs
+an explicit allocation/effective-access policy, distinct from C++ construction
+and object lifetime; allocation, initialized bytes and ownership must not
+silently create a C++ object witness. Also, address-only equality in a contract
+does not guarantee that a loaded or returned pointer can be dereferenced. The
+affected branch and abstract-callback proofs need an explicit typed-place
+guarantee (or a separately designed full-pointer-value contract), preserving
+their original C and retaining the insufficient contracts as rejection cases.
+Implement explicit C allocation/access rules and typed-place guarantees for
+the affected contracts. Do not restore the old numeric-alias fallback to make
+the compatibility tests pass. Approval of these boundaries does not establish
+that their implementation or the acceptance matrix is complete.
+
+The current integration checkpoint is not green. The latest full library
+checkpoint ran 5,694 tests: 5,665 passed and 29 failed, with no timeouts (139
+nightly tests skipped). That run does not include all integration fixture suites
+and is not a full gate verdict. It repaired the million-element Rust array
+regression within the unchanged work/time limits: free- and bound-variable
+collection now retain compact run dependencies separately. Focused checks also
+pass the original retained constructor proof, final-release helper, hidden-record
+expansion, mixed-snapshot call proof and adjacent-range C allocation proof.
+
+Remaining reproduced integration failures include complete-width pointer naming,
+resource close/contract certification, native Rust slice extent transport,
+branch pointer transport, and loaded-pointer contracts that still rely only on
+address equality. The confirmed C multidimensional-row defect also needs declared
+row identity preserved before scalar decay. Temporary test-only diagnostics are
+not part of the release implementation and must be removed. Validate original
+source proofs after repairs, not just reduced unit tests, and complete the full
+acceptance matrix before publishing or merging this checkpoint.
+
+Before activation of checked pointer designation, the returned composed-observer regression was repaired: proof-entry input names
 now use already checked explicit separation facts, without initializing raw
 outputs. Ordinary, expanded and retained verification preserve the original
 value and frame claims. The PR 646 constructor-input repair now restores the
@@ -27,8 +58,10 @@ object-input requirements authenticate the destination and scalar referent;
 indexed ownership composition supplies complete field separation even when
 the receiver and input use different pointer blocks. These facts justify the
 bounded padding exclusion while retaining the full unwritten output footprint.
-All four original cleanup Markdown fixtures and `basic-cpp` also pass. The repair
-preserves their source, contracts and value/frame claims.
+All four original cleanup Markdown fixtures and `basic-cpp` passed that checkpoint.
+They must pass again with designation enabled before this stabilization work is
+complete; scalar-range input and pointer-valued output transport are currently
+under integration. Preserve their source, contracts and value/frame claims.
 
 The [constructor-padding implementation sequence](../design/cpp-object-model.md#constructor-padding-implementation-sequence)
 requires declared storage layouts, preserved subobject boundaries and checked
@@ -69,19 +102,31 @@ cannot substitute a different designation. Native scalar declaration and record/
 terms, and exact complete pointer stores and reloads preserve them. Loaded-value
 origins retain their defining snapshot and cell through paired substitution and
 checked memory transport. Activation remains bounded: unknown legacy loads do not
-acquire object evidence. Modular full-pointer output effects, array/global
-producers, and general pointer arithmetic/access enforcement remain pending.
-The sibling-pointer defect remains open. The design also
+acquire object evidence. Retained domains now reach executable arithmetic and access checks,
+array/global declarations, scalar-array member decay and reference binding.
+Verified bodies can certify input-preserving or declared-child pointer results
+and exact final full-width pointer-member equations. Scalar/record prefix
+requirements and their actual-call checks are implemented; integrated source
+validation remains in progress. General pointer outputs and broader result
+origins remain outside those bounded effects. Independent entry reconstruction
+now admits exact declared opaque composite heads without importing caller cells
+or unfolding child evidence; its new head/profile regressions still require
+integrated validation. Numeric pointer equality does not certify full-value
+transport, native validity, ownership or initialization. Uncertified checked
+crossings remain unresolved.
+The sibling-pointer defect remains open until the full ordinary/expanded/retained
+cross-boundary matrix is checked. The design also
 records the concrete
 [byte-access source-profile choice](../design/cpp-object-model.md#byte-access-requires-an-explicit-source-profile-choice)
 that must be settled before expanding the cast-and-index byte writer.
 
-The other known semantic gap is the relation between modular byte-value
-postconditions and the caller's typed word. Preserve the existing typed-cell
-machinery; implement a shared representation law rather than a helper-specific
-decoder rule. The design also requires an admission audit for object/subobject
-access and the selected C++ byte-traversal semantics. Any actual profile choice
-found by that audit should be raised before widening admission.
+The bounded relation between modular byte-value postconditions and the caller's
+automatic declared uint32 is delivered by the shared representation law, with
+ordinary, expanded and retained verification of the unchanged exact-value
+fixture. It preserves the typed-cell machinery and is not a decoder-specific
+rule. Other representation profiles, the admission audit for object/subobject
+access, and the selected C++ byte-traversal integration remain separate
+acceptance obligations. Raise any actual profile choice before widening admission.
 
 The original design cleanup and selected fee arithmetic proofs are delivered.
 `GetFeePerK` is also verified on the unchanged pinned header: it delegates to
@@ -570,15 +615,21 @@ join; reset touches only overlapping runs. C and pinned `std::byte` caller check
 cover ordinary, expanded and retained verification. Resource semantics version
 65 invalidates older retained proof artifacts.
 
-The next value prerequisite is the relation between specification byte reads and
-the declared uint32 representation after a modular call. The initialized caller
-can read its integer, and byte postconditions prove byte results, but those facts
-do not yet reconstruct the integer's value. Keep the exact little-endian word
-claim in `mdtests/modular_byte_output_word_value_requires_representation.md` and
-implement the shared observation law specified by the
+The bounded shared value prerequisite is now implemented for automatic declared
+four-byte uint32 scalars with a pinned little-endian target profile. Execution
+and logical byte reads use the same selected-snapshot projections. Four exact
+initialized byte-value premises reconstruct the word through one checked packing
+rule; casts, allocation size and arbitrary observations cannot issue its type or
+target evidence. The unchanged exact word-value claim in
+`mdtests/modular_byte_output_word_value_requires_representation.md` is positive.
+Ordinary, expanded and retained verification and missing/mutated premise and
+result checks pass, alongside width/profile/initialization/snapshot boundaries
+and unrelated-fact/cell scaling. The explicit application uses existing proof
+syntax and retains all four snapshot-relative byte premises. See the
 [object-model design](../design/cpp-object-model.md#one-representation-consistent-observations).
-Turn that claim into a positive regression when the law is implemented; do not
-substitute a safety claim for the decoder's value contract.
+This completes the shared C bridge prerequisite; remaining C++ traversal,
+object-model integration and the selected decoder's full value contract still
+require their own checked evidence.
 
 `ReadCompactSize` additionally brings stream failure and canonical
 encoding rules; do not bundle those decisions into this span slice.

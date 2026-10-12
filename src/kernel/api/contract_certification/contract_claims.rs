@@ -87,6 +87,7 @@ pub(crate) fn c_checked_function_proposition_with_reason(
             && completed.result.as_ref() == value
             && completed.state.memory() == state.memory()
             && completed.state.locals() == state.locals()
+            && completed.state.typed_access_policy() == state.typed_access_policy()
             && completed.state.aggregate_destination == state.aggregate_destination
     };
     // Resource/population representation can change at exit. Aggregate return
@@ -179,7 +180,8 @@ pub fn c_function_outcomes_program_state_definitionally_equal(
                 state: right_state,
             },
         ) => {
-            c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
+            left_state.typed_access_policy() == right_state.typed_access_policy()
+                && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
                 && c_memories_definitionally_equal(
                     left_state.memory(),
                     right_state.memory(),
@@ -267,13 +269,15 @@ pub fn c_function_outcomes_program_state_equal_by_execution_provenance(
     else {
         return false;
     };
-    memories_equal_by_execution_provenance(
-        left_state.memory(),
-        left_facts,
-        right_state.memory(),
-        right_facts,
-        assumptions,
-    ) && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
+    left_state.typed_access_policy() == right_state.typed_access_policy()
+        && memories_equal_by_execution_provenance(
+            left_state.memory(),
+            left_facts,
+            right_state.memory(),
+            right_facts,
+            assumptions,
+        )
+        && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
 }
 
 fn memories_equal_by_execution_provenance(
@@ -791,6 +795,9 @@ fn materialized_load_is_unchanged(
         // its load variable) by the pointee width, as the kernel's own
         // symbolic pointer loads do.
         CValue::Pointer(pointer_value) => {
+            if pointer_value.designation().is_some() {
+                return false;
+            }
             let Pointer {
                 offset: PointerOffsetTerm::Int32Scaled { value: bits, .. },
                 ..
@@ -825,6 +832,8 @@ fn materialized_load_is_unchanged(
 }
 
 struct CertifiedFunctionClaimPath {
+    independent_entry: std::cell::OnceCell<bool>,
+    entry_assumptions: PureFactContext,
     caller_state: CState,
     arguments: Vec<CExpression>,
     outcome: CFunctionOutcome,
@@ -931,7 +940,11 @@ fn prepare_function_claim_path(
             .to_string()
             .into());
     };
-    let Some(entry_state) = c_function_entry_state(caller_state, function, arguments) else {
+    let entry_assumptions = assumptions.clone();
+    let independent_entry = std::cell::OnceCell::new();
+    let Some(entry_state) =
+        c_function_entry_state_with_assumptions(caller_state, function, arguments, &assumptions)
+    else {
         return Err("the function entry state cannot be reconstructed"
             .to_string()
             .into());
@@ -1145,6 +1158,8 @@ fn prepare_function_claim_path(
             });
         }
         return Ok(CertifiedFunctionClaimPath {
+            independent_entry,
+            entry_assumptions,
             caller_state: caller_state.clone(),
             arguments: arguments.to_vec(),
             outcome: outcome.clone(),
@@ -1326,6 +1341,8 @@ fn prepare_function_claim_path(
         .synchronize_memory_equalities(&assumptions);
 
     Ok(CertifiedFunctionClaimPath {
+        independent_entry,
+        entry_assumptions,
         caller_state: caller_state.clone(),
         arguments: arguments.to_vec(),
         outcome: outcome.clone(),
@@ -1393,6 +1410,8 @@ fn function_claim_holds_on_prepared_path(
     completion_origin_state: Option<&CState>,
 ) -> bool {
     let CertifiedFunctionClaimPath {
+        independent_entry: _,
+        entry_assumptions: _,
         caller_state,
         arguments,
         outcome,
@@ -1621,6 +1640,16 @@ fn function_claim_holds_on_prepared_path(
         CFunctionContractClaimTarget::EnsureResource(index) => {
             if !matches!(outcome, CFunctionOutcome::Return { .. }) {
                 return true;
+            }
+            if let Some(spec) = function.resource_ensures().get(*index)
+                && (!spec.native_record_places().is_empty()
+                    || !spec.native_span_requirements().is_empty())
+                && post_state.as_ref().is_none_or(|state| {
+                    check_native_record_specs(state, std::slice::from_ref(spec), assumptions)
+                        .is_err()
+                })
+            {
+                return false;
             }
             // The proof already checked this exact resource claim, including
             // its returned context and allocation-lifetime obligation. Reuse
@@ -2079,7 +2108,7 @@ pub fn c_function_ensure_goals(
         return None;
     };
     let mut entry_state = contract_view_of_entry(
-        c_function_entry_state(caller_state, function, arguments)?,
+        c_function_entry_state_with_assumptions(caller_state, function, arguments, assumptions)?,
         function,
         arguments,
     );
@@ -2179,7 +2208,7 @@ pub(crate) fn c_function_exceptional_ensure_goals(
         return None;
     };
     let mut entry_state = contract_view_of_entry(
-        c_function_entry_state(caller_state, function, arguments)?,
+        c_function_entry_state_with_assumptions(caller_state, function, arguments, assumptions)?,
         function,
         arguments,
     );
@@ -2404,6 +2433,15 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
     checked_propositions: &[CCheckedFunctionProposition],
 ) -> Option<Vec<CVerifiedFunctionContractClaim>> {
     if !contract_execution.is_complete() {
+        #[cfg(test)]
+        if std::env::var_os("CLICK_CALLBACK_CLAIM_PROBE").is_some() {
+            eprintln!(
+                "callback-claim-probe function={} incomplete execution paths={} refusal={:?}",
+                function.name(),
+                contract_execution.path_count(),
+                contract_execution.reuse_diagnostic()
+            );
+        }
         return None;
     }
     let timings = crate::instrumentation::enabled();
@@ -2442,6 +2480,23 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
                     )
                 },
             );
+            #[cfg(test)]
+            if !holds && std::env::var_os("CLICK_CALLBACK_CLAIM_PROBE").is_some() {
+                static REPORTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if REPORTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 8 {
+                    eprintln!("callback-claim-probe function={} claim={:?} target={:?}", function.name(), claim.key(), claim.target());
+                    for view in cases.iter().flatten().take(2) {
+                        match view.prepared(function) {
+                            Ok(paths) => for path in paths.iter().take(2) {
+                                eprintln!("callback-claim-probe prepared normal={} native_outputs={:?}",
+                                    matches!(path.outcome, CFunctionOutcome::Return { .. }),
+                                    path.post_state.as_ref().map(|state| check_native_output_places(state, function.contract_interface(), &path.assumptions)));
+                            },
+                            Err(_) => eprintln!("callback-claim-probe path preparation refused"),
+                        }
+                    }
+                }
+            }
             if timings {
                 crate::instrumentation::emit(
                     crate::instrumentation::VerificationEvent::ClaimFinished {
@@ -2454,6 +2509,12 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
             let load_equalities = load_equality_capture.finish();
             holds.then(|| CVerifiedFunctionContractClaim {
                 function: function.clone(),
+                // Every claim is backed by authenticated complete body path
+                // sets. Effect inference independently prepares and checks all
+                // cases; a proposition completion alone cannot supply it.
+                pointer_result_effects: infer_pointer_result_effects(function, &cases).into(),
+                pointer_store_effects: infer_pointer_store_effects(function, &cases).into(),
+                native_output_places_certified: infer_native_output_places(function, &cases),
                 key: claim.key().clone(),
                 load_equalities,
                 loop_semantics: contract_execution.loop_semantics,
@@ -2488,9 +2549,602 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
     claims
 }
 
-/// One path set of a contract execution, prepared for claim checking the
-/// first time a claim is judged over it. A claim the first set certifies
-/// never prepares the second.
+fn infer_native_output_places(
+    function: &CFunction,
+    cases: &[Vec<ContractPathSetView<'_>>],
+) -> bool {
+    if !crate::kernel::functions::independent_entry::native_output_entry_is_relevant(
+        function.contract_interface(),
+    ) {
+        return false;
+    }
+    let has_normal_return = cases.iter().flatten().any(|view| {
+        view.prepared(function).as_ref().is_ok_and(|paths| {
+            paths
+                .iter()
+                .any(|path| matches!(path.outcome, CFunctionOutcome::Return { .. }))
+        })
+    });
+    has_normal_return
+        && cases.iter().all(|alternatives| {
+            alternatives.iter().any(|view| {
+                view.prepared(function).as_ref().is_ok_and(|paths| {
+                    !paths.is_empty()
+                        && paths.iter().all(|path| {
+                            pointer_effect_entry_has_independent_binders(function, path)
+                                && match &path.outcome {
+                                    CFunctionOutcome::Return { .. } => {
+                                        path.post_state.as_ref().is_some_and(|state| {
+                                            check_native_output_places(
+                                                state,
+                                                function.contract_interface(),
+                                                &path.assumptions,
+                                            )
+                                            .is_ok()
+                                        })
+                                    }
+                                    CFunctionOutcome::Throw { .. }
+                                    | CFunctionOutcome::VerificationDiverges => true,
+                                    _ => false,
+                                }
+                        })
+                })
+            })
+        })
+}
+
+/// Infer only semantic relationships present in authenticated body outcomes.
+fn pointer_store_arguments(
+    function: &CFunction,
+    path: &CertifiedFunctionClaimPath,
+) -> Option<Vec<CValue>> {
+    function
+        .contract_interface()
+        .parameters()
+        .iter()
+        .map(|parameter| path.entry_state.locals().get(parameter.name()).cloned())
+        .collect()
+}
+
+fn pointer_store_effect_holds(
+    function: &CFunction,
+    effect: &CPointerStoreEffect,
+    path: &CertifiedFunctionClaimPath,
+) -> bool {
+    if !matches!(path.outcome, CFunctionOutcome::Return { .. }) {
+        return matches!(
+            path.outcome,
+            CFunctionOutcome::Throw { .. } | CFunctionOutcome::VerificationDiverges
+        );
+    }
+    let Some(post_state) = path.post_state.as_ref() else {
+        return false;
+    };
+    let Some(arguments) = pointer_store_arguments(function, path) else {
+        return false;
+    };
+    let Some(destination) = crate::kernel::functions::pointer_store_effects::selected(
+        &path.entry_state,
+        function.contract_interface(),
+        &arguments,
+        &effect.destination,
+        &effect.destination_path,
+    ) else {
+        return false;
+    };
+    let Some(element_type) = crate::kernel::functions::pointer_store_effects::selected_element_type(
+        &path.entry_state,
+        &destination,
+        &path.assumptions,
+    ) else {
+        return false;
+    };
+    let writes = crate::kernel::reasoning::memory_effect_write_accesses(&path.effect_facts);
+    // Another possibly overlapping write can invalidate a cached final cell,
+    // including when two independently bound parameters alias at the call.
+    if writes.iter().any(|(pointer, bytes)| {
+        pointer != destination.pointer()
+            && !crate::kernel::memory_provenance::write_access_is_disjoint_from_load(
+                pointer,
+                *bytes,
+                destination.pointer(),
+                effect.value_type.byte_width(),
+                &path.assumptions,
+            )
+    }) {
+        return false;
+    }
+    if element_type != effect.value_type
+        || !effect.value_type.is_pointer()
+        || !crate::kernel::reasoning::memory_effect_write_accesses(&path.effect_facts).contains(&(
+            destination.pointer().clone(),
+            effect.value_type.byte_width(),
+        ))
+        || !post_state.memory().has_initialized_bytes_under(
+            destination.pointer(),
+            effect.value_type.byte_width(),
+            &path.assumptions,
+        )
+    {
+        return false;
+    }
+    let Some(source) = crate::kernel::functions::pointer_store_effects::selected(
+        &path.entry_state,
+        function.contract_interface(),
+        &arguments,
+        &effect.source,
+        &effect.source_path,
+    ) else {
+        return false;
+    };
+    source.designation().is_some()
+        && post_state.memory().known_value(destination.pointer())
+            == Some(CValue::Pointer(source.with_type(effect.value_type)))
+}
+
+fn infer_pointer_store_effects(
+    function: &CFunction,
+    cases: &[Vec<ContractPathSetView<'_>>],
+) -> Vec<CPointerStoreEffect> {
+    if !crate::kernel::functions::independent_entry::has_store_roots(function.contract_interface())
+    {
+        return Vec::new();
+    }
+    let mut candidates = BTreeSet::new();
+    for view in cases.iter().flatten() {
+        let Ok(paths) = view.prepared(function) else {
+            continue;
+        };
+        for path in paths {
+            if !pointer_effect_entry_has_independent_binders(function, path)
+                || !matches!(path.outcome, CFunctionOutcome::Return { .. })
+            {
+                continue;
+            }
+            let Some(post_state) = path.post_state.as_ref() else {
+                continue;
+            };
+            let Some(arguments) = pointer_store_arguments(function, path) else {
+                continue;
+            };
+            let mut roots = function
+                .contract_interface()
+                .parameters()
+                .iter()
+                .enumerate()
+                .filter(|(_, parameter)| parameter.c_type().is_pointer())
+                .map(|(index, _)| CPointerEffectRoot::Parameter(index))
+                .collect::<Vec<_>>();
+            if function.contract_interface().aggregate_return_mode()
+                == CAggregateReturnMode::Construction
+            {
+                roots.push(CPointerEffectRoot::ConstructionDestination);
+            }
+            for destination_root in &roots {
+                let Some(destination) = crate::kernel::functions::pointer_store_effects::root(
+                    &path.entry_state,
+                    function.contract_interface(),
+                    &arguments,
+                    destination_root,
+                ) else {
+                    continue;
+                };
+                for (destination_path, value_type) in
+                    crate::kernel::functions::pointer_store_effects::pointer_fields(
+                        &path.entry_state,
+                        &destination,
+                    )
+                {
+                    let Some(cell) = crate::kernel::functions::pointer_store_effects::selected(
+                        &path.entry_state,
+                        function.contract_interface(),
+                        &arguments,
+                        destination_root,
+                        &destination_path,
+                    ) else {
+                        continue;
+                    };
+                    let Some(CValue::Pointer(stored)) =
+                        post_state.memory().known_value(cell.pointer())
+                    else {
+                        continue;
+                    };
+                    for source_root in &roots {
+                        let Some(source) = crate::kernel::functions::pointer_store_effects::root(
+                            &path.entry_state,
+                            function.contract_interface(),
+                            &arguments,
+                            source_root,
+                        ) else {
+                            continue;
+                        };
+                        let mut source_paths = vec![Vec::new()];
+                        if let (
+                            Some(PointerDesignation::Object {
+                                root,
+                                path: stored_path,
+                                ..
+                            }),
+                            Some(PointerDesignation::Object {
+                                root: source_root,
+                                path: source_path,
+                                ..
+                            }),
+                        ) = (stored.designation(), source.designation())
+                        {
+                            if root == source_root && stored_path.starts_with(source_path) {
+                                if let Some(path) = stored_path[source_path.len()..]
+                                    .iter()
+                                    .map(|selection| match selection {
+                                        PointerDomainSelection::Member(name) => Some(name.clone()),
+                                        _ => None,
+                                    })
+                                    .collect::<Option<Vec<_>>>()
+                                {
+                                    source_paths.push(path);
+                                }
+                            }
+                        }
+                        if let (
+                            Some(PointerDesignation::InputSelected {
+                                input,
+                                origin,
+                                path: stored_path,
+                                ..
+                            }),
+                            Some(PointerDesignation::InputSelected {
+                                input: source_input,
+                                origin: source_origin,
+                                path: source_path,
+                                ..
+                            }),
+                        ) = (stored.designation(), source.designation())
+                        {
+                            if input == source_input
+                                && origin == source_origin
+                                && stored_path.starts_with(source_path)
+                            {
+                                if let Some(path) = stored_path[source_path.len()..]
+                                    .iter()
+                                    .map(|selection| match selection {
+                                        PointerDomainSelection::Member(name) => Some(name.clone()),
+                                        _ => None,
+                                    })
+                                    .collect::<Option<Vec<_>>>()
+                                {
+                                    source_paths.push(path);
+                                }
+                            }
+                        }
+                        for source_path in source_paths {
+                            let effect = CPointerStoreEffect {
+                                destination: destination_root.clone(),
+                                destination_path: destination_path.clone().into(),
+                                value_type,
+                                source: source_root.clone(),
+                                source_path: source_path.into(),
+                            };
+                            let holds = pointer_store_effect_holds(function, &effect, path);
+                            if holds {
+                                candidates.insert(effect);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .filter(|effect| {
+            cases.iter().all(|alternatives| {
+                alternatives.iter().any(|view| {
+                    view.prepared(function).as_ref().is_ok_and(|paths| {
+                        !paths.is_empty()
+                            && paths.iter().all(|path| {
+                                pointer_effect_entry_has_independent_binders(function, path)
+                                    && pointer_store_effect_holds(function, effect, path)
+                            })
+                    })
+                })
+            })
+        })
+        .collect()
+}
+
+fn infer_pointer_result_effects(
+    function: &CFunction,
+    cases: &[Vec<ContractPathSetView<'_>>],
+) -> Vec<CPointerResultEffect> {
+    if !function.contract_interface().return_type().is_pointer()
+        || function
+            .contract_interface()
+            .return_aggregate_layout()
+            .is_some()
+    {
+        return Vec::new();
+    }
+    // A real normal return supplies candidates. An all-throw or divergent
+    // body cannot invent arbitrary designation promises by vacuity.
+    let mut candidates = BTreeSet::new();
+    for view in cases.iter().flatten() {
+        let Ok(paths) = view.prepared(function) else {
+            continue;
+        };
+        for path in paths {
+            let CFunctionOutcome::Return {
+                value: CValue::Pointer(result),
+                ..
+            } = &path.outcome
+            else {
+                continue;
+            };
+            let Some(designation) = result.designation() else {
+                continue;
+            };
+            candidates.insert(CPointerResultEffect::Opaque);
+            if !pointer_effect_entry_has_independent_binders(function, path) {
+                continue;
+            }
+            for (parameter, formal) in function
+                .contract_interface()
+                .parameters()
+                .iter()
+                .enumerate()
+            {
+                let Some(CValue::Pointer(input)) = path.entry_state.locals().get(formal.name())
+                else {
+                    continue;
+                };
+                let Some(input_designation) = input.designation() else {
+                    continue;
+                };
+                let child_path = if designation == input_designation {
+                    Vec::new()
+                } else if let (
+                    PointerDesignation::Object {
+                        root,
+                        path: result_path,
+                        ..
+                    },
+                    PointerDesignation::Object {
+                        root: input_root,
+                        path: input_path,
+                        ..
+                    },
+                ) = (designation, input_designation)
+                {
+                    if root != input_root || !result_path.starts_with(input_path) {
+                        continue;
+                    }
+                    let Some(members) = result_path[input_path.len()..]
+                        .iter()
+                        .map(|selection| match selection {
+                            PointerDomainSelection::Member(name) => Some(name.clone()),
+                            PointerDomainSelection::Element(_) => None,
+                        })
+                        .collect::<Option<Vec<_>>>()
+                    else {
+                        continue;
+                    };
+                    members
+                } else if let (
+                    PointerDesignation::InputSelected {
+                        input: result_input,
+                        origin: result_origin,
+                        path: result_path,
+                        ..
+                    },
+                    PointerDesignation::InputSelected {
+                        input: input_id,
+                        origin: input_origin,
+                        path: input_path,
+                        ..
+                    },
+                ) = (designation, input_designation)
+                {
+                    if result_input != input_id
+                        || result_origin != input_origin
+                        || !result_path.starts_with(input_path)
+                    {
+                        continue;
+                    }
+                    let Some(members) = result_path[input_path.len()..]
+                        .iter()
+                        .map(|selection| match selection {
+                            PointerDomainSelection::Member(name) => Some(name.clone()),
+                            PointerDomainSelection::Element(_) => None,
+                        })
+                        .collect::<Option<Vec<_>>>()
+                    else {
+                        continue;
+                    };
+                    members
+                } else {
+                    continue;
+                };
+                let effect = CPointerResultEffect::FromParameter {
+                    parameter,
+                    child_path: child_path.into(),
+                };
+                if pointer_result_effect_holds(function, &effect, path) {
+                    candidates.insert(effect);
+                }
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .filter(|effect| {
+            cases.iter().all(|alternatives| {
+                alternatives.iter().any(|view| {
+                    view.prepared(function).as_ref().is_ok_and(|paths| {
+                        !paths.is_empty()
+                            && paths.iter().all(|path| {
+                                (matches!(effect, CPointerResultEffect::Opaque)
+                                    || pointer_effect_entry_has_independent_binders(function, path))
+                                    && pointer_result_effect_holds(function, effect, path)
+                            })
+                    })
+                })
+            })
+        })
+        .collect()
+}
+
+fn pointer_effect_entry_has_independent_binders(
+    function: &CFunction,
+    path: &CertifiedFunctionClaimPath,
+) -> bool {
+    if !*path.independent_entry.get_or_init(|| {
+        crate::kernel::functions::independent_entry::matches(
+            function,
+            &path.arguments,
+            &path.caller_state,
+            &path.entry_assumptions,
+        )
+    }) {
+        return false;
+    }
+    let mut binders = BTreeSet::new();
+    if path.arguments.len() != function.parameters().len() {
+        return false;
+    }
+    for (argument, parameter) in path.arguments.iter().zip(function.parameters()) {
+        let CExpression::Value(value) = argument else {
+            return false;
+        };
+        let variable = match value {
+            CValue::Bool(Bitvector32Term::If {
+                condition,
+                then_term,
+                else_term,
+            }) => {
+                // The source entry producer normalizes a symbolic bool to
+                // `v == 0 ? 0 : 1`. This remains one independent binder;
+                // arbitrary scalar expressions and constants stay excluded.
+                let ConditionTerm::Bitvector32Equal(left, right) = condition.as_ref() else {
+                    return false;
+                };
+                let Bitvector32Term::Variable(variable) = left.as_ref() else {
+                    return false;
+                };
+                if **right != Bitvector32Term::Constant(0)
+                    || **then_term != Bitvector32Term::Constant(0)
+                    || **else_term != Bitvector32Term::Constant(1)
+                {
+                    return false;
+                }
+                *variable
+            }
+            CValue::Bool(Bitvector32Term::Variable(variable))
+            | CValue::Int8(Bitvector32Term::Variable(variable))
+            | CValue::UInt8(Bitvector32Term::Variable(variable))
+            | CValue::Int16(Bitvector32Term::Variable(variable))
+            | CValue::UInt16(Bitvector32Term::Variable(variable))
+            | CValue::Int32(Bitvector32Term::Variable(variable))
+            | CValue::UInt32(Bitvector32Term::Variable(variable))
+            | CValue::Int64(Bitvector32Term::Variable(variable))
+            | CValue::UInt64(Bitvector32Term::Variable(variable))
+            | CValue::Int128(Bitvector32Term::Variable(variable))
+            | CValue::UInt128(Bitvector32Term::Variable(variable))
+            | CValue::Float32(Bitvector32Term::Variable(variable))
+            | CValue::Float64(Bitvector32Term::Variable(variable)) => *variable,
+            CValue::Pointer(pointer) => {
+                let variable = match (&pointer.pointer().block, &pointer.pointer().offset) {
+                    (PointerBlock::Symbolic(variable), PointerOffsetTerm::Constant(0)) => *variable,
+                    (
+                        PointerBlock::ExternalArgument,
+                        PointerOffsetTerm::Int32Scaled { value, byte_width },
+                    ) if *byte_width
+                        == i64::from(
+                            parameter
+                                .c_type()
+                                .pointee_type()
+                                .map_or(1, CType::byte_width),
+                        ) =>
+                    {
+                        let Bitvector32Term::Variable(variable) = value.as_ref() else {
+                            return false;
+                        };
+                        *variable
+                    }
+                    _ => return false,
+                };
+                // Entry binders may have a checked native root descriptor,
+                // but never a caller-selected sibling or a shared domain.
+                let Some(CValue::Pointer(entry)) = path.entry_state.locals().get(parameter.name())
+                else {
+                    return false;
+                };
+                match entry.designation() {
+                    None => {}
+                    Some(PointerDesignation::Unresolved(domain)) if *domain == variable => {}
+                    Some(PointerDesignation::Object {
+                        root,
+                        path: selections,
+                        base,
+                        ..
+                    }) if root == pointer.pointer() && *base == *root && selections.is_empty() => {}
+                    _ => return false,
+                }
+                variable
+            }
+            _ => return false,
+        };
+        if !binders.insert(variable) {
+            return false;
+        }
+    }
+    true
+}
+
+fn pointer_result_effect_holds(
+    function: &CFunction,
+    effect: &CPointerResultEffect,
+    path: &CertifiedFunctionClaimPath,
+) -> bool {
+    let CFunctionOutcome::Return { value, .. } = &path.outcome else {
+        return matches!(
+            path.outcome,
+            CFunctionOutcome::Throw { .. } | CFunctionOutcome::VerificationDiverges
+        );
+    };
+    let CValue::Pointer(result) = value else {
+        return false;
+    };
+    let CPointerResultEffect::FromParameter {
+        parameter,
+        child_path,
+    } = effect
+    else {
+        // This marker only prevents erasure. Unlike a transported domain it
+        // promises no object or access, including on another unknown return.
+        return true;
+    };
+    let Some(CValue::Pointer(input)) = path
+        .entry_state
+        .locals()
+        .get(function.contract_interface().parameters()[*parameter].name())
+    else {
+        return false;
+    };
+    let selected = if child_path.is_empty() {
+        input.clone()
+    } else {
+        let Some(selected) = path
+            .entry_state
+            .memory()
+            .checked_member_pointer_by_path(input, child_path)
+        else {
+            return false;
+        };
+        selected
+    };
+    selected.designation().is_some() && selected.same_designation(result)
+}
+
+/// One complete path set, prepared once and reused across claim checks.
 struct ContractPathSetView<'a> {
     set: &'a CContractPathSet,
     capture_failure: bool,
@@ -2600,6 +3254,10 @@ fn claim_holds_on_some_path_set_of_every_case(
     cases.iter().all(|alternatives| {
         alternatives.iter().any(|view| {
             if let CFunctionContractClaimTarget::EnsureResource(index) = claim.target()
+                && function.resource_ensures().get(*index).is_some_and(|spec| {
+                    spec.native_record_places().is_empty()
+                        && spec.native_span_requirements().is_empty()
+                })
                 && view.set.checked_resource_claims.len() == view.set.paths.len()
                 && view.set.checked_resource_transitions.len() == view.set.paths.len()
                 && view
@@ -2758,6 +3416,24 @@ pub fn c_verified_function_rule(
         CLoopSemantics::Verify
     };
     Some(CVerifiedFunctionRule {
+        source_declaration: None,
+        native_output_places_certified: proofs
+            .iter()
+            .any(|proof| proof.native_output_places_certified),
+        pointer_store_effects: proofs
+            .iter()
+            .flat_map(|proof| proof.pointer_store_effects.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .into(),
+        pointer_result_effects: proofs
+            .iter()
+            .flat_map(|proof| proof.pointer_result_effects.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .into(),
         function,
         loop_semantics,
         checked_callees: crate::kernel::termination::merge_checked_callees(
@@ -2826,6 +3502,10 @@ pub(crate) fn c_recursive_function_contract_hypothesis(
         && !function.contract_claims().is_empty()
         && function_contract_claims_are_complete(&function))
     .then_some(CVerifiedFunctionRule {
+        source_declaration: None,
+        pointer_result_effects: Default::default(),
+        pointer_store_effects: Default::default(),
+        native_output_places_certified: false,
         function,
         // A hypothesis certified nothing, so it says nothing about loops.
         loop_semantics: CLoopSemantics::Verify,

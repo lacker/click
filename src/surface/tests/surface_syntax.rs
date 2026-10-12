@@ -1713,7 +1713,7 @@ fn special_arithmetic_certificate_round_trips_and_rejects_bad_premises() {
         parse(&format!(
             "theorem special_certificate_forms(p: int32) {{ ensures aligned(p, 8) by {{ {printed} }} }}"
         ))
-        .expect("printed rules certificate should reparse")
+        .unwrap_or_else(|error| panic!("printed rules certificate should reparse: {error:?}\n{printed}"))
         .theorem_definitions()[0]
             .ensures()[0]
             .proof(),
@@ -4925,8 +4925,11 @@ fn a_missing_memory_fact_is_reported_as_a_place() {
             "missing resource fact `views a->data`",
         ),
         (
+            // Permission to read the pointer field does not establish any
+            // object at its value. The native carrier check fails before a
+            // pointee permission can be requested; keep the original source.
             "int32 read_data(struct pad* a) { views a->data; }",
-            "missing resource fact `views a->data[0..1]`",
+            "pointer arithmetic left the pointed-to object",
         ),
         (
             "int32 write_other(struct cell* p) { views *p; }",
@@ -4938,13 +4941,19 @@ fn a_missing_memory_fact_is_reported_as_a_place() {
         ),
         (
             "int32 read_q(int32* q) { views q[0]; }",
-            "held `views q[0]` does not cover `q[1]`",
+            "undefined behavior: invalid memory access",
         ),
     ] {
         let source = format!("verifying \"place.c\"; {contract} by {{ execute(); simp(); }}");
         let error = verify_c0_sources(&source, &[("place.c", c_source)])
             .expect_err("the access is not authorized");
         assert!(error.message.contains(expected), "{contract}: {error:?}");
+        if contract == "int32 read_data(struct pad* a) { views a->data; }" {
+            assert!(error.message.contains("`return a->data[0];`"), "{error:?}");
+        }
+        if contract == "int32 read_q(int32* q) { views q[0]; }" {
+            assert!(error.message.contains("`return q[1];`"), "{error:?}");
+        }
     }
 }
 
@@ -5048,7 +5057,8 @@ fn a_struct_pointer_range_counts_structs() {
     verify_c0_sources(&contract("views p[0..2];"), &[("cells.c", c_source)]).unwrap();
     let error = verify_c0_sources(&contract("views p[0..1];"), &[("cells.c", c_source)])
         .expect_err("one struct does not cover the second");
-    assert!(error.message.contains("missing resource fact"), "{error:?}");
+    assert!(error.message.contains("undefined behavior: invalid memory access"), "{error:?}");
+    assert!(error.message.contains("return p[1].other;"), "{error:?}");
 
     let link = "verifying \"cells.c\"; struct cell* first(struct cell** link) { views *link; }";
     let file = parse_c0_click_file(link, &[("cells.c", c_source)]).unwrap();

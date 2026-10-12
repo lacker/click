@@ -21,6 +21,70 @@ use click::surface::{
 };
 
 #[test]
+fn native_raw_pointer_input_without_span_refuses_arithmetic_offline() {
+    let project = Project::with_fixture(
+        "raw.cpp",
+        "raw_offset",
+        "int raw_offset(int* p) { int* q = p + 1; return 0; }",
+    );
+    project.write_exception_enabled_compilation_database();
+    project.write_config_with_exception_behavior("raw_offset", "raw.cpp", true, "scalar_int32");
+    refresh_import(&project.config()).unwrap();
+    fs::remove_file(&project.exporter).unwrap();
+    let import = load_import(&project.config()).unwrap();
+    let path = project.directory.join("raw.click");
+    let source = "verifying \"raw.cpp\"; int32 raw_offset(int32* p) { ensures result == 0; } by { execute(); simp(); }";
+    fs::write(&path, source).unwrap();
+    let error =
+        verify_program_prepared_project(&read_click_project(&path, source).unwrap(), &import)
+            .unwrap_err();
+    assert!(
+        error.message().contains("pointer arithmetic")
+            || error.message().contains("invalid memory"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn native_raw_pointer_typed_prefix_checks_arithmetic_offline() {
+    let project = Project::with_fixture(
+        "raw.cpp",
+        "raw_offset",
+        "int raw_offset(int* p) { int* q = p + 1; return 0; }",
+    );
+    project.write_exception_enabled_compilation_database();
+    project.write_config_with_exception_behavior("raw_offset", "raw.cpp", true, "scalar_int32");
+    refresh_import(&project.config()).unwrap();
+    fs::remove_file(&project.exporter).unwrap();
+    let import = load_import(&project.config()).unwrap();
+    check_arithmetic_sidecar(
+        &project,
+        &import,
+        "verifying \"raw.cpp\"; int32 raw_offset(int32* p) { views p[0..2]; ensures result == 0; } by { execute(); simp(); }",
+    );
+}
+
+#[test]
+fn native_raw_pointer_forwarding_preserves_opaque_input_offline() {
+    let project = Project::with_fixture(
+        "forward.cpp",
+        "forward",
+        "int* forward(int* p) { return p; }",
+    );
+    project.write_exception_enabled_compilation_database();
+    project.write_config_with_exception_behavior("forward", "forward.cpp", true, "scalar_int32");
+    refresh_import(&project.config()).unwrap();
+    fs::remove_file(&project.exporter).unwrap();
+    let import = load_import(&project.config()).unwrap();
+    check_arithmetic_sidecar(
+        &project,
+        &import,
+        "verifying \"forward.cpp\"; int32* forward(int32* p) { ensures result == p; } by { execute(); simp(); }",
+    );
+}
+
+#[test]
 // A widening helper-result initializer qualifies the object, not the scalar conversion value.
 fn readonly_scalar_initialization_checks_converted_helper_results() {
     let project = Project::with_fixture(

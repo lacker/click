@@ -4,6 +4,296 @@
 use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
 
+#[test]
+fn native_statement_execution_clears_specification_pointer_observation() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let identity = Variable(988_160);
+    let address = Pointer::symbolic(identity);
+    let pointer = CPointerValue::new(address.clone(), CType::Int32Pointer)
+        .with_designation(PointerDesignation::Unresolved(identity));
+    let state = CState::new()
+        .with_memory(
+            CMemory::new()
+                .with_block(address.block.clone(), 4)
+                .store(address.clone(), int32(31)),
+        )
+        .with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+                address,
+                0.into(),
+                1.into(),
+                4,
+            )),
+        ));
+    let expressions = [
+        c_typed_load(
+            CExpression::Value(CValue::Pointer(pointer.clone())),
+            CType::Int32,
+        ),
+        c_pointer_offset_bytes(CExpression::Value(CValue::Pointer(pointer)), 4),
+    ];
+    let executable = PureFactContext::new();
+    for observations in [
+        executable.clone().observe_pointer_addresses(),
+        executable.clone().allow_symbolic_contract_loads(),
+        executable
+            .clone()
+            .observe_pointer_addresses()
+            .allow_symbolic_contract_loads(),
+    ] {
+        let cleared = observations.clone().without_pointer_address_observation();
+        assert_eq!(cleared, executable);
+        assert!(cleared.has_same_reasoning_policy(&executable));
+        assert!(!cleared.should_require_owned_expression_loads());
+        let owned = observations.clone().require_owned_expression_loads();
+        assert!(
+            owned
+                .clone()
+                .without_pointer_address_observation()
+                .should_require_owned_expression_loads()
+        );
+        for expression in &expressions {
+            let paths = evaluate_c_expression_paths(
+                &state,
+                expression,
+                &observations,
+                &mut ExecutionBudget::for_c_expression(expression),
+            )
+            .unwrap();
+            assert!(
+                paths
+                    .iter()
+                    .any(|path| matches!(path.outcome, CExpressionOutcome::Value(_)))
+            );
+            let statement = CStatement::Return(expression.clone());
+            let paths = execute_c_statement_paths(
+                &state,
+                &statement,
+                &observations,
+                &CExecutionEnvironment::new(),
+                CExecutionSemantics::EXECUTE_BODIES,
+                &mut ExecutionBudget::for_new_execution(),
+            )
+            .unwrap();
+            assert!(!paths.is_empty());
+            assert!(
+                paths
+                    .iter()
+                    .all(|path| matches!(path.outcome, CStatementOutcome::UndefinedBehavior(_))),
+                "observation must not authorize native access or formation: {paths:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn symbolic_contract_address_observation_preserves_unresolved_carriers_without_access() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let identity = Variable(988_100);
+    let root = Pointer::symbolic(identity);
+    let pointer = CPointerValue::new(root.clone(), CType::UInt8Pointer)
+        .with_designation(PointerDesignation::Unresolved(identity))
+        .with_pointee_constant(true)
+        .with_pointee_volatile(true);
+    let layout = std::sync::Arc::new(CAggregateLayout::new(
+        16,
+        4,
+        vec![
+            CAggregateField::new("value", 4, CType::Int32),
+            CAggregateField::new("items", 8, CType::Int32Array(2)),
+        ],
+    ));
+    let member = |name: &str, value_type| CExpression::MemberAddress {
+        object: Box::new(CExpression::Value(CValue::Pointer(pointer.clone()))),
+        selection: std::sync::Arc::new(CAggregateMemberSelection {
+            layout: layout.clone(),
+            path: vec![name.into()].into(),
+            value_type,
+        }),
+    };
+    let expressions = [
+        (member("value", CType::Int32), 4),
+        (
+            c_typed_load(member("items", CType::Int32Array(2)), CType::Int32Array(2)),
+            8,
+        ),
+        (
+            c_pointer_offset_bytes(
+                CExpression::Value(CValue::Pointer(
+                    pointer.clone().with_type(CType::Int32Pointer),
+                )),
+                4,
+            ),
+            4,
+        ),
+    ];
+    let state = CState::new();
+    let executable = PureFactContext::new();
+    let logical = executable.clone().observe_pointer_addresses();
+    assert!(!logical.should_allow_symbolic_contract_loads());
+    let owned = logical.clone().require_owned_expression_loads();
+    assert!(!owned.should_observe_pointer_addresses());
+    assert!(!owned.should_allow_symbolic_contract_loads());
+    for (expression, offset) in expressions {
+        let paths = evaluate_c_expression_paths(
+            &state,
+            &expression,
+            &logical,
+            &mut ExecutionBudget::for_c_expression(&expression),
+        )
+        .unwrap();
+        let [path] = paths.as_slice() else {
+            panic!("one logical observation: {paths:?}")
+        };
+        let CExpressionOutcome::Value(CValue::Pointer(observed)) = &path.outcome else {
+            panic!("logical observation must retain the unresolved address: {path:?}")
+        };
+        assert_eq!(observed.pointer(), &root.offset_by_bytes(offset));
+        assert_eq!(observed.c_type(), CType::Int32Pointer);
+        assert!(observed.same_designation(&pointer));
+        assert!(
+            matches!(observed.designation(), Some(PointerDesignation::Unresolved(found)) if *found == identity)
+        );
+        assert!(observed.pointee_constant() && observed.pointee_volatile());
+        assert!(path.obligations.is_empty());
+        for assumptions in [&executable, &owned] {
+            let paths = evaluate_c_expression_paths(
+                &state,
+                &expression,
+                assumptions,
+                &mut ExecutionBudget::for_c_expression(&expression),
+            )
+            .unwrap();
+            assert!(!paths.is_empty());
+            assert!(
+                paths
+                    .iter()
+                    .all(|path| matches!(path.outcome, CExpressionOutcome::UndefinedBehavior(_))),
+                "unwitnessed executable address must be refused: {paths:?}"
+            );
+        }
+    }
+    assert_eq!(state.memory().cells.representation_len(), 0);
+}
+
+#[test]
+fn pointer_address_observation_keeps_scalar_and_pointer_read_requirements() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let executable = PureFactContext::new();
+    let observation = executable.clone().observe_pointer_addresses();
+    assert!(!observation.should_allow_symbolic_contract_loads());
+    let owned = observation.clone().require_owned_expression_loads();
+    assert!(!owned.should_observe_pointer_addresses());
+    assert!(!owned.should_allow_symbolic_contract_loads());
+
+    let backing = CMemory::local_pointer("observed-backing");
+    let backing_memory =
+        CMemory::new().with_declared_scalar_block(backing.block.clone(), 4, CType::Int32);
+    let backing_pointer = backing_memory
+        .declared_scalar_pointer(&backing, CType::Int32)
+        .unwrap();
+    for (index, value) in [int32(31), CValue::Pointer(backing_pointer)]
+        .into_iter()
+        .enumerate()
+    {
+        let address = Pointer::symbolic(Variable(988_110 + index as u64));
+        let value_type = value.c_type();
+        let bytes = value_type.byte_width();
+        let expression = c_typed_load(
+            CExpression::Value(CValue::typed_pointer(
+                address.clone(),
+                value_type.pointer_to().unwrap(),
+            )),
+            value_type,
+        );
+        let read_permission = |width| {
+            ResourceContext::new().unchecked_with_fact(CResourceFact::view_memory(
+                CMemoryRange::new_with_element_width(address.clone(), 0.into(), 1.into(), width),
+            ))
+        };
+        let initialized = backing_memory
+            .clone()
+            .with_block(address.block.clone(), bytes)
+            .store(address.clone(), value.clone());
+        let readable = CState::new()
+            .with_memory(initialized.clone())
+            .with_resource_context(read_permission(bytes));
+        let uninitialized = CState::new()
+            .with_memory(
+                backing_memory
+                    .clone()
+                    .with_uninitialized_block(address.block.clone(), bytes),
+            )
+            .with_resource_context(read_permission(bytes));
+        for assumptions in [&executable, &observation, &owned] {
+            let evaluate = |state: &CState| {
+                evaluate_c_expression_paths(
+                    state,
+                    &expression,
+                    assumptions,
+                    &mut ExecutionBudget::for_c_expression(&expression),
+                )
+                .unwrap()
+            };
+            let paths = evaluate(&readable);
+            let [path] = paths.as_slice() else {
+                panic!("one permitted read: {paths:?}");
+            };
+            assert_eq!(path.outcome, CExpressionOutcome::Value(value.clone()));
+            assert!(path.obligations.is_empty());
+            for denied in [
+                CState::new().with_memory(initialized.clone()),
+                CState::new()
+                    .with_memory(initialized.clone())
+                    .with_resource_context(read_permission(bytes - 1)),
+            ] {
+                let paths = evaluate(&denied);
+                assert!(!paths.is_empty());
+                assert!(
+                    paths.iter().all(|path| matches!(
+                        path.outcome,
+                        CExpressionOutcome::RuntimeError(CRuntimeError::MissingResource { .. })
+                    )),
+                    "address observation must not create byte authority: {paths:?}"
+                );
+            }
+            let paths = evaluate(&uninitialized);
+            assert!(!paths.is_empty());
+            assert!(
+                paths.iter().all(|path| matches!(
+                    path.outcome,
+                    CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead)
+                )),
+                "address observation must not initialize a cell: {paths:?}"
+            );
+            let wrong_type = CState::new()
+                .with_memory(
+                    backing_memory
+                        .clone()
+                        .with_block(address.block.clone(), bytes)
+                        .store(
+                            address.clone(),
+                            if value_type.is_object_pointer() {
+                                int32(31)
+                            } else {
+                                uint8(31)
+                            },
+                        ),
+                )
+                .with_resource_context(read_permission(bytes));
+            let paths = evaluate(&wrong_type);
+            assert!(!paths.is_empty());
+            assert!(
+                paths.iter().all(|path| matches!(
+                    path.outcome,
+                    CExpressionOutcome::RuntimeError(CRuntimeError::LoadTypeMismatch { .. })
+                )),
+                "address observation must not manufacture a compatible typed cell: {paths:?}"
+            );
+        }
+    }
+}
+
 /// The only specification-conditional branch lowering decides is the one a
 /// literally constant condition folds away. Folding stays exact in both
 /// directions; a condition that needs an ambient fact is not decided here,
@@ -1520,6 +1810,44 @@ fn explicit_wide_integer_pointer_cast_accepts_only_proven_null_without_origin() 
             assert!(obligations.is_empty());
         }
     }
+}
+
+#[test]
+fn integer_cast_cannot_erase_a_retained_object_domain() {
+    let address = Pointer::symbolic(Variable(4243));
+    let domain = PointerDesignation::Object {
+        root: address.clone(),
+        path: Default::default(),
+        base: address.clone(),
+        element_type: CType::Int32,
+        stride: 4,
+        count: IntegerTerm::constant_i64(1).into(),
+    };
+    let pointer = CPointerValue::new(address, CType::Int32Pointer).with_designation(domain);
+    let assumptions = PureFactContext::new();
+    let mut obligations = Vec::new();
+    for target in [CType::Int64, CType::UInt64] {
+        assert!(matches!(
+            crate::kernel::eval::cast_c_value_to_type(
+                CValue::Pointer(pointer.clone()),
+                target,
+                &mut obligations,
+                &assumptions
+            ),
+            Err(CRuntimeError::PointerConversion(_))
+        ));
+    }
+    let CValue::Pointer(byte_view) = crate::kernel::eval::cast_c_value_to_type(
+        CValue::Pointer(pointer.clone()),
+        CType::UInt8Pointer,
+        &mut obligations,
+        &assumptions,
+    )
+    .unwrap() else {
+        panic!("pointer cast must preserve the carrier")
+    };
+    assert!(pointer.same_designation(&byte_view));
+    assert!(obligations.is_empty());
 }
 
 #[test]
@@ -3989,4 +4317,89 @@ fn unsigned_narrowing_distributes_constant_subtraction_modulo_the_low_word() {
             );
         }
     }
+}
+
+#[test]
+fn pointer_alignment_observes_only_a_boolean_and_preserves_cast_refusal() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let variable = Variable(988_150);
+    let address = Pointer::symbolic(variable);
+    let carrier = CPointerValue::new(address.clone(), CType::Int32Pointer)
+        .with_designation(PointerDesignation::Unresolved(variable));
+    let state = CState::new();
+    for assumptions in [
+        PureFactContext::new(),
+        PureFactContext::new().observe_pointer_addresses(),
+    ] {
+        let expression = CExpression::PointerAligned {
+            pointer: Box::new(CExpression::Value(CValue::Pointer(carrier.clone()))),
+            alignment: 4,
+        };
+        let paths = evaluate_c_expression_paths(
+            &state,
+            &expression,
+            &assumptions,
+            &mut ExecutionBudget::for_c_expression(&expression),
+        )
+        .unwrap();
+        let [path] = paths.as_slice() else {
+            panic!("one alignment observation: {paths:?}");
+        };
+        let CExpressionOutcome::Value(CValue::Bool(value)) = &path.outcome else {
+            panic!("alignment produces only a Boolean: {path:?}");
+        };
+        let expected = ConditionTerm::pointer_aligned(address.clone(), 4);
+        assert_eq!(
+            value,
+            &Bitvector32Term::if_then_else(
+                expected.clone(),
+                Bitvector32Term::Constant(1),
+                Bitvector32Term::Constant(0),
+            )
+        );
+        assert_eq!(
+            crate::kernel::spec::c_value_comparison_proposition(
+                &CValue::Bool(value.clone()),
+                CComparisonOperator::Equal,
+                &bool_value(1),
+            ),
+            Some(Proposition::ConditionIs(expected, true))
+        );
+        let cast = c_cast(
+            CExpression::Value(CValue::Pointer(carrier.clone())),
+            CType::UInt64,
+        );
+        let cast_paths = evaluate_c_expression_paths(
+            &state,
+            &cast,
+            &assumptions,
+            &mut ExecutionBudget::for_c_expression(&cast),
+        )
+        .unwrap();
+        assert!(
+            cast_paths
+                .iter()
+                .all(|path| !matches!(path.outcome, CExpressionOutcome::Value(_)))
+        );
+    }
+    for alignment in [0, 3] {
+        let expression = CExpression::PointerAligned {
+            pointer: Box::new(CExpression::Value(CValue::Pointer(carrier.clone()))),
+            alignment,
+        };
+        let paths = evaluate_c_expression_paths(
+            &state,
+            &expression,
+            &PureFactContext::new(),
+            &mut ExecutionBudget::for_c_expression(&expression),
+        )
+        .unwrap();
+        assert!(paths.iter().all(|path| matches!(
+            path.outcome,
+            CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+        )));
+    }
+    assert!(
+        matches!(carrier.designation(), Some(PointerDesignation::Unresolved(found)) if *found == variable)
+    );
 }

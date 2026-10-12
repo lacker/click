@@ -482,7 +482,9 @@ fn collect_c_pointer_carriers(pointer: &CPointerValue, variables: &mut CarrierVa
         if !variables.visit() {
             return;
         }
-        if let PointerDesignation::Object { path, .. } = designation {
+        if let PointerDesignation::Object { path, .. }
+        | PointerDesignation::InputSelected { path, .. } = designation
+        {
             for _ in path.iter() {
                 if !variables.visit() {
                     return;
@@ -2527,7 +2529,11 @@ impl<'a> TermRewrite<'a> {
                         | PointerBlock::FunctionSymbolic(variable) => Some(variable),
                         _ => None,
                     },
-                    Some(PointerDesignation::Object { .. } | PointerDesignation::Loaded(_)) => None,
+                    Some(
+                        PointerDesignation::Object { .. }
+                        | PointerDesignation::InputSelected { .. }
+                        | PointerDesignation::Loaded(_),
+                    ) => None,
                 };
                 if let Some(variable) = binder
                     && !self.scope.c.contains_key(&variable)
@@ -2627,6 +2633,62 @@ impl<'a> TermRewrite<'a> {
                 PointerDesignation::Object {
                     root: self.pointer(root),
                     path,
+                    base: self.pointer(base),
+                    element_type: *element_type,
+                    stride: *stride,
+                    count: self.integer_shared(count).into(),
+                }
+            }
+            PointerDesignation::InputSelected {
+                input,
+                origin,
+                path,
+                base,
+                element_type,
+                stride,
+                count,
+            } => {
+                let input = match input {
+                    CNativeInputIdentity::Unresolved(variable) => CNativeInputIdentity::Unresolved(
+                        self.scope.c.get(variable).copied().unwrap_or(*variable),
+                    ),
+                    CNativeInputIdentity::Loaded(identity) => {
+                        let address = self.pointer(identity.address());
+                        let memory = if address == *identity.address() {
+                            identity.memory().clone()
+                        } else {
+                            crate::kernel::reasoning::canonical_load_projection_source(
+                                identity.memory(),
+                                identity.address(),
+                            )
+                            .unwrap_or_else(|| identity.memory().clone())
+                        };
+                        CNativeInputIdentity::Loaded(PointerLoadIdentity::new(memory, address))
+                    }
+                };
+                let mut selected = Vec::with_capacity(path.len());
+                for part in path.iter() {
+                    if self.checked_work_exhausted() {
+                        break;
+                    }
+                    self.visit();
+                    selected.push(match part {
+                        PointerDomainSelection::Member(name) => {
+                            PointerDomainSelection::Member(name.clone())
+                        }
+                        PointerDomainSelection::Element(index) => {
+                            PointerDomainSelection::Element(self.integer_shared(index).into())
+                        }
+                    });
+                }
+                PointerDesignation::InputSelected {
+                    input,
+                    origin: self.pointer(origin),
+                    path: if selected == path.as_ref() {
+                        path.clone()
+                    } else {
+                        selected.into()
+                    },
                     base: self.pointer(base),
                     element_type: *element_type,
                     stride: *stride,

@@ -2251,14 +2251,35 @@ pub(in crate::kernel) fn typed_store_separated_ranges_evidence(
     // A checked borrowed projection remains separate from current ownership.
     // Query only address-keyed exposed members; no recursive expansion or
     // pairwise separation facts are constructed.
+    let indexed_alias = |address: &Pointer| {
+        assumptions
+            .exact_pointer_aliases(address)
+            .find(|alias| {
+                !matches!(
+                    alias.block,
+                    PointerBlock::Symbolic(_) | PointerBlock::FunctionSymbolic(_)
+                )
+            })
+            .cloned()
+            .unwrap_or_else(|| address.clone())
+    };
+    let resolved_write = indexed_alias(write);
+    let resolved_load = indexed_alias(pointer);
     if let Some((resources, left, right)) = assumptions.borrow_partition_separated_members(
-        resolved_write,
-        resolved_load,
+        &resolved_write,
+        &resolved_load,
         |range| AccessInRangeEvidence::for_access(write, write_bytes, range, assumptions).is_some(),
         |range| {
             AccessInRangeEvidence::for_access(pointer, load_bytes, range, assumptions).is_some()
         },
     ) {
+        if crate::kernel::reasoning::pointers_proven_equal_for_memory_resolution(
+            write,
+            pointer,
+            assumptions,
+        ) {
+            return None;
+        }
         let write_membership =
             AccessInRangeEvidence::for_access(write, write_bytes, left, assumptions)?;
         let load_membership =
@@ -2779,6 +2800,260 @@ fn resolve_loaded_pointer_designation(
         });
     }
     designation
+}
+
+/// Recover the displacement from an exact producer-paired pointer read.
+/// Address equations do not authenticate a read's defining snapshot or cell.
+pub(in crate::kernel) fn paired_pointer_load_displacement(
+    pointer: &CPointerValue,
+    origin: &PointerLoadIdentity,
+) -> Option<PointerOffsetTerm> {
+    let registered_here = |variable: &Variable| {
+        crate::kernel::registered_load_bytes_for_variable(variable) == Some(C_POINTER_BYTE_WIDTH)
+            && matches!(
+                crate::kernel::registered_load_term_for_variable(variable),
+                Some(Bitvector32Term::MemoryLoad(memory, address, LoadKind::Bits32))
+                    if memory.arena_id() == origin.memory().arena_id()
+                        && address.as_ref() == origin.address()
+            )
+    };
+    match &pointer.pointer().block {
+        PointerBlock::LoadedPointer(identity) if *identity == origin.id() => {
+            return Some(pointer.pointer().offset.clone());
+        }
+        PointerBlock::Symbolic(variable) if registered_here(variable) => {
+            return Some(pointer.pointer().offset.clone());
+        }
+        block if *block == origin.address().block => {}
+        _ => return None,
+    }
+    // Legacy reads encode one load name at the producer's pointee scale.
+    // Other scales and multiple matching leaves cannot name the whole value.
+    let width = i64::from(pointer.c_type().pointee_type()?.byte_width());
+    let mut pending = vec![&pointer.pointer().offset];
+    let mut displacement = PointerOffsetTerm::Constant(0);
+    let mut found = false;
+    while let Some(offset) = pending.pop() {
+        crate::instrumentation::record_deterministic_work(1);
+        match offset {
+            PointerOffsetTerm::Add(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            PointerOffsetTerm::Int32Scaled { value, byte_width }
+                if matches!(value.as_ref(), Bitvector32Term::Variable(variable)
+                    if registered_here(variable)) =>
+            {
+                if found || *byte_width != width {
+                    return None;
+                }
+                found = true;
+            }
+            offset => displacement = exact_pointer_offset_sum(displacement, offset.clone()),
+        }
+    }
+    found.then_some(displacement)
+}
+
+fn exact_pointer_offset_sum(
+    left: PointerOffsetTerm,
+    right: PointerOffsetTerm,
+) -> PointerOffsetTerm {
+    match (&left, &right) {
+        (PointerOffsetTerm::Constant(0), _) => right,
+        (_, PointerOffsetTerm::Constant(0)) => left,
+        (PointerOffsetTerm::Constant(left), PointerOffsetTerm::Constant(right))
+            if left.checked_add(*right).is_some() =>
+        {
+            PointerOffsetTerm::Constant(left.checked_add(*right).unwrap())
+        }
+        _ => PointerOffsetTerm::Add(Box::new(left), Box::new(right)),
+    }
+}
+
+/// Resolve a loaded pointer's complete carrier through its own full-width
+/// cell, preserving the exact arithmetic displacement and access qualifiers.
+/// Unlike designation equality, this authenticates the raw read spelling
+/// before following the selected DAG. Unknown, partial or cyclic values do
+/// not become a checked object merely because their addresses are equal.
+pub(in crate::kernel) fn resolve_loaded_pointer_carrier(
+    pointer: &CPointerValue,
+    assumptions: &PureFactContext,
+) -> Option<CPointerValue> {
+    resolve_pointer_read_carrier(pointer, assumptions, false, false)
+}
+
+/// Recover a concrete full pointer value, including a stored legacy carrier.
+/// Unknown reads remain unknown; this helper grants no native object domain.
+pub(in crate::kernel) fn resolve_loaded_pointer_value(
+    pointer: &CPointerValue,
+    assumptions: &PureFactContext,
+) -> Option<CPointerValue> {
+    resolve_pointer_read_carrier(pointer, assumptions, false, true)
+}
+
+/// Normalize an exact pointer read through checked complete-cell history.
+/// An unknown terminal remains an opaque read pair, with no object authority.
+pub(in crate::kernel) fn canonical_loaded_pointer_carrier(
+    pointer: &CPointerValue,
+    assumptions: &PureFactContext,
+) -> Option<CPointerValue> {
+    resolve_pointer_read_carrier(pointer, assumptions, true, false)
+}
+
+// Called only for the value delivered by an already checked full-pointer
+// cell source. Registry entries identify its exact immutable defining read;
+// they never establish a connection between two arbitrary pointer values.
+pub(in crate::kernel) fn legacy_stored_pointer_read(
+    pointer: &CPointerValue,
+) -> Option<CPointerValue> {
+    if pointer.designation().is_some() || !pointer.c_type().is_object_pointer() {
+        return None;
+    }
+    let registered = |variable: &Variable| {
+        if crate::kernel::registered_load_bytes_for_variable(variable) != Some(C_POINTER_BYTE_WIDTH)
+        {
+            return None;
+        }
+        match crate::kernel::registered_load_term_for_variable(variable)? {
+            Bitvector32Term::MemoryLoad(memory, address, LoadKind::Bits32) => {
+                Some(PointerLoadIdentity::new(memory, *address))
+            }
+            _ => None,
+        }
+    };
+    let origin = match &pointer.block {
+        PointerBlock::LoadedPointer(identity) => {
+            let (memory, address) = crate::kernel::eval::registered_pointer_load(*identity)?;
+            PointerLoadIdentity::new(memory, address)
+        }
+        PointerBlock::Symbolic(variable) => registered(variable)?,
+        _ => {
+            let mut pending = vec![&pointer.offset];
+            let mut origin = None;
+            while let Some(offset) = pending.pop() {
+                crate::instrumentation::record_deterministic_work(1);
+                match offset {
+                    PointerOffsetTerm::Add(left, right) => {
+                        pending.push(right);
+                        pending.push(left);
+                    }
+                    PointerOffsetTerm::Int32Scaled { value, .. } => {
+                        if let Bitvector32Term::Variable(variable) = value.as_ref()
+                            && let Some(found) = registered(variable)
+                        {
+                            if origin.is_some() {
+                                return None;
+                            }
+                            origin = Some(found);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            origin?
+        }
+    };
+    paired_pointer_load_displacement(pointer, &origin)?;
+    Some(
+        pointer
+            .clone()
+            .with_designation(PointerDesignation::Loaded(origin)),
+    )
+}
+
+fn resolve_pointer_read_carrier(
+    pointer: &CPointerValue,
+    assumptions: &PureFactContext,
+    allow_opaque: bool,
+    allow_stored_legacy: bool,
+) -> Option<CPointerValue> {
+    let epoch = crate::kernel::assumptions::incomplete_reasoning_epoch();
+    let mut current = pointer.clone();
+    let mut pending = Vec::new();
+    let mut visited = BTreeSet::new();
+    while let Some(PointerDesignation::Loaded(origin)) = current.designation() {
+        if !visited.insert(origin.clone()) || resolution_interrupted() {
+            return None;
+        }
+        crate::instrumentation::record_deterministic_work(1);
+        let displacement = paired_pointer_load_displacement(&current, origin)?;
+        let memory = canonical_load_projection_source(origin.memory(), origin.address())
+            .unwrap_or_else(|| origin.memory().clone());
+        let cell = memory_dag_cell_source(
+            &memory,
+            origin.address(),
+            C_POINTER_BYTE_WIDTH,
+            assumptions,
+            true,
+        )?;
+        let stored = match cell.resolved_value(origin.address(), LoadKind::Bits32) {
+            Some(CValue::Pointer(stored)) => Some(stored),
+            Some(_) => return None,
+            None => pointer_value_at_stopping_store(
+                &cell,
+                origin.address(),
+                LoadKind::Bits32,
+                C_POINTER_BYTE_WIDTH,
+                assumptions,
+            ),
+        };
+        let Some(stored) = stored else {
+            if !allow_opaque {
+                return None;
+            }
+            // A checked frame preserves the complete read's bytes. Bind its
+            // raw address and designation to the same reached immutable read.
+            let terminal = PointerLoadIdentity::new(cell.node().clone(), origin.address().clone());
+            current = current
+                .with_pointer(Pointer::loaded_value(terminal.memory(), terminal.address()))
+                .with_designation(PointerDesignation::Loaded(terminal));
+            pending.push(displacement);
+            break;
+        };
+        pending.push(displacement);
+        if allow_stored_legacy && stored.designation().is_none() {
+            current = stored;
+            break;
+        }
+        current = if stored.designation().is_none() {
+            legacy_stored_pointer_read(&stored)?
+        } else {
+            stored
+        };
+    }
+    if !(allow_opaque && matches!(current.designation(), Some(PointerDesignation::Loaded(_))))
+        && !(allow_stored_legacy && current.designation().is_none())
+        && !matches!(
+            current.designation(),
+            Some(
+                PointerDesignation::Object { .. }
+                    | PointerDesignation::InputSelected { .. }
+                    | PointerDesignation::Unresolved(_)
+            )
+        )
+        || resolution_interrupted()
+        || crate::kernel::assumptions::incomplete_reasoning_epoch() != epoch
+    {
+        return None;
+    }
+    // Move the growing offset instead of cloning its full selected spine at
+    // every copied carrier. Only the outer access path's qualifiers survive.
+    let mut offset = current.pointer().offset.clone();
+    for displacement in pending.into_iter().rev() {
+        offset = exact_pointer_offset_sum(offset, displacement);
+    }
+    let address = Pointer {
+        block: current.pointer().block.clone(),
+        offset,
+    };
+    Some(
+        current
+            .with_pointer(address)
+            .with_type(pointer.c_type())
+            .with_pointee_constant(pointer.pointee_constant())
+            .with_pointee_volatile(pointer.pointee_volatile()),
+    )
 }
 
 pub(in crate::kernel) fn loaded_pointer_designations_equal(
@@ -4323,6 +4598,24 @@ fn cell_integer_for_read(
         return None;
     };
     if !kind.reads_value(&cell) {
+        return None;
+    }
+    // A cached scalar answers only for the bytes its producer actually read.
+    // A complete pointer may use a Bits32 proxy, but a genuine four-byte
+    // value at the same address cannot supply that eight-byte value.
+    let cell_bytes = match &cell {
+        CValue::Int32(Bitvector32Term::Variable(variable)) => {
+            crate::kernel::registered_load_bytes_for_variable(variable)
+                .unwrap_or_else(|| cell.byte_width())
+        }
+        _ => cell.byte_width(),
+    };
+    if crate::kernel::load_term_access_width(
+        &crate::kernel::intern_c_memory_ref(memory),
+        pointer,
+        kind,
+    ) > cell_bytes
+    {
         return None;
     }
     match cell {

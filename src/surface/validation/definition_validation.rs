@@ -670,11 +670,17 @@ pub(in crate::surface) fn c_expression_reads_no_memory(expression: &CExpression)
     match expression {
         CExpression::Variable(_) | CExpression::Value(_) => true,
         CExpression::Add(left, right)
+        | CExpression::RecordPointerOffset {
+            pointer: left,
+            index: right,
+            ..
+        }
         | CExpression::Subtract(left, right)
         | CExpression::Multiply(left, right) => {
             c_expression_reads_no_memory(left) && c_expression_reads_no_memory(right)
         }
-        CExpression::PointerOffsetBytes { pointer, .. } => c_expression_reads_no_memory(pointer),
+        CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::PointerAligned { pointer, .. } => c_expression_reads_no_memory(pointer),
         CExpression::Cast { expression, .. } => c_expression_reads_no_memory(expression),
         // `&q[i]` is an address computed from `q` and `i`; nothing is loaded.
         CExpression::AddressOf(place) => match place.as_ref() {
@@ -2572,7 +2578,8 @@ fn collect_resource_fact_reads_from_c_expression(
         CExpression::MemberAddress {
             object: pointer, ..
         }
-        | CExpression::PointerOffsetBytes { pointer, .. } => {
+        | CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::PointerAligned { pointer, .. } => {
             collect_resource_fact_reads_from_c_expression(pointer, reads);
         }
         CExpression::Load(pointer) => {
@@ -2603,7 +2610,12 @@ fn collect_resource_fact_reads_from_c_expression(
                 enclosing_range: None,
             });
         }
-        crate::kernel::binary_c_operation!(left, right) => {
+        CExpression::RecordPointerOffset {
+            pointer: left,
+            index: right,
+            ..
+        }
+        | crate::kernel::binary_c_operation!(left, right) => {
             collect_resource_fact_reads_from_c_expression(left, reads);
             collect_resource_fact_reads_from_c_expression(right, reads);
         }

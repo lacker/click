@@ -240,10 +240,16 @@ pub(super) fn summary_result(
     interface: &CFunctionContractInterface,
 ) -> Option<CValue> {
     let selected = destination(state, interface)?;
-    Some(CValue::typed_pointer(
-        selected.pointer.clone(),
-        interface.return_type(),
-    ))
+    // `destination` checked an exact complete-object construction return.
+    // Ordinary child constructors return void and never pass through here;
+    // selecting their child path from its numeric address would lose the
+    // original parent designation.
+    let pointer = state
+        .memory()
+        .declared_aggregate_pointer(&selected.pointer, &selected.layout)?
+        .with_type(interface.return_type())
+        .with_pointee_constant(interface.return_pointee_is_constant());
+    Some(CValue::Pointer(pointer))
 }
 
 /// A certified construction rule, or an explicit external construction-return

@@ -2265,6 +2265,7 @@ fn verify_c0_sources_in_context(
         click_function_environment,
         resource_environment,
         mut function_environment,
+        current_function_environment,
         mut theorem_certification_facts,
         mut theorem_certification_authorities,
         theorem_environment,
@@ -2344,8 +2345,7 @@ fn verify_c0_sources_in_context(
         } else {
             BTreeMap::new()
         };
-        let mut function_environment = initial_function_environment
-            .unwrap_or(built_function_environment)
+        let current_function_environment = built_function_environment
             .with_modeled_pthread_binding(
                 (selected_thread_runtime
                     == crate::languages::c::thread_runtime::CThreadRuntime::ModeledPthread)
@@ -2353,6 +2353,12 @@ fn verify_c0_sources_in_context(
             )
             .with_modeled_mutex_definitions(modeled_mutex_definitions)
             .with_byte_order(selected_target.byte_order());
+        // Retained carrier certificates may depend on any linked callee or
+        // declaration. A source change invalidates the whole retained batch;
+        // proof-only edits can reuse it without a per-call dependency scan.
+        let mut function_environment = initial_function_environment
+            .filter(|retained| retained.same_function_declarations(&current_function_environment))
+            .unwrap_or_else(|| current_function_environment.clone());
         // Contracts are declaration interfaces. A selected function receives
         // every well-formed callee contract as a scoped assumption, while its
         // own contract hypothesis supports the existing checked-recursion
@@ -2383,6 +2389,18 @@ fn verify_c0_sources_in_context(
                     function_environment =
                         function_environment.with_verified_function_rule(hypothesis);
                 }
+            } else if current_function_environment
+                .get_function(function.name())
+                .is_some_and(|current| {
+                    current == &function
+                        && function_environment.has_checked_native_function_effects(current)
+                })
+            {
+                // An unchanged retained body certificate already supplies
+                // semantic carrier effects. An external assumption would
+                // take dispatch precedence and discard that evidence.
+                function_environment =
+                    function_environment.without_external_function_rule(function.name());
             } else if let Some(assumption) =
                 crate::kernel::c_unselected_function_contract_assumption(function)
             {
@@ -2429,6 +2447,7 @@ fn verify_c0_sources_in_context(
             click_function_environment,
             resource_environment,
             function_environment,
+            current_function_environment,
             theorem_certification_facts,
             theorem_certification_authorities,
             theorem_environment,
@@ -2984,10 +3003,11 @@ fn verify_c0_sources_in_context(
         if contract_function.resource_derived_mutable_frame() {
             let loop_assumptions = assumptions_from_propositions(&certification_facts);
             let mut loop_budget = crate::kernel::ExecutionBudget::beside_live_state();
-            let Some(loop_entry_state) = crate::kernel::c_function_entry_state(
+            let Some(loop_entry_state) = crate::kernel::c_function_entry_state_with_assumptions(
                 &certification_state,
                 &contract_function,
                 &certification_arguments,
+                &assumptions_from_propositions(&certification_facts),
             ) else {
                 return Err(ClickError::new(format!(
                     "could not construct the resource-derived loop entry for `{}`",
@@ -3026,10 +3046,11 @@ fn verify_c0_sources_in_context(
             || !contract_function.resource_requires().is_empty()
             || contract_function.resource_derived_mutable_frame()
         {
-            let Some(storage_entry_state) = crate::kernel::c_function_entry_state(
+            let Some(storage_entry_state) = crate::kernel::c_function_entry_state_with_assumptions(
                 &certification_state,
                 &contract_function,
                 &certification_arguments,
+                &assumptions_from_propositions(&certification_facts),
             ) else {
                 return Err(ClickError::new(format!(
                     "could not construct the storage-check entry for `{}`",
@@ -3462,13 +3483,18 @@ fn verify_c0_sources_in_context(
             // the resource transition, while explicit mutable frames require
             // an Effect claim.
             if !contract_function.is_program_entry() {
-                let rule = c_verified_function_rule(contract_function, &certified_claims)
+                let mut rule = c_verified_function_rule(contract_function, &certified_claims)
                     .ok_or_else(|| {
                         ClickError::new(format!(
                             "could not package verified contract for `{}`",
                             function_block.signature.name()
                         ))
                     })?;
+                if let Some(declaration) =
+                    current_function_environment.get_function(parsed_function.name())
+                {
+                    rule.bind_source_declaration(declaration);
+                }
                 function_environment = function_environment.with_verified_function_rule(rule);
             }
         }
@@ -4350,6 +4376,10 @@ pub(in crate::surface) fn c0_statement_calls(
                 pointer: expression,
                 ..
             }
+            | syntax::C0Expression::MemberAddress {
+                pointer: expression,
+                ..
+            }
             | syntax::C0Expression::CheckedArrayIndex {
                 index: expression, ..
             }
@@ -4374,7 +4404,12 @@ pub(in crate::surface) fn c0_statement_calls(
                 collect_function_addresses(then_branch, names);
                 collect_function_addresses(else_branch, names);
             }
-            syntax::C0Expression::LessThan(left, right)
+            syntax::C0Expression::RecordPointerOffset {
+                pointer: left,
+                index: right,
+                ..
+            }
+            | syntax::C0Expression::LessThan(left, right)
             | syntax::C0Expression::LessEqual(left, right)
             | syntax::C0Expression::GreaterThan(left, right)
             | syntax::C0Expression::GreaterEqual(left, right)
@@ -6801,7 +6836,18 @@ pub(in crate::surface) fn external_c0_function_with_reference_inputs(
     function_block: &FunctionBlock,
     resources: &ResourceEnvironment,
 ) -> syntax::C0Function {
-    let parsed = external_c0_function(function_block);
+    let parsed = external_c0_function(function_block)
+        .with_parameter_pointee_layouts(resources.struct_layouts());
+    let parsed = if function_block
+        .signature()
+        .parameters()
+        .iter()
+        .any(|parameter| parameter.is_reference())
+    {
+        parsed.with_typed_access_policy(crate::kernel::CTypedAccessPolicy::NativeObjectOnly)
+    } else {
+        parsed
+    };
     let mut scalars = Vec::new();
     let mut aggregates = Vec::new();
     for (parameter_index, parameter) in function_block.signature().parameters().iter().enumerate() {
@@ -7180,6 +7226,23 @@ pub(in crate::surface) fn function_resource_summary(
             snapshot,
             None,
         )?;
+        let places = crate::surface::lowering::native_record_places_for_resource(
+            &lowered_resource,
+            parsed_function.parameters(),
+            resource_environment.struct_layouts(),
+        )?;
+        let spans = crate::surface::lowering::native_span_requirements_for_resource(
+            &lowered_resource,
+            parsed_function.parameters(),
+            resource_environment.struct_layouts(),
+        )?;
+        let specs = specs
+            .into_iter()
+            .map(|spec| {
+                spec.with_native_record_places(places.clone())
+                    .with_native_span_requirements(spans.clone())
+            })
+            .collect::<Vec<_>>();
         let guard = ensure
             .condition()
             .map(|condition| {
@@ -7339,7 +7402,12 @@ pub(in crate::surface) fn composite_resource_definitions(
             .contains()
             .iter()
             .map(|resource| {
-                resource_clause_to_resource_spec_for_body(resource, &definition_parameters, None)
+                resource_clause_to_resource_spec_for_body(
+                    resource,
+                    &definition_parameters,
+                    None,
+                    resource_environment.struct_layouts(),
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
         let recursive = body.contains().iter().any(|resource| {
@@ -7457,7 +7525,12 @@ pub(in crate::surface) fn composite_resource_definitions(
                     .contains()
                     .iter()
                     .map(|resource| {
-                        resource_clause_to_resource_spec_for_body(resource, &parameters, None)
+                        resource_clause_to_resource_spec_for_body(
+                            resource,
+                            &parameters,
+                            None,
+                            resource_environment.struct_layouts(),
+                        )
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let (facts, _) = lower_composite_resource_facts_with_bindings(
@@ -7579,17 +7652,31 @@ fn lower_resource_body_children(
 pub(in crate::surface) fn append_entry_resource_specs(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
-    _resource_environment: &ResourceEnvironment,
+    resource_environment: &ResourceEnvironment,
     specs: &mut Vec<CResourceSpec>,
 ) -> Result<(), ClickError> {
-    specs.extend(resource_clause_to_resource_specs_with_metadata(
+    let lowered = resource_clause_to_resource_specs_with_metadata(
         resource,
         parameters,
         None,
         CResourceTransferRole::Borrow,
         CResourceSnapshot::Entry,
         None,
-    )?);
+    )?;
+    let places = crate::surface::lowering::native_record_places_for_resource(
+        resource,
+        parameters,
+        resource_environment.struct_layouts(),
+    )?;
+    let spans = crate::surface::lowering::native_span_requirements_for_resource(
+        resource,
+        parameters,
+        resource_environment.struct_layouts(),
+    )?;
+    specs.extend(lowered.into_iter().map(|spec| {
+        spec.with_native_record_places(places.clone())
+            .with_native_span_requirements(spans.clone())
+    }));
     Ok(())
 }
 
@@ -7683,6 +7770,7 @@ fn resource_clause_to_resource_spec_for_body(
     resource: &ResourceClause,
     parameters: &[syntax::C0Parameter],
     result_type: Option<crate::kernel::CType>,
+    layouts: &BTreeMap<String, syntax::C0StructLayout>,
 ) -> Result<CResourceSpec, ClickError> {
     // Scalar model fields are bound by the instance-body evaluator, just as
     // they are for memory endpoints and child arguments. Keep this spelling
@@ -7726,14 +7814,22 @@ fn resource_clause_to_resource_spec_for_body(
             ResourceAccessMode::View => CResourceTransferRole::Borrow,
         },
     };
-    resource_clause_to_resource_spec_with_metadata(
+    let spec = resource_clause_to_resource_spec_with_metadata(
         resource,
         parameters,
         result_type,
         role,
         CResourceSnapshot::Current,
         None,
-    )
+    )?;
+    let places =
+        crate::surface::lowering::native_record_places_for_resource(resource, parameters, layouts)?;
+    let spans = crate::surface::lowering::native_span_requirements_for_resource(
+        resource, parameters, layouts,
+    )?;
+    Ok(spec
+        .with_native_record_places(places)
+        .with_native_span_requirements(spans))
 }
 
 fn resource_clause_to_resource_spec_with_metadata(
@@ -8212,6 +8308,19 @@ pub(in crate::surface) fn substitute_contract_segment(
             start: substitute_contract_expression_in(start, substitutions)?,
             end: substitute_contract_expression_in(end, substitutions)?,
             layout: layout.clone(),
+        },
+        ContractSegmentSurface::IndexedField {
+            place,
+            element_width,
+            element_type,
+        } => ContractSegmentSurface::IndexedField {
+            place: Box::new(substitute_contract_expression_in(place, substitutions)?),
+            element_width: *element_width,
+            element_type: *element_type,
+        },
+        ContractSegmentSurface::ObjectAt { name, base } => ContractSegmentSurface::ObjectAt {
+            name: name.clone(),
+            base: Box::new(substitute_contract_expression_in(base, substitutions)?),
         },
         surface => surface.clone(),
     };
@@ -9194,8 +9303,14 @@ int32 read_retargeted(struct buffer* owner, int32* other) {
 "#;
         let error = verify_sources(click, RETARGET_SOURCE)
             .expect_err("the entry view must not follow a rewritten pointer field");
+        // Both the typed input guarantee and its read permission belong to
+        // the entry carrier. The replacement has neither; domain checking may
+        // therefore refuse it before the permission check is reached.
         assert!(
-            error.message().contains("missing resource fact `views "),
+            error.message().contains("missing resource fact `views ")
+                || error
+                    .message()
+                    .contains("pointer arithmetic left the pointed-to object"),
             "{}",
             error.message()
         );

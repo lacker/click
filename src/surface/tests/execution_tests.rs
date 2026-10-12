@@ -1224,6 +1224,11 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
     else {
         panic!("fill3's input is a pointer");
     };
+    let Some(crate::kernel::PointerDesignation::Unresolved(input_identity)) =
+        argument.designation()
+    else {
+        panic!("fill3 must retain an opaque native span identity");
+    };
     let base = argument.pointer().clone();
     let first = base.clone();
     let second = offset_pointer_by_int32_elements(base.clone(), Bitvector32Term::Constant(1));
@@ -1251,6 +1256,41 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
             Bitvector32Term::Constant(0),
             Bitvector32Term::Constant(3),
         )));
+    let expected_requirement = CResourceSpec::memory(
+        CMemorySegment::new(
+            CExpression::Variable("p".into()),
+            CExpression::Value(int32(0)),
+            CExpression::Value(int32(3)),
+        ),
+        CResourceAccessMode::Own,
+        CResourceTransferRole::Consume,
+        CResourceSnapshot::Entry,
+    )
+    .with_native_span_requirements(vec![crate::kernel::CNativeSpanRequirement {
+        access_policy: crate::kernel::CTypedAccessPolicy::CAllocatedAccessAllowed,
+        carrier: CExpression::Variable("p".into()),
+        element_type: CType::Int32,
+        count: CExpression::Value(int32(3)),
+    }]);
+    let expected_entry_contract = c_function(
+        CType::Int32,
+        "fill3",
+        vec![crate::kernel::c_parameter("p", CType::Int32Pointer)],
+        crate::kernel::c_return(CExpression::Value(int32(2))),
+    )
+    .with_resource_summary(vec![expected_requirement.clone()], Vec::new());
+    let initial_memory = crate::kernel::c_state_with_assumed_native_record_inputs(
+        &CState::new()
+            .with_memory(initial_memory)
+            .with_resource_context(initial_resources.clone()),
+        &expected_entry_contract,
+        verified.specification.arguments(),
+        &[],
+        &crate::kernel::PureFactContext::new(),
+    )
+    .expect("the independent fill3 contract admits its typed input span")
+    .memory()
+    .clone();
     let final_memory = initial_memory
         .clone()
         .with_block("local:i", 4)
@@ -1275,7 +1315,11 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
     );
     assert_eq!(
         verified.specification.arguments(),
-        &[crate::kernel::c_pointer_value(base.clone())]
+        &[CExpression::Value(CValue::Pointer(
+            crate::kernel::CPointerValue::new(base.clone(), CType::Int32Pointer).with_designation(
+                crate::kernel::PointerDesignation::Unresolved(*input_identity)
+            ),
+        ))]
     );
     assert!(
         verified
@@ -1352,19 +1396,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                     )
                     .with_source_body(parsed.source_body().clone())
                 }
-                .with_resource_summary(
-                    vec![CResourceSpec::memory(
-                        CMemorySegment::new(
-                            CExpression::Variable("p".to_string()),
-                            CExpression::Value(int32(0)),
-                            CExpression::Value(int32(3)),
-                        ),
-                        CResourceAccessMode::Own,
-                        CResourceTransferRole::Consume,
-                        CResourceSnapshot::Entry,
-                    )],
-                    Vec::new(),
-                )
+                .with_resource_summary(vec![expected_requirement], Vec::new(),)
                 .with_contract(
                     vec![SpecProposition::MemoryLoadable {
                         memory: SpecMemory::Current,
@@ -2165,4 +2197,21 @@ int32 choose(int32 a, int32 b) {
         verify_c0_sources(&expanded, &sources)
             .unwrap_or_else(|error| panic!("{}\n{expanded}", error.message()));
     }
+}
+
+#[test]
+fn numeric_address_equation_cannot_recover_a_sibling_object_designation() {
+    let c = "struct Pair { int first; int second; }; \
+             int read_word(unsigned long word, struct Pair* p) { return *((int*)word); }";
+    let source = r#"
+        verifying "word.c";
+        int32 read_word(uint64 word, struct Pair* p) {
+            views p->second;
+            requires word == address(&p->first + 1);
+            ensures result == p->second;
+        } by { execute(); simp(); }
+    "#;
+    let error = verify_c0_sources(source, &[("word.c", c)])
+        .expect_err("numeric equality must not recover a dereferenceable sibling designation");
+    assert!(error.message().contains("invalid memory access"), "{error:?}");
 }

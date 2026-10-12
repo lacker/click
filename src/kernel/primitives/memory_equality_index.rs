@@ -97,19 +97,13 @@ fn start_access_extent(fact: &CResourceFact) -> Option<u64> {
     })
 }
 
-// Whole-cell candidates carry their own authorized read footprints. The existing int32-slot interpretation of pointer reads is special:
-// eight bytes may read one logical four-byte element, including an interior
-// element of a longer range. Those partial reads retain the range checker.
+// Whole-cell candidates carry their complete physical footprints. The range's
+// element unit does not change the number of bytes it authorizes.
 fn exact_access_sizes(fact: &CResourceFact) -> Vec<u32> {
     let Some(extent) = read_extent(fact).and_then(|extent| u32::try_from(extent).ok()) else {
         return Vec::new();
     };
-    let width = fact.memory_range().expect("memory extent").element_width();
-    match (extent, width) {
-        (8, 4) => Vec::new(),
-        (4, 4) => vec![4, 8],
-        _ => vec![extent],
-    }
+    vec![extent]
 }
 
 #[derive(Clone, Debug, Default)]
@@ -412,7 +406,7 @@ impl AddressPoints {
             crate::instrumentation::record_deterministic_work(1);
             larger.owners = larger.owners.with_value(*entry);
         }
-        // Each occurrence contributes at most two footprints per access kind. Using the
+        // Each occurrence contributes one footprint per access kind. Using the
         // same smaller occurrence payload for both indexes bounds all moves,
         // even when the graph chooses the other class representative.
         for (larger_access, smaller_access) in [
@@ -2338,21 +2332,21 @@ mod tests {
     }
 
     #[test]
-    fn pointer_slot_candidates_preserve_the_checked_logical_width_rule() {
+    fn pointer_slot_candidates_require_the_complete_physical_width() {
         let base = Pointer::symbolic(Variable(851_015));
         let facts = PureFactContext::new();
         let slot = ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(
             CMemoryRange::new(base.clone(), 0u32.into(), 1u32.into()),
         ));
-        assert!(slot.permits_memory_read(&base, C_POINTER_BYTE_WIDTH, &facts));
+        assert!(!slot.permits_memory_read(&base, C_POINTER_BYTE_WIDTH, &facts));
         assert!(!slot.permits_memory_read(&base, 16, &facts));
         assert!(
             slot.memory_write_range(&base, C_POINTER_BYTE_WIDTH, &facts)
-                .is_some()
+                .is_none()
         );
         assert!(slot.memory_write_range(&base, 16, &facts).is_none());
-        // Candidate selection is an overapproximation. The logical rule does
-        // not authorize a pointer read from a four-byte, byte-indexed view.
+        // Changing the range's element unit cannot turn half a pointer into
+        // permission for the complete native value.
         let bytes = ResourceContext::new().unchecked_with_fact(view(&base, 0, 4));
         assert!(!bytes.permits_memory_read(&base, C_POINTER_BYTE_WIDTH, &facts));
         let byte_owner = ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(
@@ -2362,6 +2356,15 @@ mod tests {
             byte_owner
                 .memory_write_range(&base, C_POINTER_BYTE_WIDTH, &facts)
                 .is_none()
+        );
+        let complete = ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(
+            CMemoryRange::new(base.clone(), 0u32.into(), 2u32.into()),
+        ));
+        assert!(complete.permits_memory_read(&base, C_POINTER_BYTE_WIDTH, &facts));
+        assert!(
+            complete
+                .memory_write_range(&base, C_POINTER_BYTE_WIDTH, &facts)
+                .is_some()
         );
     }
 

@@ -41,10 +41,10 @@ resolve lifetime, provenance, or language validity and is not the proposed work.
    broader object-lifetime features. The acceptance matrix below defines that
    milestone; verifying one more helper alone does not.
 
-These consolidate the accepted direction. The common typed/byte observation
-rule and the admission audit below are remaining implementation work, not
-newly delivered capabilities. No new Surface syntax is introduced here; the
-mapping from native contracts to object-validity obligations remains to be audited.
+These consolidate the accepted direction. The bounded declared-uint32
+observation rule is delivered through the existing checked application syntax.
+The admission audit and complete object-model acceptance matrix remain open;
+implemented native requirements must retain matching checks at actual calls.
 
 ## The bounded target
 
@@ -300,6 +300,14 @@ native interface/body checking actually certifies; keep unresolved results
 unusable for accesses that need missing evidence. Do not add a hidden promise
 that every pointer-returning helper preserves a particular input's domain.
 
+Loop abstraction has the same obligation. A fresh abstract address may retain
+the entry pointer's designation only when the loop rule checks preservation of
+that complete designation on every relevant body continuation. Numeric loop
+invariants can then establish the address's position within that domain; they
+cannot supply its identity. Joins likewise retain only common checked
+designation evidence. A changing or unsupported designation must remain
+unresolved unless a separate checked invariant describes it.
+
 For `Restore`, establish the constructor destination's object and the input's
 live scalar object under matching entry/call obligations. In the supported
 non-overlapping object hierarchy, a live scalar cannot occupy arbitrary padding
@@ -342,8 +350,25 @@ and an explicit root/path/base/element/stride/count term. Counts and array path
 selections are mathematical integers. Value identity, snapshot identity, alpha
 keys, dependency collection, full-value substitution and resource matching retain
 these terms; address-only substitution cannot replace them. Raw pointer comparison
-and storage keys remain address-based. Resource semantics version 71 invalidates
+and storage keys remain address-based. Resource semantics version 72 invalidates
 older retained artifacts.
+
+Native input spans are minimum guarantees, not declarations of the complete
+allocation's extent. A scalar prefix records its declared element type and a
+mathematical count; a record prefix also records its checked nominal layout.
+Selecting a record element or member retains the exact input identity, origin,
+and selection path. Authentication checks that row and path and carries the
+selected element's bounds into the ordinary proof obligations. It must not find
+an input witness by numerical address equality or reinterpret a promised prefix
+as a complete array object. An empty prefix gives no object, non-nullness, or
+executable access guarantee.
+
+Record-pointer arithmetic retains the source's record layout and unscaled index
+as a typed operation. Its stride is the checked record size, with subtraction
+applied outside the native index's modular arithmetic. Lowering it to generic
+byte-pointer arithmetic would discard the distinction between traversing record
+elements and accessing an object's byte representation; those operations have
+separate requirements.
 
 This descriptor is syntax, not an authenticated object witness. Declared scalar
 address formation and native record/member selection authenticate the declaration
@@ -364,8 +389,17 @@ complete separation is checked. Automatic declaration evidence remains tied to
 its own lifetime; these inputs never manufacture a declaration or allocation. Geometry matching is indexed and memoizes fully checked selected-layout
 matches; lifetime and current-memory authentication remain separate checks.
 
-**Producer activation remains bounded.** Existing unprofiled unknown pointer
-loads retain legacy absence. Exact known pointer stores and reloads preserve the
+**Producer activation remains bounded.** The pinned C++ importer marks admitted
+raw object-pointer parameters as native inputs, independently of their resource
+clauses. Their symbolic entry values start unresolved even when the contract
+has no span requirement. The marker is part of the checked function interface;
+it grants no object extent, permission, or initialization. A typed input promise
+can justify traversal; the absence of a promise must not select legacy pointer
+arithmetic. Existing unprofiled C and Rust parameters and unknown pointer
+loads retain legacy absence. C records containing unions remain outside automatic
+native record enrollment, including records holding modeled opaque pthread
+objects. This compatibility boundary does not admit C++ union operations or
+weaken explicit native input requirements. Exact known pointer stores and reloads preserve the
 complete carrier. An immutable loaded-value origin can transport a designated
 value through its own checked complete cell and memory history, but a registry
 name, cell extent or pointer type is not evidence about the referent. The origin
@@ -375,12 +409,57 @@ copy prefixes within the exact assumption and memory-history scope.
 Do not enable designated unknown outputs globally before modular contracts can
 certify full pointer-value effects. Existing address-only postconditions do not
 promise designation preservation. An unknown summary output therefore cannot
-satisfy a new native object-input requirement. Ordinary C/C++ pointer arithmetic
-and access enforcement, array/global producers and the broader result-effect
-migration remain open; this bounded path does not close the sibling-pointer bug.
+satisfy a new native object-input requirement. Executable arithmetic, subtraction, ordering, reads and writes now check
+retained domains. Automatic scalar arrays and scalar/record globals retain
+checked declarations; scalar array members decay with their actual extent.
+Reference binding preserves an actual array element's containing domain.
+Complete loaded carriers require their exact full-width defining read and
+checked cell history, independently of raw address equations.
+
+Body-certified result effects preserve an input domain or select a declared
+child. They require independently reconstructed contract entry, independent
+symbolic binders, and agreement across complete normal-return paths. Independent
+parameter names alone are insufficient: caller-specific cell contents or extra
+entry assumptions must not certify a universal result, stored-pointer equation,
+or native output guarantee. The shared entry recipe must admit exactly the
+function's declared storage, native input requirements and contract resources.
+It can reconstruct an explicitly declared opaque composite head from the
+independent arguments and indexed definition. It does not unfold that head,
+import caller cells, or guess selected child, protocol or resource-reference
+evidence. The actual entry must still match the reconstructed memory, complete
+resource representation and declared premises exactly. The new opaque-head
+and native-formal enrollment checks require integrated validation.
+
+The bounded stored-pointer effect certifies an exact final full-width member
+cell containing the selected source carrier on every complete body path.
+Application checks its declared member type, write permission and initialized
+width before retaining that carrier. A numeric pointer postcondition supplies
+only address equality; it cannot substitute another designation or certify
+this effect. Existing
+[`pointer effect tests`](../src/kernel/functions/pointer_result_effect_tests.rs)
+pair a complete member-store positive with caller-specific cell and extra
+entry-premise refusals. The
+[`opaque entry tests`](../src/kernel/functions/independent_entry.rs)
+check that the head supplies no hidden cell and reject changed carrier,
+premise or definition evidence.
+
+A checked call with no applicable effect leaves
+its pointer result unresolved. Unknown pointer-cell reads through designated
+storage also retain an unresolved loaded pair. Designated pointer-to-integer
+casts refuse until the integer representation can retain the full carrier.
+
+These checks do not yet complete the general interface migration. Bounded
+scalar/record span requirements, pointer-result effects and final pointer-member
+equations are implemented. Their source/call integration remains under
+validation; general pointer outputs, broader result origins and unsupported
+aggregate-array/overlapping layouts remain separate obligations.
+Legacy absence must not be presented as authenticated support. The
+sibling-pointer bug remains open until its full cross-boundary matrix passes.
 The unchanged constructor and scalar-unwind integration tests, all four original
-cleanup Markdown fixtures, and `basic-cpp` pass. These acceptance cases retain
-the original source, contracts and value/frame claims.
+cleanup Markdown fixtures, and `basic-cpp` passed the preceding constructor-input
+checkpoint. They remain required acceptance cases for designation activation;
+scalar-prefix input and pointer-valued output transport are still under
+integration. Retain the original source, contracts and value/frame claims.
 
 Queries must use the selected domain/object and existing indexed evidence.
 Separation used to frame a read must cover its complete byte span and the
@@ -460,13 +539,14 @@ lifetime of independently owned span backing storage.
 
 ## One representation, consistent observations
 
-### The law to implement next
+### The delivered declared-uint32 law
 
 Execution loads and specification observations must agree whenever both refer
 to the same admitted object, byte range and memory snapshot. A modular call
 changes which facts are known; it must not change what a byte or typed read
-means. The current execution-only byte view violates this intended uniformity:
-its useful relation is unavailable to specification byte postconditions.
+means. The bounded declared-uint32 profile now supplies this shared relation,
+including the unchanged modular C word-value fixture. Other representation
+profiles and the remaining object-model acceptance obligations are separate.
 
 For the initial declared uint32 profile, let `w` be its value at snapshot `M`
 and `b0` through `b3` be its initialized representation bytes at that same
@@ -491,11 +571,11 @@ bytes. After modular output initialization, postconditions fixing all four bytes
 must determine the same word as inline execution would. Old-snapshot bytes
 cannot reconstruct the current word after a write.
 
-The initial implementation should expose one guarded representation observation
+The initial implementation exposes one guarded representation observation
 operation and checked projection/reconstruction rules to both execution and
-logical loads. It may retain separate APIs for program reads and pure term
-construction: program reads have authority and definedness obligations that
-building a symbolic proposition does not discharge. In particular, constructing
+logical loads. Separate APIs remain for program reads and pure term construction:
+program reads have authority and definedness obligations that building a symbolic
+proposition does not discharge. In particular, constructing
 a logical read term or naming an unknown value does not initialize memory,
 start a lifetime, or make an otherwise invalid program read legal.
 
@@ -542,21 +622,26 @@ observations at that snapshot to the word, including after a modular call.
 Neither projection nor packing allocates storage or sets initialization bits.
 The explicit initialized-range effect supplies that independent evidence.
 
-Implement this through the shared load/representation layer, with the existing
-`canonical_form_of_load` and `LoadKind` boundary audited for width and snapshot
-identity. Keep an explicit checked rule when normalization alone cannot connect
-the observations. The rule's certificate must name the object declaration,
-target representation, relevant initialization evidence and exact observations;
-retained checking must not repeat a search over arbitrary ambient equalities.
-Reject forged widths, adjacent-object byte mixtures, stale snapshots, three-byte
-coverage and unsupported target/type evidence.
+The shared load/representation layer uses `canonical_form_of_load` with an
+explicit four-byte observation width. Immutable automatic declaration metadata
+pins the checked uint32 type and little-endian target profile. The selected live
+load retains its initialization snapshot even when its canonical variable names
+an earlier memory projection. The checked `declared_uint32_from_bytes` application
+connects its four byte observations to a constant word; source expansion retains
+the exact byte premises at a recorded snapshot where the local remains in scope.
+Ordinary, expanded and retained checks, missing/mutated premises and result,
+wrong root/snapshot, incomplete initialization, unsupported profile, and
+unrelated-fact/cell scaling have focused regressions. No mutable cell observation,
+cast, or arbitrary allocation issues the declaration profile.
 
 This is the implementation contract, not a requirement to replace every existing
 load term immediately. Existing complete typed cells and direct byte-store
 normalization can remain efficient encodings if both reduce to the same law.
-First prove the relation in the shared C fixture, whose character-pointer rules
-already supply the source-language representation traversal. Claim C++ coverage
-only after its separate byte-access profile is settled.
+The shared C fixture now proves the exact word value without changing its
+program or contracts; its character-pointer rules supply the source traversal.
+C++ coverage still depends on its separately admitted traversal profile and
+unchanged integration proofs. This result does not complete the wider
+object-model or decoder acceptance matrix.
 
 ## Contracts, proof entry and modular calls
 
@@ -621,6 +706,36 @@ C11 dead-pointer policy must not silently become the rule for every C++ pointer
 comparison or Rust value. C's character-alias rules must not grant C++ access
 through every same-sized scalar type. Unsafe Rust is not implicitly covered by
 safe-Rust import evidence.
+
+### Bounded C allocated scalar access
+
+The approved compatibility rule keeps C allocated access separate from native
+object validity. A successful trusted allocator operation may retain an exact
+scalar-access identity for its result. An allocation contract, an equal numeric
+address, a cast, or initialized bytes cannot manufacture that identity. Source
+lowering must distinguish a real scalar allocation target from the scalar
+pointer encoding used internally for record addresses.
+
+The initial profile supports the selected scalar type at aligned positions
+within the retained allocation extent. It does not claim general C effective-type
+or aliasing support. Allocation grants no initialized value: malloc bytes remain
+uninitialized, while calloc follows the separately checked zero-initialization
+rules. Every access still needs permission and every read needs an initialized,
+compatible value. Free, failed allocation and replacement allocation must retire
+or transport the exact identity consistently with storage lifetime.
+
+Typed-place requirements carry their access policy. A C requirement can accept
+either native object evidence or this bounded C allocation evidence. A C++
+native-object requirement accepts only native object evidence. Symbolic C entry
+may assume its declared typed-place guarantee without inventing a concrete
+allocation, and actual calls must discharge that guarantee. These distinctions
+belong to interface identity and certificate reuse, not to a numeric-pointer
+fallback. Implementation and acceptance tests for this rule remain in progress.
+
+Address equality in branch and callback contracts remains an address fact.
+Contracts whose implementation dereferences a loaded or returned pointer must
+guarantee a valid typed place for that actual pointer. Preserve the original C
+and keep insufficient address-only contracts as rejection tests.
 
 The C++ importer must retain enough evidence to distinguish source operations:
 resolved constructor/copy/assignment identity, destination category, object and
@@ -711,8 +826,9 @@ with complete-width separation from distinct owned members of a valid
 composition, including members in different pointer blocks. The unchanged
 constructor and scalar-unwind integration tests, four cleanup Markdown fixtures
 and `basic-cpp` pass.
-Neither repair changes source contracts or initializes padding. The byte/word
-semantic bridge and broader pointer designation enforcement remain open.
+Neither repair changes source contracts or initializes padding. The bounded shared C byte/word bridge is now checked normally, in expanded
+source and in retained sessions. Broader pointer designation enforcement and the
+remaining frontend/object-model acceptance matrix require their own validation.
 
 ### Audit ledger
 
@@ -726,7 +842,7 @@ Source admission, execution and proof checking each have separate obligations.
 | Construction return | `cpp/construction.rs` and the implemented construction design | Preserve value-only/copy-equivalent admission; kernel destination identity alone is insufficient for source return identity |
 | Entry initialization | Raw markers, naming, checked entry facts and the constructor regression | Keep raw output and padding unwritten; the constructor repair requires authenticated object witnesses and complete field separation, including indexed cross-block ownership composition |
 | Returned observer | Recorded proof trace and unchanged integration test | Input naming now uses already checked explicit full-range separation; ordinary, expanded, retained and negative checks pass; constructor padding uses the separate bounded object-input rule |
-| Byte/word values | `eval/byte_view.rs`, declared scalar metadata and exact modular word refusal | Direct execution has a bounded encoding law; logical/modular observations still need the shared bridge above |
+| Byte/word values | Shared uint32 observation/packing, pinned automatic declaration metadata and the unchanged exact modular word fixture | Ordinary, expanded and retained checks and certificate mutations pass for the bounded shared C profile; other representations/frontend coverage remain separate |
 | Rust availability | `rust/lowering/moves.rs` storage events and checked live/drop flags | Preserve value consumption independently of bytes and storage; a C++ move must not reuse Rust's consuming semantics |
 | Scalar initialization | Shared initialized declaration, conversion and const-freezing protocol | Retain the distinct initialization transition; ownership and a named logical cell cannot replace it |
 
@@ -757,9 +873,10 @@ Complete automatic aggregate declarations now retain their layout in the shared
 block declaration metadata. Ordinary aggregate declarations, raw destination
 allocations, by-value parameter copies and actual copy-result allocations issue
 that evidence. Synthetic symbolic result blocks and constructor proof-entry raw
-markers do not. The metadata participates in snapshot identity and joins;
-resource semantics version 71 invalidates older retained artifacts. This metadata
-grants no access. C++ declarations and explicit child boundaries now additionally
+markers do not. The metadata participates in snapshot identity and joins.
+The layout checkpoint introduced resource semantics version 71; the current
+designation semantics use version 72. This metadata grants no access.
+C++ declarations and explicit child boundaries now additionally
 retain their checked nominal identity. Embedded-record boundaries retain parent
 relationships, root-relative offsets, full extents including padding, and
 alignment. Layout metadata alone does not establish active lifetime or authorize
@@ -800,10 +917,11 @@ The implementation sequence is:
    views and mergeable string-literal ownership. The cross-block query retains
    at most two matches per side and checks at most four candidate pairs; a miss
    leaves separation unproven. Complete raw footprints and padding remain
-   unwritten. The unchanged constructor and scalar-unwind integration tests
-   pass, as do all four original cleanup Markdown fixtures and `basic-cpp`.
-   Preserve these and the hostile padding, alias, missing-write and no-op cases
-   as regression coverage.
+   unwritten. The unchanged constructor and scalar-unwind integration tests,
+   all four original cleanup Markdown fixtures and `basic-cpp` passed the
+   preceding constructor-input checkpoint. Their integrated designation checks
+   remain required before this stabilization work is complete. Preserve these
+   and the hostile padding, alias, missing-write and no-op cases as coverage.
 
 Do not silently add full-extent separation as a stronger contract precondition
 or derive it from field ownership. It must follow from admitted object-domain
@@ -840,8 +958,9 @@ remaining paths still need their own admission and call checks:
 | --- | --- | --- |
 | C++ scalar/record reference parameters and receivers | Separate semantic input requirements; matching symbolic-entry, body, summary and certification checks; nominal record identity and explicit member paths | Extend only with checked evidence for additional source profiles and full pointer-result effects |
 | Rust reference parameters (`rust/lowering.rs::lower_function`) | Pointer carrier, qualifiers and source reference/array/slice information in lowering | Carry the applicable Rust referent guarantees to shared checking without treating raw pointers as references |
-| C and C++ raw pointer parameters | Pointer value and access type | Do not infer a live pointee merely from the signature; a pointer may be null or one-past when the function does not dereference it |
-| Memory `owns`/`views` clauses (`surface/lowering/resource_lowering.rs`) | Permission, range guards and snapshot-relative loadability; bounded constructor direct int32/int64 cell clauses also retain a separately checked scalar input requirement | General ranges, byte ownership and successful loads do not establish an object or array designation |
+| C and C++ raw pointer parameters | Pointer value and access type; admitted C++ raw inputs also carry an unresolved native identity even without a range clause | A signature alone does not establish a live pointee; checked native promises are required for traversal, and forwarding alone must preserve the unresolved identity |
+| Memory `owns`/`views` clauses (`surface/lowering/resource_lowering.rs`) | Permission, range guards and snapshot-relative loadability; selected declared scalar and record prefixes retain separate native input requirements | A prefix promises a minimum extent, not a complete array; C character-byte clauses do not declare uint8 objects, and byte ownership or successful loads alone do not establish designation |
+| Native callback members | Declared record member selection retains the exact function-pointer signature as its access type | A field's storage type does not certify a callback contract, byte reinterpretation or call authority; incompatible signatures refuse |
 | By-value aggregate parameters (`kernel/functions.rs`) | A fresh copied destination with its declared layout | Check the source value against its actual object and preserve nested boundaries; do not use the requested layout to create source evidence |
 | Constructor body entry and binding | Separate nominal record and scalar input requirements; checked complete/embedded selection, raw footprint, alignment and field permissions | Keep validity, permission and initialization separate; validate the unchanged RAII acceptance cases |
 
@@ -886,12 +1005,14 @@ conditions, not a promise of a fixed number of PRs.
    The confirmed member-pointer defect requires checked designation across
    arithmetic, loads, copies and calls; it cannot be closed by a documentation
    note or a syntax-only rejection of the initial probe.
-2. **Unify the selected representation observations.** Implement the declared
-   uint32 law once, with checked rules usable by execution, logical observations
-   and modular calls. Preserve byte/pointer/type refusals and efficient lookup.
-   Turn the exact value claim in
+2. **Selected representation bridge delivered.** The declared-uint32 law is
+   shared by execution, logical observations and checked modular value reasoning.
+   The exact value claim in
    [`modular_byte_output_word_value_requires_representation.md`](../mdtests/modular_byte_output_word_value_requires_representation.md)
-   into a positive regression without weakening it or rewriting its source.
+   is now positive without changing its C or contracts. Ordinary, expanded and
+   retained checks, hostile premises and indexed scaling pass. This closes that
+   prerequisite, while other representation/frontend profiles remain bounded
+   by their separate evidence requirements.
 3. **Close lifecycle and call-path inconsistencies.** Check proof-entry naming,
    scalar initialization, constructor completion, copy materialization, havoc,
    branch joins and cleanup against the common laws. Reuse passing tests where

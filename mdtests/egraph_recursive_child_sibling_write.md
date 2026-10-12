@@ -1,6 +1,8 @@
 # Recursive child matching across a sibling-field write
 
-Unfold, write the integer sibling field, and refold the same recursive children.
+Unfold, write the integer sibling field, and refold the same recursive children
+at the original full parent carrier `p`. Preserve the identical model, including
+its numerical `id`; address equality does not transfer native designation.
 
 ```c filename=egraph_reduce.c
 struct node { struct node *left; struct node *right; int tag; };
@@ -37,7 +39,7 @@ void roundtrip(struct node* p) {
   Tree::Node(id, lm, rm) => {
    let { left: l, right: r } = unfold(t);
    step();
-   let t = fold(tree(id), { model: Tree::Node(id, lm, rm) }, { left: l, right: r });
+   let t = fold(tree(p), { model: Tree::Node(id, lm, rm) }, { left: l, right: r });
    execute();
    simp();
   },

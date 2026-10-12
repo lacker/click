@@ -4,8 +4,10 @@ mod byte_view;
 mod expression;
 mod memory_loads;
 mod operators;
+pub(in crate::kernel) mod pointer_domains;
 pub(in crate::kernel) mod pointer_tags;
 mod statements;
+pub(in crate::kernel) mod uint32_representation;
 pub(in crate::kernel) use statements::{
     end_scope_automatic_lifetimes, missing_aggregate_copy_read_resource,
     refresh_scalar_local_after_memory_store, refresh_scalar_local_from_memory,
@@ -52,6 +54,7 @@ pub(in crate::kernel) use byte_view::{
 pub(super) use expression::*;
 pub(crate) use memory_loads::canonical_condition_fact;
 pub(crate) use memory_loads::canonical_form_of_load;
+pub(crate) use memory_loads::canonical_form_of_typed_load;
 pub(crate) use memory_loads::canonical_term;
 pub(crate) use memory_loads::canonicalized_offset_index_term;
 pub(crate) use memory_loads::check_canonical_at_creation;

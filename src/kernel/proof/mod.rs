@@ -35,6 +35,8 @@ mod storage;
 pub(crate) mod term_rewrite;
 
 pub(crate) use branches::{BranchId, ProofBranch, ProofBranchState, ProofBranches, SplitId};
+#[cfg(test)]
+pub(crate) use execution::selected_condition_probe;
 pub(crate) use execution::{
     CheckedBranchSplit, CheckedBranchSplitError, CheckedCallEvent, CheckedCallEvents,
     CheckedCallOutcomeSplit, CheckedExecutionEvent, CheckedProofCasePartition, EvidenceRefusal,

@@ -27,36 +27,18 @@ thread_local! {
     > = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// How many of a range's logical elements an access of `byte_width` bytes
-/// occupies for the *permission* question, where a range authorizes a read.
-///
-/// A range counts logical elements and an access is measured in bytes, so an
-/// `int64` read spans two elements of a four-byte range. The exception is the
-/// historical struct field unit: a loaded C pointer occupies one four-byte
-/// *field* even though its ABI footprint is two physical words, and
-/// [`PureFactContext::pointer_access_in_range`] has counted it that way since
-/// struct ranges existed. Keeping that rule here is what makes this a pure
-/// extraction of the code it replaces.
-///
-/// `None` for a width that names no elements at all, which declines the
-/// element question rather than rounding an answer onto a boundary.
-/// Minimum footprint a read candidate may need under the kernel's existing
-/// logical pointer-cell convention. This only selects candidates: the range's
-/// actual element width and the complete permission check remain authoritative.
+/// A read candidate must cover the physical access width. In particular,
+/// pointer cells and other eight-byte values need all eight bytes even when
+/// the resource range counts four-byte elements.
 pub(in crate::kernel) fn read_candidate_byte_width(byte_width: u32) -> u32 {
-    if byte_width == crate::kernel::C_POINTER_BYTE_WIDTH {
-        4
-    } else {
-        byte_width
-    }
+    byte_width
 }
 
+/// Convert a physical byte access to the number of resource elements needed.
+/// Empty accesses and zero-width ranges have no such element count.
 fn authorized_access_element_length(byte_width: u32, element_width: u32) -> Option<u32> {
     if element_width == 0 || byte_width == 0 {
         return None;
-    }
-    if element_width == 4 {
-        return Some(read_candidate_byte_width(byte_width).div_ceil(element_width));
     }
     Some(byte_width.div_ceil(element_width))
 }
@@ -1837,124 +1819,6 @@ impl PureFactContext {
                 ))
     }
 
-    pub(in crate::kernel) fn pointers_directly_disjoint_by_range(
-        &self,
-        left: &Pointer,
-        right: &Pointer,
-    ) -> bool {
-        if self.pointers_proven_equal_ignoring_memory_separation(left, right) {
-            return false;
-        }
-        let contains = |pointer: &Pointer, range: &CMemoryRange| {
-            if range.wide_bounds().is_some() {
-                self.pointer_access_in_wide_range(pointer, range.element_width(), range)
-            } else {
-                self.pointer_in_range_with_width(
-                    pointer,
-                    range.base(),
-                    range.start(),
-                    range.end(),
-                    range.element_width(),
-                )
-            }
-        };
-        if self
-            .borrow_partition_separated_members(
-                left,
-                right,
-                |range| contains(left, range),
-                |range| contains(right, range),
-            )
-            .is_some()
-        {
-            return true;
-        }
-        let direct = self
-            .memory_separation_candidates(&left.block, &right.block)
-            .find_map(|(proposition, left_range, right_range)| {
-                let contained = contains(left, left_range) && contains(right, right_range)
-                    || contains(right, left_range) && contains(left, right_range);
-                (contained
-                    && !self.memory_ranges_overlap_after_base_equality(left_range, right_range))
-                .then_some(proposition)
-            });
-        if let Some(proposition) = direct {
-            record_implicit_reasoning_provenance(self, proposition);
-            return true;
-        }
-        if let Some((resources, _, _)) = self.composition_separated_members(
-            &left.block,
-            &right.block,
-            |range| contains(left, range),
-            |range| contains(right, range),
-            |left_range, right_range| {
-                !self.memory_ranges_overlap_after_base_equality(left_range, right_range)
-            },
-        ) {
-            record_implicit_reasoning_provenance(
-                self,
-                &Proposition::CResourceComposition(resources.clone()),
-            );
-            return true;
-        }
-        false
-    }
-
-    pub(in crate::kernel) fn pointers_proven_disjoint_by_shallow_explicit_range(
-        &self,
-        left: &Pointer,
-        right: &Pointer,
-    ) -> bool {
-        if self.pointers_proven_equal_ignoring_memory_separation(left, right) {
-            return false;
-        }
-        let contains = |pointer: &Pointer, range: &CMemoryRange| {
-            // A wide range has its one membership rule.
-            if range.wide_bounds().is_some() {
-                return self.pointer_access_in_wide_range(pointer, range.element_width(), range);
-            }
-            self.pointer_in_range_by_shallow_fact_graph_with_width(
-                pointer,
-                range.base(),
-                range.start(),
-                range.end(),
-                range.element_width(),
-            )
-        };
-        self.memory_separation_candidates(&left.block, &right.block)
-            .any(|(proposition, left_range, right_range)| {
-                let proved = contains(left, left_range) && contains(right, right_range)
-                    || contains(right, left_range) && contains(left, right_range);
-                let proved = proved
-                    && !self.memory_ranges_overlap_after_base_equality(left_range, right_range);
-                if proved {
-                    record_implicit_reasoning_provenance(self, proposition);
-                }
-                proved
-            })
-            || self
-                .composition_separated_members(
-                    &left.block,
-                    &right.block,
-                    |range| contains(left, range),
-                    |range| contains(right, range),
-                    |left_range, right_range| {
-                        !self.memory_ranges_overlap_after_base_equality(left_range, right_range)
-                    },
-                )
-                .inspect(|(resources, _, _)| {
-                    record_implicit_reasoning_provenance(
-                        self,
-                        &Proposition::CResourceComposition((*resources).clone()),
-                    );
-                })
-                .is_some()
-            || self
-                .resource_compositions
-                .iter()
-                .any(|resources| resources.proves_owned_pointers_separate_shallow(left, right))
-    }
-
     pub(in crate::kernel) fn pointer_in_range_by_shallow_fact_graph_with_width(
         &self,
         pointer: &Pointer,
@@ -3305,13 +3169,9 @@ impl PureFactContext {
     /// half sits on the range's first element; every framing route that asks
     /// this question then carried the read across a write there.
     ///
-    /// `access_element_span` is the exclusion side's count and deliberately
-    /// not [`authorized_access_element_length`]: eight bytes at an address
-    /// could be a pointer or an `int64`, and the permission side's struct
-    /// field rule reads that width as one four-byte field. The two may
-    /// disagree only in this direction — a range may authorize an access it is
-    /// not proven separate from, which costs a framing conclusion, while the
-    /// reverse is the false theorem.
+    /// Both permission and exclusion use the complete physical access width.
+    /// This exclusion query additionally requires an exact element span so
+    /// that it does not round a boundary into a separation conclusion.
     ///
     /// Returns `None` when the access has no element span in this range's
     /// coordinates, which is the same declining that
@@ -4564,6 +4424,44 @@ fn additive_base_spellings(pointer: &Pointer) -> Vec<Pointer> {
         offset = left;
     }
     spellings
+}
+
+#[cfg(test)]
+mod physical_read_permission_tests {
+    use super::*;
+
+    #[test]
+    fn physical_read_permission_requires_the_entire_access_width() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let pointer = CMemory::local_pointer("physical-read-width");
+        for (width, count) in [(1, 4), (1, 8), (4, 1), (4, 2), (8, 1)] {
+            let range = CMemoryRange::new_with_element_width(
+                pointer.clone(),
+                0.into(),
+                count.into(),
+                width,
+            );
+            for owned in [false, true] {
+                let fact = if owned {
+                    CResourceFact::own_memory(range.clone())
+                } else {
+                    CResourceFact::view_memory(range.clone())
+                };
+                let resources = ResourceContext::new().unchecked_with_fact(fact);
+                let assumptions = PureFactContext::new();
+                assert_eq!(
+                    resources.permits_memory_read(&pointer, 8, &assumptions),
+                    width * count >= 8,
+                    "element width {width}, count {count}, owned {owned}",
+                );
+                assert!(!resources.permits_memory_read(
+                    &pointer.offset_by_bytes(4),
+                    8,
+                    &assumptions,
+                ));
+            }
+        }
+    }
 }
 
 #[cfg(test)]

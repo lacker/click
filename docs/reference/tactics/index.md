@@ -235,6 +235,36 @@ never searches for an equivalent equality. Expansion and audit verify the
 complete rewritten surface proof through the ordinary entry point.
 
 
+
+### Declared uint32 byte reconstruction
+
+`apply(declared_uint32_from_bytes(word, value)) using { P0; P1; P2; P3; }`
+is a checked application of the shared byte-representation rule. `word` must
+be a uint32 observation of one declared four-byte unsigned scalar in an
+initialized snapshot whose declaration retains the selected little-endian
+target profile. `value` must be a uint32 constant. The four explicit premises
+state the corresponding low byte and three shifted, masked bytes of that same
+observation. Their values must equal the four bytes of `value` in increasing
+address order. Equalities may be written in either orientation.
+
+The application checks all four exact premises and the observation's retained
+declaration, width, snapshot, target, and initialization evidence. Omitting a
+premise or changing its byte, root, snapshot, or result refuses the application.
+It supplies the word equality without granting memory access or initialization.
+A byte array, a different scalar type, an absent target profile, or an observation
+without the complete four-byte initialized span is outside this rule.
+
+Smart `simp` can emit this application with the four selected premises; its
+expanded form checks those premises directly. The unchanged
+[`modular byte-output word fixture`](https://github.com/clicklang/click/blob/master/mdtests/modular_byte_output_word_value_requires_representation.md)
+proves its exact little-endian value. The focused
+[`declared_uint32_from_bytes_modular_word_expands_and_checks_retained_premises` test](https://github.com/clicklang/click/blob/master/src/surface/proof/uint32_representation.rs)
+uses the unchanged modular byte-output program and checks expansion, retained
+verification, and missing or mutated premises. The
+[`kernel rule tests`](https://github.com/clicklang/click/blob/master/src/kernel/api/uint32_representation.rs)
+check the declaration, target, initialization, and width boundaries.
+
+
 ## Exact integer product bounds
 
 Inside `arithmetic_certificate rules`, the node

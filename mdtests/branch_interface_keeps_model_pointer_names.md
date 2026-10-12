@@ -1,8 +1,9 @@
 # A branch interface retains its model-bound pointer spelling
 
 The interface exports a packed word using the outer model binding `id`.
-A later snapshot rewrite cancels the extra word. Verification used to pass,
-but expansion printed an internal pointer as `…` instead of retaining `id`.
+A later snapshot rewrite cancels the extra word. The loaded child has its own
+typed-place guarantee; address equality with `q` supplies no such validity.
+Expansion must retain the model name rather than print an internal pointer.
 
 ```c filename=probe.c
 struct Node { unsigned long tag; struct Node *next; int32 other; };
@@ -31,7 +32,7 @@ void set_word(struct Node* q, struct Node* r, uint64 stamp) {
 void put(struct Node *p, struct Node *q, int32 x, uint64 stamp) {
     owns p->next;
     requires p->next == q;
-    owns q->tag;
+    owns p->next->tag;
     owns q->other;
     owns q->next;
     consumes s: identity(q->next);

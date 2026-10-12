@@ -10,6 +10,7 @@ impl CParameter {
             pointee_volatile: false,
             constant: false,
             pointee_constant: false,
+            native_pointer_input: false,
         }
     }
 
@@ -39,6 +40,15 @@ impl CParameter {
 
     pub fn pointee_is_constant(&self) -> bool {
         self.pointee_constant
+    }
+
+    pub fn is_native_pointer_input(&self) -> bool {
+        self.native_pointer_input
+    }
+
+    pub(crate) fn with_native_pointer_input(mut self, native_pointer_input: bool) -> Self {
+        self.native_pointer_input = native_pointer_input;
+        self
     }
 
     pub fn with_volatile(mut self, volatile: bool) -> Self {
@@ -716,8 +726,13 @@ impl CScalarObjectInput {
 }
 
 impl CFunctionContractInterface {
+    pub(crate) fn typed_access_policy(&self) -> CTypedAccessPolicy {
+        self.typed_access_policy
+    }
+
     pub(crate) fn new(return_type: CType, parameters: Vec<CParameter>) -> Self {
         Self {
+            typed_access_policy: CTypedAccessPolicy::default(),
             return_type,
             return_pointee_constant: false,
             return_aggregate_layout: None,
@@ -995,7 +1010,8 @@ impl CFunctionContractInterface {
     /// Compare exactly the semantic interface, including normalized resource
     /// role/snapshot metadata, while ignoring its nominal contract name.
     pub(crate) fn exactly_matches(&self, other: &Self) -> bool {
-        self.return_type == other.return_type
+        self.typed_access_policy == other.typed_access_policy
+            && self.return_type == other.return_type
             && self.return_pointee_constant == other.return_pointee_constant
             && self.return_aggregate_layout == other.return_aggregate_layout
             && self.aggregate_return_mode == other.aggregate_return_mode
@@ -1029,7 +1045,8 @@ impl CFunctionContractInterface {
     }
 
     pub(crate) fn has_compatible_signature_and_composite_vocabulary(&self, other: &Self) -> bool {
-        self.aggregate_return_mode == CAggregateReturnMode::Copy
+        crate::kernel::functions::typed_access_policy_refinement_compatible(self, other)
+            && self.aggregate_return_mode == CAggregateReturnMode::Copy
             && self.construction_parameter.is_none()
             && self.return_type == other.return_type
             && self.return_pointee_constant == other.return_pointee_constant
@@ -1051,6 +1068,7 @@ impl CFunctionContractInterface {
                         && left.pointee_volatile == right.pointee_volatile
                         && left.constant == right.constant
                         && left.pointee_constant == right.pointee_constant
+                        && left.native_pointer_input == right.native_pointer_input
                 })
             && self.resource_constructors == other.resource_constructors
             && self.composite_resource_definitions == other.composite_resource_definitions
@@ -1062,6 +1080,11 @@ impl CFunctionContractInterface {
 }
 
 impl CFunction {
+    pub(crate) fn with_typed_access_policy(mut self, policy: CTypedAccessPolicy) -> Self {
+        self.contract_interface.typed_access_policy = policy;
+        self
+    }
+
     pub(crate) fn with_program_entry(mut self) -> Self {
         self.program_entry = true;
         self
@@ -3228,6 +3251,37 @@ impl CExecutionEnvironment {
         self
     }
 
+    /// A retained semantic effect is usable only for the exact checked body
+    /// and interface. Scoped recursive hypotheses never carry these effects.
+    pub(crate) fn has_checked_native_function_effects(&self, function: &CFunction) -> bool {
+        self.verified_function_rules
+            .get(function.name())
+            .is_some_and(|rule| {
+                rule.source_declaration.as_deref().unwrap_or(&rule.function) == function
+                    && (rule.native_output_places_certified
+                        || !rule.pointer_result_effects.is_empty()
+                        || !rule.pointer_store_effects.is_empty())
+            })
+    }
+
+    /// Compare certificate dependencies once when rebuilding a source proof
+    /// environment. Proof certificates and proof-local selections are excluded.
+    pub(crate) fn same_function_declarations(&self, other: &Self) -> bool {
+        self.functions == other.functions
+            && self.function_contracts == other.function_contracts
+            && self.modeled_pthread_binding == other.modeled_pthread_binding
+            && self.modeled_mutex_definitions == other.modeled_mutex_definitions
+            && self.byte_order == other.byte_order
+            && self
+                .external_function_rules
+                .iter()
+                .filter(|(_, rule)| !rule.scoped_unselected)
+                .eq(other
+                    .external_function_rules
+                    .iter()
+                    .filter(|(_, rule)| !rule.scoped_unselected))
+    }
+
     pub(in crate::kernel) fn get_verified_function_rule(
         &self,
         name: &str,
@@ -3494,3 +3548,98 @@ impl std::fmt::Display for CTerminationError {
 }
 
 impl std::error::Error for CTerminationError {}
+
+impl CVerifiedFunctionRule {
+    /// Called only by the source transaction after certifying the function
+    /// produced from this declaration's exact proof block. It records the
+    /// declaration identity, without replacing the checked application IR.
+    pub(crate) fn bind_source_declaration(&mut self, declaration: &CFunction) -> bool {
+        let checked = &self.function;
+        if checked.name != declaration.name
+            || checked.body != declaration.body
+            || checked.source_body != declaration.source_body
+            || checked.program_entry != declaration.program_entry
+            || checked.inline_body != declaration.inline_body
+            || checked.control_targets != declaration.control_targets
+            || checked.global_variables != declaration.global_variables
+            || checked.global_arrays != declaration.global_arrays
+            || checked.static_variables != declaration.static_variables
+            || checked.static_storage != declaration.static_storage
+            || checked.string_literals != declaration.string_literals
+        {
+            return false;
+        }
+        self.source_declaration = Some(std::sync::Arc::new(declaration.clone()));
+        true
+    }
+}
+
+#[cfg(test)]
+mod retained_declaration_tests {
+    use super::*;
+    use crate::kernel::{c_function, c_return, c_void_value};
+
+    #[test]
+    fn source_certificate_binding_rejects_changed_declaration_and_body() {
+        let declaration = c_function(CType::Void, "bound", vec![], c_return(c_void_value()));
+        let mut rule = CVerifiedFunctionRule {
+            function: declaration.clone(),
+            source_declaration: None,
+            pointer_result_effects: vec![CPointerResultEffect::Opaque].into(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
+            loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
+            applied_tactics: Default::default(),
+        };
+        assert!(rule.bind_source_declaration(&declaration));
+        let environment = CExecutionEnvironment::new().with_verified_function_rule(rule.clone());
+        assert!(environment.has_checked_native_function_effects(&declaration));
+        let changed_interface = c_function(
+            CType::Int32,
+            "bound",
+            vec![],
+            c_return(crate::kernel::c_int32_literal(0)),
+        );
+        assert!(!environment.has_checked_native_function_effects(&changed_interface));
+        let changed_body = c_function(
+            CType::Void,
+            "bound",
+            vec![],
+            crate::kernel::c_seq(crate::kernel::c_skip(), c_return(c_void_value())),
+        );
+        assert!(!rule.bind_source_declaration(&changed_body));
+        assert_eq!(rule.source_declaration.as_deref(), Some(&declaration));
+    }
+
+    #[test]
+    fn representation_copy_authority_is_a_retained_declaration_dependency() {
+        let function = c_function(CType::Void, "copy", vec![], c_return(c_void_value()));
+        let rule = CExternalFunctionRule {
+            function: function.clone(),
+            scoped_unselected: false,
+            representation_copy: None,
+        };
+        let declared = CExecutionEnvironment::new()
+            .with_function(function)
+            .with_external_function_rule(rule.clone());
+        let changed = declared
+            .clone()
+            .with_external_function_rule(rule.with_representation_copy(RepresentationCopyEffect {
+                destination_argument: 0,
+                source_argument: 1,
+                bytes_argument: 2,
+            }));
+        assert_eq!(declared.functions, changed.functions);
+        assert!(!declared.same_function_declarations(&changed));
+        assert!(!changed.same_function_declarations(&declared));
+        let scoped = declared
+            .clone()
+            .with_external_function_rule(CExternalFunctionRule {
+                function: c_function(CType::Void, "unselected", vec![], c_return(c_void_value())),
+                scoped_unselected: true,
+                representation_copy: None,
+            });
+        assert!(declared.same_function_declarations(&scoped));
+    }
+}

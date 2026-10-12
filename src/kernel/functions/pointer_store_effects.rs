@@ -1,0 +1,325 @@
+use super::*;
+
+pub(crate) fn root(
+    state: &CState,
+    interface: &CFunctionContractInterface,
+    arguments: &[CValue],
+    selector: &CPointerEffectRoot,
+) -> Option<CPointerValue> {
+    match selector {
+        CPointerEffectRoot::Parameter(index) => {
+            let CValue::Pointer(pointer) = arguments.get(*index)? else {
+                return None;
+            };
+            // Keep scalar carriers unchanged; record witnesses authenticate
+            // unresolved/loaded carriers without changing their numeric value.
+            Some(
+                state
+                    .memory()
+                    .checked_native_record_pointer(pointer)
+                    .unwrap_or_else(|| pointer.clone()),
+            )
+        }
+        CPointerEffectRoot::ConstructionDestination => {
+            if interface.aggregate_return_mode() != CAggregateReturnMode::Construction {
+                return None;
+            }
+            let destination = state.aggregate_destination.as_deref()?;
+            state
+                .memory()
+                .declared_aggregate_pointer(&destination.pointer, &destination.layout)
+        }
+    }
+}
+
+pub(crate) fn selected(
+    state: &CState,
+    interface: &CFunctionContractInterface,
+    arguments: &[CValue],
+    selector: &CPointerEffectRoot,
+    path: &[String],
+) -> Option<CPointerValue> {
+    let pointer = if path.is_empty() {
+        match selector {
+            CPointerEffectRoot::Parameter(index) => {
+                let CValue::Pointer(pointer) = arguments.get(*index)? else {
+                    return None;
+                };
+                pointer.clone()
+            }
+            _ => root(state, interface, arguments, selector)?,
+        }
+    } else {
+        root(state, interface, arguments, selector)?
+    };
+    if path.is_empty() {
+        Some(pointer)
+    } else {
+        state
+            .memory()
+            .checked_member_pointer_by_path(&pointer, path)
+    }
+}
+
+pub(crate) fn selected_element_type(
+    state: &CState,
+    pointer: &CPointerValue,
+    assumptions: &PureFactContext,
+) -> Option<CType> {
+    match pointer.designation()? {
+        PointerDesignation::Object { element_type, .. } => Some(*element_type),
+        PointerDesignation::InputSelected { element_type, .. } => {
+            let guards = state
+                .memory()
+                .authenticated_input_selection(pointer, assumptions)?;
+            guards
+                .iter()
+                .all(|guard| {
+                    required_obligation_is_exactly_discharged(
+                        assumptions,
+                        &Proposition::ConditionIs(guard.clone(), true),
+                    )
+                })
+                .then_some(*element_type)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn pointer_fields(state: &CState, pointer: &CPointerValue) -> Vec<(Vec<String>, CType)> {
+    let layout = match pointer.designation() {
+        Some(PointerDesignation::Object { root, .. }) => match state
+            .memory()
+            .blocks
+            .get(&root.block)
+            .and_then(|block| block.declared_object.as_ref())
+        {
+            Some(CDeclaredObject::Aggregate(layout)) => Some(layout.clone()),
+            Some(_) => None,
+            None => state.memory().heap.object_input_domains.get(root).cloned(),
+        },
+        Some(PointerDesignation::InputSelected { .. }) => {
+            state.memory().input_record_layout(pointer)
+        }
+        _ => None,
+    };
+    let Some(layout) = layout else {
+        return Vec::new();
+    };
+    layout
+        .fields()
+        .iter()
+        .filter_map(|field| {
+            crate::instrumentation::record_deterministic_work(1);
+            if !field.c_type.is_pointer() {
+                return None;
+            }
+            let path = field
+                .name()
+                .split('.')
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let selected = state
+                .memory()
+                .checked_member_pointer_by_path(pointer, &path)?;
+            let element_type = match selected.designation()? {
+                PointerDesignation::Object { element_type, .. }
+                | PointerDesignation::InputSelected { element_type, .. } => *element_type,
+                _ => return None,
+            };
+            (element_type == field.c_type).then_some((path, field.c_type))
+        })
+        .collect()
+}
+
+pub(super) fn writes_authorized(
+    state: &CState,
+    interface: &CFunctionContractInterface,
+    arguments: &[CValue],
+    effects: &[CPointerStoreEffect],
+    assumptions: &PureFactContext,
+) -> bool {
+    effects.iter().all(|effect| {
+        let Some(destination) = selected(
+            state,
+            interface,
+            arguments,
+            &effect.destination,
+            &effect.destination_path,
+        ) else {
+            return false;
+        };
+        let bytes = effect.value_type.byte_width();
+        state
+            .resources()
+            .memory_write_range(destination.pointer(), bytes, assumptions)
+            .is_some()
+            && crate::kernel::eval::memory_write_permission_outcome(
+                state,
+                destination.pointer(),
+                bytes,
+                assumptions,
+            )
+            .is_none()
+    })
+}
+
+pub(super) fn apply(
+    state: &CState,
+    interface: &CFunctionContractInterface,
+    arguments: &[CValue],
+    effects: &[CPointerStoreEffect],
+    assumptions: &PureFactContext,
+) -> Result<CMemory, String> {
+    let mut memory = state.memory().clone();
+    for effect in effects {
+        let destination = selected(
+            state,
+            interface,
+            arguments,
+            &effect.destination,
+            &effect.destination_path,
+        )
+        .ok_or("certified pointer cell destination is not a declared member")?;
+        let Some(element_type) = selected_element_type(state, &destination, assumptions) else {
+            return Err("certified pointer cell lacks its retained member type".into());
+        };
+        if element_type != effect.value_type
+            || !effect.value_type.is_pointer()
+            || !memory.has_initialized_bytes_under(
+                destination.pointer(),
+                effect.value_type.byte_width(),
+                assumptions,
+            )
+        {
+            return Err(
+                "certified pointer cell is not initialized at its full declared width".into(),
+            );
+        }
+        let source = selected(
+            state,
+            interface,
+            arguments,
+            &effect.source,
+            &effect.source_path,
+        )
+        .filter(|source| source.designation().is_some())
+        .ok_or("certified stored pointer source lacks a semantic carrier")?
+        .with_type(effect.value_type);
+        // This is an authenticated final-cell equation from complete body
+        // certification. Existing initialization and ownership are prerequisites;
+        // the equation transports the full source carrier, not a fresh address.
+        memory = memory
+            .with_certified_pointer_cell(destination.pointer().clone(), source, assumptions)
+            .ok_or("certified pointer cell lost its initialized storage prerequisite")?;
+    }
+    Ok(memory)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stored_carrier_equation_requires_initialization_and_preserves_exact_source() {
+        let layout = CAggregateLayout::new(
+            C_POINTER_BYTE_WIDTH,
+            C_POINTER_BYTE_WIDTH,
+            vec![CAggregateField::new("kid", 0, CType::Int32Pointer)],
+        );
+        let address = CMemory::local_pointer("effect_cell");
+        let memory = CMemory::new().with_declared_aggregate_block(address.block.clone(), &layout);
+        let destination = memory
+            .declared_aggregate_pointer(&address, &layout)
+            .unwrap();
+        let source_address = CMemory::local_pointer("effect_source");
+        let memory =
+            memory.with_declared_scalar_block(source_address.block.clone(), 4, CType::Int32);
+        let source = memory
+            .declared_scalar_pointer(&source_address, CType::Int32)
+            .unwrap();
+        let interface = c_function(
+            CType::Void,
+            "put",
+            vec![
+                c_parameter("p", destination.c_type()),
+                c_parameter("q", source.c_type()),
+            ],
+            c_return(c_void_value()),
+        )
+        .contract_interface()
+        .clone();
+        let effect = CPointerStoreEffect {
+            destination: CPointerEffectRoot::Parameter(0),
+            destination_path: vec!["kid".into()].into(),
+            value_type: CType::Int32Pointer,
+            source: CPointerEffectRoot::Parameter(1),
+            source_path: Default::default(),
+        };
+        let args = [
+            CValue::Pointer(destination),
+            CValue::Pointer(source.clone()),
+        ];
+        let state = CState::new().with_memory(memory);
+        assert!(
+            apply(
+                &state,
+                &interface,
+                &args,
+                std::slice::from_ref(&effect),
+                &PureFactContext::new()
+            )
+            .is_err()
+        );
+        assert!(!writes_authorized(
+            &state,
+            &interface,
+            &args,
+            std::slice::from_ref(&effect),
+            &PureFactContext::new()
+        ));
+        let range = CMemoryRange::new_with_element_width(
+            address.clone(),
+            0u32.into(),
+            1u32.into(),
+            C_POINTER_BYTE_WIDTH,
+        );
+        let readonly = state.clone().with_resource_context(
+            ResourceContext::new()
+                .unchecked_with_fact(CResourceFact::View(CResource::Memory(range.clone()))),
+        );
+        assert!(!writes_authorized(
+            &readonly,
+            &interface,
+            &args,
+            std::slice::from_ref(&effect),
+            &PureFactContext::new()
+        ));
+        let owned = state.clone().with_resource_context(
+            ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(range)),
+        );
+        assert!(writes_authorized(
+            &owned,
+            &interface,
+            &args,
+            std::slice::from_ref(&effect),
+            &PureFactContext::new()
+        ));
+        let initialized = state.memory().clone().store(
+            address.clone(),
+            CValue::typed_pointer(Pointer::symbolic(Variable(9_898_203)), CType::Int32Pointer),
+        );
+        let marks = initialized.heap.initialized.clone();
+        let state = state.with_memory(initialized);
+        let after = apply(
+            &state,
+            &interface,
+            &args,
+            &[effect],
+            &PureFactContext::new(),
+        )
+        .unwrap();
+        assert_eq!(after.known_value(&address), Some(CValue::Pointer(source)));
+        assert_eq!(after.heap.initialized, marks);
+    }
+}

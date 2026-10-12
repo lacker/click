@@ -77,6 +77,7 @@ pub(super) fn bind(
     caller: &CState,
     interface: &CFunctionContractInterface,
     callee: &CState,
+    assumptions: &PureFactContext,
 ) -> Option<()> {
     for input in interface.aggregate_object_inputs() {
         let parameter = interface.parameters().get(input.parameter_index)?;
@@ -90,7 +91,22 @@ pub(super) fn bind(
             .memory()
             .has_aggregate_object_domain(pointer, &input.layout)
         {
-            return None;
+            let selection = CAggregateMemberSelection {
+                layout: input.layout.clone(),
+                path: Arc::from([]),
+                value_type: CType::UInt8Array(input.layout.size_bytes()),
+            };
+            let (_, guards) = caller.memory().guarded_native_record_selection(
+                pointer,
+                &selection,
+                assumptions,
+            )?;
+            if guards
+                .iter()
+                .any(|guard| assumptions.decide(guard) != Some(true))
+            {
+                return None;
+            }
         }
     }
     for input in interface.scalar_object_inputs() {
@@ -101,9 +117,21 @@ pub(super) fn bind(
         let CValue::Pointer(pointer) = callee.locals.get(parameter.name())? else {
             return None;
         };
-        if !caller
-            .memory()
-            .has_scalar_object_domain(pointer, input.element_type)
+        let Ok(crate::kernel::eval::pointer_domains::PointerDomainCheck::Checked(guards)) =
+            crate::kernel::eval::pointer_domains::checked_typed_pointer_span(
+                caller,
+                pointer,
+                IntegerTerm::constant_i64(0),
+                IntegerTerm::constant_i64(1),
+                input.element_type,
+                assumptions,
+            )
+        else {
+            return None;
+        };
+        if guards
+            .iter()
+            .any(|guard| assumptions.decide(guard) != Some(true))
         {
             return None;
         }
@@ -603,6 +631,424 @@ mod member_tests {
         assert!(
             nested.iter().all(|work| *work <= nested[0].max(1) * 2),
             "{nested:?}"
+        );
+    }
+
+    #[test]
+    fn relative_child_selection_preserves_the_authenticated_enclosing_record() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let child = child(2);
+        let layout = parent(&child);
+        let address = CMemory::frame_local_pointer(949_020, "record");
+        let memory = CMemory::new().with_declared_aggregate_block(address.block.clone(), &layout);
+        let object = memory
+            .declared_aggregate_pointer(&address, &layout)
+            .unwrap();
+        let record = selected(&memory, &object, &layout, &["child"], CType::UInt8Array(8));
+        let direct = selected(
+            &memory,
+            &object,
+            &layout,
+            &["child", "field1"],
+            CType::Int32,
+        );
+        let relative = memory
+            .checked_member_pointer_by_path(&record, &["field1".into()])
+            .unwrap();
+        assert_eq!(relative, direct);
+        assert!(
+            memory.checked_member_array_pointer(&record).is_none(),
+            "record storage is not a byte array"
+        );
+        assert!(
+            memory
+                .checked_member_pointer_by_path(&record, &["sibling".into()])
+                .is_none()
+        );
+        assert!(
+            memory
+                .checked_member_pointer_by_path(&relative, &["field0".into()])
+                .is_none()
+        );
+        let raw = CPointerValue::new(record.pointer().clone(), record.c_type());
+        assert!(
+            memory
+                .checked_member_pointer_by_path(&raw, &["field0".into()])
+                .is_none()
+        );
+        let shifted = record.clone().with_pointer(record.offset_by_bytes(4));
+        assert!(
+            memory
+                .checked_member_pointer_by_path(&shifted, &["field0".into()])
+                .is_none()
+        );
+        let expired = memory.without_local_block(&address.block);
+        assert!(
+            expired
+                .checked_member_pointer_by_path(&record, &["field0".into()])
+                .is_none()
+        );
+    }
+}
+
+#[cfg(test)]
+mod array_reference_tests {
+    use super::*;
+
+    fn function() -> CFunction {
+        c_function(
+            CType::Void,
+            "array_element_reference",
+            vec![c_parameter("pointer", CType::Int32Pointer)],
+            c_return(CExpression::Value(CValue::Void)),
+        )
+        .with_scalar_object_inputs(vec![CScalarObjectInput {
+            parameter_index: 0,
+            element_type: CType::Int32,
+        }])
+    }
+
+    fn array() -> (CState, CPointerValue) {
+        let base = CMemory::frame_local_pointer(949_010, "array");
+        let memory = CMemory::new()
+            .with_declared_array_block(base.block.clone(), CType::Int32, 4)
+            .unwrap();
+        let pointer = memory
+            .declared_array_pointer(&base, CType::Int32, 4)
+            .unwrap();
+        (CState::new().with_memory(memory), pointer)
+    }
+
+    fn bind_both(state: &CState, pointer: &CPointerValue, assumptions: &PureFactContext) -> bool {
+        let function = function();
+        let arguments = [CValue::Pointer(pointer.clone())];
+        let body =
+            bind_c_function_arguments_with_assumptions(state, &function, &arguments, assumptions);
+        let summary = bind_c_contract_arguments_with_assumptions(
+            state,
+            function.contract_interface(),
+            &arguments,
+            None,
+            assumptions,
+        );
+        assert_eq!(body.is_some(), summary.is_some());
+        for callee in body.iter().chain(summary.iter()) {
+            assert_eq!(callee.locals().get("pointer"), Some(&arguments[0]));
+            assert_eq!(callee.memory(), state.memory());
+        }
+        body.is_some()
+    }
+
+    #[test]
+    fn scalar_reference_binding_preserves_the_containing_array_domain() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (state, pointer) = array();
+        for offset in [0, 4, 12] {
+            let element = pointer
+                .clone()
+                .with_pointer(pointer.offset_by_bytes(offset));
+            assert!(bind_both(&state, &element, &PureFactContext::new()));
+        }
+        for offset in [1, 16, 20] {
+            let element = pointer
+                .clone()
+                .with_pointer(pointer.offset_by_bytes(offset));
+            assert!(!bind_both(&state, &element, &PureFactContext::new()));
+        }
+        let raw = CPointerValue::new(pointer.offset_by_bytes(4), CType::Int32Pointer);
+        assert!(!bind_both(&state, &raw, &PureFactContext::new()));
+        let Some(PointerDesignation::Object {
+            root, path, base, ..
+        }) = pointer.designation()
+        else {
+            panic!()
+        };
+        let forged = pointer
+            .clone()
+            .with_designation(PointerDesignation::Object {
+                root: root.clone(),
+                path: path.clone(),
+                base: base.clone(),
+                element_type: CType::Int32,
+                stride: 4,
+                count: IntegerTerm::constant_i64(5).into(),
+            });
+        assert!(!bind_both(&state, &forged, &PureFactContext::new()));
+        let expired = state
+            .clone()
+            .with_memory(state.memory().without_local_block(&pointer.block));
+        assert!(!bind_both(&expired, &pointer, &PureFactContext::new()));
+        assert_eq!(state.memory().cells.representation_len(), 0);
+        assert!(state.resources().facts().is_empty());
+    }
+
+    #[test]
+    fn symbolic_array_reference_binding_uses_the_actual_caller_guards() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (state, pointer) = array();
+        let index = Bitvector32Term::Variable(Variable(949_011));
+        let element = pointer.clone().with_pointer(Pointer {
+            block: pointer.block.clone(),
+            offset: PointerOffsetTerm::Int32Scaled {
+                value: Box::new(index),
+                byte_width: 4,
+            },
+        });
+        let crate::kernel::eval::pointer_domains::PointerDomainCheck::Checked(guards) =
+            crate::kernel::eval::pointer_domains::checked_pointer_access(
+                &state,
+                &element,
+                CType::Int32,
+                4,
+                crate::kernel::eval::pointer_domains::PointerDomainView::Typed,
+                &PureFactContext::new(),
+            )
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(!guards.is_empty());
+        assert!(!bind_both(&state, &element, &PureFactContext::new()));
+        let context = guards
+            .iter()
+            .fold(PureFactContext::new(), |context, guard| {
+                context.assume_condition(guard.clone(), true)
+            });
+        assert!(bind_both(&state, &element, &context));
+        let missing = guards
+            .iter()
+            .skip(1)
+            .fold(PureFactContext::new(), |context, guard| {
+                context.assume_condition(guard.clone(), true)
+            });
+        assert!(!bind_both(&state, &element, &missing));
+        let arguments = [CExpression::Value(CValue::Pointer(element.clone()))];
+        assert!(c_function_entry_state(&state, &function(), &arguments).is_none());
+        let entry =
+            c_function_entry_state_with_assumptions(&state, &function(), &arguments, &context)
+                .unwrap();
+        assert_eq!(
+            entry.locals().get("pointer"),
+            Some(&CValue::Pointer(element))
+        );
+    }
+}
+
+#[cfg(test)]
+mod member_array_tests {
+    use super::*;
+
+    fn fixture(unrelated: u32) -> (CMemory, CPointerValue, CAggregateLayout) {
+        let layout =
+            CAggregateLayout::new(
+                16 + unrelated * 4,
+                4,
+                vec![CAggregateField::new("items", 0, CType::Int32Array(4))]
+                    .into_iter()
+                    .chain((0..unrelated).map(|i| {
+                        CAggregateField::new(format!("other{i}"), 16 + i * 4, CType::Int32)
+                    }))
+                    .collect(),
+            );
+        let address = CMemory::frame_local_pointer(949_030, "member_array");
+        let memory = CMemory::new().with_declared_aggregate_block(address.block.clone(), &layout);
+        let object = memory
+            .declared_aggregate_pointer(&address, &layout)
+            .unwrap();
+        let member = memory
+            .checked_member_pointer(
+                &object,
+                &CAggregateMemberSelection {
+                    layout: Arc::new(layout.clone()),
+                    path: vec!["items".into()].into(),
+                    value_type: CType::Int32Array(4),
+                },
+            )
+            .unwrap();
+        (memory, member, layout)
+    }
+
+    #[test]
+    fn member_array_decay_authenticates_the_actual_array_without_losing_its_parent() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (memory, member, _) = fixture(2);
+        let array = memory.checked_member_array_pointer(&member).unwrap();
+        let Some(PointerDesignation::Object {
+            root,
+            path,
+            base,
+            element_type,
+            stride,
+            count,
+        }) = array.designation()
+        else {
+            panic!()
+        };
+        assert_eq!(root, &CMemory::frame_local_pointer(949_030, "member_array"));
+        assert_eq!(
+            path.as_ref(),
+            &[PointerDomainSelection::Member("items".into())]
+        );
+        assert_eq!(base, member.pointer());
+        assert_eq!(*element_type, CType::Int32);
+        assert_eq!(*stride, 4);
+        assert_eq!(
+            *count,
+            SharedIntegerTerm::from(IntegerTerm::constant_i64(4))
+        );
+        let element = array.clone().with_pointer(array.offset_by_bytes(12));
+        assert!(memory.authenticated_pointer_domain_at_base(&element));
+        let state = CState::new().with_memory(memory.clone());
+        let function = c_function(
+            CType::Void,
+            "member_array_ref",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(CExpression::Value(CValue::Void)),
+        )
+        .with_scalar_object_inputs(vec![CScalarObjectInput {
+            parameter_index: 0,
+            element_type: CType::Int32,
+        }]);
+        assert!(
+            bind_c_function_arguments_with_assumptions(
+                &state,
+                &function,
+                &[CValue::Pointer(element.clone())],
+                &PureFactContext::new()
+            )
+            .is_some()
+        );
+        let one_past = array.clone().with_pointer(array.offset_by_bytes(16));
+        assert!(
+            bind_c_function_arguments_with_assumptions(
+                &state,
+                &function,
+                &[CValue::Pointer(one_past)],
+                &PureFactContext::new()
+            )
+            .is_none()
+        );
+        let forged = array.clone().with_designation(PointerDesignation::Object {
+            root: root.clone(),
+            path: path.clone(),
+            base: base.clone(),
+            element_type: *element_type,
+            stride: *stride,
+            count: IntegerTerm::constant_i64(5).into(),
+        });
+        assert!(!memory.authenticated_pointer_domain_at_base(&forged));
+        assert!(
+            memory
+                .checked_member_array_pointer(&CPointerValue::new(
+                    member.pointer().clone(),
+                    member.c_type()
+                ))
+                .is_none()
+        );
+        assert_eq!(memory.cells.representation_len(), 0);
+        assert!(!memory.has_initialized_bytes_under(member.pointer(), 16, &PureFactContext::new()));
+        assert!(
+            !memory
+                .without_local_block(&root.block)
+                .authenticated_pointer_domain_at_base(&array)
+        );
+    }
+
+    #[test]
+    fn selected_member_array_queries_ignore_unrelated_record_fields() {
+        let mut samples = Vec::new();
+        for unrelated in [16, 128, 1024] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let (memory, member, _) = fixture(unrelated);
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                for _ in 0..32 {
+                    let array = memory.checked_member_array_pointer(&member).unwrap();
+                    assert!(memory.authenticated_pointer_domain_at_base(&array));
+                }
+            });
+            samples.push(work);
+        }
+        assert!(
+            samples.windows(2).all(|pair| pair[0] == pair[1]),
+            "selected member work grew: {samples:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod opaque_record_binding_tests {
+    use super::*;
+
+    #[test]
+    fn opaque_record_binding_requires_the_exact_carrier_and_layout() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let layout = Arc::new(CAggregateLayout::new(
+            8,
+            8,
+            vec![CAggregateField::new("next", 0, CType::Int32Pointer)],
+        ));
+        let identity = Variable(988_330);
+        let pointer = CPointerValue::new(Pointer::symbolic(identity), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(identity));
+        let memory = CMemory::new()
+            .with_native_record_input(pointer.clone(), layout.clone())
+            .unwrap();
+        let caller = CState::new().with_memory(memory);
+        let function = c_function(
+            CType::Void,
+            "record_helper",
+            vec![c_parameter("record", CType::Int32Pointer)],
+            c_return(CExpression::Value(CValue::Void)),
+        )
+        .with_aggregate_object_inputs(vec![CAggregateObjectInput {
+            parameter_index: 0,
+            layout: layout.clone(),
+        }]);
+        let assumptions = PureFactContext::new();
+        let callee = CState::new().with_local("record", CValue::Pointer(pointer.clone()));
+        assert!(
+            bind(
+                &caller,
+                function.contract_interface(),
+                &callee,
+                &assumptions
+            )
+            .is_some()
+        );
+        for wrong in [
+            CPointerValue::new(pointer.pointer().clone(), pointer.c_type()),
+            pointer
+                .clone()
+                .with_designation(PointerDesignation::Unresolved(Variable(988_331))),
+        ] {
+            let callee = CState::new().with_local("record", CValue::Pointer(wrong));
+            assert!(
+                bind(
+                    &caller,
+                    function.contract_interface(),
+                    &callee,
+                    &assumptions
+                )
+                .is_none()
+            );
+        }
+        let wrong_layout = Arc::new(CAggregateLayout::new(
+            8,
+            8,
+            vec![CAggregateField::new("other", 0, CType::Int64)],
+        ));
+        let wrong_function = function.with_aggregate_object_inputs(vec![CAggregateObjectInput {
+            parameter_index: 0,
+            layout: wrong_layout,
+        }]);
+        assert!(
+            bind(
+                &caller,
+                wrong_function.contract_interface(),
+                &callee,
+                &assumptions
+            )
+            .is_none()
         );
     }
 }

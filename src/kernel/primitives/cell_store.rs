@@ -555,12 +555,12 @@ impl CellRun {
         let pointer = self.slot_pointer(index);
         match &self.mode {
             RunValueMode::Load => {
-                let load = crate::kernel::canonical_form_of_load(
+                let load = crate::kernel::eval::canonical_form_of_typed_load(
                     self.source.clone(),
                     pointer.clone(),
-                    LoadKind::of_type(self.element_type)
-                        .expect("memory ranges cannot contain aggregate elements"),
-                );
+                    self.element_type,
+                )
+                .expect("memory ranges cannot contain aggregate elements");
                 cell_run_value(&pointer, self.element_type, load)
             }
             RunValueMode::SymbolicStorage => crate::kernel::eval::symbolic_storage_cell_value(
@@ -573,11 +573,12 @@ impl CellRun {
             RunValueMode::Constant(value) => value.clone(),
             RunValueMode::Copy { source_base } => {
                 let source_pointer = source_base.offset_by_bytes(index * self.element_width);
-                let load = crate::kernel::canonical_form_of_load(
+                let load = crate::kernel::eval::canonical_form_of_typed_load(
                     self.source.clone(),
                     source_pointer.clone(),
-                    LoadKind::of_type(self.element_type).expect("scalar snapshot element"),
-                );
+                    self.element_type,
+                )
+                .expect("scalar snapshot element");
                 cell_run_value(&source_pointer, self.element_type, load)
             }
         }
@@ -2598,6 +2599,94 @@ mod tests {
     use super::*;
     use crate::kernel::primitives::{CMemory, Variable};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn typed_seeded_pointer_reads_record_eight_bytes_before_naming() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let block = PointerBlock::from("global:typed-seeded-pointer-source");
+        let memory = CMemory::new().with_block(block.clone(), 64);
+        let source = crate::kernel::intern_c_memory_ref(&memory);
+        for (offset, mode) in [
+            (0, RunValueMode::Load),
+            (
+                8,
+                RunValueMode::Copy {
+                    source_base: constant(&block, 8),
+                },
+            ),
+        ] {
+            let address = constant(&block, offset);
+            let base = match &mode {
+                RunValueMode::Copy { .. } => {
+                    constant(&PointerBlock::from("global:typed-seeded-pointer-copy"), 0)
+                }
+                _ => address.clone(),
+            };
+            let run = CellRun::new_with_mode(
+                base,
+                8,
+                CType::Int32Pointer,
+                1,
+                source.clone(),
+                mode,
+                IndexIntervals::default(),
+            );
+            let CValue::Pointer(produced) = run.value(0) else {
+                panic!("a pointer run must produce a pointer value");
+            };
+            let (_, Bitvector32Term::Variable(variable), _) =
+                produced.pointer().as_loaded().unwrap()
+            else {
+                panic!("a seeded pointer names its source read");
+            };
+            assert_eq!(
+                crate::kernel::registered_load_bytes_for_variable(variable),
+                Some(8)
+            );
+            let cell =
+                super::super::CPointerValue::new(address.clone(), CType::Int32PointerPointer)
+                    .with_designation(super::super::PointerDesignation::Unresolved(Variable(
+                        991_801,
+                    )));
+            let mut old = produced.clone();
+            crate::kernel::eval::retain_full_pointer_read_carrier(&memory, &cell, &mut old);
+            let after = memory
+                .clone()
+                .store(address.offset_by_bytes(8), crate::kernel::int32(u32::MAX));
+            let mut current = produced;
+            crate::kernel::eval::retain_full_pointer_read_carrier(&after, &cell, &mut current);
+            assert!(old.designation().is_some());
+            assert_eq!(
+                old, current,
+                "the producer's origin survives the unrelated store"
+            );
+        }
+        let narrow_address = constant(&block, 24);
+        let narrow = CellRun::new(
+            narrow_address.clone(),
+            4,
+            CType::Int32,
+            1,
+            source,
+            IndexIntervals::default(),
+        );
+        let CValue::Int32(Bitvector32Term::Variable(variable)) = narrow.value(0) else {
+            panic!("a scalar run must produce a scalar read");
+        };
+        assert_eq!(
+            crate::kernel::registered_load_bytes_for_variable(&variable),
+            Some(4)
+        );
+        let scalar_spelling = super::super::CPointerValue::new(
+            Pointer::loaded(block, Bitvector32Term::Variable(variable), 4),
+            CType::Int32Pointer,
+        );
+        assert!(
+            crate::kernel::memory_provenance::legacy_stored_pointer_read(&scalar_spelling)
+                .is_none(),
+            "a true four-byte scalar read cannot authenticate a pointer read"
+        );
+    }
 
     #[test]
     fn retained_run_reads_refresh_load_origins_without_scanning_the_run() {

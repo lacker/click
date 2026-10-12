@@ -1140,6 +1140,16 @@ pub(in crate::kernel) fn cast_c_value_to_type(
                 "function addresses do not convert to integers".to_string(),
             ));
         }
+        // The integer-address term currently retains only storage identity.
+        // Until its checked representation carries the complete designation,
+        // refusing this crossing prevents an integer round trip from erasing
+        // a scalar/member bound and returning an unrestricted legacy pointer.
+        if pointer.designation().is_some() && !pointer.is_null() {
+            return Err(CRuntimeError::PointerConversion(
+                "pointer-to-integer conversion cannot yet preserve the object designation"
+                    .to_string(),
+            ));
+        }
         let address = Bitvector32Term::pointer_address(pointer.pointer().clone());
         return Ok(match target_type {
             CType::UInt64 => CValue::UInt64(address),
@@ -1286,6 +1296,24 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
             };
             vec![CExpressionPath {
                 outcome: if state.memory.has_block(&pointer.block) {
+                    if let Some(CLocalBinding::ArrayObject {
+                        element_type,
+                        length,
+                        ..
+                    }) = state.locals.binding(name)
+                        && let Some(value) =
+                            state
+                                .memory
+                                .declared_array_pointer(&pointer, *element_type, *length)
+                    {
+                        return Ok(vec![CExpressionPath {
+                            outcome: CExpressionOutcome::Value(CValue::Pointer(
+                                value.with_pointee_constant(pointee_constant),
+                            )),
+                            facts: Vec::new().into(),
+                            obligations: Vec::new(),
+                        }]);
+                    }
                     if let Some(CLocalBinding::AggregateObject { layout, .. }) =
                         state.locals.binding(name)
                         && let Some(value) =
@@ -1377,22 +1405,167 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
         CExpression::AddressOf(target) => {
             address_of_lvalue_paths(state, target, assumptions, budget)?
         }
+        CExpression::RecordPointerOffset {
+            pointer,
+            index,
+            layout,
+            subtract,
+        } => {
+            evaluate_c_value_binary_paths(
+                state,
+                pointer,
+                index,
+                assumptions,
+                budget,
+                |pointer, index, facts, obligations| {
+                    let CValue::Pointer(pointer) = pointer else {
+                        return vec![CExpressionPath {
+                            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            facts,
+                            obligations,
+                        }];
+                    };
+                    let context = assumptions_with_path_context(assumptions, &facts, &obligations);
+                    let Some((index, unsigned, wide)) =
+                        super::operators::pointer_index_term(index, &facts, &context)
+                    else {
+                        return vec![CExpressionPath {
+                            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            facts,
+                            obligations,
+                        }];
+                    };
+                    // Observe the machine index first. Subtraction changes
+                    // the mathematical stride, never negates a modular word
+                    // (notably INT_MIN and unsigned indices).
+                    let stride = if *subtract {
+                        -i64::from(layout.size_bytes())
+                    } else {
+                        i64::from(layout.size_bytes())
+                    };
+                    let displacement = if wide {
+                        PointerOffsetTerm::scale_int64(index, stride, unsigned)
+                    } else {
+                        PointerOffsetTerm::scale_int32(index, stride)
+                    };
+                    let address = Pointer {
+                        block: pointer.block.clone(),
+                        offset: PointerOffsetTerm::add(pointer.offset.clone(), displacement),
+                    };
+                    let checked = if assumptions.should_observe_pointer_addresses() {
+                        Ok(super::pointer_domains::PointerDomainCheck::Legacy)
+                    } else {
+                        super::pointer_domains::checked_record_pointer_formation(
+                            state, &pointer, &address, layout, &context,
+                        )
+                    };
+                    let Some(mut refused) = super::operators::pointer_domain_refusal_paths(
+                        checked,
+                        &facts,
+                        &obligations,
+                        assumptions,
+                        &CUndefinedBehavior::PointerArithmetic,
+                    ) else {
+                        return vec![CExpressionPath {
+                            outcome: CExpressionOutcome::UndefinedBehavior(
+                                CUndefinedBehavior::PointerArithmetic,
+                            ),
+                            facts,
+                            obligations,
+                        }];
+                    };
+                    refused.insert(
+                        0,
+                        CExpressionPath {
+                            outcome: CExpressionOutcome::Value(CValue::Pointer(
+                                pointer.with_pointer(address),
+                            )),
+                            facts,
+                            obligations,
+                        },
+                    );
+                    refused
+                },
+            )?
+        }
         CExpression::MemberAddress { object, selection } => {
             let mut paths = evaluate_c_expression_paths(state, object, assumptions, budget)?;
+            let mut domain_refusals = Vec::new();
             for path in &mut paths {
                 if let CExpressionOutcome::Value(value) = &path.outcome {
+                    let member_assumptions =
+                        assumptions_with_path_context(assumptions, &path.facts, &path.obligations);
                     path.outcome = match value {
-                        CValue::Pointer(pointer) => state
-                            .memory()
-                            .checked_member_pointer(pointer, selection)
-                            .map(|pointer| CExpressionOutcome::Value(CValue::Pointer(pointer)))
-                            .unwrap_or(CExpressionOutcome::UndefinedBehavior(
-                                CUndefinedBehavior::InvalidMemory,
-                            )),
+                        CValue::Pointer(pointer) => {
+                            // A modular result retains its certified domain
+                            // while its address has a fresh spelling. Rewrite
+                            // only that spelling when it equals the retained
+                            // selected base; equality supplies no designation.
+                            let selected_base =
+                                address_at_retained_base(pointer, &member_assumptions);
+                            let pointer = selected_base.as_ref().unwrap_or(pointer);
+                            let selected = state.memory().guarded_native_record_selection(
+                                pointer,
+                                selection,
+                                &member_assumptions,
+                            );
+                            let selected = selected.filter(|(_, guards)| {
+                                !assumptions.should_observe_pointer_addresses()
+                                    || guards
+                                        .iter()
+                                        .all(|guard| member_assumptions.decide(guard) == Some(true))
+                            });
+                            if let Some((selected, guards)) = selected {
+                                match super::operators::pointer_domain_refusal_paths(
+                                    Ok(super::pointer_domains::PointerDomainCheck::Checked(guards)),
+                                    &path.facts,
+                                    &path.obligations,
+                                    assumptions,
+                                    &CUndefinedBehavior::InvalidMemory,
+                                ) {
+                                    Some(refused) => {
+                                        domain_refusals.extend(refused);
+                                        CExpressionOutcome::Value(CValue::Pointer(selected))
+                                    }
+                                    None => CExpressionOutcome::UndefinedBehavior(
+                                        CUndefinedBehavior::InvalidMemory,
+                                    ),
+                                }
+                            } else {
+                                (pointer.designation().is_none()
+                                    || assumptions.should_observe_pointer_addresses())
+                                .then(|| {
+                                    // A pure specification observes addresses; it
+                                    // does not execute a native member access. Keep
+                                    // its existing carrier without minting a child
+                                    // domain. Executable selections with a domain
+                                    // must pass authentication above.
+                                    let (offset, value_type) =
+                                        selection.layout.member_at_path(&selection.path)?;
+                                    (value_type == selection.value_type).then(|| {
+                                        pointer
+                                            .clone()
+                                            .with_pointer(pointer.pointer().offset_by_bytes(offset))
+                                            .with_type(
+                                                value_type
+                                                    .pointer_to()
+                                                    .unwrap_or(CType::Int32Pointer),
+                                            )
+                                    })
+                                })
+                                .flatten()
+                                .map(|pointer| CExpressionOutcome::Value(CValue::Pointer(pointer)))
+                                .unwrap_or(CExpressionOutcome::UndefinedBehavior(
+                                    CUndefinedBehavior::InvalidMemory,
+                                ))
+                            }
+                        }
                         _ => CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                     };
                 }
             }
+            paths.extend(domain_refusals);
+            budget.check_path_width(paths.len())?;
             paths
         }
         CExpression::CheckedObjectAddress(target) => {
@@ -1461,6 +1634,30 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                         Some("reference binding requires live storage for the complete referent"),
                     );
                 }
+            }
+            paths
+        }
+        CExpression::PointerAligned { pointer, alignment } => {
+            let mut paths = evaluate_c_expression_paths(state, pointer, assumptions, budget)?;
+            for path in &mut paths {
+                path.outcome = if *alignment == 0 || !alignment.is_power_of_two() {
+                    CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                } else if let CExpressionOutcome::Value(CValue::Pointer(pointer)) = &path.outcome {
+                    let condition =
+                        ConditionTerm::pointer_aligned(pointer.pointer().clone(), *alignment);
+                    CExpressionOutcome::Value(CValue::Bool(Bitvector32Term::if_then_else(
+                        condition,
+                        Bitvector32Term::Constant(1),
+                        Bitvector32Term::Constant(0),
+                    )))
+                } else {
+                    match &path.outcome {
+                        CExpressionOutcome::Value(_) => {
+                            CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                        }
+                        outcome => outcome.clone(),
+                    }
+                };
             }
             paths
         }
@@ -1680,7 +1877,7 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
         CExpression::TypedLoad {
             pointer,
             value_type:
-                CType::Int32Array(_)
+                array_type @ (CType::Int32Array(_)
                 | CType::UInt8Array(_)
                 | CType::Int8Array(_)
                 | CType::Int16Array(_)
@@ -1690,9 +1887,66 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                 | CType::Int64Array(_)
                 | CType::UInt128Array(_)
                 | CType::UInt64Array(_)
-                | CType::PointerArray(_, _),
+                | CType::Float32Array(_)
+                | CType::Float64Array(_)
+                | CType::PointerArray(_, _)),
             ..
-        } => evaluate_c_expression_paths(state, pointer, assumptions, budget)?,
+        } => {
+            let mut paths = evaluate_c_expression_paths(state, pointer, assumptions, budget)?;
+            let mut domain_refusals = Vec::new();
+            for path in &mut paths {
+                if let CExpressionOutcome::Value(CValue::Pointer(pointer)) = &path.outcome {
+                    let decay_assumptions =
+                        assumptions_with_path_context(assumptions, &path.facts, &path.obligations);
+                    let selected_base = address_at_retained_base(pointer, &decay_assumptions);
+                    let pointer = selected_base.as_ref().unwrap_or(pointer);
+                    let decayed = state
+                        .memory()
+                        .guarded_member_array_pointer(pointer, &decay_assumptions)
+                        .filter(|(_, guards)| {
+                            !assumptions.should_observe_pointer_addresses()
+                                || guards
+                                    .iter()
+                                    .all(|guard| decay_assumptions.decide(guard) == Some(true))
+                        });
+                    if let Some((decayed, guards)) = decayed {
+                        path.outcome = match super::operators::pointer_domain_refusal_paths(
+                            Ok(super::pointer_domains::PointerDomainCheck::Checked(guards)),
+                            &path.facts,
+                            &path.obligations,
+                            assumptions,
+                            &CUndefinedBehavior::InvalidMemory,
+                        ) {
+                            Some(refused) => {
+                                domain_refusals.extend(refused);
+                                CExpressionOutcome::Value(CValue::Pointer(decayed))
+                            }
+                            None => CExpressionOutcome::UndefinedBehavior(
+                                CUndefinedBehavior::InvalidMemory,
+                            ),
+                        };
+                    } else {
+                        let decayed = (pointer.designation().is_none()
+                            || assumptions.should_observe_pointer_addresses())
+                        .then(|| {
+                            array_type
+                                .array_element_type()
+                                .and_then(CType::pointer_to)
+                                .map(|ty| pointer.clone().with_type(ty))
+                        })
+                        .flatten();
+                        path.outcome = decayed
+                            .map(|pointer| CExpressionOutcome::Value(CValue::Pointer(pointer)))
+                            .unwrap_or(CExpressionOutcome::UndefinedBehavior(
+                                CUndefinedBehavior::InvalidMemory,
+                            ));
+                    }
+                }
+            }
+            paths.extend(domain_refusals);
+            budget.check_path_width(paths.len())?;
+            paths
+        }
         CExpression::Load(_) | CExpression::TypedLoad { .. } | CExpression::Index(_, _) => {
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
@@ -1709,6 +1963,20 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
     }
     budget.check_path_width(paths.len())?;
     Ok(paths)
+}
+
+/// Normalize only the address of a retained object carrier. The caller must
+/// still authenticate its descriptor through the selected native producer.
+fn address_at_retained_base(
+    pointer: &CPointerValue,
+    assumptions: &PureFactContext,
+) -> Option<CPointerValue> {
+    let PointerDesignation::Object { base, .. } = pointer.designation()? else {
+        return None;
+    };
+    (pointer.pointer() != base
+        && pointers_proven_equal_for_memory_resolution(pointer.pointer(), base, assumptions))
+    .then(|| pointer.clone().with_pointer(base.clone()))
 }
 
 #[allow(clippy::too_many_arguments)] // Cast mode and pointee qualifiers are independent.
@@ -2022,10 +2290,15 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                         // Some value types have no represented address view;
                         // they remain readable lvalues, while address-of still
                         // rejects them via pointer_to below.
-                        CPointerValue::new(
-                            slot.clone(),
-                            c_type.pointer_to().unwrap_or(CType::VoidPointer),
-                        ),
+                        state
+                            .memory()
+                            .declared_scalar_pointer(slot, *c_type)
+                            .unwrap_or_else(|| {
+                                CPointerValue::new(
+                                    slot.clone(),
+                                    c_type.pointer_to().unwrap_or(CType::VoidPointer),
+                                )
+                            }),
                         *c_type,
                         *volatile,
                         *pointee_volatile,
@@ -2212,6 +2485,63 @@ pub(in crate::kernel) fn read_c_lvalue_expression_paths(
     Ok(paths)
 }
 
+/// Keep an enrolled pointer-cell read's address and exact complete read
+/// identity together across native and specification observers. This creates
+/// no object validity or access permission for the unknown referent.
+pub(in crate::kernel) fn retain_full_pointer_read_carrier(
+    memory: &CMemory,
+    cell: &CPointerValue,
+    pointer: &mut CPointerValue,
+) {
+    if cell.designation().is_none()
+        || !pointer.c_type().is_object_pointer()
+        || pointer.designation().is_some()
+        || pointer.is_null()
+    {
+        return;
+    }
+    // The checked read may return an older named full-pointer value. Retain
+    // that producer's immutable defining read before considering the current
+    // storage snapshot; one raw load name cannot acquire a second origin.
+    if let Some(produced) = crate::kernel::memory_provenance::legacy_stored_pointer_read(pointer) {
+        *pointer = produced;
+        return;
+    }
+    let origin = PointerLoadIdentity::new(
+        crate::kernel::intern_c_memory_ref(memory),
+        cell.pointer().clone(),
+    );
+    // A metadata-only memory edge may retain an older canonical read. Use
+    // only that exact full-width producer pair, never an address equation.
+    let candidate = match super::canonical_form_of_load(
+        origin.memory().clone(),
+        origin.address().clone(),
+        LoadKind::Bits32,
+    ) {
+        Bitvector32Term::Variable(variable)
+            if crate::kernel::registered_load_bytes_for_variable(&variable)
+                == Some(C_POINTER_BYTE_WIDTH) =>
+        {
+            match crate::kernel::registered_load_term_for_variable(&variable) {
+                Some(Bitvector32Term::MemoryLoad(memory, address, LoadKind::Bits32)) => {
+                    Some(PointerLoadIdentity::new(memory, *address))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    let defining_origin = candidate
+        .filter(|candidate| {
+            crate::kernel::memory_provenance::paired_pointer_load_displacement(pointer, candidate)
+                .is_some()
+        })
+        .unwrap_or(origin);
+    *pointer = pointer
+        .clone()
+        .with_designation(PointerDesignation::Loaded(defining_origin));
+}
+
 /// Reads an lvalue, filing the type range of each narrow integer value the
 /// read produces.
 ///
@@ -2232,6 +2562,45 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut domain_refusals = Vec::new();
+    if !assumptions.should_observe_pointer_addresses()
+        && let CLValueOutcome::LValue(lvalue) = &outcome
+        && let CLValueStorage::Memory { pointer } = &lvalue.storage
+    {
+        let domain_context = assumptions_with_path_context(assumptions, &facts, &obligations);
+        let check = super::pointer_domains::checked_pointer_access(
+            state,
+            pointer,
+            lvalue.value_type,
+            lvalue.value_type.byte_width(),
+            super::operators::pointer_domain_view(pointer),
+            &domain_context,
+        );
+        let Some(refused) = super::operators::pointer_domain_refusal_paths(
+            check,
+            &facts,
+            &obligations,
+            assumptions,
+            &CUndefinedBehavior::InvalidMemory,
+        ) else {
+            return Ok(vec![CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+                facts,
+                obligations,
+            }]);
+        };
+        domain_refusals = refused;
+    }
+    let checked_pointer_cell = match &outcome {
+        CLValueOutcome::LValue(CLValue {
+            storage: CLValueStorage::Memory { pointer },
+            value_type,
+            ..
+        }) if pointer.designation().is_some() && value_type.is_object_pointer() => {
+            Some(pointer.clone())
+        }
+        _ => None,
+    };
     let mut paths = read_c_lvalue_paths_without_ranges(
         state,
         outcome,
@@ -2241,6 +2610,14 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
         assumptions,
         budget,
     )?;
+    if let Some(cell) = checked_pointer_cell {
+        for path in &mut paths {
+            if let CExpressionOutcome::Value(CValue::Pointer(pointer)) = &mut path.outcome {
+                retain_full_pointer_read_carrier(state.memory(), &cell, pointer);
+            }
+        }
+    }
+    paths.extend(domain_refusals);
     for path in &mut paths {
         let CExpressionOutcome::Value(value) = &path.outcome else {
             continue;
@@ -2394,9 +2771,8 @@ fn read_c_lvalue_paths_without_ranges(
                                     pointer.clone(),
                                     Bitvector32Term::Constant(0),
                                     Bitvector32Term::Constant(1),
-                                    // The element the permission check
-                                    // counts: a loaded pointer is one
-                                    // four-byte logical field.
+                                    // Report the same complete physical
+                                    // footprint the permission check needs.
                                     crate::kernel::assumptions::read_candidate_byte_width(
                                         lvalue.value_type.byte_width(),
                                     ),
@@ -2581,6 +2957,8 @@ pub(in crate::kernel) fn c_expression_pointee_type(
             CType::Int128Array(_) => Some(CType::Int128),
             CType::UInt64Array(_) => Some(CType::UInt64),
             CType::UInt128Array(_) => Some(CType::UInt128),
+            CType::Float32Array(_) => Some(CType::Float32),
+            CType::Float64Array(_) => Some(CType::Float64),
             CType::PointerArray(element, _) => Some(element.pointer_type()),
             value_type => value_type.pointee_type(),
         },
@@ -3026,4 +3404,56 @@ pub(in crate::kernel) fn c_truthiness_as_c_int32_paths(
             obligations: path.obligations,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod global_declaration_address_tests {
+    use super::*;
+
+    #[test]
+    fn global_lvalue_address_preserves_only_matching_declaration_evidence() {
+        let slot = CMemory::global_pointer("counter");
+        for (memory, authenticated) in [
+            (
+                CMemory::new().with_declared_scalar_block_or_read_only(
+                    slot.block.clone(),
+                    4,
+                    CType::Int32,
+                    true,
+                ),
+                true,
+            ),
+            (
+                CMemory::new().with_declared_scalar_block(slot.block.clone(), 4, CType::UInt32),
+                false,
+            ),
+            (CMemory::new().with_block(slot.block.clone(), 4), false),
+        ] {
+            let mut state = CState::new().with_memory(memory);
+            state.locals.set_global_with_all_qualifiers(
+                "counter",
+                CType::Int32,
+                slot.clone(),
+                true,
+                false,
+                true,
+                false,
+            );
+            let paths = evaluate_c_lvalue_paths(
+                &state,
+                &CExpression::Variable("counter".into()),
+                &PureFactContext::new(),
+                &mut ExecutionBudget::beside_live_state(),
+            )
+            .unwrap();
+            let CLValueOutcome::LValue(lvalue) = &paths[0].outcome else {
+                panic!("a registered global must remain an lvalue");
+            };
+            let pointer = lvalue.pointer_value(&state, CType::Int32Pointer).unwrap();
+            assert_eq!(pointer.pointer(), &slot);
+            assert_eq!(pointer.designation().is_some(), authenticated);
+            assert!(lvalue.is_volatile());
+            assert!(lvalue.is_constant());
+        }
+    }
 }

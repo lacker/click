@@ -1416,6 +1416,7 @@ impl<'a> Proof<'a> {
         }
         let before_facts = self.facts().clone();
         let checked = open_composite_resource_for_proof(
+            context.function.composite_resource_definitions(),
             context.resource_environment,
             &resource,
             context.parsed_function.parameters(),

@@ -98,6 +98,17 @@ fn substitute_c_expression_variables(
             .unwrap_or_else(|| expression.clone()),
         AddressOf(body) => AddressOf(unary(body)),
         CheckedObjectAddress(body) => CheckedObjectAddress(unary(body)),
+        RecordPointerOffset {
+            pointer,
+            index,
+            layout,
+            subtract,
+        } => RecordPointerOffset {
+            pointer: unary(pointer),
+            index: unary(index),
+            layout: layout.clone(),
+            subtract: *subtract,
+        },
         MemberAddress { object, selection } => MemberAddress {
             object: unary(object),
             selection: selection.clone(),
@@ -105,6 +116,10 @@ fn substitute_c_expression_variables(
         PointerOffsetBytes { pointer, bytes } => PointerOffsetBytes {
             pointer: unary(pointer),
             bytes: *bytes,
+        },
+        PointerAligned { pointer, alignment } => PointerAligned {
+            pointer: unary(pointer),
+            alignment: *alignment,
         },
         LessThan(left, right) => {
             let (left, right) = binary(left, right);
@@ -1030,9 +1045,15 @@ fn expression_takes_address_of(expression: &CExpression, name: &str) -> bool {
             object: pointer, ..
         }
         | PointerOffsetBytes { pointer, .. }
+        | PointerAligned { pointer, .. }
         | TypedLoad { pointer, .. } => inner(pointer),
         Not(body) | BitwiseNot(body) | Load(body) => inner(body),
-        LessThan(left, right)
+        RecordPointerOffset {
+            pointer: left,
+            index: right,
+            ..
+        }
+        | LessThan(left, right)
         | LessEqual(left, right)
         | GreaterThan(left, right)
         | GreaterEqual(left, right)
@@ -1072,6 +1093,10 @@ fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet
             pointer: expression,
             ..
         }
+        | PointerAligned {
+            pointer: expression,
+            ..
+        }
         | Not(expression)
         | BitwiseNot(expression)
         | Load(expression) => collect_c_expression_variables(expression, names),
@@ -1084,7 +1109,12 @@ fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet
             collect_c_expression_variables(then_branch, names);
             collect_c_expression_variables(else_branch, names);
         }
-        LessThan(left, right)
+        RecordPointerOffset {
+            pointer: left,
+            index: right,
+            ..
+        }
+        | LessThan(left, right)
         | LessEqual(left, right)
         | GreaterThan(left, right)
         | GreaterEqual(left, right)
@@ -2058,12 +2088,29 @@ fn termination_measure_display(measure: &CExpression) -> String {
         PointerOffsetBytes { pointer, bytes } => {
             format!("{} + {bytes} bytes", termination_measure_display(pointer))
         }
+        PointerAligned { pointer, alignment } => {
+            format!(
+                "aligned({}, {alignment})",
+                termination_measure_display(pointer)
+            )
+        }
         Index(base, index) => format!(
             "{}[{}]",
             termination_measure_display(base),
             termination_measure_display(index)
         ),
         Cast { expression, .. } => termination_measure_display(expression),
+        RecordPointerOffset {
+            pointer,
+            index,
+            subtract,
+            ..
+        } => format!(
+            "{} {} {}",
+            termination_measure_display(pointer),
+            if *subtract { "-" } else { "+" },
+            termination_measure_display(index)
+        ),
         MemberAddress { object, selection } => format!(
             "&({})->{}",
             termination_measure_display(object),
@@ -2726,7 +2773,9 @@ fn c_ranking_measure_term_unfolded(
         | AddressOf(_)
         | CheckedObjectAddress(_)
         | PointerOffsetBytes { .. }
-        | MemberAddress { .. } => Err(
+        | PointerAligned { .. }
+        | MemberAddress { .. }
+        | RecordPointerOffset { .. } => Err(
             "termination measures may only use scalar int32 or unsigned integer expressions".into(),
         ),
         Load(_) | TypedLoad { .. } | Index(_, _) => {
@@ -3825,6 +3874,10 @@ fn expression_function_addresses(expression: &CExpression, taken: &mut BTreeSet<
             pointer: expression,
             ..
         }
+        | PointerAligned {
+            pointer: expression,
+            ..
+        }
         | TypedLoad {
             pointer: expression,
             ..
@@ -3841,7 +3894,12 @@ fn expression_function_addresses(expression: &CExpression, taken: &mut BTreeSet<
             expression_function_addresses(then_branch, taken);
             expression_function_addresses(else_branch, taken);
         }
-        LessThan(left, right)
+        RecordPointerOffset {
+            pointer: left,
+            index: right,
+            ..
+        }
+        | LessThan(left, right)
         | LessEqual(left, right)
         | GreaterThan(left, right)
         | GreaterEqual(left, right)
@@ -5819,6 +5877,10 @@ mod local_descent_tests {
             body = CStatement::Seq(Arc::new(body), Arc::new(summarized_loop(1)));
         }
         CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: CFunction::new(CType::Void, name, Vec::new(), body),
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
             checked_callees: None,
@@ -6012,6 +6074,10 @@ mod local_descent_tests {
                 body = CStatement::Seq(Arc::new(body), Arc::new(summarized_loop(1)));
             }
             CVerifiedFunctionRule {
+                source_declaration: None,
+                pointer_result_effects: Default::default(),
+                pointer_store_effects: Default::default(),
+                native_output_places_certified: false,
                 loop_semantics: CLoopSemantics::ApplyVerifiedRules,
                 checked_callees: None,
                 applied_tactics: Default::default(),
@@ -6165,6 +6231,10 @@ mod local_descent_tests {
             None => Vec::new(),
         };
         CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: CFunction::new(CType::Void, name, parameters, body),
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
             checked_callees: None,
@@ -6356,6 +6426,10 @@ mod local_descent_tests {
     #[test]
     fn a_loop_certification_executed_to_its_exit_owes_no_measure() {
         let bare = |name: &str| CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
             checked_callees: None,
             applied_tactics: Default::default(),
@@ -6543,6 +6617,10 @@ mod local_descent_tests {
             };
             body = CStatement::Seq(Arc::new(body), Arc::new(guarded_call(argument)));
             [CVerifiedFunctionRule {
+                source_declaration: None,
+                pointer_result_effects: Default::default(),
+                pointer_store_effects: Default::default(),
+                native_output_places_certified: false,
                 loop_semantics: CLoopSemantics::ApplyVerifiedRules,
                 checked_callees: None,
                 applied_tactics: Default::default(),
@@ -6685,6 +6763,10 @@ mod local_descent_tests {
             function = function.with_inline_body();
         }
         CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function,
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
             checked_callees: None,
@@ -6718,6 +6800,10 @@ mod local_descent_tests {
             });
         }
         CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function,
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
             checked_callees: None,
@@ -6871,6 +6957,10 @@ mod local_descent_tests {
             }),
         );
         CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: CFunction::new(CType::Void, name, Vec::new(), body)
                 .with_recursion_measure(declared_component()),
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
@@ -7074,6 +7164,10 @@ mod termination_scaling_tests {
     /// measures.
     fn rule(name: &str, callees: &[String]) -> CVerifiedFunctionRule {
         CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: CFunction::new(CType::Void, name, Vec::new(), calls_body(callees)),
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
             checked_callees: None,
@@ -7330,6 +7424,10 @@ mod checked_callee_certification_tests {
     #[test]
     fn checked_callee_graph_distinguishes_missing_and_empty_evidence() {
         let rule = |checked_callees| CVerifiedFunctionRule {
+            source_declaration: None,
+            pointer_result_effects: Default::default(),
+            pointer_store_effects: Default::default(),
+            native_output_places_certified: false,
             function: CFunction::new(
                 CType::Void,
                 "caller",

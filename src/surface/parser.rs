@@ -501,6 +501,7 @@ struct Parser {
     matching_parentheses: Vec<Option<usize>>,
     position: usize,
     struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
+    kernel_member_layouts: std::cell::RefCell<BTreeMap<String, std::sync::Arc<crate::kernel::CAggregateLayout>>>,
     union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     current_struct_params: BTreeMap<String, String>,
     /// The `void *` parameters of the function block being parsed, which a
@@ -725,6 +726,7 @@ fn algebraic_parameter_types(
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ResolvedField {
+    member_selection: Option<std::sync::Arc<crate::kernel::CAggregateMemberSelection>>,
     c_type: C0Type,
     pointee_constant: bool,
     struct_name: Option<String>,
@@ -840,6 +842,7 @@ impl Parser {
             algebraic_type_nesting: 0,
             position: 0,
             struct_layouts,
+            kernel_member_layouts: std::cell::RefCell::new(BTreeMap::new()),
             union_layouts,
             current_struct_params: BTreeMap::new(),
             current_void_pointer_params: BTreeSet::new(),
@@ -8770,7 +8773,7 @@ impl Parser {
             {
                 let field = self.resolve_union_field_metadata(base_union_name, &field_name)?;
                 dereferences_pointer = field.c_type.is_pointer();
-                let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                let pointer = self.offset_field_pointer(base, &field);
                 let field_memory_pointer = field_has_direct_memory_place(&field);
                 scalar_field = field_memory_pointer
                     && matches!(
@@ -8799,7 +8802,7 @@ impl Parser {
             {
                 let field = self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
                 dereferences_pointer = field.c_type.is_pointer();
-                let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                let pointer = self.offset_field_pointer(base, &field);
                 let field_memory_pointer = field_has_direct_memory_place(&field);
                 scalar_field = field_memory_pointer
                     && matches!(
@@ -8886,19 +8889,16 @@ impl Parser {
             struct_array_element_width = next_array_element_width;
             struct_array_shape = next_array_shape;
         }
-        if let Some((name, element_width, element_type)) = indexed_scalar_field {
+        if let Some((_name, element_width, element_type)) = indexed_scalar_field {
             return Ok(vec![ContractSegment {
                 state: ContractSegmentState::Current,
                 base,
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(1)),
-                surface: ContractSegmentSurface::Field {
-                    // `surface_base` has already absorbed this field name, so
-                    // there is no parent spelling left to print beside it.
-                    base: None,
-                    name,
-                    element_width: Some(element_width),
-                    element_type: Some(element_type),
+                surface: ContractSegmentSurface::IndexedField {
+                    place: Box::new(surface_base),
+                    element_width,
+                    element_type,
                 },
             }]);
         }
@@ -8992,7 +8992,14 @@ impl Parser {
                     },
                 }]);
             };
-            return Ok(vec![self.object_segment(base, struct_name)?]);
+            let mut segment = self.object_segment(base, struct_name.clone())?;
+            if matches!(&surface_base, ContractExpression::Field { .. }) {
+                segment.surface = ContractSegmentSurface::ObjectAt {
+                    name: struct_name,
+                    base: Box::new(surface_base),
+                };
+            }
+            return Ok(vec![segment]);
         }
         // A place written alone is its own storage: one element at its
         // address.
@@ -9018,9 +9025,15 @@ impl Parser {
                 }
                 expression => CExpression::AddressOf(Box::new(expression)),
             };
-            let surface_base = ContractExpression::CFragment(CExpression::AddressOf(Box::new(
+            let lowered = CExpression::AddressOf(Box::new(
                 contract_expression_as_c_fragment(&surface_base).expect("C segment base"),
-            )));
+            ));
+            // Retain the parser-resolved member path as native interface evidence.
+            // The permission still uses its original lowered address.
+            let surface_base = ContractExpression::CUnary {
+                operand: Box::new(surface_base),
+                lowered,
+            };
             return Ok(vec![ContractSegment {
                 state: ContractSegmentState::Current,
                 base,
@@ -9401,7 +9414,7 @@ impl Parser {
             return Ok(CExpression::Load(Box::new(base)));
         };
         Ok(CExpression::TypedLoad {
-            pointer: Box::new(self.offset_field_pointer(base, field.offset_bytes)),
+            pointer: Box::new(self.offset_field_pointer(base, &field)),
             value_type: field.c_type.to_kernel_type(),
             volatile: false,
             pointee_constant: field.pointee_constant,
@@ -9582,7 +9595,19 @@ impl Parser {
             .filter(|offset| *offset > field.offset_bytes())
             .min()
             .unwrap_or_else(|| layout.size_bytes());
+        let kernel_layout = self.kernel_member_layouts.borrow_mut()
+            .entry(struct_name.to_string())
+            .or_insert_with(|| std::sync::Arc::new(layout.to_kernel_aggregate_layout()))
+            .clone();
+        let path = vec![field_name.to_string()];
+        let member_selection = kernel_layout.member_at_path(&path)
+            .filter(|(offset, ty)| *offset == field.offset_bytes()
+                && *ty == field.c_type().to_kernel_type())
+            .map(|(_, value_type)| std::sync::Arc::new(crate::kernel::CAggregateMemberSelection {
+                layout: kernel_layout.clone(), path: path.into(), value_type,
+            }));
         Ok(ResolvedField {
+            member_selection,
             c_type: field.c_type(),
             pointee_constant: field.pointee_is_constant(),
             struct_name: field.struct_name().map(str::to_string),
@@ -9613,6 +9638,7 @@ impl Parser {
             );
         }
         Ok(ResolvedField {
+            member_selection: None,
             c_type: field.c_type(),
             pointee_constant: field.pointee_is_constant(),
             struct_name: None,
@@ -9702,8 +9728,14 @@ impl Parser {
         Ok(())
     }
 
-    fn offset_field_pointer(&self, base: CExpression, offset_bytes: u32) -> CExpression {
-        crate::kernel::c_pointer_offset_bytes(base, offset_bytes)
+    fn offset_field_pointer(&self, base: CExpression, field: &ResolvedField) -> CExpression {
+        if let Some(selection) = &field.member_selection {
+            CExpression::MemberAddress {
+                object: Box::new(base), selection: selection.clone(),
+            }
+        } else {
+            crate::kernel::c_pointer_offset_bytes(base, field.offset_bytes)
+        }
     }
 
     fn offset_c0_field_pointer(&self, base: C0Expression, offset_bytes: u32) -> C0Expression {
@@ -10410,7 +10442,7 @@ impl Parser {
                     {
                         let field =
                             self.resolve_union_field_metadata(base_union_name, &field_name)?;
-                        let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                        let pointer = self.offset_field_pointer(base, &field);
                         struct_name = field.struct_name.clone();
                         union_name = None;
                         struct_array_element_width = None;
@@ -10426,7 +10458,7 @@ impl Parser {
                     {
                         let field =
                             self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
-                        let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                        let pointer = self.offset_field_pointer(base, &field);
                         struct_name = field.struct_name.clone();
                         union_name = field.union_name.clone();
                         struct_array_element_width = field.array_element_width;
@@ -12051,29 +12083,16 @@ fn source_nesting_error_message(
     .with_kind(ClickErrorKind::Syntax)
 }
 
-/// `aligned(p, n)` is sugar for `address(p) & (n - 1) == 0`; the kernel
-/// decides that shape from the pointer's formation.
+/// `aligned(p, n)` observes only address alignment. It supplies no integer
+/// representation from which a pointer could be reconstructed.
 fn aligned_proposition(pointer: CExpression, alignment: u64) -> ClickProposition {
-    let uint64 = |value: u64| {
-        ContractExpression::CFragment(CExpression::Value(CValue::UInt64(
-            Bitvector32Term::UInt64Constant(value),
-        )))
-    };
     ClickProposition::Comparison {
-        left: ContractExpression::BitwiseAnd(
-            Box::new(ContractExpression::CFragment(CExpression::Cast {
-                expression: Box::new(pointer),
-                target_type: CType::UInt64,
-                integer_mode: crate::kernel::CIntegerCastMode::Standard,
-                pointee_struct: None,
-                pointee_volatile: false,
-                pointee_constant: false,
-                explicit_qualification: false,
-            })),
-            Box::new(uint64(alignment - 1)),
-        ),
+        left: ContractExpression::CFragment(CExpression::PointerAligned {
+            pointer: Box::new(pointer),
+            alignment,
+        }),
         operator: ComparisonOperator::Equal,
-        right: uint64(0),
+        right: ContractExpression::CFragment(CExpression::Value(crate::kernel::bool_value(1))),
     }
 }
 
@@ -12092,8 +12111,9 @@ fn object_alignment_fact(
     let (ResourceClause::OwnMemory(segment) | ResourceClause::ViewMemory(segment)) = clause else {
         return None;
     };
-    let ContractSegmentSurface::Object(struct_name) = &segment.surface else {
-        return None;
+    let struct_name = match &segment.surface {
+        ContractSegmentSurface::Object(name) | ContractSegmentSurface::ObjectAt { name, .. } => name,
+        _ => return None,
     };
     let alignment = u64::from(struct_layouts.get(struct_name)?.alignment_bytes());
     (alignment >= 2).then(|| aligned_proposition(segment.base.clone(), alignment))

@@ -2723,3 +2723,63 @@ fn mutex_use_resource_type_checks_its_dependent_argument() {
 }
 
 mod authority_conditional_release_tests;
+
+#[test]
+fn c_declared_member_domains_reject_scalar_sibling_traversal() {
+    let contract = r#"verifying "pair.c";
+        int32 probe(struct Pair* pair) {
+            views pair->first;
+            views pair->second;
+            ensures result == pair->second;
+        } by { execute(); simp(); }"#;
+    let valid = "struct Pair { int first; int second; }; int probe(struct Pair* pair) { return *(&pair->second + 0); }";
+    verify_c0_sources(contract, &[("pair.c", valid)])
+        .expect("direct declared sibling access verifies before testing invalid traversal");
+    for body in [
+        "return *(&pair->first + 1);",
+        "int *p = &pair->first; return *(p + 1);",
+    ] {
+        let source = format!(
+            "struct Pair {{ int first; int second; }}; int probe(struct Pair* pair) {{ {body} }}"
+        );
+        assert!(
+            verify_c0_sources(contract, &[("pair.c", source.as_str())]).is_err(),
+            "accepted {body}"
+        );
+    }
+}
+
+#[test]
+fn c_declared_record_call_discharges_typed_member_input_requirement() {
+    let source = "struct Pair { int first; int second; }; int read(struct Pair* pair) { return pair->second; } int caller(void) { struct Pair pair = { 3, 7 }; return read(&pair); }";
+    let contract = r#"verifying "pair.c";
+        int32 read(struct Pair* pair) {
+            views pair->second;
+            ensures result == pair->second;
+        } by { execute(); simp(); }
+        int32 caller() {
+            ensures result == 7;
+        } by { execute(); simp(); }"#;
+    verify_c0_sources(contract, &[("pair.c", source)])
+        .expect("actual declared record discharges the same input requirement used at entry");
+}
+
+#[test]
+fn c_native_record_pointer_inputs_without_access_remain_admissible() {
+    let source = "struct Pair { int first; int second; }; int unused(struct Pair *pair) { return 7; } int caller(void) { return unused((struct Pair*)0); }";
+    let contract = r#"verifying "pair.c";
+        int32 unused(struct Pair* pair) { ensures result == 7; } by { execute(); simp(); }
+        int32 caller() { ensures result == 7; } by { execute(); simp(); }"#;
+    verify_c0_sources(contract, &[("pair.c", source)])
+        .expect("a raw record-pointer signature does not require a live pointee");
+}
+
+#[test]
+fn canonical_surface_record_pointer_identity_transports_declared_domain_modularly() {
+    let source = "struct Pair { int first; int second; }; struct Pair *identity(struct Pair *pair) { return pair; } int caller(void) { struct Pair pair = { 7, 9 }; struct Pair *q = identity(&pair); return q->first; }";
+    let contract = r#"verifying "identity.c";
+        struct Pair* identity(struct Pair* pair) { views pair->first; ensures result == pair; } by { execute(); simp(); }
+        int32 caller() { ensures result == 7; } by { execute(); simp(); }"#;
+    verify_c0_sources(contract, &[("identity.c", source)])
+        .expect("checked record entry carrier certifies a modular pointer preservation effect");
+}

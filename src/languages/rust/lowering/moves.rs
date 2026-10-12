@@ -186,11 +186,8 @@ pub(super) fn lower(
                 } else {
                     c_begin_aggregate_construction(
                         local.name.clone(),
-                        CAggregateLayout::new(
-                            *length as u32 * element.byte_width(),
-                            element.byte_width(),
-                            vec![],
-                        ),
+                        CAggregateLayout::new_scalar_array(element, *length as u32)
+                            .ok_or("invalid compact scalar array declaration")?,
                     )
                 }
             }
@@ -441,7 +438,7 @@ pub(super) fn lower(
                             .get(&(record.as_str(), field.as_str()))
                             .and_then(|(_, ty)| array_field_parts(*ty))
                     {
-                        let address = cx.address(target)?;
+                        let address = cx.indexed_parts(target)?.0;
                         cx.assign_array_region(address, element, u64::from(length), value)?
                     } else {
                         let (mut checks, mut value) = cx.prepared_expr(value)?;
@@ -479,8 +476,13 @@ pub(super) fn lower(
                     let mut initialize = assertion(flag, false);
                     let record_fields = r.fields.clone();
                     for (value, field) in fields.iter().zip(&record_fields) {
-                        let address = c_pointer_offset_bytes(c_variable(target), field.offset);
+                        let address =
+                            cx.record_field_address(c_variable(target), record, &field.name)?;
                         let write = if let Type::Array { element, length } = &field.value_type {
+                            let address = c_typed_load(
+                                address,
+                                record_field_type(&field.value_type)?.to_kernel_type(),
+                            );
                             cx.assign_array_region(
                                 address,
                                 scalar_type(element)?.to_kernel_type(),
@@ -531,13 +533,14 @@ pub(super) fn lower(
                         .clone();
                     for field in &record_fields {
                         let source_address =
-                            c_pointer_offset_bytes(c_variable(source), field.offset);
+                            cx.record_field_address(c_variable(source), record, &field.name)?;
                         let target_address =
-                            c_pointer_offset_bytes(c_variable(target), field.offset);
+                            cx.record_field_address(c_variable(target), record, &field.name)?;
                         let write = if let Type::Array { element, length } = &field.value_type {
+                            let field_type = record_field_type(&field.value_type)?.to_kernel_type();
                             c_write_scalar_array_region(
-                                target_address,
-                                source_address,
+                                c_typed_load(target_address, field_type),
+                                c_typed_load(source_address, field_type),
                                 scalar_type(element)?.to_kernel_type(),
                                 arrays::array_length(
                                     scalar_type(element)?.to_kernel_type(),
@@ -580,11 +583,11 @@ pub(super) fn lower(
                     // Re-entry retires the old object and checks live loans.
                     c_begin_aggregate_construction(
                         local.clone(),
-                        CAggregateLayout::new(
-                            arrays::array_length(element, length)? * element.byte_width(),
-                            element.byte_width(),
-                            vec![],
-                        ),
+                        CAggregateLayout::new_scalar_array(
+                            element,
+                            arrays::array_length(element, length)?,
+                        )
+                        .ok_or("invalid compact scalar array declaration")?,
                     )
                 }
                 S::BeginStorage { local } => {
@@ -1006,6 +1009,7 @@ mod tests {
                 locals: BTreeSet::new(),
                 return_type: C0Type::Void,
                 layouts: &layouts,
+                selected_layouts: BTreeMap::new(),
                 records: &records,
                 functions: &functions,
             };

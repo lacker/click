@@ -1922,8 +1922,25 @@ pub(super) fn solve_nested_have<'a>(
             // An explicit script is checked by its proof steps alone: a
             // step that fails is an error, never a miss for search to
             // rescue. The checked scope reports the exact declining step.
+            #[cfg(test)]
+            let probe = if std::env::var_os("CLICK_SCOPE_CONDITION_PROBE").is_some() {
+                nested.goal().map(|goal| {
+                    crate::kernel::proof::selected_condition_probe(
+                        Some(nested.body().facts().assumptions()),
+                        goal,
+                    )
+                })
+            } else {
+                None
+            };
             let mut declined = None;
             let selected = nested.try_authoritative_linear_script_reporting(body, &mut declined)?;
+            #[cfg(test)]
+            if selected.is_none()
+                && let Some(probe) = probe
+            {
+                eprintln!("nested-have-condition-probe {probe}");
+            }
             if selected.is_none() {
                 let detail = match declined {
                     Some(crate::surface::proof::smart_closures::LinearScriptDecline::Step(
