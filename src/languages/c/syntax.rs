@@ -15545,7 +15545,28 @@ impl Parser {
             .structs
             .get(target_struct)
             .expect("validated struct value has a layout");
-        if !layout.aggregate_unions.is_empty() {
+        let has_scalar_array_member = layout.aggregate_fields().iter().any(|field| {
+            !field.name.contains('[')
+                && matches!(
+                    field.c_type,
+                    C0Type::Int8Array(_)
+                        | C0Type::Int16Array(_)
+                        | C0Type::Int32Array(_)
+                        | C0Type::Int64Array(_)
+                        | C0Type::Int128Array(_)
+                        | C0Type::CharArray(_)
+                        | C0Type::UInt8Array(_)
+                        | C0Type::UInt16Array(_)
+                        | C0Type::UInt32Array(_)
+                        | C0Type::UInt64Array(_)
+                        | C0Type::UInt128Array(_)
+                        | C0Type::Float32Array(_)
+                        | C0Type::Float64Array(_)
+                )
+        });
+        // Copy complete array members as part of the checked aggregate operation;
+        // expanding their scalar stores would cross selected row domains.
+        if !layout.aggregate_unions.is_empty() || has_scalar_array_member {
             return Ok(C0Statement::AggregateCopy {
                 target: target_pointer,
                 source: source_pointer,

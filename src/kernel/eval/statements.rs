@@ -909,6 +909,68 @@ fn execute_c_aggregate_copy_paths(
             if source_pointer.is_null() {
                 continue;
             }
+            let domain_context = assumptions_with_path_context(assumptions, &facts, &obligations);
+            let Some((target_pointer, mut guards)) =
+                crate::kernel::functions::aggregate_copy_carrier(
+                    state,
+                    &target_pointer,
+                    layout,
+                    &domain_context,
+                )
+            else {
+                paths.push(CStatementExecutionPath::new(
+                    CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+                    facts,
+                    obligations,
+                ));
+                continue;
+            };
+            let Some((source_pointer, source_guards)) =
+                crate::kernel::functions::aggregate_copy_carrier(
+                    state,
+                    &source_pointer,
+                    layout,
+                    &domain_context,
+                )
+            else {
+                paths.push(CStatementExecutionPath::new(
+                    CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+                    facts,
+                    obligations,
+                ));
+                continue;
+            };
+            guards.extend(source_guards);
+            let Some(refused) = super::operators::pointer_domain_refusal_paths(
+                Ok(super::pointer_domains::PointerDomainCheck::Checked(guards)),
+                &facts,
+                &obligations,
+                assumptions,
+                &CUndefinedBehavior::InvalidMemory,
+            ) else {
+                paths.push(CStatementExecutionPath::new(
+                    CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+                    facts,
+                    obligations,
+                ));
+                continue;
+            };
+            for refused in refused {
+                let outcome = match refused.outcome {
+                    CExpressionOutcome::UndefinedBehavior(error) => {
+                        CStatementOutcome::UndefinedBehavior(error)
+                    }
+                    CExpressionOutcome::RuntimeError(error) => {
+                        CStatementOutcome::RuntimeError(error)
+                    }
+                    CExpressionOutcome::Value(_) => unreachable!("a domain refusal has no value"),
+                };
+                paths.push(CStatementExecutionPath::new(
+                    outcome,
+                    refused.facts,
+                    refused.obligations,
+                ));
+            }
             if let Some(resource) = missing_aggregate_copy_read_resource(
                 state,
                 source_pointer.pointer(),

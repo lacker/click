@@ -16300,6 +16300,7 @@ fn complete_aggregate_return(
     state: &mut CState,
     function: &CFunction,
     value: CValue,
+    assumptions: &PureFactContext,
 ) -> Result<CValue, AggregateReturnRefusal> {
     if function.contract_interface().aggregate_return_mode() == CAggregateReturnMode::Construction {
         return construction_return::complete(state, function.contract_interface(), value);
@@ -16313,8 +16314,16 @@ fn complete_aggregate_return(
     if pointer.is_null() {
         return Err(AggregateReturnRefusal::InvalidValue);
     }
+    let (pointer, guards) = aggregate_copy_carrier(state, &pointer, layout, assumptions)
+        .ok_or(AggregateReturnRefusal::InvalidValue)?;
+    if !guards
+        .iter()
+        .all(|guard| assumptions.decide(guard) == Some(true))
+    {
+        return Err(AggregateReturnRefusal::InvalidValue);
+    }
     let source = pointer.pointer().clone();
-    if aggregate_copy_reads_uninitialized(&state.memory, &source, layout) {
+    if aggregate_copy_reads_uninitialized_under(&state.memory, &source, layout, assumptions) {
         return Err(AggregateReturnRefusal::UninitializedRead);
     }
     let frame = state.next_local_frame;
@@ -18950,6 +18959,43 @@ fn local_view_range_within_block(range: &CMemoryRange, memory: &CMemory) -> bool
     memory.access_in_bounds(&base, bytes)
 }
 
+/// Whole-object copying consumes a retained complete object, not a scalar row
+/// that happens to have the same numeric address. This is independent of the
+/// subsequent byte authority and initialization checks. Legacy C storage keeps
+/// its existing allocated-access policy; native carriers must authenticate.
+pub(in crate::kernel) fn aggregate_copy_carrier(
+    state: &CState,
+    pointer: &CPointerValue,
+    layout: &CAggregateLayout,
+    assumptions: &PureFactContext,
+) -> Option<(CPointerValue, Vec<ConditionTerm>)> {
+    if pointer.designation().is_none() {
+        return (state.memory().typed_access_policy()
+            == CTypedAccessPolicy::CAllocatedAccessAllowed)
+            .then(|| (pointer.clone(), Vec::new()));
+    }
+    let mut pointer = pointer.clone();
+    if let Some(
+        PointerDesignation::Object { base, .. } | PointerDesignation::InputSelected { base, .. },
+    ) = pointer.designation()
+        && pointer.pointer() != base
+        && pointers_proven_equal_for_memory_resolution(pointer.pointer(), base, assumptions)
+    {
+        // Transport only a retained carrier's address; equality grants no
+        // layout or designation. The selected declaration is rechecked below.
+        pointer = pointer.clone().with_pointer(base.clone());
+    }
+    state.memory().guarded_native_record_selection(
+        &pointer,
+        &CAggregateMemberSelection {
+            layout: Arc::new(layout.clone()),
+            path: Arc::from([]),
+            value_type: CType::UInt8Array(layout.size_bytes()),
+        },
+        assumptions,
+    )
+}
+
 /// Check actual argument reads before allocating the callee's private copy.
 fn aggregate_argument_read_refusal(
     state: &CState,
@@ -18966,6 +19012,20 @@ fn aggregate_argument_read_refusal(
         };
         // Actual calls use the same read boundary as ordinary aggregate
         // assignment. Entry images are evaluated values, not caller reads.
+        let Some((source, guards)) = aggregate_copy_carrier(state, source, layout, assumptions)
+        else {
+            return Some(CFunctionOutcome::UndefinedBehavior(
+                CUndefinedBehavior::InvalidMemory,
+            ));
+        };
+        if !guards
+            .iter()
+            .all(|guard| assumptions.decide(guard) == Some(true))
+        {
+            return Some(CFunctionOutcome::UndefinedBehavior(
+                CUndefinedBehavior::InvalidMemory,
+            ));
+        }
         if let Some(resource) = crate::kernel::eval::missing_aggregate_copy_read_resource(
             state,
             source.pointer(),
@@ -18990,6 +19050,17 @@ fn aggregate_argument_read_refusal(
         }
     }
     None
+}
+
+// These scalar types have the existing compact run/snapshot storage backend.
+// Other supported array fields retain typed member-wise value copying.
+fn compact_aggregate_array_field(c_type: CType) -> Option<(CType, u32)> {
+    match c_type {
+        CType::Int32Array(count) => Some((CType::Int32, count)),
+        CType::UInt32Array(count) => Some((CType::UInt32, count)),
+        CType::UInt8Array(count) => Some((CType::UInt8, count)),
+        _ => None,
+    }
 }
 
 /// Whole-struct assignment copies every member (C11 6.5.16.1p2), but
@@ -19017,9 +19088,9 @@ fn aggregate_copy_reads_uninitialized_under(
     // field type this copy cannot carry drops the destination cells instead
     // of leaving them readable, so it cannot go stale here.
     for field in layout.fields() {
-        if let CType::UInt32Array(count) = field.c_type() {
+        if let Some((element_type, count)) = compact_aggregate_array_field(field.c_type()) {
             let source_field = source.offset_by_bytes(field.offset_bytes());
-            let Some(bytes) = count.checked_mul(4) else {
+            let Some(bytes) = count.checked_mul(element_type.byte_width()) else {
                 return true;
             };
             if bytes == 0
@@ -19054,6 +19125,12 @@ fn aggregate_copy_reads_uninitialized_under(
             | CType::UInt128
             | CType::Float32
             | CType::Float64 => (field.c_type(), 1),
+            CType::Int8Array(length) => (CType::Int8, length),
+            CType::Int16Array(length) => (CType::Int16, length),
+            CType::UInt16Array(length) => (CType::UInt16, length),
+            CType::Float32Array(length) => (CType::Float32, length),
+            CType::Float64Array(length) => (CType::Float64, length),
+            CType::PointerArray(element, length) => (element.pointer_type(), length),
             CType::Int32Array(length) => (CType::Int32, length),
             CType::UInt32Array(length) => (CType::UInt32, length),
             CType::Int64Array(length) => (CType::Int64, length),
@@ -19066,6 +19143,7 @@ fn aggregate_copy_reads_uninitialized_under(
             | CType::Int32PointerPointer
             | CType::UInt8PointerPointer
             | CType::FunctionPointer(_) => (field.c_type(), 1),
+            pointer_type if pointer_type.is_pointer() => (pointer_type, 1),
             _ => continue,
         };
         for index in 0..element_count {
@@ -19211,14 +19289,19 @@ fn copy_aggregate_fields(
     layout: &CAggregateLayout,
 ) -> CMemory {
     for field in layout.fields() {
-        if let CType::UInt32Array(count) = field.c_type() {
+        if let Some((element_type, count)) = compact_aggregate_array_field(field.c_type()) {
             let source_field = source.offset_by_bytes(field.offset_bytes());
             let target_field = destination.offset_by_bytes(field.offset_bytes());
             if let Ok(copied) = memory.clone().write_scalar_array_region(
                 &target_field,
-                CType::UInt32,
+                element_type,
                 count,
-                CValue::typed_pointer(source_field, CType::UInt32Pointer),
+                CValue::typed_pointer(
+                    source_field,
+                    element_type
+                        .pointer_to()
+                        .expect("scalar array pointer type"),
+                ),
                 true,
                 false,
                 &PureFactContext::new(),
@@ -19230,11 +19313,13 @@ fn copy_aggregate_fields(
             // without generating one load for each element of the field.
             if let Ok(copied) = memory.clone().write_scalar_array_snapshot(
                 &target_field,
-                CType::UInt32,
+                element_type,
                 count,
                 CValue::typed_pointer(
                     source.offset_by_bytes(field.offset_bytes()),
-                    CType::UInt32Pointer,
+                    element_type
+                        .pointer_to()
+                        .expect("scalar array pointer type"),
                 ),
                 true,
                 false,
@@ -19258,6 +19343,12 @@ fn copy_aggregate_fields(
                 | CType::UInt128
             | CType::Float32
             | CType::Float64 => (field.c_type(), 1),
+            CType::Int8Array(length) => (CType::Int8, length),
+            CType::Int16Array(length) => (CType::Int16, length),
+            CType::UInt16Array(length) => (CType::UInt16, length),
+            CType::Float32Array(length) => (CType::Float32, length),
+            CType::Float64Array(length) => (CType::Float64, length),
+            CType::PointerArray(element, length) => (element.pointer_type(), length),
             CType::Int32Array(length) => (CType::Int32, length),
             CType::UInt32Array(length) => (CType::UInt32, length),
             CType::Int64Array(length) => (CType::Int64, length),
@@ -19272,6 +19363,7 @@ fn copy_aggregate_fields(
             // A callback field is an eight-byte pointer value; carry it so a
             // copied table still dispatches to the same concrete target.
             | CType::FunctionPointer(_) => (field.c_type(), 1),
+            pointer_type if pointer_type.is_pointer() => (pointer_type, 1),
             // A field this copy cannot carry must not leave the destination's
             // previous value in place: C copies every member, so a stale cell
             // would be readable as the destination's old contents. Drop those
@@ -19308,6 +19400,9 @@ fn copy_aggregate_fields(
                         | CType::Int32PointerPointer
                         | CType::UInt8PointerPointer => {
                             Some(CValue::typed_pointer(Pointer::null(), element_type))
+                        }
+                        pointer_type if pointer_type.is_pointer() => {
+                            Some(CValue::typed_pointer(Pointer::null(), pointer_type))
                         }
                         CType::UInt16 => Some(uint16(0)),
                         CType::UInt32 => Some(uint32(0)),
@@ -19354,6 +19449,14 @@ fn copy_aggregate_fields(
                             &memory,
                             &source_field,
                             element_type,
+                            true,
+                        )
+                    }
+                    pointer_type if pointer_type.is_pointer() => {
+                        crate::kernel::eval::symbolic_storage_cell_value(
+                            &memory,
+                            &source_field,
+                            pointer_type,
                             true,
                         )
                     }
@@ -31764,7 +31867,7 @@ fn function_outcome_from_body_with_resource_transfer(
     // Resource completion over an already completed outcome keeps its result.
     let value = if reestablish_population_invariants && function.return_aggregate_layout().is_some()
     {
-        match complete_aggregate_return(&mut state, function, value) {
+        match complete_aggregate_return(&mut state, function, value, assumptions) {
             Ok(value) => value,
             Err(AggregateReturnRefusal::UninitializedRead) => {
                 return Ok((
@@ -32766,7 +32869,7 @@ pub(super) fn function_outcome_from_body(
                 );
             };
             let value = if function.return_aggregate_layout().is_some() {
-                match complete_aggregate_return(&mut state, function, value) {
+                match complete_aggregate_return(&mut state, function, value, assumptions) {
                     Ok(value) => value,
                     Err(AggregateReturnRefusal::UninitializedRead) => {
                         return (

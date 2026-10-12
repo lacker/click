@@ -32,7 +32,11 @@ fn c_array_rows_reject_original_sibling_read_and_recheck_original_control() {
         .unwrap();
     let negative = r#"verifying "row.c";
         int probe() { ensures result == 4; } by { execute(); simp(); }"#;
-    assert!(verify_c0_sources(negative, &sources).is_err());
+    let error = verify_c0_sources(negative, &sources).unwrap_err();
+    assert!(
+        error.message().contains("invalid memory access"),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -66,14 +70,18 @@ fn c_array_row_one_past_forms_but_equal_next_row_does_not_widen_access() {
 #[test]
 fn c_global_static_nested_rows_and_pointer_recipes_preserve_declared_extent() {
     for prefix in [
-        "int values[2][3] = {{1,2,3},{4,5,6}}; int *saved = &values[0][0];",
-        "struct Inner { int values[2][3]; }; struct Outer { int tag; struct Inner inner; }; struct Outer outer = {0, {{{1,2,3},{4,5,6}}}}; int *saved = &outer.inner.values[0][0];",
+        "const int values[2][3] = {{1,2,3},{4,5,6}}; const int *const saved = &values[0][0];",
+        "struct Inner { int values[2][3]; }; struct Outer { int tag; struct Inner inner; }; const struct Outer outer = {0, {{{1,2,3},{4,5,6}}}}; const int *const saved = &outer.inner.values[0][0];",
     ] {
         let proof =
             r#"verifying "row.c"; int probe() { ensures result == 4; } by { execute(); simp(); }"#;
         let negative = format!("{prefix} int probe(void) {{ return saved[3]; }}");
-        assert!(verify_c0_sources(proof, &[("row.c", negative.as_str())]).is_err());
-        let positive = if prefix.starts_with("struct") {
+        let error = verify_c0_sources(proof, &[("row.c", negative.as_str())]).unwrap_err();
+        assert!(
+            error.message().contains("invalid memory access"),
+            "{error:?}"
+        );
+        let positive = if prefix.contains("struct Inner") {
             format!("{prefix} int probe(void) {{ return outer.inner.values[1][0]; }}")
         } else {
             format!("{prefix} int probe(void) {{ return values[1][0]; }}")
@@ -82,11 +90,14 @@ fn c_global_static_nested_rows_and_pointer_recipes_preserve_declared_extent() {
     }
     let proof =
         r#"verifying "row.c"; int probe() { ensures result == 4; } by { execute(); simp(); }"#;
-    let positive =
-        "int probe(void) { static int values[2][3] = {{1,2,3},{4,5,6}}; return values[1][0]; }";
+    let positive = "int probe(void) { static const int values[2][3] = {{1,2,3},{4,5,6}}; return values[1][0]; }";
     verify_c0_sources(proof, &[("row.c", positive)]).unwrap();
-    let negative = "int probe(void) { static int values[2][3] = {{1,2,3},{4,5,6}}; static int *saved = &values[0][0]; return saved[3]; }";
-    assert!(verify_c0_sources(proof, &[("row.c", negative)]).is_err());
+    let negative = "int probe(void) { static const int values[2][3] = {{1,2,3},{4,5,6}}; static const int *const saved = &values[0][0]; return saved[3]; }";
+    let error = verify_c0_sources(proof, &[("row.c", negative)]).unwrap_err();
+    assert!(
+        error.message().contains("invalid memory access"),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -115,7 +126,10 @@ fn c_array_row_unsigned_indices_keep_their_native_bounds() {
     let c = "int read(unsigned i) { int values[2][3] = {{7,7,7},{7,7,7}}; return values[i][0]; }";
     let proof = r#"verifying "row.c"; int read(uint32 i) {
         requires i < 2u32; ensures result == 7;
-    } by { execute(); simp(); }"#;
+    } by {
+        if i == 0u32 { execute(); simp(); }
+        else { have i == 1u32 by simp; execute(); simp(); }
+    }"#;
     verify_c0_sources(proof, &[("row.c", c)]).unwrap();
     let invalid = proof.replace("i < 2u32", "i == 2u32");
     assert!(verify_c0_sources(&invalid, &[("row.c", c)]).is_err());

@@ -9482,7 +9482,8 @@ fn c0_struct_scalar_array_element_address_executes_at_element_width() {
         state
             .memory()
             .clone()
-            .store(packet.offset_by_bytes(24), crate::kernel::int32(7)),
+            .store(packet.offset_by_bytes(24), crate::kernel::int32(7))
+            .without_local_block(&"local:value_pointer".into()),
     );
     let arguments = vec![crate::kernel::CExpression::Value(
         crate::kernel::CValue::Pointer(carrier),

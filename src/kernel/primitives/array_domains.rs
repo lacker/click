@@ -729,6 +729,83 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_copy_requires_complete_carrier_and_keeps_row_domains_separate() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let layout = CAggregateLayout::new(
+            24,
+            4,
+            vec![
+                CAggregateField::new("values", 0, CType::Int32Array(6))
+                    .with_array_shape(Some(&[2, 3])),
+            ],
+        );
+        let root = Pointer {
+            block: "local:copy-source".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new().with_declared_aggregate_block(root.block.clone(), &layout);
+        let whole = memory.declared_aggregate_pointer(&root, &layout).unwrap();
+        let context = PureFactContext::new();
+        let state = CState::new().with_memory(memory.clone());
+        assert!(
+            crate::kernel::functions::aggregate_copy_carrier(&state, &whole, &layout, &context)
+                .is_some()
+        );
+        let member = memory
+            .checked_member_pointer(
+                &whole,
+                &CAggregateMemberSelection {
+                    layout: Arc::new(layout.clone()),
+                    path: vec!["values".into()].into(),
+                    value_type: CType::Int32Array(6),
+                },
+            )
+            .unwrap();
+        let (array, guards) = memory
+            .guarded_member_array_pointer(&member, &context)
+            .unwrap();
+        assert!(checked(guards, &context));
+        let (row, guards) = memory
+            .guarded_array_row_pointer(
+                &array,
+                IntegerTerm::constant_i64(0).into(),
+                CType::Int32,
+                &[2, 3],
+                &context,
+            )
+            .unwrap();
+        assert!(checked(guards, &context));
+        assert_eq!(row.pointer(), whole.pointer());
+        for carrier in [
+            row.clone(),
+            row.clone().with_pointer(row.pointer().offset_by_bytes(12)),
+        ] {
+            assert!(
+                crate::kernel::functions::aggregate_copy_carrier(
+                    &state, &carrier, &layout, &context
+                )
+                .is_none()
+            );
+        }
+        assert!(
+            !state
+                .memory()
+                .has_initialized_bytes_under(&root, 24, &context)
+        );
+        let legacy = CPointerValue::new(root.clone(), CType::UInt8Pointer);
+        assert!(
+            crate::kernel::functions::aggregate_copy_carrier(&state, &legacy, &layout, &context)
+                .is_some()
+        );
+        let strict = state
+            .with_memory(memory.with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly));
+        assert!(
+            crate::kernel::functions::aggregate_copy_carrier(&strict, &legacy, &layout, &context)
+                .is_none()
+        );
+    }
+
+    #[test]
     fn array_row_shape_is_declaration_evidence_not_expression_geometry() {
         let _session = crate::kernel::VerificationSession::enter();
         let (memory, array) = matrix(2);
