@@ -3060,6 +3060,25 @@ fn pointer_effect_entry_has_independent_binders(
                         base,
                         ..
                     }) if root == pointer.pointer() && *base == *root && selections.is_empty() => {}
+                    Some(PointerDesignation::InputSelected {
+                        input: CNativeInputIdentity::Unresolved(origin_variable),
+                        origin,
+                        path: selections,
+                        base,
+                        ..
+                    }) if *origin_variable == variable
+                        && origin == pointer.pointer()
+                        && base == origin
+                        && selections.is_empty()
+                        && path
+                            .entry_state
+                            .memory()
+                            .authenticated_input_selection(entry, &path.entry_assumptions)
+                            .is_some_and(|guards| {
+                                guards
+                                    .iter()
+                                    .all(|guard| path.entry_assumptions.decide(guard) == Some(true))
+                            }) => {}
                     _ => return false,
                 }
                 variable

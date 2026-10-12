@@ -171,6 +171,37 @@ fn name_direct_input(
     Some(state.clone().with_memory(memory))
 }
 
+/// Bind declaration expressions before their required field ownership exists.
+/// This scratch scope creates no resource, memory observation or program entry.
+fn declaration_scope(
+    state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+) -> Option<CState> {
+    let mut scope = state.clone();
+    for (parameter, argument) in function.parameters().iter().zip(arguments) {
+        let CExpression::Value(value) = argument else {
+            return None;
+        };
+        if value.c_type() != parameter.c_type() {
+            return None;
+        }
+        scope.locals.set_typed_with_all_qualifiers(
+            parameter.name().to_string(),
+            value
+                .clone()
+                .with_pointer_pointee_volatile(parameter.pointee_is_volatile())
+                .with_pointer_pointee_constant(parameter.pointee_is_constant()),
+            parameter.c_type(),
+            parameter.is_volatile(),
+            parameter.pointee_is_volatile(),
+            parameter.is_constant(),
+            parameter.pointee_is_constant(),
+        );
+    }
+    Some(scope)
+}
+
 /// Construct only declared globals and inputs. No cell or ledger from the
 /// actual caller is used to create this state.
 pub(crate) fn construct(
@@ -330,9 +361,7 @@ pub(crate) fn construct(
         .ok()?;
     // Only native promise producers may add designations to independent binders.
     let empty = PureFactContext::new();
-    let mut entry = crate::kernel::c_function_entry_state_with_assumptions(
-        &state, function, &canonical, &empty,
-    )?;
+    let mut entry = declaration_scope(&state, function, &canonical)?;
     let root_specs = interface
         .resource_requires()
         .iter()
@@ -364,9 +393,7 @@ pub(crate) fn construct(
             continue;
         }
         crate::instrumentation::record_deterministic_work(1);
-        let entry = crate::kernel::c_function_entry_state_with_assumptions(
-            &state, function, &canonical, &empty,
-        )?;
+        let entry = declaration_scope(&state, function, &canonical)?;
         let Ok(Ok(fact)) = evaluate_function_resource_spec(&entry, spec, &empty, &mut budget)
         else {
             return None;
@@ -407,9 +434,7 @@ pub(crate) fn construct(
         let resources = state.resources().clone().unchecked_with_fact(fact.clone());
         state = state.with_resource_context(resources);
         if direct_memory {
-            let bound = crate::kernel::c_function_entry_state_with_assumptions(
-                &state, function, &canonical, &empty,
-            )?;
+            let bound = declaration_scope(&state, function, &canonical)?;
             state.set_memory(
                 name_direct_input(&bound, spec, &fact, &empty)?
                     .memory()
@@ -425,6 +450,7 @@ pub(crate) fn construct(
         &empty,
     )
     .ok()?;
+    crate::kernel::c_function_entry_state_with_assumptions(&state, function, &canonical, &empty)?;
     Some(IndependentEntry {
         caller: state,
         arguments: canonical,
@@ -697,7 +723,22 @@ mod eligibility_tests {
             vec![c_parameter("this", CType::UInt8Pointer).with_native_pointer_input(true)],
             c_return(c_void_value()),
         )
-        .with_construction_parameter(0, layout);
+        .with_construction_parameter(0, layout.clone())
+        .with_resource_summary(
+            vec![CResourceSpec::owned_memory(CMemorySegment::new(
+                CExpression::MemberAddress {
+                    object: Box::new(c_variable("this")),
+                    selection: Arc::new(CAggregateMemberSelection {
+                        layout: Arc::new(layout),
+                        path: Arc::from(["value".to_string()]),
+                        value_type: CType::Int32,
+                    }),
+                },
+                c_int32_literal(0),
+                c_int32_literal(1),
+            ))],
+            vec![],
+        );
         let pointer = crate::kernel::c_construction_contract_input_pointer(
             &function,
             Pointer::symbolic(Variable(9_898_242)),
