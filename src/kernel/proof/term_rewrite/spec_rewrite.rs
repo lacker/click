@@ -1618,6 +1618,17 @@ impl<'a> TermRewrite<'a> {
                 expression: Box::new(self.rewrite_c_expression(expression)?),
                 classification: *classification,
             },
+            CExpression::ArrayRowAddress {
+                array,
+                index,
+                shape,
+                element_type,
+            } => CExpression::ArrayRowAddress {
+                array: Box::new(self.rewrite_c_expression(array)?),
+                index: Box::new(self.rewrite_c_expression(index)?),
+                shape: shape.clone(),
+                element_type: *element_type,
+            },
             CExpression::RecordPointerOffset {
                 pointer,
                 index,

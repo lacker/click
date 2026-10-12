@@ -13747,8 +13747,10 @@ fn c_expression_supports_stateful_memory_refinement(expression: &CExpression) ->
                 && c_expression_supports_stateful_memory_refinement(else_branch)
         }
         crate::kernel::binary_c_expression!(left, right) => {
-            !matches!(expression, CExpression::RecordPointerOffset { .. })
-                && c_expression_supports_stateful_memory_refinement(left)
+            !matches!(
+                expression,
+                CExpression::RecordPointerOffset { .. } | CExpression::ArrayRowAddress { .. }
+            ) && c_expression_supports_stateful_memory_refinement(left)
                 && c_expression_supports_stateful_memory_refinement(right)
         }
     }
@@ -13947,6 +13949,7 @@ pub(super) fn c_expression_is_state_independent(expression: &CExpression) -> boo
         }
         CExpression::MemberAddress { .. }
         | CExpression::RecordPointerOffset { .. }
+        | CExpression::ArrayRowAddress { .. }
         | CExpression::AddressOf(_)
         | CExpression::CheckedObjectAddress(_)
         | CExpression::Load(_)
@@ -16872,7 +16875,12 @@ fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CEx
                 values(base, reads);
                 values(index, reads);
             }
-            CExpression::RecordPointerOffset {
+            CExpression::ArrayRowAddress {
+                array: left,
+                index: right,
+                ..
+            }
+            | CExpression::RecordPointerOffset {
                 pointer: left,
                 index: right,
                 ..
@@ -17869,6 +17877,20 @@ fn initialize_c_function_globals_owned(
                 )
                 .expect("validated native array extent"),
         );
+        if let Some(shape) = global_array.array_shape() {
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_declared_array_shape(
+                        &slot.block,
+                        global_array.element_type(),
+                        global_array.length(),
+                        shape,
+                    )
+                    .expect("validated native multidimensional array declaration"),
+            );
+        }
         state.locals.set_array_object_at_with_constant(
             global_array.kernel_name().to_string(),
             global_array.element_type(),
@@ -18125,6 +18147,20 @@ fn initialize_c_function_globals_owned(
                 )
                 .expect("validated native array extent"),
         );
+        if let Some(shape) = static_array.array_shape() {
+            state.set_memory(
+                state
+                    .memory
+                    .clone()
+                    .with_declared_array_shape(
+                        &slot.block,
+                        static_array.element_type(),
+                        static_array.length(),
+                        shape,
+                    )
+                    .expect("validated native multidimensional array declaration"),
+            );
+        }
         state.locals.set_array_object_at_with_constant(
             static_array.kernel_name().to_string(),
             static_array.element_type(),

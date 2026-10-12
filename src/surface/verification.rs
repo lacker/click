@@ -4404,7 +4404,12 @@ pub(in crate::surface) fn c0_statement_calls(
                 collect_function_addresses(then_branch, names);
                 collect_function_addresses(else_branch, names);
             }
-            syntax::C0Expression::RecordPointerOffset {
+            syntax::C0Expression::ArrayRowAddress {
+                array: left,
+                index: right,
+                ..
+            }
+            | syntax::C0Expression::RecordPointerOffset {
                 pointer: left,
                 index: right,
                 ..

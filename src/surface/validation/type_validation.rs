@@ -2977,7 +2977,8 @@ fn infer_c_expression_type(
         CExpression::AddressOf(_)
         | CExpression::CheckedObjectAddress(_)
         | CExpression::FunctionAddress(_)
-        | CExpression::MemberAddress { .. } => None,
+        | CExpression::MemberAddress { .. }
+        | CExpression::ArrayRowAddress { .. } => None,
         CExpression::RecordPointerOffset { pointer, .. }
         | CExpression::PointerOffsetBytes { pointer, .. } => {
             infer_c_expression_type(pointer, variables)

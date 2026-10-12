@@ -9292,6 +9292,40 @@ fn c0_struct_inline_scalar_array_field_supports_indexed_load_and_store() {
     );
 }
 
+fn declared_row_record_fixture(
+    layout: crate::kernel::CAggregateLayout,
+) -> (crate::kernel::CState, crate::kernel::CPointerValue) {
+    let theorem = crate::kernel::prove_c_statement_execution(
+        crate::kernel::CState::new(),
+        crate::kernel::c_seq(
+            crate::kernel::c_declare_aggregate("row_fixture", layout),
+            crate::kernel::c_return(crate::kernel::CExpression::AddressOf(Box::new(
+                crate::kernel::c_variable("row_fixture"),
+            ))),
+        ),
+    )
+    .expect("the fixture declares its actual record storage");
+    let crate::kernel::Proposition::CStatementExecutes {
+        outcome:
+            crate::kernel::CStatementOutcome::Return {
+                value: crate::kernel::CValue::Pointer(pointer),
+                state,
+            },
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("fixture declaration must retain its address");
+    };
+    // Retain the actual declaration/lifetime memory, without scratch bindings
+    // or extra permissions in the tested call's original external state.
+    (
+        crate::kernel::CState::new().with_memory(state.memory().clone()),
+        pointer
+            .clone()
+            .with_type(crate::kernel::CType::Int32Pointer),
+    )
+}
+
 #[test]
 fn c0_struct_multidimensional_scalar_array_field_flattens_row_major() {
     let function = syntax::parse_function(
@@ -9307,30 +9341,22 @@ fn c0_struct_multidimensional_scalar_array_field_flattens_row_major() {
         }
         "#,
     )
-    .expect("multidimensional indexed scalar array access should parse")
-    .to_kernel_function();
-    let packet = crate::kernel::Pointer {
-        block: "packet".into(),
-        offset: crate::kernel::PointerOffsetTerm::Constant(0),
-    };
+    .expect("multidimensional indexed scalar array access should parse");
+    let layout = function.structs()["packet"].to_kernel_aggregate_layout();
+    let function = function.to_kernel_function();
+    let (declared, carrier) = declared_row_record_fixture(layout);
+    let packet = carrier.pointer().clone();
     let resources = own_memory_context(packet.clone(), 0, 10);
-    let state = crate::kernel::CState::new()
-        .with_memory(crate::kernel::CMemory::new().with_block("packet", 28))
-        .with_resource_context(resources.clone());
-    let final_state = crate::kernel::CState::new()
-        .with_memory(
-            crate::kernel::CMemory::new()
-                .with_block("packet", 28)
-                .store(
-                    crate::kernel::Pointer {
-                        block: "packet".into(),
-                        offset: crate::kernel::PointerOffsetTerm::Constant(24),
-                    },
-                    crate::kernel::int32(7),
-                ),
-        )
-        .with_resource_context(resources);
-    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let state = declared.with_resource_context(resources.clone());
+    let final_state = state.clone().with_memory(
+        state
+            .memory()
+            .clone()
+            .store(packet.offset_by_bytes(24), crate::kernel::int32(7)),
+    );
+    let arguments = vec![crate::kernel::CExpression::Value(
+        crate::kernel::CValue::Pointer(carrier),
+    )];
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
@@ -9376,21 +9402,27 @@ fn c0_struct_scalar_array_element_address_preserves_row_major_offset() {
     let syntax::C0Expression::Index(base, index) = target.as_ref() else {
         panic!("array element address should target an indexed lvalue")
     };
+    let syntax::C0Expression::ArrayRowAddress {
+        array,
+        index: row,
+        element_type,
+        shape,
+    } = base.as_ref()
+    else {
+        panic!("outer array index must select the declared row");
+    };
+    assert_eq!(*element_type, syntax::C0Type::Int32);
+    assert_eq!(shape.as_ref(), &[2, 3]);
     assert!(matches!(
-        base.as_ref(),
-        syntax::C0Expression::Field {
-            field_type: syntax::C0Type::Int32Array(6),
-            array_shape: Some(shape),
-            ..
-        } if shape == &[2, 3]
+        row.as_ref(),
+        syntax::C0Expression::Int32Literal(1)
     ));
+    assert!(matches!(array.as_ref(), syntax::C0Expression::Field {
+        field_type: syntax::C0Type::Int32Array(6), array_shape: Some(shape), ..
+    } if shape == &[2, 3]));
     assert!(matches!(
         index.as_ref(),
-        syntax::C0Expression::Add(left, right)
-            if matches!(left.as_ref(), syntax::C0Expression::Multiply(multiplier, stride)
-                if matches!(multiplier.as_ref(), syntax::C0Expression::Int32Literal(1))
-                    && matches!(stride.as_ref(), syntax::C0Expression::Int32Literal(3)))
-                && matches!(right.as_ref(), syntax::C0Expression::Int32Literal(2))
+        syntax::C0Expression::Int32Literal(2)
     ));
 
     let crate::kernel::CStatement::Return(crate::kernel::CExpression::AddressOf(target)) =
@@ -9401,26 +9433,27 @@ fn c0_struct_scalar_array_element_address_preserves_row_major_offset() {
     let crate::kernel::CExpression::Index(base, index) = target.as_ref() else {
         panic!("array element address should preserve indexed lvalue lowering")
     };
+    let crate::kernel::CExpression::ArrayRowAddress {
+        array,
+        index: row,
+        element_type,
+        shape,
+    } = base.as_ref()
+    else {
+        panic!("kernel lowering must retain row selection");
+    };
+    assert_eq!(*element_type, crate::kernel::CType::Int32);
+    assert_eq!(shape.as_ref(), &[2, 3]);
+    assert_eq!(row.as_ref(), &crate::kernel::c_int32_literal(1));
     assert!(matches!(
-        base.as_ref(),
+        array.as_ref(),
         crate::kernel::CExpression::TypedLoad {
             value_type: crate::kernel::CType::Int32Array(6),
             ..
         }
     ));
-    assert!(matches!(
-        index.as_ref(),
-        crate::kernel::CExpression::Add(left, right)
-            if matches!(left.as_ref(), crate::kernel::CExpression::Multiply(multiplier, stride)
-                if matches!(multiplier.as_ref(), crate::kernel::CExpression::Value(value)
-                    if value == &crate::kernel::int32(1))
-                    && matches!(stride.as_ref(), crate::kernel::CExpression::Value(value)
-                        if value == &crate::kernel::int32(3)))
-                && matches!(right.as_ref(), crate::kernel::CExpression::Value(value)
-                    if value == &crate::kernel::int32(2))
-    ));
+    assert_eq!(index.as_ref(), &crate::kernel::c_int32_literal(2));
 }
-
 #[test]
 fn c0_struct_scalar_array_element_address_executes_at_element_width() {
     let function = syntax::parse_function(
@@ -9438,43 +9471,22 @@ fn c0_struct_scalar_array_element_address_executes_at_element_width() {
         }
         "#,
     )
-    .expect("address of an inline scalar array element should parse")
-    .to_kernel_function();
-    let packet = crate::kernel::Pointer {
-        block: "packet".into(),
-        offset: crate::kernel::PointerOffsetTerm::Constant(0),
-    };
-    let value = crate::kernel::Pointer {
-        block: "packet".into(),
-        offset: crate::kernel::PointerOffsetTerm::Constant(24),
-    };
-    let local_value_pointer = crate::kernel::Pointer {
-        block: "local:value_pointer".into(),
-        offset: crate::kernel::PointerOffsetTerm::Constant(0),
-    };
+    .expect("address of an inline scalar array element should parse");
+    let layout = function.structs()["packet"].to_kernel_aggregate_layout();
+    let function = function.to_kernel_function();
+    let (declared, carrier) = declared_row_record_fixture(layout);
+    let packet = carrier.pointer().clone();
     let resources = own_memory_context(packet.clone(), 0, 10);
-    let state = crate::kernel::CState::new()
-        .with_memory(crate::kernel::CMemory::new().with_block("packet", 28))
-        .with_resource_context(resources.clone());
-    let final_state = crate::kernel::CState::new()
-        .with_memory(
-            crate::kernel::CMemory::new()
-                .with_block("local:value_pointer", 8)
-                .with_block("packet", 28)
-                .store(
-                    local_value_pointer,
-                    crate::kernel::CValue::pointer(value.clone()),
-                )
-                .store(value, crate::kernel::int32(7)),
-        )
-        .with_resource_context(resources);
-    let final_state = final_state.clone().with_memory(
-        final_state
+    let state = declared.with_resource_context(resources.clone());
+    let final_state = state.clone().with_memory(
+        state
             .memory()
             .clone()
-            .without_local_block(&"local:value_pointer".into()),
+            .store(packet.offset_by_bytes(24), crate::kernel::int32(7)),
     );
-    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let arguments = vec![crate::kernel::CExpression::Value(
+        crate::kernel::CValue::Pointer(carrier),
+    )];
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
@@ -14228,5 +14240,82 @@ fn c_allocator_scalar_profile_uses_the_actual_source_declaration() {
     assert_eq!(
         allocation(&crate::kernel::c_heap_allocate("p", 8)),
         Some(None)
+    );
+}
+
+#[test]
+fn c_static_array_element_initializers_retain_the_declared_row_recipe() {
+    fn assert_row(value: &crate::kernel::CValue, members: &[&str], row: i64, offset: i64) {
+        let crate::kernel::CValue::Pointer(pointer) = value else {
+            panic!("pointer initializer");
+        };
+        let Some(crate::kernel::PointerDesignation::Object {
+            path,
+            element_type,
+            stride,
+            count,
+            ..
+        }) = pointer.designation()
+        else {
+            panic!("actual static declaration must retain its row recipe");
+        };
+        let mut expected = members
+            .iter()
+            .map(|name| crate::kernel::PointerDomainSelection::Member((*name).to_string()))
+            .collect::<Vec<_>>();
+        expected.push(crate::kernel::PointerDomainSelection::Element(
+            crate::kernel::IntegerTerm::constant_i64(row).into(),
+        ));
+        assert_eq!(path.as_ref(), expected.as_slice());
+        assert_eq!(*element_type, CType::Int32);
+        assert_eq!(*stride, 4);
+        assert_eq!(*count, crate::kernel::IntegerTerm::constant_i64(3).into());
+        assert_eq!(
+            pointer.pointer().offset,
+            crate::kernel::PointerOffsetTerm::Constant(offset)
+        );
+        assert!(pointer.pointee_constant());
+    }
+    let global = syntax::parse_function(
+        "const int32 values[2][3] = {{1,2,3},{4,5,6}}; const int32* const q = &values[1][2]; int32 probe() { return *q; }",
+    ).unwrap().to_kernel_function();
+    assert_row(
+        global
+            .global_variables()
+            .iter()
+            .find(|value| value.name() == "q")
+            .unwrap()
+            .initial_value(),
+        &[],
+        1,
+        20,
+    );
+    let local = syntax::parse_function(
+        "int32 probe() { static const int32 values[2][3] = {{1,2,3},{4,5,6}}; static const int32* const q = &values[0][2]; return *q; }",
+    ).unwrap().to_kernel_function();
+    assert_row(
+        local
+            .static_variables()
+            .iter()
+            .find(|value| value.source_name() == "q")
+            .unwrap()
+            .initial_value(),
+        &[],
+        0,
+        8,
+    );
+    let nested = syntax::parse_function(
+        "struct Inner { int32 values[2][3]; }; struct Outer { struct Inner inner; }; const struct Outer rows = {{{{1,2,3},{4,5,6}}}}; const int32* const q = &rows.inner.values[1][2]; int32 probe() { return *q; }",
+    ).unwrap().to_kernel_function();
+    assert_row(
+        nested
+            .global_variables()
+            .iter()
+            .find(|value| value.name() == "q")
+            .unwrap()
+            .initial_value(),
+        &["inner", "values"],
+        1,
+        20,
     );
 }

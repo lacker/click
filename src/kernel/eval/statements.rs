@@ -3028,6 +3028,7 @@ fn execute_c_statement_leaf_paths(
             name,
             c_type,
             array_object_kind,
+            array_shape,
             volatile,
             pointee_volatile,
             constant,
@@ -3061,6 +3062,29 @@ fn execute_c_statement_leaf_paths(
                         *array_object_kind,
                     ),
                 };
+                let declared = declared.and_then(|mut declared| {
+                    if let Some(shape) = array_shape {
+                        if *array_object_kind != CArrayObjectKind::Scalar {
+                            return Err(CRuntimeError::TypeMismatch);
+                        }
+                        let (element, count) = c_type
+                            .array_element_and_count()
+                            .ok_or(CRuntimeError::TypeMismatch)?;
+                        let slot = declared
+                            .locals
+                            .slot(name)
+                            .cloned()
+                            .ok_or(CRuntimeError::TypeMismatch)?;
+                        declared.set_memory(
+                            declared
+                                .memory
+                                .clone()
+                                .with_declared_array_shape(&slot.block, element, count, shape)
+                                .ok_or(CRuntimeError::TypeMismatch)?,
+                        );
+                    }
+                    Ok(declared)
+                });
                 match declared.and_then(|state| match zero_fill {
                     Some(zero_fill) => zero_fill_declared_array(state, name, zero_fill),
                     None => Ok(state),

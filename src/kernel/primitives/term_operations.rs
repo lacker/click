@@ -3027,6 +3027,27 @@ impl CType {
         self.array_element_and_count().map(|(element, _)| element)
     }
 
+    pub(in crate::kernel) fn scalar_array_type(self, count: u32) -> Option<Self> {
+        Some(match self {
+            Self::Int8 => Self::Int8Array(count),
+            Self::Int16 => Self::Int16Array(count),
+            Self::Int32 => Self::Int32Array(count),
+            Self::UInt8 => Self::UInt8Array(count),
+            Self::UInt16 => Self::UInt16Array(count),
+            Self::UInt32 => Self::UInt32Array(count),
+            Self::Int64 => Self::Int64Array(count),
+            Self::UInt64 => Self::UInt64Array(count),
+            Self::Int128 => Self::Int128Array(count),
+            Self::UInt128 => Self::UInt128Array(count),
+            Self::Float32 => Self::Float32Array(count),
+            Self::Float64 => Self::Float64Array(count),
+            pointer if pointer.is_object_pointer() => {
+                Self::PointerArray(CPointerArrayElement::from_pointer_type(pointer)?, count)
+            }
+            _ => return None,
+        })
+    }
+
     pub(crate) fn array_element_and_count(self) -> Option<(Self, u32)> {
         Some(match self {
             Self::Int8Array(count) => (Self::Int8, count),

@@ -2691,17 +2691,64 @@ impl CMemory {
             return None;
         }
         let size = count.checked_mul(width)?;
+        let shape = self.blocks.get(&block).and_then(|declaration| {
+            match declaration.declared_object.as_ref() {
+                Some(CDeclaredObject::Array {
+                    element_type: held,
+                    count: held_count,
+                    shape,
+                }) if *held == element_type && *held_count == count => shape.clone(),
+                _ => None,
+            }
+        });
         Some(self.with_complete_declaration(
             block,
             size,
             CDeclaredObject::Array {
                 element_type,
                 count,
+                shape,
             },
             read_only,
             false,
             None,
         ))
+    }
+
+    /// Attach dimensions only to an actual scalar-array declaration. Byte
+    /// blocks, raw construction markers and ownership ranges cannot issue them.
+    pub(in crate::kernel) fn with_declared_array_shape(
+        mut self,
+        block: &PointerBlock,
+        element: CType,
+        count: u32,
+        shape: &[u32],
+    ) -> Option<Self> {
+        checked_scalar_array_shape(element, count, shape)?;
+        let declaration = self.blocks.get(block)?;
+        if !matches!(declaration.declared_object.as_ref(),
+            Some(CDeclaredObject::Array { element_type, count: held, shape: old })
+            if *element_type == element && *held == count
+                && old.as_deref().is_none_or(|old| old == shape))
+        {
+            return None;
+        }
+        let base = intern_derivation_base(&mut self);
+        let mut declaration = self.blocks.get(block)?.clone();
+        declaration.declared_object = Some(CDeclaredObject::Array {
+            element_type: element,
+            count,
+            shape: (shape.len() > 1).then(|| Arc::from(shape)),
+        });
+        Arc::make_mut(&mut self.blocks).insert(block.clone(), declaration);
+        record_c_memory_derivation(
+            &mut self,
+            CMemoryDerivation::BlockDeclared {
+                base,
+                block: block.clone(),
+            },
+        );
+        Some(self)
     }
 
     /// Complete scalar construction without changing its extent, type, cells,
@@ -2911,49 +2958,19 @@ impl CMemory {
     /// Authenticate an actual scalar array declaration. Its element count is
     /// never reconstructed from byte ownership or the allocation's extent.
     pub(in crate::kernel) fn has_declared_array_domain(&self, pointer: &CPointerValue) -> bool {
-        let Some(PointerDesignation::Object {
-            root,
-            path,
-            base,
-            element_type,
-            stride,
-            count,
-        }) = pointer.designation()
-        else {
-            return false;
+        let at_base = match pointer.designation() {
+            Some(PointerDesignation::Object { base, .. })
+            | Some(PointerDesignation::InputSelected { base, .. }) => pointer.pointer() == base,
+            _ => false,
         };
-        if !path.is_empty() {
-            return self.has_declared_member_array_domain(pointer);
-        }
-        if root != base
-            || base != pointer.pointer()
-            || !path.is_empty()
-            || root.offset.as_const() != Some(0)
-            || pointer.is_null()
-            || self.is_ended_local_address(root)
-            || self.is_deallocated_heap_address(root, &PureFactContext::new())
-        {
-            return false;
-        }
-        crate::instrumentation::record_deterministic_work(1);
-        let shape = match self
-            .blocks
-            .get(&root.block)
-            .and_then(|block| block.declared_object.as_ref())
-        {
-            Some(CDeclaredObject::Array {
-                element_type,
-                count,
-            }) => Some((*element_type, *count)),
-            Some(CDeclaredObject::Aggregate(layout)) => layout.scalar_array(),
-            _ => None,
-        };
-        let Some((held, held_count)) = shape else {
-            return false;
-        };
-        held == *element_type
-            && *stride == held.byte_width()
-            && *count == SharedIntegerTerm::from(IntegerTerm::constant_i64(i64::from(held_count)))
+        at_base
+            && self
+                .authenticated_array_domain(pointer, &PureFactContext::new())
+                .is_some_and(|guards| {
+                    guards
+                        .iter()
+                        .all(|guard| guard == &ConditionTerm::Constant(true))
+                })
     }
 
     pub(in crate::kernel) fn declared_array_pointer(
@@ -2967,11 +2984,15 @@ impl CMemory {
                 root: address.clone(),
                 path: Arc::from([]),
                 base: address.clone(),
-                element_type,
-                stride: element_type.byte_width(),
-                count: IntegerTerm::constant_i64(i64::from(count)).into(),
+                element_type: element_type.scalar_array_type(count)?,
+                stride: count.checked_mul(element_type.byte_width())?,
+                count: IntegerTerm::constant_i64(1).into(),
             });
-        self.has_declared_array_domain(&value).then_some(value)
+        let (value, guards) = self.guarded_declared_array_decay(&value, &PureFactContext::new())?;
+        guards
+            .iter()
+            .all(|guard| guard == &ConditionTerm::Constant(true))
+            .then_some(value)
     }
 
     /// Array decay selects the actual declared member array while keeping its
@@ -2981,45 +3002,12 @@ impl CMemory {
         &self,
         object: &CPointerValue,
     ) -> Option<CPointerValue> {
-        if matches!(
-            object.designation(),
-            Some(PointerDesignation::InputSelected { .. })
-        ) {
-            let (pointer, guards) =
-                self.guarded_member_array_pointer(object, &PureFactContext::new())?;
-            return guards
-                .iter()
-                .all(|guard| guard == &ConditionTerm::Constant(true))
-                .then_some(pointer);
-        }
-        let (layout, path, selected) = self.checked_record_selection(object)?;
-        if path.is_empty() {
-            return None;
-        }
-        let (element_type, count) = layout.array_member_at_path(&path)?;
-        let stride = element_type.byte_width();
-        if stride == 0 || stride.checked_mul(count)? != selected.byte_width() {
-            return None;
-        }
-        let PointerDesignation::Object {
-            root, path, base, ..
-        } = object.designation()?
-        else {
-            return None;
-        };
-        Some(
-            object
-                .clone()
-                .with_type(element_type.pointer_to()?)
-                .with_designation(PointerDesignation::Object {
-                    root: root.clone(),
-                    path: path.clone(),
-                    base: base.clone(),
-                    element_type,
-                    stride,
-                    count: IntegerTerm::constant_i64(i64::from(count)).into(),
-                }),
-        )
+        let (pointer, guards) =
+            self.guarded_declared_array_decay(object, &PureFactContext::new())?;
+        guards
+            .iter()
+            .all(|guard| guard == &ConditionTerm::Constant(true))
+            .then_some(pointer)
     }
 
     pub(in crate::kernel) fn guarded_member_array_pointer(
@@ -3027,114 +3015,7 @@ impl CMemory {
         object: &CPointerValue,
         assumptions: &PureFactContext,
     ) -> Option<(CPointerValue, Vec<ConditionTerm>)> {
-        let Some(PointerDesignation::InputSelected {
-            input,
-            origin,
-            path,
-            base,
-            element_type: selected,
-            stride: selected_stride,
-            count: selected_count,
-        }) = object.designation()
-        else {
-            return self
-                .checked_member_array_pointer(object)
-                .map(|pointer| (pointer, vec![]));
-        };
-        let mut guards = self.authenticated_input_selection(object, assumptions)?;
-        guards.push(ConditionTerm::pointer_equal(
-            object.pointer().clone(),
-            base.clone(),
-        ));
-        let (layout, _, _, members) = self.input_selection_parts(input, origin, path)?;
-        let (element_type, count) = layout.array_member_at_path(&members)?;
-        let stride = element_type.byte_width();
-        if stride == 0
-            || stride.checked_mul(count)? != selected.byte_width()
-            || *selected_stride != selected.byte_width()
-            || *selected_count != SharedIntegerTerm::from(IntegerTerm::constant_i64(1))
-        {
-            return None;
-        }
-        let decayed = object
-            .clone()
-            .with_type(element_type.pointer_to()?)
-            .with_designation(PointerDesignation::InputSelected {
-                input: input.clone(),
-                origin: origin.clone(),
-                path: path.clone(),
-                base: base.clone(),
-                element_type,
-                stride,
-                count: IntegerTerm::constant_i64(i64::from(count)).into(),
-            });
-        guards.extend(self.authenticated_input_selection(&decayed, assumptions)?);
-        Some((decayed, guards))
-    }
-
-    fn has_declared_member_array_domain(&self, pointer: &CPointerValue) -> bool {
-        let Some(PointerDesignation::Object {
-            root,
-            path,
-            base,
-            element_type,
-            stride,
-            count,
-        }) = pointer.designation()
-        else {
-            return false;
-        };
-        if path.is_empty() || base != pointer.pointer() {
-            return false;
-        }
-        let layout = match self
-            .blocks
-            .get(&root.block)
-            .and_then(|block| block.declared_object.as_ref())
-        {
-            Some(CDeclaredObject::Aggregate(layout)) => layout,
-            Some(_) => return false,
-            None => match self.heap.object_input_domains.get(root) {
-                Some(layout) => layout,
-                None => return false,
-            },
-        };
-        let Some(member_path) = path
-            .iter()
-            .map(|part| match part {
-                PointerDomainSelection::Member(name) => Some(name.clone()),
-                PointerDomainSelection::Element(_) => None,
-            })
-            .collect::<Option<Vec<_>>>()
-        else {
-            return false;
-        };
-        let Some((_, selected)) = layout.member_at_path(&member_path) else {
-            return false;
-        };
-        let Some((held_element, held_count)) = layout.array_member_at_path(&member_path) else {
-            return false;
-        };
-        if *element_type != held_element
-            || *stride != held_element.byte_width()
-            || *count != SharedIntegerTerm::from(IntegerTerm::constant_i64(i64::from(held_count)))
-        {
-            return false;
-        }
-        // Reauthenticate the complete selected array, including lifetime,
-        // known-declaration precedence, root offset and exact parent path.
-        let complete = pointer
-            .clone()
-            .with_designation(PointerDesignation::Object {
-                root: root.clone(),
-                path: path.clone(),
-                base: base.clone(),
-                element_type: selected,
-                stride: selected.byte_width(),
-                count: IntegerTerm::constant_i64(1).into(),
-            });
-        self.checked_member_array_pointer(&complete)
-            .is_some_and(|held| held.same_designation(pointer))
+        self.guarded_declared_array_decay(object, assumptions)
     }
 
     /// Authenticate a retained descriptor at its selected base. The executable
@@ -3266,8 +3147,26 @@ impl CMemory {
             return self.has_declared_array_domain(pointer)
                 && matches!(pointer.designation(), Some(PointerDesignation::Object { element_type, count: held_count, .. })
                     if *element_type == element && *held_count == SharedIntegerTerm::from(IntegerTerm::constant_i64(i64::from(count))))
-                && self.blocks.get(&pointer.block).is_some_and(|block|
-                    matches!(block.declared_object.as_ref(), Some(CDeclaredObject::Aggregate(layout)) if layout.selects_layout_path(&[], expected)));
+                && match pointer.designation() {
+                    Some(PointerDesignation::Object { root, path, .. }) if path.is_empty() => {
+                        match self
+                            .blocks
+                            .get(&root.block)
+                            .and_then(|block| block.declared_object.as_ref())
+                        {
+                            Some(CDeclaredObject::Aggregate(layout)) => {
+                                layout.selects_layout_path(&[], expected)
+                            }
+                            Some(_) => false,
+                            None => self
+                                .heap
+                                .object_input_domains
+                                .get(root)
+                                .is_some_and(|layout| layout.selects_layout_path(&[], expected)),
+                        }
+                    }
+                    _ => false,
+                };
         }
         self.checked_record_selection(pointer)
             .is_some_and(|(layout, path, selected)| {
@@ -3302,6 +3201,18 @@ impl CMemory {
         layout: &CAggregateLayout,
         pointer_type: CType,
     ) -> CPointerValue {
+        if let Some((element, count)) = layout.scalar_array() {
+            return CPointerValue::new(address.clone(), pointer_type).with_designation(
+                PointerDesignation::Object {
+                    root: address.clone(),
+                    path: Arc::from([]),
+                    base: address,
+                    element_type: element,
+                    stride: element.byte_width(),
+                    count: IntegerTerm::constant_i64(i64::from(count)).into(),
+                },
+            );
+        }
         CPointerValue::new(address.clone(), pointer_type).with_designation(
             PointerDesignation::Object {
                 root: address.clone(),
@@ -3952,7 +3863,7 @@ impl CMemory {
         Some((row.origin.clone(), layout.clone(), count.clone()))
     }
 
-    fn input_selection_parts<'a>(
+    pub(super) fn input_selection_parts<'a>(
         &'a self,
         input: &CNativeInputIdentity,
         origin: &Pointer,
@@ -3988,6 +3899,7 @@ impl CMemory {
         }
         let members = members
             .iter()
+            .take_while(|part| matches!(part, PointerDomainSelection::Member(_)))
             .map(|part| match part {
                 PointerDomainSelection::Member(name) => Some(name.clone()),
                 _ => None,
@@ -4015,24 +3927,34 @@ impl CMemory {
         else {
             return None;
         };
+        if let Some(guards) = self.authenticated_array_domain(pointer, assumptions) {
+            return Some(guards);
+        }
         let (layout, prefix, index, members) = self.input_selection_parts(input, origin, path)?;
         let (offset, selected) = if members.is_empty() {
             (0, CType::UInt8Array(layout.size_bytes()))
         } else {
             layout.member_at_path(&members)?
         };
+        let row = self.heap.native_record_inputs.get(input)?;
+        let member_path = if matches!(row.kind, CNativeInputKind::RecordPrefix { .. }) {
+            &path[1..]
+        } else {
+            path.as_ref()
+        };
+        if member_path
+            .iter()
+            .any(|part| matches!(part, PointerDomainSelection::Element(_)))
+        {
+            return None;
+        }
         let complete = *element_type == selected
             && *stride == selected.byte_width()
             && *count == SharedIntegerTerm::from(IntegerTerm::constant_i64(1));
-        let decayed = layout
-            .array_member_at_path(&members)
-            .is_some_and(|(element, length)| {
-                *element_type == element
-                    && *stride == element.byte_width()
-                    && *count
-                        == SharedIntegerTerm::from(IntegerTerm::constant_i64(i64::from(length)))
-            });
-        if !complete && !decayed {
+        // All array decay (including one-dimensional arrays) is checked by
+        // authenticated_array_domain above. A failed shape match must not
+        // fall back to the old flat scalar extent.
+        if !complete {
             return None;
         }
         let record_start = Pointer {

@@ -1411,6 +1411,94 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
         CExpression::AddressOf(target) => {
             address_of_lvalue_paths(state, target, assumptions, budget)?
         }
+        CExpression::ArrayRowAddress {
+            array,
+            index,
+            element_type,
+            shape,
+        } => evaluate_c_value_binary_paths(
+            state,
+            array,
+            index,
+            assumptions,
+            budget,
+            |array, index, facts, obligations| {
+                let CValue::Pointer(array) = array else {
+                    return vec![CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts,
+                        obligations,
+                    }];
+                };
+                let context = assumptions_with_path_context(assumptions, &facts, &obligations);
+                let Some((index, unsigned, wide)) =
+                    super::operators::pointer_index_term(index, &facts, &context)
+                else {
+                    return vec![CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts,
+                        obligations,
+                    }];
+                };
+                let kind = if wide {
+                    if unsigned {
+                        MachineIntegerType::UInt64
+                    } else {
+                        MachineIntegerType::Int64
+                    }
+                } else {
+                    MachineIntegerType::Int32
+                };
+                let Some(index) = super::pointer_domains::native_count_observation(kind, index)
+                else {
+                    return vec![CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts,
+                        obligations,
+                    }];
+                };
+                let selected = state.memory().guarded_array_row_pointer(
+                    &array,
+                    index.into(),
+                    *element_type,
+                    shape,
+                    &context,
+                );
+                let Some((pointer, guards)) = selected else {
+                    return vec![CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(
+                            CUndefinedBehavior::InvalidMemory,
+                        ),
+                        facts,
+                        obligations,
+                    }];
+                };
+                let Some(mut refused) = super::operators::pointer_domain_refusal_paths(
+                    Ok(super::pointer_domains::PointerDomainCheck::Checked(guards)),
+                    &facts,
+                    &obligations,
+                    assumptions,
+                    &CUndefinedBehavior::InvalidMemory,
+                ) else {
+                    return vec![CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(
+                            CUndefinedBehavior::InvalidMemory,
+                        ),
+                        facts,
+                        obligations,
+                    }];
+                };
+                refused.insert(
+                    0,
+                    CExpressionPath {
+                        outcome: CExpressionOutcome::Value(CValue::Pointer(pointer)),
+                        facts,
+                        obligations,
+                    },
+                );
+                refused
+            },
+        )?,
         CExpression::RecordPointerOffset {
             pointer,
             index,
@@ -2951,6 +3039,7 @@ pub(in crate::kernel) fn c_expression_pointee_type(
         CExpression::PointerOffsetBytes { pointer, .. } => {
             c_expression_pointee_type(state, pointer)
         }
+        CExpression::ArrayRowAddress { element_type, .. } => Some(*element_type),
         CExpression::MemberAddress { selection, .. } => Some(selection.value_type),
         CExpression::TypedLoad { value_type, .. } => match value_type {
             CType::Int32Array(_) => Some(CType::Int32),

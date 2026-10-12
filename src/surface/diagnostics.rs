@@ -4813,6 +4813,11 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 describe_field_place(&describe_c_expression(object), &selection.path.join("."))
             )
         }
+        CExpression::ArrayRowAddress { array, index, .. } => format!(
+            "{}[{}]",
+            describe_c_expression(array),
+            describe_c_expression(index)
+        ),
         CExpression::RecordPointerOffset {
             pointer,
             index,

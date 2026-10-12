@@ -242,6 +242,7 @@ impl CGlobalArray {
             kernel_name: kernel_name.into(),
             element_type,
             length,
+            array_shape: None,
             initial_values,
             constant: false,
         }
@@ -261,6 +262,24 @@ impl CGlobalArray {
 
     pub fn length(&self) -> u32 {
         self.length
+    }
+
+    pub fn with_array_shape(mut self, shape: Option<&[u32]>) -> Self {
+        assert!(
+            shape.is_none_or(|shape| super::checked_scalar_array_shape(
+                self.element_type,
+                self.length,
+                shape
+            )
+            .is_some()),
+            "array dimensions must describe the declared scalar array"
+        );
+        self.array_shape = shape.filter(|shape| shape.len() > 1).map(Arc::from);
+        self
+    }
+
+    pub fn array_shape(&self) -> Option<&[u32]> {
+        self.array_shape.as_deref()
     }
 
     pub fn initial_values(&self) -> &CArrayContents {
@@ -548,6 +567,7 @@ impl CStaticArray {
             kernel_name: kernel_name.into(),
             element_type,
             length,
+            array_shape: None,
             initial_values,
             constant: false,
         }
@@ -567,6 +587,24 @@ impl CStaticArray {
 
     pub fn length(&self) -> u32 {
         self.length
+    }
+
+    pub fn with_array_shape(mut self, shape: Option<&[u32]>) -> Self {
+        assert!(
+            shape.is_none_or(|shape| super::checked_scalar_array_shape(
+                self.element_type,
+                self.length,
+                shape
+            )
+            .is_some()),
+            "array dimensions must describe the declared scalar array"
+        );
+        self.array_shape = shape.filter(|shape| shape.len() > 1).map(Arc::from);
+        self
+    }
+
+    pub fn array_shape(&self) -> Option<&[u32]> {
+        self.array_shape.as_deref()
     }
 
     pub fn initial_values(&self) -> &CArrayContents {

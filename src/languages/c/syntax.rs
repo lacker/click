@@ -130,6 +130,12 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
 #[derive(Clone, Debug)]
 struct StaticAddress {
     pointer: crate::kernel::Pointer,
+    carrier: Option<crate::kernel::CPointerValue>,
+    record_recipe: Option<(
+        crate::kernel::Pointer,
+        std::sync::Arc<crate::kernel::CAggregateLayout>,
+        Vec<String>,
+    )>,
     c_type: C0Type,
     constant: bool,
 }
@@ -601,6 +607,7 @@ impl C0GlobalArray {
             values,
         )
         .with_constant(self.is_constant())
+        .with_array_shape(self.shape())
     }
 }
 
@@ -1243,6 +1250,7 @@ impl C0StaticArray {
             values,
         )
         .with_constant(self.is_constant())
+        .with_array_shape(Some(self.shape()))
     }
 }
 
@@ -1651,9 +1659,32 @@ fn typed_store_at<'a>(
                 // it reads no element and contributes no additional offset.
                 pointer = inner;
             }
+            C0Expression::ArrayRowAddress {
+                array,
+                index,
+                element_type,
+                shape,
+            } => {
+                if shape.len() < 2 || element_type != value_type {
+                    return None;
+                }
+                let row = static_integer_value(index)?;
+                if row >= shape[0] {
+                    return None;
+                }
+                let row_bytes = shape[1..]
+                    .iter()
+                    .try_fold(element_type.abi_size_bytes(), |bytes, length| {
+                        bytes.checked_mul(*length)
+                    })?;
+                offset = offset.checked_add(row.checked_mul(row_bytes)?)?;
+                pointer = array;
+            }
             // Only the element store `base + index` of a scalar array, whose
             // index scales by the stored element type.
-            C0Expression::Add(inner, index) if matches!(inner.as_ref(), C0Expression::Variable(name) if name == base) =>
+            C0Expression::Add(inner, index)
+                if matches!(inner.as_ref(), C0Expression::Variable(name) if name == base)
+                    || matches!(inner.as_ref(), C0Expression::ArrayRowAddress { element_type, .. } if element_type == value_type) =>
             {
                 let C0Expression::Int32Literal(index) = index.as_ref() else {
                     return None;
@@ -2028,6 +2059,7 @@ pub struct C0StructLayout {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct C0AggregateField {
     pointee_constant: bool,
+    array_shape: Option<Vec<u32>>,
     name: String,
     offset_bytes: u32,
     c_type: C0Type,
@@ -2583,6 +2615,7 @@ pub enum C0Statement {
     Declare {
         /// Explicit native record-array backing, distinct from a genuine byte array.
         aggregate_array_backing: bool,
+        array_shape: Option<Vec<u32>>,
         initializer: Option<C0Expression>,
         c_type: C0Type,
         name: String,
@@ -2869,6 +2902,12 @@ pub enum C0Expression {
         pointer: Box<C0Expression>,
         selection: std::sync::Arc<crate::kernel::CAggregateMemberSelection>,
     },
+    ArrayRowAddress {
+        array: Box<C0Expression>,
+        index: Box<C0Expression>,
+        element_type: C0Type,
+        shape: std::sync::Arc<[u32]>,
+    },
     RecordPointerOffset {
         pointer: Box<C0Expression>,
         index: Box<C0Expression>,
@@ -3008,6 +3047,11 @@ macro_rules! binary_c0_expression {
     ($left:pat, $right:pat) => {
         $crate::languages::c::syntax::binary_c0_operation!($left, $right)
             | $crate::languages::c::syntax::C0Expression::Index($left, $right)
+            | $crate::languages::c::syntax::C0Expression::ArrayRowAddress {
+                array: $left,
+                index: $right,
+                ..
+            }
             | $crate::languages::c::syntax::C0Expression::RecordPointerOffset {
                 pointer: $left,
                 index: $right,
@@ -3411,6 +3455,8 @@ impl C0Function {
                 pointer: crate::kernel::CMemory::global_pointer(global.kernel_name()),
                 c_type: global.c_type(),
                 constant: global.is_constant(),
+                carrier: None,
+                record_recipe: None,
             });
         }
         if let Some(global_array) = self
@@ -3423,6 +3469,13 @@ impl C0Function {
                 pointer: crate::kernel::CMemory::global_pointer(global_array.kernel_name()),
                 c_type,
                 constant: global_array.is_constant(),
+                carrier: crate::kernel::CMemory::static_array_declaration_recipe(
+                    crate::kernel::CMemory::global_pointer(global_array.kernel_name()),
+                    global_array.element_type().to_kernel_type(),
+                    global_array.length(),
+                    global_array.shape()?,
+                ),
+                record_recipe: None,
             });
         }
         if let Some(global_aggregate) = self
@@ -3434,6 +3487,8 @@ impl C0Function {
                 pointer: crate::kernel::CMemory::global_pointer(global_aggregate.kernel_name()),
                 c_type: struct_value_type(global_aggregate.layout()),
                 constant: global_aggregate.is_constant(),
+                carrier: None,
+                record_recipe: None,
             });
         }
         if let Some(global_aggregate_array) = self
@@ -3448,6 +3503,8 @@ impl C0Function {
                 ),
                 c_type,
                 constant: global_aggregate_array.is_constant(),
+                carrier: None,
+                record_recipe: None,
             });
         }
         if let Some(static_local) = self
@@ -3462,6 +3519,8 @@ impl C0Function {
                 ),
                 c_type: static_local.c_type(),
                 constant: static_local.is_constant(),
+                carrier: None,
+                record_recipe: None,
             });
         }
         if let Some(static_array) = self
@@ -3476,6 +3535,13 @@ impl C0Function {
                 ),
                 c_type: static_array.c_type(),
                 constant: static_array.is_constant(),
+                carrier: crate::kernel::CMemory::static_array_declaration_recipe(
+                    crate::kernel::CMemory::static_pointer(&self.name, static_array.kernel_name()),
+                    static_array.element_type().to_kernel_type(),
+                    static_array.length(),
+                    static_array.shape(),
+                ),
+                record_recipe: None,
             });
         }
         if let Some(static_aggregate) = self.static_aggregates.values().find(|static_aggregate| {
@@ -3488,6 +3554,8 @@ impl C0Function {
                 ),
                 c_type: struct_value_type(static_aggregate.layout()),
                 constant: static_aggregate.is_constant(),
+                carrier: None,
+                record_recipe: None,
             });
         }
         self.static_aggregate_arrays
@@ -3503,6 +3571,8 @@ impl C0Function {
                 ),
                 c_type: static_aggregate_array.c_type(),
                 constant: static_aggregate_array.is_constant(),
+                carrier: None,
+                record_recipe: None,
             })
     }
 
@@ -3529,7 +3599,28 @@ impl C0Function {
                 let index = static_integer_value(index)?;
                 let bytes = index.checked_mul(element_type.abi_size_bytes())?;
                 address.pointer = address.pointer.offset_by_bytes(bytes);
+                address.carrier = address
+                    .carrier
+                    .map(|carrier| carrier.with_pointer(address.pointer.clone()));
                 address.c_type = element_type;
+                Some(address)
+            }
+            C0Expression::ArrayRowAddress {
+                array,
+                index,
+                element_type,
+                shape,
+            } => {
+                let mut address = self.static_address_expression(array)?;
+                let carrier = crate::kernel::CMemory::static_array_row_declaration_recipe(
+                    address.carrier.as_ref()?,
+                    element_type.to_kernel_type(),
+                    shape,
+                    static_integer_value(index)?,
+                )?;
+                address.pointer = carrier.pointer().clone();
+                address.carrier = Some(carrier);
+                address.c_type = element_type.pointer_type()?;
                 Some(address)
             }
             C0Expression::RecordPointerOffset {
@@ -3559,12 +3650,30 @@ impl C0Function {
             C0Expression::MemberAddress { pointer, selection } => {
                 let mut address = self.static_address_expression(pointer)?;
                 let (offset, _) = selection.layout().member_at_path(selection.path())?;
+                let (root, layout, mut members) =
+                    address.record_recipe.take().unwrap_or_else(|| {
+                        (
+                            address.pointer.clone(),
+                            selection.layout.clone(),
+                            Vec::new(),
+                        )
+                    });
+                members.extend(selection.path().iter().cloned());
+                address.carrier = crate::kernel::CMemory::static_member_array_declaration_recipe(
+                    root.clone(),
+                    &layout,
+                    &members,
+                );
+                address.record_recipe = Some((root, layout, members));
                 address.pointer = address.pointer.offset_by_bytes(offset);
                 Some(address)
             }
             C0Expression::PointerOffsetBytes { pointer, bytes } => {
                 let mut address = self.static_address_expression(pointer)?;
                 address.pointer = address.pointer.offset_by_bytes(*bytes);
+                address.carrier = address
+                    .carrier
+                    .map(|carrier| carrier.with_pointer(address.pointer.clone()));
                 Some(address)
             }
             C0Expression::Add(pointer, offset) => {
@@ -3572,6 +3681,9 @@ impl C0Function {
                 address.pointer = address
                     .pointer
                     .offset_by_bytes(static_integer_value(offset)?);
+                address.carrier = address
+                    .carrier
+                    .map(|carrier| carrier.with_pointer(address.pointer.clone()));
                 Some(address)
             }
             C0Expression::AggregateAddress {
@@ -3595,6 +3707,9 @@ impl C0Function {
             } => {
                 let mut address = self.static_address_expression(expression)?;
                 address.c_type = *c_type;
+                address.carrier = address
+                    .carrier
+                    .map(|carrier| carrier.with_type(c_type.to_kernel_type()));
                 Some(address)
             }
             _ => None,
@@ -3613,6 +3728,14 @@ impl C0Function {
         let address = self.static_address_expression(target)?;
         if address.c_type.pointer_type()? != declared_type {
             return None;
+        }
+        if let Some(carrier) = address.carrier {
+            return Some(crate::kernel::CValue::Pointer(
+                carrier
+                    .with_pointer(address.pointer)
+                    .with_type(declared_type.to_kernel_type())
+                    .with_pointee_constant(declared_pointee_constant),
+            ));
         }
         Some(crate::kernel::CValue::typed_pointer_with_pointee_constant(
             address.pointer,
@@ -4148,6 +4271,7 @@ impl C0StructLayout {
                     crate::instrumentation::record_deterministic_work(1);
                     aggregate_fields.push(C0AggregateField {
                         pointee_constant: field.pointee_constant,
+                        array_shape: field.array_shape.clone().filter(|shape| shape.len() > 1),
                         name: format!("{name}.{}", field.name),
                         offset_bytes: offset_bytes
                             .checked_add(field.offset_bytes)
@@ -4158,6 +4282,7 @@ impl C0StructLayout {
             } else {
                 aggregate_fields.push(C0AggregateField {
                     pointee_constant: false,
+                    array_shape: None,
                     name,
                     offset_bytes,
                     c_type,
@@ -4209,11 +4334,7 @@ impl C0StructLayout {
                         field.offset_bytes,
                         field.c_type.to_kernel_type(),
                     )
-                    .with_array_shape(
-                        self.fields
-                            .get(&field.name)
-                            .and_then(|declared| declared.array_shape()),
-                    )
+                    .with_array_shape(field.array_shape.as_deref())
                 })
                 .collect(),
             self.aggregate_unions
@@ -4923,6 +5044,7 @@ impl C0Statement {
             }
             Self::Declare {
                 aggregate_array_backing,
+                array_shape,
                 c_type,
                 name,
                 volatile,
@@ -4958,10 +5080,16 @@ impl C0Statement {
                     )
                 };
                 if let crate::kernel::CStatement::Declare {
-                    initializer: value, ..
+                    initializer: value,
+                    array_shape: shape,
+                    ..
                 } = &mut statement
                 {
                     *value = initializer.as_ref().map(C0Expression::to_kernel_expression);
+                    *shape = array_shape
+                        .as_deref()
+                        .filter(|shape| shape.len() > 1)
+                        .map(std::sync::Arc::from);
                 }
                 statement
             }
@@ -5230,6 +5358,17 @@ impl C0Expression {
                     selection: selection.clone(),
                 }
             }
+            Self::ArrayRowAddress {
+                array,
+                index,
+                element_type,
+                shape,
+            } => crate::kernel::CExpression::ArrayRowAddress {
+                array: Box::new(array.to_kernel_expression()),
+                index: Box::new(index.to_kernel_expression()),
+                element_type: element_type.to_kernel_type(),
+                shape: shape.clone(),
+            },
             Self::RecordPointerOffset {
                 pointer,
                 index,
@@ -6587,6 +6726,7 @@ fn evaluate_static_integer_expression(
         | C0Expression::AddressOf(_)
         | C0Expression::PointerOffsetBytes { .. }
         | C0Expression::MemberAddress { .. }
+        | C0Expression::ArrayRowAddress { .. }
         | C0Expression::RecordPointerOffset { .. }
         | C0Expression::Float32Literal(_)
         | C0Expression::Float64Literal(_)
@@ -7006,6 +7146,10 @@ fn flatten_aggregate_layout(
         for nested_field in nested_layout.aggregate_fields() {
             aggregate_fields.push(C0AggregateField {
                 pointee_constant: nested_field.pointee_constant,
+                array_shape: nested_field
+                    .array_shape
+                    .clone()
+                    .filter(|shape| shape.len() > 1),
                 name: format!("{prefix}.{}", nested_field.name),
                 offset_bytes: base_offset
                     .checked_add(nested_field.offset_bytes)
@@ -7124,6 +7268,7 @@ fn flatten_aggregate_layout(
         } else {
             aggregate_fields.push(C0AggregateField {
                 pointee_constant: field.pointee_constant,
+                array_shape: field.array_shape.clone().filter(|shape| shape.len() > 1),
                 name: field_name.clone(),
                 offset_bytes: field.offset_bytes,
                 c_type: field.c_type,
@@ -8164,6 +8309,7 @@ impl Parser {
             C0Expression::AddressOf(target) => self.expression_is_constant_lvalue(target),
             C0Expression::PointerOffsetBytes { pointer, .. }
             | C0Expression::MemberAddress { pointer, .. }
+            | C0Expression::ArrayRowAddress { array: pointer, .. }
             | C0Expression::RecordPointerOffset { pointer, .. }
             | C0Expression::Subtract(pointer, _) => self.expression_pointee_is_constant(pointer),
             C0Expression::Add(left, right) => {
@@ -8311,6 +8457,18 @@ impl Parser {
                 let (base_type, constant) = self.static_address_expression(base)?;
                 static_integer_value(index)?;
                 Some((base_type.pointee_type()?, constant))
+            }
+            C0Expression::ArrayRowAddress {
+                array,
+                index,
+                element_type,
+                shape,
+            } => {
+                let (_, constant) = self.static_address_expression(array)?;
+                if shape.len() < 2 || static_integer_value(index)? >= shape[0] {
+                    return None;
+                }
+                Some((element_type.pointer_type()?, constant))
             }
             C0Expression::PointerOffsetBytes { pointer, .. }
             | C0Expression::MemberAddress { pointer, .. }
@@ -13330,6 +13488,26 @@ impl Parser {
             pointee_constant: false,
             site: C0Site::NONE,
         };
+        let retain_rows = |stores: Vec<C0Statement>| {
+            stores
+                .into_iter()
+                .map(|mut store| {
+                    if dimensions.len() > 1
+                        && let C0Statement::Store { pointer, .. } = &mut store
+                        && let C0Expression::Add(_, index) = pointer
+                        && let C0Expression::Int32Literal(index) = index.as_ref()
+                    {
+                        *pointer = scalar_array_element_pointer(
+                            C0Expression::Variable(name.to_string()),
+                            *index,
+                            &dimensions,
+                            element_type,
+                        );
+                    }
+                    store
+                })
+                .collect::<Vec<_>>()
+        };
         // The declaration zero-fills the array, and only the written
         // elements that are not the zero initializer are stored after it.
         if compact {
@@ -13348,7 +13526,7 @@ impl Parser {
                 let stores = zero_fill.without_its_own_stores(name, written_stores);
                 return Ok((
                     Some(zero_fill),
-                    balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip),
+                    balanced_statement_sequence(retain_rows(stores)).unwrap_or(C0Statement::Skip),
                 ));
             }
         }
@@ -13368,7 +13546,7 @@ impl Parser {
         }
         Ok((
             None,
-            balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip),
+            balanced_statement_sequence(retain_rows(stores)).unwrap_or(C0Statement::Skip),
         ))
     }
 
@@ -14237,13 +14415,22 @@ impl Parser {
                 .into_iter()
                 .enumerate()
                 .map(|(index, value)| C0Statement::Store {
-                    pointer: offset_field_pointer(
-                        field_pointer.clone(),
-                        u32::try_from(index)
-                            .expect("validated struct array initializer index")
-                            .checked_mul(element_type.abi_size_bytes())
-                            .expect("validated struct array initializer offset"),
-                    ),
+                    pointer: if dimensions.len() > 1 {
+                        scalar_array_element_pointer(
+                            field_pointer.clone(),
+                            u32::try_from(index).expect("validated array initializer index"),
+                            &dimensions,
+                            element_type,
+                        )
+                    } else {
+                        offset_field_pointer(
+                            field_pointer.clone(),
+                            u32::try_from(index)
+                                .expect("validated struct array initializer index")
+                                .checked_mul(element_type.abi_size_bytes())
+                                .expect("validated struct array initializer offset"),
+                        )
+                    },
                     value,
                     value_type: Some(element_type),
                     pointee_constant: false,
@@ -14505,12 +14692,21 @@ impl Parser {
             let element_count = dimensions.iter().product::<u32>();
             return (0..element_count)
                 .map(|index| C0Statement::Store {
-                    pointer: offset_field_pointer(
-                        field_pointer.clone(),
-                        index
-                            .checked_mul(element_type.abi_size_bytes())
-                            .expect("validated struct array initializer offset"),
-                    ),
+                    pointer: if dimensions.len() > 1 {
+                        scalar_array_element_pointer(
+                            field_pointer.clone(),
+                            index,
+                            &dimensions,
+                            element_type,
+                        )
+                    } else {
+                        offset_field_pointer(
+                            field_pointer.clone(),
+                            index
+                                .checked_mul(element_type.abi_size_bytes())
+                                .expect("validated struct array initializer offset"),
+                        )
+                    },
                     value: zero_initializer_value(element_type),
                     value_type: Some(element_type),
                     pointee_constant: false,
@@ -14608,6 +14804,7 @@ impl Parser {
                 .insert(kernel_name.clone(), signature.clone());
             let declaration = C0Statement::Declare {
                 aggregate_array_backing: false,
+                array_shape: None,
                 c_type,
                 name: kernel_name.clone(),
                 volatile: false,
@@ -14839,6 +15036,10 @@ impl Parser {
             let declaration = C0Statement::Declare {
                 aggregate_array_backing: is_plain_struct_type(&parsed_type)
                     && array_shape.is_some(),
+                array_shape: (!is_plain_struct_type(&parsed_type))
+                    .then(|| array_shape.clone())
+                    .flatten()
+                    .filter(|shape| shape.len() > 1),
                 c_type,
                 name: name.clone(),
                 volatile: object_volatile,
@@ -14887,6 +15088,7 @@ impl Parser {
                     let declaration = match declaration {
                         C0Statement::Declare {
                             aggregate_array_backing,
+                            array_shape,
                             c_type,
                             name,
                             volatile,
@@ -14897,6 +15099,7 @@ impl Parser {
                             ..
                         } => C0Statement::Declare {
                             aggregate_array_backing,
+                            array_shape,
                             c_type,
                             name,
                             volatile,
@@ -15525,6 +15728,7 @@ impl Parser {
             initializers.push(C0Statement::Seq(
                 Box::new(C0Statement::Declare {
                     aggregate_array_backing: false,
+                    array_shape: None,
                     c_type: parsed_type.c_type,
                     name: name.clone(),
                     volatile: object_volatile,
@@ -16290,6 +16494,7 @@ impl Parser {
             | C0Expression::AddressOf(_)
             | C0Expression::PointerOffsetBytes { .. }
             | C0Expression::MemberAddress { .. }
+            | C0Expression::ArrayRowAddress { .. }
             | C0Expression::RecordPointerOffset { .. }
             | crate::languages::c::syntax::c0_comparison!(_, _)
             | C0Expression::Not(_)
@@ -16835,7 +17040,12 @@ impl Parser {
                     || self.expression_reads_potentially_changed_value(then_branch)
                     || self.expression_reads_potentially_changed_value(else_branch)
             }
-            C0Expression::RecordPointerOffset {
+            C0Expression::ArrayRowAddress {
+                array: left,
+                index: right,
+                ..
+            }
+            | C0Expression::RecordPointerOffset {
                 pointer: left,
                 index: right,
                 ..
@@ -16920,6 +17130,7 @@ impl Parser {
             | C0Statement::DeclareStructValue { .. } => Ok(statement),
             C0Statement::Declare {
                 aggregate_array_backing,
+                array_shape,
                 initializer: Some(expression),
                 c_type,
                 name,
@@ -16935,6 +17146,7 @@ impl Parser {
                     prefix,
                     C0Statement::Declare {
                         aggregate_array_backing,
+                        array_shape,
                         initializer: Some(expression),
                         c_type,
                         name,
@@ -17044,6 +17256,7 @@ impl Parser {
                     .insert(callback_name.clone(), function.clone());
                 prefix.push(C0Statement::Declare {
                     aggregate_array_backing: false,
+                    array_shape: None,
                     c_type: callback_type,
                     name: callback_name.clone(),
                     volatile: false,
@@ -17592,6 +17805,7 @@ impl Parser {
                     vec![
                         C0Statement::Declare {
                             aggregate_array_backing: false,
+                            array_shape: None,
                             c_type,
                             name: temporary.clone(),
                             volatile: false,
@@ -17637,6 +17851,7 @@ impl Parser {
                 }
                 prefix.push(C0Statement::Declare {
                     aggregate_array_backing: false,
+                    array_shape: None,
                     c_type,
                     name: temporary.clone(),
                     volatile: false,
@@ -17849,6 +18064,7 @@ impl Parser {
                 // neither branch's value is silently truncated.
                 prefix.push(C0Statement::Declare {
                     aggregate_array_backing: false,
+                    array_shape: None,
                     c_type,
                     name: target.clone(),
                     volatile: false,
@@ -17892,6 +18108,7 @@ impl Parser {
                 }
                 let mut prefix = vec![C0Statement::Declare {
                     aggregate_array_backing: false,
+                    array_shape: None,
                     c_type,
                     name: target.clone(),
                     volatile: false,
@@ -17931,6 +18148,23 @@ impl Parser {
             C0Expression::AddressOf(expression) => {
                 let (prefix, expression) = self.lower_expression_calls(*expression)?;
                 Ok((prefix, C0Expression::AddressOf(Box::new(expression))))
+            }
+            C0Expression::ArrayRowAddress {
+                array,
+                index,
+                element_type,
+                shape,
+            } => {
+                let (prefix, array, index) = self.lower_expression_pair(*array, *index)?;
+                Ok((
+                    prefix,
+                    C0Expression::ArrayRowAddress {
+                        array: Box::new(array),
+                        index: Box::new(index),
+                        element_type,
+                        shape,
+                    },
+                ))
             }
             C0Expression::RecordPointerOffset {
                 pointer,
@@ -18026,6 +18260,7 @@ impl Parser {
                 }
                 prefix.push(C0Statement::Declare {
                     aggregate_array_backing: false,
+                    array_shape: None,
                     c_type,
                     name: temporary.clone(),
                     volatile: false,
@@ -18204,6 +18439,7 @@ impl Parser {
         let (callback_name, callback_type) = self.declare_synthesized_function_pointer(&signature);
         prefix.push(C0Statement::Declare {
             aggregate_array_backing: false,
+            array_shape: None,
             c_type: callback_type,
             name: callback_name.clone(),
             volatile: false,
@@ -18312,6 +18548,7 @@ impl Parser {
         let mut prefix = left_prefix;
         prefix.push(C0Statement::Declare {
             aggregate_array_backing: false,
+            array_shape: None,
             c_type: C0Type::Int32,
             name: target.clone(),
             volatile: false,
@@ -19522,8 +19759,17 @@ impl Parser {
                                 indexes.len()
                             )));
                         }
-                        let offset = flatten_array_indices(indexes, &shape, false);
-                        expression = C0Expression::Index(Box::new(expression), Box::new(offset));
+                        let element_type = self
+                            .source_expression_type(&expression)
+                            .and_then(C0Type::pointee_type)
+                            .expect("a declared scalar array field has its element type");
+                        expression = select_scalar_array_indices(
+                            expression,
+                            indexes,
+                            &shape,
+                            element_type,
+                            false,
+                        );
                         continue;
                     }
                     let incomplete_array = match &expression {
@@ -19581,8 +19827,24 @@ impl Parser {
                                 .global_arrays
                                 .get(name)
                                 .is_some_and(C0GlobalArray::is_incomplete);
-                        let offset = flatten_array_indices(indexes, &shape, unbounded_outer);
                         let struct_array = self.variable_structs.contains_key(name);
+                        if !struct_array {
+                            let element_type = self
+                                .variable_types
+                                .get(name)
+                                .copied()
+                                .and_then(C0Type::pointee_type)
+                                .expect("declared scalar array has its element type");
+                            expression = select_scalar_array_indices(
+                                expression,
+                                indexes,
+                                &shape,
+                                element_type,
+                                unbounded_outer,
+                            );
+                            continue;
+                        }
+                        let offset = flatten_array_indices(indexes, &shape, unbounded_outer);
                         let offset = if struct_array {
                             let struct_name = self
                                 .variable_structs
@@ -19786,6 +20048,7 @@ impl Parser {
             | C0Expression::AddressOf(_)
             | C0Expression::PointerOffsetBytes { .. }
             | C0Expression::MemberAddress { .. }
+            | C0Expression::ArrayRowAddress { .. }
             | C0Expression::RecordPointerOffset { .. }
             | C0Expression::Int32Literal(_)
             | C0Expression::UInt8Literal(_)
@@ -19819,6 +20082,7 @@ impl Parser {
             C0Expression::SequentialRead { c_type, .. }
             | C0Expression::SequentialWrite { c_type, .. } => Some(*c_type),
             C0Expression::Cast { c_type, .. } => Some(*c_type),
+            C0Expression::ArrayRowAddress { element_type, .. } => element_type.pointer_type(),
             C0Expression::Assignment { c_type, .. } | C0Expression::ScalarUpdate { c_type, .. } => {
                 Some(*c_type)
             }
@@ -19872,22 +20136,28 @@ impl Parser {
                 field_struct_name: Some(struct_name),
                 ..
             } => Some(struct_name.clone()),
-            C0Expression::Index(base, _) => match base.as_ref() {
-                C0Expression::Field {
-                    field_type: C0Type::PointerArray(_, _),
-                    field_struct_name: Some(struct_name),
-                    ..
-                } => Some(struct_name.clone()),
-                C0Expression::Variable(name)
-                    if matches!(
-                        self.variable_types.get(name),
-                        Some(C0Type::PointerArray(_, _))
-                    ) =>
-                {
-                    self.variable_structs.get(name).cloned()
+            C0Expression::Index(base, _) => {
+                let mut selected_array = base.as_ref();
+                while let C0Expression::ArrayRowAddress { array, .. } = selected_array {
+                    selected_array = array;
                 }
-                _ => None,
-            },
+                match selected_array {
+                    C0Expression::Field {
+                        field_type: C0Type::PointerArray(_, _),
+                        field_struct_name: Some(struct_name),
+                        ..
+                    } => Some(struct_name.clone()),
+                    C0Expression::Variable(name)
+                        if matches!(
+                            self.variable_types.get(name),
+                            Some(C0Type::PointerArray(_, _))
+                        ) =>
+                    {
+                        self.variable_structs.get(name).cloned()
+                    }
+                    _ => None,
+                }
+            }
             C0Expression::Load(pointer) => self.struct_pointer_pointer_name(pointer),
             C0Expression::SequentialRead { struct_name, .. }
             | C0Expression::SequentialWrite { struct_name, .. } => struct_name.clone(),
@@ -20116,6 +20386,7 @@ impl Parser {
             }
             C0Expression::CheckedArrayIndex { index, .. } => self.source_expression_type(index),
             C0Expression::AddressOf(value) => self.source_expression_type(value)?.pointer_type(),
+            C0Expression::ArrayRowAddress { element_type, .. } => element_type.pointer_type(),
             C0Expression::PointerOffsetBytes { pointer, .. }
             | C0Expression::MemberAddress { pointer, .. }
             | C0Expression::RecordPointerOffset { pointer, .. } => {
@@ -20998,6 +21269,70 @@ fn static_integer_value(expression: &C0Expression) -> Option<u32> {
         }
         _ => None,
     }
+}
+
+fn scalar_array_element_pointer(
+    array: C0Expression,
+    mut flat_index: u32,
+    shape: &[u32],
+    element_type: C0Type,
+) -> C0Expression {
+    if shape.len() <= 1 {
+        return C0Expression::Add(
+            Box::new(array),
+            Box::new(C0Expression::Int32Literal(flat_index)),
+        );
+    }
+    let mut indexes = vec![C0Expression::Int32Literal(0); shape.len()];
+    for dimension in (0..shape.len()).rev() {
+        indexes[dimension] = C0Expression::Int32Literal(flat_index % shape[dimension]);
+        flat_index /= shape[dimension];
+    }
+    let C0Expression::Index(base, index) =
+        select_scalar_array_indices(array, indexes, shape, element_type, false)
+    else {
+        unreachable!()
+    };
+    C0Expression::Add(base, index)
+}
+
+fn select_scalar_array_indices(
+    mut array: C0Expression,
+    indexes: Vec<C0Expression>,
+    shape: &[u32],
+    element_type: C0Type,
+    unbounded_outer: bool,
+) -> C0Expression {
+    if shape.len() == 1 {
+        return C0Expression::Index(
+            Box::new(array),
+            Box::new(flatten_array_indices(indexes, shape, unbounded_outer)),
+        );
+    }
+    for (dimension, index) in indexes.into_iter().enumerate() {
+        let index = if unbounded_outer && dimension == 0 {
+            index
+        } else {
+            match static_integer_value(&index) {
+                Some(value) if value < shape[dimension] => index,
+                _ => C0Expression::CheckedArrayIndex {
+                    index: Box::new(index),
+                    length: shape[dimension],
+                },
+            }
+        };
+        if dimension + 1 == shape.len() {
+            array = C0Expression::Index(Box::new(array), Box::new(index));
+        } else {
+            array = C0Expression::ArrayRowAddress {
+                array: Box::new(array),
+                index: Box::new(index),
+                element_type,
+                shape: std::sync::Arc::from(&shape[dimension..]),
+            };
+        }
+    }
+    array
 }
 
 fn flatten_array_indices(
@@ -22099,7 +22434,12 @@ fn expression_reads_runtime_value(expression: &C0Expression) -> bool {
                 || expression_reads_runtime_value(then_branch)
                 || expression_reads_runtime_value(else_branch)
         }
-        C0Expression::RecordPointerOffset {
+        C0Expression::ArrayRowAddress {
+            array: left,
+            index: right,
+            ..
+        }
+        | C0Expression::RecordPointerOffset {
             pointer: left,
             index: right,
             ..

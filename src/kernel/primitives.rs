@@ -58,6 +58,7 @@ mod derivations;
 mod initialized_bytes;
 mod observed_population_families;
 pub(crate) use initialized_bytes::InitializedBytes;
+mod array_domains;
 mod memory_state;
 pub(crate) use observed_population_families::ObservedPopulationFamilies;
 mod persistent_map;
@@ -750,6 +751,11 @@ macro_rules! binary_c_expression {
             | $crate::kernel::CExpression::Index($left, $right)
             | $crate::kernel::CExpression::RecordPointerOffset {
                 pointer: $left,
+                index: $right,
+                ..
+            }
+            | $crate::kernel::CExpression::ArrayRowAddress {
+                array: $left,
                 index: $right,
                 ..
             }
@@ -1941,6 +1947,15 @@ pub enum CExpression {
     MemberAddress {
         object: Box<CExpression>,
         selection: Arc<CAggregateMemberSelection>,
+    },
+    /// Select and decay one row of an actual multidimensional scalar array.
+    /// The supplied shape must match its retained declaration/path; it grants
+    /// no storage authority or initialized bytes.
+    ArrayRowAddress {
+        array: Box<CExpression>,
+        index: Box<CExpression>,
+        element_type: CType,
+        shape: Arc<[u32]>,
     },
     /// A native record element step, with scaling outside the observed
     /// machine index. This is distinct from byte representation arithmetic.
@@ -3349,6 +3364,8 @@ pub enum CStatement {
         name: String,
         c_type: CType,
         array_object_kind: CArrayObjectKind,
+        /// Actual scalar-array dimensions, validated against the declaration.
+        array_shape: Option<Arc<[u32]>>,
         volatile: bool,
         pointee_volatile: bool,
         constant: bool,
@@ -3634,14 +3651,30 @@ pub struct CGlobal {
     pub(super) pointee_constant: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CGlobalArray {
     pub(super) source_name: String,
     pub(super) kernel_name: String,
     pub(super) element_type: CType,
     pub(super) length: u32,
+    pub(super) array_shape: Option<Arc<[u32]>>,
     pub(super) initial_values: CArrayContents,
     pub(super) constant: bool,
+}
+
+impl std::hash::Hash for CGlobalArray {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.source_name.hash(state);
+        self.kernel_name.hash(state);
+        self.element_type.hash(state);
+        self.length.hash(state);
+        self.initial_values.hash(state);
+        self.constant.hash(state);
+        if let Some(shape) = &self.array_shape {
+            0x6172_7261_795f_726fu64.hash(state);
+            shape.hash(state);
+        }
+    }
 }
 
 /// A linked file-scope aggregate. The layout describes the typed leaf cells
@@ -3681,14 +3714,30 @@ pub struct CStaticLocal {
     pub(super) pointee_constant: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CStaticArray {
     pub(super) source_name: String,
     pub(super) kernel_name: String,
     pub(super) element_type: CType,
     pub(super) length: u32,
+    pub(super) array_shape: Option<Arc<[u32]>>,
     pub(super) initial_values: CArrayContents,
     pub(super) constant: bool,
+}
+
+impl std::hash::Hash for CStaticArray {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.source_name.hash(state);
+        self.kernel_name.hash(state);
+        self.element_type.hash(state);
+        self.length.hash(state);
+        self.initial_values.hash(state);
+        self.constant.hash(state);
+        if let Some(shape) = &self.array_shape {
+            0x6172_7261_795f_726fu64.hash(state);
+            shape.hash(state);
+        }
+    }
 }
 
 /// The initial contents of a static-storage scalar array: every element
@@ -3911,15 +3960,35 @@ pub struct CStringLiteral {
     pub(super) bytes: Vec<u8>,
 }
 
+/// Check only the selected declaration's compact dimensions. This is object
+/// geometry, independent of values, initialization, allocation and authority.
+pub(crate) fn checked_scalar_array_shape(element: CType, count: u32, shape: &[u32]) -> Option<u32> {
+    if shape.is_empty() || element.scalar_array_type(count).is_none() {
+        return None;
+    }
+    let mut product = 1u32;
+    for dimension in shape {
+        crate::instrumentation::record_deterministic_work(1);
+        if *dimension == 0 {
+            return None;
+        }
+        product = product.checked_mul(*dimension)?;
+    }
+    (product == count).then_some(())?;
+    count
+        .checked_mul(element.byte_width())
+        .filter(|bytes| *bytes != 0)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CAggregateField {
     pub(super) name: String,
     pub(super) offset_bytes: u32,
     pub(super) c_type: CType,
     /// The source dimensions of an array field with more than one, outermost
-    /// first. `c_type` holds such a field as one flat array; nothing reasons
-    /// from the shape, which only lets a proof term about an element be
-    /// spelled with the subscripts the source declares.
+    /// first. `c_type` retains its flat storage extent. Native row selection
+    /// validates the nonzero dimensions/product against that actual extent
+    /// before using them; presentation alone is not evidence.
     pub(super) array_shape: Option<Vec<u32>>,
 }
 
@@ -4522,6 +4591,20 @@ impl CAggregateLayout {
         self.fields[*self.index.0.fields.get(&name)?]
             .c_type
             .array_element_and_count()
+    }
+
+    pub(in crate::kernel) fn array_member_shape_at_path(
+        &self,
+        path: &[String],
+    ) -> Option<(CType, u32, Arc<[u32]>)> {
+        let (element, count) = self.array_member_at_path(path)?;
+        let field = &self.fields[*self.index.0.fields.get(&path.join("."))?];
+        let shape: Arc<[u32]> = match field.array_shape.as_deref() {
+            Some(shape) => shape.into(),
+            None => Arc::from([count]),
+        };
+        checked_scalar_array_shape(element, count, &shape)?;
+        Some((element, count, shape))
     }
 
     pub(in crate::kernel) fn selects_layout_path(&self, path: &[String], expected: &Self) -> bool {
@@ -6841,11 +6924,37 @@ impl CHeapMemory {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) enum CDeclaredObject {
     Scalar(CType),
     Aggregate(Arc<CAggregateLayout>),
-    Array { element_type: CType, count: u32 },
+    Array {
+        element_type: CType,
+        count: u32,
+        shape: Option<Arc<[u32]>>,
+    },
+}
+
+impl std::hash::Hash for CDeclaredObject {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::Scalar(value) => value.hash(state),
+            Self::Aggregate(layout) => layout.hash(state),
+            Self::Array {
+                element_type,
+                count,
+                shape,
+            } => {
+                element_type.hash(state);
+                count.hash(state);
+                if let Some(shape) = shape {
+                    0x6172_7261_795f_726fu64.hash(state);
+                    shape.hash(state);
+                }
+            }
+        }
+    }
 }
 
 /// The byte representation policy pinned by an actual native declaration.

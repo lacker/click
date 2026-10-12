@@ -670,6 +670,11 @@ pub(in crate::surface) fn c_expression_reads_no_memory(expression: &CExpression)
     match expression {
         CExpression::Variable(_) | CExpression::Value(_) => true,
         CExpression::Add(left, right)
+        | CExpression::ArrayRowAddress {
+            array: left,
+            index: right,
+            ..
+        }
         | CExpression::RecordPointerOffset {
             pointer: left,
             index: right,
@@ -2610,7 +2615,12 @@ fn collect_resource_fact_reads_from_c_expression(
                 enclosing_range: None,
             });
         }
-        CExpression::RecordPointerOffset {
+        CExpression::ArrayRowAddress {
+            array: left,
+            index: right,
+            ..
+        }
+        | CExpression::RecordPointerOffset {
             pointer: left,
             index: right,
             ..

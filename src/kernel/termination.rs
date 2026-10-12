@@ -98,6 +98,17 @@ fn substitute_c_expression_variables(
             .unwrap_or_else(|| expression.clone()),
         AddressOf(body) => AddressOf(unary(body)),
         CheckedObjectAddress(body) => CheckedObjectAddress(unary(body)),
+        ArrayRowAddress {
+            array,
+            index,
+            shape,
+            element_type,
+        } => ArrayRowAddress {
+            array: unary(array),
+            index: unary(index),
+            shape: shape.clone(),
+            element_type: *element_type,
+        },
         RecordPointerOffset {
             pointer,
             index,
@@ -1048,7 +1059,12 @@ fn expression_takes_address_of(expression: &CExpression, name: &str) -> bool {
         | PointerAligned { pointer, .. }
         | TypedLoad { pointer, .. } => inner(pointer),
         Not(body) | BitwiseNot(body) | Load(body) => inner(body),
-        RecordPointerOffset {
+        ArrayRowAddress {
+            array: left,
+            index: right,
+            ..
+        }
+        | RecordPointerOffset {
             pointer: left,
             index: right,
             ..
@@ -1109,7 +1125,12 @@ fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet
             collect_c_expression_variables(then_branch, names);
             collect_c_expression_variables(else_branch, names);
         }
-        RecordPointerOffset {
+        ArrayRowAddress {
+            array: left,
+            index: right,
+            ..
+        }
+        | RecordPointerOffset {
             pointer: left,
             index: right,
             ..
@@ -2100,6 +2121,11 @@ fn termination_measure_display(measure: &CExpression) -> String {
             termination_measure_display(index)
         ),
         Cast { expression, .. } => termination_measure_display(expression),
+        ArrayRowAddress { array, index, .. } => format!(
+            "{}[{}]",
+            termination_measure_display(array),
+            termination_measure_display(index)
+        ),
         RecordPointerOffset {
             pointer,
             index,
@@ -2775,7 +2801,8 @@ fn c_ranking_measure_term_unfolded(
         | PointerOffsetBytes { .. }
         | PointerAligned { .. }
         | MemberAddress { .. }
-        | RecordPointerOffset { .. } => Err(
+        | RecordPointerOffset { .. }
+        | ArrayRowAddress { .. } => Err(
             "termination measures may only use scalar int32 or unsigned integer expressions".into(),
         ),
         Load(_) | TypedLoad { .. } | Index(_, _) => {
@@ -3894,7 +3921,12 @@ fn expression_function_addresses(expression: &CExpression, taken: &mut BTreeSet<
             expression_function_addresses(then_branch, taken);
             expression_function_addresses(else_branch, taken);
         }
-        RecordPointerOffset {
+        ArrayRowAddress {
+            array: left,
+            index: right,
+            ..
+        }
+        | RecordPointerOffset {
             pointer: left,
             index: right,
             ..

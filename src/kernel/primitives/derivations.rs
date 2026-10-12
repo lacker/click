@@ -1743,7 +1743,12 @@ fn c_expression_steps_for_mode(expression: &CExpression, lvalue: bool) -> usize 
             | CExpression::PointerAligned { pointer, .. }
             | CExpression::Not(pointer)
             | CExpression::BitwiseNot(pointer) => pending.push((pointer, false)),
-            CExpression::RecordPointerOffset {
+            CExpression::ArrayRowAddress {
+                array: left,
+                index: right,
+                ..
+            }
+            | CExpression::RecordPointerOffset {
                 pointer: left,
                 index: right,
                 ..

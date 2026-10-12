@@ -83,6 +83,83 @@ pub(super) fn execute(
                 ));
                 continue;
             };
+            // Whole declaration initialization stays compact even for nested
+            // dimensions. Every partial/row-selected operation remains bounded
+            // by its authenticated scalar domain.
+            let target_check = state
+                .memory()
+                .complete_declared_array_storage(&target_pointer, element_type, count, &selected)
+                .map(super::super::pointer_domains::PointerDomainCheck::Checked)
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    super::super::pointer_domains::checked_c_typed_pointer_span(
+                        state,
+                        &target_pointer,
+                        IntegerTerm::constant_i64(0),
+                        IntegerTerm::constant_i64(i64::from(count)),
+                        element_type,
+                        &selected,
+                    )
+                });
+            let Some(refused) = super::super::operators::pointer_domain_refusal_paths(
+                target_check,
+                &facts,
+                &obligations,
+                assumptions,
+                &CUndefinedBehavior::InvalidMemory,
+            ) else {
+                paths.push(path(
+                    CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+                    facts,
+                    obligations,
+                ));
+                continue;
+            };
+            for refused in refused {
+                paths.push(path(
+                    expression_error(refused.outcome),
+                    refused.facts,
+                    refused.obligations,
+                ));
+            }
+            if copy && let CValue::Pointer(source) = &value {
+                let source_check = state
+                    .memory()
+                    .complete_declared_array_storage(source, element_type, count, &selected)
+                    .map(super::super::pointer_domains::PointerDomainCheck::Checked)
+                    .map(Ok)
+                    .unwrap_or_else(|| {
+                        super::super::pointer_domains::checked_c_typed_pointer_span(
+                            state,
+                            source,
+                            IntegerTerm::constant_i64(0),
+                            IntegerTerm::constant_i64(i64::from(count)),
+                            element_type,
+                            &selected,
+                        )
+                    });
+                let Some(refused) = super::super::operators::pointer_domain_refusal_paths(
+                    source_check,
+                    &facts,
+                    &obligations,
+                    assumptions,
+                    &CUndefinedBehavior::InvalidMemory,
+                ) else {
+                    paths.push(path(
+                        CStatementOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+                        facts,
+                        obligations,
+                    ));
+                    continue;
+                };
+                for refused in refused {
+                    paths.push(path(
+                        expression_error(refused.outcome),
+                        refused.facts,
+                        refused.obligations,
+                    ));
+                }
+            }
             let target = target_pointer.pointer();
             if bytes != 0
                 && (target_pointer.pointee_constant()

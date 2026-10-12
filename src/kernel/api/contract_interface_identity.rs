@@ -504,7 +504,10 @@ impl Names {
                 self.c(then_branch);
                 self.c(else_branch);
             }
-            RecordPointerOffset {
+            ArrayRowAddress {
+                array: a, index: b, ..
+            }
+            | RecordPointerOffset {
                 pointer: a,
                 index: b,
                 ..

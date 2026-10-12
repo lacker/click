@@ -3574,6 +3574,17 @@ pub(in crate::surface) fn substitute_c_fragment_in(
             object: Box::new(substitute_c_fragment_in(object, substitutions)?),
             selection: selection.clone(),
         }),
+        CExpression::ArrayRowAddress {
+            array,
+            index,
+            shape,
+            element_type,
+        } => Ok(CExpression::ArrayRowAddress {
+            array: Box::new(substitute_c_fragment_in(array, substitutions)?),
+            index: Box::new(substitute_c_fragment_in(index, substitutions)?),
+            shape: shape.clone(),
+            element_type: *element_type,
+        }),
         CExpression::RecordPointerOffset {
             pointer,
             index,

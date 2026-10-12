@@ -4422,6 +4422,21 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
         CExpression::FloatNegate(expression) => CExpression::FloatNegate(Box::new(
             substitute_bitvector_variable_in_c_expression(expression, from, to),
         )),
+        CExpression::ArrayRowAddress {
+            array,
+            index,
+            shape,
+            element_type,
+        } => CExpression::ArrayRowAddress {
+            array: Box::new(substitute_bitvector_variable_in_c_expression(
+                array, from, to,
+            )),
+            index: Box::new(substitute_bitvector_variable_in_c_expression(
+                index, from, to,
+            )),
+            shape: shape.clone(),
+            element_type: *element_type,
+        },
         CExpression::RecordPointerOffset {
             pointer,
             index,
@@ -6513,6 +6528,17 @@ fn substitute_pointer_variable_in_c_expression(
         CExpression::FloatNegate(expression) => CExpression::FloatNegate(Box::new(
             substitute_pointer_variable_in_c_expression(expression, from, to),
         )),
+        CExpression::ArrayRowAddress {
+            array,
+            index,
+            shape,
+            element_type,
+        } => CExpression::ArrayRowAddress {
+            array: Box::new(substitute_pointer_variable_in_c_expression(array, from, to)),
+            index: Box::new(substitute_pointer_variable_in_c_expression(index, from, to)),
+            shape: shape.clone(),
+            element_type: *element_type,
+        },
         CExpression::RecordPointerOffset {
             pointer,
             index,

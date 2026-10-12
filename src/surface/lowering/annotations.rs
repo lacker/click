@@ -6513,6 +6513,31 @@ impl AnnotationLowerer<'_> {
                     Ok(SpecExpression::CExpression(expression.clone()))
                 }
             }
+            CExpression::ArrayRowAddress {
+                array,
+                index,
+                element_type,
+                shape,
+            } => {
+                let array = self.lower_c_fragment_to_spec(array, environment)?;
+                let index = self.lower_c_fragment_to_spec(index, environment)?;
+                let array_name = "@click:array-row:array";
+                let index_name = "@click:array-row:index";
+                Ok(SpecExpression::Let {
+                    name: array_name.into(),
+                    value: Box::new(array),
+                    body: Box::new(SpecExpression::Let {
+                        name: index_name.into(),
+                        value: Box::new(index),
+                        body: Box::new(SpecExpression::CExpression(CExpression::ArrayRowAddress {
+                            array: Box::new(c_variable(array_name)),
+                            index: Box::new(c_variable(index_name)),
+                            element_type: *element_type,
+                            shape: shape.clone(),
+                        })),
+                    }),
+                })
+            }
             CExpression::RecordPointerOffset {
                 pointer,
                 index,
@@ -7128,7 +7153,8 @@ impl AnnotationLowerer<'_> {
                 value_type => value_type.pointee_type(),
             },
             CExpression::MemberAddress { selection, .. } => Some(selection.value_type),
-            CExpression::RecordPointerOffset { pointer, .. }
+            CExpression::ArrayRowAddress { array: pointer, .. }
+            | CExpression::RecordPointerOffset { pointer, .. }
             | CExpression::PointerOffsetBytes { pointer, .. } => {
                 self.c_expression_array_element_type(pointer, environment)
             }
@@ -7202,6 +7228,7 @@ impl AnnotationLowerer<'_> {
             },
             CExpression::MemberAddress { selection, .. } => Some(selection.value_type.byte_width()),
             CExpression::RecordPointerOffset { layout, .. } => Some(layout.size_bytes()),
+            CExpression::ArrayRowAddress { element_type, .. } => Some(element_type.byte_width()),
             CExpression::PointerOffsetBytes { pointer, .. } => {
                 self.c_expression_array_element_width(pointer, environment)
             }

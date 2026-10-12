@@ -513,6 +513,20 @@ fn authenticated_domain(
         // or an address equality is insufficient.
         return Err(PointerDomainRefusal::UnresolvedDesignation);
     };
+    if let Some(guards) = state
+        .memory()
+        .authenticated_array_domain(pointer, assumptions)
+    {
+        return Ok(Some(AuthenticatedDomain {
+            base: base.clone(),
+            element_type: *element_type,
+            stride: *stride,
+            count: count.clone(),
+            prefix: false,
+            authentication_guards: guards,
+            paired_base: None,
+        }));
+    }
     if *stride == 0 || !state.memory().authenticated_pointer_domain_at_base(pointer) {
         return Err(PointerDomainRefusal::UnauthenticatedDomain);
     }

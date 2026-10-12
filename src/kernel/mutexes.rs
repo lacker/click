@@ -4319,6 +4319,7 @@ mod tests {
                 name: "holder".into(),
                 c_type: CType::Int32,
                 array_object_kind: CArrayObjectKind::Scalar,
+                array_shape: None,
                 volatile: false,
                 pointee_volatile: false,
                 constant: false,

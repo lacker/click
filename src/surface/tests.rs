@@ -2783,3 +2783,5 @@ fn canonical_surface_record_pointer_identity_transports_declared_domain_modularl
     verify_c0_sources(contract, &[("identity.c", source)])
         .expect("checked record entry carrier certifies a modular pointer preservation effect");
 }
+
+mod array_row_tests;

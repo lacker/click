@@ -280,7 +280,12 @@ fn collect_c_expression_reads(expression: &CExpression, bound: &[String], reads:
             collect_c_expression_reads(then_branch, bound, reads);
             collect_c_expression_reads(else_branch, bound, reads);
         }
-        RecordPointerOffset {
+        ArrayRowAddress {
+            array: left,
+            index: right,
+            ..
+        }
+        | RecordPointerOffset {
             pointer: left,
             index: right,
             ..
