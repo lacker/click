@@ -987,9 +987,41 @@ impl ProofFacts {
     /// Implicit closure after introducing facts preserves the structural
     /// proof script. New graph consequences are consumed by explicit closers.
     pub(crate) fn introduced_goal_available(&self, required: &Proposition) -> bool {
+        if let Proposition::And(left, right) = required {
+            return self.introduced_goal_available(left) && self.introduced_goal_available(right);
+        }
         self.contains(required)
             || self.integer_alpha_fact_available(required)
             || self.quantified_fact_available(required)
+    }
+
+    /// Check only read-defined leaves of the selected goal at its retained
+    /// state. Permission and initialization remain separate checked premises;
+    /// this supplies no pointer designation or resource ownership.
+    pub(crate) fn with_selected_defined_reads(&self, goal: &Proposition, state: &CState) -> Self {
+        let mut facts = self.clone();
+        let mut pending = vec![goal];
+        while let Some(goal) = pending.pop() {
+            crate::instrumentation::record_deterministic_work(1);
+            match goal {
+                Proposition::And(left, right) => {
+                    pending.push(left);
+                    pending.push(right);
+                }
+                Proposition::CMemoryReadDefined { .. }
+                    if !facts.contains(goal)
+                        && crate::kernel::c_state_justifies_loadability_obligation(
+                            state,
+                            goal,
+                            facts.assumptions(),
+                        ) =>
+                {
+                    facts = facts.with_fact(goal.clone());
+                }
+                _ => {}
+            }
+        }
+        facts
     }
 
     pub(crate) fn implicit_transport_assumptions(&self) -> &PureFactContext {
@@ -3959,5 +3991,76 @@ mod statement_publication_delta_tests {
             assert_eq!(reordered.to_vec(), selected);
             assert_eq!(root.to_vec(), prefix_facts);
         }
+    }
+}
+
+#[cfg(test)]
+mod selected_defined_read_tests {
+    use super::*;
+
+    #[test]
+    fn selected_read_admission_keeps_snapshot_type_and_initialization_requirements() {
+        let pointer = Pointer {
+            block: "global:selected-defined-read".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new()
+            .with_block(pointer.block.clone(), 4)
+            .store(pointer.clone(), int32(7));
+        let state = CState::new().with_memory(memory.clone());
+        let read = Proposition::CMemoryReadDefined {
+            memory: memory.clone(),
+            pointer: pointer.clone(),
+            value_type: CType::Int32,
+        };
+        let scalar = Proposition::ConditionIs(
+            ConditionTerm::signed_subtract_overflows(
+                Bitvector32Term::Variable(Variable(983_121)),
+                Bitvector32Term::Variable(Variable(983_122)),
+            ),
+            false,
+        );
+        let goal = Proposition::And(Box::new(scalar.clone()), Box::new(read.clone()));
+        let initial = ProofFacts::from_ordered(&[]);
+        let facts = initial.with_selected_defined_reads(&goal, &state);
+        assert!(facts.contains(&read));
+        assert!(!facts.introduced_goal_available(&goal));
+        assert!(facts.with_fact(scalar).introduced_goal_available(&goal));
+        let unknown = CMemory::new().with_uninitialized_block(pointer.block.clone(), 4);
+        let unreadable = Proposition::CMemoryReadDefined {
+            memory: unknown.clone(),
+            pointer: pointer.clone(),
+            value_type: CType::Int32,
+        };
+        let permission =
+            CResourceFact::own_memory(CMemoryRange::new(pointer.clone(), 0u32.into(), 1u32.into()));
+        let uninitialized = CState::new()
+            .with_memory(unknown)
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(permission));
+        assert!(
+            !initial
+                .with_selected_defined_reads(&unreadable, &uninitialized)
+                .contains(&unreadable)
+        );
+        let wide = Proposition::CMemoryReadDefined {
+            memory,
+            pointer: pointer.clone(),
+            value_type: CType::Int64,
+        };
+        assert!(
+            !initial
+                .with_selected_defined_reads(&wide, &state)
+                .contains(&wide)
+        );
+        let other = Proposition::CMemoryReadDefined {
+            memory: CMemory::new(),
+            pointer,
+            value_type: CType::Int32,
+        };
+        assert!(
+            !initial
+                .with_selected_defined_reads(&other, &state)
+                .contains(&other)
+        );
     }
 }

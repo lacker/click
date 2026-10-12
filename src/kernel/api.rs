@@ -3265,6 +3265,32 @@ pub(crate) fn c_mutex_use_resource(state: &CState, mutex: &Pointer) -> CResource
 /// not a call rule: actual calls must establish the same requirement through
 /// the constructor binder. The input may be a subobject of an unknown enclosing
 /// allocation. No storage, initialized value, separation or permission is added.
+/// Source-obligation producer for an independently bound constructor receiver.
+/// Actual calls validate their retained destination; this issues no permission
+/// or initialized bytes and is not a caller pointer conversion.
+pub(crate) fn c_construction_contract_input_pointer(
+    function: &CFunction,
+    address: Pointer,
+) -> Option<CPointerValue> {
+    let interface = function.contract_interface();
+    let (index, layout) = interface.construction_parameter()?;
+    if interface.aggregate_return_mode() != CAggregateReturnMode::Copy
+        || interface.return_type() != CType::Void
+        || interface.return_aggregate_layout().is_some()
+    {
+        return None;
+    }
+    let parameter = interface.parameters().get(index)?;
+    if !parameter.c_type().is_pointer() || parameter.aggregate_layout().is_some() {
+        return None;
+    }
+    Some(
+        CMemory::aggregate_input_pointer(address, layout, parameter.c_type())
+            .with_pointee_constant(parameter.pointee_is_constant())
+            .with_pointee_volatile(parameter.pointee_is_volatile()),
+    )
+}
+
 pub(crate) fn c_state_with_construction_contract_input(
     state: CState,
     function: &CFunction,

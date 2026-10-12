@@ -1387,8 +1387,88 @@ fn authority_control_evaluation_condition_proven(
 ) -> bool {
     use crate::kernel::ConditionTerm;
     let stated = |goal: &Proposition| {
-        matches!(crate::kernel::canonical_condition_fact(goal), Proposition::ConditionIs(condition, truth)
-            if assumptions.exact_condition_value(&condition) == Some(truth))
+        let canonical = crate::kernel::canonical_condition_fact(goal);
+        if assumptions.contains_assumed_exact(&canonical) {
+            return true;
+        }
+        let Proposition::ConditionIs(condition, truth) = &canonical else {
+            return false;
+        };
+        let operands = |condition: &ConditionTerm| match condition {
+            ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+                Some((true, left.as_ref().clone(), right.as_ref().clone()))
+            }
+            ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+                Some((false, left.as_ref().clone(), right.as_ref().clone()))
+            }
+            _ => None,
+        };
+        let Some((add, left, right)) = operands(condition) else {
+            return false;
+        };
+        let mut variables = std::collections::BTreeSet::new();
+        let mut pending = vec![left.clone(), right.clone()];
+        while let Some(term) = pending.pop() {
+            match term {
+                Bitvector32Term::Variable(variable) => {
+                    variables.insert(variable);
+                }
+                Bitvector32Term::Add(left, right)
+                | Bitvector32Term::Subtract(left, right)
+                | Bitvector32Term::Multiply(left, right) => {
+                    pending.push(*left);
+                    pending.push(*right);
+                }
+                _ => {}
+            }
+        }
+        let equivalent = |candidate: &ConditionTerm, candidate_truth| {
+            if candidate_truth != *truth {
+                return false;
+            }
+            let Some((candidate_add, candidate_left, candidate_right)) = operands(candidate) else {
+                return false;
+            };
+            candidate_add == add
+                && (assumptions.int32_values_known_equal(&left, &candidate_left)
+                    && assumptions.int32_values_known_equal(&right, &candidate_right)
+                    || add
+                        && assumptions.int32_values_known_equal(&left, &candidate_right)
+                        && assumptions.int32_values_known_equal(&right, &candidate_left))
+        };
+        for variable in variables {
+            let key = crate::kernel::primitives::AtomicConnectionKey::Variable(variable);
+            let (candidates, _) = assumptions.atomic_facts_connected_to(&key, true);
+            for candidate in candidates {
+                crate::instrumentation::record_deterministic_work(1);
+                match candidate {
+                    crate::kernel::primitives::AtomicConnectedFact::Condition(condition, truth)
+                        if equivalent(condition, truth) =>
+                    {
+                        return true;
+                    }
+                    crate::kernel::primitives::AtomicConnectedFact::Condition(_, _) => {}
+                    crate::kernel::primitives::AtomicConnectedFact::Proposition(proposition) => {
+                        let mut conjuncts = vec![proposition];
+                        while let Some(conjunct) = conjuncts.pop() {
+                            match conjunct {
+                                Proposition::And(left, right) => {
+                                    conjuncts.push(left);
+                                    conjuncts.push(right);
+                                }
+                                Proposition::ConditionIs(condition, truth)
+                                    if equivalent(condition, *truth) =>
+                                {
+                                    return true;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
     };
     if stated(goal) {
         return true;
@@ -2574,9 +2654,14 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
                     "resource-rewrite-probe name={name} concrete={} memory={} population={}",
                     concrete_after == *before_state,
                     crate::kernel::api::contract_certification::c_memories_definitionally_equal(
-                        native_baseline.memory(), after_state.memory(), assumptions,
+                        native_baseline.memory(),
+                        after_state.memory(),
+                        assumptions,
                     ),
-                    crate::kernel::api::population_observations_equal(before_state, &population_after),
+                    crate::kernel::api::population_observations_equal(
+                        before_state,
+                        &population_after
+                    ),
                 );
             }
             return Err(
@@ -7599,6 +7684,9 @@ fn trace_completion_from_entry(
                             if bytes.as_const().is_some_and(|width|
                                 width > 0 && memory.is_loadable_concretely(base, width)));
                     if !materialized_read
+                        && !matches!(fact, Proposition::CMemoryReadDefined { .. }
+                            if crate::kernel::c_state_justifies_loadability_obligation(
+                                state, fact, executed_under))
                         && !executed_under.settles_exactly(fact)
                         && !resource_composition_is_supported_by(
                             fact,
@@ -11197,6 +11285,70 @@ mod tests {
     }
 
     #[test]
+    fn authority_nonoverflow_uses_selected_exact_scalar_equality_without_dropping_a_premise() {
+        let read = Bitvector32Term::Variable(Variable(983_110));
+        let count = Bitvector32Term::Variable(Variable(983_111));
+        let amount = Bitvector32Term::Variable(Variable(983_112));
+        let equality =
+            Proposition::ConditionIs(ConditionTerm::equal(read.clone(), count.clone()), true);
+        let nonoverflow = Proposition::ConditionIs(
+            ConditionTerm::signed_add_overflows(read, amount.clone()),
+            false,
+        );
+        let goal =
+            Proposition::ConditionIs(ConditionTerm::signed_add_overflows(count, amount), false);
+        for missing in 0..=2 {
+            let facts = [equality.clone(), nonoverflow.clone()]
+                .into_iter()
+                .enumerate()
+                .filter(|(index, _)| *index != missing)
+                .fold(PureFactContext::new(), |facts, (_, fact)| {
+                    facts.assume_proposition(fact)
+                });
+            assert_eq!(
+                super::authority_control_evaluation_condition_proven(&facts, &goal),
+                missing == 2
+            );
+        }
+        let wrong = Proposition::ConditionIs(
+            ConditionTerm::signed_add_overflows(
+                Bitvector32Term::Variable(Variable(983_113)),
+                Bitvector32Term::Variable(Variable(983_112)),
+            ),
+            false,
+        );
+        let facts = PureFactContext::new()
+            .assume_proposition(equality)
+            .assume_proposition(nonoverflow);
+        assert!(!super::authority_control_evaluation_condition_proven(
+            &facts, &wrong
+        ));
+        let baseline = crate::instrumentation::measure_deterministic_work(|| {
+            super::authority_control_evaluation_condition_proven(&facts, &goal)
+        });
+        for unrelated in [16u64, 128, 1024] {
+            let facts = (0..unrelated).fold(facts.clone(), |facts, index| {
+                facts.assume_condition(
+                    ConditionTerm::signed_add_overflows(
+                        Bitvector32Term::Variable(Variable(984_000 + 2 * index)),
+                        Bitvector32Term::Variable(Variable(984_001 + 2 * index)),
+                    ),
+                    false,
+                )
+            });
+            let (proven, work) = crate::instrumentation::measure_deterministic_work(|| {
+                super::authority_control_evaluation_condition_proven(&facts, &goal)
+            });
+            assert!(proven);
+            assert!(
+                work <= baseline.1 + 16,
+                "unrelated conditions changed selected transport: {} -> {work}",
+                baseline.1
+            );
+        }
+    }
+
+    #[test]
     fn balanced_unit_sum_domain_requires_all_three_original_domains() {
         use crate::kernel::ConditionTerm;
         let a = Bitvector32Term::Variable(Variable(100));
@@ -12246,6 +12398,40 @@ mod tests {
             ),
             (bad_value, false),
         ];
+        let typed = |memory, pointer, value_type| Proposition::CMemoryReadDefined {
+            memory,
+            pointer,
+            value_type,
+        };
+        let pointer = Pointer::symbolic(Variable(42));
+        let typed_cases = [
+            (
+                typed(state.memory().clone(), pointer.clone(), CType::Int32),
+                true,
+            ),
+            (
+                typed(state.memory().clone(), pointer.clone(), CType::Int64),
+                false,
+            ),
+            (typed(CMemory::new(), pointer.clone(), CType::Int32), false),
+            (
+                typed(
+                    state.memory().clone(),
+                    Pointer::symbolic(Variable(44)),
+                    CType::Int32,
+                ),
+                false,
+            ),
+            (
+                typed(
+                    CMemory::new().with_uninitialized_block(pointer.block.clone(), 4),
+                    pointer,
+                    CType::Int32,
+                ),
+                false,
+            ),
+        ];
+        let cases = cases.into_iter().chain(typed_cases);
         for (fact, accepted) in cases {
             let roots = empty.clone().with_fact(fact.clone());
             let mut events = original.clone();

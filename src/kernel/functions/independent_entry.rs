@@ -216,10 +216,23 @@ pub(crate) fn construct(
             return None;
         }
         if let CValue::Pointer(pointer) = value {
-            let mut pointer = CPointerValue::new(pointer.pointer().clone(), pointer.c_type())
-                .with_pointee_constant(pointer.pointee_constant())
-                .with_pointee_volatile(pointer.pointee_volatile());
-            if parameter.is_native_pointer_input() || span_formals.contains(&index) {
+            let construction_layout = interface
+                .construction_parameter()
+                .filter(|(parameter_index, _)| *parameter_index == index)
+                .map(|(_, layout)| layout);
+            let mut pointer = if construction_layout.is_some() {
+                crate::kernel::c_construction_contract_input_pointer(
+                    function,
+                    pointer.pointer().clone(),
+                )?
+            } else {
+                CPointerValue::new(pointer.pointer().clone(), pointer.c_type())
+                    .with_pointee_constant(pointer.pointee_constant())
+                    .with_pointee_volatile(pointer.pointee_volatile())
+            };
+            if construction_layout.is_none()
+                && (parameter.is_native_pointer_input() || span_formals.contains(&index))
+            {
                 pointer = pointer.with_designation(PointerDesignation::Unresolved(variable));
             }
             *argument = CExpression::Value(CValue::Pointer(pointer));
@@ -673,6 +686,36 @@ mod tests {
 #[cfg(test)]
 mod eligibility_tests {
     use super::*;
+
+    #[test]
+    fn constructor_receiver_uses_the_same_declared_carrier_in_source_and_canonical_entry() {
+        let layout =
+            CAggregateLayout::new(4, 4, vec![CAggregateField::new("value", 0, CType::Int32)]);
+        let function = c_function(
+            CType::Void,
+            "receiver",
+            vec![c_parameter("this", CType::UInt8Pointer).with_native_pointer_input(true)],
+            c_return(c_void_value()),
+        )
+        .with_construction_parameter(0, layout);
+        let pointer = crate::kernel::c_construction_contract_input_pointer(
+            &function,
+            Pointer::symbolic(Variable(9_898_242)),
+        )
+        .expect("declared constructor receiver");
+        assert!(
+            matches!(pointer.designation(), Some(PointerDesignation::Object { path, .. }) if path.is_empty())
+        );
+        let arguments = vec![CExpression::Value(CValue::Pointer(pointer))];
+        let entry =
+            construct(&function, &arguments, None, false).expect("independent constructor entry");
+        assert_eq!(entry.arguments, arguments);
+        let assumptions =
+            crate::kernel::c_function_contract_entry(&entry.caller, &function, &arguments)
+                .expect("constructor contract entry")
+                .into_assumptions();
+        assert!(matches(&function, &arguments, &entry.caller, &assumptions));
+    }
 
     #[test]
     fn scalar_array_interfaces_skip_semantic_entry_reconstruction_at_every_extent() {

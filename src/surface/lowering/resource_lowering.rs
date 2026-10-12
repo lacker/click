@@ -1440,7 +1440,7 @@ pub(in crate::surface) fn initial_call_state(
         state = state.with_resource_context(resources);
     }
     if let Some((index, layout)) = function.contract_interface().construction_parameter() {
-        let parameter = parameters
+        parameters
             .get(index)
             .ok_or_else(|| ClickError::new("constructor destination parameter is missing"))?;
         // A symbolic block is an arbitrary input identity, not a fresh local.
@@ -1449,10 +1449,12 @@ pub(in crate::surface) fn initial_call_state(
         // allocation's extent. Field liveness comes from the entry contract.
         let destination = Pointer::symbolic(input_pointer_variable(scope, index)?);
         crate::kernel::register_block_alignment(&destination.block, layout.alignment_bytes());
-        arguments[index] = c_typed_pointer_value(
-            destination.clone(),
-            parameter.to_kernel_parameter().c_type(),
-        );
+        let pointer =
+            crate::kernel::c_construction_contract_input_pointer(function, destination.clone())
+                .ok_or_else(|| {
+                    ClickError::new("constructor input has no declared object carrier")
+                })?;
+        arguments[index] = CExpression::Value(CValue::Pointer(pointer));
         let memory = state
             .memory()
             .clone()

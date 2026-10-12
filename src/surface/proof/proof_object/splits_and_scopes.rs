@@ -1232,6 +1232,12 @@ impl<'a> Proof<'a> {
                 }
             }
         }
+        if let Some(execution) = self.execution() {
+            body_facts =
+                body_facts.with_selected_defined_reads(&body_kernel, &execution.core.state);
+        } else if let ProofContext::FixedState(context) = self.context.as_ref() {
+            body_facts = body_facts.with_selected_defined_reads(&body_kernel, context.state);
+        }
         // A `have` at the frontier may also consume a fact available across
         // the frontier's certified effects, exactly as a statement step's
         // prerequisite may. Load names are not preserved across call-havoc and
