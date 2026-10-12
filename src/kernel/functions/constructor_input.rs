@@ -15,17 +15,25 @@ pub(crate) fn assume_scalar_object_inputs(
 ) -> Result<CState, String> {
     for input in interface.native_span_inputs() {
         validate_span_input(interface, input).ok_or("invalid native slice input metadata")?;
-        let Some(CExpression::Value(CValue::UInt64(length))) = arguments.get(input.length_parameter_index) else {
+        let Some(CExpression::Value(CValue::UInt64(length))) =
+            arguments.get(input.length_parameter_index)
+        else {
             return Err("native slice input length is not an entry usize value".into());
         };
         let count = crate::kernel::eval::pointer_domains::native_count_observation(
-            MachineIntegerType::UInt64, length.clone(),
-        ).ok_or("native slice length has no exact observation")?;
-        let Some(CExpression::Value(CValue::Pointer(pointer))) = arguments.get(input.parameter_index) else {
+            MachineIntegerType::UInt64,
+            length.clone(),
+        )
+        .ok_or("native slice length has no exact observation")?;
+        let Some(CExpression::Value(CValue::Pointer(pointer))) =
+            arguments.get(input.parameter_index)
+        else {
             return Err("native slice input is not an entry pointer value".into());
         };
         state.set_memory(state.memory().clone().with_native_slice_input(
-            pointer.clone(), input.element_type, count.into(),
+            pointer.clone(),
+            input.element_type,
+            count.into(),
         )?);
     }
     for input in interface.aggregate_object_inputs() {
@@ -100,30 +108,54 @@ pub(super) fn bind(
 ) -> Option<()> {
     for input in interface.native_span_inputs() {
         validate_span_input(interface, input)?;
-        let CValue::Pointer(pointer) = callee.locals.get(interface.parameters()[input.parameter_index].name())? else {
+        let CValue::Pointer(pointer) = callee
+            .locals
+            .get(interface.parameters()[input.parameter_index].name())?
+        else {
             return None;
         };
-        let CValue::UInt64(length) = callee.locals.get(interface.parameters()[input.length_parameter_index].name())? else {
+        let CValue::UInt64(length) = callee
+            .locals
+            .get(interface.parameters()[input.length_parameter_index].name())?
+        else {
             return None;
         };
         let count = crate::kernel::eval::pointer_domains::native_count_observation(
-            MachineIntegerType::UInt64, length.clone(),
+            MachineIntegerType::UInt64,
+            length.clone(),
         )?;
         // The span check alone is vacuous for zero. Identity formation also
         // requires an actual valid carrier, including for an empty slice.
         let checks = [
             crate::kernel::eval::pointer_domains::checked_typed_pointer_span(
-                caller, pointer, IntegerTerm::constant_i64(0), count,
-                input.element_type, assumptions,
+                caller,
+                pointer,
+                IntegerTerm::constant_i64(0),
+                count,
+                input.element_type,
+                assumptions,
             ),
             crate::kernel::eval::pointer_domains::checked_pointer_formation(
-                caller, pointer, pointer.pointer(), input.element_type.byte_width(),
-                crate::kernel::eval::pointer_domains::PointerDomainView::Typed, assumptions,
+                caller,
+                pointer,
+                pointer.pointer(),
+                input.element_type.byte_width(),
+                crate::kernel::eval::pointer_domains::PointerDomainView::Typed,
+                assumptions,
             ),
         ];
         for check in checks {
-            let Ok(crate::kernel::eval::pointer_domains::PointerDomainCheck::Checked(guards)) = check else { return None; };
-            if guards.iter().any(|guard| assumptions.decide(guard) != Some(true)) { return None; }
+            let Ok(crate::kernel::eval::pointer_domains::PointerDomainCheck::Checked(guards)) =
+                check
+            else {
+                return None;
+            };
+            if guards
+                .iter()
+                .any(|guard| assumptions.decide(guard) != Some(true))
+            {
+                return None;
+            }
         }
     }
     for input in interface.aggregate_object_inputs() {
@@ -186,14 +218,21 @@ pub(super) fn bind(
     Some(())
 }
 
-fn validate_span_input(interface: &CFunctionContractInterface, input: &CNativeSpanInput) -> Option<()> {
+fn validate_span_input(
+    interface: &CFunctionContractInterface,
+    input: &CNativeSpanInput,
+) -> Option<()> {
     let pointer = interface.parameters().get(input.parameter_index)?;
     let length = interface.parameters().get(input.length_parameter_index)?;
     (input.parameter_index != input.length_parameter_index
         && pointer.is_native_pointer_input()
         && pointer.c_type().pointee_type() == Some(input.element_type)
-        && matches!(input.element_type, CType::UInt8 | CType::Int32 | CType::UInt32)
-        && length.c_type() == CType::UInt64).then_some(())
+        && matches!(
+            input.element_type,
+            CType::UInt8 | CType::Int32 | CType::UInt32
+        )
+        && length.c_type() == CType::UInt64)
+        .then_some(())
 }
 
 #[cfg(test)]
