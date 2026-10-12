@@ -14267,7 +14267,7 @@ fn c_static_array_element_initializers_retain_the_declared_row_recipe() {
             crate::kernel::IntegerTerm::constant_i64(row).into(),
         ));
         assert_eq!(path.as_ref(), expected.as_slice());
-        assert_eq!(*element_type, CType::Int32);
+        assert_eq!(*element_type, crate::kernel::CType::Int32);
         assert_eq!(*stride, 4);
         assert_eq!(*count, crate::kernel::IntegerTerm::constant_i64(3).into());
         assert_eq!(

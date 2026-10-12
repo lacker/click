@@ -607,7 +607,6 @@ impl CMemory {
 mod tests {
     use super::*;
     use crate::kernel::eval::pointer_domains::{self, PointerDomainCheck, PointerDomainView};
-    use crate::kernel::prelude::*;
 
     fn checked(guards: Vec<ConditionTerm>, context: &PureFactContext) -> bool {
         guards
@@ -615,7 +614,7 @@ mod tests {
             .all(|guard| context.decide(guard) == Some(true))
     }
     fn passes(query: Result<PointerDomainCheck, pointer_domains::PointerDomainRefusal>) -> bool {
-        matches!(query,Ok(PointerDomainCheck::Checked(guards)) if checked(guards,&PureFactContext::new()))
+        matches!(query,Ok(PointerDomainCheck::Checked(guards)) if checked(guards.clone(),&PureFactContext::new()))
     }
     fn matrix(rows: u32) -> (CMemory, CPointerValue) {
         let root = CMemory::local_pointer("row-domain");
@@ -795,7 +794,7 @@ mod tests {
                     .with_array_shape(Some(&[2, 3])),
             ],
         ));
-        let origin = CPointerValue::new(Pointer::symbolic("row-input"), CType::Int32Pointer)
+        let origin = CPointerValue::new(Pointer::symbolic(Variable(997_301)), CType::Int32Pointer)
             .with_designation(PointerDesignation::Unresolved(Variable(997_301)));
         let memory = CMemory::new()
             .with_native_record_input(origin.clone(), layout.clone())
@@ -879,7 +878,7 @@ mod tests {
     fn native_fixed_scalar_array_inputs_keep_one_dimensional_and_empty_geometry() {
         let _session = crate::kernel::VerificationSession::enter();
         for count in [0, 4] {
-            let root = Pointer::symbolic(format!("native-fixed-array-{count}"));
+            let root = Pointer::symbolic(Variable(997_302 + u64::from(count)));
             let layout = CAggregateLayout::new_scalar_array(CType::Int32, count).unwrap();
             let memory = CMemory::new()
                 .with_object_input_domain(root.clone(), &layout)
